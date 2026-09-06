@@ -6383,6 +6383,38 @@ and `x == null` inside the loop still tells a null element from a real zero (`re
 where `x?.n` reads 0 for both).  Worth measuring rather than assuming — a resolved bug is a
 claim about a build like any other.
 
+#### B8i — `@FR-I-NullSrc` walked: the formal line held and its own gloss reached one case past it (2026-09-07)
+
+`iteration.md` is one of the two docs that are **100 % uncited** — 11 rules, not one named by any
+code site (`matching.md` is the other, at 23).  It is also where B8h should have looked first: it
+carries a rule about a NULL SOURCE, and B8h had just spent a session improving a refusal for one.
+
+**The rule holds.**  `(I-NullSrc)` says `for x in nullref { body }` runs the body zero times, "a
+null source is empty… no halt".  Measured: a collection field never filled, and a call whose
+declared `vector<τ>` return answers null, each iterate zero times with no fault.  `(I-Empty)`
+holds by the same line of code, which is the point — they are one question, *how many elements
+does this source have*, and `vector::length_vector` answers 0 for both.  Both rules now cite it.
+
+**Its "In words" gloss did not.**  The same paragraph ended *"so a `for` over a possibly-null
+collection is safe without a guard"* — and the type-level spelling of "possibly-null" is `τ?`,
+which is exactly the one case the rule does not cover and the compiler refuses.  A reader
+following the prose writes `for x in v` with `v: vector<integer>?` and does not compile; a reader
+following the formal line writes what ships.  Corrected, with the distinction stated: `nullref`
+is a RUNTIME null of a NON-nullable type, and a `τ?` needs the discharge that `(N-Coal)` /
+`(N-Default)` require of every other position.
+
+**Two docs, two walks, the same shape.**  B8g found `collections.md` stating the opposite of the
+rule it cites; this one finds `iteration.md` promising one case more than the rule it explains.
+Neither was a code defect and both would have sent a reader wrong — which is the argument for
+walking a rule by READING it against the code even when the code turns out to be right, and the
+reason an `OPEN: 0` is a claim about the deviation register and never about the prose around it.
+
+⚠ **And it is the check B8h owed and did not make.**  CLAUDE.md's rule is to read the formal spec
+before shipping a REFUSAL, because *"a rule may say it must work, making the refusal a
+deviation"*.  B8h improved a refusal's wording without first asking whether `iteration.md` had
+anything to say about a null source — it did, and had the answer been about `τ?` the work would
+have been polishing something that should not exist.  It was not, so B8h stands; the process gap
+is the finding, and the cost of closing it was one grep.
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
