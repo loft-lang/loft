@@ -2472,7 +2472,17 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 729 | 365 | 5 | **359** |
+| 730 | 366 | 5 | **359** |
+
+**The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
+carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
+`729 | 365 | 5 | 359` on the other — the middle column coincidentally equal, the outer two not.
+It reconciles: from main's `728 | 364 | 5 | 359`, `snapshot_kind` adds one OPAQUE, then
+`reshaped_containers` adds one PEELING, then `for_type` moves one opaque→peeling.  Each
+paragraph below names the count as of ITS change, which is the history and not the current
+state; the three landed in a different order than they were written.  **A number in a merge
+conflict is re-measured, never taken from a side** — the conflict here was exactly this row,
+predicted from both checkouts before the join and still not guessable from either.
 
 `Parser::for_type` moved from opaque to PEELING — `729 | 365 | 5 | 359` — which is the
 direction this table exists to drive, and the entry @PLN25's own dn1 audit had already written
