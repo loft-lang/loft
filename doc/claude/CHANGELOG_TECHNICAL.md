@@ -136,6 +136,31 @@ cells compile one source concurrently), with an empty output block as the only e
 Guarded on the destination's INODE changing across a publish, which fails on the pre-fix form;
 the end-to-end racing test does NOT falsify and its header says so.
 
+### A nullable collection is refused with its discharge, not with a list of kinds (2026-09-06)
+
+`for x in v` where `v: vector<integer>?` reported *"Unknown in expression type
+`vector<integer>?`"* twice and *"cannot iterate over `vector<integer>?`; expected vector,
+sorted, index, hash, text, or range"* once — a kind list that recites the kind the author had
+already picked correctly, when the only thing in the way is the `?`.  `Parser::iterator` now
+recognises a nullable whose inner type IS iterable and names the cure instead: add `?` (the
+type's default, an empty collection) or `?? []`, either of which gives an absent collection
+zero iterations.  Both spellings already worked; nothing said so.
+
+The duplicate line is gone with it: `Parser::for_type` peels `τ?` before resolving the element
+type — the element type of a nullable collection is its element type, the `?` being a fact about
+the collection rather than about what it holds.  @PLN25's dn1 audit carries a NEEDS-FIX row for
+that site (*"`for x in nullable` misses Text/Integer arms → peel in_type"*) AND, further down,
+the verdict that dropped it: peeling `for_type`/`iterator` routed `text?` into a
+text-char-iteration path that PANICS.  Only the first half is taken here — `iterator` does not
+peel, it refuses — so that path is unreachable; verified on `text?` null and present.  Five
+errors become three, informative one first, and the optional audit gains a peeling site
+(729 · 365 · 5 · 359).  The cure named is the inner type's own default, so `text?` is told
+`?? ""` rather than `?? []`.
+
+The refusal is the null model being consistent rather than an omission: iteration is the same
+`(N-Coal)`/`(N-Default)` discharge `v[i]` needs, and a loop that silently accepted a null source
+would be the implicit unwrap `types.md` rules out everywhere else.
+
 ### A hash iterates in KEY order, and the rules doc now says so (2026-09-06)
 
 `collections.md`'s `(Col-Order)` read *"hash → UNSORTED bucket walk (no key order) — the C-Order

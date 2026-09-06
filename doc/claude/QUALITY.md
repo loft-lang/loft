@@ -2472,7 +2472,17 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 729 | 364 | 5 | **360** |
+| 729 | 365 | 5 | **359** |
+
+`Parser::for_type` moved from opaque to PEELING — `729 | 365 | 5 | 359` — which is the
+direction this table exists to drive, and the entry @PLN25's own dn1 audit had already written
+down and nobody had taken: *"`for x in nullable` misses Text/Integer arms → peel in_type"*.
+The element type of a nullable collection is its element type; the `?` is a fact about the
+collection, not about what it holds. Unpeeled, every arm missed and the fall-through reported
+*"Unknown in expression type `vector<T>?`"* — TWICE, plus a kind-list that recited the kind the
+author had actually used. Peeling does not make such a loop legal (there is no `τ? ⤳ τ`), so
+the refusal still stands; it just stands alone, and the cascade for `for x in v` on a
+`vector<integer>?` goes from five errors to three with the informative one first.
 
 loft#1403 added one on the OPAQUE side — `729 | 364 | 5 | 360` — `snapshot_kind` in the
 `#remove` refusal, which reads a type to name the collection kind the author wrote.  Opaque is
@@ -6326,6 +6336,52 @@ made `{ data: hash<E[k]>, spare: hash<E[k]>? }` answer "this collection" where i
 `hash`.  The row lands 729 · 364 · 5 · **360**.  A peel that "cannot hurt" hurt, and the cell
 that showed it took a minute to write.  Three walks running, three audit-row moves, three times
 the full gate and never a targeted suite.
+
+#### B8h — the iteration surface's own refusals: a nullable source, and the audit entry that named its cure (2026-09-06)
+
+Not a rule walk — a question from the owner, and the kind worth following because it starts
+from *"why is this refused at all?"* rather than from a symptom.  Why can a nullable collection
+not be iterated, when returning nothing for a null source is the obvious reading?
+
+**The refusal is right, and the capability already exists.**  `for e in h?` and `for e in h ?? []`
+each give an absent collection ZERO iterations — measured, both spellings.  So the behaviour the
+question asks for is there; the language only requires it to be said, which is the same
+`(N-Coal)`/`(N-Default)` discharge `v[i]` needs.  A loop that accepted a null source silently
+would be the implicit unwrap `types.md` rules out everywhere else (*"there is NO `τ? ⤳ τ`"*).
+
+**The DIAGNOSTIC was the defect.**  It said *"cannot iterate over `vector<integer>?`; expected
+vector, sorted, index, hash, text, or range"* — a list that recites the kind the author had
+picked correctly — and never named the one character that fixes it.  Same class as B8f's
+`#remove` refusal telling a `trie` author their loop was "hash iteration": a message that
+misdescribes what was written and prescribes a cure for something else.
+
+**And the second line was an entry already written down — TWICE, with opposite verdicts, and
+the second one is why this needed care.**  The shape also reported *"Unknown in expression type
+`vector<integer>?`"*, twice, from the element-type resolver.  `@PLN25`'s dn1 audit has a
+NEEDS-FIX row for exactly that site — *"`for x in nullable` misses Text/Integer arms → peel
+in_type"* — and, further down the same document, the verdict that **dropped it**:
+*"`for x in <τ?>` — NOT A BUG (dropped) … Peeling `for_type`/`iterator` only routed `text?` to a
+text-char-iteration path that PANICS … → reverted."*  Reading only the row would have re-walked
+into a crash.
+
+What makes peeling safe here is that it is only HALF of what was reverted: `for_type` peels, so
+the element type resolves and the duplicate line goes; `iterator` does NOT peel — it gains a
+REFUSAL — so the text-char path that panicked is never reached.  Measured on `text?` null,
+`text?` present, and `text ?? ""`: a clean refusal, a clean refusal, and `a,b,c,`.  Five errors
+become three, the informative one first, and the optional audit gains a PEELING site — the
+direction that table exists to drive.
+
+⚠ **The message names the inner type's OWN default.**  `text?`'s is the empty text, so its cure
+is `?? ""` and not `?? []` — telling a `text` author to write `?? []` would have been a second
+wrong cure inside the message written to fix the first one, which is the failure mode B8f's
+`#remove` refusal already demonstrated once.
+
+**A second recollection checked, and it holds.**  The owner also recalled that iteration used to
+STOP at a null element and thought it was resolved.  It is: `vector<E?>`, `vector<integer?>` and
+`vector<text?>` each visit every element, deliver the null as a value rather than a terminator,
+and `x == null` inside the loop still tells a null element from a real zero (`rec0, NULL, rec7`
+where `x?.n` reads 0 for both).  Worth measuring rather than assuming — a resolved bug is a
+claim about a build like any other.
 
 #### B2 — open, and the owner's call
 

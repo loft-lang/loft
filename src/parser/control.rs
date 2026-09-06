@@ -9807,6 +9807,20 @@ impl Parser {
         if let Type::RefVar(inner) = in_type {
             return self.for_type(inner);
         }
+        // …and peel `τ?` for the same reason (@PLN25's dn1 audit named this site and
+        // prescribed exactly this: *"`for x in nullable` misses Text/Integer arms"*).
+        //
+        // The ELEMENT type of a nullable collection is its element type; the `?` is a fact
+        // about the collection, not about what it holds.  Left unpeeled, every arm below
+        // missed and the fall-through reported *"Unknown in expression type vector<T>?"* —
+        // a second error for one mistake, and the unhelpful one of the two, since
+        // `Parser::iterator` already refuses the loop by naming the `?` and the discharge
+        // that clears it.  Peeling does not make the loop legal: there is no `τ? ⤳ τ`
+        // ([types.md](../../doc/claude/formal/types.md) N-Coal / N-Default), so the refusal
+        // still stands — it just stands alone.
+        if let Type::Optional(inner) = in_type {
+            return self.for_type(inner);
+        }
         if let Type::Vector(t_nr, dep) = &in_type {
             let mut t = *t_nr.clone();
             if let Type::Enum(nr, true, _) = t

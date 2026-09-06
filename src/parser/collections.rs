@@ -717,12 +717,56 @@ impl Parser {
                     // what to substitute.  Old wording "Unknown iterator
                     // type T" left users guessing whether T was the issue
                     // or the syntax.
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "cannot iterate over {}; expected vector, sorted, index, hash, text, or range",
-                        is_type.name(&self.data)
-                    );
+                    //
+                    // A NULLABLE collection is the case where that list is the wrong answer:
+                    // the author picked a kind this loop accepts and only the `?` is in the
+                    // way, so reciting the kinds reads as "you used the wrong one".  What is
+                    // missing is the DISCHARGE — `(N-Coal)` / `(N-Default)`, the same one
+                    // `v[i]` needs, and there is no `τ? ⤳ τ` for a `for` to lean on either.
+                    // Both spellings give an absent collection zero iterations, which is
+                    // what the reader wanted; they just have to say so.
+                    if let Type::Optional(inner) = is_type
+                        && matches!(
+                            **inner,
+                            Type::Vector(_, _)
+                                | Type::Sorted(_, _, _)
+                                | Type::Index(_, _, _)
+                                | Type::Hash(_, _, _)
+                                | Type::Radix(_, _, _)
+                                | Type::Trie(_, _, _)
+                                | Type::Text(_)
+                        )
+                    {
+                        // The `??` spelling has to name the DEFAULT of the inner type, not a
+                        // collection literal: `text?`'s is the empty text, and telling its
+                        // author to write `?? []` would be a second wrong cure in the same
+                        // message.  `?` is the type's own default either way.
+                        let (empty, thing) = if matches!(**inner, Type::Text(_)) {
+                            ("\"\"", "text")
+                        } else {
+                            ("[]", "collection")
+                        };
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "cannot iterate over {} because it is NULLABLE — a `{}` is iterable, \
+                             but there is no implicit unwrap.  Discharge it first: add `?` (the \
+                             type's default, an empty {}) or `?? {}`; either spelling gives an \
+                             absent {} zero iterations",
+                            is_type.name(&self.data),
+                            inner.name(&self.data),
+                            thing,
+                            empty,
+                            thing
+                        );
+                    } else {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "cannot iterate over {}; expected vector, sorted, index, hash, text, or range",
+                            is_type.name(&self.data)
+                        );
+                    }
                 }
             }
         }
