@@ -6403,6 +6403,24 @@ following the formal line writes what ships.  Corrected, with the distinction st
 is a RUNTIME null of a NON-nullable type, and a `τ?` needs the discharge that `(N-Coal)` /
 `(N-Default)` require of every other position.
 
+**A reconnaissance of `matching.md` in the same pass, and it is a NEGATIVE.**  It is the other
+100 %-uncited doc (23 rules) and it also declares `OPEN: 0`, so it was the obvious next target.
+Every claim checked HOLDS: `(M-Wild)` refuses an arm after `_` and says *"move `_` to the end"*;
+`(M-Exhaust)` names the missing variant; `(M-Bool)`, `(P-Seq)`/`(P-Whole)`, `(P-Rest)`,
+`(P-Alt)`, `(P-Rep)` and `(P-Opt)` all behave as written, including *"P-Opt never Fails"*.  So
+the prose-vs-rule shape is not universal — two docs had it and the third does not.
+
+⚠ **What it cost instead was FOUR wrong probes, and the reason is worth the note it got.**  The
+rules write a repetition `⟨(a)*, κ⟩`, and those parentheses are METANOTATION — but the concrete
+syntax uses literal parens for a VARIANT element (`[ (x: Num)*, ..rest ]`) and NONE for a scalar
+one (`[ xs:integer* ]`).  Reading `(a)*` as source is what a first reader does; each wrong
+spelling reports `Expect token ,`, which names nothing.  Three of my four failures were that, and
+the fourth was `--tests` swallowing the directory again and attributing one file's parse error to
+another — the third time today ([[tests-flag-swallows-its-path]]).  **A refusal that reads as a
+defect is a spelling error until an authoritative example says otherwise**; the one here was
+`tests/parse_errors.rs`'s `scalar_rep_type_mismatch`, which quotes the form outright.  Both
+spellings are now written beside `(P-Rep)`.
+
 **Two docs, two walks, the same shape.**  B8g found `collections.md` stating the opposite of the
 rule it cites; this one finds `iteration.md` promising one case more than the rule it explains.
 Neither was a code defect and both would have sent a reader wrong — which is the argument for

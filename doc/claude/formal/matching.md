@@ -151,6 +151,16 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              failed attempt are NEVER observable — the arm body runs ONLY after a committed whole-match.
 ```
 
+**The parentheses above are METANOTATION, and the concrete syntax has two spellings.**  `⟨(a)*⟩`
+says *"a repetition of the pattern a"*; it does not say the source contains a `(`.  A VARIANT
+element is written with the parens — `[ (x: Num)*, ..rest ]`, `[ (Kw { k })? ]` — and a SCALAR
+element is written without them, as a bare capture with the suffix on the type:
+`[ xs:integer* ]`.  There is no parenthesised scalar form and no bare variant form; each kind
+takes exactly one of the two, and the wrong one is a parse error that reports `Expect token ,`
+rather than naming the spelling.  Reading `(a)*` as literal syntax is what a first reader does —
+it cost four wrong probes in the walk that added this note (QUALITY.md B8i) — so the two forms
+are written out here beside the rule they instantiate.
+
 **In words.** A pattern either matches — moving the cursor forward and binding names — or fails,
 leaving everything exactly as it was. A sequence runs its parts in order and fails as a whole if any
 part fails; an arm's sequence must line up with the *entire* input unless it ends in `..rest`.
