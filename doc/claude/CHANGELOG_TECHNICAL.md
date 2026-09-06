@@ -162,9 +162,11 @@ struct's one snapshot-walked field for `for e in b.data`; with two such fields t
 not decidable from there, so the wording stays kind-neutral rather than guessing.  A `spatial`
 is keyed by coordinate axes and gets `spatial[x, y] = null` as its cure.  The message is a
 pinned surface — `tests/issues.rs`, `the-reference-quotes-its-refusals-word-for-word.loft` and
-CAVEATS.md quote it — and all three moved with it.  The kind is read through `.base()`, so a
-collection declared nullable (`h: hash<E[k]>?`) is named like its dense twin; that is one more
-`Type`-discriminating site on the PEELING side of the optional audit (729 · 365 · 5 · 359).
+CAVEATS.md quote it — and all three moved with it.  The kind is read WITHOUT peeling `τ?`: a
+nullable collection cannot be iterated at all, so one never reaches the question, and a nullable
+SIBLING field is not a candidate for which field the loop is over — peeling counted it and made
+a decidable case answer vaguely.  One more `Type`-discriminating site, on the OPAQUE side of the
+optional audit (729 · 364 · 5 · 360).
 `@FR-Col-Remove` gained its first code citations in the same pass (`remove_vector_at`,
 `remove_owned`, `State::remove`, `vector::remove_vector`), from the walk that found this
 (QUALITY.md B8f), which also filed

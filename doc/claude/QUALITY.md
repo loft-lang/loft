@@ -2472,13 +2472,19 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 729 | 365 | 5 | **359** |
+| 729 | 364 | 5 | **360** |
 
-loft#1403 added one on the PEELING side — `729 | 365 | 5 | 359` — `snapshot_kind` in the
-`#remove` refusal, which reads a field's declared type to name the collection kind the author
-wrote.  It peels because a snapshot-walked collection can be declared nullable
-(`h: hash<E[k]>?`) and the kind a message names is the kind that was written, `?` or not; the
-opaque column is unmoved, which is the shape a new site should have.
+loft#1403 added one on the OPAQUE side — `729 | 364 | 5 | 360` — `snapshot_kind` in the
+`#remove` refusal, which reads a type to name the collection kind the author wrote.  Opaque is
+the right column, and the reason is REACHABILITY: a nullable collection cannot be iterated at
+all (*"cannot iterate over `hash<Ent,[\"k\"]>?`"*), so a `τ?` never arrives by the direct
+route.  ⚠ It is also the right column for a second reason a peel gets backwards — a nullable
+SIBLING field is not a candidate for *"which field is this loop over"*, so counting it made a
+decidable case answer with the kind-neutral wording (measured: `{ data: hash<E[k]>, spare:
+hash<E[k]>? }` said "this collection" where it can say `hash`).  I shipped the peel first on
+the reading that `?` is only a marker over the same storage; the sibling checkout put it in the
+opaque column instead and was right, and the two cells above are the measurement that settled
+it rather than either reading.
 
 D-bind-25 added one function on the SEEING-THROUGH side — `730 | 365 | 5 | 360` —
 `scopes::reshaped_containers`, which now asks a keyed removal's container which KIND it is so a
@@ -6311,11 +6317,15 @@ interleave fails exactly the discriminating cell and leaves the other eight gree
 **The audit row moved, and the full gate is what caught it — again.**  `snapshot_kind`, the
 helper B8f added to name the collection kind in the `#remove` refusal, discriminates on `Type`
 variants, so `quality_optional_table_matches_the_audit` went red at 728 → 729.  The audit's
-question was the right one to be asked: a snapshot-walked collection can be declared
-`hash<E[k]>?`, and the message should name the kind with or without the `?`.  Reading the type
-through `.base()` answers it, and the row lands 729 · 365 · 5 · **359** — one more site, on the
-PEELING side, with the opaque column unmoved.  Three walks running, three audit-row moves, three
-times the full gate and never a targeted suite.
+question was the right one to be asked — and my first answer to it was wrong.  I peeled with
+`.base()`, reasoning that `?` is a marker over the same storage; the sibling checkout put the
+site in the OPAQUE column instead, and measuring settled it their way twice over: a nullable
+collection cannot be iterated at all, so a `τ?` never reaches the question, and a nullable
+SIBLING field is not a candidate for *which* field the loop is over, so peeling counted it and
+made `{ data: hash<E[k]>, spare: hash<E[k]>? }` answer "this collection" where it can answer
+`hash`.  The row lands 729 · 364 · 5 · **360**.  A peel that "cannot hurt" hurt, and the cell
+that showed it took a minute to write.  Three walks running, three audit-row moves, three times
+the full gate and never a targeted suite.
 
 #### B2 — open, and the owner's call
 

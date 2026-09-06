@@ -1971,12 +1971,16 @@ use #count instead"
             if !self.first_pass {
                 let coll = self.vars.loop_coll_var(index_var);
                 if coll != u16::MAX && self.vars.name(coll).contains("hash_scratch") {
-                    // `.base()` because a snapshot-walked collection can be declared
-                    // NULLABLE (`h: hash<E[k]>?`), and `Optional` is a marker over the same
-                    // storage — the kind a message names is the kind that was written, with
-                    // or without the `?`.
+                    // NOT peeled through `.base()`, and the reason is reachability rather
+                    // than taste: a NULLABLE collection cannot be iterated at all ("cannot
+                    // iterate over `hash<Ent,["k"]>?`"), so a `τ?` never reaches this
+                    // question by the direct route — and where one is a SIBLING field, it is
+                    // not a candidate for "which field is this loop over" either.  Peeling
+                    // counted it as a second match and made a decidable case answer with the
+                    // kind-neutral wording (measured: `{ data: hash<E[k]>, spare:
+                    // hash<E[k]>? }` said "this collection" where it can say `hash`).
                     fn snapshot_kind(tp: &Type) -> Option<&'static str> {
-                        match tp.base() {
+                        match tp {
                             Type::Hash(_, _, _) => Some("hash"),
                             Type::Trie(_, _, _) => Some("trie"),
                             Type::Radix(_, _, _) => Some("spatial"),
