@@ -148,7 +148,8 @@ every read would then pay for the check.
 ```
   (Col-Order)   for x in c { … } visits in a per-kind ORDER, identical on both backends:
                   vector  → index order 0,1,2,… (iteration.md I-For)
-                  hash    → UNSORTED bucket walk (no key order) — the C-Order decided edge
+                  hash    → KEY order, via the ordered snapshot the walk builds for it
+                            (its `par` walk is the UNSORTED one — concurrency.md C-Order)
                   sorted  → key order
                   index   → key order (its tree side)
                   spatial → Morton / Z-order
@@ -167,6 +168,19 @@ every read would then pay for the check.
 *Anchor:* concurrency.md `C-Order` (hash); STDLIB.md/DATABASE.md (spatial Morton). **This is the
 divergence-prone rule** (interp store-walk vs native emitted loop) — the whole reason the area needs
 pinning. `C-Order` already states the hash edge; `Col-Order` generalises it to every kind.
+
+**The hash line read the opposite of the rule it cites, and of what ships, until 2026-09-06.**
+It said *"UNSORTED bucket walk (no key order) — the C-Order decided edge"*, and the edge
+`C-Order` actually decides is the other one: the SEQUENTIAL walk is key-ordered and only the
+`par` walk gives that up, "because the parallel queue has no use for key order". Measured on
+both backends: a `hash<E[id]>` filled 49 down to 0 iterates 0,1,2,…,49, a `hash<E[k]>` on text
+iterates alphabetically, and the same collection under `par(…, 4)` comes out scrambled. The
+parser builds the ordered snapshot that makes it so (`parse_for`'s `hash_scratch`, an O(n log n)
+key sort for a hash and nothing for a radix, which is already ordered), and LOFT.md and
+STDLIB.md both describe it — *"hash iterates via its internal ordered index"*. So this was a
+transcription inverted in one place, not a rule the code had drifted from: the code, `C-Order`
+and the user-facing docs already agreed, and only this line dissented. Found in the
+`@FR-Col-Order` walk (QUALITY.md B8g).
 
 `Col-Order-Sign` is the half that was violated rather than merely unpinned. `index` applied the
 sign a second time in two places — the iterator bit (`fill_iter`) and the range-cursor bound swap

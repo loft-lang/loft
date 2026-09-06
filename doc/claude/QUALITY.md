@@ -2472,7 +2472,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 730 | 365 | 5 | **360** |
+| 729 | 365 | 5 | **359** |
+
+loft#1403 added one on the PEELING side — `729 | 365 | 5 | 359` — `snapshot_kind` in the
+`#remove` refusal, which reads a field's declared type to name the collection kind the author
+wrote.  It peels because a snapshot-walked collection can be declared nullable
+(`h: hash<E[k]>?`) and the kind a message names is the kind that was written, `?` or not; the
+opaque column is unmoved, which is the shape a new site should have.
 
 D-bind-25 added one function on the SEEING-THROUGH side — `730 | 365 | 5 | 360` —
 `scopes::reshaped_containers`, which now asks a keyed removal's container which KIND it is so a
@@ -6257,6 +6263,59 @@ on its subject suite and a 27-cell matrix — and shipping it alone would have t
 answer into a use-after-free.  What caught it was running the full corpus rather than the
 targeted suite, and the failing test was not a guard for any of this: it was a generic tree
 walk whose author had simply written the ordinary spelling.
+
+#### B8g — `@FR-Col-Order` walked: the rule that stated the opposite of the rule it cites (2026-09-06)
+
+Picked for the same reason B8f was and one more: `@FR-Col-Order` had **zero citations**, and
+`collections.md` calls it *"the divergence-prone rule (interp store-walk vs native emitted loop)
+— the whole reason the area needs pinning"* while its own conformance plan still listed it as to
+be pinned.  A rule that names itself the risk and has neither a citation nor a guard is the
+cheapest thing on the queue to be wrong.
+
+**It was wrong in the DOC, not the code.**  `(Col-Order)` read `hash → UNSORTED bucket walk (no
+key order) — the C-Order decided edge`, and the edge `concurrency.md (C-Order)` actually decides
+is the other one: the SEQUENTIAL walk is key-ordered and only the `par` walk gives that up,
+*"because the parallel queue has no use for key order"*.  So the rule contradicted the rule it
+cites as its source, three lines under a sentence claiming to generalise it.
+
+Measured, both backends: a `hash<E[id]>` filled 49 down to 0 iterates `0,1,…,49`; a
+`hash<E[k]>` on text iterates alphabetically; the same collection under `par(…, 4)` comes out
+`9,2,8,1,7,6,0,10,11,5,4,3`.  The parser builds the ordered snapshot that makes it so — the
+`hash_scratch` in `parse_for`, an O(n log n) key sort for a hash and nothing for a radix, which
+is already ordered — and LOFT.md and STDLIB.md both describe it (*"hash iterates via its
+internal ordered index"*).  So the code, `C-Order` and both user-facing docs already agreed and
+one line dissented: a transcription inverted in one place, not a rule the code had drifted from.
+That distinction is what makes correcting the doc the right move rather than a violation of
+*"the code changes to match the rules"* — there was no rule here to change, only two copies of
+one, and the copy disagreed with its original.
+
+**What the walk pinned.**  `a-collection-iterates-in-the-order-its-kind-defines.loft`, 9 cells
+over all six kinds, green on BOTH backends — which is the half of the rule ("identical on both
+backends") that nothing had ever asserted.  Every cell inserts in an order that is not the
+iteration order, so a walk returning insertion order fails rather than passes by coincidence,
+and the 50-key descending cell is the one that cannot come out ascending by luck.
+
+**The Morton convention was measured, not assumed.**  A `spatial`'s curve is stated as
+"Morton / Z-order" and nothing said which axis takes the low bit of each pair — a fact a guard
+has to have, since the two conventions give different sequences.  Four unit-square points name
+it outright: the walk answers `(0,0) (0,1) (1,0) (1,1)`, so the SECOND axis is the low bit and
+the first-declared axis is the major one.  The 4x4 cell then follows by hand — codes 0, 6, 9,
+10, 15 — and matches the measurement exactly, which is the check that the convention read off
+the small case actually explains the larger one.
+
+**A `@falsified-at: none`, and why that is the honest answer here.**  This is a conformance pin
+rather than a regression guard: every cell passes on every build measured, because what was
+broken was the doc.  The harness was still shown able to fail it — expecting the other
+interleave fails exactly the discriminating cell and leaves the other eight green.
+
+**The audit row moved, and the full gate is what caught it — again.**  `snapshot_kind`, the
+helper B8f added to name the collection kind in the `#remove` refusal, discriminates on `Type`
+variants, so `quality_optional_table_matches_the_audit` went red at 728 → 729.  The audit's
+question was the right one to be asked: a snapshot-walked collection can be declared
+`hash<E[k]>?`, and the message should name the kind with or without the `?`.  Reading the type
+through `.base()` answers it, and the row lands 729 · 365 · 5 · **359** — one more site, on the
+PEELING side, with the opaque column unmoved.  Three walks running, three audit-row moves, three
+times the full gate and never a targeted suite.
 
 #### B2 — open, and the owner's call
 

@@ -136,6 +136,21 @@ cells compile one source concurrently), with an empty output block as the only e
 Guarded on the destination's INODE changing across a publish, which fails on the pre-fix form;
 the end-to-end racing test does NOT falsify and its header says so.
 
+### A hash iterates in KEY order, and the rules doc now says so (2026-09-06)
+
+`collections.md`'s `(Col-Order)` read *"hash → UNSORTED bucket walk (no key order) — the C-Order
+decided edge"*, which is the opposite of the edge `concurrency.md (C-Order)` decides: the
+SEQUENTIAL walk is key-ordered and only the `par` walk gives that up.  Measured on both
+backends — a `hash<E[id]>` filled 49 down to 0 iterates 0..49, a text-keyed one alphabetically,
+and the same collection under `par(…, 4)` comes out scrambled — and the parser's `hash_scratch`
+sort is what makes it so, as LOFT.md and STDLIB.md already described.  So the code, `C-Order`
+and the user-facing docs agreed and one line dissented; the line is corrected and
+`@FR-Col-Order` gains its first citation, at the snapshot builder that implements it.  New guard
+`a-collection-iterates-in-the-order-its-kind-defines.loft` pins all six kinds on BOTH backends —
+the half of the rule nothing had asserted — including the `spatial` Morton interleave, whose
+convention is read off four unit-square points rather than assumed (the second axis takes the
+low bit of each pair, so the first-declared axis is major).  QUALITY.md B8g.
+
 ### A `#remove` refusal names the collection the author wrote (2026-09-06, loft#1403)
 
 `hash`, `trie` and `spatial` all iterate a pre-sorted SNAPSHOT of their records, so `#remove`
@@ -147,9 +162,12 @@ struct's one snapshot-walked field for `for e in b.data`; with two such fields t
 not decidable from there, so the wording stays kind-neutral rather than guessing.  A `spatial`
 is keyed by coordinate axes and gets `spatial[x, y] = null` as its cure.  The message is a
 pinned surface — `tests/issues.rs`, `the-reference-quotes-its-refusals-word-for-word.loft` and
-CAVEATS.md quote it — and all three moved with it.  `@FR-Col-Remove` gained its first code
-citations in the same pass (`remove_vector_at`, `remove_owned`, `State::remove`,
-`vector::remove_vector`), from the walk that found this (QUALITY.md B8f), which also filed
+CAVEATS.md quote it — and all three moved with it.  The kind is read through `.base()`, so a
+collection declared nullable (`h: hash<E[k]>?`) is named like its dense twin; that is one more
+`Type`-discriminating site on the PEELING side of the optional audit (729 · 365 · 5 · 359).
+`@FR-Col-Remove` gained its first code citations in the same pass (`remove_vector_at`,
+`remove_owned`, `State::remove`, `vector::remove_vector`), from the walk that found this
+(QUALITY.md B8f), which also filed
 loft#1401 (a `??`-discharged projection escapes `(H-Materialise)` and reads a renumbered
 position after a removal) and loft#1402 (a by-index removal keeps what the element owned — one
 record per removal, and it cannot be closed before #1401).

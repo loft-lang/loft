@@ -1971,8 +1971,12 @@ use #count instead"
             if !self.first_pass {
                 let coll = self.vars.loop_coll_var(index_var);
                 if coll != u16::MAX && self.vars.name(coll).contains("hash_scratch") {
+                    // `.base()` because a snapshot-walked collection can be declared
+                    // NULLABLE (`h: hash<E[k]>?`), and `Optional` is a marker over the same
+                    // storage — the kind a message names is the kind that was written, with
+                    // or without the `?`.
                     fn snapshot_kind(tp: &Type) -> Option<&'static str> {
-                        match tp {
+                        match tp.base() {
                             Type::Hash(_, _, _) => Some("hash"),
                             Type::Trie(_, _, _) => Some("trie"),
                             Type::Radix(_, _, _) => Some("spatial"),
@@ -2964,6 +2968,11 @@ use #count instead"
             | Type::Radix(content, _, dep)
             | Type::Trie(content, _, dep) = in_type.clone()
             {
+                // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
+                // order: the hash builder sorts, and the walk reads the sorted copy.  Only
+                // the `par` walk skips the sort (@FR-C-Order), which is the one place the
+                // two orders differ.
+                //
                 // A trie is a radix TREE too, so its in-order walk is already key
                 // order: it takes the tree builder, not the hash one (whose bucket
                 // walk would read a trie's records as a hash table).
