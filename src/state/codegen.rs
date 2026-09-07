@@ -4504,16 +4504,23 @@ impl State {
                 Type::Boolean => stack.add_op("OpGetBoolean", self),
                 Type::Enum(_, false, _) => stack.add_op("OpGetByte", self),
                 Type::Text(_) => stack.add_op("OpGetStackText", self),
-                Type::Vector(_, _)
-                | Type::Reference(_, _)
-                | Type::Enum(_, true, _)
-                // @P305 — keyed collections passed by `&` are DbRef-backed
-                // just like vectors/references; referencing one (e.g. as the
-                // `coll` arg of `OpSetKeyed` for `h[k] = v` on a `&hash`
-                // param) needs the same stack-ref deref.
-                | Type::Sorted(_, _, _)
-                | Type::Hash(_, _, _)
-                | Type::Index(_, _, _) => {
+                // @P305 — a keyed collection passed by `&` is DbRef-backed just like a
+                // vector or a reference; reaching one (e.g. as the `coll` argument of
+                // `OpSetKeyed` for `h[k] = v` on a `&hash` parameter) needs the same
+                // stack-ref deref.  @FR-Col-Store defines the store-backed set as
+                // `Vector` plus the five keyed kinds, so `vectors::is_collection` is the
+                // one home for that half and this arm derives from it rather than
+                // listing the kinds again — the list spelled out is exactly how `trie`
+                // and `spatial` came to be missing while their three siblings worked
+                // (loft#1445, the fourth instance of the class after loft#1291,
+                // loft#1292 and loft#1433).
+                //
+                // The `_ =>` below is a `panic!`, so a kind missing here is an ICE and
+                // not a lost optimisation: the cost of an omission is the whole program.
+                Type::Reference(_, _) | Type::Enum(_, true, _) => {
+                    stack.add_op("OpGetStackRef", self);
+                }
+                other if crate::parser::vectors::is_collection(other) => {
                     stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
