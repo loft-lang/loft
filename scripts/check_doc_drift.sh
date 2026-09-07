@@ -530,11 +530,15 @@ examples_defs_in_tree() {
     case "${LOFT_ROOT:-}" in "$abs_root"/*) skip="./${LOFT_ROOT#"$abs_root"/}" ;; esac
   fi
   ( cd "$root" 2>/dev/null || exit 0
+    # `-type f`: `-name '*.loft'` also matches a DIRECTORY named `.loft` — the
+    # build cache `loft test` leaves beside a package — and awk exits fatally on
+    # "Is a directory", losing every later file in that xargs batch behind the
+    # 2>/dev/null.  The index then silently drops rows the resolver still sees.
     if [ -n "$skip" ]; then
-      find . -name '*.loft' -not -path './.*' -not -path './target/*' \
+      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' \
         -not -path "$skip/*" -print0 2>/dev/null
     else
-      find . -name '*.loft' -not -path './.*' -not -path './target/*' -print0 2>/dev/null
+      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' -print0 2>/dev/null
     fi \
     | xargs -0 awk '
         FNR==1 { f=FILENAME; sub(/^\.\//,"",f); p=""; cited=0 }
