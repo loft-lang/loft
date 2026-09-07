@@ -3235,9 +3235,17 @@ fn keyed_collection_unknown_key_field_lists_the_fields_when_it_cannot_suggest() 
 ///
 /// It used to have a second reason: `Type::name` rendered a keyed type's key list
 /// in the schema's debug spelling (`sorted<E,[("k", true)]>`) rather than the
-/// source's (`sorted<E[k]>`). That is fixed (loft#956 carries it, where the same
-/// string reached a `reduce` refusal), so the workaround is no longer load-bearing
-/// — the choice above is.
+/// source's (`sorted<E[k]>`). loft#956 fixed that by adding `Type::source_name`
+/// beside `name` rather than re-spelling `name` itself, which is right — `name` is
+/// the SCHEMA KEY, and re-spelling it re-identifies the type.
+///
+/// It stayed broken for one shape until loft#1434, and the shape is worth naming:
+/// `source_name`'s catch-all assumed everything it did not list "already reads as
+/// the source writes it", which is true of a leaf and false of a WRAPPER, whose
+/// inner it rendered through `name`. So a NULLABLE keyed collection came back
+/// `hash<It,["k"]>?` at every site that had correctly asked for the source
+/// spelling. `a_nullable_keyed_collection_is_refused_in_the_source_spelling`
+/// below is that cell.
 #[test]
 fn keyed_collection_as_a_vector_element_is_refused() {
     code!("struct Ent { k: integer, v: integer }\nfn test() { vh: vector<hash<Ent[k]>> = []; }")
@@ -3287,6 +3295,38 @@ fn a_reference_to_a_keyed_collection_is_named_as_written() {
 /// A method call cannot: it resolves its RECEIVER before its arguments are parsed, so
 /// `x.sizer()` has no arity to ask with. Refusing at the declaration names both arities and
 /// the cure; letting it through would resolve one of them by accident.
+/// loft#1434 — the refusal names the `?` and the discharge, and spells the keyed type
+/// the way the author wrote it.
+///
+/// Both halves matter and they fail independently: a message that renders
+/// `hash<Ent,["k"]>?` is telling an author about a type they did not write, and one that
+/// only lists the iterable kinds never says the `?` is the problem. The keys carry their
+/// DIRECTION too — `sorted<E[-k]>` — which the debug spelling rendered as `("k", false)`.
+#[test]
+fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
+    code!(
+        "struct Ent { k: integer, v: integer }\nfn test() { h: hash<Ent[k]>? = []; for e in h { } }"
+    )
+    .error(
+        "cannot iterate over hash<Ent[k]>? because it is NULLABLE — a `hash<Ent[k]>` is \
+             iterable, but there is no implicit unwrap.  Discharge it first: add `?` (the \
+             type's default, an empty collection) or `?? []`; either spelling gives an absent \
+             collection zero iterations at \
+             a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
+    )
+    // The two below are CASCADE, not findings: the refusal above bails out of the `for`
+    // without consuming its body, so the statement parse fails twice more at the same
+    // position.  They are asserted because the harness matches the whole list, and named
+    // here so that collapsing them to the one real error reads as the fix it is rather
+    // than as a broken test.
+    .error(
+        "Need an iterable expression in a for statement at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
+    )
+    .error(
+        "Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
+    );
+}
+
 #[test]
 fn one_bound_set_cannot_require_two_signatures_of_one_method() {
     code!(
