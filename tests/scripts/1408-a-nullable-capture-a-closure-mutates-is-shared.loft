@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A closure that MUTATES a captured scalar boxes it into a shared `__cell_<T>` record, so the
+// closure's write reaches the outer variable.  `accumulate_scalars_to_box` chose that set with
+// a bare `matches!` over the scalar `Type` variants, so `Optional(τ)` matched no arm and a
+// NULLABLE capture never entered it: no cell, and — because the same list drives three
+// refusals — no guard either (loft#1408).
+//
+// `(L-CapScalar)` (formal/closures.md) is not what was wrong.  A capture is by value at
+// creation, so a closure reading the creation-time value is CORRECT; c8 and c9 below pin that,
+// and the dense and nullable spellings agree on it.  What differed is the WRITE direction,
+// where the dense spelling shares a cell and the nullable one silently did not.
+//
+// Every cell is a PAIR: the nullable spelling and its dense twin, which must answer the same.
+// A pair that agrees for the wrong reason is the risk here, so the twins are byte-identical
+// apart from the one `?` and the discharge it forces.
+//
+// Axes this file MOVES:  the captured TYPE (integer, text, float, boolean, plain enum), the
+//                        composition the write has to survive (a direct call, repeated calls
+//                        accumulating, a call from inside a loop, a call made through ANOTHER
+//                        function, a write interleaved with the outer's own), the capture's
+//                        starting state (present, and absent — a `τ?` that begins null), and
+//                        the scalar/heap split — a captured struct and vector are the controls
+//                        on the other side of it.
+// Axes it HOLDS FIXED:   one closure per variable (two is a refusal — `1408b`), and every
+//                        closure is built and called in the frame that owns the local.
+//
+// @falsified-at: 2808e183 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   c3/c4/c5/c6/c7 and the text half of c2 are the moving cells; on the control build the
+//   nullable twin answers its stale copy while the dense twin answers the write.  c1, c8 and
+//   c9 are green on both builds and are the controls.
+
+enum Colour { Red, Green, Blue }
+
+struct S { n: integer }
+
+fn call_it(g: fn(integer), n: integer) { g(n); }
+
+fn main() {
+  // c1 — CONTROL: a direct call already reached the outer local before the fix, for every
+  // scalar kind.  If one of these ever moves, the fallback path changed, not the cell.
+  a1: integer? = 5;   fa1 = fn(d: integer) { a1 = 7; };            fa1(0);
+  b1: integer  = 5;   fb1 = fn(d: integer) { b1 = 7; };            fb1(0);
+  assert(a1 == 7 && b1 == 7, "c1 direct call, integer pair");
+
+  a2: text? = "a";    fa2 = fn(d: integer) { a2 = "b"; };          fa2(0);
+  b2: text  = "a";    fb2 = fn(d: integer) { b2 = "b"; };          fb2(0);
+  assert(a2 == "b" && b2 == "b", "c1 direct call, text pair");
+
+  a3: float? = 1.0;   fa3 = fn(d: integer) { a3 = 2.0; };          fa3(0);
+  b3: float  = 1.0;   fb3 = fn(d: integer) { b3 = 2.0; };          fb3(0);
+  assert(a3 == 2.0 && b3 == 2.0, "c1 direct call, float pair");
+
+  a4: boolean? = false; fa4 = fn(d: integer) { a4 = true; };       fa4(0);
+  b4: boolean  = false; fb4 = fn(d: integer) { b4 = true; };       fb4(0);
+  assert(a4 == true && b4 == true, "c1 direct call, boolean pair");
+
+  a5: Colour? = Colour.Red; fa5 = fn(d: integer) { a5 = Colour.Blue; }; fa5(0);
+  b5: Colour  = Colour.Red; fb5 = fn(d: integer) { b5 = Colour.Blue; }; fb5(0);
+  assert(a5 == Colour.Blue && b5 == Colour.Blue, "c1 direct call, enum pair");
+
+  // c2 — repeated calls ACCUMULATE through the capture: the closure reads what its own
+  // previous call wrote.  The text half is the one that needed the boxed-text LHS branch to
+  // peel too — spelled bare, a nullable boxed text took the text-special branch and emitted
+  // `Set(65535, …)`, an ICE on both backends.
+  a6: integer? = 0;   fa6 = fn(d: integer) { a6 = (a6 ?? 0) + d; };
+  b6: integer  = 0;   fb6 = fn(d: integer) { b6 = b6 + d; };
+  fa6(1); fa6(2); fa6(3); fb6(1); fb6(2); fb6(3);
+  assert(a6 == 6 && b6 == 6, "c2 accumulate over three calls, integer pair");
+
+  a7: text? = "";     fa7 = fn(d: integer) { a7 = (a7 ?? "") + "x"; };
+  b7: text  = "";     fb7 = fn(d: integer) { b7 = b7 + "x"; };
+  fa7(0); fa7(0); fb7(0); fb7(0);
+  assert(a7 == "xx" && b7 == "xx", "c2 accumulate over three calls, text pair");
+
+  // c3 — the call is made from inside a LOOP, so the write crosses an iteration boundary.
+  a8: integer? = 0;   fa8 = fn(d: integer) { a8 = (a8 ?? 0) + d; };
+  b8: integer  = 0;   fb8 = fn(d: integer) { b8 = b8 + d; };
+  for i in 1..4 { fa8(i); fb8(i); }
+  assert(a8 == 6 && b8 == 6, "c3 called from a loop, integer pair");
+
+  // c4 — the call is made through ANOTHER function, so the closure is a value that left the
+  // frame that owns the local.  This is the cell earning its keep: an inline copy cannot
+  // carry the write back from there, and the nullable answered its stale 1.
+  a9: integer? = 1;   fa9 = fn(d: integer) { a9 = 7; };   call_it(fa9, 0);
+  b9: integer  = 1;   fb9 = fn(d: integer) { b9 = 7; };   call_it(fb9, 0);
+  assert(a9 == 7 && b9 == 7, "c4 called through another function, integer pair");
+
+  a10: text? = "a";   fa10 = fn(d: integer) { a10 = "b"; };  call_it(fa10, 0);
+  b10: text  = "a";   fb10 = fn(d: integer) { b10 = "b"; };  call_it(fb10, 0);
+  assert(a10 == "b" && b10 == "b", "c4 called through another function, text pair");
+
+  // c5 — the closure's write and the OUTER's own write interleave.  The dense twin reads
+  // 11/110/110; the nullable read 11/21/100, which is the signature of a private copy: the
+  // closure never saw the outer's 100 and the outer never saw the closure's 11.
+  a11: integer? = 1;  fa11 = fn(d: integer) -> integer { a11 = (a11 ?? 0) + 10; (a11 ?? 0) };
+  x1 = fa11(0);  a11 = 100;  y1 = fa11(0);
+  b11: integer  = 1;  fb11 = fn(d: integer) -> integer { b11 = b11 + 10; b11 };
+  x2 = fb11(0);  b11 = 100;  y2 = fb11(0);
+  assert(x1 == 11 && y1 == 110 && a11 == 110, "c5 interleaved writes, nullable");
+  assert(x2 == 11 && y2 == 110 && b11 == 110, "c5 interleaved writes, dense twin");
+
+  // c6 — the capture begins ABSENT.  A `τ?` that is null at creation must still take a cell,
+  // and the closure's write discharges it; there is no dense twin because a dense local
+  // cannot start null, so the assertion is the nullable's own round trip.
+  a12: integer? = null as integer?;
+  fa12 = fn(d: integer) { a12 = 7; };
+  call_it(fa12, 0);
+  assert(a12 == 7, "c6 capture that begins absent takes the write");
+
+  // c7 — the closure writes NULL back through the capture, so absence travels the same
+  // channel the value does.
+  a13: integer? = 5;
+  fa13 = fn(d: integer) { a13 = null as integer?; };
+  call_it(fa13, 0);
+  assert(a13 == null, "c7 a null written through the capture reaches the local");
+
+  // c8 — CONTROL for `(L-CapScalar)`: a capture the closure never MUTATES is by value at
+  // creation, so the outer's later write is NOT visible inside.  Both spellings agree, and
+  // they must keep agreeing — boxing a read-only capture would break this rule.
+  a14: integer? = 1;  ra14 = fn(d: integer) -> integer { (a14 ?? 0) + d };
+  b14: integer  = 1;  rb14 = fn(d: integer) -> integer { b14 + d };
+  a14 = 5;  b14 = 5;
+  assert(ra14(0) == 1 && rb14(0) == 1, "c8 an unmutated capture is by value at creation");
+
+  // c9 — the same rule read through the NULL state: the closure keeps the absence it was
+  // built with, even after the outer local is given a value.
+  a15: integer? = null as integer?;
+  ra15 = fn(d: integer) -> boolean { a15 == null };
+  a15 = 5;
+  assert(ra15(0) == true, "c9 an unmutated capture keeps the absence it was built with");
+
+  // c10 — CONTROL on the other side of the scalar/heap split: a captured STRUCT and a
+  // captured VECTOR are shared by `(L-CapHeap)` whatever their nullability, and they reach
+  // through the same indirect call c4 uses.  They take no cell and must not start taking one:
+  // the cure below is for the SCALAR set, and a heap capture already shares its store.
+  a16: S? = S { n: 1 };  fa16 = fn(d: integer) { a16.n = 9; };  call_it(fa16, 0);
+  b16: S  = S { n: 1 };  fb16 = fn(d: integer) { b16.n = 9; };  call_it(fb16, 0);
+  assert(a16.n == 9 && b16.n == 9, "c10 a captured struct is shared, both spellings");
+
+  a17: vector<integer>? = [1];  fa17 = fn(d: integer) { a17[0] = 9; };  call_it(fa17, 0);
+  b17: vector<integer>  = [1];  fb17 = fn(d: integer) { b17[0] = 9; };  call_it(fb17, 0);
+  assert(a17[0] == 9 && b17[0] == 9, "c10 a captured vector is shared, both spellings");
+
+  println("nullable mutated captures are shared ok");
+}

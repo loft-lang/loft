@@ -5916,6 +5916,27 @@ fn ensure_tuple_defs_for_capture(
 /// | `text` | `__cell_text` |
 /// | plain enum `E` | `__cell_enum_<E>` |
 pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<String> {
+    // A NULLABLE capture takes a cell of its own.  `Optional(Ï)` shares `Ï`'s storage
+    // in-band (C90), so the cell reads and writes with the same ops — but the `value`
+    // field has to DECLARE the nullability, because a `Ï` field may not hold the
+    // sentinel (`@FR-N-Store`).  One field cannot be spelled both ways, so the answer is
+    // a second cell rather than a widened one, and the dense path is left untouched.
+    let (base, nullable) = tp.peel_optional();
+    let stem = cell_stem(base, data)?;
+    Some(if nullable {
+        format!("__cell_opt_{stem}")
+    } else {
+        format!("__cell_{stem}")
+    })
+}
+
+/// The canonical cell name for a NON-nullable scalar, without the `__cell_` prefix —
+/// the naming table above, and the one place the boxable set is spelled.
+///
+/// `None` means "this type gets no cell": a reference, a collection, a function, and the
+/// forced-size integer widths (`u8`/`i16`/â¦), which have no canonical cell template.
+/// A capture the namer declines keeps today's un-boxed stack slot.
+fn cell_stem(tp: &Type, data: &crate::data::Data) -> Option<String> {
     match tp {
         Type::Integer(spec) => {
             // Default-nullable byte_width: matches the storage the
@@ -5927,19 +5948,19 @@ pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<St
             // (u8/i8/u16/i16) defer to 02d-iv.
             let bw = spec.byte_width(true);
             match (bw, spec.forced_size.is_some()) {
-                (8, false) if spec.max == u32::MAX => Some("__cell_long".to_string()),
-                (8, false) => Some("__cell_integer".to_string()),
+                (8, false) if spec.max == u32::MAX => Some("long".to_string()),
+                (8, false) => Some("integer".to_string()),
                 _ => None,
             }
         }
-        Type::Float => Some("__cell_float".to_string()),
-        Type::Single => Some("__cell_single".to_string()),
-        Type::Boolean => Some("__cell_boolean".to_string()),
-        Type::Character => Some("__cell_character".to_string()),
-        Type::Text(_) => Some("__cell_text".to_string()),
+        Type::Float => Some("float".to_string()),
+        Type::Single => Some("single".to_string()),
+        Type::Boolean => Some("boolean".to_string()),
+        Type::Character => Some("character".to_string()),
+        Type::Text(_) => Some("text".to_string()),
         Type::Enum(d_nr, false, _) => {
             let enum_name = data.def(*d_nr).name();
-            Some(format!("__cell_enum_{enum_name}"))
+            Some(format!("enum_{enum_name}"))
         }
         _ => None,
     }
@@ -5973,6 +5994,10 @@ pub(crate) fn boxed_cell_def(tp: &Type, data: &crate::data::Data) -> Option<u32>
 /// (e.g. `text` with different lifetime deps, or
 /// `integer not null` vs `integer`) share a single cell struct.
 fn cell_value_type(tp: &Type) -> Type {
+    // Through `Type::optional`, so the wrap stays idempotent (`@FR-N-Idem`, its one home).
+    if let (inner, true) = tp.peel_optional() {
+        return Type::optional(cell_value_type(inner));
+    }
     match tp {
         Type::Integer(spec) => {
             // Canonical wide vs narrow templates; bounds + null-flag
@@ -6098,8 +6123,13 @@ fn accumulate_scalars_to_box(
         let Some((_, tp)) = captured_names.iter().find(|(n, _)| n == name) else {
             continue;
         };
+        // `@FR-L-CapWrite` — the set of captures whose write reaches the outer variable.
+        // `.base()`, because nullability does not change whether a capture is a SCALAR one.
+        // This list drives the three refusals that read `scalars_to_box` — shared between two
+        // closures, written through a `const` parameter, written through a `&` one — so a
+        // capture that falls out of it is not merely un-boxed, it is unguarded (loft#1408).
         let is_scalar = matches!(
-            tp,
+            tp.base(),
             Type::Integer(_)
                 | Type::Float
                 | Type::Single

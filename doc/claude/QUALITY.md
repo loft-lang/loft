@@ -2472,7 +2472,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 728 | 364 | 5 | **359** |
+| 728 | 369 | 5 | **354** |
 
 loft#1389 added one function on the OPAQUE side — `728 | 364 | 5 | 359` — `Parser::change_var`'s
 self-dep strip, which now names `Type::Reference | Type::Enum(_, true, _)` where it used to

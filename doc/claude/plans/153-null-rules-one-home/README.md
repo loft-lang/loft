@@ -9,7 +9,7 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 ## Status
 
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and three batches landed; phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and FOUR batches landed, the audit row moving DOWN for the first time (359 → 354, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -85,7 +85,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | Open |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 4 batches landed; the row moved DOWN for the first time (359 → 354) |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -507,6 +507,61 @@ member (the tuple-set dispatch), a nullable scalar hoisted out of a branch (the 
 prologue's `is_scalar`), an absent element bound to a local.  Refusals met on the way, each
 honest and recorded: a `par` worker cannot answer `S?` (*not supported*, the concurrency
 chapter silent on it), a generator cannot spell `iterator<S?>` (refused at the type).
+
+**Batch 4 — the closure-capture CELL family, and the refusals that rode on it (2026-09-07).**
+The `parser/vectors.rs` tier-0 group (14 tier-0, 3 tier-1 — the most tier-1 of any file) is one
+family: the functions that decide **what storage a captured variable gets**.  A closure that
+MUTATES a captured scalar boxes it into a shared `__cell_<T>`, and `accumulate_scalars_to_box`
+chose that set with a bare `matches!` over the scalar `Type` variants — so `Optional(τ)` matched
+no arm.  The hypothesis written before the run was that the write is therefore LOST, and it was
+**falsified**: thirteen cells green on both backends, because an un-boxed capture still copies
+out at a direct call.  The var table is what carried the finding instead — `x: integer` becomes
+`ref(__cell_integer)`, `x: integer?` stays `int?` — so the question moved from *is it broken* to
+*where does the un-boxed path stop agreeing with the boxed one*, and round 2 varied the
+compositions a COPY cannot survive.  Four disagreements, both backends, identical: the write is
+lost when the closure is called THROUGH another function, the interleaved shape answers the
+closure's private copy (`11 21 100` against the twin's `11 110 110`), and — the part that made
+this more than a lost write — **three refusals read the same list**, so a `τ?` capture was not
+merely un-boxed but unguarded: sharing between two closures is refused for a dense local and
+silently wrong for a nullable one, `const` on a nullable parameter is silently not enforced, and
+C115's `&`-from-closure refusal is never asked.  **loft#1408**, `silent-wrong`.
+
+Cured by the peel at seven sites of the one family — the boxable SET (`accumulate_scalars_to_box`),
+the cell NAME and its `value` type (`cell_struct_name`, restructured around a `cell_stem` so the
+boxable set is spelled once; `cell_value_type`, wrapping through `Type::optional`, phase 0's
+`(N-Idem)` home), the read and write ops (`auto_deref_boxed_scalar`, `cell_value_set_op` — both
+choose the op from `.base()` because `Optional(τ)` shares `τ`'s storage in-band under C90, while
+the declared type keeps its `?` so ordinary discharge still applies), the type-flip preservation
+guard, and the boxed-text LHS test.  A nullable takes a cell of its OWN (`__cell_opt_<T>`)
+rather than a widened one, because the `value` field has to declare the nullability or
+`(N-Store)` is violated at the cell — the rule this plan built in phase 3, met from the inside.
+The seventh site was found BY the guard, not by reading: spelled bare, `is_boxed_text_lhs` sent a
+boxed `text?` down the text-special branch and emitted `Set(65535, …)`, loft#1206's ICE reached
+through the cell instead of through a field — and the `+=` test six lines below it already
+peeled, so the drift was already in the file.
+
+**The rules were silent on the half that was wrong, so the rule was extended.**  `(L-CapScalar)`
+says a capture is by value at creation, which makes the read direction correct and is why the
+`d3`/`d8` cells agree across nullability and are CONTROLS rather than defects.  Nothing said
+where the closure's own WRITE lands, which is precisely what the `__cell_` machinery implements
+and what a `τ?` was missing.  Added as `(L-CapWrite)` in [closures.md](../../formal/closures.md),
+cited at its two enforcing sites.
+
+Guards: `1408-…` (ten cells, each a nullable/dense PAIR across five scalar kinds × five
+compositions, plus the `(L-CapScalar)` controls and the struct/vector `(L-CapHeap)` controls),
+`1408b-…` (the sharing refusal) and `1408c-…` (the two parameter refusals) — split because a
+firing `@EXPECT_ERROR` stops a file and the sharing errors abort before the pass that asks the
+parameter ones, which left three cells unreached in the first cut.  All three falsified against
+`2808e183` on both backends.  **The `optional` row moved DOWN for the first time in this phase:
+`728 | 369 | 5 | 354` from `728 | 364 | 5 | 359`, tier 0 from 180 to 177** — five functions
+moved, every one with a cell.
+
+Filed rather than bundled: **loft#1409**, the same user-visible symptom from a different
+mechanism — a FORCED-SIZE integer capture (`u8`, `i16`, `u32`) is in `scalars_to_box`, so the
+refusals fire for it, but `cell_struct_name` has no template for it, so an indirect call loses
+its write exactly as the nullable did.  It is `synthesize_cell_structs`'s own documented "phase
+02d-ii silent gap".  Kept apart because the cures differ and a blanket refusal would break the
+direct-call form, which compiles and is correct today (`f_u8_direct` measured green).
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 

@@ -64,6 +64,15 @@ available). A bare `f` (a function's name used as a value) is a first-class func
   (L-CapHeap)    a captured HEAP value (struct/vector) is SHARED: a mutation-through the source
                  AFTER capture is visible inside the closure (consistent with calls.md
                  F-ParamHeap — capture, like a call, shares heap state, copies scalars).
+  (L-CapWrite)   a captured SCALAR the closure REASSIGNS is SHARED IN THE WRITE DIRECTION:
+                 the closure's write reaches the outer variable, and a later call sees what
+                 the previous one wrote.  This does not weaken (L-CapScalar) — the closure
+                 still starts from the creation-time value and still does not see the outer's
+                 later writes — it says only where the closure's OWN write lands.  Sharing one
+                 such variable between TWO closures is refused (a decided limit, not a gap);
+                 the cure the refusal names is a struct field, which is (L-CapHeap) and shares
+                 in both directions.  The rule is nullability-agnostic: `Ï?` and `Ï` agree on
+                 all of it, which is what loft#1408 restored.
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -100,7 +109,12 @@ loft#1324's fix — the store-lifetime half is correct either way, so this is a 
 rather than a leak, and it is open.
 
 **In words.** A closure that captures an `integer x` freezes `x`'s value at the moment the closure
-is built (verified: capture, then `x = 20`, still yields `10`). A closure that captures a struct or
+is built (verified: capture, then `x = 20`, still yields `10`).  If the closure ASSIGNS to `x`,
+that write is not lost: it reaches the outer `x` and the closure's next call sees it
+((L-CapWrite), verified on both backends for `integer`, `text`, `float`, `boolean` and a plain
+enum, in each spelling with and without `?`, including when the closure is called through
+another function — `tests/scripts/1408-…`).  The two halves read as one sentence: the closure
+owns the variable's value from the moment it is built, and hands it back. A closure that captures a struct or
 vector shares it — mutating a field of the captured value afterwards shows up when the closure runs
 (verified: `b.v = 9` after capture yields `9`). This mirrors the parameter contract in
 [calls.md](calls.md): heap is shared, scalars are copied.
