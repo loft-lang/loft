@@ -2470,7 +2470,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 731 | 375 | 5 | **351** |
+| 733 | 377 | 5 | **351** |
+
+Two functions joined the seeing-through column without a walk of their own: the sibling
+checkout's loft#1409 (`synthesize_cell_structs`, the capture-cell templates batch 4's family
+grew a narrow-width arm for) and loft#1421 (`views_a_nullable_element_slot`), cherry-picked
+here.  The opaque column is unchanged by both, which is why the numerator moved and the
+figure this phase is measured by did not.
 
 @PLN153 phase 4 batch 8 (the TUPLE tier-0 group, loft#1423 / loft#1424) moved the row NOT AT
 ALL, and that is the honest reading of what it did: the seven functions it walked are opaque to

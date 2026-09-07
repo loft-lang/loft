@@ -348,7 +348,7 @@ fn cross_type_ne_int_enum() {
 #[test]
 fn null_element_in_value_enum_vector_rejected() {
     code!("enum Color { Red, Green, Blue }\nfn test() { v: vector<Color?> = [Color.Red, null]; }")
-        .error("cannot store null elements in a vector<Color> (would lose precision); cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
+        .error("cannot store null elements in a vector<Color> (would lose precision); declare the element nullable (`vector<Color?>`), or cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
 }
 
 // @PLN102 arc-E E2 (B) — a STATICALLY out-of-range constant operation is a
