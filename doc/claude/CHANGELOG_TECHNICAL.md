@@ -39,14 +39,21 @@ two `matches!` arms, which is how the keyed kinds came to be missing from both (
 loft#1409/#1416 (`cell_stem`'s boxable set) and loft#1443 (`Type::Function` absent from a
 write-back dispatch that panics on its `_` arm) are the same shape.
 
-**What is NOT fixed, and why the refusal stands.** The `&hash<τ[k]>` PARAMETER spelling is
-still refused: the append routes do not claim it, because `is_keyed` / `is_collection` read
-`tp.base()`, which peels `Optional` and not the link, so `c += [rec]` falls into the VECTOR
-route and reports a type change.  Making those predicates peel the link was measured
-here — WITHOUT the keyed emission path resolving its store through the parameter's double
-indirection it converts the refusal into a SILENT DROP (`len` 0, no diagnostic), which is the
-worse state.  Recorded as D-bind-28, open, in `formal/binding-history.md`; D-bind-29 records
-the closed half.
+**What was NOT fixed here, and the wrong reason this entry gave for it.** The `&hash<τ[k]>`
+PARAMETER spelling was still refused at this commit — the append routes did not claim it,
+because `is_keyed` / `is_collection` read `tp.base()`, which peels `Optional` and not the link,
+so `c += [rec]` fell into the VECTOR route and reported a type change.  Closed the same day by
+loft#1445 (its own entry below).
+
+⚠ This paragraph originally continued: *"WITHOUT the keyed emission path resolving its store
+through the parameter's double indirection it converts the refusal into a SILENT DROP."*  The
+MEASUREMENT was right — the surface peel alone does give `len` 0 with no diagnostic.  The
+ATTRIBUTION was invented, and it pointed the next reader at an emission path that was never
+broken: a keyed INSERT one operator over (`c[7] = Row{…}`) reaches the caller's store through
+that exact double indirection on both backends, with the pre-existing key still readable.  The
+real cause was a THIRD site of the same `base()` miss (`keyed_known_type`), visible as a wrong
+type NUMBER rather than as a reachability failure.  Recorded as D-bind-28, now CLOSED in
+`formal/binding-history.md`; D-bind-29 records the other closed half.
 
 Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends — both
 directions of the link, all five keyed kinds (`spatial` on its own, since the keyed-field copy

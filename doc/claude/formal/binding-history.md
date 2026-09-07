@@ -6,9 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — D-bind-28 OPENED 2026-09-07, the COLLECTION half of `(B-Ref-Uniform)`: three
-mechanisms broke it, the vector surface and the keyed BIND are closed, the keyed PARAMETER
-(loft#1445) is not (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+OPEN: **0** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) OPENED and CLOSED
+2026-09-07: three independent mechanisms broke it — the vector surface, the keyed BIND
+(loft#1433) and the keyed PARAMETER (loft#1445) — and all three are closed (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
 DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
 2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
 D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
@@ -57,19 +57,39 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends, with
 > `a_plain_keyed_bind_still_copies` as the control a share-everything cure fails.
 
-> **D-bind-28, part three — STILL OPEN (2026-09-07, loft#1445) — the `&hash<τ[k]>`
-> PARAMETER spelling is refused.**  `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable with
-> no operation special-cased, and `c += [rec]` on a `&hash<Row[id]>` parameter is refused
-> instead — *"Variable 'c' cannot change type from `&hash<Row,["id"]>` to `vector<Row>`"*,
-> because the append routes do not claim the statement (`is_keyed` / `is_collection` read
-> `tp.base()`, which peels `Optional` and not the link) and it falls into the VECTOR route.
+> **D-bind-28, part three — CLOSED (2026-09-07, loft#1445) — the `&hash<τ[k]>`
+> PARAMETER spelling is used exactly like its dense twin.**  `(B-Ref-Uniform)` says a `&τ`
+> variable is used exactly like a `τ` variable with no operation special-cased, and
+> `c += [rec]` on a `&hash<Row[id]>` parameter was refused instead — *"Variable 'c' cannot
+> change type from `&hash<Row,["id"]>` to `vector<Row>"*, because the append routes did not
+> claim the statement (`is_keyed` / `is_collection` read `tp.base()`, which peels `Optional`
+> and not the link) and it fell into the VECTOR route.
 >
-> **Measured, and this is why the refusal stands**: making those predicates peel the link
-> WITHOUT the keyed emission path resolving its store through the parameter's double
-> indirection turns the refusal into a SILENT DROP — the statement routes, the emitted IR
-> reads correctly, and `len` answers 0 with no diagnostic.  A refusal is the better of the
-> two states, so the surface peel must not land alone.  Closes when the keyed insert resolves
-> a `RefVar` collection argument.
+> ⚠ **This entry carried a WRONG reason while it was open, and the correction is the useful
+> part.**  It read: *"making those predicates peel the link WITHOUT the keyed emission path
+> resolving its store through the parameter's double indirection turns the refusal into a
+> SILENT DROP … a refusal is the better of the two states."*  The MEASUREMENT was right — the
+> surface peel alone does produce `len` 0 with no diagnostic.  The ATTRIBUTION was invented.
+> The emission path resolves a keyed store through a `&` parameter and always did: a keyed
+> INSERT one operator over (`c[7] = Row{…}`) reaches the caller's store on both backends,
+> with the pre-existing key still readable afterwards.
+>
+> The real cause was a THIRD site of the same miss: `keyed_known_type` also opens with
+> `base()`, so a `&`-wrapped keyed type answers `None`, `new_record`'s fallback hands
+> `OpNewRecord` the `vector<τ>` id, and `record_finish` dispatches through `Parts::Vector`.
+> It presents as a wrong type NUMBER (`parent_tp` reads the `&vector` twin's id), not as a
+> reachability failure — which is why a mechanism sentence could not tell the two apart and a
+> `parent_tp` comparison could.  The peel was never the wrong move; it was half a move.
+>
+> Closed by peeling all three sites with `peel_link` — `is_keyed`, `is_collection`,
+> `keyed_known_type` — plus the `+=` route's DESTINATION.  That fourth is not optional:
+> peeling the predicates without it hands `append_source` a `RefVar` that matches no arm and
+> breaks the `&vector<Row>` twin that always worked, so the failure lands in the CONTROL
+> rather than in the cell under test.  Guard:
+> `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`, all five keyed kinds
+> plus the vector control, both backends, every destination PRE-POPULATED and every cell
+> reading the old key as well as the new one — an empty destination cannot tell an append that
+> reached the caller from one that built a fresh collection and counted itself.
 
 > **D-bind-25, D-bind-26, D-bind-27 — OPENED AND CLOSED (2026-09-07) — three places
 > `(B-Disturb)` names that the walk could not see.**  All three came out of loft#1401's

@@ -355,9 +355,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 1** — **D-bind-28 OPEN 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
-The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
-special-cased.  THREE independent mechanisms broke that for collections; two are closed.
+**OPEN: 0** — **D-bind-28 OPENED AND CLOSED 2026-09-07, the collection half of
+`(B-Ref-Uniform)`.**  The rule says a `&τ` variable is used *exactly* like a `τ` variable and
+that no operation is special-cased.  THREE independent mechanisms broke that for collections;
+all three are now closed.
 
 * **CLOSED 2026-09-07 — the VECTOR surface.**  Four compiler special-cases (`insert`,
   `reverse`, `sort`, `reserve`) matched `Type::Vector` against the argument type with the `&`
@@ -379,15 +380,30 @@ special-cased.  THREE independent mechanisms broke that for collections; two are
   ⚠ **This was NOT the broken emission path below**, though loft#1433 was filed as if it were
   ("the alias silently drops every append", which is how an EMPTY source presents).  The append
   was never dropped: it landed in the alias's own store.  The bind and the append are two
-  faults, and only the second remains.
-* **STILL OPEN — the keyed PARAMETER (loft#1445).**  `c += […]` on a `&hash` / `&sorted` /
-  `&index` / `&trie` PARAMETER is refused, and the refusal is the SAFER state: peeling the link
-  in `is_keyed` / `is_collection` / `append_source` routes the statement and emits
-  correct-looking IR, but the keyed kinds then resolve their store wrongly through the
-  double-indirect `RefVar` and answer without a diagnostic (measured twice, with different
-  symptoms — `len` 0 on one build, `len=1` with empty payload fields on `hash` and `index` on
-  another, `sorted` and `vector` right in both).  The fix belongs in the keyed emission path,
-  not in the predicates.
+  faults, and both are now closed.
+* **CLOSED 2026-09-07 (loft#1445) — the keyed PARAMETER.**  `c += […]` on a `&hash` /
+  `&sorted` / `&index` / `&trie` / `&spatial` PARAMETER was refused, naming a `vector<τ>` the
+  program never wrote.  Closed by peeling the link at all THREE predicate sites — `is_keyed`,
+  `is_collection` and `keyed_known_type` — plus the `+=` route's DESTINATION.
+  ⚠ **The fourth is not optional and its omission fails in the CONTROL:** peeling the
+  predicates alone hands `append_source` a `RefVar` that matches no arm, and the
+  `&vector<Row>` twin that always worked starts refusing.  Separately, two of the five kinds
+  (`trie`, `spatial`) were an ICE through `&` at all — a deref allow-list listing kinds instead
+  of deriving them from `vectors::is_collection`.
+  ⚠ **This entry previously said the refusal was the SAFER state and that "the fix belongs in
+  the keyed emission path, not in the predicates".  That conclusion was exactly backwards, and
+  the correction is worth more than the entry.**  The MEASUREMENTS behind it were real — the
+  surface peel alone gives `len` 0 with no diagnostic, and on another build `len=1` with empty
+  payload fields.  The ATTRIBUTION was invented: the emission path resolves a keyed store
+  through a `&` parameter and always did, which a keyed INSERT one operator over
+  (`c[7] = Row{…}`) demonstrates on both backends with the pre-existing key still readable.
+  The real cause was a THIRD instance of the SAME predicate miss — `keyed_known_type` also
+  opening with `base()` — so the fallback handed `OpNewRecord` the `vector<τ>` id and
+  `record_finish` dispatched through `Parts::Vector`.  It presents as a wrong type NUMBER
+  (`parent_tp` reading the `&vector` twin's id), not as a reachability failure, which is why a
+  mechanism sentence could not tell the two apart and a `parent_tp` comparison could.  The peel
+  was never the wrong move — it was half a move, and calling the remaining half "the emission
+  path" sent the next reader to rebuild something that was not broken.
 
 The closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a placefor a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
 through a FIELD, and for every place a branch's arms can name rather than only an agreed one;
