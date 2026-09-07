@@ -5,12 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Off-box full gate for a work branch (@PLN157 session finding): the full
-  # matrix on demand, so a dev box stays free for measurement while GH
-  # validates.  Dispatch: `gh workflow run ci.yml --ref <branch>` — the
-  # trigger must exist on that ref, so a branch gains it on first rebase
-  # past this commit.
-  workflow_dispatch:
   # Daily FULL run (03:00 UTC, clear of the 04:00 miri nightly).  Windows does
   # NOT run per-PR any more: the Windows leg costs ~30 min and almost never
   # regresses independently of the Linux/macOS legs that DO run per-PR.
