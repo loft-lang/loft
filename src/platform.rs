@@ -641,7 +641,8 @@ mod reclaim_tests {
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
             !dead.exists(),
-            "dead-pid file must go in the dead-only sweep (freed {dead_only} bytes)"
+            "dead-pid file must go in the dead-only sweep ({})",
+            evidence(dead_only)
         );
         assert!(
             own.exists() && fresh_no_pid.exists(),
@@ -659,7 +660,8 @@ mod reclaim_tests {
         if cfg!(target_os = "linux") {
             assert!(
                 dead_only > 0,
-                "the dead-only sweep removed the dead-pid file but accounted no bytes for it"
+                "the dead-only sweep removed the dead-pid file but accounted no bytes for it ({})",
+                evidence(dead_only)
             );
         }
         std::fs::write(&dead, "stale").unwrap();

@@ -17,7 +17,10 @@ Usage:
     diagnostic_spelling.py check    # exit 1 on any unmarked `Type::name` in a diagnostic
     diagnostic_spelling.py list     # every site, allowed ones included, counted by file
 
-A message that genuinely means the schema key marks its line `// schema-key`.
+A message that genuinely means the schema key marks its line `// schema-key` — **on the same
+line as the render**, not in a comment above it.  The check reads the line the call sits on, so
+an explanation written above is invisible to it; that is the first mistake a reader makes, and
+the failure message says so.
 """
 
 import bisect
@@ -159,8 +162,11 @@ def main():
     print(
         f"{len(bad)} diagnostic(s) render a type with `Type::name` — the SCHEMA KEY, which\n"
         "spells a keyed collection `hash<It,[\"k\"]>` rather than the `hash<It[k]>` its reader\n"
-        "wrote.  Use `Type::source_name`, or mark the line `// schema-key` if the message\n"
-        "genuinely names the key:\n"
+        "wrote.  Use `Type::source_name`.\n\n"
+        "If the render genuinely means the schema key — a type IDENTITY such as a `__tuple<…>`\n"
+        "comparison or a `t_<LEN><Type>_` method name, or a developer trace — append\n"
+        "`// schema-key — <why>` TO THE RENDER'S OWN LINE.  A comment on the line above is not\n"
+        "seen: this reads the line the call sits on.\n"
     )
     for path, lineno, _marked, line in bad:
         print(f"  {path}:{lineno}: {line[:110]}")

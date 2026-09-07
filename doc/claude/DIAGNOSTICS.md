@@ -429,9 +429,13 @@ reads the same under both.
 `tests/doc_hygiene.rs`). It fails on a `Type::name(data)` render inside a diagnostic emitter —
 `diagnostic!`, `diagnostic_at!`, `specific!`, or a direct `diagnostic_format(…)` — and on ANY
 such render in `src/parser/` or `src/variables/`, the layers that talk to the author. A render
-that genuinely means the schema key marks its line `// schema-key` with the reason; there are
-six, and they are type IDENTITY (a `__tuple<…>` comparison, a `t_<LEN><Type>_` method name) or
-a developer trace behind `LOFT_TRACE_UNWRAP`.
+that genuinely means the schema key marks its line `// schema-key — <why>`; there are six, and
+they are type IDENTITY (a `__tuple<…>` comparison, a `t_<LEN><Type>_` method name) or a
+developer trace behind `LOFT_TRACE_UNWRAP`.
+
+⚠ **The marker goes on the RENDER'S OWN LINE**, not in a comment above it — the check reads the
+line the call sits on. That is the first mistake a reader makes, and it is the one an author
+writing a careful explanation makes by default, so the failure message says it too.
 
 The wider rule is why the gate is not span-only. A span cannot see `let nm = tp.name(data);`
 on the line above the `diagnostic!` that interpolates it, nor a helper called from inside one
