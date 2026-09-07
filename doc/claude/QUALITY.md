@@ -2282,6 +2282,40 @@ disagreeing spelling, no duplicated variant list — the four silent sites conta
 match, because what they do is the RAW thing the helper wraps, which is also what every correct
 site that does not need the helper does. The home being right is what makes it invisible.
 
+**A THIRD member of the family, and the most productive one measured so far: ONE spelling
+asked N questions.**  Not a question with several spellings (the drift screen catches that),
+nor a right home nobody calls (loft#1250 above), but a single predicate that different call
+sites ask DIFFERENT questions of — safe for as long as the answers coincide on the paths in
+front of the author, and wrong on the path they did not have.  **Five instances in one day
+(2026-09-07):**
+
+| predicate | question A | question B | how it surfaced |
+|---|---|---|---|
+| `generation::Output::emit_live` | does the live/debug tier ship? | did the author ask to trade away frame NAMING? | every production `--html` panic lost every loft frame name; `emit_live` is false BY DEFAULT there (@PLN98 P3.4) with `--lean` never passed |
+| `vectors::is_keyed` / `is_collection` (78 sites) | which collection KIND is this? | does this variable OWN a store? | loft#1445's first fix: `unreachable!("gen_keyed_null on non-keyed type")`, AND a callee's records written into the CALLER's collection two frames down |
+| `Vars::owns_store` | who owes the FREE? | is in-place store REUSE licensed? | loft#1447 — a captured local still owns its store, and reuse is still not licensed |
+| `Type::base()` at container-kind sites | peel `Optional` | peel the `&` link too | loft#1433/#1445, three sites |
+| `Vars::captured` | should the never-read warning fire? | must a rebind mint? | benign — both read the same FACT; recorded because the flag is now load-bearing for codegen and must not be narrowed for a lint |
+
+**The cure is a separate NAME, never a better condition.**  A better condition is one reviewer
+away from being re-conflated, because the coincidence that made the original reading look right
+is still there; a named field or predicate gives the second question somewhere to live and a
+doc-comment to be visibly wrong in.  loft#1447 adds `rebind_must_mint` BESIDE `owns_store`
+rather than widening it, for exactly this reason.
+
+⚠ **And the blast radius of widening one cannot be bounded by INSPECTION.**  loft#1445's first
+fix widened two predicates asked at 78 sites; a targeted repair (splitting `is_owned_keyed` out
+for the two null-init sites) then failed DIFFERENTLY, proving more sites read the widened
+answer.  What closed it was an INSTRUMENT: an env-gated form of the predicate that computes
+BOTH answers, keeps the narrow one, and backtraces on disagreement — one run of the matrix named
+every call site that sees the widened shape, twelve in `parse_assign_op_inner` alone.  Build the
+probe rather than reading the call sites.
+
+**How each announced itself is the reason this class is expensive:** the narrow failures (a
+missing kind, an absent arm) surface as ICEs at the site.  These surface somewhere else
+entirely — and loft#1445's surfaced TWICE in different disguises, first as an `unreachable!`
+and then as a silent wrong value in a caller two frames down, from ONE widening.
+
 If a screen for this is worth writing, the shape to look for is: **a `pub(crate)` predicate
 whose doc-comment names a question, with callers performing the raw operation it wraps in the
 same diagnostic or decision.** A weaker but cheaper proxy that would have caught this one: a

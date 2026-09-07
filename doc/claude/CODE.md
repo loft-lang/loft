@@ -222,6 +222,38 @@ Three shapes that read as correct and are not, each measured in this repo's own 
   for the next pattern instead of stopping using patterns, which is the actual lesson: use the
   recorded pid.
 
+- ⚠ **`git merge-base --is-ancestor <sha> HEAD` is not the test for "do I have this CHANGE".**
+  It answers about COMMITS, and the moment any checkout cherry-picks, the same change exists
+  under a different sha and every ancestry test reads MISSING for the rest of time.  The test
+  is `git show <sha> | git patch-id --stable` on both sides, compared.  Measured 2026-09-07: a
+  peer reported that `tuxedo-1361-tuple-copy` lacked `cbbea3cd2` (loft#1407's use-after-free
+  fix) and therefore carried a live `(H-View)` UAF; I re-ran their check, got the same
+  NOT-AN-ANCESTOR, and confirmed it.  Both wrong — the tree had it as `c0c2a9cb`, and both
+  shas give patch-id `d935f9a4ec628af42b5d8f8b277d251a18edb63d`.  What caught it was the
+  cherry-pick producing an EMPTY patch, not either agent's reasoning.  Across checkouts that
+  continuously pick from each other, "do I have this commit" is almost never the question
+  being asked.  **And the second-order lesson costs more than the first: verifying a peer by
+  re-running the peer's own method can only ever confirm them.  Verification means changing
+  the instrument.**
+
+- ⚠ **Never kill a `make ci` mid-compile — and if you must, clear the incremental dir in the
+  same breath.**  A killed compile leaves `target/debug/incremental` inconsistent, and the NEXT
+  build fails at link with undefined `core::ptr::drop_glue::<…>` and `anon.<hex>.llvm.<hex>`
+  referenced from `.rcgu.o` files.  Those names appear in NO source file, so the failure reads
+  like a link or codegen defect and cannot be grepped for.  The cure is `cargo clean -p loft`
+  and nothing smaller: hand-globbing `target/debug/deps/loft-*` does NOT match `libloft.rlib`,
+  so the stale rlib survives and the next gate fails identically with DIFFERENT symbols
+  (`loft::vector::get_vector`, `loft::keys::explain_enabled::ON`, now referenced from inside
+  the rlib).  Measured 2026-09-07: three gates, two of them wasted, and a 66 GiB clean.  A
+  second gate is cheaper than a corrupted target dir, so prefer letting one finish.
+
+- ⚠ **`CI-RESULT: FAILED` with a `FAIL [` count of ZERO is never the code under test.**  It is
+  the toolchain, the box, or the target dir — a link failure, contention, a corrupt incremental
+  cache.  Read the count BEFORE reading a single line of the error text; the verdict line's
+  captured `error[` is frequently a package you never touched.  Measured 2026-09-07: this
+  distinction was re-derived from error text three times in one evening because the count was
+  only reachable by grepping.  `scripts/ci-run.sh` now names the failing TEST and how many.
+
 ---
 
 ## See also
