@@ -32,9 +32,11 @@
 //                        lowering admits `Reference`/`Tuple`/`Text` and not `Function`, so the
 //                        link is never installed and the bind cannot be told from a write.
 //                        That is a second unsound step in its own site, it still ICEs here as
-//                        it always did, and it is filed separately rather than half-fixed.
+//                        it always did, and it is loft#1454 — filed rather than half-fixed,
+//                        because admitting the fn source there makes the INTERPRETER right and
+//                        leaves `--native` emitting an empty initialiser and a non-deref write.
 //
-// @falsified-at: f5cd8a37e — interpret exit 1 -> 0, native exit 1 -> 0.  On the control EVERY
+// @falsified-at: f5cd8a37e — interpret exit 1 -> 0, native exit 101 -> 0.  On the control EVERY
 //   cell is the ICE, so the file cannot even reach an assertion there; each cell's VALUE is
 //   hand-computed below and checked on both backends, which is what makes the pass mean
 //   something rather than the two binaries agreeing with each other.
