@@ -1741,11 +1741,15 @@ impl Type {
                 inner.renumber_frame_deps(from, to);
                 d.renumber_frame(from, to);
             }
-            Type::Function(args, ret, d) => {
-                for a in args {
-                    a.renumber_frame_deps(from, to);
-                }
-                ret.renumber_frame_deps(from, to);
+            // A fn type's OWN dep is caller-side (the closure / work-buffer note this
+            // frame holds), so it renumbers.  Its `args` and `ret` are the CALLEE's
+            // declared signature, which lives in DEF space — attribute indices — and a
+            // caller's variable swap never relocates those: `Deps::renumber_frame`'s own
+            // contract says applying it to an attr-space list corrupts it.  Descending
+            // was inert in practice (measured: it changed nothing across 1210 corpus
+            // scripts) and became a fault the moment the text-return promotion started
+            // tagging that list correctly.
+            Type::Function(_args, _ret, d) => {
                 d.renumber_frame(from, to);
             }
             Type::RefVar(inner) | Type::Rewritten(inner) | Type::Optional(inner) => {
@@ -3280,6 +3284,11 @@ mod renumber_frame_deps_tests {
         assert_eq!(inner.depend(), vec![99]);
         assert_eq!(&d.items, &vec![99]);
 
+        // A fn type renumbers its OWN dep and leaves its SIGNATURE alone: `args` and
+        // `ret` are the callee's declared types in DEF space (attribute indices), which
+        // a caller-side variable swap must not relocate.  This half of the test used to
+        // assert the opposite; it only ever built the signature with `Deps::frame`, so
+        // it never exercised the case it was wrong about.
         let mut f = Type::Function(
             vec![text(vec![2])],
             Box::new(text(vec![2])),
@@ -3289,9 +3298,17 @@ mod renumber_frame_deps_tests {
         let Type::Function(args, ret, d) = &f else {
             panic!()
         };
-        assert_eq!(args[0].depend(), vec![99]);
-        assert_eq!(ret.depend(), vec![99]);
-        assert_eq!(&d.items, &vec![99]);
+        assert_eq!(
+            args[0].depend(),
+            vec![2],
+            "a callee's parameter type is DEF space"
+        );
+        assert_eq!(ret.depend(), vec![2], "a callee's return type is DEF space");
+        assert_eq!(
+            &d.items,
+            &vec![99],
+            "the fn value's own dep is caller frame space"
+        );
     }
 
     #[test]

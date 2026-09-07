@@ -7062,10 +7062,23 @@ impl Parser {
         // indices are frame-independent and the instance copies the template's parameters
         // in order, so re-attaching is exact; `expand_deferred_par` does the same for a
         // par worker's return.  A tuple carries no dep list of its own and is boxed below.
+        // ATTR space, all of them, and NOTHING the substitution dragged in.  The
+        // paragraph above says these entries are attribute indices, and
+        // `Definition.returned` is the DEF-space home `call_dependencies` reads with
+        // `as_attr_indices` — so `Type::depending`, which builds `Deps::frame1`, tagged
+        // them as caller frame variables.  It also REPLACES the list rather than
+        // appending, so a template returning more than one dep kept only the last.
+        //
+        // The unconditional write is the other half: `substitute_all` puts the CONCRETE
+        // type where the type variable was, and that type was read at the CALL SITE, so
+        // it arrives carrying the CALLER's frame deps.  Those name nothing in the
+        // callee's attribute space and must not survive into this home — a keyed
+        // monomorph reached `as_attr_indices` holding a caller local's frame number.
+        // Setting the list even when the template had none is what drops them; an empty
+        // ATTR list is the owned answer, and the `Own::Borrowed` block below re-derives
+        // any real borrow from the instance's own body.
         if !matches!(new_returned.base(), Type::Tuple(_)) {
-            for d in tmpl_ret_deps {
-                new_returned = new_returned.depending(d);
-            }
+            new_returned = new_returned.with_deps(&crate::data::Deps::attrs(tmpl_ret_deps));
         }
         // Register the new definition.
         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
