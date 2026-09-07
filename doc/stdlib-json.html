@@ -53,11 +53,11 @@
 <p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn field(self: JsonValue, name: text) -&gt; JsonValue</code></pre>
+<pre><code>pub fn field(self: JsonValue, name: text) -&gt; JsonValue[self]</code></pre>
 <p>Observes the runtime's json_errors state populated by json_parse.  No parent writes. JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field(&quot;a&quot;).field(&quot;b&quot;)` is safe — every intermediate missing produces `JNull`, never a trap.</p>
 </div>
 <div class="item">
-<pre><code>pub fn item(self: JsonValue, index: integer) -&gt; JsonValue</code></pre>
+<pre><code>pub fn item(self: JsonValue, index: integer) -&gt; JsonValue[self]</code></pre>
 <p>JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.</p>
 </div>
 <div class="item">

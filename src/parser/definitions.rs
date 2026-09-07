@@ -2730,6 +2730,19 @@ impl Parser {
                     spec.forced_size = Some(nz);
                     tp = Type::Integer(spec);
                 }
+                // A `[param]` on the return type is this declaration's own borrow list, and
+                // this arm builds its type by CLONING the named def's — which carries the
+                // def's deps, not the declaration's.  Stamp the parsed list on, exactly as
+                // the two arms above do, so a signature that says it returns a view of a
+                // parameter says so in every type it can name.  Without this the annotation
+                // parses, resolves its parameter, and is dropped: `field(self: JsonValue, …)
+                // -> JsonValue[self]` read as an OWNED return, so the caller's local was
+                // freed at scope end and it was the caller's own store that went
+                // (@FR-H-View — a projection aliases the place, and freeing it is the
+                // owner's business, never the viewer's).
+                if !dep.is_empty() {
+                    tp = tp.with_deps(&crate::data::Deps::unknown(dep));
+                }
                 Some(tp)
             }
         } else {
