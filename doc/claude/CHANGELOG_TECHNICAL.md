@@ -115,6 +115,45 @@ signed controls that a "just make four bytes unsigned" cure fails.
 Fixes #1437.
 
 ### @PLN156: release gates that prove they ran, and a gate that checks the gates (2026-09-07)
+### An element read cannot be more non-null than the collection it reads from (2026-09-07)
+
+**#1450** (its `(N-Domain)` leg) and the nullable-receiver-index half of **#1434** — a keyed or
+indexed read through an ABSENT collection typed non-null.  `index_provably_fit` elides
+`(N-Domain)`'s `τ?` for an index the developer can vouch for (a literal, a loop variable, a
+bounded computation — the loft#1436 trust), and that proof is about the INDEX; it says nothing
+about whether the COLLECTION exists.  So `m: vector<It>? = null; z: It = m[0]` was silent while
+`m[i]` on the same receiver warned, and the promise turned on the spelling of the subscript.
+The receiver's `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods, so
+it is now read before that peel and carried to the result type — vector plus all four keyed kinds
+(`hash`, `sorted`, `index`, `trie`), whose arms carried only the `expr_not_null` lint clear.  The
+dense-receiver trust is untouched and is the control.
+
+Two prerequisites, both deviations of their own, both fixed here:
+
+* **The discharge narrowed SCALARS only.**  `if s != null { … }` never narrowed a struct or a
+  vector: a heap null test is its own opcode (`OpRefIsNull` / `OpVectorIsNull`) where a scalar
+  compares against a `…FromNull` literal, and `narrowing_from_condition` read only the scalar
+  spelling.  This is `D-Null-Heap`'s class on the discharge side.  It gates shippability rather
+  than politeness — with no working guard, correct guarded code and silent-wrong code produce the
+  same warning; fixing it took the leg's corpus cost from 2 sites to 0.
+* **A narrowing described the assignment TARGET.**  A proof says what a slot HOLDS and dies at the
+  next write, but the target is parsed as an expression, so a proven-non-null variable read as its
+  peeled base and a declared `τ?` slot answered `τ` — `cur: It? = src; if cur == null { return -1; }
+  cur = src;` was reported as a nullable reaching a non-null slot.  Pre-existing on the scalar path
+  and independent of this issue; `warning` gates library CI, so a library that guarded a nullable
+  and rebound it failed its own gate on correct code.
+
+The same place-vs-read distinction is why the receiver's `?` must not reach a keyed WRITE:
+`(Col-Insert-Absent)` makes that write total (loft#1213 materialises an absent keyed destination
+on the write itself), and carried into the target the write lowered to a read and was lost in
+silence.  Peeled at the `parse_assign_op` chokepoint, which is the one home for "the target is a
+place" — all three of the above are enforced there.
+
+Registered as `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` in
+[formal/types-history.md](formal/types-history.md).  The other two legs of #1450 stay open with
+their costs measured: the `(N-Prop)` field read through a nullable receiver (37 corpus sites) and
+`(Col-Lookup)`'s own `τ?` for a missing key in a PRESENT collection (351).
+
 ### A frame's release of a captured store is by store identity, not by the capture's name (2026-09-07)
 
 **#1446** — a captured local REASSIGNED after the closure build kept the frame's own scope-exit

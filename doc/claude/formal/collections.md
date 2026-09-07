@@ -176,7 +176,10 @@ every read would then pay for the check.
   (Col-Lookup)  Γ ⊢ c[key] ⇒ τ?              a keyed point lookup is NULLABLE — an absent key yields the
                                               null record (P285), discharged by `?? d` / `match` like any τ?.
 ```
-*Anchor:* fields.rs:700-706 (P285, the `expr_not_null` clear); mirrors types.md `(N-Index)` for `v[i]`.
+*Anchor:* fields.rs:700-706 (P285, the `expr_not_null` clear) — ⚠ a LINT switch, not a type: the
+rule is not enforced for a miss in a PRESENT collection (`D-col-lookup`, OPEN).  The
+RECEIVER-absent case IS typed, at `parse_index` (`@FR-N-Domain`, loft#1450).  Mirrors types.md
+`(N-Index)` for `v[i]`.
 
 ### 1.3b One field, one decode — `Col-Axis`
 
@@ -483,7 +486,11 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 0.**  The record of the closed ones is in
+**OPEN: 1.**  `D-col-lookup` (loft#1450, opened 2026-09-07): `(Col-Lookup)`'s `τ?` is carried by
+the `expr_not_null` LINT flag its own anchor cites and never reaches a type, so a lookup that
+misses in a present collection binds into a non-null slot in silence, on all four keyed kinds.
+Deferred on cost (351 corpus sites), not on doubt.  The RECEIVER-absent half is closed
+(`D-Null-Recv`, [types-history.md](types-history.md)).  The rest of the record is in
 the companion [collections-history.md](collections-history.md).
 
 ## 4. Conformance / oracle plan (how each rule gets pinned — [VERIFICATION.md](VERIFICATION.md))

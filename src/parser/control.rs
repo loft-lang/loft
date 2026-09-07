@@ -3789,6 +3789,21 @@ impl Parser {
                 return Some((v, name.starts_with("OpNe")));
             }
         }
+        // A HEAP value tests against `null` through a dedicated op rather than a comparison
+        // with a null literal, so the scalar arm above never sees one: `s == null` on a
+        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and `s != null` is
+        // that test under `OpNot`.  The polarity follows the test's own sense — the bare op
+        // is the `== null` question, which proves the var non-null on the ELSE side, and
+        // negated it is `!= null`, which proves it in the THEN branch.
+        if let Some(v) = self.heap_null_test(test) {
+            return Some((v, false));
+        }
+        if name == "OpNot"
+            && args.len() == 1
+            && let Some(v) = self.heap_null_test(&args[0])
+        {
+            return Some((v, true));
+        }
         // `if v` (truthy) — a bare nullable read converted to boolean → non-null in THEN.
         if name.starts_with("OpConvBoolFrom")
             && args.len() == 1
@@ -3814,6 +3829,26 @@ impl Parser {
             return Some((*v, false));
         }
         None
+    }
+
+    /// The variable a HEAP null test names, when `test` is one.
+    ///
+    /// A struct or a vector answers "is this absent?" through its own opcode — `OpRefIsNull`,
+    /// `OpVectorIsNull` — where a scalar compares against a `…FromNull` literal.  Callers that
+    /// read a null proof out of a condition need both spellings; this is the heap one, and it
+    /// answers only for a plain variable, which is the only place a proof can be recorded.
+    fn heap_null_test(&self, test: &Value) -> Option<u16> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        if args.len() != 1 || !matches!(self.data.def(*op).name(), "OpRefIsNull" | "OpVectorIsNull")
+        {
+            return None;
+        }
+        match args[0].unspan() {
+            Value::Var(v) => Some(*v),
+            _ => None,
+        }
     }
 
     /// @PLN25 DN3 fault-op — read a non-zero divisor proof out of a parsed `if` condition.

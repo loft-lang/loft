@@ -996,6 +996,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // peels (`s.starts_with(..)` works on a `text?`). Inert gate-OFF: no
         // `Optional` is ever constructed, so `.base()` is a no-op. A null-check
         // discharges the value; indexing the null sentinel behaves as gate-OFF.
+        // `@FR-N-Domain` (loft#1450, and the nullable-receiver half of loft#1434) — an element
+        // read cannot be more non-null than the collection it reads from, so the receiver's `?`
+        // has to outlive the peel on the next line and reach the RESULT type.  The peel is what
+        // makes `s: text?; s[i]` dispatch at all, and it discards exactly this fact.
+        let receiver_optional = matches!(t, Type::Optional(_));
         t = t.base().clone();
         let mut elm_type = self.index_type(&t);
         for on in t.depend() {
@@ -1046,8 +1051,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is an `Enum` to it — and a `vector<S?>` read by a variable index then typed
             // its local `S?` on one pass and `__nullable<S>?` on the other and refused the
             // program as a type change.
+            // `index_provably_fit` trusts the INDEX — the number the developer typed, a loop
+            // variable, a bounded computation (loft#1436) — and says nothing about whether the
+            // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
+            // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
+            // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
             if crate::keys::pln25_dn1_enabled()
-                && !self.last_index_fit
+                && (!self.last_index_fit || receiver_optional)
                 && self.tagged_pointer_type(&elm_type).is_none()
             {
                 elm_type = Type::optional(elm_type);
@@ -1112,6 +1122,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // the key.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            // `@FR-N-Domain` — an ABSENT keyed collection has no entry to answer with, so the
+            // lookup is `τ?` whatever the key.  (The lookup's OWN nullability for a present
+            // collection with a missing key is `(Col-Lookup)`, still carried by the
+            // `expr_not_null` clear above rather than by the type.)
+            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() {
+                elm_type = Type::optional(elm_type);
+            }
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
             let el = crate::typedef::key_bearing_def(&self.data, *el);
             let mut key_types = Vec::new();
@@ -1126,6 +1143,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // @P285 — see the Hash/Radix arm above; the lookup result is nullable.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            // `@FR-N-Domain` — see the Hash/Radix arm above; an absent collection has no
+            // entry to answer with whatever the key.
+            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() {
+                elm_type = Type::optional(elm_type);
+            }
         } else if self.user_index_op(&t) != u32::MAX {
             // @PLN125 arc C — `x[i]` on a library type is the call the type declared.
             // `OpIndex` takes the receiver and the indices, so the lowering is the
