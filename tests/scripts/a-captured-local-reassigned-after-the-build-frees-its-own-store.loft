@@ -25,7 +25,8 @@
 // The CONTROLS are what keep the widening honest: a capture that is never reassigned must
 // still hand its store to the record (freeing it in the frame as well would be the #323
 // over-free, and an escaping closure would read a released store), and a literal right-hand
-// side rebuilds in place and mints nothing to leak.
+// side MINTS a fresh store (loft#1447 — a captured local is not the sole holder, so in-place
+// reuse is not licensed) and that mint is released like any other.
 //
 // `main` calls every cell and is what scores this guard: `--tests` does not leak-check
 // (`scripts/falsify.sh` § ONE CHANNEL IS BLIND).  `tests/wrap.rs::run_test` runs `main` when
@@ -85,11 +86,23 @@ fn test_a_capture_never_reassigned_is_the_records() {
   assert(n == 6 && s.a == 1, "never reassigned: got {n} {s.a}, want 6 1");
 }
 
-fn test_a_literal_right_hand_side_rebuilds_in_place() {
+// `(L-CapHeap)`: a REASSIGNMENT of the captured variable is not a mutation-through — `s.a = 7`
+// reads through, `s = S{…}` does not, "because it rebinds the variable while the closure keeps
+// the `DbRef` it was built with.  That is what a captured vector and a captured struct do — the
+// closure answers the build-time value" (`formal/closures.md`).  So `h(5)` is `1 + 5`, and the
+// two vector cells above already assert the same thing for the collection spelling.
+//
+// This cell began as the leak control for loft#1388, asserting that a literal right-hand side
+// "rebuilds in place and mints nothing to leak" — and it read `h(5) == 12`, which is the store
+// being re-minted UNDER the record.  loft#1447 is that defect: in-place reuse of a local's
+// store is licensed only while the local is the store's SOLE holder, and a closure record built
+// over it is a second holder.  The cell keeps its leak-control job and gets a stronger one: the
+// rebind now MINTS, so what it guards is that the mint is released, not that none happens.
+fn test_a_literal_right_hand_side_mints_and_the_closure_keeps_its_build_value() {
   s = S{a: 1, b: "x"};
   h: fn(integer) -> integer = |i| { s.a + i };
   s = S{a: 7, b: "lit"};
-  assert(s.a == 7 && h(5) == 12, "literal rhs: got {s.a} {h(5)}, want 7 12");
+  assert(s.a == 7 && h(5) == 6, "literal rhs: got {s.a} {h(5)}, want 7 6");
 }
 
 // The two cells @FR-O-Witness closed: a stored closure called TWICE (whose intermediate store
@@ -140,5 +153,5 @@ fn main() {
   test_an_inline_closure_over_a_vector();
   test_a_stored_closure_over_a_vector();
   test_a_capture_never_reassigned_is_the_records();
-  test_a_literal_right_hand_side_rebuilds_in_place();
+  test_a_literal_right_hand_side_mints_and_the_closure_keeps_its_build_value();
 }

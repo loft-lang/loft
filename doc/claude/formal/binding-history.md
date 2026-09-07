@@ -6,9 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`), 2026-09-07: three
-independent mechanisms broke it — the vector surface and the keyed BIND (loft#1433) are
-CLOSED; the keyed PARAMETER (loft#1445) is OPEN AGAIN, its first fix reverted (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+OPEN: **0** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) CLOSED 2026-09-07: three
+independent mechanisms broke it and all three are closed — the vector surface, the keyed BIND
+(loft#1433), and the keyed PARAMETER (loft#1445), whose first fix was reverted and whose
+rework closes it by SPLITTING the predicate rather than widening it (part four, below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
 DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
 2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
 D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
@@ -100,6 +101,28 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > plus the vector control, both backends, every destination PRE-POPULATED and every cell
 > reading the old key as well as the new one — an empty destination cannot tell an append that
 > reached the caller from one that built a fresh collection and counted itself.
+
+> **D-bind-28, part four — CLOSED (2026-09-07, loft#1445 reworked) — one predicate, two
+> names.**  The reverted fix widened `is_keyed` / `is_collection`, which are asked at 78 sites
+> and answer two different questions.  The rework gives each its own name: `keyed_kind(tp)`
+> peels the link (which kind, which type id, which insert) and `owns_keyed_store(tp)` does not
+> (what may be allocated, minted or replaced in place), leaving `is_keyed` to the sites that
+> never had to tell them apart.  `1291` 8/8, `1445` 8/8, `1445b` 2/2 on this tree; two full
+> gates on the authoring tree (979s and 1097s).
+>
+> **What closes the entry is a control, not the appends.**  `(B-Ref-Uniform)` says a `&τ` is
+> used EXACTLY like a `τ`, so the question is agreement between the two spellings and not
+> whether any particular one is accepted.  `a += b` where both are `hash<Row[k]>` is REFUSED —
+> *"cannot append a whole `hash<Row[k]>` to another — a keyed collection's `+=` takes one `Row`
+> element written `[…]`, or a `vector<Row>` of them"* — and the `&` spelling is refused too.
+> Uniform, so the rule holds; the whole-collection append is a decided surface limit and not
+> this entry's business.
+>
+> ⚠ **One residual, and it is a DIAGNOSTIC defect rather than a rule one.**  The two refusals
+> are not the same message: the dense one names the authored type and both cures, while the `&`
+> one says *"No matching operator 'Add' on '&hash<Row,[\"k\"]>'"* — the SCHEMA spelling of the
+> type, which no source ever wrote, and no cure.  That is loft#1449 (`Type::name` where
+> `source_name` is meant), and this is a live instance of it.
 
 > **D-bind-25, D-bind-26, D-bind-27 — OPENED AND CLOSED (2026-09-07) — three places
 > `(B-Disturb)` names that the walk could not see.**  All three came out of loft#1401's
@@ -848,6 +871,7 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > `pln87_amp_in_struct_literal_field_*`, `pln87_amp_in_return_statement_*` in
 > `tests/parse_errors.rs`, with the ACCEPT half — every legal `&` position, each asserting
 > the write reaches the source — in `tests/scripts/150-amp-head-position.loft`. The @PLN87 ladder (L1–L6), the model + doc reconciliation (PR#436), the residual
+
 D-bind-7 and D-bind-8 (closed below) are all verified; @PLN40's Const-Bind / Const-Value /
 Const-ScalarCollapse / Const-Compose are shipped and enforced for struct fields, parameters,
 and locals — and, since @PLN102 K1, for **enum-variant fields** too (their one former residual

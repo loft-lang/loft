@@ -355,10 +355,11 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 1** — **D-bind-28 OPEN 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
+**OPEN: 0** — **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
-special-cased.  THREE independent mechanisms broke that for collections; two are closed and the
-keyed PARAMETER is open again after its first fix was reverted.
+special-cased.  THREE independent mechanisms broke that for collections and all three are now
+closed; the keyed PARAMETER took two attempts, and what closed it was splitting the overloaded
+predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather than widening it.
 
 * **CLOSED 2026-09-07 — the VECTOR surface.**  Four compiler special-cases (`insert`,
   `reverse`, `sort`, `reserve`) matched `Type::Vector` against the argument type with the `&`
