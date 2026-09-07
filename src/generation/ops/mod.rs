@@ -235,6 +235,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     ] {
         r.insert(op, Box::new(float_compare::FloatCompareEmitter));
     }
+    // @PLN157 P4b — scalar element writes fuse against a hoisted header;
+    // the same ops fall back to their template for record-field writes and
+    // outside hoisted loops.
+    for op in ["OpSetInt", "OpSetSingle", "OpSetFloat"] {
+        r.insert(op, Box::new(vector_ops::FusedElementWriteEmitter));
+    }
     r.insert("OpGetRecord", Box::new(key_ops::OpGetRecordEmitter));
     r.insert("OpIterate", Box::new(key_ops::OpIterateEmitter));
 

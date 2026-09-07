@@ -1871,6 +1871,47 @@ impl Stores {
         }
     }
 
+    /// The write twin of [`Self::vec_get_hoisted_or_raise_runtime`] (@PLN157 P4b): one
+    /// indexed element WRITE against an already-derived [`crate::vector::VecHeader`] —
+    /// in range, one bounds test and one typed store, with no `DbRef` built between
+    /// them.  Every other index — negative, out-of-range, `i64::MIN` — falls through to
+    /// `vec_get_or_raise_runtime` plus the template's `rec != 0` write, so the raise it
+    /// reports and the null-element behaviour keep their one definition.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes
+    /// `db` — the point of the switch.  Never in the emitted default.
+    #[inline]
+    pub fn vec_set_hoisted_or_raise_runtime<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        fld: u32,
+        val: T,
+    ) {
+        if index >= 0 && index < i64::from(h.len) {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    crate::vector::vec_header(db, &self.allocations),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+            }
+            *self.allocations[h.store_nr as usize].addr_mut::<T>(
+                h.rec,
+                crate::vector::checked_vec_pos(index as u32, size) + fld,
+            ) = val;
+        } else {
+            let elem = self.vec_get_or_raise_runtime(db, size, index);
+            if elem.rec != 0 {
+                T::set_in(self.store_mut(&elem), elem.rec, elem.pos + fld, val);
+            }
+        }
+    }
+
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_ref_or_raise`.  Same body; native rewriter
     /// translates `s.vec_ref_or_raise(...)` →

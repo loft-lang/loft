@@ -472,6 +472,43 @@ nothing, so it cannot invalidate any header, aliased or not.  Hoisted scalar
 the new tier gets its own `LOFT_NO_WRITE_HOIST` for one-step bisection,
 following the P2/N-switch precedent.
 
+**P4a/b SHIPPED 2026-09-07.**  `blocks_header_hoist` carries the two-tier
+gate (`IN_PLACE_SET_OPS`, 12 scalar setters; a user call that writes stays
+blocking — interprocedural in-place is not worth its soundness surface);
+`hoist::fused_element_write` + `Stores::vec_set_hoisted_or_raise_runtime`
+(bounds test + one typed store; off-fast-path falls back into
+`vec_get_or_raise_runtime` + the template's `rec != 0` write, VERIFY
+monomorphisation rides `LOFT_HOIST_VERIFY`); the emitter and pre-eval share
+the one recogniser.  Two findings along the way: the drawing's RASTER loops
+are field-reached (`lay.best`) — P4d's shape, so this slice's bench coverage
+is `hair_brush` — and `OpMathFuncFloat`/`Single` (the libm dispatchers) had
+never been on the allow-list, so ANY loop calling `sin`/`sqrt` through a
+helper never hoisted at all, reads included; they are pure scalar math whose
+`const` is a function selector, and joining the list unblocks those loops
+generally.  Guards: `tests/scripts/157-write-hoist.loft` (four lanes;
+falsified by shifting the fused write's field offset — writes land in
+neighbours, c1 red) + four new `hoist_gate` pins (in-place keeps headers,
+alias write keeps both, grow-beside-in-place declines, the write shape).
+Measured: `hair` 57.2k → 48.4k ns/op (−15 %, ≈3.6× Rust — under the bar);
+`hash`/`lock` hashes exact in all four modes.  A cell also pinned the
+copy-bind: `u = a` copies, and the tier must not change that.
+
+**P4d SHIPPED (same day): the path key.**  The hoist key widens from a bare
+var to `(root, [const offsets])` — `lay.best` is `(lay, [8])` — with ONE
+recogniser (`hoist::vector_path`, a `Var` or `OpGetField(path, const,
+const)` chain) feeding all three previously-agreeing sites: the candidate
+collector, the fused read/write recognisers, and the emission (the prelude
+now re-emits the cloned pure path expression; `active_vec_header` keys on
+the path).  A rebind of the ROOT invalidates every path under it;
+repointing the field itself is `OpSetRef`, outside `IN_PLACE_SET_OPS`, so
+it blocks outright.  The raster pixel loop now emits 7 fused writes + 1
+fused read + 7 path headers and ZERO per-element resolutions — the exact
+shape the hand probe measured.  Guard cells: two SIBLING fields written in
+one loop prove the path keys stay apart by value; `hoist_gate` pins the
+path recogniser.  Measured (quiet rounds): `lock` −13–18 % (~25.3–27.9M
+from ~30.8–32.4M), the ledger's element-hoist share; hashes exact on
+interpret / native / `LOFT_HOIST_VERIFY`.
+
 **Red:** `lock` not ≤ 4 ms; `fill_poly`/`composite` not within 4×; any
 `LOFT_HOIST_VERIFY` panic; any hash movement; the matrix's negative cells
 (growing write, rebind) not declining the hoist.

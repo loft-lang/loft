@@ -1534,7 +1534,11 @@ so the count is a thermometer for the screen's reach, not a debt against this fu
 the tree it is measured on.  The `@FR-O-Owner` walk
 folded two byte-identical container-namer loops into one home and the loft#1384 place walk
 joined it there, so neither branch's row survives the join — the audit classifies FUNCTIONS,
-and a merged body is one function however many branches touched it.
+and a merged body is one function however many branches touched it.  @PLN157 P4d adds one on
+the call-spelling side — **47 · 12 · 35** — `hoist::vector_path` names `OpGetField` to build
+a hoist key; a TupleGet-held vector simply DECLINES the hoist (unrecognised shapes keep the
+per-element form), so the single spelling is a narrower optimisation, not a wrong answer —
+widening it is a candidate, not a debt.
 
 (`./scripts/ir_walker_audit.py spellings`, gated by `doc_hygiene::quality_spellings_table_matches_the_audit`
 so the row cannot go stale — the same arrangement the `unspan` table has.)

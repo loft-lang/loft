@@ -598,7 +598,7 @@ pub struct Output<'a> {
     /// of a variable listed here skips the store resolution and the length load; every
     /// other read emits unchanged. One frame is pushed per `Value::Loop`, so a frame is
     /// popped exactly where the local it names goes out of scope.
-    pub vec_headers: Vec<HashMap<u16, String>>,
+    pub vec_headers: Vec<HashMap<hoist::PathKey, String>>,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
@@ -640,6 +640,12 @@ pub struct Output<'a> {
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
     pub leaf_elide_disabled: bool,
+    /// `LOFT_NO_WRITE_HOIST=1` — classify in-place element writes as hoist
+    /// blockers again (@PLN157 P4a), so a loop that writes keeps the pre-885
+    /// per-element form for everything.  One step finer than
+    /// `LOFT_NO_VECTOR_HOIST` when bisecting a wrong answer in a loop that
+    /// both reads and writes vectors.
+    pub write_hoist_disabled: bool,
     /// O7: number of consecutive format/append ops following the current
     /// `OpClearStackText`/`OpClearText`.  Set by `output_block` before each
     /// op is emitted; consumed (and reset to 0) by `clear_stack_text`.
@@ -1472,6 +1478,7 @@ impl<'a> Output<'a> {
             nn_cache: HashMap::new(),
             leaf_cache: HashMap::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
+            write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
             yield_collect: false,
             yield_collect_text: false,
@@ -1720,30 +1727,41 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        let mut frame: HashMap<u16, String> = HashMap::new();
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let candidates = if self.hoist_disabled {
             Vec::new()
         } else {
-            hoist::hoistable_vectors(lp, self.data, self.def_nr, &mut self.hoist_cache)
+            hoist::hoistable_vectors(
+                lp,
+                self.data,
+                self.def_nr,
+                &mut self.hoist_cache,
+                !self.write_hoist_disabled,
+            )
         };
         let mut lines: Vec<String> = Vec::new();
-        for v in candidates {
-            if self.vec_headers.iter().any(|f| f.contains_key(&v)) {
+        for (path, expr) in candidates {
+            if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
             }
             // A generator's locals live on the generator struct and are named `self.var_x`
             // inside its `next` methods. The prelude below spells a plain local, so a
             // vector that moved onto the struct is left alone rather than named wrongly.
-            if self.coroutine_persistent_fields.contains_key(&v) {
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
             }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
-            let var = sanitize(self.data.def(self.def_nr).variables().name(v));
+            // The path expression is pure (a Var, or const `OpGetField`s over one —
+            // `vector_path` vouched), so evaluating it once here is exactly the
+            // evaluation the loop body repeats.
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
             lines.push(format!(
-                "let {name} = vector::vec_header(&(var_{var}), &stores.allocations);"
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations);"
             ));
-            frame.insert(v, name);
+            frame.insert(path, name);
         }
         let opened = !lines.is_empty();
         if opened {
@@ -1769,11 +1787,11 @@ impl Output<'_> {
 
     /// The Rust local holding `var`'s hoisted header, when an enclosing loop derived one.
     #[must_use]
-    pub fn active_vec_header(&self, var: u16) -> Option<&str> {
+    pub fn active_vec_header(&self, path: &hoist::PathKey) -> Option<&str> {
         self.vec_headers
             .iter()
             .rev()
-            .find_map(|f| f.get(&var).map(String::as_str))
+            .find_map(|f| f.get(path).map(String::as_str))
     }
 
     /// Whether this call is emitted as ONE fused element read (loft#885 stage 2) — the
@@ -1794,7 +1812,27 @@ impl Output<'_> {
             return None;
         }
         let fused = hoist::fused_element_read(self.data, getter, args)?;
-        self.active_vec_header(fused.var)?;
+        self.active_vec_header(&fused.path)?;
+        Some(fused)
+    }
+
+    /// Whether this call is emitted as ONE fused element WRITE (@PLN157 P4b) — the
+    /// shape qualifies, the enclosing loop hoisted a header for the vector, and the
+    /// fusion is not switched off by `LOFT_NO_ELEM_FUSE`.  Same one home, same
+    /// reason as [`Self::fused_element_read`]: the emitter and the pre-eval
+    /// collector must reach the SAME verdict, or the element address the fusion
+    /// folds away is also lifted into a `let _pre_N` and resolves twice.
+    #[must_use]
+    pub fn fused_element_write<'a>(
+        &self,
+        setter: &str,
+        args: &'a [Value],
+    ) -> Option<hoist::FusedWrite<'a>> {
+        if self.elem_fuse_disabled {
+            return None;
+        }
+        let fused = hoist::fused_element_write(self.data, setter, args)?;
+        self.active_vec_header(&fused.path)?;
         Some(fused)
     }
 

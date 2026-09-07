@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 
 /// Checked vector position — `8 + index * size` using u64 to detect overflow.
 #[inline]
-fn checked_vec_pos(index: u32, size: u32) -> u32 {
+pub(crate) fn checked_vec_pos(index: u32, size: u32) -> u32 {
     let pos = u64::from(index) * u64::from(size) + 8;
     u32::try_from(pos)
         .unwrap_or_else(|_| panic!("Vector position overflow: index={index} size={size}"))
@@ -602,6 +602,34 @@ pub struct VecHeader {
     pub store_nr: u16,
     pub rec: u32,
     pub len: u32,
+}
+
+/// The scalar types a fused element WRITE stores (@PLN157 P4b), with the typed
+/// `Store` setter its fallback path uses — so the off-fast-path write is the same
+/// call the `#rust` template made, not a second spelling of it.
+pub trait HoistScalar: Copy + 'static {
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self);
+}
+
+impl HoistScalar for i64 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_int(rec, fld, val);
+    }
+}
+
+impl HoistScalar for f32 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_single(rec, fld, val);
+    }
+}
+
+impl HoistScalar for f64 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_float(rec, fld, val);
+    }
 }
 
 /// Derive [`VecHeader`] for the vector `db` points at.
