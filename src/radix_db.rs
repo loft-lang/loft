@@ -57,6 +57,7 @@ fn axis_i64(store: &Store, rec: u32, key: &Key) -> i64 {
     match key.type_nr.unsigned_abs() {
         2 => store.get_long(rec, p),
         8 => i64::from(store.get_i32_raw(rec, p)),
+        12 => i64::from(store.get_u32_raw(rec, p)),
         9 => i64::from(store.get_short(rec, p, 0)),
         10 => i64::from(store.get_byte(rec, p, 0)),
         11 => {

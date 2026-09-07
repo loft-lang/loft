@@ -338,6 +338,9 @@ fn write_parts(out: &mut String, parts: &Parts) {
         Parts::Int(n, b) => {
             let _ = write!(out, "{{\"k\":\"Int\",\"n\":{n},\"b\":{b}}}");
         }
+        Parts::IntRaw(n, b) => {
+            let _ = write!(out, "{{\"k\":\"IntRaw\",\"n\":{n},\"b\":{b}}}");
+        }
         Parts::ShortRaw(n, b) => {
             let _ = write!(out, "{{\"k\":\"ShortRaw\",\"n\":{n},\"b\":{b}}}");
         }
@@ -402,6 +405,7 @@ fn parts_from(p: &Parsed) -> Result<Parts, SchemaDecodeError> {
         "Byte" => Parts::Byte(as_i32(field(p, "n")?)?, as_bool(field(p, "b")?)?),
         "Short" => Parts::Short(as_i32(field(p, "n")?)?, as_bool(field(p, "b")?)?),
         "Int" => Parts::Int(as_i32(field(p, "n")?)?, as_bool(field(p, "b")?)?),
+        "IntRaw" => Parts::IntRaw(as_i32(field(p, "n")?)?, as_bool(field(p, "b")?)?),
         "ShortRaw" => Parts::ShortRaw(as_i32(field(p, "n")?)?, as_bool(field(p, "b")?)?),
         "Vector" => Parts::Vector(as_u16(field(p, "c")?)?),
         "Array" => Parts::Array(as_u16(field(p, "c")?)?),

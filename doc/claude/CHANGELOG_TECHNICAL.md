@@ -9,6 +9,59 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The unsigned 4-byte encoding gets its own schema Part, and the width→Part choice one home (2026-09-07)
+
+`NarrowIntKind` has carried three 4-byte kinds since `u32` landed — `Int4` (signed, `i32::MIN`
+for absence), `Int4Raw` and `Int4Full` (unsigned, `u32::MAX`). The SCHEMA had one: `Parts::Int`,
+which sign-extends. So a `u32` slot was written by `OpSetInt4Raw` and read back through a Part
+that disagreed with it, and the disagreement was invisible at every value below 2147483648.
+
+Above it, every route that reads through the schema rather than through the field's own op
+answered wrong — the record render, `to_json`, the store round-trip, and all four keyed kinds,
+whose `key_descriptor_for_content` collapsed the two encodings onto `type_nr` 8 and read them
+with the signed `get_i32_raw`. A lookup therefore missed a record its own iteration yielded. The
+nullable form was wrong in both directions at once: `u32::MAX` decoded as -1, so an ABSENCE
+rendered as a value, and 2147483648 decoded as `i32::MIN`, so a VALUE rendered as an absence.
+
+`Parts::IntRaw(min, nullable)` is the 4-byte twin of `Parts::ShortRaw`, with `type_nr` 12 and
+`PT_INT_RAW` (19, appended — a variant's position is its wire code). At 2 bytes the same split
+already existed and was added for the same reason (loft#812): a non-null `u16` read back
+off-by-one because the Part applied a shift the direct write never did.
+
+**What the fix is actually about is the count of homes.** The width→encoding question was
+answered in FIVE places, and the sweep found each only after the previous one was closed:
+`typedef.rs` (struct field), `Data::narrow_vector_content` and `parser/vectors.rs` (element),
+`generation/mod.rs`'s `init()` field emitter, and — the one that made the backends diverge —
+`generation/mod.rs`'s element lookup, which reconstructs the registered type's NAME by hand.
+That last one registered `int<0,false>` for a `vector<u32>` element while the compiler had
+`int_raw<0,false>`: an extra type in generated `init()`, every id past it renamed, reported by
+`LOFT_STRICT_SCHEMA_IDS=1` as the loft#739 class. It needed several `u32` collections in one
+program to surface; each shape alone passed.
+
+All five now derive from `NarrowIntKind`: `part` (the `Parts` id), `part_ctor` (the constructor
+`init()` emits) and `part_name` (the schema key both the constructors and the generator look up
+by). The `Stores` narrow constructors take their name from `part_name` too, so the generator and
+the constructor cannot spell one type two ways.
+
+Five `type_nr` readers needed the new number, not the four the issue named: `compare_ref`,
+`get_key`, `hash_ref`, `radix_db::axis_i64` and `paged_reader::axis_value` — plus `compare_key`,
+a SEPARATE `(Content, type_nr)` match which is what `sorted` and `index` order by, the paged
+compare mirror, `state/io.rs::stack_key`'s `8..=11` range, and `generation/text.rs::emit_content`'s
+`1|5|7|8|9|10|11` (loft#811's class: a missing width falls to `Content::Long(0)`, so the native
+lookup searches for zero). Three more sites had `_ =>` fallbacks that would have taken the new
+kind silently: `type_owns_heap` (`_ => true`), `binary_size` (`_ => 0`), and both directions of
+`codegen_runtime`'s narrow serialisation (an 8-byte read for a 4-byte slot).
+
+`formal/layout.md` gains `(L-Narrow-Enc)` — a width does not determine how its bytes decode, so
+the encoding is part of `layout(τ)` and has one home. `(L-Narrow)` now names `u32` beside `i32`
+at 4 bytes. The golden cannot see this rule (the encoding moves no byte) and neither can a
+backend differential (both read the same `Parts`); what scores it is two ROUTES to one field
+disagreeing. Guard:
+`tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, both backends, with the
+signed controls that a "just make four bytes unsigned" cure fails.
+
+Fixes #1437.
+
 ### @PLN156: release gates that prove they ran, and a gate that checks the gates (2026-09-07)
 ### A slice pattern names the same variants over a `vector<E?>` (2026-09-07)
 

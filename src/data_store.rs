@@ -394,7 +394,7 @@ pub(crate) const KEYFIELD_STRIDE: u32 = 9;
 pub(crate) const KEYFIELD_NR: u32 = 0;
 pub(crate) const KEYFIELD_ASC: u32 = 8;
 
-/// `DbParts` (`database::Parts`) — enum record, 17 variants.
+/// `DbParts` (`database::Parts`) — enum record, 19 variants.
 pub(crate) const DBPARTS_STRIDE: u32 = 24;
 pub(crate) const PT_BASE: u8 = 1;
 pub(crate) const PT_STRUCT: u8 = 2;
@@ -414,13 +414,14 @@ pub(crate) const PT_RADIX: u8 = 15;
 pub(crate) const PT_DB_REF: u8 = 16;
 pub(crate) const PT_CHILD_REC: u8 = 17;
 pub(crate) const PT_TRIE: u8 = 18;
+pub(crate) const PT_INT_RAW: u8 = 19;
 // `DbParts` field offsets (shared where variant shapes coincide).
 pub(crate) const PTSTRUCT_FIELDS: u32 = 4; // vector<DbField>
 pub(crate) const PTENUM_VALUES: u32 = 4; // vector<EnumPair>
 pub(crate) const PTENUMVALUE_VALUE: u32 = 8;
 pub(crate) const PTENUMVALUE_FIELDS: u32 = 4; // vector<DbField>
-pub(crate) const PTNUM_START: u32 = 8; // Byte/Short/Int/ShortRaw (i32)
-pub(crate) const PTNUM_NULLABLE: u32 = 7; // Byte/Short/Int/ShortRaw
+pub(crate) const PTNUM_START: u32 = 8; // Byte/Short/Int/ShortRaw/IntRaw (i32)
+pub(crate) const PTNUM_NULLABLE: u32 = 7; // Byte/Short/Int/ShortRaw/IntRaw
 pub(crate) const PTCONTENT: u32 = 8; // Vector/Array/Sorted/Ordered/Hash/Index/Radix/ChildRec
 pub(crate) const PTKEYS: u32 = 4; // Sorted/Ordered/Index (vector<KeyField>)
 pub(crate) const PTFIELDS: u32 = 4; // Hash/Radix (vector<integer>)
@@ -1549,12 +1550,19 @@ mod tests {
         assert_eq!(pos(ids.pt_trie, "key"), PTTRIE_KEY);
         assert_eq!(disc(ids.pt_db_ref), PT_DB_REF);
         assert_eq!(disc(ids.pt_child_rec), PT_CHILD_REC);
+        assert_eq!(disc(ids.pt_int_raw), PT_INT_RAW);
         assert_eq!(pos(ids.pt_struct, "fields"), PTSTRUCT_FIELDS);
         assert_eq!(pos(ids.pt_enum, "values"), PTENUM_VALUES);
         assert_eq!(pos(ids.pt_enum_value, "value"), PTENUMVALUE_VALUE);
         assert_eq!(pos(ids.pt_enum_value, "fields"), PTENUMVALUE_FIELDS);
-        // The four narrow-integer variants share (start, nullable).
-        for v in [ids.pt_byte, ids.pt_short, ids.pt_int, ids.pt_short_raw] {
+        // The five narrow-integer variants share (start, nullable).
+        for v in [
+            ids.pt_byte,
+            ids.pt_short,
+            ids.pt_int,
+            ids.pt_short_raw,
+            ids.pt_int_raw,
+        ] {
             assert_eq!(pos(v, "start"), PTNUM_START);
             assert_eq!(pos(v, "nullable"), PTNUM_NULLABLE);
         }

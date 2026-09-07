@@ -1137,9 +1137,13 @@ impl Stores {
                 }
                 Ok(())
             }
-            // The four narrow-integer encodings (@FR-L-Narrow) live in `write_narrow_value`,
+            // The five narrow-integer encodings (@FR-L-Narrow) live in `write_narrow_value`,
             // so this walker and the `JsonValue` one spell a narrow slot's bytes the same way.
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _) => {
+            Parts::Byte(_, _)
+            | Parts::Short(_, _)
+            | Parts::ShortRaw(_, _)
+            | Parts::Int(_, _)
+            | Parts::IntRaw(_, _) => {
                 let Some(n) = parsed.as_i64() else {
                     return Err(mismatch());
                 };
@@ -1446,11 +1450,13 @@ impl Stores {
     /// answering whether `tp` was a narrow integer at all — `false` lets a caller fall
     /// through to its own dispatch.
     ///
-    /// Enforces @FR-L-Null for the narrow widths — the write twin of `narrow_is_null`.
+    /// Enforces @FR-L-Null and @FR-L-Narrow-Enc for the narrow widths — the write twin of
+    /// `narrow_is_null`.
     ///
-    /// The four encodings disagree about where the null code sits: `Byte` and `Short`
+    /// The five encodings disagree about where the null code sits: `Byte` and `Short`
     /// store `value - min + 1` and reserve the raw code for absence, `ShortRaw` stores
-    /// `value - min` directly, and `Int` is a raw `i32` whose null is `i32::MIN`.  That
+    /// `value - min` directly, `Int` is a raw `i32` whose null is `i32::MIN`, and
+    /// `IntRaw` is a raw `u32` whose null is `u32::MAX`.  That
     /// makes the encoding part of the slot's LAYOUT, so it lives at one address.  A second
     /// writer re-deriving it does not fail loudly: it writes plausible bytes that decode to
     /// the wrong value, or to absence, for present input.
@@ -1460,6 +1466,7 @@ impl Stores {
             Short(i32),
             ShortRaw(i32),
             Int,
+            IntRaw,
         }
         if tp == u16::MAX || tp <= 6 {
             return false;
@@ -1471,6 +1478,7 @@ impl Stores {
             Parts::Short(from, _) => Enc::Short(from),
             Parts::ShortRaw(from, _) => Enc::ShortRaw(from),
             Parts::Int(_, _) => Enc::Int,
+            Parts::IntRaw(_, _) => Enc::IntRaw,
             _ => return false,
         };
         #[allow(clippy::cast_possible_truncation)]
@@ -1488,6 +1496,14 @@ impl Stores {
             Enc::Int => {
                 store.set_i32_raw(slot.rec, slot.pos, if n == i64::MIN { i32::MIN } else { v })
             }
+            // The unsigned twin, whose absence is the top code — and whose value must
+            // NOT go through `v`, an `i32`, or every value past 2147483647 truncates.
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            Enc::IntRaw => store.set_u32_raw(
+                slot.rec,
+                slot.pos,
+                if n == i64::MIN { u32::MAX } else { n as u32 },
+            ),
         };
         true
     }
@@ -1645,6 +1661,12 @@ impl Stores {
             Parts::Int(_, null) => {
                 self.store_mut(rec)
                     .set_i32_raw(rec.rec, rec.pos, if null { i32::MIN } else { 0 });
+            }
+            // The unsigned twin's absence is the TOP code; `i32::MIN` is a legal value
+            // of this encoding, so writing it here would store 2147483648 as the null.
+            Parts::IntRaw(_, null) => {
+                self.store_mut(rec)
+                    .set_u32_raw(rec.rec, rec.pos, if null { u32::MAX } else { 0 });
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 for (f_nr, f) in fields.iter().enumerate() {

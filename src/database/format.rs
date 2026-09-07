@@ -1447,6 +1447,14 @@ impl ShowDb<'_> {
                         write!(s, "{}", self.store().get_i32_raw(self.rec, self.pos)).unwrap();
                     }
                 }
+                // The unsigned twin: the same four bytes, read WITHOUT sign extension.
+                Parts::IntRaw(_, _) => {
+                    if self.is_null_slot() {
+                        s.push_str("null");
+                    } else {
+                        write!(s, "{}", self.store().get_u32_raw(self.rec, self.pos)).unwrap();
+                    }
+                }
                 // Plan-06 phase 4d.C step 2: format a stored DbRef
                 // pointer as the three u32 components.  Closures don't
                 // round-trip through textual format anyway; this just
@@ -2189,6 +2197,17 @@ impl ShowDb<'_> {
             Parts::Int(_, nullable) => {
                 let v = self.store().get_i32_raw(self.rec, self.pos);
                 if *nullable && v == i32::MIN {
+                    s.push_str("null");
+                } else {
+                    write!(s, "{v}").unwrap();
+                }
+            }
+            // The unsigned twin: no sign extension, and the reserved code is the TOP
+            // one (`u32::MAX`) rather than `i32::MIN` — read as signed, absence here
+            // renders as the value -1 and a present 3000000000 as -1294967296.
+            Parts::IntRaw(_, nullable) => {
+                let v = self.store().get_u32_raw(self.rec, self.pos);
+                if *nullable && v == u32::MAX {
                     s.push_str("null");
                 } else {
                     write!(s, "{v}").unwrap();

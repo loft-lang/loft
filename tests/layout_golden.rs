@@ -36,6 +36,7 @@ use std::path::PathBuf;
 const CORPUS: &str = r#"
 struct Scalars { b: boolean, c: character, s: single, f: float, i: integer, t: text }
 struct Narrow { a: i32, b: u8, c: u16 }
+struct Unsigned { a: u32, b: u32?, v: vector<u32> }
 struct Wide { s: i16 }
 struct NotNull { i: integer, t: text }
 struct Nullable { n: integer?, f: float? }
@@ -59,6 +60,7 @@ enum Shape { Circle { radius: integer }, Rect { width: integer, height: integer 
 const TYPES: &[&str] = &[
     "Scalars",
     "Narrow",
+    "Unsigned",
     "Wide",
     "NotNull",
     "Nullable",
@@ -97,8 +99,13 @@ const TYPES: &[&str] = &[
 /// the RANGE, but the element stride + schema were keyed on `forced_size`, leaving
 /// `vector<integer limit(10,255)>` at the wide 8-byte stride while its READ decoded 1
 /// byte + `min`.  Only the added rows move the hash — every pre-existing row is
-/// unchanged, which is the claim "the alias spelling did not move" made checkable.)
-const LAYOUT_ALGO_HASH: u64 = 7_452_756_109_479_163_234;
+/// unchanged, which is the claim "the alias spelling did not move" made checkable.
+/// 2026-09-07 — re-blessed for loft#1437: added `Unsigned`, a `u32` field, a nullable one and
+/// a `u32` ELEMENT.  The corpus carried `i32`, `u8` and `u16` but no `u32` — the one narrow
+/// width whose ENCODING its width does not decide — so `(L-Narrow-Enc)` had no row at all.
+/// That is a fact a layout dump CAN carry, because the row names the Part, while a value
+/// comparison cannot see it.  Only the added rows move the hash.)
+const LAYOUT_ALGO_HASH: u64 = 2_090_453_648_790_136_790;
 
 /// @PLN135 Q2 — `keys::key_hash` for a fixed seed over a fixed key set: the function a
 /// reader must reproduce to find an entry a writer placed. Pinned by
@@ -287,6 +294,7 @@ fn coverage(p: &Parts) -> (&'static str, Cover) {
         Parts::Byte(..) => ("Byte", Cover::Covered),
         Parts::ShortRaw(..) => ("ShortRaw", Cover::Covered),
         Parts::Int(..) => ("Int", Cover::Covered),
+        Parts::IntRaw(..) => ("IntRaw", Cover::Covered),
         Parts::Vector(_) => ("Vector", Cover::Covered),
         Parts::Hash(..) => ("Hash", Cover::Covered),
         Parts::Enum(_) => ("Enum", Cover::Covered),
@@ -341,6 +349,7 @@ const COVERED_LABELS: &[&str] = &[
     "Byte",
     "ShortRaw",
     "Int",
+    "IntRaw",
     "Vector",
     "Hash",
     "Ordered",

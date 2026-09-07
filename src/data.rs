@@ -595,6 +595,102 @@ impl NarrowIntKind {
         }
     }
 
+    /// The schema `Parts` type id a slot of this kind stores under — the schema-side
+    /// twin of [`Self::get_op`] / [`Self::set_op`], registering the type if it is new.
+    ///
+    /// @FR-L-Narrow-Enc — the encoding is part of the layout, so the schema and the ops
+    /// take it from one choice.
+    ///
+    /// This is the ONE home for the width→Part decision, and it is deliberately keyed on
+    /// the same [`NarrowIntKind`] the read and write ops come from: a slot's Part and its
+    /// ops then cannot name different encodings, because there is only one choice and all
+    /// three read it.  FIVE call sites used to re-derive this from the width — the struct
+    /// field, the two element paths, and both halves of the native generator — and the
+    /// 4-byte arm of each was `database.int(…)` flat, so an unsigned 4-byte slot was
+    /// WRITTEN by `OpSetInt4Raw` (unsigned, `u32::MAX` for absence) and read back through
+    /// `Parts::Int` (sign-extending, `i32::MIN` for absence).  Every schema-driven route
+    /// — the record render, `to_json`, the store round-trip, and every keyed lookup —
+    /// then answered a `u32` at or above 2147483648 as a negative number, while a direct
+    /// field read of the same field was correct (loft#1437).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], the wide 8-byte default, which has no narrow
+    /// Part: the caller keeps its own wide path.
+    #[must_use]
+    pub fn part(
+        self,
+        database: &mut crate::database::Stores,
+        min: i32,
+        nullable: bool,
+    ) -> Option<u16> {
+        Some(match self {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => database.byte(min, nullable),
+            NarrowIntKind::Short => database.short(min, nullable),
+            // Both 2-byte direct kinds decode the same way; `nullable` is what tells the
+            // Part whether the top code is absence.
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => database.short_raw(min, nullable),
+            NarrowIntKind::Int4 => database.int(min, nullable),
+            // As one width down: the raw and full 4-byte kinds share an encoding and
+            // differ only in whether the reserved top code means absence.
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => database.int_raw(min, nullable),
+            NarrowIntKind::Int => return None,
+        })
+    }
+
+    /// @FR-L-Narrow-Enc — the schema NAME this kind's Part is registered under: the key the `Stores`
+    /// constructors dedupe on, and the key the native generator looks a registered
+    /// element type up by.
+    ///
+    /// It lives here because those are two different pieces of code that must produce
+    /// the SAME string: the generator reconstructing it by hand is how `vector<u32>`
+    /// came out as `int<0,false>` in generated `init()` while the compiler had
+    /// registered `int_raw<0,false>`, which mints an extra type and renames every id
+    /// after it (`LOFT_STRICT_SCHEMA_IDS` reports it; loft#739 is the class).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], which has no narrow Part.
+    #[must_use]
+    pub fn part_name(self, min: i32, nullable: bool) -> Option<String> {
+        Some(match self {
+            // The unqualified `byte` is the historical key for the common shape and is
+            // the name that store is registered under; keeping it is not cosmetic.
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => {
+                if min == 0 && !nullable {
+                    "byte".to_string()
+                } else {
+                    format!("byte<{min},{nullable}>")
+                }
+            }
+            NarrowIntKind::Short => format!("short<{min},{nullable}>"),
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => {
+                format!("short_raw<{min},{nullable}>")
+            }
+            NarrowIntKind::Int4 => format!("int<{min},{nullable}>"),
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => {
+                format!("int_raw<{min},{nullable}>")
+            }
+            NarrowIntKind::Int => return None,
+        })
+    }
+
+    /// @FR-L-Narrow-Enc — the [`crate::database::Stores`] constructor that registers this
+    /// kind's Part, by name: what the native generator writes into `init()`.
+    ///
+    /// It comes from here so the generated schema and the interpreter's are chosen by
+    /// the SAME rule.  Registering a different Part in `init()` renames every type id
+    /// after it, which `LOFT_STRICT_SCHEMA_IDS` reports as schema-id drift (loft#739).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], which has no narrow Part.
+    #[must_use]
+    pub fn part_ctor(self) -> Option<&'static str> {
+        Some(match self {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => "byte",
+            NarrowIntKind::Short => "short",
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => "short_raw",
+            NarrowIntKind::Int4 => "int",
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => "int_raw",
+            NarrowIntKind::Int => return None,
+        })
+    }
+
     /// True when the 1/2-byte ops take a trailing `min` arg; the 4/8-byte ops
     /// (`Int4`/`Int`) do not.
     #[must_use]
@@ -5364,16 +5460,13 @@ impl Data {
             // The Part carries the offset the OPS encode against (`part_min`), not the
             // declared `min` — they differ for a nullable signed narrow slot.
             let m = spec.part_min(n, nullable);
-            return match n {
-                1 => Some(database.byte(m, nullable)),
-                // a nullable 2-byte element uses the `+1` sentinel encoding
-                // (`Parts::Short`), matching the nullable field; the non-null
-                // element stays direct (`Parts::ShortRaw`, full 65536 range).
-                2 if nullable => Some(database.short(m, true)),
-                2 => Some(database.short_raw(m, false)),
-                4 => Some(database.int(m, nullable)),
-                _ => None,
-            };
+            // One home for the width→Part decision, shared with the struct-field mint
+            // and keyed on the same `NarrowIntKind` the element's read and write ops
+            // come from.  `narrow_vec` is true here — that is what this site IS — which
+            // at 2 bytes selects the direct encoding for a non-null element and at 4
+            // bytes selects the sentinel-reserving unsigned kind.
+            return NarrowIntKind::of(n, nullable, true, spec.unsigned_wide())
+                .part(database, m, nullable);
         }
         // Plan-06 ARC.md A6.c — fn-ref vector elements are 4-byte
         // d_nrs (`element_stack_size(Type::Function) = 4`).  The previous

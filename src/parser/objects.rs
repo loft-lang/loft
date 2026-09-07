@@ -1268,13 +1268,17 @@ impl Parser {
                     // Post-2c: honor `as i32` by routing to Parts::Int (4B) when
                     // the alias has size(4).
                     let forced = self.data.forced_size(alias_nr);
-                    let id = if let Type::Integer(IntegerSpec { min, .. }) = &tp
+                    let id = if let Type::Integer(spec) = &tp
                         && forced == Some(4)
                     {
                         if self.first_pass {
                             u16::MAX
                         } else {
-                            self.database.int(*min, false)
+                            // @FR-L-Narrow-Enc — four bytes do not say how they decode, and a
+                            // binary read is a decode: through `Parts::Int` a `u32` above
+                            // `i32::MAX` came back sign-extended, so a value written to a file
+                            // did not survive its own round-trip.
+                            self.narrow_io_part(4, spec)
                         }
                     } else if let Type::Integer(IntegerSpec { min, .. }) = &tp
                         && forced == Some(1)
@@ -1365,10 +1369,11 @@ impl Parser {
                 };
                 let id = if self.first_pass {
                     u16::MAX
-                } else if let Type::Integer(IntegerSpec { min, .. }) = &hint
+                } else if let Type::Integer(spec) = &hint
                     && forced_width == Some(4)
                 {
-                    self.database.int(*min, false)
+                    // @FR-L-Narrow-Enc — as above: the sign is part of the encoding.
+                    self.narrow_io_part(4, spec)
                 } else if let Type::Integer(IntegerSpec { min, .. }) = &hint
                     && (forced_width == Some(1) || hint.size(false) == 1)
                 {
@@ -1519,6 +1524,20 @@ impl Parser {
         matches!(tp, Type::Reference(d, _) if *d == file_def)
     }
 
+    /// The schema type a binary-I/O slot of `width` bytes serialises through, for a value
+    /// whose declared range is `spec`.
+    ///
+    /// @FR-L-Narrow-Enc — a width does not say how its bytes decode, and `read_data` /
+    /// `write_data` dispatch on the `Parts` this returns.  The 1- and 2-byte widths already
+    /// zero-extend a non-negative range (their readers test `from < 0`), so only the 4-byte
+    /// width needed the choice made explicitly; it comes from the same `NarrowIntKind` the
+    /// field and element paths use, so a `u32` written to a file reads back as itself.
+    fn narrow_io_part(&mut self, width: u8, spec: &IntegerSpec) -> u16 {
+        crate::data::NarrowIntKind::of(width, false, false, spec.unsigned_wide())
+            .part(&mut self.database, spec.min, false)
+            .unwrap_or_else(|| self.database.name("integer"))
+    }
+
     /// Ensure byte/short integer types used in file I/O are registered in the database.
     pub(crate) fn ensure_io_type(&mut self, t: &Type) {
         match t {
@@ -1656,16 +1675,19 @@ impl Parser {
         self.ensure_io_type(&val_type_clone);
         // Post-2c: if the value was written as `… as <alias>` and the alias
         // has size(N), narrow the serialisation to the alias's db type.
-        let db_tp = if let Type::Integer(IntegerSpec { min, .. }) = val_type
+        let db_tp = if let Type::Integer(spec) = val_type
             && let Some(n) = self.data.forced_size(cast_alias)
         {
+            let min = &spec.min;
             if self.first_pass {
                 u16::MAX
             } else {
                 match n {
                     1 => self.database.byte(*min, false),
                     2 => self.database.short(*min, false),
-                    4 => self.database.int(*min, false),
+                    // @FR-L-Narrow-Enc — the WRITE has to agree with the read above about
+                    // which four-byte encoding this is.
+                    4 => self.narrow_io_part(4, spec),
                     _ => self.get_type(val_type),
                 }
             }

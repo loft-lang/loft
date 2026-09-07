@@ -87,13 +87,25 @@ store written by one build readable by another *of the same layout*.
               width(float)=8    width(integer)=8    width(text)=4 (a Str handle)
               align(τ) = its natural alignment (1,4,4,4,8,8,4 respectively).
   (L-Narrow)  a range-annotated integer stores in the SMALLEST width that holds its range (#399):
-              u8 → 1 B, u16/i16 → 2 B, i32 → 4 B, else 8 B.  The narrowing is a WIDTH change,
+              u8 → 1 B, u16/i16 → 2 B, i32/u32 → 4 B, else 8 B.  The narrowing is a WIDTH change,
               so it moves offsets and record size — a layout fact the golden pins.
+  (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
+              non-negative range running past the signed maximum stores UNSIGNED and reserves the
+              TOP code for absence; a signed range stores two's-complement and reserves its own
+              minimum.  So the ENCODING is part of layout(τ) exactly as the width is, and every
+              consumer of it — the schema `Parts`, the read/write ops, the key descriptor and the
+              constructor generated `init()` emits — derives it from ONE choice.
 ```
 
 **In words.** Each base type has a fixed stored width. A narrow integer (`i32`, `u8`, …) stores in
 fewer bytes — which is exactly why a narrowing is a layout change: it shifts every following
 field. (#399 is the change class; the golden test pins each width.)
+
+`(L-Narrow-Enc)` is the half a width alone cannot carry. `i32` and `u32` occupy the same four
+bytes and mean different numbers by them, so a reader that knows only *four bytes* has to guess,
+and a guess is silent: it answers a plausible number rather than refusing. That is why the choice
+is a single function of the type (`NarrowIntKind`) and not a `match` on the width repeated at each
+consumer — a repeat is a place the two can disagree, and the disagreement never announces itself.
 
 ### References, collections, and child records
 
@@ -301,6 +313,16 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Narrow-Enc`** — `tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, on
+  both backends: a `u32` field, element, key and spatial axis at and past `i32::MAX`, plus the
+  absence code, each read through the SCHEMA (record render, keyed lookup, ordering) and through
+  the field's own op, which must agree.  The golden cannot see this rule — the encoding does not
+  move a byte — and neither can a same-backend comparison, because both backends read the schema
+  through the same `Parts`.  What scores it is the two ROUTES to one field disagreeing.  Its
+  controls are the load-bearing half: an `i32` element, field, and descending key must keep the
+  SIGNED decode, which a cure that simply made four bytes unsigned fails and every unsigned cell
+  passes.
+
 - **Both backends** — `tests/scripts/509-layout-parity.loft` constructs the corpus and asserts the
   read-path (narrow widths, the nested-vector stride at runtime, tuple packing, enum tag+fields) on
   interpreter, `--native`, and wasm: a value-corrupting ABI divergence fails on the divergent

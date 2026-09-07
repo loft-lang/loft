@@ -197,6 +197,7 @@ impl Stores {
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::DbRef
             | Parts::ChildRec(_) => panic!(
                 "find called on non-collection type: {} (db={})",
@@ -347,6 +348,7 @@ impl Stores {
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::DbRef
             | Parts::ChildRec(_) => Vec::new(),
         }
@@ -458,6 +460,7 @@ impl Stores {
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::DbRef
             | Parts::ChildRec(_)
             | Parts::Hash(_, _)
@@ -1030,6 +1033,7 @@ impl Stores {
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::DbRef
             | Parts::ChildRec(_) => panic!(
                 "remove called on non-collection type: {} (db={})",

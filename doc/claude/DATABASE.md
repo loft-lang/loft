@@ -848,10 +848,19 @@ The encoding for vector elements differs from struct fields:
 
 The divergence is required because `vector_add` raw-byte-copies
 element bytes from source to destination — the +1 offset of
-`Parts::Short` would cause read/write mismatch.  `Parts::Byte`
-and `Parts::Int` are direct-encoded already and need no separate
-"raw" variant; only the 2-byte case needed `Parts::ShortRaw`.
-The 8-byte fallback (`Parts::Long`) is also direct.
+`Parts::Short` would cause read/write mismatch.  `Parts::Byte` is
+direct-encoded and needs no separate "raw" variant, and the 8-byte
+fallback (`Parts::Long`) is also direct.
+
+The 4-byte width needs a second variant for a DIFFERENT reason, and
+it is the one @FR-L-Narrow-Enc states: the shift is not the only
+thing a width leaves undecided — the SIGN is too.  `Parts::Int`
+sign-extends and spends `i32::MIN` on absence; `Parts::IntRaw`
+zero-extends and spends `u32::MAX`.  `i32` and `u32` are the same
+four bytes and different numbers by them, so a reader given only the
+width has to guess, and the guess is silent.  Which one a slot uses
+is `IntegerSpec::unsigned_wide()`, asked once — see the one-home
+table below.
 
 Public surface (in `src/data.rs`):
 
@@ -859,6 +868,17 @@ Public surface (in `src/data.rs`):
 |---|---|---|
 | `IntegerSpec::vector_narrow_width()` | `Option<u8>` (1 / 2 / 4, or `None` for the 8-byte fallback) | "Should this vector element narrow?" |
 | `Data::narrow_vector_content(content)` | content type with `forced_size` applied | Wrap a content type before calling `database.vector(...)` |
+| `NarrowIntKind::of(width, nullable, narrow_vec, unsigned_wide)` | the storage KIND | The one home: which encoding this slot uses |
+| `NarrowIntKind::part(db, min, nullable)` | `Option<u16>` | The schema `Parts` id for that kind — what the interpreter registers |
+| `NarrowIntKind::part_ctor()` | `Option<&str>` | The `Stores` constructor generated `init()` emits for it |
+| `NarrowIntKind::part_name(min, nullable)` | `Option<String>` | The schema key both the constructors and the native generator look it up by |
+| `NarrowIntKind::get_op()` / `set_op()` | the op names | The read/write ops the codegen emits |
+
+⚠ **Every one of those answers must come from the same `NarrowIntKind`.**  A site that
+re-derives the encoding from the width — a `match n { 1 => …, 2 => …, 4 => … }`, or a
+`format!("int<{min},{nullable}>")` rebuilding the schema key by hand — is a place the schema and
+the ops can disagree, and the disagreement is a wrong NUMBER rather than an error.  There were
+five such sites; loft#1437 is what they cost.
 
 **Compiler-contributor gotcha**: `typedef.rs::fill_database`
 walks ONLY struct definitions.  Local-variable / parameter /

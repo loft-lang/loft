@@ -303,7 +303,7 @@ struct KeyField {
 }
 
 enum DbParts {
-  // src/database/mod.rs::Parts (17 variants)
+  // src/database/mod.rs::Parts (19 variants)
   PtBase,
   PtStruct { fields: vector<DbField> },
   PtEnum { values: vector<EnumPair> },
@@ -324,6 +324,11 @@ enum DbParts {
   // The schema twin of TyTrie — content type nr + the key FIELD INDEX.
   // Appended for the same reason.
   PtTrie { content: integer, key: integer },
+  // The 4-byte UNSIGNED integer encoding (`u32`), the twin of PtShortRaw one width up.
+  // Appended rather than placed beside PtInt: a variant's position IS its wire code,
+  // so inserting one renumbers every code after it and no store written by an older
+  // build would read back.
+  PtIntRaw { start: integer, nullable: boolean },
 }
 
 struct DbType {

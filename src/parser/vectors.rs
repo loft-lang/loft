@@ -5583,11 +5583,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `short<min,false>` (the `+1` sentinel encoding) where this arm
                 // registers `short_raw` (direct), so the two spellings of one range
                 // could not agree on a Part even when both found one.
+                // The width→Part decision has ONE home, shared with the struct-field and
+                // element mints and keyed on the same `NarrowIntKind` the ops come from
+                // (`NarrowIntKind::part`).  A width with no narrow Part keeps the wide
+                // 8-byte `integer`.
                 match spec.vector_narrow_width(false) {
-                    Some(1) => self.database.byte(spec.min, false),
-                    Some(2) => self.database.short_raw(spec.min, false),
-                    Some(4) => self.database.int(spec.min, false),
-                    _ => self.database.name("integer"),
+                    Some(n) => crate::data::NarrowIntKind::of(n, false, true, spec.unsigned_wide())
+                        .part(&mut self.database, spec.min, false)
+                        .unwrap_or_else(|| self.database.name("integer")),
+                    None => self.database.name("integer"),
                 }
             }
             Type::Character => self.database.name("integer"),

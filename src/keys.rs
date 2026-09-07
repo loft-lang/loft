@@ -1824,6 +1824,7 @@ fn compare_key(k: &Content, record: &DbRef, stores: &[Store], key: &Key, pos: u3
             .cmp(s.get_str(s.get_u32_raw(record.rec, record.pos + pos))),
         // Narrow integer keys — match hash_ref / get_key.
         (Content::Long(v), 8) => v.cmp(&i64::from(s.get_i32_raw(record.rec, record.pos + pos))),
+        (Content::Long(v), 12) => v.cmp(&i64::from(s.get_u32_raw(record.rec, record.pos + pos))),
         (Content::Long(v), 9) => v.cmp(&i64::from(s.get_short(
             record.rec,
             record.pos + pos,
@@ -1869,6 +1870,9 @@ pub enum FastKey<'a> {
     Long(u32, i64),
     /// A `size(4)` integer (8), sign-extended from the raw 4 bytes.
     I32(u32, i64),
+    /// A `Parts::IntRaw` 4-byte integer (12), ZERO-extended from the raw 4 bytes —
+    /// the unsigned twin of `I32`, for a range that runs past `i32::MAX`.
+    U32(u32, i64),
     /// A `Parts::ShortRaw` 2-byte integer (11), decoded `read + start`.
     ShortRaw(u32, i32, i64),
     /// `text` (6): the offset holds a 4-byte string handle.
@@ -1886,6 +1890,7 @@ pub fn fast_key<'a>(keys: &[Key], key: &'a [Content]) -> Option<FastKey<'a>> {
         (Content::Long(v), 1) => Some(FastKey::Int(pos, *v)),
         (Content::Long(v), 2) => Some(FastKey::Long(pos, *v)),
         (Content::Long(v), 8) => Some(FastKey::I32(pos, *v)),
+        (Content::Long(v), 12) => Some(FastKey::U32(pos, *v)),
         (Content::Long(v), 11) => Some(FastKey::ShortRaw(pos, k.start, *v)),
         (Content::Str(v), 6) => Some(FastKey::Str(pos, v.str())),
         _ => None,
@@ -1909,6 +1914,7 @@ impl FastKey<'_> {
             FastKey::Int(pos, v) => s.get_int(rec, base + pos) == *v,
             FastKey::Long(pos, v) => s.get_long(rec, base + pos) == *v,
             FastKey::I32(pos, v) => i64::from(s.get_i32_raw(rec, base + pos)) == *v,
+            FastKey::U32(pos, v) => i64::from(s.get_u32_raw(rec, base + pos)) == *v,
             FastKey::ShortRaw(pos, start, v) => {
                 i64::from(s.get_short_full(rec, base + pos, *start)) == *v
             }
@@ -1928,6 +1934,9 @@ fn compare_ref(r1: &DbRef, r2: &DbRef, stores: &[Store], key: &Key, p1: u32, p2:
             .get_str(s.get_u32_raw(r1.rec, p1))
             .cmp(s.get_str(s.get_u32_raw(r2.rec, p2))),
         8 => s.get_i32_raw(r1.rec, p1).cmp(&s.get_i32_raw(r2.rec, p2)),
+        // The unsigned 4-byte encoding must ORDER unsigned too: compared as `i32`,
+        // every key at or above 2147483648 sorts below every key below it.
+        12 => s.get_u32_raw(r1.rec, p1).cmp(&s.get_u32_raw(r2.rec, p2)),
         9 => s
             .get_short(r1.rec, p1, key.start)
             .cmp(&s.get_short(r2.rec, p2, key.start)),
@@ -1982,6 +1991,10 @@ pub fn get_key(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Content> {
             }
             8 => {
                 let v = store(record, stores).get_i32_raw(record.rec, p);
+                result.push(Content::Long(i64::from(v)));
+            }
+            12 => {
+                let v = store(record, stores).get_u32_raw(record.rec, p);
                 result.push(Content::Long(i64::from(v)));
             }
             9 => {
@@ -2049,10 +2062,14 @@ fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHash
         2 => hasher.write_i64(s.get_long(r.rec, p)),
         3 | 4 => (),
         6 => hasher.write_str(s.get_str(s.get_u32_raw(r.rec, p))),
-        // Narrow-integer key storage (Parts::Int / Short / ShortRaw / Byte).
+        // Narrow-integer key storage (Parts::Int / IntRaw / Short / ShortRaw / Byte).
         // Each yields an i64 view so the hash matches `get_key`'s
         // Content::Long(i64) reconstruction at the lookup site.
         8 => hasher.write_i64(i64::from(s.get_i32_raw(r.rec, p))),
+        // Sign-extending this one hashes the probe value 3000000000 as -1294967296,
+        // which lands in a different bucket than the stored record: the lookup then
+        // answers `null` for a record the collection's own iteration yields.
+        12 => hasher.write_i64(i64::from(s.get_u32_raw(r.rec, p))),
         9 => hasher.write_i64(i64::from(s.get_short(r.rec, p, key.start))),
         10 => hasher.write_i64(i64::from(s.get_byte(r.rec, p, key.start))),
         // `Parts::ShortRaw` stores `(val - min) as u16` with no null sentinel, so it

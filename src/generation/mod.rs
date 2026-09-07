@@ -1388,6 +1388,7 @@ enum BareIo {
     Short(i32, bool),
     ShortRaw(i32, bool),
     Int(i32, bool),
+    IntRaw(i32, bool),
     Vector(u16),
     Sorted(u16, Vec<(u16, bool)>),
     Hash(u16, Vec<u16>),
@@ -3118,6 +3119,9 @@ extern crate loft;"
                 crate::database::Parts::Int(min, nullable) => {
                     bare_io.push((tid, BareIo::Int(*min, *nullable)));
                 }
+                crate::database::Parts::IntRaw(min, nullable) => {
+                    bare_io.push((tid, BareIo::IntRaw(*min, *nullable)));
+                }
                 crate::database::Parts::Vector(c) => {
                     bare_io.push((tid, BareIo::Vector(*c)));
                 }
@@ -3624,6 +3628,9 @@ extern crate loft;"
             }
             BareIo::Int(min, nullable) => {
                 writeln!(w, "    let t{tid} = db.int({min}, {nullable});")?;
+            }
+            BareIo::IntRaw(min, nullable) => {
+                writeln!(w, "    let t{tid} = db.int_raw({min}, {nullable});")?;
             }
             BareIo::Vector(c) => {
                 let c_ref = type_id_ref(*c);
@@ -4237,22 +4244,14 @@ extern crate loft;"
                 // `narrow_vector_content` registered — `part_min`, not the declared `min`
                 // (they differ for a nullable signed narrow element).
                 let elm_min = spec.part_min(n, elm_nullable);
-                let name = match n {
-                    1 => {
-                        if elm_min == 0 && !elm_nullable {
-                            "byte".to_string()
-                        } else {
-                            format!("byte<{elm_min},{elm_nullable}>")
-                        }
-                    }
-                    // A nullable 2-byte element is the `+1` sentinel encoding
-                    // (`Parts::Short`), the non-null one direct (`ShortRaw`) —
-                    // mirroring `Data::narrow_vector_content`.
-                    2 if elm_nullable => format!("short<{elm_min},true>"),
-                    2 => format!("short_raw<{elm_min},false>"),
-                    4 => format!("int<{elm_min},{elm_nullable}>"),
-                    _ => String::new(),
-                };
+                // The kind and its NAME both come from the one home the compiler
+                // registered this element through (`Data::narrow_vector_content`), so a
+                // width's encoding cannot be decided one way here and another there.
+                // `narrow_vec` is true: this IS the element path.
+                let name =
+                    crate::data::NarrowIntKind::of(n, elm_nullable, true, spec.unsigned_wide())
+                        .part_name(elm_min, elm_nullable)
+                        .unwrap_or_default();
                 if !name.is_empty() {
                     let narrow = self.stores.name(&name);
                     if narrow != u16::MAX {
@@ -4435,38 +4434,26 @@ extern crate loft;"
                  field_size={field_size} for `{field_name}` — only 1/2/4/8 \
                  are supported by db.byte / db.short / db.int / db.field"
             );
-            if field_size == 1 {
-                emit_db_field(
+            // The constructor comes from the ONE width→Part home, the same one
+            // `typedef.rs` registers the interpreter's schema through — so `init()`
+            // cannot register a Part the compiler did not name.  A width with no narrow
+            // Part registers no type at all, as the wide 8-byte default.
+            match crate::data::NarrowIntKind::of(
+                field_size,
+                nullable,
+                false,
+                int_spec.unsigned_wide(),
+            )
+            .part_ctor()
+            {
+                Some(ctor) => emit_db_field(
                     w,
                     s_var,
                     field_name,
-                    "byte",
-                    &format!("db.byte({min}, {nullable})"),
-                )?;
-            } else if field_size == 2 {
-                // Match the ONE width→op home (`NarrowIntKind::of(2, nullable, false)`): a
-                // NULLABLE 2-byte field is `db.short` (the `+1` sentinel encoding), a NON-null
-                // one is `db.short_raw` (direct — the `ShortFull` write is `OpSetShortRaw`).
-                // Using `db.short` for a non-null field made the schema READ (`ShowDb`/to_json/
-                // store round-trip) apply the `+1` shift the direct write never did → a non-null
-                // `u16` field read back off-by-one / `i32::MIN` (interp fixed in typedef.rs; this
-                // is the native db-setup twin).
-                let (label, ctor) = if nullable {
-                    ("short", format!("db.short({min}, {nullable})"))
-                } else {
-                    ("short_raw", format!("db.short_raw({min}, {nullable})"))
-                };
-                emit_db_field(w, s_var, field_name, label, &ctor)?;
-            } else if field_size == 4 {
-                emit_db_field(
-                    w,
-                    s_var,
-                    field_name,
-                    "int",
-                    &format!("db.int({min}, {nullable})"),
-                )?;
-            } else {
-                writeln!(w, "    db.field({s_var}, \"{field_name}\", 0);")?;
+                    ctor,
+                    &format!("db.{ctor}({min}, {nullable})"),
+                )?,
+                None => writeln!(w, "    db.field({s_var}, \"{field_name}\", 0);")?,
             }
             return Ok(());
         }

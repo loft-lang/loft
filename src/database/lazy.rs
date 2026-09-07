@@ -631,6 +631,7 @@ impl Stores {
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Vector(_)
             | Parts::Array(_)

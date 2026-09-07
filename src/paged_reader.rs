@@ -1088,6 +1088,7 @@ fn key_compare_reader<P: PageProvider>(
         let c = match (val, k.type_nr.abs()) {
             (Content::Long(v), 1 | 2) => v.cmp(&reader.i64_at(rec, p)),
             (Content::Long(v), 8) => v.cmp(&i64::from(reader.i32_at(rec, p))),
+            (Content::Long(v), 12) => v.cmp(&i64::from(reader.u32_at(rec, p))),
             (Content::Long(v), 9) => {
                 let mut b = [0u8; 2];
                 reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
@@ -1474,6 +1475,8 @@ impl<'a, P: PageProvider> PagedSpatial<'a, P> {
         match key.type_nr.unsigned_abs() {
             // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
             8 => i64::from(self.reader.i32_at(rec, p)),
+            // 4-byte UNSIGNED (`intraw<…>`), as `Store::get_u32_raw` reads it.
+            12 => i64::from(self.reader.u32_at(rec, p)),
             // 2-byte, `1`-biased with `0` reserved for null (`Store::get_short`).
             9 => {
                 let raw = self.reader.u16_at(rec, p);

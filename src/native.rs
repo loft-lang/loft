@@ -4425,7 +4425,11 @@ pub(crate) fn populate_struct_from_jsonvalue(
             }
         } else if matches!(
             stores.types[content_kt as usize].parts,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+            Parts::Byte(_, _)
+                | Parts::Short(_, _)
+                | Parts::ShortRaw(_, _)
+                | Parts::Int(_, _)
+                | Parts::IntRaw(_, _)
         ) {
             // A narrow-integer field.  @FR-L-Narrow is the authority on which widths
             // belong in this set, and `write_narrow_value` owns their encodings.
@@ -4821,7 +4825,11 @@ fn populate_vector_from_jarray(
             }
         } else if matches!(
             elem_parts,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+            Parts::Byte(_, _)
+                | Parts::Short(_, _)
+                | Parts::ShortRaw(_, _)
+                | Parts::Int(_, _)
+                | Parts::IntRaw(_, _)
         ) {
             // A narrow-integer element — the element twin of the field arm above, and
             // @FR-L-Narrow is the authority on the width set for both.

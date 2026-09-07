@@ -2551,6 +2551,7 @@ impl Stores {
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Base => {}
         }
@@ -3118,7 +3119,8 @@ impl Stores {
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
-            | Parts::Int(_, _) => {}
+            | Parts::Int(_, _)
+            | Parts::IntRaw(_, _) => {}
             // A stored 12-byte `DbRef` — the closure half of a `fn(…)` struct field — is
             // deliberately NOT re-pointed: the copy keeps the source's pointer and ALIASES
             // its closure record, which is why a bound fn-ref field read is marked
@@ -4059,6 +4061,7 @@ impl Stores {
             Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_)
             | Parts::DbRef => false,
@@ -4165,6 +4168,7 @@ impl Stores {
             | Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_)
             | Parts::DbRef => false,
@@ -4302,6 +4306,7 @@ impl Stores {
             | Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_) => true,
             // A stored DbRef names another store, and this rebuild only moves

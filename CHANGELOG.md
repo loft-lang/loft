@@ -14,6 +14,17 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `u32` value above 2147483647 no longer reads back as a negative number.**  Four bytes do not
+say whether they are signed, and loft's storage schema had only the signed reading of them: a
+`u32` field or element was WRITTEN unsigned and read back sign-extended everywhere the schema
+drove the read.  One record answered two different values for one field depending on how you
+asked — `r.a` gave `3000000000` while printing the record gave `-1294967296` — and a `hash`,
+`sorted`, `index` or `spatial` lookup answered `null` for a record its own `for` loop happily
+yielded.  A nullable `u32?` was wrong in both directions: an absent one printed as `-1`, and a
+present `2147483648` disappeared from the record entirely, because that is exactly the bit
+pattern the signed reading reserves for absence.  Every route now reads a `u32` as a `u32`, and
+`i32` is unchanged.
+
 **Pattern matching now works over a vector whose elements may be absent.**  `match v { [Id { x }]
 => x, … }` over a `vector<Tok?>` was refused with an error that pointed at a comma and explained
 nothing, and the shorter spelling `[Id]` was worse: it quietly matched EVERY element — a

@@ -1152,30 +1152,25 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
                     // sentinel, so a present `i16?` rendered one too low through the schema
                     // while reading the same field answered correctly.
                     let m = int_spec.part_min(s, field_nullable);
-                    if s == 1 {
-                        database.byte(m, field_nullable)
-                    } else if s == 2 {
-                        // The schema Part MUST match the op the codegen chose via the ONE
-                        // width→op home (`NarrowIntKind::of(2, nullable, narrow_vec=false)`):
-                        // a NULLABLE 2-byte field is `Short` (the `+1` sentinel encoding), a
-                        // NON-null one is `ShortFull` (direct, written via `OpSetShortRaw`).
-                        // The schema READ (`ShowDb`/`to_json`/store round-trip) uses this Part,
-                        // so a non-null field MUST be `Parts::ShortRaw` (direct decode) — using
-                        // `Parts::Short` here made the read apply the `+1` shift the direct
-                        // write never did, so a non-null `u16` field read back off-by-one
-                        // (`7 → 6`) / as `i32::MIN` at the boundary, while field access (which
-                        // already uses `OpGetShortFull`) was correct.  Pre-existing for
-                        // `u16 not null`; F2 exposed it for plain `u16` (now non-null).
-                        if field_nullable {
-                            database.short(m, field_nullable)
-                        } else {
-                            database.short_raw(m, field_nullable)
-                        }
-                    } else if s == 4 {
-                        database.int(m, field_nullable)
-                    } else {
-                        database.name("integer")
-                    }
+                    // The schema Part MUST match the op the codegen chose via the ONE
+                    // width→op home, so both are taken from the SAME `NarrowIntKind`
+                    // rather than re-derived here from the width.  What the schema Part
+                    // decides is the READ (`ShowDb` / `to_json` / the store round-trip /
+                    // every keyed lookup); a slot whose Part names a different encoding
+                    // than its ops answers those routes wrong while a direct field access
+                    // stays correct, which is the shape both loft#812 (2-byte, the `+1`
+                    // shift a direct write never did) and loft#1437 (4-byte, a sign-extended
+                    // `u32`) took.  A struct field is not a narrow-vector element, so
+                    // `narrow_vec` is false; a width with no narrow Part keeps the wide
+                    // 8-byte `integer`.
+                    crate::data::NarrowIntKind::of(
+                        s,
+                        field_nullable,
+                        false,
+                        int_spec.unsigned_wide(),
+                    )
+                    .part(database, m, field_nullable)
+                    .unwrap_or_else(|| database.name("integer"))
                 }
                 Type::Hash(c_nr, key_fields, _) => {
                     let mut c_tp = data.def(c_nr).known_type;

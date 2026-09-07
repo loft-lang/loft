@@ -80,7 +80,11 @@ impl State {
             data.extend_from_slice(s.as_bytes());
         } else if matches!(
             &self.database.types[db_tp as usize].parts,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+            Parts::Byte(_, _)
+                | Parts::Short(_, _)
+                | Parts::ShortRaw(_, _)
+                | Parts::Int(_, _)
+                | Parts::IntRaw(_, _)
         ) {
             // @FR-L-Narrow classifies the width; the ENCODING here is deliberately not the
             // one that rule's field form uses, so this site must not be folded onto
@@ -105,6 +109,14 @@ impl State {
                         (v as i32).to_le_bytes()
                     } else {
                         (v as i32).to_be_bytes()
+                    };
+                    data.extend_from_slice(&b);
+                }
+                Parts::IntRaw(_, _) => {
+                    let b = if little_endian {
+                        (v as u32).to_le_bytes()
+                    } else {
+                        (v as u32).to_be_bytes()
                     };
                     data.extend_from_slice(&b);
                 }
@@ -312,7 +324,11 @@ impl State {
                     .write_data(&vec_ref, db_tp, little_endian, &data);
             } else if matches!(
                 &self.database.types[db_tp as usize].parts,
-                Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+                Parts::Byte(_, _)
+                    | Parts::Short(_, _)
+                    | Parts::ShortRaw(_, _)
+                    | Parts::Int(_, _)
+                    | Parts::IntRaw(_, _)
             ) {
                 // @FR-L-Narrow classifies the width; the raw-slot ENCODING below is not the
                 // field form, so this is not a fold candidate — see the write twin above.
@@ -353,6 +369,17 @@ impl State {
                             i64::from(i32::from_le_bytes(d))
                         } else {
                             i64::from(i32::from_be_bytes(d))
+                        }
+                    }
+                    // The unsigned 4-byte width ZERO-extends, for the same reason `u8`
+                    // and `u16` do one and two widths down: sign-extending it reads every
+                    // value past 2147483647 back as a negative number.
+                    Parts::IntRaw(_, _) => {
+                        let d: [u8; 4] = data[0..4].try_into().unwrap();
+                        if little_endian {
+                            i64::from(u32::from_le_bytes(d))
+                        } else {
+                            i64::from(u32::from_be_bytes(d))
                         }
                     }
                     _ => unreachable!(),
@@ -1270,8 +1297,8 @@ impl State {
                 5 => key.push(Content::Long(i64::from(*self.get_stack::<bool>()))),
                 6 => key.push(Content::Str(self.string())),
                 7 => key.push(Content::Long(i64::from(*self.get_stack::<u8>()))),
-                // The four narrow STORAGE widths (`Parts::Int` / `Short` / `Byte` /
-                // `ShortRaw`).  Narrowing happens at the field boundary, so the bound a
+                // The five narrow STORAGE widths (`Parts::Int` / `Short` / `Byte` /
+                // `ShortRaw` / `IntRaw`).  Narrowing happens at the field boundary, so the bound a
                 // caller pushes for a ranged scan is an ordinary 8-byte integer whatever
                 // the field's width — the same rule `generation/text.rs::emit_content`
                 // states for the native side, where every integer width answers a
@@ -1281,7 +1308,7 @@ impl State {
                 // iteration of a collection keyed on `u8` / `i16` / `i32` / a limited
                 // integer — including a bare `for r in coll`, which pushes bounds too, so
                 // the collection could be built and counted but never walked (loft#812).
-                8..=11 => key.push(Content::Long(*self.get_stack::<i64>())),
+                8..=12 => key.push(Content::Long(*self.get_stack::<i64>())),
                 _ => panic!("Unknown key type"),
             }
         }
@@ -2050,6 +2077,7 @@ impl State {
                     // every narrow-key hash since Parts::Int was introduced.
                     match &self.database.types[*k as usize].parts {
                         crate::database::Parts::Int(_, _)
+                        | crate::database::Parts::IntRaw(_, _)
                         | crate::database::Parts::Short(_, _)
                         | crate::database::Parts::ShortRaw(_, _)
                         | crate::database::Parts::Byte(_, _) => {

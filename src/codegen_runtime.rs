@@ -1905,6 +1905,15 @@ impl FileVal for i64 {
                     };
                     out.extend_from_slice(&b);
                 }
+                crate::database::Parts::IntRaw(_, _) => {
+                    let v = *self as u32;
+                    let b = if little_endian {
+                        v.to_le_bytes()
+                    } else {
+                        v.to_be_bytes()
+                    };
+                    out.extend_from_slice(&b);
+                }
                 _ => {
                     let b = if little_endian {
                         self.to_le_bytes()
@@ -1984,6 +1993,16 @@ impl FileVal for i64 {
                             i32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
                         } else {
                             i32::from_be_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
+                        });
+                    }
+                }
+                // Zero-extends, as its `u8` / `u16` siblings do.
+                crate::database::Parts::IntRaw(_, _) => {
+                    if bytes.len() >= 4 {
+                        *self = i64::from(if little_endian {
+                            u32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
+                        } else {
+                            u32::from_be_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
                         });
                     }
                 }
