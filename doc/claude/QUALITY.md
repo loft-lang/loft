@@ -2637,6 +2637,14 @@ than by the audit.
 
 
 
+*loft#1445 added the 734th and the 373rd, and it is a SPLIT rather than a new site.*
+`vectors::owns_keyed_store` is the ownership half of a question `is_keyed` was answering
+twice — *which kind of collection is this*, where a `&` link must peel, and *does this
+variable own a store*, where it must not.  It discriminates on `Type::RefVar` through
+`base()`, so it enters as PEELING; its sibling `keyed_kind` is a one-line forward to
+`is_keyed(tp.peel_link())` with no `matches!` of its own and is therefore not counted at all.
+The opaque column does not move: nothing left it, and the entry that joined already peels.
+
 ⚠ **The 368 → 372 / 360 → 356 move is the INSTRUMENT, not the code.**  `PEEL_CALL` and
 `PEEL_BIND` named `base` and `peel_optional` and not `peel_link` — so a site that peels MORE
 scored as though it peeled less.  `Type::peel_link`'s first line is `let mut tp = self.base()`
