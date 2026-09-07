@@ -761,7 +761,7 @@ impl Parser {
             } else if matches!(tp.base(), Type::Enum(d, true, _)
                     if !self.data.def(*d).name.starts_with("__nullable<"))
                 && matches!(operand.unspan(), Value::Var(_))
-                && self.views_a_collection(tp)
+                && self.views_a_nullable_element_slot(tp)
             {
                 // loft#1071 — a struct-enum bound FROM an inline element: the `for e in v`
                 // loop variable over a `vector<Shape?>`.  It is a sub-reference to the
