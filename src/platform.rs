@@ -613,6 +613,31 @@ mod reclaim_tests {
         // A proxy can read 0 for a working sweep: `reclaim_native_scratch_by` takes the
         // length from `entry.metadata()` BEFORE removing, and a failed `metadata()` removes
         // the file and adds zero.
+        // loft#1406's macOS leg fails HERE and has never been reproduced off a CI runner, so
+        // each question costs a round trip of a day.  The assertions therefore carry their own
+        // evidence: the sweep's two DECISION INPUTS for the dead name, and what the directory
+        // actually holds afterwards.  Both are decidable by reading on Linux — `4294967294`
+        // parses, and `pid_alive` refuses it before `kill` because it would become a negative
+        // process-group id — so a macOS run that disagrees names its own cause instead of
+        // leaving the next reader another hypothesis.
+        let evidence = |freed: u64| {
+            let mut names: Vec<String> = std::fs::read_dir(&dir).map_or_else(
+                |e| vec![format!("<read_dir failed: {e}>")],
+                |es| {
+                    es.flatten()
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect()
+                },
+            );
+            names.sort();
+            format!(
+                "freed {freed} bytes; runtime_scratch_pid = {:?}, pid_alive = {:?}; {} holds [{}]",
+                runtime_scratch_pid("loft_native_4294967294.rs"),
+                pid_alive(4_294_967_294),
+                dir.display(),
+                names.join(", ")
+            )
+        };
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
             !dead.exists(),

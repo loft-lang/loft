@@ -96,7 +96,8 @@ case "${1:-status}" in
         # each while holding a clippy or rustfmt error in the same verdict line.
         #
         # The markers are unambiguous, so the verdict names which of the three it is: clippy
-        # prints the lint doc URL, rustfmt prints `Diff in <path>`.
+        # prints the lint doc URL, rustfmt prints `Diff in <path>`.  (No apostrophes in here:
+        # this whole wrapper is one single-quoted `bash -c` string.)
         #
         # nextest prints `FAIL [   1.23s] (12/34) <binary> <test>` once per attempt, so the
         # retries of one test collapse under `sort -u`.
@@ -105,8 +106,13 @@ case "${1:-status}" in
         n=$(printf "%s" "$ft" | grep -c . || true)
         if [ "${n:-0}" -gt 0 ]; then
           note FAILED "$n test(s) — $(printf "%s" "$ft" | head -3 | tr "\n" " " | head -c 200)"
+        elif grep -q "rust-clippy/.*index\.html#" result.txt 2>/dev/null; then
+          lint=$(grep -oE "index\.html#[a-z_]+" result.txt 2>/dev/null | head -1 | sed "s/.*#//")
+          note FAILED "0 tests — CLIPPY, so THE CODE (lint ${lint:-?}): $(grep -m1 -E "^error: " result.txt 2>/dev/null | head -c 100)"
+        elif grep -q "^Diff in " result.txt 2>/dev/null; then
+          note FAILED "0 tests — RUSTFMT, so THE CODE: $(grep -c "^Diff in " result.txt 2>/dev/null) file(s) unformatted; run \`cargo fmt\`"
         else
-          note FAILED "0 test failures (toolchain/box/target-dir, not the code) — $(grep -m1 -E "^error" result.txt 2>/dev/null | head -c 120)"
+          note FAILED "0 tests and neither fmt nor clippy — toolchain/box/target-dir: $(grep -m1 -E "^error" result.txt 2>/dev/null | head -c 120)"
         fi
       fi' >/dev/null 2>&1 &
     echo "RUNNING $! $(date +%s) started" > $V
