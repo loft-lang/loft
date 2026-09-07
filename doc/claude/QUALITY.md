@@ -2633,6 +2633,15 @@ while the dense twin was fixed.  That is the same one-notion-two-spellings failu
 exists to find, caught by writing the predicate the way the match site already wrote it rather
 than by the audit.
 
+**loft#1412 added the 731st and the 360th** — `Parser::vector_operations` now reads the
+removal's element width off the vector's CONTENT (`@FR-H-Stride`), so it discriminates on a
+`Type` variant where it previously did not.  It scores OPAQUE and stays that way on purpose:
+its sole caller admits it only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is
+unreachable and a peel there would be dead code — `.remove` on a nullable vector does not
+resolve at all (*"Unknown field vector.remove"*), never reaching this function.  An opaque
+entry is not automatically a gap; this one is the classifier counting a shape test whose
+shape the caller has already decided.
+
 **The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
 carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
 `729 | 365 | 5 | 359` on the other — the middle column coincidentally equal, the outer two not.
