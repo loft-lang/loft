@@ -942,6 +942,16 @@ fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 #rust"DbRef {{store_nr: @v1.store_nr, rec: @v1.rec, pos: @v1.pos + u32::from(@fld)}}"
 // Simple type value write and read, vector elements always have fld=0.
 // All these types are passed by value instead of by reference.
+//
+// @FR-H-ReadNull / @FR-H-WriteNull / @FR-H-WriteOOB — every accessor below opens with the
+// SAME test, `rec == 0`, because a target that names no live cell has one spelling: an index
+// out of range answers `nullref` (@FR-H-Index) and so does a keyed miss or an unfilled field.
+// A getter answers its type's null sentinel; a setter does nothing and the program continues,
+// so a write can never resolve a store for an absent target and scribble at record 0.  These
+// bodies are the SHARED half of the two backends — the interpreter's `fill.rs` arm and the
+// native emitter both carry this text — which is why the two agree here by construction
+// rather than by test.  (The lock half of the write rule, @FR-H-WriteLocked, is not tested
+// here: it lives one level down in `Store::addr_mut`.)
 fn OpGetInt(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ stores.store(&db).get_int(db.rec, db.pos + u32::from(@fld))}} }}"
 fn OpGetCharacter(v1: reference, fld: const u16) -> character;

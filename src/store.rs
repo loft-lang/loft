@@ -2869,6 +2869,14 @@ impl Store {
     pub fn addr_mut<T: 'static>(&mut self, rec: u32, fld: u32) -> &mut T {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
+        //
+        // @FR-H-WriteLocked — the write half of the lock, and the last place that can refuse:
+        // a locked store never takes a write, so the rule's "never a silent successful write"
+        // holds here whatever route reached it.  What this site cannot do is tell WHOSE
+        // mistake it is — `read_only` is one flag for the const store, a worker borrow and the
+        // author's own `d#lock`, and only the last is a user error that deserves a loft fault
+        // with the author's line (loft#1405).  The assert is deliberately not a
+        // `debug_assert`: a release build must refuse too.
         debug_assert!(
             !self.read_only,
             "Write to read-only store at rec={rec} fld={fld} (locked by: {})",

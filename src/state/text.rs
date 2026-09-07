@@ -491,7 +491,15 @@ impl State {
         let mut till = *self.get_stack::<i64>() as i32;
         let mut from = *self.get_stack::<i64>() as i32;
         let v1 = self.string();
-        if from < 0 || from >= v1.len as i32 {
+        // @FR-Slice-Value — a negative bound is `size + bound`, floored at the start:
+        // the same rule the vector slice, `s[-1]` and `char_slice` follow, applied to the
+        // FROM end as it already is to the TILL end below.  A byte index is what a text
+        // slice takes, so the count is from the end in BYTES, and the boundary snap under
+        // this normalises whatever character it lands inside.
+        if from < 0 {
+            from = (from + v1.len as i32).max(0);
+        }
+        if from >= v1.len as i32 {
             self.put_stack(Str {
                 ptr: v1.ptr,
                 len: 0,

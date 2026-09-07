@@ -1814,6 +1814,10 @@ impl Stores {
         index: i64,
     ) -> crate::keys::DbRef {
         let len = crate::vector::length_vector(db, &self.allocations);
+        // @FR-H-Index — the native half of the one normalisation: negative counts from the
+        // end, and only a STILL-out-of-range index is out of bounds.  Kept byte-for-byte with
+        // `State::vec_get_or_raise` because a divergence here is a different program, not a
+        // different speed.
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {

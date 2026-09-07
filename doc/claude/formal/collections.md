@@ -196,12 +196,30 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
   (Slice-Value)  v[a..b] / v[a..=b] / v[a..] / v[..b]  yields a FRESH sub-collection value:
                    vector<τ> → a fresh vector<τ> (H-Alloc); text → a text substring.
                  Bounds CLAMP: a partial-OOB slice returns the in-range part; a fully-OOB slice ⟹ [].
+                 A NEGATIVE bound counts from the END — `size + bound`, floored at the start, so
+                 v[-2..] is the last two and v[-99..] is the whole value.  EITHER end, BOTH kinds.
+                 A reversed range (after that normalisation) ⟹ [].
                  `..` is end-EXCLUSIVE, `..=` end-INCLUSIVE.  (Index vs slice asymmetry for text:
                  v[i] ⇒ character, v[i..j] ⇒ text.)
 ```
-*Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234.
+*Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
+negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
 **To verify when writing:** the exact clamp values on both backends; freshness (a value slice is
 independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
+
+> **`size` is the unit the bound counts in, and the two kinds count different things.** A
+> `vector<τ>` bound is an ELEMENT index; a `text` bound is a BYTE offset (`size(s)`, not the
+> character count `len(s)`), so counting from the end counts bytes and the boundary snap under
+> it decides which character you get — `"héllo"[-4..]` lands inside the two-byte `é` and answers
+> `"éllo"`. That is the same units split `char_slice` exists for (STDLIB.md), and it is why the
+> negative bound is spelled `size + bound` here rather than `len + bound`.
+>
+> **The `from` end was the half that did not hold.** Until 2026-09-07 a text slice normalised
+> only its `till`: `s[-2..]` answered `""` where `v[-2..]` answered the last two, on both
+> backends, with `s[..-1]` right beside it — three implementations of one operation, and the one
+> that had it right (`ops::sub_text`, which INTERNALS.md documents as end-relative on both ends)
+> was the unused one. Pinned by `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft`,
+> which reads every text cell against the vector cell for the same bound.
 
 ### 1.6 Keyed range-slice iterators — `Slice-KeyedIter` (`D-key-1`, the shipped decided edge)
 

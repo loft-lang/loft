@@ -5299,6 +5299,12 @@ impl State {
     /// returns.  Negative indices use Python-style addressing
     /// (`v[-1]` == last); only after addressing yields a still-out-of-
     /// range value does the raise fire.
+    ///
+    /// @FR-H-Index — this is where the index becomes an address, so it is where "negative
+    /// counts from the end" and "out of range answers nullref" are decided for the
+    /// interpreter.  `Stores::vec_get_or_raise_runtime` is the native twin, and
+    /// `vec_get_hoisted_or_raise_runtime` sends every non-fast-path index back to it, so the
+    /// normalisation has one definition per backend rather than one per call site.
     #[must_use]
     pub fn vec_get_or_raise(
         &mut self,
@@ -5352,6 +5358,11 @@ impl State {
     /// today returns `char(0)` on OOB (silent wrong-answer); raise
     /// `IndexOutOfBounds` / `NegativeIndex` for the non-nullable path.
     /// Negative addressing mirrors `vec_get_or_raise`.
+    ///
+    /// @FR-H-Index for `text`, whose index is a BYTE offset — so the count from the end is in
+    /// bytes, and `ops::text_character` under this snaps back to the character containing
+    /// that byte.  The value-slice bound `s[a..b]` follows the same rule
+    /// (`@FR-Slice-Value`, `State::get_text_sub`).
     #[must_use]
     pub fn text_char_or_raise(&mut self, val: &str, index: i64) -> char {
         let len = val.len() as i64;

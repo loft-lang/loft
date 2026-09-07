@@ -829,14 +829,16 @@ fn get_record_lookup(
 ///   it points into the middle of a multi-byte sequence.
 /// - `till` is snapped *forward* past continuation bytes so it lands on the
 ///   next character boundary.
-/// - A negative `till` counts from the end of the string (`till += len`).
+/// - A negative bound counts from the end of the string (`bound += len`), floored at the
+///   start of the string — the rule `@FR-Slice-Value` gives every value slice.
 ///
 /// Bytecode equivalent: `State::get_text_sub` in `src/state/text.rs`.
 #[must_use]
 pub fn OpGetTextSub(text: &str, from: i64, till: i64) -> &str {
     let bytes = text.as_bytes();
     let len = bytes.len() as i64;
-    if from < 0 || from >= len {
+    let from = if from < 0 { (from + len).max(0) } else { from };
+    if from >= len {
         return "";
     }
     // Snap `from` backward to the start of the current character.

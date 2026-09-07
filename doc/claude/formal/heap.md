@@ -96,6 +96,9 @@ value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).
   (H-Read)      ⟨read(r ⊕ n), ⟨ρ, H⟩⟩ → ⟨H[r ⊕ n], σ⟩            when H ⊢ r live
   (H-ReadNull)  ⟨read(nullref ⊕ n), σ⟩ → ⟨null, σ⟩               (deref of absent = null, CONTINUE)
   (H-Index)     ⟨read(r[i]), ⟨ρ, H⟩⟩ → ⟨H[r ⊕ stride·i], σ⟩       when 0 ≤ i < len(r)
+                ⟨read(r[i]), σ⟩ → ⟨read(r[len(r) + i]), σ⟩         when -len(r) ≤ i < 0: a NEGATIVE
+                                                                   index names the element that far
+                                                                   from the END (v[-1] is the last)
                 ⟨read(r[i]), σ⟩ → ⟨null, σ⟩                        when i out of bounds (OOB = null, CONTINUE)
 ```
 
@@ -104,12 +107,24 @@ or `pos + stride·index`). Reading through **nullref**, or **out of bounds**, yi
 and execution **continues** — the same spreadsheet discipline as arithmetic (operational.md
 `E-Uncomp`): an absent value degrades to null locally, it never halts the run.
 
+**An index is end-relative when it is negative**, so "out of bounds" is `i ≥ len(r)` or
+`i < -len(r)`, not simply `i ∉ [0, len)` — `v[-1]` is the last element and `v[-len]` the first
+(LOFT.md § Vectors, @P384; the value-slice bound follows the same rule,
+[collections.md](collections.md) `Slice-Value`). The consequence is the one the language
+reference names: because a negative index in range yields a **real element**, a computed index
+that goes negative does not null-guard — `v[i] ?? d` catches `i ≥ len` and not a `-1`
+"not-found" sentinel. Both backends normalise at one pair of twinned sites
+(`State::vec_get_or_raise` / `Stores::vec_get_or_raise_runtime`), which is also where a still-out-of-range
+index becomes `nullref` plus a recoverable fault rather than a silent read.
+
 ### Write — update in place; null/lock faults are values or rejects, never wild writes
 
 ```
   (H-Write)      ⟨write(r ⊕ n, v), ⟨ρ, H⟩⟩ → ⟨v, ⟨ρ, H[r ⊕ n ↦ v]⟩⟩   when H ⊢ r live, store(r) writable
   (H-WriteNull)  ⟨write(nullref ⊕ n, v), σ⟩ → ⟨v, σ⟩                    (no store to update; a no-op step)
   (H-WriteOOB)   ⟨write(r[i], v), σ⟩ → ⟨v, σ⟩                           when i out of bounds (no-op, CONTINUE)
+                 A NEGATIVE i in [-len(r), -1) is NOT out of bounds — it names the element from
+                 the END (H-Index), and the write LANDS there.
   (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable, else a
                    runtime lock fault — never a silent successful write.
 ```
@@ -117,7 +132,10 @@ and execution **continues** — the same spreadsheet discipline as arithmetic (o
 **In words.** A write updates the byte(s) at the target and yields the written value. A write
 **through nullref** or **out of bounds** targets no live cell, so it is a no-op that continues
 (it must never scribble on an arbitrary address — the null discipline extends to the write
-side). A write to a **locked** store is refused (the `#lock` runtime guard / const store),
+side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
+every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
+and `absent.f = x` through a keyed miss take the identical step (measured on both backends —
+value, length and the neighbouring records all unchanged). A write to a **locked** store is refused (the `#lock` runtime guard / const store),
 never silently applied. Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
