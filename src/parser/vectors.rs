@@ -5303,7 +5303,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Type::Tuple(elems) = tp
             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
         {
-            let h = self.create_unique("tuphold", &owned_create);
+            // The hold BORROWS its source; it is the one branch here that mints no store.
+            // The three above create a backing (`OpDatabase` + a copy) and so are created
+            // with `owned_create`, whose empty dep list is `@FR-O-Proxy`'s proxy for "this
+            // binding owns its store" — which is what places their free.  This hold only
+            // names the source tuple so each member can be read once, so `@FR-O-Borrow`
+            // applies instead: it is tracked and never frees, and `@FR-O-Derived` then
+            // derives no free for it.  Created with the SOURCE's dep, since `with_deps`
+            // carries a tuple's dep into every element and the free is decided per element.
+            let base = match &src {
+                Value::Var(v) => *v,
+                Value::TupleGet(b, _) => *b,
+                _ => return None,
+            };
+            let hold_tp = tp.depending(base);
+            let h = self.create_unique("tuphold", &hold_tp);
             if h == u16::MAX {
                 return None;
             }
