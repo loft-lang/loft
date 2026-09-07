@@ -3540,6 +3540,43 @@ product's own setter, never a test-local mirror of the reader**; and when a test
 implementations agree, say which one is the oracle — if the answer is "neither", the test cannot
 fail for the reason it was written (loft#1431).
 
+**A VALUE assertion is vacuous when the bug is a use-after-free whose bytes survive — guard the
+fix's emitted SIGNATURE instead.**  loft's arena "free" is not a libc `free()`: the record keeps
+its bytes, so a read through the dangling reference answers *correctly*.  Both backends agree, the
+whole corpus is green, and `make ci` cannot see the defect at all — only a gate that WRITES on
+free (`LOFT_POISON=1`, which stamps `0xDEADBEEF`) makes it observable.  A guard written the
+obvious way — do the values come back right? — therefore passes on the broken build and is not a
+guard.
+
+Two measured shapes, and the second is the one to fear:
+
+- **loft#1361, the loud half.** `u = t` on a nested tuple emitted `OpFreeRef(_tuphold_1.0)` and
+  destroyed the source's vector; under poison the freed record surfaces as `0xDEADBEEF` arriving
+  in `vector_append`.  Wrong-looking, once you are looking.
+- **loft#1441, the quiet half.** A `text` return delivered through a work buffer, two identical
+  calls: *the FIRST answers `[world]` and the SECOND answers `[]`*.  The wrong answer is a
+  plausible empty string — a value the program could legitimately produce — so nothing about it
+  reads as corruption.  **The ASYMMETRY is the tell**: identical calls differing by POSITION means
+  a slot REUSED after a free, not a value never written.  A one-call probe cannot see it, and a
+  two-call probe that only checks "is the answer a string" passes.
+
+So when the symptom is layout-fragile, assert what the fix DETERMINES rather than what the
+program happens to compute: the emitted IR.  `OpFreeRef(_tuphold` must not appear, because the
+nested-tuple hold borrows its source and nothing may free through it.  That is deterministic,
+it fails on the pre-fix build with its own message, and it needs no sanitizer to run in `make ci`.
+
+**Pair it with a positive assertion that the construct is still BUILT.**  A bare "must not
+contain" passes for free the moment the code stops taking that path — it cannot distinguish
+*fixed* from *gone*, which is the failure mode that shape has by construction.  Assert the hold
+exists AND that nothing frees through it.
+
+⚠ The gate's own harness is load-bearing here.  `LOFT_POISON=1 loft --interpret --tests <file>`
+**passes** on the broken build: the nightly runs these through `wrap` under nextest
+(`--lib --test issues --test wrap --test strings --test frame_vars`), which leak-checks and gives
+each test its own process, and the `--tests` spelling reaches none of that.  Reproduce with the
+gate's command or you will report "cannot reproduce" on a defect that is present.
+
+
 **A fixture chosen for convenience lands where every candidate implementation agrees.**  This is
 the cause behind the two entries above and it was sighted three times in one day: `7` fits every
 width; `1..5` fits one byte; a `u16` spatial axis at `300` sits below the signed midpoint where a
