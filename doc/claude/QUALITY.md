@@ -482,6 +482,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 |---:|---:|---:|
 | 420 | 396 | **24** |
 
+
+
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
 shadow) and loft#1397's lint on top: **410 · 386 · 24**, both additions on the peeling side;
@@ -1513,6 +1515,8 @@ already found by hand, which is what makes the other sixteen worth reading.
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
 | 48 | **12** | 36 |
+
+
 
 Re-measured on the tree that holds both streams: **45 · 12 · 33**, and **46 · 12 · 34** once
 loft#1396's `value_view_container` joins it — another function resolving a projection by op
@@ -2638,6 +2642,7 @@ than by the audit.
 
 
 
+
 *This row is a property of the TREE and moves on almost any commit that adds, removes or
 re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather
 than adjusted by hand — the total is the other three columns summed, and a number measured
@@ -2647,13 +2652,24 @@ before a later commit cannot survive it.*
 `Optional` before deciding whether a return is a tuple, which is the fix itself — it matched
 `Type::Tuple` while the shape it had to catch was `Optional(Tuple(…))`.*
 
-*loft#1449 removed one from each of the first two columns, by MERGING rather than by peeling.*
-`Type::name` and `Type::source_name` were two match statements over the same variants, kept
-apart so the second could spell a keyed collection the way its author wrote it.  Held apart
-they drifted three times, and never at a keyed arm — always at a CONSTRUCTOR the second had
-not learned to recurse through.  They are now one body, `Type::render`, with a flag for which
-of the two jobs it is doing; the arms are exhaustive, so a constructor cannot be forgotten.
-Both entered as PEELING (each had an `Optional` arm), so the opaque count is unmoved.
+loft#1450 adds one to the SEEING-THROUGH side, and it is the first addition there whose whole
+job is the wrapper: `parse_assign_op` now asks whether an assignment's target is declared
+`Type::Optional` before letting a flow narrowing describe the slot, because a narrowing says
+what a slot HOLDS and never what it may hold — 735 -> 736 discriminating, 381 -> 382 seeing
+through.  The opaque column does not move.
+
+@PLN153 phase 4 batch 10 (the `scopes.rs` tier-0 group — the store-lifetime pass, loft#1439 /
+loft#1442) leaves the opaque column WHERE IT IS, and the arithmetic is worth reading: it peels
+`established_stores` (three record tests in one predicate) onto the seeing-through side and adds
+`escaping_record_holds`, the new predicate its other fix needed, on the OPAQUE side — where that
+one belongs, since the closure-record local it classifies is compiler-minted and can never carry
+a `?`.  The rest of the group is closed by probe cells: the text-return-buffer family delivers a
+`-> text?` correctly in five shapes (values and leaks, both backends), and the capture-adoption
+family answers `adopts=true` for every nullable capture — the defect was one layer below it, in
+the work-ref whose free was plain.  `check_ref_leaks` is the group's one KNOWN blind spot left
+alone deliberately: it asks `Type::Reference` bare, so it is blind to every nullable local, and
+it is also `#[cfg(debug_assertions)]` — which `[profile.dev.package.loft]` strips from every
+build this project makes, so widening it would be widening an assert nothing runs.
 
 *loft#1445 added a site to each of the first two columns, and it is a SPLIT rather than a new site.*
 `vectors::owns_keyed_store` is the ownership half of a question `is_keyed` was answering
