@@ -2473,7 +2473,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 730 | 371 | 5 | **354** |
+| 731 | 366 | 5 | **360** |
+
+**loft#1412 added the 731st and the 360th** — `Parser::vector_operations` now reads the
+removal's element width off the vector's CONTENT (`@FR-H-Stride`), so it discriminates on a
+`Type` variant where it previously did not.  It scores OPAQUE and stays that way on purpose:
+its sole caller admits it only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is
+unreachable and a peel there would be dead code — `.remove` on a nullable vector does not
+resolve at all (*"Unknown field vector.remove"*), never reaching this function.  An opaque
+entry is not automatically a gap; this one is the classifier counting a shape test whose
+shape the caller has already decided.
 
 **Re-measured on the joined tree for loft#1408, and a FOURTH number again**: `730 | 371 |
 5 | 354`, against `730 | 366 | 5 | 359` on this side and `728 | 369 | 5 | 354` on the one
