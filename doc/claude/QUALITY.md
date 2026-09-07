@@ -2473,7 +2473,23 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 732 | 366 | 5 | **361** |
+| 734 | 373 | 5 | **356** |
+
+**The row is the JOINED tree's, re-measured, and a FIFTH number that no branch carried.**
+`734 | 373 | 5 | 356`, against `732 | 366 | 5 | 361` on the branch the two `@FR-H-Stride`
+fixes came from and `730 | 371 | 5 | 354` on this one at the moment of the join.  Neither
+endpoint predicts it and the two are not addable: each measured a population the other did
+not have.  The paragraphs below name the count as of THEIR change, which is the history and
+not the current state — do not "fix" them to agree with the row, because each is a correct
+record of its own step and rewriting them is what destroys the audit.  **A number in a merge
+conflict is re-measured, never taken from a side** — that rule has now been applied to this
+one row on four separate joins, and it has been unguessable every time.
+
+Not attributed per function here, deliberately: the delta spans two streams' changes at once
+(the `@FR-H-Stride` pair below, plus loft#1409's cell machinery, loft#1415's null-arm source
+test, loft#1416's enum element arm and bare-variant peels, loft#1418's monomorph key and
+loft#1421's element-slot predicate), and an attribution nobody measured is a hypothesis
+dressed as a record.  Re-run `ir_walker_audit.py optional` for the per-function view.
 
 **Two `@FR-H-Stride` fixes moved this row, and neither opaque entry is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
