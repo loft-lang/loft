@@ -66,14 +66,14 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-07 | `ce0ea555` |
-| `doc-quality` | 2026-09-07 | `ce0ea555` |
+| `design-protocol` | 2026-09-07 | `a9743ea6` |
+| `doc-quality` | 2026-09-07 | `a9743ea6` |
 | `draw` | 2026-09-07 | `04c08d10` |
-| `engineering-rigor` | 2026-09-07 | `04c08d10` |
-| `formal-rules` | 2026-09-07 | `04c08d10` |
-| `loft-codegen` | 2026-09-07 | `04c08d10` |
-| `loft-debug` | 2026-09-07 | `04c08d10` |
-| `loft-plan-workflow` | 2026-09-07 | `ce0ea555` |
+| `engineering-rigor` | 2026-09-07 | `a9743ea6` |
+| `formal-rules` | 2026-09-07 | `a9743ea6` |
+| `loft-codegen` | 2026-09-07 | `a9743ea6` |
+| `loft-debug` | 2026-09-07 | `a9743ea6` |
+| `loft-plan-workflow` | 2026-09-07 | `a9743ea6` |
 | `loft-ship` | 2026-09-07 | `04c08d10` |
 | `loft-test` | 2026-09-07 | `04c08d10` |
 | `loft-write` | 2026-09-07 | `04c08d10` |
