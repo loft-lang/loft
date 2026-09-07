@@ -4397,18 +4397,30 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
+        // `τ?` has a THIRD spelling, and this gate has to ask all three of one face.
+        // A `&` parameter carries its nullability INSIDE the reference: `&integer?` is
+        // `RefVar(Optional(Integer))`, so asking `Type::Optional` of the OUTER type answers
+        // about the reference rather than about the slot the store lands in.  Read bare, every
+        // correct call handing a `τ?` to a `&τ?` parameter warned that it "becomes null there"
+        // in "the non-null type `&integer?`" — naming a nullable type non-null — and `warning`
+        // gates library CI, so a library taking a `&τ?` parameter failed on correct code
+        // (loft#1413).  The pointee is the slot, so the pointee is what this asks.
+        let null_face = match target_tp {
+            Type::RefVar(pointee) => pointee.as_ref(),
+            other => other,
+        };
         if self.first_pass
             || !crate::keys::pln25_dn3_enabled()
             || matches!(
-                target_tp,
+                null_face,
                 Type::Optional(_) | Type::Void | Type::Never | Type::Null
             )
-            // `τ?` has a second spelling: an INLINE slot holds an absent `S` as the synthetic
+            // The second spelling: an INLINE slot holds an absent `S` as the synthetic
             // `__nullable<S>` enum, which is not a `Type::Optional` and is exactly as nullable.
             // A tuple ELEMENT is such a slot, so recursing into a promoted tuple return reaches
             // one — and reading it as non-null made the check warn that a `W2?` becomes null in
             // `__nullable<W2>` (loft#1123).
-            || self.data.is_nullable_wrapper(target_tp)
+            || self.data.is_nullable_wrapper(null_face)
         {
             return false;
         }

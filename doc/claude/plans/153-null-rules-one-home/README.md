@@ -85,7 +85,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 5 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 6 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -599,6 +599,52 @@ for field reads and method calls, now asked of the @PLN35 slice machinery.  That
 step in the pattern machinery rather than a peel, so it is the batch's OPEN item — filed as
 **loft#1410** with the measurement, rather than half-fixed.  The guard says in its header what it does not
 cover and why.
+
+**Batch 6 — the `&` PARAMETER group in `scopes.rs`, and the THIRD spelling of `τ?` at phase 3's
+own gate (2026-09-07).**  `reassigned_ref_params`, `removed_ref_params`, `removed_params_map`,
+`def_reshape_refusals`, `amp_writeback_owned_copy`, `reclaim_safe` — the tier-0 group that
+reasons about `&` parameters in the scope pass, a different layer from batch 1's `&` LOCAL link.
+
+Reading them reshaped the hypothesis before a single probe: they match the OUTER
+`Type::RefVar(_)`, and a `&integer?` is `RefVar(Optional(Integer))`, so the shallow tests fire
+for a nullable parameter exactly as for a dense one.  The matrix therefore aimed at the deeper
+question — does a `&τ?` behave like a `&τ` — as eight nullable/dense pairs.  Seven pairs
+delivered identical values on both backends.  What every nullable cell carried instead was a
+DIAGNOSTIC its dense twin did not: *"a nullable `integer?` is stored into parameter 1 of `bump`
+of the non-null type `&integer?`"* — a correct program, told that the store its own signature
+asks for makes the value null, in a "non-null type" that is spelled with a `?`.
+
+**The cause is phase 3's own gate, and it is this plan's thesis in one line.**  `τ?` has THREE
+spellings at `nstore_unwrap_report`; two were handled — `Type::Optional` and the synthetic
+`__nullable<S>` (loft#1123, whose comment sits at that guard) — and the third is a `&`
+parameter, which carries its nullability INSIDE the reference.  Asking `Type::Optional` of the
+outer type answers about the REFERENCE, not about the slot the store lands in.  Cured by asking
+both tests of the pointee, because the pointee is the slot (**loft#1413**).  `warning` is the
+tier that gates library CI, so a library exposing a `&τ?` parameter failed its own CI on correct
+code with a self-contradictory message.
+
+The negative control is what makes it a fix rather than a deletion: a nullable argument into a
+`&integer` parameter must STILL warn, and does.  Both directions are in
+`tests/callarg_nstore.rs`, which counts the warning and so can go red — measured failing with
+the peel reverted, its twin staying green.  That Rust pair carries the falsification, because
+`make falsify` compares exit, asserts, leak, panic and refusals and a WARNING moves none of
+them: the `.loft` guard is INERT against the pre-fix build, correctly, and says so in place of
+a falsify stamp.  The `.loft` guard carries the other half — that the writes still reach the
+caller, so the silence is not bought by dropping the store.
+
+**One face left open, and it is a different site.**  A `&vector<T>?` parameter still reports.
+`control.rs::un_ref` converts `RefVar(τ?)` to `τ?`, and `convert` peels the destination's
+`Optional` before the `RefVar`, so the chain ends up asking *"store `vector<T>?` into
+`vector<T>`"* — a nullability question the dereference never posed.  Localised by instrument
+rather than by reading (`parse_index` → `un_ref` → `convert` ×3 → the gate, `what = "a slot"`,
+i.e. a bare convert with no store context); the identical read and write on a plain nullable
+vector LOCAL are clean, which is what makes it `&`-specific.  A recursion-order defect in
+`convert`, recorded on loft#1413 rather than bundled.
+
+Filed on the way, unrelated to null and found as the DENSE control of the removal pair:
+**loft#1411** — `v.remove(i)` through a `&vector<T>` parameter corrupts the caller's vector
+while `len` stays right (`[10,20,30,40,50]` with `remove(1)` gives `[10,20,50,0]`, both
+backends, already wrong inside the callee).  `sev:high`, `silent-wrong`.
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 

@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Store`'s gate asks one question — is this store's DESTINATION non-null? — and `τ?` has
+// three spellings at it.  Two were handled: `Type::Optional`, and the synthetic
+// `__nullable<S>` an inline slot holds (loft#1123, the comment at the gate).  The third is a
+// `&` parameter, which carries its nullability INSIDE the reference: `&integer?` is
+// `RefVar(Optional(Integer))`, so asking `Type::Optional` of the outer type answers about the
+// REFERENCE and not about the slot the store lands in.
+//
+// Read bare, every correct call handing a `τ?` to a `&τ?` parameter warned that the value
+// "becomes null there" in "the non-null type `&integer?`" — a message naming a nullable type
+// non-null, about a store that is exactly what the signature asks for.  `warning` is the tier
+// that GATES library CI (`LOFT_DENY_WARNINGS=1`), so a library taking a `&τ?` parameter failed
+// its own CI on correct code (loft#1413).
+//
+// Every cell is a PAIR: the `&τ?` spelling and its `&τ` twin, which must both run clean and
+// answer the same.  The pair is what carries the claim — a nullable parameter that merely
+// stopped warning while delivering the wrong value would pass a value-only check.
+//
+// Axes this file MOVES:  the pointee type across the storage shapes the gate distinguishes
+//                        (integer in-band, text by pointer, a struct by reference), and what
+//                        the callee does through the `&` (reassign the whole value, write a
+//                        FIELD through it, install a fresh record, and write NULL through it).
+// ⚠ Noted while writing this, and not the subject: `advice[slow-reference-parameter]` fires
+// for `&S` and NOT for `&S?`, so the nullable spelling of an unnecessary `&` goes unadvised.
+// The advice's own shape test is a separate reach question from this gate's.
+//
+// Axes it HOLDS FIXED:   the pointee is not a COLLECTION.  A `&vector<T>?` still reports, from
+//                        a different site — `un_ref` converts `RefVar(τ?)` to `τ?` and
+//                        `convert` peels the destination's `Optional` before the `RefVar`, so
+//                        it ends up asking "store `vector<T>?` into `vector<T>`", a
+//                        nullability question the dereference never posed.  That is a
+//                        recursion-order defect in `convert` rather than this gate, and it is
+//                        filed rather than bundled.
+//
+// @falsified-at: none — the defect's channel is a spurious WARNING, and `make falsify` compares
+//   exit, asserts, leak, panic and refusals, none of which a warning moves; run against 7dde4d4b
+//   this file is INERT, correctly.  The falsification lives in
+//   `tests/callarg_nstore.rs::a_nullable_argument_into_a_nullable_reference_parameter_is_silent`,
+//   which counts the warning and so CAN go red: measured failing with the peel reverted, while
+//   its negative twin `…_into_a_non_null_reference_parameter_still_warns` stays green — the pair
+//   that shows the fix asks the rule of the pointee rather than removing it.  This file carries
+//   the other half: that the writes still reach the caller, so the silence is not bought by
+//   dropping the store.
+
+struct S { n: integer }
+
+fn bump(n: &integer?)   { n = (n ?? 0) + 1; }
+fn bumpc(n: &integer)   { n = n + 1; }
+fn setb(s: &text?)      { s = "b"; }
+fn setbc(s: &text)      { s = "b"; }
+fn setn(v: &S?)         { v.n = 9; }
+fn fresh(v: &S?)        { v = S { n: 7 }; }
+fn freshc(v: &S)        { v = S { n: 7 }; }
+fn clear(n: &integer?)  { n = null as integer?; }
+
+fn main() {
+  // c1 — an in-band scalar: the argument is nullable, the parameter's POINTEE is nullable,
+  // and the store is what the signature asks for.  No diagnostic, and the write reaches back.
+  a: integer? = 5;   bump(a);
+  b: integer  = 5;   bumpc(b);
+  assert(a == 6 && b == 6, "c1 integer pair writes back");
+
+  // c2 — the pointer-stored scalar, whose absence is a null pointer rather than a sentinel.
+  t: text? = "a";    setb(t);
+  u: text  = "a";    setbc(u);
+  assert(t == "b" && u == "b", "c2 text pair writes back");
+
+  // c3 — a FIELD write through the reference: the destination is the field, and the `&`'s own
+  // nullability must not be read as the field's.  NO dense twin here on purpose: for a plain
+  // `&S` this shape draws `advice[slow-reference-parameter]`, correctly — a struct's field
+  // mutation already propagates without the `&`.  c4's pair carries the struct reference
+  // instead, with a whole-record install, which is a write the `&` is genuinely needed for.
+  s: S? = S { n: 1 };  setn(s);
+  assert(s.n == 9, "c3 a field write through a nullable reference reaches the caller");
+
+  // c4 — a WHOLE fresh record installed through the reference, which displaces what the
+  // caller's binding named.
+  s2: S? = S { n: 1 };  fresh(s2);
+  r2: S  = S { n: 1 };  freshc(r2);
+  assert(s2.n == 7 && r2.n == 7, "c4 whole-record pair writes back");
+
+  // c5 — NULL written through the reference.  The one direction only the nullable spelling
+  // has, so it stands alone: absence travels the same channel the value does, and the gate
+  // must not report the store that the `?` in the signature exists to permit.
+  z: integer? = 5;   clear(z);
+  assert(z == null, "c5 a null written through a nullable reference reaches the caller");
+
+  println("nullable reference parameters are silent ok");
+}

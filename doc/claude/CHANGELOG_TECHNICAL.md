@@ -9,6 +9,31 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `τ?` argument into a `&τ?` parameter no longer warns (2026-09-07)
+
+`(N-Store)`'s gate asks one question — is this store's destination non-null? — and `τ?` has
+THREE spellings at it. Two were handled: `Type::Optional`, and the synthetic `__nullable<S>` an
+inline slot holds (loft#1123). The third is a `&` parameter, which carries its nullability
+INSIDE the reference: `&integer?` is `RefVar(Optional(Integer))`, so asking `Type::Optional` of
+the outer type answered about the REFERENCE and not about the slot the store lands in.
+
+Every correct call handing a `τ?` to a `&τ?` parameter therefore warned that the value "becomes
+null there" in "the non-null type `&integer?`" — a message naming a nullable type non-null,
+about the store the signature exists to permit, with no discharge that could satisfy it.
+`warning` is the tier that gates library CI, so a library exposing a `&τ?` parameter failed its
+own CI on correct code.
+
+Both tests now ask the POINTEE, because the pointee is the slot. The rule is not removed, only
+asked of the right face: a nullable argument into a `&integer` parameter still warns, and that
+negative control is half the guard.
+
+loft#1413. Guarded twice, because the defect's channel is a warning and `make falsify` measures
+exit, asserts, leak, panic and refusals: `tests/callarg_nstore.rs` counts the warning and so can
+go red (measured failing with the peel reverted, its non-null twin green), and
+`tests/scripts/1413-…` holds the value half — the writes still reach the caller, so the silence
+is not bought by dropping the store. A `&vector<T>?` still reports from a different site
+(`un_ref` + `convert`'s recursion order), recorded on the issue.
+
 ### A nullable capture a closure mutates is neither boxed nor guarded (2026-09-07)
 
 A closure that MUTATES a captured scalar boxes it into a shared `__cell_<T>` record, so the
