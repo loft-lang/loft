@@ -67,9 +67,9 @@ row whose skill was deleted.
 | skill | reviewed through | commit |
 |---|---|---|
 | `design-protocol` | 2026-09-07 | `ae0c79d2` |
-| `doc-quality` | 2026-09-07 | `4918c410` |
+| `doc-quality` | 2026-09-07 | `1b1828c7` |
 | `draw` | 2026-09-07 | `04c08d10` |
-| `engineering-rigor` | 2026-09-07 | `4918c410` |
+| `engineering-rigor` | 2026-09-07 | `1b1828c7` |
 | `formal-rules` | 2026-09-07 | `ae0c79d2` |
 | `loft-codegen` | 2026-09-07 | `ae0c79d2` |
 | `loft-debug` | 2026-09-07 | `ae0c79d2` |
