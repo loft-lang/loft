@@ -1726,9 +1726,14 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
 /// as a view bound outside the `if` is concerned.
 fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet<u16> {
     let mut out: HashSet<u16> = HashSet::new();
+    // @FR-L-Null — `.base()` at each of the three record tests below: a `?` is a compile-time
+    // bit over the SAME storage, so `S?` establishes a store exactly as `S` does.  Asked bare,
+    // a nullable local's reassignment established nothing, so a view into it was neither
+    // materialised nor reported: `o: Q? = Q { … }; v = o.p; o = Q { … }; v.a` read a released
+    // record on both backends while its dense twin copied `v` out and said so (loft#1442).
     let note = |v: u16, out: &mut HashSet<u16>| {
         if matches!(
-            function.tp(v),
+            function.tp(v).base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) && !function.is_compiler_generated(v)
         {
@@ -1758,7 +1763,7 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
             // for the same var, not an establishment of its own.
             let establishes = match rhs.unspan() {
                 Value::Var(src) => matches!(
-                    function.tp(*src),
+                    function.tp(*src).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _)
                 ),
                 Value::Call(f, _) => data.def(*f).name.starts_with("n_"),
@@ -1775,7 +1780,7 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
                 Value::Block(_) | Value::Insert(_) => matches!(
                     rhs.tail().unspan(),
                     Value::Var(src) if matches!(
-                        function.tp(*src),
+                        function.tp(*src).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
                     )
                 ),
@@ -5113,6 +5118,52 @@ pub(crate) fn capture_adoption_owns_free(
     !built_with.reassigned_after_build.contains(&v)
         && (function.is_captured(v) || backs_an_adopted_capture(data, function, built_with, v))
         && crate::data::is_dbref(function.tp(v).base())
+}
+
+/// Does a closure record that LEAVES this frame hold the store of local `witness`?
+///
+/// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the
+/// frame outlives the other.
+///
+/// [`capture_adoption_owns_free`] says the record ADOPTED the capture, and that alone does not
+/// decide who frees: a record built and left behind dies with the frame WITHOUT a free of its
+/// own — the fn-ref type carries `Deps::frame1` precisely so the scope sweep skips it — so its
+/// cascade never runs and the frame's release is the store's only one.  A record handed OUT is
+/// the caller's, and its cascade frees what it adopted, so a frame release there is a second
+/// free of one store.
+///
+/// The escaping records are the ones the declared return type names, `DepEntry::CalleeFrame`
+/// being the fn-ref's own spelling of "this value carries that record".  Asking whether a
+/// record holds THIS witness — its capture attributes are named after the locals they took —
+/// is what keeps a function that returns one closure while keeping another from declining a
+/// free the kept one still owes.
+fn escaping_record_holds(data: &Data, function: &Function, d_nr: u32, witness: u16) -> bool {
+    if d_nr == u32::MAX || !function.is_captured(witness) {
+        return false;
+    }
+    let name = function.name(witness);
+    data.def(d_nr).returned().depend().iter().any(|raw| {
+        let crate::data::DepEntry::CalleeFrame(w) = crate::data::DepEntry::decode(*raw) else {
+            return false;
+        };
+        if w >= function.count() {
+            return false;
+        }
+        let Type::Reference(record, _) = function.tp(w) else {
+            return false;
+        };
+        let record = *record;
+        if !data.def(record).name.starts_with("__closure_") {
+            return false;
+        }
+        let a = data.attr(record, name);
+        // …and the record's death has to REACH the store: the cascade follows an attribute
+        // holding a 12-byte DbRef, which is what `capture_attr_is_cascade_relevant` asks.  A
+        // capture it does not follow — a record `Enum`, whose attribute is not a `Reference` —
+        // is adopted for the free-suppression's purposes and freed by nobody, so the frame's
+        // release is still the only one.
+        a != usize::MAX && capture_attr_is_cascade_relevant(data, record, a)
+    })
 }
 
 /// The backing local a capture named AT THE CLOSURE BUILD — the store the record actually
@@ -9094,7 +9145,21 @@ impl Scopes<'_> {
                         }
                     } else if is_work_ref
                         && let Some(&witness) = self.literal_buffer.get(&v)
-                        && (witness == ret_var || return_sources.contains(&witness))
+                        && (witness == ret_var
+                            || return_sources.contains(&witness)
+                            // loft#1439 — the record ADOPTED the capture (so the frame emits no
+                            // free for the local) and that record LEAVES the frame (so its
+                            // cascade will free what it holds).  Both halves are load-bearing:
+                            // without the first, a capture the record only borrows loses its
+                            // sole release; without the second, a record left behind dies with
+                            // no free of its own — the fn-ref type carries `Deps::frame1` so the
+                            // sweep skips it — and its cascade never runs.
+                            || (capture_adoption_owns_free(
+                                data,
+                                function,
+                                &self.capture_build_backing,
+                                witness,
+                            ) && escaping_record_holds(data, function, self.d_nr, witness)))
                     {
                         // loft#1317 — the buffer an inline record literal minted, whose store
                         // the local it was aliased into is now HANDING TO THE CALLER.  This

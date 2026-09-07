@@ -13,6 +13,7 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 **Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and FOUR batches landed, the audit row moving DOWN for the first time (359 → 354, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 **Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and EIGHT batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 **Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and NINE batches landed, the audit row moving DOWN three times (359 → 354 → 351 → 347, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and TEN batches landed, the audit row moving DOWN three times (359 → 354 → 351 → 347, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -94,6 +95,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 6 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 8 batches landed; the row moved DOWN twice (359 → 354 → 351) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 9 batches landed; the row moved DOWN three times (359 → 354 → 351 → 347) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 10 batches landed; the row moved DOWN three times (359 → 354 → 351 → 347) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -886,6 +888,88 @@ COMPATIBILITY question), **loft#1432** (a `τ?` receiver overload after its dens
 unreachable while the reverse order is refused as a redefinition — one of the two is wrong), and
 **loft#1434** (a nullable collection cannot be ITERATED but can be INDEXED, and the refusal names
 neither the `?` nor the `?? []` that works — the ITERATION family, which is batch 10's group).
+
+**Batch 10 — the `scopes.rs` tier-0 group, where the null spelling costs a STORE (2026-09-07).**
+Seventeen tier-0 functions, of which batch 6 had walked the `&`-parameter six.  The remaining
+group is the store-lifetime pass's own: who owns a store, who frees it, and which locals a
+statement gives a new one.  Two defects, both `sev:high` `silent-wrong`, both use-after-free,
+both on the two backends alike — and neither one visible on the value channel, which is the
+methodological finding of this batch.
+
+- **loft#1439** — a closure that OUTLIVES its frame and captures a nullable heap local reads a
+  released record.  `c: S? = S { … }` lowers through a work-ref (the store is minted into
+  `__ref_p2_1` and the local adopts it) where the dense spelling has no work-ref at all, and
+  that work-ref's free ran unconditionally right after `OpSetDbRef(___clos_1, 0, n)` handed the
+  store to the closure record.  loft#1317 had made that free conditional for the RETURNED local
+  and its comment states the boundary it chose — *"Where the local is NOT returned, this plain
+  free is the store's only release — the local may be captured (the record adopted it and the
+  frame emits nothing)"* — which is right for a closure that STAYS and wrong for one that
+  LEAVES.  THREE facts have to meet, and each alone is a wrong answer: the record adopted the
+  capture, the record ESCAPES (`DepEntry::CalleeFrame` in the declared return type), and the
+  capture attribute is one the cascade FOLLOWS.  The third was found by the matrix, not by
+  reading: a record-`Enum` capture is adopted for the suppression's purposes and not followed by
+  the cascade, so declining the frame's free there LEAKS (`kt=83 Circle50×1`).
+- **loft#1442** — a view into a nullable local is not materialised when the local is reassigned.
+  `established_stores` names the record kinds bare at three tests, so an `Optional(Reference)`
+  local establishes nothing however it is assigned: `o: Q? = Q { … }; v = o.p; o = Q { … }; v.a`
+  read a released record while its dense twin copied `v` out and printed the advice that says
+  writes through it no longer reach the source.  Both faces are one miss — no materialisation
+  AND no report — so the nullable case is the one where the user is told nothing.
+
+**The rules were silent on who frees a capture, so the rule was written.**  `(L-CapOwn)` in
+[closures.md](../../formal/closures.md): a captured heap store is freed ONCE, by whichever of the
+record and the frame outlives the other; a record left behind never frees at all (the fn-ref type
+carries its frame dep, so the sweep skips it), and the record's reach is its CASCADE.  That is
+the sentence the three facts above are each a clause of.  Writing it also moved the chapter's
+deviation count off zero: **D-clo-24** (loft#1440) is TWO closures over ONE local where only one
+escapes — both records adopt the store, the one left behind frees it, and the caller reads a
+released record.  Its DENSE twin fails identically, which is what says it is adoption itself —
+an ownership TRANSFER where `(L-CapHeap)` says SHARE — and not anything about the `?`.  Filed,
+not fixed: the cure is a design step in the capture model.
+
+**Why the chapter's `OPEN: 0` did not see either.**  Its oracle paragraph names what the closing
+guards hold FIXED, and the first item is *"every closure is built in the frame that calls it"* —
+which is precisely the axis both defects live on.  An `OPEN: 0` is only as strong as the oracle
+under it, met here as plainly as anywhere in this plan.
+
+**And the value channel does not score these.**  Both guards read INERT under a plain `make
+falsify` and are falsified with the instrument armed (`LOFT_STRICT_STORES=1` — that half alone,
+measured: the question is WHEN the store was released, not what its bytes read afterwards, so
+`LOFT_POISON` adds nothing to these two),
+because a released record keeps its bytes until something writes over them: the same probe
+answered `-2401053088876216593` in one program and the right value in another whose only
+difference was what ran before it.  Written into both guards' `@falsified-at` lines, and into the
+issues, because a repro whose garbage is not reproducible reads as a fix when it is a coincidence.
+
+`scripts/introspect_diff.sh` over the corpus against the pre-batch-9 compiler: **DIFFERENT 10 of
+1356**, and every one is accounted for — eight are this stream's own new guards, and the two
+pre-existing files (`05-enums.loft`, `09-enum.loft`) are batch 9's loft#1435, which gave them
+dispatchers they never had.  Batch 10 changes WHICH FREES ARE EMITTED and moved no existing
+program's emission at all: the two conditions it adds fire only for a nullable local a view
+outlives and for a nullable capture a closure carries out of its frame, and the corpus has
+neither.
+
+Guards: `1439-an-escaping-closure-keeps-its-nullable-capture.loft` (the escaping nullable capture,
+with the dense, absent, vector, hash, text, KEPT and record-enum cells that make the three facts
+separable) and `1442-a-view-into-a-nullable-local-is-materialised.loft` (a field view and an
+element view across a reassignment, each beside its dense twin, plus the no-reassignment control
+that must NOT be copied).  The `optional` row stays at **347**: `established_stores` peels onto
+the seeing-through side and `escaping_record_holds` joins the opaque side, where a
+compiler-minted closure-record local belongs.
+
+Closed by probe cells rather than by a peel: the text-return-buffer family
+(`any_text_return_buffer`, `text_return_buffer_for`, `check_text_return_path`,
+`has_return_buffer`) delivers a `-> text?` correctly in five shapes, and the capture-adoption
+family (`mark_borrowed_captures`, `capture_is_adopted`, `record_adopts_capture`) answers
+`adopts=true` for every nullable capture — measured with an env-gated print rather than assumed,
+which is what moved the search one layer down to the work-ref.  `scan_inner`'s block-tail HOIST (whose absence is a
+codegen panic, not a wrong value) and `scan_if`'s text test are closed the same way: a block
+whose tail is a nullable record, a `text?` bound across two `if` arms, and their dense twins,
+right on both backends with no leak.  `check_ref_leaks` is left alone
+on purpose and is recorded here as the group's known blind spot: it asks `Type::Reference` bare,
+so it is blind to every nullable local, and it is `#[cfg(debug_assertions)]`, which
+`[profile.dev.package.loft]` strips from every build this project makes — widening an assert
+nothing runs is not a fix.
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 

@@ -80,6 +80,13 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  out of range, and answers identically to the same variable never captured
                  at all.  The share (L-CapWrite) grants is about WHERE the write lands; it
                  grants nothing about what the variable may hold.
+  (L-CapOwn)     a captured heap store is freed ONCE, by whichever of the two outlives the
+                 other.  A closure record that LEAVES its defining frame takes the release over:
+                 its cascade frees what it adopted, so the frame must not.  A record left BEHIND
+                 never frees at all — the fn-ref type carries its frame dep so the scope sweep
+                 skips it — so there the frame's release is the store's only one.  The record's
+                 reach is its CASCADE: a capture attribute the cascade does not follow is not
+                 covered by any adoption, whatever the free-suppression believes.
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -152,19 +159,32 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in
-[closures-history.md](closures-history.md).
+**OPEN: 1.**
 
-> **An `OPEN: 0` is a claim to re-measure, and this is what its oracle covers.** The closing
-> guards are `1248-…` (a fn-ref `??` join's argument witness and single capture witness),
+- **D-clo-24** *(open, loft#1440)* — `(L-CapOwn)` says a captured store is freed once, and TWO
+  closures over ONE local both adopt it: where one of them escapes and the other is left behind,
+  the one left behind releases the store the escaped record still holds, and the caller reads a
+  released record.  Both spellings fail, dense and nullable alike, on both backends, so it is
+  adoption itself — an ownership TRANSFER where `(L-CapHeap)` says SHARE — rather than anything
+  about the `?`.  The cure is a design step in the capture model (the second adopter borrows),
+  which is why it is filed rather than fixed.
+
+> **An `OPEN: 0` was a claim to re-measure, and re-measuring is what moved it to 1.** The
+> closing guards are `1248-…` (a fn-ref `??` join's argument witness and single capture witness),
 > `1248b-…` (the capture SLOT: two store-bearing captures, a captured collection, a capture
 > beside a pure mint, a capture returned directly), `1257b-…` (a collection return freed by
 > identity, every kind and spelling) and `1320-…` (a branch-joined binding).  What they hold
-> FIXED: every closure is built in the frame that calls it, every witness variable is assigned
+> FIXED: **every closure is built in the frame that calls it**, every witness variable is assigned
 > once, and no closure is stored in a container or in a struct a container holds (a decided
 > refusal, C115/#247).  Two shapes are DECLINED and asserted by value only — `c ?? d`, where
 > either capture may come back, and a capture variable reassigned after the build — and each
 > keeps the leak it had.
+>
+> That first fixed axis is where loft#1439 and loft#1440 both live: a closure that OUTLIVES its
+> frame.  `1439-an-escaping-closure-keeps-its-nullable-capture.loft` covers it now — the
+> nullable capture that was read after release, with the dense, absent, collection, text, kept
+> and record-enum cells beside it — and its own axis note says what it still holds fixed (one
+> adopter per store, which is D-clo-24's).
 
 `D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to

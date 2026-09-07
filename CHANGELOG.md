@@ -34,6 +34,18 @@ yielded.  A nullable `u32?` was wrong in both directions: an absent one printed 
 present `2147483648` disappeared from the record entirely, because that is exactly the bit
 pattern the signed reading reserves for absence.  Every route now reads a `u32` as a `u32`, and
 `i32` is unchanged.
+**A closure you return keeps the value it captured, when that value may be absent.**  Writing
+`n: Thing? = Thing { … }` and returning a closure that reads `n` handed back a closure whose
+value had already been released — the answer was whatever happened to be in that memory next,
+usually still right, sometimes a huge meaningless number.  The dense spelling `n: Thing` was
+never affected.  Two closures over the SAME value where one of them escapes is still wrong the
+same way (loft#1440) and is being worked on.
+
+**A view into a value that may be absent is copied out when you replace that value.**  `v = o.p;
+o = Other { … }` copies `v` first and tells you it did — writes through `v` stop reaching `o` —
+but only when `o` was declared `Other`.  Declared `Other?` it did neither: no copy, no note, and
+reading `v` afterwards read released memory.
+
 **A method you write for one variant of an enum is found even when its receiver is `Square?`.**
 Writing `fn area(self: Square?)` — the way to say "this works even when the shape is absent" —
 made the method invisible to the dispatcher that routes `shape.area()` to the right variant, so
