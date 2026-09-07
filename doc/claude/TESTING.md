@@ -2956,6 +2956,21 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**A probe whose TEST is looser than its question, which is a different failure from the one
+below and fails the other way.**  Setup contamination puts the answer into the channel; this
+one accepts the wrong answer out of it — and it almost always fails toward "nothing found",
+which reads as clean.  SUBSTRING where EXACT was meant is the commonest form.  Measured
+2026-09-07 counting formal rules with no code citation: the predicate included
+`"0 citation" in <summary>`, which is `True` for **"10 citation(s)"** and "20 citation(s)", so
+every rule with exactly ten or twenty citations counted as having none.  Three chapters read
+one too high, and nothing in the output could show it — a plausible number, no error, no empty
+cell to notice.  It survived being used to CORRECT someone else's table.
+**Assert on the structured thing** (here: does a `src/` line come back at all), never on a
+substring of a human-readable summary; and when a number disagrees with someone else's, check
+whether the DIRECTION of the difference is possible before explaining it — the two trees here
+were in a superset relation, so the sign was already impossible and no story about them could
+have been true.
+
 **A probe whose SETUP contains the thing it tests for measures the setup.**  This is the one
 that survives "measure first", because the probe runs first and still answers the wrong
 question — a probe written from a hypothesis inherits the hypothesis.  Measured 2026-09-07,
