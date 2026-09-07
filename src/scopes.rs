@@ -7601,11 +7601,35 @@ impl Scopes<'_> {
                 // record on every `null` answer, both backends.  A parameter REBOUND in
                 // this body may hold a store of its own; that one is released by
                 // identity against its entry stash at scope exit (`rebind_orig`).
+                // ...and not a VIEW of one either, for the same reason and by the same rule.
+                // `match v { [a, ..] => a, _ => null }` over a `vector<t>` PARAMETER binds
+                // `a` to an element of the CALLER's store: the present arm hands that
+                // element straight back and the null arm never assigns `a` at all, so the
+                // conditional free is inert on both paths.  Inert but not harmless — `a`
+                // lives in the match block while this free is emitted at the RETURN, so
+                // native scoped the Rust `let` to the block and refused the program it had
+                // just generated (E0425, loft#1415).  The interpreter never saw it: frame
+                // slots have no block scope.
+                //
+                // `borrows_one_argument` is the exception the rule needs.  A nullable local
+                // BOUND from a parameter and later reassigned from a minting call owns a
+                // store on some paths and borrows on others (@FR-O-Latest, the D-own-16
+                // shape), and this free is its ONLY one — `get_free_vars` skips every return
+                // source.  So that one stays in, and the runtime comparison decides.
+                let store_is_the_callers = |function: &Function, v: u16| {
+                    (function.is_argument(v)
+                        || function
+                            .tp(v)
+                            .depend()
+                            .iter()
+                            .any(|&d| function.is_argument(d)))
+                        && !function.borrows_one_argument(v)
+                };
                 for &v in &sources {
                     if matches!(
                         function.tp(v),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
-                    ) && !function.is_argument(v)
+                    ) && !store_is_the_callers(function, v)
                     {
                         null_arm_record_sources.push(v);
                     }

@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-F-ParamHeap — a heap PARAMETER's store is the CALLER's, so nothing this frame does may
+// release it.  @PLN85's null-arm machinery already said so for the parameter itself: a
+// `τ?`-returning `match` hoists its value to `__ret_N` and frees each suppressed return
+// source conditionally, and a parameter is excluded from that set because "the null arm has
+// nothing of this frame's to release for it".
+//
+// A VIEW of a parameter is the same fact one step over, and it was not excluded.  A match-arm
+// binding over a vector PARAMETER (`match v { [a, ..] => a, _ => null }`) binds `a` to an
+// element of the caller's store: the present arm hands that element straight back, and the
+// null arm never assigns `a` at all.  The free is therefore inert on both paths — but it is
+// emitted at the RETURN while `a` lives in the match block, so `--native` scoped the Rust
+// `let` to the block and refused the program it had just generated (`E0425: cannot find value
+// `var_a``).  The interpreter never saw it, because frame slots have no block scope: one
+// decision expressed twice, and only half of it visible (loft#1415).
+//
+// The exclusion is deliberately not "every borrow".  `borrows_one_argument` — a NULLABLE local
+// bound from a parameter and later reassigned from a minting call — owns a store on some paths
+// (@FR-O-Latest), and this conditional free is its only one, because `get_free_vars` skips
+// every return source.  That half is held down by the code, not by a cell here — see the note
+// at the foot of this file and loft#1422.
+//
+// @falsified-at: 4e3ab5b7 — native exit 1 -> 0 (rustc E0425 on `var_a`, three occurrences,
+//   in `head_from_parameter`); interpret was already 0 on the control build, which is the
+//   point: only the native half moved, and the leak column is unchanged at `none` on both
+//   builds and both backends.
+
+struct S { a: integer }
+enum Tok { Fn { x: integer }, Id { x: integer } }
+
+fn head_from_parameter(v: vector<Tok>) -> Tok? { match v { [a, ..] => a, _ => null } }
+
+// The control that always compiled: a LOCAL subject materialises the view into a
+// function-scope temp first, so its free was already in a scope that declares it.
+fn head_from_local() -> Tok? {
+  d: vector<Tok> = [Id { x: 7 }];
+  return match d { [a, ..] => a, _ => null };
+}
+
+fn a_parameter_subject_answers_its_first_element() {
+  v: vector<Tok> = [Id { x: 7 }, Fn { x: 8 }];
+  h = head_from_parameter(v);
+  assert(h != null, "the present arm answers an element");
+  assert_eq("{len(v)}", "2", "the caller's vector is intact after the call");
+  assert_eq("{v[0].x}", "7", "and its first element still reads");
+}
+
+// The null arm is the path the free was guarding, and the one that would have released the
+// caller's store had the free ever fired: an empty vector matches no `[a, ..]`.
+//
+// ⚠ The absence is read through `??` and through an INLINE comparison, never off a bound
+// local.  `h = head_from_parameter(e); h == null` answers FALSE on both backends — a `τ?`
+// return that can view a parameter loses its absence when the caller binds it (loft#1421).
+// That is older than this fix and unchanged by it (A/B measured with the change applied and
+// reverted, identical both ways), so asserting the bound spelling here would pin someone
+// else's defect to this guard and fail it for a reason it does not own.
+fn an_empty_parameter_answers_null_and_leaves_the_caller_alone() {
+  e: vector<Tok> = [];
+  assert(head_from_parameter(e) == null, "the null arm answers null");
+  d = head_from_parameter(e) ?? Id { x: -1 };
+  assert_eq("{d.x}", "-1", "and discharges to the default");
+  assert_eq("{len(e)}", "0", "the caller's vector survives the null answer");
+
+  v: vector<Tok> = [Id { x: 7 }];
+  again = head_from_parameter(v);
+  assert(again != null, "a second call still reads a live store");
+  assert_eq("{v[0].x}", "7", "the caller's element is unchanged");
+}
+
+fn the_local_subject_control_still_answers() {
+  h = head_from_local();
+  assert(h != null, "the local-subject spelling is unmoved");
+}
+
+// ── The other half: a source this frame DOES own must still be freed on the null arm ──
+
+fn owned_or_null(c: boolean) -> S? {
+  s = S { a: 1 };
+  return if c { s } else { null };
+}
+
+// A local record source has no deps, so it stays in the null-arm set and the null path frees
+// the store it allocated.  Called in a loop: a regression here is a store per iteration, which
+// the harness's leak check reports rather than the assertions.
+fn an_owned_null_arm_source_is_still_freed() {
+  present = 0;
+  absent = 0;
+  for i in 0..24 {
+    r = owned_or_null(i % 2 == 0);
+    if r == null { absent = absent + 1; } else { present = present + 1; }
+  }
+  assert_eq("{present}", "12", "the present arm delivered");
+  assert_eq("{absent}", "12", "the null arm answered null");
+}
+
+// `borrows_one_argument` — a nullable local bound from a parameter and then reassigned from a
+// minting call — is deliberately kept IN the null-arm set by this fix, because it owns a store
+// on the minting path and this conditional free is its only one.  There is no cell for it here
+// on purpose: that shape LEAKS its minted store, 12 records over 24 calls, and it leaks
+// identically with this change applied and reverted (loft#1422).  A cell asserting it would
+// fail for a defect this fix neither causes nor cures, and one asserting the leak would freeze
+// it into the contract.  The inclusion is held down by the code comment and by loft#1422's own
+// guard when that lands.
