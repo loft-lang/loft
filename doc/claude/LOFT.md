@@ -1816,6 +1816,123 @@ match v {
 **Match is an expression:** it produces a value that can be assigned or returned. All
 arms must produce the same type (or void).
 
+### Slice patterns (matching a vector)
+
+A match arm can also describe the **shape of a vector**: how many elements it has, what sits
+at the front or the back, and what lies in between. Each element you name becomes a variable
+inside the arm.
+
+```
+match v {
+    []           => "empty",
+    [only]       => "one: {only}",
+    [first, ..]  => "starts with {first}",
+    _            => "other"
+}
+```
+
+**A slice pattern matches the whole vector.** `[a, b, c]` matches a vector of exactly three
+elements — not the first three of a longer one. Use `_` for an element you do not need, and a
+literal to require a particular value:
+
+```
+match v {
+    [a, _, c] => a + c,      // exactly 3 elements; the middle one is ignored
+    [1, x]    => x,          // exactly 2, and the first must be 1
+    _         => 0
+}
+```
+
+**`..` skips the middle.** Put it between the elements you care about. The vector may be any
+length that leaves room for them:
+
+```
+match v {
+    [first, .., last] => last - first,   // 2 or more elements
+    _                 => 0
+}
+```
+
+**`..name` also captures what it skipped**, as a `vector` you can return, index, or change:
+
+```
+match v {
+    [head, ..tail] => len(tail),        // everything after the first
+    _              => 0
+}
+
+match v {
+    [first, ..mid, last] => len(mid),   // everything between the two ends
+    _                    => 0
+}
+```
+
+Order the arms from the most specific to the least: `[head, ..tail]` already matches every
+vector with at least one element, so an arm below it that also starts with one element would
+never be reached.
+
+**Every slice pattern can fail, so a match on a vector needs a final catch-all.** No set of
+slice arms is ever complete on its own, because some length always escapes them. End with `_`
+or with a bare name, which binds the whole vector:
+
+```
+match v {
+    [a, b] => a + b,
+    whole  => len(whole)      // or `_ => 0`
+}
+```
+
+Leaving it out is a compile error: *"match on vector is not exhaustive — a slice pattern can
+fail (a length no arm matches); add a `_ =>` or a bare-binding final arm"*.
+
+**What a binding gives you** depends on the element type, and follows the same view-or-copy
+split as the rest of the language:
+
+| element type | writing through the binding |
+|---|---|
+| a struct, or a nested `vector` | updates the element inside the matched vector — a **view** |
+| `integer`, `float`, `boolean`, `character` | changes the binding only — a **copy** |
+| `text` | changes the binding only — a **copy** |
+| a `..name` rest, or a repetition's collected vector | a **fresh** vector, independent of the subject |
+
+```
+match ps { [p, ..] => { p.x = 99; }, _ => { } }   // struct element: ps[0].x is now 99
+match ns { [n, ..] => { n = 77; },   _ => { } }   // scalar element: ns is unchanged
+```
+
+Note the one place this differs from an enum arm: a `text` **payload** of a variant is a view
+(above), but a `text` **element** of a vector is a copy. Mutating a captured `..rest` never
+touches the vector it came from, which is what makes it safe to return.
+
+**Element patterns.** Beyond a name, a `_` and a literal, an element of a struct-enum vector
+can be matched by its variant, and a run of elements can be collected into one binding. This is
+what lets a single arm describe the shape of a token sequence:
+
+| form | matches |
+|---|---|
+| `Kw { word }` | an element of that variant, binding its field |
+| `(A { n } \| B { n })` | either variant — the branches must bind the **same** field name |
+| `(x: Num)*` | zero or more `Num` elements, collected into `x` |
+| `(x: Num)+` | one or more |
+| `(x: Num)*(Comma)` | a run with a separator between items; the separator is not collected |
+| `xs:integer*` | the same for a plain scalar element type |
+| `(Kw { k } Op { o })?` | an optional group — if absent, its captures read `null` |
+
+```
+match toks {
+    [Kw { word }, ..rest]        => "keyword {word}, {len(rest)} more",
+    [(x: Num)*, End { e }]       => "{len(x)} numbers then {e}",
+    _                            => "no match"
+}
+```
+
+A variant element may itself be matched deeper — `[Box { inner: Num { n } }, ..]` binds `n`.
+A slice arm takes an `if` guard like any other arm.
+
+**Two limits worth knowing.** An element written **after** a `..` must be a plain name or `_`;
+a literal or a variant pattern there does not parse (loft#1419). And a multi-pattern arm
+(`A { r }, B { r } => …`) is for enum variants only — it does not accept slice patterns.
+
 ### `is` variant check
 
 The `is` operator tests whether an enum value is a specific variant:
@@ -1922,6 +2039,9 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 [for n in 1..7 { n * 2 }]  // vector comprehension (builds [2, 4, 6, 8, 10, 12])
 [for n in 1..10 if n % 2 == 0 { n }]  // comprehension with filter
 ```
+
+**A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
+slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
 
 **Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
 be used in `for x in v[lo..hi] { … }` and wherever an iterator is
@@ -2633,8 +2753,19 @@ stmt         ::= expr [ ';' ]
 expr         ::= for_expr | match_expr | 'continue' | 'break' | 'return' [ expr ]
                | assignment
 match_expr   ::= 'match' expr '{' match_arm { ',' match_arm } '}'
-match_arm    ::= pattern { '|' pattern } [ 'if' expr ] '=>' expr
+match_arm    ::= pattern { ( '|' | ',' ) pattern } [ 'if' expr ] '=>' expr   // both: enum arms only
 pattern      ::= '_' | 'null' | literal | range | CamelIdent [ '{' field_bind '}' ]
+               | ident                       // whole-subject bind; vector subjects only
+               | slice_pat
+slice_pat    ::= '[' [ slice_elem { ',' slice_elem } ] ']'
+slice_elem   ::= '_' | ident | literal | CamelIdent [ '{' field_bind '}' ]
+               | '(' variant_alt { '|' variant_alt } ')'      // alternation, shared captures
+               | '(' ident ':' CamelIdent ')' rep             // collect a run of one variant
+               | ident ':' type rep                           // the same for a scalar element
+               | '(' slice_elem { slice_elem } ')' '?'        // optional group, captures null
+               | '..' [ ident ]                               // skip, optionally capturing
+rep          ::= ( '*' | '+' ) [ '(' CamelIdent ')' ]         // optional separator variant
+variant_alt  ::= CamelIdent [ '{' field_bind '}' ]
 assignment   ::= operators [ ( '=' | '+=' | '-=' | '*=' | '/=' | '%=' ) operators ]
 operators    ::= single { '.' ident [ '(' args ')' ] | '[' index ']' | '#' ident | '?' }
                { binary_op operators }   // '?' is the @PLN116 postfix default-fallback (tightest)
