@@ -4404,10 +4404,25 @@ extern crate loft;"
         if let Type::Integer(int_spec) = typedef {
             // Post-2c: the field's size may come from the integer alias's
             // `size(N)` annotation (captured in `Attribute.alias_d_nr` →
-            // `Data::forced_size`) OR from the `Type::Integer` range.
-            // Mirrors `src/typedef.rs:354-373` exactly so the runtime
+            // `Data::forced_size`), from the width the TYPE itself carries, or
+            // from the `Type::Integer` range.  Mirrors `fill_database`'s integer
+            // arm in `src/typedef.rs` exactly, all three rungs, so the runtime
             // Parts matches the interpreter's (Byte/Short/Int/base).
-            let field_size = forced_size.unwrap_or_else(|| typedef.size(nullable));
+            //
+            // The middle rung is the one a SYNTHESIZED field needs.  `parse_field`
+            // captures `alias_d_nr` for a field somebody declared, so `u8?` on a
+            // struct resolves its width through the alias; a field built from a
+            // Type alone — `__tuple<…>`'s elements, a mutated capture's `__cell_…`
+            // value — has no alias, and without this rung the range heuristic
+            // silently widens it (a nullable `u8` reserves its sentinel and becomes
+            // a 2-byte `short`).  The compiler reads the width off the type and does
+            // not widen, so the two disagreed about one field: `byte<0,true>` in the
+            // compiler's table against `short<0,true>` in generated `init()`, which
+            // renames every id past it (loft#739).  @PLN114 added the rung to the
+            // interpreter for the tuple case; this is its native twin.
+            let field_size = forced_size
+                .or_else(|| int_spec.forced_size.map(std::num::NonZeroU8::get))
+                .unwrap_or_else(|| typedef.size(nullable));
             // …including the OFFSET the Part carries: `part_min`, the same one the field's
             // ops encode against, which a nullable signed narrow field shifts by one.
             // Emitting the declared `min` here left the generated `init()` registering a

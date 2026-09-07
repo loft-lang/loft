@@ -2053,11 +2053,10 @@ or build a local and use that."
     /// must be created in pass 1; pass 2 looks them up via
     /// `data.def_nr(name)` (no creation).
     ///
-    /// Cells whose `cell_struct_name` returns `None` (exotic
-    /// integer widths, Reference / Function / Vector / etc.) are
-    /// silently skipped — phase 02d-iii's outer-binding rewrite
-    /// detects the missing cell at the use site and falls back to
-    /// today's stack-slot codegen.
+    /// Cells whose `cell_struct_name` returns `None` (Reference / Function / Vector /
+    /// etc.) are skipped — phase 02d-iii's outer-binding rewrite detects the missing
+    /// cell at the use site and falls back to stack-slot codegen.  No SCALAR is
+    /// declined, so that fallback never carries one (`@FR-L-CapWrite`).
     fn synthesize_cell_structs(&mut self, lambda_d_nr: u32) {
         if !self.first_pass {
             return;
@@ -2079,8 +2078,20 @@ or build a local and use that."
                 .data
                 .add_def(&cell_name, self.lexer.pos(), DefType::Struct);
             let value_tp = cell_value_type(tp);
-            self.data
+            // The FLAG has to say what the TYPE says.  `add_attribute` marks every
+            // attribute nullable, and a dense cell's `value` is not: that is the whole
+            // reason a nullable capture takes a `__cell_opt_` of its own rather than
+            // widening this one (`@FR-N-Store` — a `τ` field may not hold the sentinel).
+            // Left disagreeing, the field's width is read two ways — the declared width
+            // from the type, a sentinel-reserving one from the flag — which agree at 8
+            // bytes and part company at every narrow width: a `u8` cell registered as
+            // `byte<0,true>` in the compiler and `short<0,true>` in generated `init()`,
+            // one byte against two, with the ids past it renamed (loft#739).
+            let nullable = matches!(value_tp, Type::Optional(_));
+            let a_nr = self
+                .data
                 .add_attribute(&mut self.lexer, cell_d_nr, "value", value_tp);
+            self.data.set_attr_nullable(cell_d_nr, a_nr, nullable);
         }
     }
 
@@ -2121,8 +2132,8 @@ or build a local and use that."
     ///   change its call-site signature.  Argument boxing is a
     ///   follow-up sub-step (matrix row M / Case-B-on-arg uses
     ///   the explicit `Mutable<T>` path in phase 05).
-    /// - Skips names whose `cell_struct_name` returns `None`
-    ///   (exotic integer widths) — phase 02d-ii's silent gap.
+    /// - Skips names whose `cell_struct_name` returns `None` — no
+    ///   scalar type is among them.
     /// - Skips names already flipped on a re-entry (defensive).
     #[allow(
         dead_code,
@@ -5911,27 +5922,28 @@ fn ensure_tuple_defs_for_capture(
 /// capture into a 1-field record so closure mutations propagate
 /// back through the auto-Reference path (phase 02b/02c encoding).
 ///
-/// Returns `None` for any type the cell-synthesis pass doesn't yet
-/// support (exotic integer widths — u8/i8/u16/i16 — and any non-
-/// scalar type).  Phase 02d-i may have queued such names in
-/// `scalars_to_box` (the accumulator is intentionally inclusive);
-/// 02d-iii will detect a missing cell at the rewrite site and
-/// fall back to today's stack-slot codegen for those captures.
-/// Phase 02d-iv extends the supported set as the need surfaces.
+/// Returns `None` for a type that takes no cell at all — a reference, a collection, a
+/// function.  Every SCALAR gets one, at every integer width: `@FR-L-CapWrite` shares a
+/// captured scalar in the write direction whatever its type, so a scalar the namer
+/// declined would keep an un-boxed stack slot and lose the closure's write on any call
+/// that is not direct.
 ///
-/// Naming table (one cell per canonical type, deduped across all
+/// Naming table (one cell per storage identity, deduped across all
 /// captures):
 ///
 /// | Loft type | Cell name |
 /// |---|---|
-/// | `integer` (4-byte signed) | `__cell_integer` |
+/// | `integer` (canonical 8-byte) | `__cell_integer` |
 /// | `long` / wide integer (8-byte) | `__cell_long` |
 /// | `float` | `__cell_float` |
 /// | `single` | `__cell_single` |
 /// | `boolean` | `__cell_boolean` |
 /// | `character` | `__cell_character` |
 /// | `text` | `__cell_text` |
+/// | a narrow width (`u8`, `i16`, `integer limit(0, 100)`) | `__cell_int<width>_<min>_<max>` |
 /// | plain enum `E` | `__cell_enum_<E>` |
+///
+/// A nullable capture takes `__cell_opt_<stem>` instead (see below).
 pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<String> {
     // A NULLABLE capture takes a cell of its own.  `Optional(Ï)` shares `Ï`'s storage
     // in-band (C90), so the cell reads and writes with the same ops — but the `value`
@@ -5950,37 +5962,58 @@ pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<St
 /// The canonical cell name for a NON-nullable scalar, without the `__cell_` prefix —
 /// the naming table above, and the one place the boxable set is spelled.
 ///
-/// `None` means "this type gets no cell": a reference, a collection, a function, and the
-/// forced-size integer widths (`u8`/`i16`/â¦), which have no canonical cell template.
-/// A capture the namer declines keeps today's un-boxed stack slot.
+/// `None` means "this type gets no cell": a reference, a collection, a function.  A
+/// capture the namer declines keeps an un-boxed stack slot, which only carries a
+/// closure's write on a DIRECT call — so declining a scalar breaks `@FR-L-CapWrite`.
 fn cell_stem(tp: &Type, data: &crate::data::Data) -> Option<String> {
-    match tp {
-        Type::Integer(spec) => {
-            // Default-nullable byte_width: matches the storage the
-            // cell's `value` field will take.  i32 → 8 today (the
-            // bounds-range heuristic returns 8 for the I32
-            // template; that's the canonical "integer" storage),
-            // i64 → 8.  For the foundation phase we only emit two
-            // canonical integer cells; exotic forced-size widths
-            // (u8/i8/u16/i16) defer to 02d-iv.
-            let bw = spec.byte_width(true);
-            match (bw, spec.forced_size.is_some()) {
-                (8, false) if spec.max == u32::MAX => Some("long".to_string()),
-                (8, false) => Some("integer".to_string()),
-                _ => None,
-            }
-        }
+    // Name the STORAGE the cell takes, not the capture's spelling.  `cell_value_type`
+    // is the one decision about what the `value` field holds, so deriving the name from
+    // its answer keeps the two halves of a cell's identity — what it is called and what
+    // it stores — from drifting apart.  They are required to agree: the name is what
+    // dedupes cells, so two captures share storage exactly when they share a name.
+    match cell_value_type(tp) {
+        Type::Integer(spec) => Some(int_cell_stem(&spec)),
         Type::Float => Some("float".to_string()),
         Type::Single => Some("single".to_string()),
         Type::Boolean => Some("boolean".to_string()),
         Type::Character => Some("character".to_string()),
         Type::Text(_) => Some("text".to_string()),
         Type::Enum(d_nr, false, _) => {
-            let enum_name = data.def(*d_nr).name();
+            let enum_name = data.def(d_nr).name();
             Some(format!("enum_{enum_name}"))
         }
         _ => None,
     }
+}
+
+/// The stem naming an integer cell, carrying the spec's whole storage identity.
+///
+/// Two captures may share one cell only when their `value` field stores AND decodes
+/// identically, so the width, the bounds and the null-flag all reach the name.  Naming a
+/// narrow capture after its alias instead would give `integer limit(0, 100) size(1)` and
+/// `u8` a single cell, and the first one's declared range would silently widen to the
+/// second's — `@FR-L-CapBox`: boxing moves where a captured scalar lives and changes
+/// nothing its type promises.
+///
+/// The two canonical 8-byte templates keep the plain `integer` / `long` names every cell
+/// has always carried; only a narrow width needs the encoded form.
+fn int_cell_stem(spec: &crate::data::IntegerSpec) -> String {
+    if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+        return if spec.max == u32::MAX {
+            "long"
+        } else {
+            "integer"
+        }
+        .to_string();
+    }
+    // `m` for a negative bound: the stem is a definition NAME, so it may not carry `-`.
+    let lo = if spec.min < 0 {
+        format!("m{}", spec.min.unsigned_abs())
+    } else {
+        spec.min.to_string()
+    };
+    let nn = if spec.not_null { "_nn" } else { "" };
+    format!("int{}_{lo}_{}{nn}", spec.byte_width(true), spec.max)
 }
 
 /// The `__cell_<T>` definition a type points at, or `None` when the type is not a
@@ -6017,12 +6050,19 @@ fn cell_value_type(tp: &Type) -> Type {
     }
     match tp {
         Type::Integer(spec) => {
-            // Canonical wide vs narrow templates; bounds + null-flag
-            // are dropped to match the cell-name canonicalisation.
-            if spec.max == u32::MAX {
-                crate::data::I64.clone()
+            // A canonical 8-byte template drops its bounds + null-flag, so `integer` and
+            // `integer not null` share one cell.  A NARROW width keeps its spec whole:
+            // the width, the bounds and the reserved null sentinel are what the declared
+            // type promises, and a box that widened any of them would answer a value the
+            // author's type excludes (`@FR-L-CapBox`).
+            if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+                if spec.max == u32::MAX {
+                    crate::data::I64.clone()
+                } else {
+                    crate::data::I32.clone()
+                }
             } else {
-                crate::data::I32.clone()
+                tp.clone()
             }
         }
         Type::Text(_) => Type::Text(Deps::none()),
