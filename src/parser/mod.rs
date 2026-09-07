@@ -7124,7 +7124,18 @@ impl Parser {
                 // Written directly: `set_returned` refuses a second write on purpose (a return
                 // type must not change), and this does not change it — it adds the deps the
                 // type was declared without.
-                let with_dep = self.data.def(d_nr).returned().clone().depending(base);
+                //
+                // ATTR space, not frame: `base` is an attribute index — the guard above tests
+                // it against `attributes().len()` — and `Definition.returned` is a DEF-space
+                // home, so `Deps::attrs` is what states it.  `Type::depending` builds
+                // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
+                // `call_dependencies` reads this list with `as_attr_indices`.
+                let with_dep = self
+                    .data
+                    .def(d_nr)
+                    .returned()
+                    .clone()
+                    .with_deps(&crate::data::Deps::attrs(vec![base]));
                 self.data.definitions[d_nr as usize].returned = with_dep;
             }
         }

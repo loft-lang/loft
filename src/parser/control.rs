@@ -10216,6 +10216,20 @@ impl Parser {
                 }
                 dep.push(a as u16);
             }
+            // ⚠ This list is READ IN TWO SPACES, and re-tagging it does not close that.
+            // Every entry collected above is an ATTRIBUTE index and `Definition.returned`
+            // is the DEF-space home, so `call_dependencies` reads it with
+            // `as_attr_indices` — which trips `data.rs`'s frame/attr assertion under
+            // `-C debug-assertions=on` because `dep` starts as the current return type's
+            // list and inherits ITS space (measured on
+            // `tests/scripts/791-generic-vector-stride.loft`, items `[1, 2]`).
+            //
+            // Stating `Deps::attrs(dep.to_vec())` here was built and BACKED OUT: it moves
+            // the violation rather than closing it.  The retbuf renumber
+            // (`Type::renumber_frame_deps` -> `Deps::renumber_frame`) walks this same list
+            // as FRAME variables, so the attr tag then trips the opposite assertion at
+            // `data.rs:1543` across the whole corpus.  One list, two readers, two spaces —
+            // which reader is wrong is a design call, not a re-tag.
             let new_ret = if ret_is_optional {
                 Type::optional(Type::Text(dep))
             } else {
