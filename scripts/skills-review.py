@@ -104,6 +104,15 @@ PLACEHOLDER_SEG = re.compile(r"^(NN+|x{1,2}|foo|bar|my_[a-z_]*)(\.[a-z]+)?$")
 # design, so their absence from a checkout says nothing (@PLN112 for LIBRARIES.md).
 KNOWN_GENERATED = {"doc/claude/LIBRARIES.md"}
 
+# A bare umbrella directory is not a SOURCE: citing `doc/claude` in prose tracks the
+# whole doc tree, so every doc commit — including this review's own watermark commit —
+# re-opens the skill and the review can never settle.  Existence is still checked;
+# only the movement-tracking is refused this coarse a target.  SKILLS_REVIEW.md is
+# excluded for the same self-reference reason: the watermark table is the review's
+# own state, never a skill's source.
+TRACK_EXCLUDE = {"doc", "doc/claude", "scripts", "src", "tests", "default",
+                 ".github", ".claude", ".claude/skills", "doc/claude/SKILLS_REVIEW.md"}
+
 
 def code_regions(text: str) -> str:
     """Fenced blocks plus inline backtick spans — the only places a `make <target>`
@@ -157,7 +166,7 @@ def check_references(name: str, targets: set[str], tree_env: set[str]):
         if not os.path.exists(os.path.join(ROOT, p)):
             broken.append(f"path does not exist: {p}")
             continue
-        if p.startswith(TRACKED_PREFIXES):
+        if p.startswith(TRACKED_PREFIXES) and p.rstrip("/") not in TRACK_EXCLUDE:
             tracked.add(p)
     for t in sorted(set(MAKE_RE.findall(code_regions(text)))):
         if t not in targets:
