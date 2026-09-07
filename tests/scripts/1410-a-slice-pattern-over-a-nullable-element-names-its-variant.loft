@@ -1,0 +1,215 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1410 — a structural (slice / PEG) `match` pattern over a `vector<E?>`.
+//
+// `(L-Null)` gives `E?` the layout of `E`: an enum's variants are numbered from 1 because 0 is
+// the absent value, so a variant tag test already answers FALSE for an absent element — which is
+// `(M-Variant)` read literally, an absence is no variant.  What was missing is that the pattern
+// machinery asked `Type::Enum` of the WRAPPER: `[Id { x }]` over a `vector<Tok?>` was a parse
+// error naming nothing, and the unit spelling `[Id]` fell through to the bare-name branch and
+// became a BINDING that matched every element — a `Fn`, and an absent one — while its dense twin
+// answered "no match".  `Parser::pattern_variant_enum` is the one home the six element-identity
+// sites and the two field sub-pattern arms now ask.
+//
+// Every nullable cell is written beside its DENSE twin and both are asserted, because the
+// question is not "does the nullable spelling work" but "does it answer what its dense twin
+// answers"; and every ABSENT cell asserts the arm was NOT selected, which is the half the silent
+// spelling got wrong.
+//
+// Axes this file MOVES:  pattern shape (variant sub-pattern · bare variant · bare binding ·
+//                        named capture · alternation · repetition · wildcard · rest · a
+//                        two-element sequence), the matched element's state (the named variant ·
+//                        another variant · ABSENT), the subject (a local · a parameter · a CALL
+//                        RESULT · a cursor), how often the match runs (once · in a LOOP, where a
+//                        cursor that binds without advancing hangs instead of answering wrong),
+//                        and the element's nullability (each cell against its dense twin).
+// Axes it HOLDS FIXED:   `matrix_axes.py` — the container is a `vector` and the element a
+//                        struct-enum in every A/B cell, both by construction: a slice pattern is
+//                        worn by a vector or a cursor over one, and only an enum HAS variants for
+//                        a pattern to name.  A value-enum element and a tagged `vector<S?>`
+//                        element are the CONTROLS at the end; the scalar element kinds carry
+//                        literal and `name:Type` patterns instead and are 35l / 35m's.
+//
+// @falsified-at: d6e665ae — interpret exit 1 -> 0, native exit 1 -> 0.  Every A/B cell above
+//   fails there: the variant spellings do not compile at all, and `[Id]` answers 5 where this
+//   file asserts -1.
+
+enum Tok { Fn { x: integer }, Id { x: integer }, Num { n: integer } }
+enum Color { Red, Green }
+struct S { a: integer }
+struct Cur { src: vector<Tok?>, pos: integer }
+struct CurD { src: vector<Tok>, pos: integer }
+
+// --- A: a plain vector subject -------------------------------------------------------------
+
+fn variant_n(v: vector<Tok?>) -> integer { match v { [Id { x }] => x, _ => -1 } }
+fn variant_d(v: vector<Tok>) -> integer { match v { [Id { x }] => x, _ => -1 } }
+
+fn unit_n(v: vector<Tok?>) -> integer { match v { [Id] => 5, _ => -1 } }
+fn unit_d(v: vector<Tok>) -> integer { match v { [Id] => 5, _ => -1 } }
+
+fn bind_n(v: vector<Tok?>) -> integer { match v { [a] => if a == null { -2 } else { 1 }, _ => -1 } }
+fn bind_d(v: vector<Tok>) -> integer { match v { [a] => match a { Id { x } => 1, _ => 0 }, _ => -1 } }
+
+fn pair_n(v: vector<Tok?>) -> integer { match v { [Id { x }, Num { n }] => x * 10 + n, _ => -1 } }
+fn pair_d(v: vector<Tok>) -> integer { match v { [Id { x }, Num { n }] => x * 10 + n, _ => -1 } }
+
+fn cap_n(v: vector<Tok?>) -> integer { match v { [_t: Id { x }] => x, _ => -1 } }
+fn cap_d(v: vector<Tok>) -> integer { match v { [_t: Id { x }] => x, _ => -1 } }
+
+fn alt_n(v: vector<Tok?>) -> integer { match v { [(Fn { x } | Id { x })] => x, _ => -1 } }
+fn alt_d(v: vector<Tok>) -> integer { match v { [(Fn { x } | Id { x })] => x, _ => -1 } }
+
+fn rep_n(v: vector<Tok?>) -> integer { match v { [(t: Id)*] => len(t), _ => -1 } }
+fn rep_d(v: vector<Tok>) -> integer { match v { [(t: Id)*] => len(t), _ => -1 } }
+
+fn represt_n(v: vector<Tok?>) -> integer { match v { [(t: Id)*, ..r] => len(t) * 10 + len(r), _ => -1 } }
+fn represt_d(v: vector<Tok>) -> integer { match v { [(t: Id)*, ..r] => len(t) * 10 + len(r), _ => -1 } }
+
+fn rep_then_read(v: vector<Tok?>) -> integer {
+  n = match v { [(t: Id)*] => len(t), _ => -1 };
+  s = 0;
+  for e in v { if e != null { s = s + match e { Id { x } => x, Fn { x } => 1000 + x, Num { n } => 2000 + n } } }
+  n * 100 + s
+}
+fn rep_then_read_d(v: vector<Tok>) -> integer {
+  n = match v { [(t: Id)*] => len(t), _ => -1 };
+  s = 0;
+  for e in v { s = s + match e { Id { x } => x, Fn { x } => 1000 + x, Num { n } => 2000 + n } }
+  n * 100 + s
+}
+
+// A dense vector literal is not a `vector<Tok?>` on return (the element layouts agree for
+// an enum, but the conversion is refused for every element kind), so the local states the type.
+fn make_v() -> vector<Tok?> { v: vector<Tok?> = [Id { x: 7 }]; v }
+
+fn wild_n(v: vector<Tok?>) -> integer { match v { [_] => 3, _ => -1 } }
+fn rest_n(v: vector<Tok?>) -> integer { match v { [..r] => len(r), _ => -1 } }
+
+// --- C: controls the fix must NOT move ------------------------------------------------------
+
+fn color_n(v: vector<Color?>) -> integer { match v { [Red] => 5, _ => -1 } }
+fn color_d(v: vector<Color>) -> integer { match v { [Red] => 5, _ => -1 } }
+
+fn tagged_bind(p: vector<S?>) -> integer { match p { [x, y] => if x == null { -2 } else { if y == null { 1 } else { 2 } }, _ => -1 } }
+
+fn main() {
+  present: vector<Tok?> = [Id { x: 7 }];
+  other: vector<Tok?> = [Fn { x: 9 }];
+  absent: vector<Tok?> = [null];
+  dpresent: vector<Tok> = [Id { x: 7 }];
+  dother: vector<Tok> = [Fn { x: 9 }];
+
+  // a1–a3 — a variant sub-pattern binds its payload, and only for the named variant.  The
+  // absent cell is the one `(M-Variant)` decides: an absence is no variant.
+  assert(variant_n(present) == 7, "a1 nullable variant binds: {variant_n(present)}");
+  assert(variant_d(dpresent) == 7, "a1d dense twin: {variant_d(dpresent)}");
+  assert(variant_n(other) == -1, "a2 another variant does not match: {variant_n(other)}");
+  assert(variant_d(dother) == -1, "a2d dense twin: {variant_d(dother)}");
+  assert(variant_n(absent) == -1, "a3 an absent element matches no variant: {variant_n(absent)}");
+
+  // a4–a6 — the UNIT spelling.  This is the cell that answered 5 for every element before the
+  // fix, absent ones included: the pattern had silently become a binding named `Id`.
+  assert(unit_n(present) == 5, "a4 unit variant matches its own: {unit_n(present)}");
+  assert(unit_d(dpresent) == 5, "a4d dense twin: {unit_d(dpresent)}");
+  assert(unit_n(other) == -1, "a5 unit variant rejects another: {unit_n(other)}");
+  assert(unit_d(dother) == -1, "a5d dense twin: {unit_d(dother)}");
+  assert(unit_n(absent) == -1, "a6 unit variant rejects an absence: {unit_n(absent)}");
+
+  // a7–a8 — a BARE binding still binds the element itself, nullability and all: it names no
+  // variant, so it matches an absent element and the arm sees the null.
+  assert(bind_n(present) == 1, "a7 bare binding of a present element: {bind_n(present)}");
+  assert(bind_d(dpresent) == 1, "a7d dense twin: {bind_d(dpresent)}");
+  assert(bind_n(absent) == -2, "a8 bare binding sees the absence: {bind_n(absent)}");
+
+  // a9–a10 — a two-element sequence, one absent member enough to fail it.
+  two: vector<Tok?> = [Id { x: 7 }, Num { n: 9 }];
+  dtwo: vector<Tok> = [Id { x: 7 }, Num { n: 9 }];
+  half: vector<Tok?> = [Id { x: 7 }, null];
+  assert(pair_n(two) == 79, "a9 two-element sequence: {pair_n(two)}");
+  assert(pair_d(dtwo) == 79, "a9d dense twin: {pair_d(dtwo)}");
+  assert(pair_n(half) == -1, "a10 an absent second element fails the sequence: {pair_n(half)}");
+
+  // a11–a12 — `name:pat`, which reads the element TWICE (once to bind, once for the condition).
+  assert(cap_n(present) == 7, "a11 named capture with a sub-pattern: {cap_n(present)}");
+  assert(cap_d(dpresent) == 7, "a11d dense twin: {cap_d(dpresent)}");
+  assert(cap_n(absent) == -1, "a12 named capture over an absence: {cap_n(absent)}");
+
+  // a13–a14 — an alternation tries each branch's tag test; absence answers no to both.
+  assert(alt_n(present) == 7, "a13 alternation picks the matching branch: {alt_n(present)}");
+  assert(alt_d(dpresent) == 7, "a13d dense twin: {alt_d(dpresent)}");
+  assert(alt_n(absent) == -1, "a14 alternation over an absence: {alt_n(absent)}");
+
+  // a15–a17 — a repetition runs while the tag matches.  `(P-Rep)` stops at the absence and
+  // `(P-Whole)` then fails the arm; with a `..rest` the remainder is absorbed instead.
+  ids: vector<Tok?> = [Id { x: 7 }, Id { x: 8 }];
+  dids: vector<Tok> = [Id { x: 7 }, Id { x: 8 }];
+  assert(rep_n(ids) == 2, "a15 repetition collects the run: {rep_n(ids)}");
+  assert(rep_d(dids) == 2, "a15d dense twin: {rep_d(dids)}");
+  assert(rep_n(half) == -1, "a16 a run stopped by an absence does not span the slice: {rep_n(half)}");
+  assert(represt_n(half) == 11, "a17 the rest absorbs the absent tail: {represt_n(half)}");
+  assert(represt_d(dtwo) == 11, "a17d dense twin: {represt_d(dtwo)}");
+
+  // a20 — the repetition's per-element read borrows the SUBJECT (loft#1414's dep, met through
+  // the machinery this fix opens): the run is collected and the subject is whole afterwards.
+  // Freed instead, `--interpret` read a poisoned record and `--native` emitted a free for a
+  // temp outside its block.
+  assert(rep_then_read(ids) == 215, "a20 the run leaves the subject whole: {rep_then_read(ids)}");
+  assert(rep_then_read_d(dids) == 215, "a20d dense twin: {rep_then_read_d(dids)}");
+
+  // a18–a19 — the shapes that name no variant were right all along, and stay so.
+  assert(wild_n(absent) == 3, "a18 a wildcard element matches an absence: {wild_n(absent)}");
+  assert(rest_n(half) == 2, "a19 `..rest` over a slice holding an absence: {rest_n(half)}");
+
+  // --- B: the cursor form.  Every cell asserts the POSITION too: a cursor match that degraded
+  // to a plain struct match could bind the right value and fail to advance.
+  b1 = Cur { src: [Fn { x: 0 }, Id { x: 7 }], pos: 1 };
+  rb1 = match b1 { [Id { x }] => x, _ => -1 };
+  assert(rb1 == 7 && b1.pos == 2, "b1 nullable-element cursor consumes and advances: {rb1} {b1.pos}");
+  b1d = CurD { src: [Fn { x: 0 }, Id { x: 7 }], pos: 1 };
+  rb1d = match b1d { [Id { x }] => x, _ => -1 };
+  assert(rb1d == 7 && b1d.pos == 2, "b1d dense twin: {rb1d} {b1d.pos}");
+
+  b2 = Cur { src: [null, Id { x: 7 }], pos: 0 };
+  rb2 = match b2 { [Id { x }] => x, _ => -1 };
+  assert(rb2 == -1 && b2.pos == 0, "b2 an absent element fails and leaves the cursor: {rb2} {b2.pos}");
+
+  b3 = Cur { src: [Id { x: 3 }, Id { x: 7 }], pos: 0 };
+  b3a = match b3 { [Id { x }] => x, _ => -1 };
+  b3b = match b3 { [Id { x }] => x, _ => -1 };
+  assert(b3a == 3 && b3b == 7 && b3.pos == 2, "b3 two consecutive consumes: {b3a} {b3b} {b3.pos}");
+
+  // a21 — the subject is a CALL RESULT rather than a place: the pattern reads a temporary the
+  // match itself owns, and the variant test is the same one.
+  a21 = match make_v() { [Id { x }] => x, _ => -1 };
+  assert(a21 == 7, "a21 a call-result subject: {a21}");
+
+  // a22 — the cursor driven from a LOOP, which is the shape where a pattern that binds without
+  // advancing does not answer wrong, it hangs.  Four tokens, one consumed per turn.
+  loopc = Cur { src: [Id { x: 1 }, Id { x: 2 }, null, Id { x: 4 }], pos: 0 };
+  seen = 0;
+  turns = 0;
+  going = true;
+  while going && turns < 10 {
+    turns = turns + 1;
+    step = match loopc { [Id { x }] => x, _ => -1 };
+    if step == -1 { going = false } else { seen = seen + step }
+  }
+  assert(seen == 3 && loopc.pos == 2 && turns == 3, "a22 the loop stops at the absence: {seen} {loopc.pos} {turns}");
+
+  // --- C: controls.
+  // A VALUE-enum element: `vector<Color?>` holds no absence today (the store is refused with its
+  // own message), so this only pins that the variant test still runs over the same byte.
+  cg: vector<Color?> = [Color.Green];
+  cr: vector<Color?> = [Color.Red];
+  assert(color_n(cg) == -1, "c1 value-enum element, other variant: {color_n(cg)}");
+  assert(color_n(cr) == 5, "c2 value-enum element, named variant: {color_n(cr)}");
+  dcg: vector<Color> = [Color.Green];
+  assert(color_d(dcg) == -1, "c2d dense twin: {color_d(dcg)}");
+
+  // A TAGGED element (`vector<S?>`, the synthetic `__nullable<S>`): it names no variants, so no
+  // variant pattern reaches it and a bare binding is all a slice pattern can write.
+  ps: vector<S?> = [S { a: 1 }, null];
+  assert(tagged_bind(ps) == 1, "c3 a tagged element binds by name, absence included: {tagged_bind(ps)}");
+}

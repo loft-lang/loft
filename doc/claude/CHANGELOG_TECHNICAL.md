@@ -9,6 +9,64 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A slice pattern names the same variants over a `vector<E?>` (2026-09-07)
+
+A structural (slice / PEG) `match` pattern over a vector whose ELEMENT type is nullable was
+refused with a parse error naming nothing — and its UNIT spelling was worse than refused.
+`[Id]` over a `vector<Tok?>` fell past the bare `Type::Enum` peek into the bare-name branch and
+became a BINDING called `Id`, so it matched every element: another variant, and an absent one,
+where the dense twin correctly answers "no match". Silent, both backends.
+
+The issue recorded a cure that would have been wrong: the byte at offset 0 is @PLN25's nullable
+TAG, so the element must be read THROUGH its tag and the pattern made to fail on an absence.
+`loft introspect` says which shape that is true of. A `vector<Tok?>` element where `Tok` is a
+struct-ENUM is 16 bytes, identical to `vector<Tok>`, read through the same
+`OpGetField(elem, 0, kt)` projection, and its variant discriminants start at **1** because 0 is
+the absent value the variants are numbered away from. So a variant tag test already answers
+false for an absence: `(M-Variant)` — an absence is no variant — with no tag read and no
+is-present condition. The tagged `__nullable<S>` the tag reading describes is the STRUCT
+element, and no variant pattern can name a struct's variants.
+
+`Parser::pattern_variant_enum` is the one home: `Type::Enum` of `tp.base()`, `None` for a
+`__nullable<S>` (its discriminant is a presence bit and its two variants are the compiler's, so
+a pattern naming one would ask a variant question of an absence bit). Ten sites read it — the
+scalar-capture guard, the variant sub-pattern peek, the repetition and its tail sub-pattern,
+both alternations, `build_literal_match` and its diagnostic twin, and both arms of
+`parse_field_sub_pattern`, which is where the issue's second error came from: a nullable FIELD
+sub-pattern (`A { t: Id { x } }`) was broken the same way.
+
+A struct that is NOT a cursor now says which field stopped it instead of cascading, and the
+element-type refusals recover through the closing `]`. `cursor_shape`'s tests keep refusing a
+`vector<T>?` source and an `integer?` `pos` — peeling the source test would move which field
+becomes the source, which `153-a-cursor-match-over-a-nullable-subject-advances.loft` pins.
+
+`types.md`'s per-type null table gained the ENUM row it never had, `(L-Null)`'s sentinel list
+gained the enum discriminant, `(L-Enum)` states the numbering and the 254-variant limit, and
+`matching.md` records that a nullable subject or element names the same variants.
+
+loft#1410. Guards `tests/scripts/1410-…` (22 cells, every nullable one beside its dense twin)
+and `1410b-…` (the five refusals). `scripts/introspect_diff.sh` over the corpus: DIFFERENT 3 of
+1338, all three the new guards.
+
+### A slice-pattern element binding borrows the subject it reads (2026-09-07)
+
+`@FR-O-Deps`: what a value borrows is read off its type, so a read that borrows and says nothing
+is read as OWNED. "This element read views its subject" was spelled five times in
+`parser/control.rs`, each a three-arm `match` over `Reference | Vector | Enum`, and three of
+them let an `Optional` fall past. A nullable element binding therefore carried EMPTY deps:
+`match v { [a, ..] => a }` over a local `vector<Tok?>` was classified as returning an OWNED
+value, the subject's store was freed at the callee's exit, and the caller read `101` — the first
+element of the vector allocated next — where the dense twin answers `7`. Both backends;
+`LOFT_POISON=1` is blind to it because the store is live again by the time it is read.
+
+One home, `Parser::element_view_of`, which is a call to `Type::with_deps` — that writes through
+the wrapper already, which is why the fold is a call and not a sixth `match`. The second face of
+the same missing dep surfaced the moment loft#1410 let a repetition run over a nullable element:
+the materialisation's per-element read was freed while the subject still owned it, a poisoned
+read on `--interpret` and an `E0425` on `--native`.
+
+loft#1414. Guard `tests/scripts/1414-…`, falsified against `d6e665ae` on its own assertion.
+
 ### A `τ?` argument into a `&τ?` parameter no longer warns (2026-09-07)
 
 `(N-Store)`'s gate asks one question — is this store's destination non-null? — and `τ?` has

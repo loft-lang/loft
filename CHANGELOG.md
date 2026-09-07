@@ -14,6 +14,26 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Pattern matching now works over a vector whose elements may be absent.**  `match v { [Id { x }]
+=> x, … }` over a `vector<Tok?>` was refused with an error that pointed at a comma and explained
+nothing, and the shorter spelling `[Id]` was worse: it quietly matched EVERY element — a
+different variant, and an absent one — because the pattern had turned into a plain binding named
+`Id`.  Both spellings now ask the same question the dense `vector<Tok>` asks, and an absent
+element matches no variant, so it simply falls to the next arm.  The same fix covers a nullable
+field inside a pattern (`A { t: Id { x } }`) and a cursor whose source holds absences.
+
+**An element you bind out of a vector keeps that vector alive.**  `match v { [a, ..] => a }`
+handed back the first element of a `vector<Tok?>` without recording that the value points INTO
+the vector, so the vector's memory was released when the function returned and the caller read
+whatever was stored there next — a wrong value, quietly, on both backends.  The dense
+`vector<Tok>` was right all along; the nullable one now says what it borrows.
+
+**A slice pattern over the wrong kind of struct now says which field is wrong.**  `match c {
+[Id { x }] => … }` needs a cursor — a struct with a `vector<…>` to read from and an integer
+`pos`.  Given a struct that is neither, loft used to report *"Expect token }"* three times and
+stop.  It now says *"a slice pattern `[ … ]` matches a vector or a cursor; `Cur` is neither — its
+`pos` field is `integer?`, and a cursor's position must be an integer"*, once, and keeps parsing.
+
 **A `match` arm now has to answer in the type its siblings answer in.**  Every arm was parsed
 without knowing what type the `match` as a whole was expected to produce, so an arm of another
 type was neither converted nor refused: a `float` destination with an integer arm read the

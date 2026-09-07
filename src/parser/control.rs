@@ -4474,6 +4474,27 @@ impl Parser {
                 self.lexer.has_token(","); // optional trailing comma
                 continue;
             }
+            // A SLICE pattern over a plain struct: the subject would have routed to the cursor
+            // path above if it were one, so say which field stopped it and skip the arm.  The
+            // skip runs on BOTH passes — leaving the `[` for the struct-pattern parser cost the
+            // run its second pass, which is where the reason would have been printed.
+            if is_plain_struct && self.lexer.peek_token("[") {
+                if !self.first_pass {
+                    let why = self.cursor_defect(e_nr);
+                    let subject_name = self.data.def(e_nr).name().to_string();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a slice pattern `[ … ]` matches a vector or a cursor; `{subject_name}` \
+                         is neither — {why}"
+                    );
+                }
+                self.lexer.token("[");
+                self.skip_rest_of_slice();
+                self.expect_match_arm_arrow();
+                self.skip_match_arm_body();
+                continue;
+            }
             let Some(first_ident) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -5487,6 +5508,29 @@ impl Parser {
         }
     }
 
+    /// `elm_tp` re-stated as a VIEW into the frame variable `src` — the borrow dep a heap
+    /// element read carries — or the type unchanged when the element holds no `DbRef` (a
+    /// scalar, or a `text` element, which is an owned copy and must keep its own free).
+    ///
+    /// `@FR-O-Deps`: what a value borrows is read off its type, so a read that borrows and says
+    /// nothing is read as OWNED.  This fact was spelled by hand at FIVE sites in this file, each
+    /// a three-arm `match` over `Reference | Vector | Enum`, and three of them let an `Optional`
+    /// fall past — so a NULLABLE element read was left dep-free and the free analysis emitted
+    /// `OpFreeRef` for a record the subject owns: a use-after-free in the repetition
+    /// materialisation on both backends, and an element handed back from `[a, ..] => a` that the
+    /// caller could not see was a view (loft#1414).  The other two peeled correctly and were
+    /// duplicates.  `Type::with_deps` writes through the wrapper, which is why the one home is a
+    /// call to it rather than a sixth spelling.
+    fn element_view_of(elm_tp: &Type, src: u16) -> Type {
+        if !matches!(
+            elm_tp.base(),
+            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, _, _)
+        ) {
+            return elm_tp.clone();
+        }
+        elm_tp.with_deps(&crate::data::Deps::frame1(src))
+    }
+
     /// @PLN35 Phase 2 (P-Cap-View) — mark a slice-element capture that reads a HEAP
     /// element as a borrowed VIEW of the subject, the same way a struct-enum field
     /// binding is (`parse_match_enum_field_bindings`, #429). A slice binding
@@ -5505,19 +5549,21 @@ impl Parser {
     fn mark_slice_element_view(&mut self, bind_nr: u16, elm_tp: &Type, src: u16) {
         if bind_nr == u16::MAX
             || !matches!(
-                elm_tp,
+                elm_tp.base(),
                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
             )
         {
             return;
         }
         self.vars.set_skip_free(bind_nr);
-        let bound_tp = match self.vars.tp(bind_nr).clone() {
-            Type::Reference(td, _) => Type::Reference(td, crate::data::Deps::frame1(src)),
-            Type::Vector(it, _) => Type::Vector(it, crate::data::Deps::frame1(src)),
-            Type::Enum(td, su, _) => Type::Enum(td, su, crate::data::Deps::frame1(src)),
-            other => other,
-        };
+        // A NULLABLE element is the same view: `(L-Null)` gives `E?` the layout of `E`, so a
+        // binding off `vector<E?>` holds the subject's address exactly as its dense twin does
+        // and borrows the same store.  Asked of the wrapper, the test above said "not a record"
+        // and the binding carried EMPTY deps, so `ref_return` could not walk the borrow back to
+        // the subject: a `match v { [a, ..] => a }` returning the element was classified OWNED,
+        // the subject's store was freed at the callee's exit, and the caller read whatever was
+        // allocated next — `101` where its dense twin answers `7`, on both backends (loft#1414).
+        let bound_tp = Self::element_view_of(&self.vars.tp(bind_nr).clone(), src);
         self.vars.set_type(bind_nr, bound_tp);
     }
 
@@ -5643,18 +5689,8 @@ impl Parser {
                                         src,
                                     );
                                 }
-                                let bound_tp = match self.vars.tp(v_nr).clone() {
-                                    Type::Reference(td, _) => {
-                                        Type::Reference(td, crate::data::Deps::frame1(src))
-                                    }
-                                    Type::Vector(it, _) => {
-                                        Type::Vector(it, crate::data::Deps::frame1(src))
-                                    }
-                                    Type::Enum(td, su, _) => {
-                                        Type::Enum(td, su, crate::data::Deps::frame1(src))
-                                    }
-                                    other => other,
-                                };
+                                let bound_tp =
+                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
                                 self.vars.set_type(v_nr, bound_tp);
                             }
                         }
@@ -5705,6 +5741,87 @@ impl Parser {
             return i32::from(nr);
         }
         0
+    }
+
+    /// The enum whose VARIANTS a pattern names when it is written against a value of type
+    /// `tp` — `@FR-M-Unit` / `@FR-M-Variant` asked of a SLOT type rather than of a value.  The
+    /// second half of the answer says whether it is a struct-enum, which is what the branches
+    /// that need a payload (a repetition, an alternation, a `#lexeme` literal) require.
+    ///
+    /// A NULLABLE element names the same enum.  `@FR-L-Null` gives `E?` the layout of `E` —
+    /// variants are numbered from 1 because 0 is the absent value — so the tag test a variant
+    /// pattern builds already answers false for an absent element, which is exactly
+    /// `(M-Variant)`: an absence is no variant.  Asking `Type::Enum` of the WRAPPER instead
+    /// made a `vector<Tok?>` stop being a token stream: `[Id { x }]` was a parse error naming
+    /// nothing, and the unit spelling `[Id]` fell through to the bare-name branch and became a
+    /// BINDING that matched every element, absent ones included (loft#1410).
+    ///
+    /// The tagged `__nullable<S>` is NOT such an enum: its discriminant is `@FR-L-Null-Tag`'s
+    /// presence bit and its two variants are the compiler's, so a pattern naming one would ask
+    /// a variant question of an absence bit.  `None` keeps the element's own refusal there,
+    /// which names the type the author wrote rather than the synthetic.
+    fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
+        let Type::Enum(e_nr, is_struct, _) = tp.base() else {
+            return None;
+        };
+        if self.nullable_payload_struct(*e_nr).is_some() {
+            return None;
+        }
+        Some((*e_nr, *is_struct))
+    }
+
+    /// How a slice element's type is SPELLED to the author.  The tagged `__nullable<S>` is the
+    /// compiler's spelling of `S?` and never belongs in a message: a repetition over a
+    /// `vector<S?>` reported *"'S' is not a variant of __nullable<S>"*, which names a type the
+    /// program cannot write and a question the author did not ask (loft#1410).
+    fn slice_element_name(&self, elm_tp: &Type) -> String {
+        if matches!(elm_tp, Type::Enum(_, true, _))
+            && let Some(struct_d) = self.data.nullable_struct_payload(elm_tp)
+        {
+            return format!("{}?", self.data.def(struct_d).name());
+        }
+        elm_tp.name(&self.data)
+    }
+
+    /// Consume a match arm's body without parsing it — for an arm whose PATTERN was refused, so
+    /// the names that pattern would have bound do not come back as a second, misleading
+    /// *"Unknown variable 'x'"* pointing into a body that is fine.  Stops after the arm's own
+    /// `,`, or at the `}` that closes the match.
+    fn skip_match_arm_body(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has {
+                LexItem::None => break,
+                LexItem::Token(t) if depth == 0 && t == "," => {
+                    self.lexer.cont();
+                    break;
+                }
+                LexItem::Token(t) if depth == 0 && t == "}" => break,
+                LexItem::Token(t) if t == "{" || t == "(" || t == "[" => {
+                    depth += 1;
+                    self.lexer.cont();
+                }
+                LexItem::Token(t) if t == "}" || t == ")" || t == "]" => {
+                    depth -= 1;
+                    self.lexer.cont();
+                }
+                _ => self.lexer.cont(),
+            }
+        }
+    }
+
+    /// Recover from a REFUSED slice element by swallowing the rest of the pattern through its
+    /// closing `]` — what the group parsers do on the paths that succeed.
+    ///
+    /// Without it the refusal is followed by a first-pass cascade (*"Expect token ,"*, *"Expect
+    /// token }"*, *"unexpected ')'"*) that aborts the run before the second pass emits the real
+    /// reason, so the author is told about a comma instead of about the element type.  Measured
+    /// on a repetition over a NON-enum element, which has always landed here.
+    fn skip_rest_of_slice(&mut self) {
+        while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
+            self.lexer.cont();
+        }
+        self.lexer.token("]");
     }
 
     /// The integer-discriminant read `OpConvIntFromEnum(OpGetEnum(elem, 0))` for a
@@ -5937,12 +6054,7 @@ impl Parser {
         // A VIEW-read element type (a DbRef INTO the subject) needs a borrow dep on the transient
         // per-iteration read temp so the free-analysis frees each read once (via the copy source),
         // not double-freeing the subject; text/scalar take NO dep (owned copy / no DbRef).
-        let elm_borrowed = match elm_tp {
-            Type::Reference(td, _) => Type::Reference(*td, Deps::frame1(v)),
-            Type::Vector(it, _) => Type::Vector(it.clone(), Deps::frame1(v)),
-            Type::Enum(td, su, _) => Type::Enum(*td, *su, Deps::frame1(v)),
-            other => other.clone(),
-        };
+        let elm_borrowed = Self::element_view_of(elm_tp, v);
         let iter_tp = Type::Iterator(Box::new(elm_borrowed), Box::new(Type::Null));
         self.materialize_iterator(
             &mut mat,
@@ -6146,8 +6258,8 @@ impl Parser {
         lit: &Value,
         lit_tp: &Type,
     ) -> Option<Value> {
-        if let Type::Enum(e_nr, true, _) = elm_tp {
-            self.build_lexeme_literal_match(*e_nr, v, elm_size, elm_tp, pos, lit, lit_tp)
+        if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
+            self.build_lexeme_literal_match(e_nr, v, elm_size, elm_tp, pos, lit, lit_tp)
         } else if Self::slice_literal_compatible(elm_tp, lit_tp) {
             let read = self.read_slice_elem(v, elm_size, elm_tp, pos.clone());
             Some(self.conv_op("==", read, lit.clone(), elm_tp.clone(), lit_tp.clone()))
@@ -6160,12 +6272,12 @@ impl Parser {
     /// `build_literal_match` returns `None`): a `#lexeme` hint for a struct-enum, a type mismatch
     /// for a scalar.
     fn slice_literal_mismatch(&mut self, elm_tp: &Type, lit_tp: &Type) {
-        if let Type::Enum(e_nr, true, _) = elm_tp {
+        if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "{} has no `#lexeme` field a {} literal can match — mark a field `#lexeme` or write the variant pattern",
-                self.data.def(*e_nr).name(),
+                self.data.def(e_nr).name(),
                 lit_tp.name(&self.data)
             );
         } else {
@@ -6612,9 +6724,9 @@ impl Parser {
                     None if !self.first_pass => self.slice_literal_mismatch(elm_tp, &lit_tp),
                     None => {}
                 }
-            } else if matches!(elm_tp, Type::Enum(te, true, _)
+            } else if matches!(self.pattern_variant_enum(elm_tp), Some((te, true))
                 if matches!(&self.lexer.peek().has, LexItem::Identifier(id)
-                    if self.data.variant_of(*te, id) != u32::MAX))
+                    if self.data.variant_of(te, id) != u32::MAX))
             {
                 // A variant sub-pattern `V { f }` / bare `V`, matched at `pos`.  The DIRECT read
                 // (as the head sub-pattern path uses) drives both the tag-test and the field binds.
@@ -7244,22 +7356,8 @@ impl Parser {
             if !matches!(ftype.base(), Type::Text(_)) {
                 self.vars.set_skip_free(v_nr);
             }
-            let bs = borrow_src;
-            let borrowed = |t: Type| -> Option<Type> {
-                match t {
-                    Type::Reference(td, _) => Some(Type::Reference(td, Deps::frame1(bs))),
-                    Type::Vector(it, _) => Some(Type::Vector(it, Deps::frame1(bs))),
-                    Type::Enum(td, su, _) => Some(Type::Enum(td, su, Deps::frame1(bs))),
-                    _ => None,
-                }
-            };
-            let bound_tp = match self.vars.tp(v_nr).clone() {
-                Type::Optional(inner) => borrowed(*inner).map(Type::optional),
-                other => borrowed(other),
-            };
-            if let Some(b) = bound_tp {
-                self.vars.set_type(v_nr, b);
-            }
+            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
+            self.vars.set_type(v_nr, bound_tp);
         }
 
         // Step 5: `..rest` picks up after WHICHEVER branch matched.  The runtime cursor
@@ -7471,22 +7569,8 @@ impl Parser {
             if !matches!(ftype.base(), Type::Text(_)) {
                 self.vars.set_skip_free(v_nr);
             }
-            let bs = borrow_src;
-            let borrowed = |t: Type| -> Option<Type> {
-                match t {
-                    Type::Reference(td, _) => Some(Type::Reference(td, Deps::frame1(bs))),
-                    Type::Vector(it, _) => Some(Type::Vector(it, Deps::frame1(bs))),
-                    Type::Enum(td, su, _) => Some(Type::Enum(td, su, Deps::frame1(bs))),
-                    _ => None,
-                }
-            };
-            let bound_tp = match self.vars.tp(v_nr).clone() {
-                Type::Optional(inner) => borrowed(*inner).map(Type::optional),
-                other => borrowed(other),
-            };
-            if let Some(b) = bound_tp {
-                self.vars.set_type(v_nr, b);
-            }
+            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
+            self.vars.set_type(v_nr, bound_tp);
         }
     }
 
@@ -7628,14 +7712,14 @@ impl Parser {
         // `Variant`).  Tag-test the field's discriminant and recurse into the variant's payload
         // bindings — the same tag-test + payload-bind a top-level struct-enum arm emits, applied to
         // the field-read value (`OpEqInt(OpConvIntFromEnum(OpGetEnum(field_val, 0)), disc)`).
-        if let Type::Enum(e_nr, true, _) = field_type
+        if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
             && let Some(name) = self.lexer.has_identifier()
         {
             if name == "_" {
                 return None;
             }
-            let disc = if let Some(a_nr) = self.data.def(*e_nr).attr_names.get(&name) {
-                if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+            let disc = if let Some(a_nr) = self.data.def(e_nr).attr_names.get(&name) {
+                if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                     i32::from(nr)
                 } else {
                     0
@@ -7647,7 +7731,7 @@ impl Parser {
                         Level::Error,
                         "'{}' is not a variant of {}",
                         name,
-                        self.data.def(*e_nr).name()
+                        self.data.def(e_nr).name()
                     );
                 }
                 return None;
@@ -7657,7 +7741,7 @@ impl Parser {
             let tag_test = self.cl("OpEqInt", &[disc_expr, Value::Int(disc)]);
             // Nested payload: `Variant { subfields }` binds the variant's fields from field_val.
             if self.lexer.peek_token("{") {
-                let variant_def_nr = self.data.variant_of(*e_nr, &name);
+                let variant_def_nr = self.data.variant_of(e_nr, &name);
                 self.parse_match_enum_field_bindings(
                     variant_def_nr,
                     &name,
@@ -7670,7 +7754,7 @@ impl Parser {
             return Some(tag_test);
         }
         // Enum field: the sub-pattern is a variant name (or `_`).
-        if let Type::Enum(e_nr, false, _) = field_type
+        if let Some((e_nr, false)) = self.pattern_variant_enum(field_type)
             && let Some(name) = self.lexer.has_identifier()
         {
             // Wildcard — no condition.
@@ -7678,8 +7762,8 @@ impl Parser {
                 return None;
             }
             // Look up variant discriminant.
-            let disc = if let Some(a_nr) = self.data.def(*e_nr).attr_names.get(&name) {
-                if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+            let disc = if let Some(a_nr) = self.data.def(e_nr).attr_names.get(&name) {
+                if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                     i32::from(nr)
                 } else {
                     0
@@ -7691,27 +7775,34 @@ impl Parser {
                         Level::Error,
                         "'{}' is not a variant of {}",
                         name,
-                        self.data.def(*e_nr).name()
+                        self.data.def(e_nr).name()
                     );
                 }
                 return None;
             };
+            // The comparison is asked of the enum ITSELF, never of a `τ?` wrapper around it:
+            // `(L-Null)` gives the nullable spelling the same byte, and absence — 0 or the
+            // 255 sentinel — is no variant, so a nullable field simply fails every arm it is
+            // not.  Asking the wrapper looked for an operator on `Color?` and `Color?` and
+            // refused the program (loft#1410); a dense field's `base()` is itself, so the
+            // emission there is unchanged.
+            let cmp_tp = field_type.base().clone();
             // Build equality: field_val == Enum(disc)
-            let variant_val = Value::Enum(disc as u8, *e_nr as u16);
+            let variant_val = Value::Enum(disc as u8, e_nr as u16);
             let mut cond = Value::Null;
             self.call_op(
                 &mut cond,
                 "==",
                 &[field_val.clone(), variant_val],
-                &[field_type.clone(), field_type.clone()],
+                &[cmp_tp.clone(), cmp_tp.clone()],
             );
             // or-pattern: Paid | Refunded
             while self.lexer.has_token("|") {
                 if let Some(next_name) = self.lexer.has_identifier() {
                     let next_disc = if let Some(a_nr) =
-                        self.data.def(*e_nr).attr_names.get(&next_name)
+                        self.data.def(e_nr).attr_names.get(&next_name)
                     {
-                        if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+                        if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                             i32::from(nr)
                         } else {
                             0
@@ -7723,18 +7814,18 @@ impl Parser {
                                 Level::Error,
                                 "'{}' is not a variant of {}",
                                 next_name,
-                                self.data.def(*e_nr).name()
+                                self.data.def(e_nr).name()
                             );
                         }
                         0
                     };
-                    let next_variant = Value::Enum(next_disc as u8, *e_nr as u16);
+                    let next_variant = Value::Enum(next_disc as u8, e_nr as u16);
                     let mut next_cond = Value::Null;
                     self.call_op(
                         &mut next_cond,
                         "==",
                         &[field_val.clone(), next_variant],
-                        &[field_type.clone(), field_type.clone()],
+                        &[cmp_tp.clone(), cmp_tp.clone()],
                     );
                     // OR: if first matches → true, else check next.
                     cond = v_if(cond, Value::Boolean(true), next_cond);
@@ -8149,6 +8240,41 @@ impl Parser {
         }
     }
 
+    /// Why the struct `d_nr` is NOT a cursor, spelled for the author — the diagnostic half of
+    /// [`Self::cursor_shape`], asked when a `match` arm over a plain struct opens with a slice
+    /// pattern, which only a vector or a cursor can wear.
+    ///
+    /// `cursor_shape` answers `None` for every struct that is not one, and the arm was then
+    /// parsed as a STRUCT pattern: the `[` was "expect variant name", the first pass broke out
+    /// silently and the run died on a brace it had never reached, so the author was told about
+    /// a `}` and never about the field that disqualified the struct (loft#1410).  A `?` on the
+    /// source or the position field is the case worth naming, because those two fields still
+    /// read like a cursor's.
+    fn cursor_defect(&self, d_nr: u32) -> String {
+        let attrs = self.data.def(d_nr).attributes();
+        let field_of = |pick: &dyn Fn(&crate::data::Attribute) -> bool| {
+            attrs
+                .iter()
+                .find(|a| !a.constant && pick(a))
+                .map(|a| (a.name.clone(), a.typedef.name(&self.data)))
+        };
+        if field_of(&|a| matches!(a.typedef, Type::Vector(_, _))).is_none() {
+            return match field_of(&|a| matches!(a.typedef.base(), Type::Vector(_, _))) {
+                Some((name, tp)) => format!(
+                    "its `{name}` field is `{tp}`, and a cursor reads from a plain `vector<…>`"
+                ),
+                None => "it has no `vector<…>` field for the pattern to read".to_string(),
+            };
+        }
+        match field_of(&|a| a.name == "pos") {
+            Some((_, tp)) => {
+                format!("its `pos` field is `{tp}`, and a cursor's position must be an integer")
+            }
+            None => "it has no integer `pos` field, so nothing says where the pattern starts"
+                .to_string(),
+        }
+    }
+
     /// @PLN35 PC1 — match over a CURSOR: prefix-consume its source from `pos`, advancing `cursor.pos`
     /// by the consumed count on a match.  Reads source + pos into temps, sets `match_cursor` so the
     /// slice machinery goes prefix-relative (`read_slice_elem` offsets by `pos`, the length gate is
@@ -8538,7 +8664,7 @@ impl Parser {
                         multi_alt = true;
                         break;
                     } else if !has_rest
-                        && !matches!(&elm_tp, Type::Enum(..))
+                        && self.pattern_variant_enum(&elm_tp).is_none()
                         && let Some(is_rep) = self.peek_scalar_type_capture()
                     {
                         // @PLN35 slice 1 — a scalar type-annotated capture `name:Type` (single —
@@ -8638,9 +8764,9 @@ impl Parser {
                         // @PLN35 L2 — is this head element a VARIANT sub-pattern of the element
                         // enum type (`Ship { carrier }` / bare `Ship`)?  Peek without consuming so a
                         // plain binding name still falls through to the branch below.
-                        if let Type::Enum(elm_e_nr, _, _) = &elm_tp {
+                        if let Some((elm_e_nr, _)) = self.pattern_variant_enum(&elm_tp) {
                             if let LexItem::Identifier(pname) = &self.lexer.peek().has {
-                                self.data.variant_of(*elm_e_nr, pname) != u32::MAX
+                                self.data.variant_of(elm_e_nr, pname) != u32::MAX
                             } else {
                                 false
                             }
@@ -8673,8 +8799,7 @@ impl Parser {
                         // and any fixed `tail` after the group is matched from the END.
                         // `parse_slice_repetition` builds the run-loop cond + collection and
                         // consumes through `]`, so break the element loop.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             let head_len = head.len() as i32;
                             // Bind any BARE-NAME head element (a variant sub-pattern / literal
                             // already emitted its own bind/cond and left a "_").  These are safe:
@@ -8708,13 +8833,14 @@ impl Parser {
                             multi_alt = true;
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "a repetition `( … )*` slice element needs a struct-enum element type"
+                                    "a repetition `( … )*` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("(");
+                            self.skip_rest_of_slice();
                         }
                         break;
                     } else if group_kind == SliceGroupKind::Alt && head.is_empty() {
@@ -8723,8 +8849,7 @@ impl Parser {
                         // (a degenerate alternation `(a | ε)`).  Predictive dispatch on the leading
                         // tags over a sequence per branch; it builds the arm `cond` itself and
                         // consumes through `]`, so break the element loop and skip the length gate.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             self.parse_multi_element_alternation(
                                 e_nr,
                                 v,
@@ -8737,13 +8862,14 @@ impl Parser {
                             multi_alt = true;
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type"
+                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("(");
+                            self.skip_rest_of_slice();
                         }
                         break;
                     } else if !has_rest && self.lexer.peek_token("(") {
@@ -8752,8 +8878,7 @@ impl Parser {
                         // the element against each branch and bind the shared captures from the
                         // matching variant's offsets. A `_` placeholder keeps position alignment
                         // for following bare-name indices, as the variant sub-pattern branch does.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             let position = head.len() as i32;
                             let read =
                                 self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
@@ -8767,13 +8892,14 @@ impl Parser {
                             head.push("_".to_string());
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type"
+                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("("); // consume to make progress
+                            self.skip_rest_of_slice();
                             break;
                         }
                     } else if !has_rest && self.peek_is_slice_literal() {

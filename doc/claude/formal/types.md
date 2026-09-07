@@ -257,6 +257,7 @@ the type:
 > collision this row names. QUALITY.md § `character` on the JSON surface.
 | `Float` / `Single` | in-band sentinel = a reserved `NaN` |
 | a reference | out-of-band `nullref` (a reserved `DbRef`; no collision) |
+| an `enum` (plain or struct-enum) | in-band **discriminant `0`** — variants are numbered from 1, so `0` is a variant of no enum; a plain enum reads `255` as absent too (the byte an explicit `null` writes), which is why it holds at most 254 variants. No collision, and `size(E?) = size(E)` |
 | a struct `S` as a `vector` element | the tagged **`__nullable<S>`** enum (discriminant + payload; no collision) |
 
 > The in-band scalar sentinels are **observable, reserved values** — the base type's null is

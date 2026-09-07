@@ -64,6 +64,17 @@ arm, so `Circle { r } => r * r` uses the matched value's `r` (verified: `25` for
 wildcard `_` matches everything and is the default — it must come last, because any arm written
 after it could never run (loft rejects that at compile time).
 
+**A NULLABLE subject or element names the same variants.** `E?` is `E`'s layout with the
+reserved discriminant 0 for absence (`layout.md` `(L-Null)` / `(L-Enum)`), so `V` and `V { f }`
+are asked of a `vector<E?>` element exactly as of a dense one, and an ABSENT value matches no
+variant arm — a variant is 1 or above. That is `(M-Unit)` / `(M-Variant)` read literally, and
+it needs no null test of its own. What the compiler did instead was ask `Type::Enum` of the
+WRAPPER: `[Id { x }]` over a `vector<Tok?>` was a parse error naming nothing, and the unit
+spelling `[Id]` degraded into a bare-name BINDING that matched every element, absent ones
+included (loft#1410 — `Parser::pattern_variant_enum` is the one home that answers this
+question now).  A subject that is absent falls to the `_` arm, and where there is none the
+match answers null, which `(N-Store)` then reports at the slot it reaches.
+
 ### Exhaustiveness is checked at compile time
 
 ```
