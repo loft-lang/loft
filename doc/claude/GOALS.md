@@ -208,6 +208,31 @@ speed of it is a `--native` concern (the interpreter's dispatch overhead masks l
 so today loft lets you *express* the right layout and `--native` turns that into machine
 cost.
 
+### Fixable end to end — the open-source lesson
+
+A production lesson sits under the whole distribution: **almost no tool or library
+anyone ever adopted was 100 % reliable or a perfect fit** — JVM stack limits, kernel
+NFS locking, databases dropping aged connections without a liveness check.  What
+separated the workable stacks from the rest was never their defect count; it was that
+with an open stack you can **write the fix yourself, ship it to your own users the same
+day, and file it upstream after** — instead of waiting on a vendor's queue with a
+customer on the line.
+
+loft's process is that lesson made structural, at every layer of its own stack:
+
+- **The distribution owns every layer** (lavition → loft → libraries), all public, all
+  fixable in-house — and external dependencies are kept few and inventoried
+  ([DEPS_INVENTORY.md](DEPS_INVENTORY.md)) so there is no layer we *cannot* fix fast.
+- **The default is FIX, not file** (CLAUDE.md § Bug-filing policy): a consumer that
+  hits a defect gets the fix, not a ticket — the dogfood split exists so the language
+  side repairs on the spot while the consumer keeps building.
+- **Anyone can be the fixer** ([BUS_FACTOR.md](BUS_FACTOR.md)): the how-to-fix
+  knowledge is in the repo, so "we can fix it ourselves" does not depend on one person.
+
+The obligation runs both ways: when loft's own users hit a defect, they deserve the
+same same-day fixability we demanded from our stacks — which is why an open issue is
+never carried into a release, and why `hit-by:` names the project waiting on it.
+
 ### Why a language, not a store bolted onto an existing one
 
 A key reason loft is a *language* and not an in-memory data store added to Rust
