@@ -2473,14 +2473,26 @@ and who does not.
 |---:|---:|---:|---:|
 | RE-MEASURE | RE-MEASURE | 5 | **RE-MEASURE** |
 
-**loft#1412 added a function and an opaque entry** — `Parser::vector_operations` now reads the
-removal's element width off the vector's CONTENT (`@FR-H-Stride`), so it discriminates on a
-`Type` variant where it previously did not.  It scores OPAQUE and stays that way on purpose:
-its sole caller admits it only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is
-unreachable and a peel there would be dead code — `.remove` on a nullable vector does not
-resolve at all (*"Unknown field vector.remove"*), never reaching this function.  An opaque
-entry is not automatically a gap; this one is the classifier counting a shape test whose
-shape the caller has already decided.
+**Two `@FR-H-Stride` fixes moved this row, and neither opaque entry is a gap.**  The
+distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
+is *correctly* opaque has to say why, or the next reader re-derives it.
+
+*loft#1412 added the 731st and the 360th.*  `Parser::vector_operations` now reads the removal's
+element width off the vector's CONTENT, so it discriminates on a `Type` variant where it
+previously did not.  It scores OPAQUE and stays that way on purpose: its sole caller admits it
+only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is unreachable and a peel there
+would be dead code — `.remove` on a nullable vector does not resolve at all (*"Unknown field
+vector.remove"*), never reaching this function.
+
+*loft#1420 added the 732nd and the 361st, and it is a SWAP the totals hide.*
+`Data::narrow_vector_element` was extracted as the one home for a narrow element's
+`(spec, nullable, width)`, and it carries the `Type::Optional` arm — so it enters as PEELING.
+Its caller `narrow_vector_content` handed that arm over and is left discriminating only on
+`Type::Function`, so it moves peeling→opaque.  The middle column is unchanged at 366 because
+one function left it as another joined, which is why the row is read as four numbers and not as
+a trend: **extracting a peel into a helper makes the caller read as opaque even though the peel
+still happens on every path through it.**  A delegating caller is the one shape this classifier
+cannot see through, and it is worth knowing before reading the opaque column as a backlog.
 
 @PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
 opaque column DOWN by three and added two functions on the seeing-through side: the element's
