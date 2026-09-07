@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN153 phase 4's walk of `parser/control.rs`'s cursor-match group — `cursor_shape` (8126),
+// `parse_cursor_match` (8156), `peek_subrule_capture` (8215).  `cursor_shape` decides whether a
+// `match` subject IS a cursor by three tests spelled bare over `Type`: the SUBJECT is a
+// `Reference` to a struct, some field is a `Vector` (the first one wins, and becomes the
+// source), and a field named `pos` is an `Integer`.  A `τ?` in any of the three makes the
+// answer `None` and the struct silently stops being a cursor.
+//
+// This file guards the positions the walk measured CORRECT, which is the half that otherwise
+// has no record: a nullable SUBJECT is handled (the subject arrives already discharged, so the
+// bare test is never asked a wrapped question), a nullable field BESIDE a well-formed cursor is
+// ignored, and a nullable `vector<T>?` declared BEFORE the real source is skipped by the
+// first-vector-field rule rather than chosen and found null.
+//
+// A cursor arm ADVANCES the shared cursor, so every cell asserts the POSITION as well as the
+// bound value: a cursor match that silently degraded to a plain struct match could still bind
+// the right value while failing to advance, and the value alone would read as a pass.
+//
+// A nullable ELEMENT type (`src: vector<Tok?>`, and the same shape without a cursor) was loft#1410
+// and is closed: `1410-a-slice-pattern-over-a-nullable-element-names-its-variant.loft` carries it.
+// The reading recorded here — that the cure could not be a peel because the byte at offset 0 is
+// @PLN25's nullable TAG — held for a `vector<S?>` element (a struct, hence the synthetic
+// `__nullable<S>`) and NOT for the enum element a variant pattern can name: measured, a
+// `vector<Tok?>` element is 16 bytes exactly like its dense twin, and absence is the reserved
+// discriminant 0 that variants are numbered away from, so the variant test answers false for an
+// absence with no tag read at all.  The peel plus the exclusion of the synthetic was the cure.
+//
+// Axes this file MOVES:  where the `?` sits relative to the cursor (the subject; an unrelated
+//                        field; a vector field that is NOT the source), and the number of
+//                        consecutive prefix consumes (one, and two — the shape where a cursor
+//                        that fails to advance is an infinite loop rather than one wrong value).
+// Axes it HOLDS FIXED:   the element type is dense in every cell; the nullable-element cells are
+//                        loft#1410's file.
+//
+// @falsified-at: none — every cell here passes on the build that motivated the walk.
+//   These are the walk's CLOSED positions, kept so a later change to `cursor_shape`'s three
+//   tests cannot quietly turn cursor matching off for a nullable subject.  The cells that DID
+//   move are loft#1410's two files.  `CurFirst` below is load-bearing for the refusal half:
+//   it pins that a `vector<T>?` field ahead of the real source is SKIPPED, which is why
+//   `cursor_shape`'s source test keeps refusing rather than peeling.
+
+enum Tok { Fn { x: integer }, Id { x: integer } }
+
+struct Cur { src: vector<Tok>, pos: integer }
+struct CurNote { src: vector<Tok>, pos: integer, note: text? }
+struct CurFirst { first: vector<Tok>?, src: vector<Tok>, pos: integer }
+
+fn main() {
+  // c1 — CONTROL: a dense cursor consumes one `Id` from pos 1 and advances to 2.
+  a = Cur { src: [Fn { x: 0 }, Id { x: 7 }], pos: 1 };
+  ra = match a { [Id { x }] => x, _ => -1 };
+  assert(ra == 7 && a.pos == 2, "c1 dense cursor binds and advances");
+
+  // c2 — a nullable SUBJECT is still a cursor.  The subject reaches `cursor_shape` through a
+  // discharge, so its bare `Reference` test is never asked about a wrapper.
+  b: Cur? = Cur { src: [Fn { x: 0 }, Id { x: 7 }], pos: 1 };
+  rb = match b { [Id { x }] => x, _ => -1 };
+  assert(rb == 7 && b.pos == 2, "c2 nullable cursor subject binds and advances");
+
+  // c3 — two consecutive consumes over the nullable subject.  A cursor that binds correctly but
+  // does not advance reads the SAME token twice; this is the cell that would catch it.
+  c: Cur? = Cur { src: [Id { x: 3 }, Id { x: 7 }], pos: 0 };
+  c1v = match c { [Id { x }] => x, _ => -1 };
+  c2v = match c { [Id { x }] => x, _ => -1 };
+  assert(c1v == 3 && c2v == 7 && c.pos == 2, "c3 a nullable cursor advances between consumes");
+
+  // c4 — a nullable field that is neither the source nor `pos` does not disturb the shape.
+  d = CurNote { src: [Fn { x: 0 }, Id { x: 7 }], pos: 1, note: null };
+  rd = match d { [Id { x }] => x, _ => -1 };
+  assert(rd == 7 && d.pos == 2, "c4 an unrelated nullable field leaves the cursor a cursor");
+
+  // c5 — a nullable `vector<T>?` declared BEFORE the real source.  The source is the first
+  // vector field the bare test RECOGNISES, so the nullable one is skipped and `src` is chosen;
+  // the cursor works and reads the tokens the author meant.  This cell pins the choice, because
+  // peeling the source test would move it to `first` — which is null here.
+  e = CurFirst { first: null, src: [Fn { x: 0 }, Id { x: 7 }], pos: 1 };
+  re = match e { [Id { x }] => x, _ => -1 };
+  assert(re == 7 && e.pos == 2, "c5 a nullable vector field is not chosen as the source");
+
+  println("cursor match over a nullable subject ok");
+}

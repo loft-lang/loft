@@ -9,7 +9,7 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 ## Status
 
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and FOUR batches landed, the audit row moving DOWN for the first time (359 → 354, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and SEVEN batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -85,7 +85,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 4 batches landed; the row moved DOWN for the first time (359 → 354) |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 7 batches landed; the row moved DOWN twice (359 → 354 → 351).  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -562,6 +562,175 @@ refusals fire for it, but `cell_struct_name` has no template for it, so an indir
 its write exactly as the nullable did.  It is `synthesize_cell_structs`'s own documented "phase
 02d-ii silent gap".  Kept apart because the cures differ and a blanket refusal would break the
 direct-call form, which compiles and is correct today (`f_u8_direct` measured green).
+
+**Batch 5 — the cursor-match family, and a finding left OPEN on purpose (2026-09-07).**  The
+`parser/control.rs` tier-0 group that batch 3 did not reach: `cursor_shape`, `parse_cursor_match`,
+`peek_subrule_capture`.  `cursor_shape` decides whether a `match` subject IS a cursor with three
+bare `Type` tests — the SUBJECT is a `Reference` to a struct, the first `Vector` field is the
+source, a field named `pos` is an `Integer` — so a `τ?` in any of the three makes the answer
+`None` and the struct silently stops being a cursor.
+
+Three of the positions CLOSED, measured on both backends and guarded
+(`153-a-cursor-match-over-a-nullable-subject-advances`): a nullable SUBJECT works, because the
+subject reaches `cursor_shape` already discharged and its bare test is never asked a wrapped
+question (the var table shows the local is `ref(732)?` while the cursor temps are still minted);
+an unrelated nullable field beside a well-formed cursor is ignored; and a nullable `vector<T>?`
+declared BEFORE the real source is skipped by the first-vector-field rule rather than chosen and
+found null.  Every cell asserts the cursor POSITION as well as the bound value, because a cursor
+match that degraded to a plain struct match could bind the right value while failing to advance.
+
+**Two positions do NOT work, and the second one is why this batch ships without a fix
+(loft#1410).**  A `?` on the `src` or `pos` field turns cursor matching off and the failure surfaces as a parse error
+pointing at the arm PATTERN, naming nothing the author can act on.  And a nullable ELEMENT
+(`src: vector<Tok?>`, or the same shape with no cursor at all — `match v { [Id { x }] => … }`
+over a `vector<Tok?>`) is refused the same way, while its dense twin runs; `control.rs:8541` and
+`:8641` ask the element's ENUM identity bare, and the `Type::Iterator` arm forty lines above
+already asks its own through `elm_tp.base()`, so the drift was in the file.
+
+The peel was BUILT, MEASURED AND REVERTED rather than landed.  It routes correctly and then
+surfaces `No matching operator '==' on 'Tok?' and 'Tok?'` from `parse_field_sub_pattern`, whose
+`if let Type::Enum(e_nr, true, _) = field_type` is bare too — and peeling THAT one would be
+wrong rather than merely incomplete: the tag test it builds is
+`OpEqInt(OpConvIntFromEnum(OpGetEnum(field_val, 0)), disc)`, and for a `vector<S?>` element the
+byte at offset 0 is @PLN25's nullable TAG, not the variant discriminant, so a peeled tag test
+answers a variant question with an absence bit.  The element has to be read THROUGH its tag and
+the pattern must FAIL on an absent element — `(L-Null-Which)`, the rule phase 5 batch 1 closed
+for field reads and method calls, now asked of the @PLN35 slice machinery.  That is a design
+step in the pattern machinery rather than a peel, so it is the batch's OPEN item — filed as
+**loft#1410** with the measurement, rather than half-fixed.  The guard says in its header what it does not
+cover and why.
+
+**Batch 6 — the `&` PARAMETER group in `scopes.rs`, and the THIRD spelling of `τ?` at phase 3's
+own gate (2026-09-07).**  `reassigned_ref_params`, `removed_ref_params`, `removed_params_map`,
+`def_reshape_refusals`, `amp_writeback_owned_copy`, `reclaim_safe` — the tier-0 group that
+reasons about `&` parameters in the scope pass, a different layer from batch 1's `&` LOCAL link.
+
+Reading them reshaped the hypothesis before a single probe: they match the OUTER
+`Type::RefVar(_)`, and a `&integer?` is `RefVar(Optional(Integer))`, so the shallow tests fire
+for a nullable parameter exactly as for a dense one.  The matrix therefore aimed at the deeper
+question — does a `&τ?` behave like a `&τ` — as eight nullable/dense pairs.  Seven pairs
+delivered identical values on both backends.  What every nullable cell carried instead was a
+DIAGNOSTIC its dense twin did not: *"a nullable `integer?` is stored into parameter 1 of `bump`
+of the non-null type `&integer?`"* — a correct program, told that the store its own signature
+asks for makes the value null, in a "non-null type" that is spelled with a `?`.
+
+**The cause is phase 3's own gate, and it is this plan's thesis in one line.**  `τ?` has THREE
+spellings at `nstore_unwrap_report`; two were handled — `Type::Optional` and the synthetic
+`__nullable<S>` (loft#1123, whose comment sits at that guard) — and the third is a `&`
+parameter, which carries its nullability INSIDE the reference.  Asking `Type::Optional` of the
+outer type answers about the REFERENCE, not about the slot the store lands in.  Cured by asking
+both tests of the pointee, because the pointee is the slot (**loft#1413**).  `warning` is the
+tier that gates library CI, so a library exposing a `&τ?` parameter failed its own CI on correct
+code with a self-contradictory message.
+
+The negative control is what makes it a fix rather than a deletion: a nullable argument into a
+`&integer` parameter must STILL warn, and does.  Both directions are in
+`tests/callarg_nstore.rs`, which counts the warning and so can go red — measured failing with
+the peel reverted, its twin staying green.  That Rust pair carries the falsification, because
+`make falsify` compares exit, asserts, leak, panic and refusals and a WARNING moves none of
+them: the `.loft` guard is INERT against the pre-fix build, correctly, and says so in place of
+a falsify stamp.  The `.loft` guard carries the other half — that the writes still reach the
+caller, so the silence is not bought by dropping the store.
+
+**One face left open, and it is a different site.**  A `&vector<T>?` parameter still reports.
+`control.rs::un_ref` converts `RefVar(τ?)` to `τ?`, and `convert` peels the destination's
+`Optional` before the `RefVar`, so the chain ends up asking *"store `vector<T>?` into
+`vector<T>`"* — a nullability question the dereference never posed.  Localised by instrument
+rather than by reading (`parse_index` → `un_ref` → `convert` ×3 → the gate, `what = "a slot"`,
+i.e. a bare convert with no store context); the identical read and write on a plain nullable
+vector LOCAL are clean, which is what makes it `&`-specific.  A recursion-order defect in
+`convert`, recorded on loft#1413 rather than bundled.
+
+Filed on the way, unrelated to null and found as the DENSE control of the removal pair:
+**loft#1411** — `v.remove(i)` through a `&vector<T>` parameter corrupts the caller's vector
+while `len` stays right (`[10,20,30,40,50]` with `remove(1)` gives `[10,20,50,0]`, both
+backends, already wrong inside the callee).  `sev:high`, `silent-wrong`.
+
+**Batch 7 — the slice-pattern element family, and the measurement that reversed batch 5's own
+reading (2026-09-07).**  Batch 5 left loft#1410 OPEN with a design step recorded in it: the
+variant tag test reads the byte at offset 0, which for a `vector<S?>` element is @PLN25's
+nullable TAG, so the element would have to be read THROUGH its tag and the pattern made to fail
+on an absence.  **That reading is right for the shape it was measured on and wrong for the shape
+the issue is about**, and `loft introspect` says which in one line: a `vector<Tok?>` element
+where `Tok` is a struct-ENUM is **16 bytes, identical to `vector<Tok>`**, read through the same
+`OpGetField(elem, 0, kt)` projection (`type_def_nr` peels `Optional` already), and its variant
+discriminants start at **1** because *"0 is the null/undefined value"* the variants are numbered
+away from (`definitions.rs`).  So an absence is discriminant 0, every variant tag test already
+answers FALSE for it, and `(M-Variant)` — an absence is no variant — needs no tag read and no
+is-present condition at all.  The tagged `__nullable<S>` the reverted peel would have broken is
+the STRUCT element, which no variant pattern can name.  `(L-Null)`, not `(L-Null-Tag)`.
+
+The cure is therefore the peel PLUS the exclusion that keeps the synthetic out of it, at ONE
+home: `Parser::pattern_variant_enum(tp)` — `Type::Enum` of `tp.base()`, `None` for a
+`__nullable<S>` — read by the **ten** sites that asked the element's variant identity with a bare
+`match Type` (the scalar-capture guard, the variant sub-pattern peek, the repetition and its TAIL
+sub-pattern, both alternations, `build_literal_match` and its diagnostic twin, and BOTH arms of
+`parse_field_sub_pattern` — that last pair is where the issue's second error came from, the FIELD
+position rather than a peeled tag test: a nullable field sub-pattern `A { t: Id { x } }` was
+broken the same way and is fixed by the same home).
+
+**The silent half nobody had measured.**  The refusal was only the loud face.  The UNIT spelling
+`[Id]` over a `vector<Tok?>` fell past the bare peek into the bare-name branch and became a
+BINDING named `Id`, so it matched **every** element — another variant, and an absent one — where
+its dense twin correctly answers "no match".  `silent-wrong`, both backends.
+
+**loft#1414, the same walk one layer down.**  `@FR-O-Deps` says what a value borrows is read off
+its type, so a read that borrows and says nothing is read as OWNED — and *"this element read
+views its subject"* was spelled **five** times in `control.rs`, each a three-arm `match` over
+`Reference | Vector | Enum`.  Three of them let an `Optional` fall past, so a nullable element
+binding carried EMPTY deps: `match v { [a, ..] => a }` over a local `vector<Tok?>` was classified
+as returning an OWNED value, the subject's store was freed at the callee's exit, and the caller
+read **101** — the first element of the vector allocated next — where the dense twin answers 7,
+on both backends, with `LOFT_POISON=1` blind to it because the store was already live again.
+The other two spellings peeled correctly and were merely duplicates.  One home,
+`Parser::element_view_of`, which is a call to `Type::with_deps` — that already writes through the
+wrapper, which is why the fold is a call and not a sixth `match`.  The second face of the same
+missing dep appeared the moment the peel let a repetition run over a nullable element: the
+materialisation's per-element read was freed while the subject still owned it (a poisoned read on
+`--interpret`, an `E0425` on `--native` for a free emitted outside the temp's block).
+
+**The refusal that stayed, and now says why.**  `cursor_shape`'s source and position tests keep
+REFUSING a `vector<T>?` source and an `integer?` `pos` — peeling the source test would move which
+field becomes the cursor source, which batch 5's landed guard pins (`CurFirst`).  What was wrong
+was only what the author was told: `[` reached the STRUCT-pattern parser, the first pass broke out
+silently and the run died on a brace, so the message was *"Expect token }"*.  Now one error names
+the field (*"its `pos` field is `integer?`, and a cursor's position must be an integer"*), the arm
+is skipped on BOTH passes so pass 2 can print it, and the element-type refusals recover through
+the closing `]` — which also cures a cascade the DENSE non-enum repetition has always had, and
+makes a forward-aliased cursor source (`src: Toks` with `type Toks = vector<Tok>` below) compile
+where it did not.  The `__nullable<S>` no longer leaks into a message either (*"'S' is not a
+variant of __nullable<S>"* → *"…needs a struct-enum element type, not `S?`"*).
+
+**The rules gained what the table was missing.**  `types.md`'s per-type null table had no ENUM
+row and `(L-Null)`'s sentinel list no enum sentinel, which is exactly the gap that made the
+tagged reading look like the only one available: the enum row is now *in-band discriminant 0,
+variants numbered from 1, a plain enum reading 255 as absent too*, `(L-Enum)` states the numbering
+and the 254-variant limit the parser already enforces, and `matching.md` carries the paragraph
+that a nullable subject or element names the same variants and an absence matches none.
+
+**Measured.**  Guards `1410-a-slice-pattern-over-a-nullable-element-names-its-variant.loft`
+(22 cells, every nullable cell beside its dense twin: variant sub-pattern, unit variant, bare
+binding, two-element sequence, named capture, alternation, repetition with and without a rest,
+wildcard, rest, a call-result subject, a LOOP-driven cursor, and the value-enum and tagged
+controls), `1410b-…` (the five refusals) and `1414-…` (the escaping view, its tagged and
+parameter controls).  All three falsified against `d6e665ae`: 1410 and 1410b on exit/expectations,
+1414 on its own **assertion** — its repetition cell moved into 1410's file precisely because a
+file that cannot COMPILE on the control proves itself through the exit channel instead of through
+the value it is about.  `scripts/introspect_diff.sh` over the corpus: **DIFFERENT 3 of 1338**, all
+three the new guards — no existing program's IR, bytecode, generated Rust or stderr moved.
+`matrix_axes.py` reports container kind `vector` only and element type enum/integer/struct, both
+by construction (a slice pattern is worn by a vector or a cursor over one, and only an enum HAS
+variants to name); its A3/A9 columns describe ARGUMENT positions and do not see a match subject,
+so the call-result and loop cells are recorded here rather than in its output.  **The `optional`
+row moves DOWN again: `730 | 374 | 5 | 351` from `728 | 369 | 5 | 354`** — three functions off the
+opaque column, two new ones on the seeing-through side.
+
+Filed rather than fixed, each a different mechanism: **loft#1415** (a dense `-> τ?` element
+binding over a vector PARAMETER emits its free outside the block that declares it — `--native`
+E0425, pre-existing on `main`), **loft#1416** (`vector<Color?>` over a VALUE enum drops the `?`
+at the declaration and the null store is refused naming `vector<Color>`, while a `Color?` local
+and field hold null fine), **loft#1417** (`match e { null => … }` is refused for every HEAP
+subject — `(N-Match)` holds for a scalar only).
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 

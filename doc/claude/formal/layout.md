@@ -115,7 +115,9 @@ change even though the field pointer is unchanged.
   (L-Struct)  a struct record packs its fields by DESCENDING alignment; off(τ, fᵢ) is the packed
               position; size(τ) is the packed total.  A field access is H[r ⊕ off(τ, f)].
   (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is
-              [tag byte] followed by the variant's fields (L-Struct packing).
+              [tag byte] followed by the variant's fields (L-Struct packing).  Variants are
+              numbered from 1: 0 is the absent value (L-Null) and 255 is the null a write
+              spells, so an enum holds at most 254 variants and the parser refuses the 255th.
   (L-Tuple)   a tuple (τ₀,…,τₙ) is a synthetic __tuple<…> struct.  Element offsets are
               natural-alignment packing — off = the next position ≥ the element's alignment —
               and a tuple has TWO layout views that must compute the SAME offsets: the STACK
@@ -175,7 +177,10 @@ The rule wants splitting rather than weakening, and the split is decidable from 
 ```
   (L-Null)     τ ≈ τ?  for every τ that reserves a null VALUE  —  layout(τ) = layout(τ?);
                absence is a sentinel in those bytes (i64::MIN / NaN / 255 / nullref / codepoint
-               0), never an extra byte or a moved offset.
+               0 / an ENUM's discriminant 0, which its variants are numbered away from), never
+               an extra byte or a moved offset.  So a variant test over a `vector<E?>` element
+               decides absence for free: an absence is discriminant 0 and every variant is 1 or
+               above, which is `(M-Variant)` needing no null test of its own (loft#1410).
   (L-Null-Tag) a struct stored INLINE — a `vector`/keyed element, an embedded field, a tuple
                member — has no sentinel to spend, so `S?` is the tagged `__nullable<S>`:
                layout(S?) = discriminant ++ layout(S) at the payload base, and

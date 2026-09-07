@@ -1,6 +1,4 @@
 # QUALITY — Open Issues, Active Designs, Enhancement Plan
-# QUALITY — Open Issues, Active Design  Re-measured again (re-measured after loft#1371 gave the `&` LOCAL link the lowering the `&` PARAMETER has, for a text and a vector source): optional `720 | 360 | 5 | 355`, unspan `405 | 381 | 24`.  Re-measured again (re-measured after @PLN153 phase 4 batch 1 (the `&` lowering's source tests read through base())): optional `717 | 359 | 5 | 353`, unspan `402 | 378 | 24`.  Re-measured again (re-measured after @PLN153 phase 3c joined with the @FR-O-Witness walk): optional `716 | 358 | 5 | 353`, unspan `402 | 378 | 24`.s, Enhancement Plan
-# QUALITY — Open Issues, Active Design  Re-measured again (re-measured after loft#1371 gave the `&` LOCAL link the lowering the `&` PARAMETER has, for a text and a vector source): optional `720 | 360 | 5 | 355`, unspan `406 | 382 | 24` (re-measured again after loft#1376's `produces_whole_record`).  Re-measured again (re-measured after @PLN153 phase 4 batch 1 (the `&` lowering's source tests read through base())): optional `717 | 359 | 5 | 353`, unspan `402 | 378 | 24`.  Re-measured again (re-measured after @PLN153 phase 3c joined with the @FR-O-Witness walk): optional `716 | 358 | 5 | 353`, unspan `402 | 378 | 24`.s, Enhancement Plan
 
 This document is the single source of truth for **what's broken, what's
 being fixed, and what should be fixed next**.  It replaces the earlier
@@ -2473,7 +2471,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 734 | 373 | 5 | **356** |
+| 730 | 374 | 5 | **351** |
+
+@PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
+opaque column DOWN by three and added two functions on the seeing-through side: the element's
+variant identity and the element read's borrow dep each have ONE home now
+(`Parser::pattern_variant_enum`, `Parser::element_view_of`), and the ten and five sites that
+asked those questions with a bare `match Type` read them instead.  Every moved function has a
+cell in `1410-a-slice-pattern-over-a-nullable-element-names-its-variant.loft`,
+`1410b-a-slice-pattern-says-which-field-stopped-it.loft` or
+`1414-a-nullable-element-binding-borrows-its-subject.loft`.
 
 **The row is the JOINED tree's, re-measured, and a FIFTH number that no branch carried.**
 `734 | 373 | 5 | 356`, against `732 | 366 | 5 | 361` on the branch the two `@FR-H-Stride`
