@@ -426,6 +426,20 @@ Two measurements, both from `gh run list`, decided this:
   daily on twenty of twenty, and the reds were macOS/Windows-only tests plus a codegen
   invariant in the debug-assertions gate — deep-internals changes that pass the ubuntu
   PR gate and fail on the legs that only run after the merge.
+- **Measured 2026-09-07, three at once.** A local `make ci` returned `ALL GATES PASSED`
+  (796 s) on a tip whose nightly had THREE red gates: `LOFT_POISON` (a nested tuple's
+  copy freed the source's vector), `debug-assertions` (attribute indices tagged as frame
+  variables in `Definition.returned`) and `ASan UAF/OOB (macos-latest)` (`pid_alive` knew
+  only procfs, so nothing was provably dead off Linux).  All three were regressions from
+  one join, all three were green on `main` the morning before it, and none is in the
+  local gate's path.  **So a green `make ci` is not evidence about POISON, the
+  debug-assertions gate, or any macOS leg** — the same shape as the shipped libraries,
+  which `make ci` also says nothing about ([DEVELOPMENT.md](DEVELOPMENT.md) §
+  `revalidate_libs_local.sh`).  Two of the three needed a
+  config the box cannot run at all (macOS) or does not build by default
+  (`-C debug-assertions=on`, which `[profile.dev.package.loft]` strips), so the way to
+  ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the
+  FULL nightly set, wider than the push-triggered run that produced the reds.
 
 The **release gate** (`release-gate.yml`) is the deliberate counterpart: the six
 nightlies called as reusable workflows (`workflow_call`, the pattern
