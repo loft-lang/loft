@@ -2515,9 +2515,9 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 741 | 391 | 5 | **345** |
+| 742 | 391 | 5 | **346** |
 
-*loft#1445 added the 741st and the 391st, and it is a SPLIT rather than a new site.*
+*loft#1445 added the 742nd and the 391st, and it is a SPLIT rather than a new site.*
 `vectors::owns_keyed_store` is the ownership half of a question `is_keyed` was answering
 twice — *which kind of collection is this*, where a `&` link must peel, and *does this
 variable own a store*, where it must not.  It discriminates on `Type::RefVar` through
@@ -2586,7 +2586,7 @@ is *correctly* opaque has to say why, or the next reader re-derives it.
 loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the same side and
 for the same reason: it names `Type::Reference` to reach the closure record behind a record
 LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
-the answer, not the omission — 734 -> 735 discriminating, 348 -> 349 opaque.
+the answer, not the omission; on the joined tree it is the 346th opaque entry.
 
 @PLN153 phase 4 batch 10 (the `scopes.rs` tier-0 group — the store-lifetime pass, loft#1439 /
 loft#1442) leaves the opaque column WHERE IT IS, and the arithmetic is worth reading: it peels
