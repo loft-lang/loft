@@ -6,10 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — D-bind-28 OPENED 2026-09-07: the `&hash<τ[k]>` PARAMETER spelling is still
-refused where the LOCAL and FIELD ones now link (below).  D-bind-29 OPENED AND CLOSED
-2026-09-07 (loft#1433): a `&` bind to a keyed collection is a LINK, not a copy;
-D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+OPEN: **1** — D-bind-28 OPENED 2026-09-07, the COLLECTION half of `(B-Ref-Uniform)`: three
+mechanisms broke it, the vector surface and the keyed BIND are closed, the keyed PARAMETER
+(loft#1445) is not (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
 DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
 2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
 D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
@@ -29,7 +28,7 @@ B-Ref-Reshape is enforced for all three of B-Disturb's events (D-bind-9,
 opened and closed 2026-08-05); B-Ref-AnnotationOnly is enforced in every position, not
 only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 
-> **D-bind-29 — OPENED AND CLOSED (2026-09-07, loft#1433) — a `&` bind to a keyed
+> **D-bind-28, part two — CLOSED (2026-09-07, loft#1433) — a `&` bind to a keyed
 > collection is a LINK, not a copy.**  `(B-Ref-Alias)` says the `&` annotation makes **ANY**
 > binding a live link to the source instead of a copy, and names `d += …` as writing through.
 > The `&`-bind's source set was `matches!(amp_vector_source, Type::Vector(_, _))` — a set of
@@ -58,8 +57,8 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends, with
 > `a_plain_keyed_bind_still_copies` as the control a share-everything cure fails.
 
-> **D-bind-28 — OPENED (2026-09-07) — the `&hash<τ[k]>` PARAMETER spelling is still
-> refused.**  `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable with
+> **D-bind-28, part three — STILL OPEN (2026-09-07, loft#1445) — the `&hash<τ[k]>`
+> PARAMETER spelling is refused.**  `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable with
 > no operation special-cased, and `c += [rec]` on a `&hash<Row[id]>` parameter is refused
 > instead — *"Variable 'c' cannot change type from `&hash<Row,["id"]>` to `vector<Row>`"*,
 > because the append routes do not claim the statement (`is_keyed` / `is_collection` read

@@ -2471,30 +2471,36 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| RE-MEASURE | RE-MEASURE | 5 | **RE-MEASURE** |
+| 738 | 384 | 5 | **349** |
 
 **Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
 
-*loft#1412 added the 731st and the 360th.*  `Parser::vector_operations` now reads the removal's
+⚠ **The counts above are the JOINED tree's, re-measured with `ir_walker_audit.py optional`;
+they are not the sum of any two streams' rows and never were.**  Each of the three fixes below
+was measured against the tree it landed in, so the per-fix ordinals it gave itself do not name
+a position in this table — what each one still says correctly is which DIRECTION it moved and
+why its entry is correctly opaque, and that is the part to read.
+
+*loft#1412 added a function and an opaque entry.*  `Parser::vector_operations` now reads the removal's
 element width off the vector's CONTENT, so it discriminates on a `Type` variant where it
 previously did not.  It scores OPAQUE and stays that way on purpose: its sole caller admits it
 only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is unreachable and a peel there
 would be dead code — `.remove` on a nullable vector does not resolve at all (*"Unknown field
 vector.remove"*), never reaching this function.
 
-*loft#1420 added the 732nd and the 361st, and it is a SWAP the totals hide.*
+*loft#1420 added one of each, and it is a SWAP the totals hide.*
 `Data::narrow_vector_element` was extracted as the one home for a narrow element's
 `(spec, nullable, width)`, and it carries the `Type::Optional` arm — so it enters as PEELING.
 Its caller `narrow_vector_content` handed that arm over and is left discriminating only on
-`Type::Function`, so it moves peeling→opaque.  The middle column is unchanged at 366 because
+`Type::Function`, so it moves peeling→opaque.  The middle column did not move for that fix, because
 one function left it as another joined, which is why the row is read as four numbers and not as
 a trend: **extracting a peel into a helper makes the caller read as opaque even though the peel
 still happens on every path through it.**  A delegating caller is the one shape this classifier
 cannot see through, and it is worth knowing before reading the opaque column as a backlog.
 
-*The `(B-Ref-Uniform)` walk (B8p) added the 733rd and the 362nd.*  `Parser::resolve_type_var`
+*The `(B-Ref-Uniform)` walk (B8p) added one of each.*  `Parser::resolve_type_var`
 gained an arm stripping `Type::RefVar` from the concrete argument, beside the one already
 stripping `Type::Rewritten` — both record how an argument was REACHED or ASSEMBLED rather than
 what it IS, and a type variable binds to the shape.  It scores OPAQUE because the new arm reads

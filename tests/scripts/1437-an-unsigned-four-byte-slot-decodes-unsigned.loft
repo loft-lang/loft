@@ -26,7 +26,7 @@
 // cure that fixed the RENDER alone passes the render cells and fails every keyed one,
 // because a keyed lookup hashes and orders through a different reader.
 //
-// @falsified-at: 86f59034 — interpret exit 1 -> 0, 12 assertion failures -> 0 (5 fns still
+// @falsified-at: 86f59034 — interpret exit 1 -> 0, 13 assertion failures -> 0 (5 fns still
 //   PASS on the control); native exit 1 -> 0, 1 assertion failure -> 0.
 //
 //   The two legs count differently and the reason is the harness, not this file: the native
@@ -247,4 +247,24 @@ fn an_i32_binary_round_trip_keeps_its_sign() {
     assert_eq("{v}", "-7", "a signed 4-byte value round-trips negative");
   }
   delete("test_loft_1437_i32.bin");
+}
+
+type UBig = integer limit(1000, 4000000000) size(4);
+
+struct Qt { x: UBig, y: UBig, n: text }
+
+fn a_spatial_axis_with_a_non_zero_minimum_is_still_unsigned() {
+  // The cell where this rule meets @FR-L-Narrow-Decode, which says the 1- and 2-byte widths
+  // store `value - start` and a reader must add `start` back.  At FOUR bytes the ops store the
+  // value RAW (`set_u32_raw` / `set_i32_raw`, no shift), so the key descriptor's shift is 0 and
+  // the bias must NOT be applied — a declared minimum here changes which width the range needs
+  // and nothing else.  Asserted because the two rules pull opposite ways at this width, and a
+  // reader adding the bias "for consistency" would break exactly this axis while every `u32`
+  // cell above (minimum 0, so the bias is nothing) stayed green.
+  t: spatial<Qt[x,y]> = [Qt { x: 3000000000, y: 3500000000, n: "hi" }, Qt { x: 1000, y: 2000, n: "lo" }];
+  assert_eq("{t[3000000000,3500000000].n}", "hi", "a large point on a biased-range axis");
+  assert_eq("{t[1000,2000].n}", "lo", "and a small one at the range's own minimum");
+  out = "";
+  for e in t { out = out + "{e.x},"; }
+  assert_eq(out, "1000,3000000000,", "unsigned order on a non-zero-minimum axis");
 }
