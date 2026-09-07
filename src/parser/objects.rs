@@ -871,12 +871,18 @@ impl Parser {
         // `Type::Reference(enum)` (typed decl / reassignment / field init / call
         // arg / return).  emit_variant_value picks the right discriminant (and
         // the mixed-enum allocation form) for that enum.
-        } else if let Type::Enum(enr, _, _) = parent_tp
+        // Read through `base()`: whether the target may be ABSENT says nothing about
+        // which variants it can hold, so `v: vector<Color?> = [Green]` has to resolve
+        // `Green` exactly as the dense spelling beside it does.  Asked bare, a nullable
+        // element type fell past both arms and the bare variant was reported as having no
+        // type at all — the same peel `enum_context` already does to decide there IS an
+        // enum context here (loft#1065 one site over, loft#1416).
+        } else if let Type::Enum(enr, _, _) = parent_tp.base()
             && self.data.def(*enr).attr_names.contains_key(name)
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
-        } else if let Type::Reference(enr, _) = parent_tp
+        } else if let Type::Reference(enr, _) = parent_tp.base()
             && self.data.def_type(*enr) == DefType::Enum
             && self.data.def(*enr).attr_names.contains_key(name)
         {
