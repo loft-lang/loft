@@ -9,6 +9,34 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Two stores a nullable local lost, in the pass that decides who frees (2026-09-07)
+
+@PLN153 phase 4 batch 10, the `scopes.rs` tier-0 group.  Both are use-after-free, both on both
+backends, and neither is visible on the value channel — a released record keeps its bytes until
+something writes over them, so both guards are falsified with `LOFT_POISON=1
+LOFT_STRICT_STORES=1` and say so.
+
+**A closure that outlives its frame lost its nullable capture (loft#1439).**  `c: S? = S { … }`
+lowers through a work-ref where the dense spelling has none, and that work-ref's free ran
+unconditionally right after the closure record adopted the store.  loft#1317 made the same free
+conditional for a RETURNED local and chose "not returned ⟹ plain free" as its boundary, which is
+right for a closure that STAYS — a record left behind never frees, since the fn-ref type carries
+its frame dep and the sweep skips it — and wrong for one that LEAVES, whose cascade frees what it
+adopted.  Three facts now have to meet: the record adopted the capture, the record escapes
+(`DepEntry::CalleeFrame` in the declared return type), and the capture attribute is one the
+cascade FOLLOWS — a record-`Enum` capture is not, and declining the frame's free there leaks.
+
+**A view into a nullable local was not materialised across its reassignment (loft#1442).**
+`established_stores` names the record kinds bare at three tests, so an `Optional(Reference)`
+local established nothing however it was assigned: the view was neither copied out nor reported,
+where the dense twin does both.
+
+`(L-CapOwn)` is the rule the first one needed and `formal/closures.md` did not have — a captured
+heap store is freed once, by whichever of the record and the frame outlives the other — and
+writing it moved that chapter's deviations off zero: **D-clo-24** (loft#1440), two closures over
+one local where only one escapes, both records adopting the one store.  Its dense twin fails
+identically, so it is adoption-as-transfer rather than anything about the `?`.
+
 ### Three declaration-time questions answered NO because a `?` was written (2026-09-07)
 
 @PLN153 phase 4 batch 9, the `parser/definitions.rs` tier-0 group.  Each was a bare `matches!`
