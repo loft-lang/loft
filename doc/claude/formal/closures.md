@@ -73,6 +73,13 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  the cure the refusal names is a struct field, which is (L-CapHeap) and shares
                  in both directions.  The rule is nullability-agnostic: `Ï?` and `Ï` agree on
                  all of it, which is what loft#1408 restored.
+  (L-CapBox)     a captured scalar the closure REASSIGNS keeps its declared type exactly.
+                 Its WIDTH, its RANGE and its reserved null sentinel are what the declaration
+                 says, whatever storage the write is routed through — so a narrow capture
+                 refuses the stores its type refuses, takes its own range's default on one
+                 out of range, and answers identically to the same variable never captured
+                 at all.  The share (L-CapWrite) grants is about WHERE the write lands; it
+                 grants nothing about what the variable may hold.
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -107,6 +114,12 @@ spellings read the build-time one. Both are "the closure kept its `DbRef`"; what
 whether a rebind mints. Measured on all three keyed kinds, both backends, and unchanged by
 loft#1324's fix — the store-lifetime half is correct either way, so this is a contract question
 rather than a leak, and it is open.
+
+**Boxing is invisible, and that is the rule.** A scalar the closure writes to has to live
+somewhere both sides can reach, so it moves off the stack into a one-field record.  That is a
+change of ADDRESS, never of type: a `u8` capture is still a `u8`, one byte wide, refusing what
+`u8` refuses.  Read `(L-CapBox)` as the thing you may assume when you cannot see where a
+capture is stored — the declaration is still the whole truth about it.
 
 **In words.** A closure that captures an `integer x` freezes `x`'s value at the moment the closure
 is built (verified: capture, then `x = 20`, still yields `10`).  If the closure ASSIGNS to `x`,

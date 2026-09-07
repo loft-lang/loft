@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-CapWrite — a captured SCALAR the closure REASSIGNS is shared in the write direction:
+// the closure's write reaches the outer variable.  The rule is stated over "a scalar", so it
+// holds at every integer WIDTH, exactly as it holds for `τ?` and `τ` alike (loft#1408).
+//
+// It did not.  A mutated scalar capture is boxed into a `__cell_<T>` record, and the namer
+// had templates for the two canonical 8-byte integers only — every narrower width returned
+// `None`, which the synthesis pass skipped, so the capture kept an un-boxed stack slot.  That
+// slot carries a DIRECT call's write and nothing else, so `f(0)` was right and `call_it(f, 0)`
+// silently dropped the write (loft#1409).  Every cell here is therefore read against its
+// DIRECT control — the same closure called the way that always worked — because the invariant
+// is that the two call shapes agree, not that either matches a number somebody typed.
+//
+// The filed scope was `forced_size` aliases (`u8`/`i16`/…).  It is wider: the namer keyed on
+// STORAGE WIDTH, so a bounds-only narrow type (`Small` below, no `size()` at all) fell in the
+// same hole.  `Small` is the cell that tells the two scopes apart.
+//
+// `boolean`, `character`, `single`, `float`, `text` and a plain enum were always boxed — each
+// owns its own storage rather than sharing the one `integer` def — so they are the controls
+// that say the cure did not simply widen everything.
+//
+// @falsified-at: 0fc01ca5 — interpret exit 1 -> 0, interpret 9 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  The two backends fail a different NUMBER of
+//   cells on the control and that is not a discrepancy: native compiles the file into one
+//   binary and stops at the first failure, the interpreter runs each function and reports all
+//   nine (the six aliases, `Small`, `u8?`, and the identity cell).  Every control cell passes
+//   on the control build, which is what says the guard is measuring the narrow widths and not
+//   the harness.
+
+// Every cell compares the TEXT rendering of its two answers rather than the values.  That is
+// not a weaker assertion here — the question is whether two spellings of one write agree — and
+// it keeps the file to a single instantiation of `assert_eq`'s generic.  Mixing widths through
+// it does not work: a call at `i32` binds `AssertValue` for the whole program and a later call
+// at `integer` is then refused as a narrowing (loft#1414).  That is independent of closures and
+// of this fix, and a guard that tripped over it would report someone else's defect.
+
+type Small = integer limit(0, 100);
+enum Direction { North, East, South, West }
+
+fn call_it(g: fn(integer), n: integer) { g(n); }
+
+// ── Every integer width, indirect against its own direct control ───────────────────
+
+fn u8_write_lands_through_an_indirect_call() {
+  a: u8 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: u8 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "u8 indirect vs direct");
+}
+
+fn i8_write_lands_through_an_indirect_call() {
+  a: i8 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: i8 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "i8 indirect vs direct");
+}
+
+fn u16_write_lands_through_an_indirect_call() {
+  a: u16 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: u16 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "u16 indirect vs direct");
+}
+
+fn i16_write_lands_through_an_indirect_call() {
+  a: i16 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: i16 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "i16 indirect vs direct");
+}
+
+fn u32_write_lands_through_an_indirect_call() {
+  a: u32 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: u32 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "u32 indirect vs direct");
+}
+
+fn i32_write_lands_through_an_indirect_call() {
+  a: i32 = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: i32 = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "i32 indirect vs direct");
+}
+
+// The width can come from BOUNDS rather than a `size()` annotation, and that spelling was
+// broken by the same lookup.  Without this cell the fix reads as an alias-only cure.
+fn a_bounds_only_narrow_width_is_boxed_too() {
+  a: Small = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: Small = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "bounds-only narrow indirect vs direct");
+}
+
+fn a_nullable_narrow_capture_is_boxed_too() {
+  a: u8? = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: u8? = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "u8? indirect vs direct");
+}
+
+// ── The storage identity: same width, different declared range ─────────────────────
+//
+// A cell is deduped by NAME, so two captures share storage exactly when they share a name.
+// `Small` and `u8` are both one byte wide; if the name did not carry the BOUNDS they would
+// share one cell and `Small` would inherit `u8`'s 0..255 range.  A store past a declared
+// range takes the slot's default (loft#984), so `Small = 200` reads 0 while `u8 = 200` reads
+// 200 — and a shared cell would answer 200 for both.  Each is read against its UNBOXED
+// control, which is what fixes what the right answer is.
+fn two_one_byte_types_keep_their_own_declared_range() {
+  a: u8 = 1;     f = fn(d: integer) { a = 200; };  call_it(f, 0);
+  b: Small = 1;  g = fn(d: integer) { b = 200; };  call_it(g, 0);
+
+  c: u8 = 1;     assert_eq("{c}", "1", "the unboxed u8 control starts at 1");     c = 200;
+  e: Small = 1;  assert_eq("{e}", "1", "the unboxed Small control starts at 1");  e = 200;
+
+  assert_eq("{a}", "{c}", "boxed u8 matches the unboxed u8");
+  assert_eq("{b}", "{e}", "boxed Small matches the unboxed Small");
+  assert(a != b, "a one-byte type keeps its own range, so the two do not agree");
+}
+
+// ── Controls: the types that were already boxed must still be ──────────────────────
+
+fn a_canonical_integer_still_lands() {
+  a: integer = 1;  f = fn(d: integer) { a = 7; };  call_it(f, 0);
+  b: integer = 1;  g = fn(d: integer) { b = 7; };  g(0);
+  assert_eq("{a}", "{b}", "integer indirect vs direct");
+  assert_eq("{a}", "7", "integer reached the written value");
+}
+
+fn a_float_still_lands() {
+  a: float = 1.0;  f = fn(d: integer) { a = 7.0; };  call_it(f, 0);
+  b: float = 1.0;  g = fn(d: integer) { b = 7.0; };  g(0);
+  assert_eq("{a}", "{b}", "float indirect vs direct");
+}
+
+fn a_single_still_lands() {
+  a: single = 1.0f;  f = fn(d: integer) { a = 7.0f; };  call_it(f, 0);
+  b: single = 1.0f;  g = fn(d: integer) { b = 7.0f; };  g(0);
+  assert_eq("{a}", "{b}", "single indirect vs direct");
+}
+
+fn a_boolean_still_lands() {
+  a: boolean = false;  f = fn(d: integer) { a = true; };  call_it(f, 0);
+  b: boolean = false;  g = fn(d: integer) { b = true; };  g(0);
+  assert_eq("{a}", "{b}", "boolean indirect vs direct");
+}
+
+fn a_character_still_lands() {
+  a: character = 'a';  f = fn(d: integer) { a = 'b'; };  call_it(f, 0);
+  b: character = 'a';  g = fn(d: integer) { b = 'b'; };  g(0);
+  assert_eq("{a}", "{b}", "character indirect vs direct");
+}
+
+fn a_text_still_lands() {
+  a: text = "a";  f = fn(d: integer) { a = "b"; };  call_it(f, 0);
+  b: text = "a";  g = fn(d: integer) { b = "b"; };  g(0);
+  assert_eq("{a}", "{b}", "text indirect vs direct");
+}
+
+fn a_plain_enum_still_lands() {
+  a: Direction = North;  f = fn(d: integer) { a = East; };  call_it(f, 0);
+  b: Direction = North;  g = fn(d: integer) { b = East; };  g(0);
+  assert_eq("{a}", "{b}", "enum indirect vs direct");
+}
