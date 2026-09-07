@@ -82,9 +82,32 @@ owns their *operations + order*).
 ```
   (Col-Cons)    c: <kind><…> = []             empty-literal construction (all kinds).
   (Col-Insert)  c += [ rec, … ]               append/insert a record; keyed kinds place it by key.
+  (Col-Insert-Absent)  c: <kind><…>?  holding null,  c += [ rec, … ]
+                ⟹  c is first instantiated with its default — the empty collection — and the
+                records are then inserted exactly as (Col-Insert) says.  No diagnostic: to an
+                insert, an absent collection and an empty one are the same place, so this is a
+                DEFINED semantic and not a discharge the author forgot.  It is the ONE write
+                that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
 ```
 *Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
+
+**An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
+vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an
+element or a parameter of a nullable collection type behaves the same, and so does every keyed
+kind (loft#1213 is the keyed FIELD half of it).  This is deliberately the opposite answer from
+iteration: a `for` over a nullable collection is refused until discharged
+([iteration.md](iteration.md)), because a loop body binds a dense element and the only way
+there is an unwrap, while an insert has no such binding — its only question is *which store*,
+and an absent collection has exactly one sensible answer to it.  Where an absent collection field comes from, and why the case is kept rather than
+refused: nearly every path in a program starts a collection EMPTY, so the one producer of an
+absent one is DECODING — a JSON document whose key is missing leaves a `vector<It>?` field
+null, and the first thing the program then does with it is add to it.  Requiring
+`s.items = s.items ?? []` before every such append would bill every decoder's consumer for a
+distinction the insert cannot even observe.  The type of `c` is unchanged
+by the append (still `<kind><…>?`); what changes is the value it holds.  Measured on both
+backends before it was ruled (`n: vector<It>? = null; n += [It{…}]; len(n) == 1`), and the
+refusal alternative is declined in [DESIGN_DECISIONS.md C118](../DESIGN_DECISIONS.md).
 
 **What `Col-Insert`'s source may BE, and what it may not.** The rule is written over one
 spelling, `c += [ rec, … ]`, and three source shapes satisfy it: the collection ITSELF (for a
