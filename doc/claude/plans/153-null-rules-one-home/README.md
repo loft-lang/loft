@@ -11,6 +11,7 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 **Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and SEVEN batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 **Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and FOUR batches landed, the audit row moving DOWN for the first time (359 → 354, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and EIGHT batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -90,6 +91,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 4 batches landed; the row moved DOWN for the first time (359 → 354) |
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 5 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 6 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 8 batches landed; the row moved DOWN twice (359 → 354 → 351) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -741,6 +743,66 @@ subject — `(N-Match)` holds for a scalar only).
 step in the pattern machinery rather than a peel, so it is the batch's OPEN item, recorded here
 with its measurement rather than half-fixed.  The guard says in its header what it does not
 cover and why.
+**Batch 8 — the TUPLE tier-0 group, and a rule that promises a type the model cannot hold
+(2026-09-07).**  Seven functions in `parser/mod.rs` decide what a tuple's shape IS —
+`refuse_forward_tuple_returns`, `refuse_forward_ref_tuple_params`,
+`promote_par_worker_tuple_returns`, `stored_tuple_elements`, `emit_tuple_set_ops`,
+`tuple_elem_tag_read` / `_write` — and each matches the whole type bare, so the shape they are
+opaque to is a NULLABLE WHOLE TUPLE.  The cell list (`stage8/CELLS.md`) was written first, and
+its very first cell answered the question the other ten were built on: **`(integer, integer)?`
+cannot be spelled**.  The type parser's tuple branch returns before `parse_type`'s postfix-`?`
+handling, so the `?` was left in the stream and every position reported a syntax cascade naming
+nothing — *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"*
+inside a `vector<…>`, *"unexpected '?'"* for a field or an alias.
+
+**`(N-Opt)` says `τ?` is a type for ANY τ, and the model has no absence for a tuple.**  A tuple
+is its members' bytes: `(L-Null)`'s sentinel needs a value the type RESERVES and a tuple reserves
+none, while `(L-Null-Tag)`'s discriminant is for a STRUCT stored inline.  A `value struct` is the
+same case and has been refused BY NAME since @PLN101 — five lines away in the same function.
+So the refusal is right and the silence was the defect: it now names the tuple the author wrote
+and the two cures (nullable MEMBERS, or a `struct` wrapper).  Recorded as **D-Opt-NoNull**, the
+TYPES register's only open entry, because closing it is a representation decision rather than a fix —
+loft#1423 carries it, with the option that reads best (give a STORED tuple `(L-Null-Tag)`'s
+treatment) and what it would cost (one written type nullable in one position and not in another).
+
+**The shape exists anyway, and that is where the batch found its defects.**  Two routes build a
+nullable tuple without passing the type parser: `(N-Index)` — `v[i]` on a `vector<(τ, τ)>` IS
+`(τ, τ)?` — and a generic `-> T?` instantiated at a tuple.  Measured on that shape:
+
+- an undischarged member read reported *"Expect a field name"*: a message about a NAME, for a
+  program that wrote a number, on a receiver whose real problem is the `?`.  A nullable STRUCT
+  receiver reads correctly through its absence (`(L-Null-Which)`), which is what makes the
+  tuple's answer a defect rather than a rule.  A naive peel of the projection was BUILT first
+  and it ICEs in codegen — the value has no representation, exactly as D-Opt-NoNull says — so
+  the cure is the named refusal plus the discharges, and those are guarded, because a message
+  naming a cure that does not work is the next defect.
+- the DESTRUCTURE of the same value said *"Cannot destructure a non-tuple value"*, which is not
+  true; it now names the type and the same cure, and binds its targets anyway so the refusal is
+  the only report rather than one "Unknown variable" per name.
+- **`(N-Default)` did not hold for a tuple** (**loft#1424**, `silent-wrong`, both backends):
+  `v[j]?` on a miss answered NULL MEMBERS from a slot typed `(integer, integer)`, while the
+  struct twin `s[j]?.a` answered its `0`.  `Data::has_default` recurses over a tuple's members
+  and says yes; `Parser::build_default` had no tuple arm and said no; and the recovery for that
+  disagreement — *"should not happen in practice"* — typed the absent value as the non-null base.
+  It happened in practice.  Fixed at both ends: the tuple default is its members' defaults (the
+  value the `??` spelling hands over), and the recovery REPORTS instead of proceeding, so the
+  next disagreement between those two predicates cannot be silent.
+
+**Measured.**  Guards `1423-a-nullable-tuple-type-is-refused-by-name.loft` (seven positions, each
+naming its own tuple so no two expectations share a substring, plus the nullable-MEMBER cell that
+proves the refusal is about the tuple TYPE), `1423b-…` (the member read, through a local and
+direct, the stored spelling, and the destructure) and `1424-a-tuple-default-is-its-members-defaults.loft`
+(the member kinds a default has to build, both representations, hit and miss, `?` against `??`,
+and the destructure as a second consumer).  All three falsified against `d6e665ae` — 1424 on its
+own assertion.  `scripts/introspect_diff.sh` over the corpus: **DIFFERENT 6 of 1341**, all six the
+new guards of batches 7 and 8 — no existing program moved.  The `optional` row does NOT move
+(`731 | 375 | 5 | 351`): these seven functions are closed by a probe cell rather than by a peel,
+which is the other half of the phase's Verify line, and the denominator gains the one predicate
+the two refusals share.
+
+Filed rather than fixed: **loft#1425** — a `??` on a vector element whose tuple has a TUPLE
+member does not compile on `--native` (the generated null test reads `.0` as a bool); pre-existing,
+`--interpret` is correct, and it is why this batch's member-kind row stops at three flat members.
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 

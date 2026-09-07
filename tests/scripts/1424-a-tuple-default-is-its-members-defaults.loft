@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1424 — `(N-Default)` for a TUPLE.
+//
+// `x?` discharges `τ?` to `τ` using the type's DEFAULT.  `Data::has_default` recurses over a
+// tuple's members and says yes; `Parser::build_default` had no tuple arm and said no, and the
+// recovery for that disagreement typed the ABSENT value as the non-null base — so `v[j]?` on an
+// out-of-range index answered `null` from a slot typed `(integer, integer)`, while the struct
+// twin `s[j]?.a` answered its `0`.  Silent, both backends.
+//
+// The `?` and `??` spellings of the same discharge are asserted to agree everywhere: `??` was
+// right throughout, which is what makes `?`'s answer a defect rather than a rule.
+//
+// Axes this file MOVES:  the member kinds a tuple's default has to build (integer · text ·
+//                        character · boolean · enum · three members), the tuple's
+//                        representation (stack-backed, and STORED once a member is heap), and
+//                        whether the index HITS or misses.
+// Axes it HOLDS FIXED:   the discharge is `?` or `??` — the undischarged member read is refused
+//                        and is `1423b`'s.
+//
+// @falsified-at: d6e665ae — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native the same.  The failing assertion is c1's miss: the control reads `null` members from
+//   a slot typed `(integer, integer)` where this file asserts the defaults.
+
+enum E1424 { First, Second }
+struct S1424 { a: integer }
+
+fn main() {
+  hit = 1;
+  miss = 9;
+
+  // c1 — a stack-backed tuple: a HIT reads the element, a MISS reads the members' defaults,
+  // and the `??` spelling of the same discharge agrees on the hit and takes its own default.
+  v: vector<(integer, integer)> = [(1, 2), (3, 4)];
+  assert(v[hit]?.0 == 3 && v[hit]?.1 == 4, "c1 hit: {v[hit]?.0} {v[hit]?.1}");
+  assert(v[miss]?.0 == 0 && v[miss]?.1 == 0, "c1 miss defaults: {v[miss]?.0} {v[miss]?.1}");
+  assert((v[hit] ?? (7, 8)).0 == 3, "c1 `??` hit: {(v[hit] ?? (7, 8)).0}");
+  assert((v[miss] ?? (7, 8)).0 == 7, "c1 `??` miss: {(v[miss] ?? (7, 8)).0}");
+
+  // c2 — the STORED spelling: a `text` member makes the tuple heap-backed, and the default is
+  // the empty text, not an absent one.
+  w: vector<(text, integer)> = [("a", 1), ("b", 2)];
+  assert(w[hit]?.0 == "b" && w[hit]?.1 == 2, "c2 hit: {w[hit]?.0} {w[hit]?.1}");
+  assert(size(w[miss]?.0) == 0 && w[miss]?.1 == 0, "c2 miss defaults: [{w[miss]?.0}] {w[miss]?.1}");
+
+  // c3 — the STRUCT twin, which was right all along: this is the cell that says what the
+  // tuple's answer should have been.
+  s: vector<S1424> = [S1424 { a: 1 }, S1424 { a: 3 }];
+  assert(s[hit]?.a == 3, "c3 struct hit: {s[hit]?.a}");
+  assert(s[miss]?.a == 0, "c3 struct miss default: {s[miss]?.a}");
+
+  // c4 — the other member kinds a default has to build: a character, a boolean, an enum (its
+  // first variant), and a nested tuple.
+  c: vector<(character, boolean)> = [('x', true)];
+  assert(c[miss]?.1 == false, "c4 boolean default: {c[miss]?.1}");
+  e: vector<(E1424, integer)> = [(E1424.Second, 5)];
+  assert(e[hit - 1]?.0 == E1424.Second, "c4 enum hit: {e[hit - 1]?.0}");
+  assert(e[miss]?.0 == E1424.First, "c4 enum default is the first variant: {e[miss]?.0}");
+  // A tuple with a TUPLE member is NOT a cell here: its discharge does not compile on
+  // `--native` at all (the generated null test reads `.0` as a bool — loft#1425, pre-existing
+  // and independent of the default this file is about), so a cell for it would fail for a
+  // reason this file cannot fix.
+  m: vector<(integer, text, boolean)> = [(1, "a", true)];
+  assert(m[miss]?.1 == "" && m[miss]?.2 == false, "c4 three members default: [{m[miss]?.1}] {m[miss]?.2}");
+
+  // c5b — a DESTRUCTURE consumes the same default: the members land in two locals rather than
+  // in one tuple slot, which is a different consumer of the value `?` builds.
+  (g, h) = v[miss]?;
+  assert(g == 0 && h == 0, "c5b destructured defaults: {g} {h}");
+  (k, l) = v[hit]?;
+  assert(k == 3 && l == 4, "c5b destructured hit: {k} {l}");
+  (m1, m2) = w[miss] ?? ("z", 5);
+  assert(m1 == "z" && m2 == 5, "c5b destructured coalesce: {m1} {m2}");
+
+  // c5 — a bound local, so the discharge is not fused into the index expression.
+  q = v[miss]?;
+  assert(q.0 == 0 && q.1 == 0, "c5 a bound default tuple: {q.0} {q.1}");
+  r = v[hit]?;
+  assert(r.0 == 3 && r.1 == 4, "c5 a bound hit: {r.0} {r.1}");
+}

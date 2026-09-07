@@ -6,12 +6,64 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
+OPEN: **1** — `D-Opt-NoNull` is OPEN (2026-09-07, loft#1423, below): `(N-Opt)` licenses `τ?` for
+every τ and TWO types have no representation for absence, so the compiler refuses them at the
+declaration.  `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
 fix/reconciliation.  The **@PLN102 DN3-Float extension** (below) is also CLOSED — SHIPPED
 default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functions type `τ?`
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Opt-NoNull — OPEN (2026-09-07, @PLN153 phase 4 batch 8, loft#1423): `(N-Opt)` licenses `τ?` for every τ, and two types have no null to spend
+
+`(N-Opt)` is `τ wf ⟹ τ? wf` — *"`τ?` is a type for any τ"*.  Two types are refused at the
+declaration instead, and for the same reason: the null MODEL (the @PLN102 keystone, option B,
+frozen as C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
+or `(L-Null-Tag)`'s discriminant, which is for a STRUCT stored inline.  A `value struct` has
+neither (@PLN101, refused by name since then), and neither does a TUPLE: it is its members'
+bytes, and the synthetic `__tuple<…>` is a struct only where the tuple is STORED — a stack-backed
+tuple, which `(T-Ref-Rep)` says is what every-member-scalar gives, has nowhere to put a tag.
+
+Measured 2026-09-07: `(integer, integer)?` was not merely refused, it was not consumed.  The
+tuple branch of `parse_type_full` returned before `parse_type`'s postfix-`?` handling, so the
+`?` was left for whatever came next and every position reported a syntax cascade naming
+nothing — *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"*
+inside a `vector<…>`, *"unexpected '?'"* for a field or an alias.  A nullable MEMBER
+(`(integer?, integer)`) has always worked and is unaffected.
+
+**Mitigated, not closed.**  The refusal now names the tuple the author wrote and the two cures
+(make the members nullable, or wrap the tuple in a `struct`), beside the `value struct` case in
+the same function.  Closing it needs the design call loft#1423 carries: give a tuple
+`(L-Null-Tag)`'s treatment where it is stored — which would make one written type nullable in
+one position and not in another — or state the precondition in `(N-Opt)` itself, that τ must
+have a null to spend.  Guard: `tests/scripts/1423-a-nullable-tuple-type-is-refused-by-name.loft`
+(seven positions, each naming its own tuple so no two expectations share a substring), plus the
+nullable-member cell that proves the refusal is about the tuple TYPE.
+
+**The shape EXISTS, which is what makes the deviation more than a spelling.**  The walk's first
+reading was that the seven TUPLE tier-0 functions in `parser/mod.rs` are opaque to a shape no
+program can build.  Two routes build it anyway, and neither goes through the type parser:
+`(N-Index)` — `v[i]` on a `vector<(τ, τ)>` IS `(τ, τ)?` — and a generic `-> T?` instantiated at a
+tuple, whose own refusal names the type (*"No matching operator '==' on '(integer, integer)?' and
+'null'"*).  Measured on that shape, the same afternoon:
+
+- an undischarged member read had no answer and no message: `v[i].0` reported *"Expect a field
+  name"* — a message about a NAME, for a program that wrote a number, on a receiver whose real
+  problem is the `?`.  A nullable STRUCT receiver reads correctly through its absence
+  (`(L-Null-Which)`), which is what makes the tuple's silence read as a defect rather than a
+  rule.  Refused by name now, with the two discharges that work
+  (`tests/scripts/1423b-…`); a naive peel of the projection was built and measured first, and it
+  ICEs in codegen — the value has no representation, exactly as this entry says.
+- the `?` discharge answered NULL MEMBERS in a slot typed non-null — `(N-Default)` broken for a
+  tuple, while its struct twin was right — because `Data::has_default` recursed over the members
+  and `Parser::build_default` had no tuple arm, and the recovery for that disagreement was
+  silent.  Fixed (loft#1424): the tuple default is its members' defaults, the value the `??`
+  spelling hands over, and the recovery now REPORTS instead of typing an absent value non-null.
+
+So the seven functions are closed by their own measurement — a nullable tuple reaches none of
+them, because every route to one is refused or discharged before it gets that far — and the
+deviation stays open on the rule.
 
 ### D-Var-Enum — OPENED AND CLOSED (2026-09-06, loft#1390): an arm answering in the ENUM was asked to convert to its sibling's VARIANT, and the `match` join never widened
 

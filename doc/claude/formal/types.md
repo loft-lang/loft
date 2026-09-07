@@ -570,7 +570,10 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in the companion
+**OPEN: 1.**  `D-Opt-NoNull` — `(N-Opt)` licenses `τ?` for every τ, and two types have no
+representation for absence (a `value struct`, and a TUPLE), so both are refused at the
+declaration; the design call is loft#1423.  Every other deviation this doc has carried is
+closed; the record is in the companion
 [types-history.md](types-history.md).
 
 ## Conformance check (how we know a deviation is real)

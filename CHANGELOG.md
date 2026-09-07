@@ -34,6 +34,18 @@ yielded.  A nullable `u32?` was wrong in both directions: an absent one printed 
 present `2147483648` disappeared from the record entirely, because that is exactly the bit
 pattern the signed reading reserves for absence.  Every route now reads a `u32` as a `u32`, and
 `i32` is unchanged.
+**A `?` on a tuple type now says why it cannot be one.**  `t: (integer, integer)? = …` reported
+*"Expect token ;"* and left you looking at the semicolon.  A tuple has nowhere to keep "absent" —
+it is just its members' bytes — so the type is refused, and the message now says that and names
+the two things you can do instead: make the MEMBERS nullable (`(integer?, text?)`), or wrap the
+tuple in a `struct`, which can be `?`.
+
+**Reading a tuple out of a vector at a position that may not exist now behaves like every other
+type.**  `v[i]` where `i` might be past the end gives "a tuple or nothing", and `v[i]?` is how
+you ask for the tuple with its defaults — but it was answering `null` in both members while the
+same program written with a struct answered `0`.  It now gives the members' defaults.  Reading
+`.0` off the undischarged value, or destructuring it, is refused with a message that names the
+discharge instead of complaining about a field name or claiming the value is not a tuple.
 
 **Pattern matching now works over a vector whose elements may be absent.**  `match v { [Id { x }]
 => x, … }` over a `vector<Tok?>` was refused with an error that pointed at a comma and explained
