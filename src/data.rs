@@ -9106,7 +9106,15 @@ impl Data {
             Type::Single => self.source_nr(0, "single"),
             Type::Character => self.source_nr(0, "character"),
             Type::Routine(d_nr) | Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => *d_nr,
-            Type::Vector(tp, _) | Type::RefVar(tp) => {
+            // `&T` is a reference TO `T`, so its element is `T`'s element — the same
+            // transparency `Rewritten` and `Optional` have above, and for the same reason: a
+            // wrapper is not a container.  Bundled with `Vector` it answered one level short,
+            // so `&vector<τ>` gave the VECTOR's def where `vector<τ>` gives τ's: a removal
+            // through a `&` parameter then shifted by the vector record's width instead of the
+            // element's, and the caller's vector came back with the wrong elements while `len`
+            // stayed right (loft#1411).
+            Type::RefVar(tp) => self.type_elm(tp),
+            Type::Vector(tp, _) => {
                 if let Type::Reference(td, _) = **tp {
                     td
                 } else {
