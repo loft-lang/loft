@@ -370,6 +370,25 @@ emitted Rust, hashes exact throughout):**
 | + plain `??`-divisions and idx arithmetic | 25.9 | −2 % (the division machinery already inlines) |
 | + N4 leaf-strip (no prelude on `chan`/`ramp`/`brush_sample`/`seed_hash`) | 24.1 | −7 %; also takes `hash` 1.11M → 0.68M (−39 %) |
 
+**The value-struct-return probe (2026-09-07, after P4d): the next mechanism,
+measured.**  `brush_sample` returns a 4-float `Smp`: the emitted call passes
+a NULL retbuf, the callee allocates the record (`OpDatabase`), and the
+caller frees per pixel TWICE (`OpFreeRef`) — and that allocation is what
+(rightly) blocks every hoist in the resolve loop.  Hand-rewriting the
+emitted pair to a `(f64, f64, f64, f64)` return: `lock` 25.1M → 17.1M
+(**−32 % — the largest single lever measured in this plan**).  Adding the
+resolve-loop element hoists the unblocking enables — the shapes the P4
+emitter already produces once the blocker is gone — 17.1M → 14.2M (−17 %
+more).  Cumulative: `lock` 32.9M → 14.2M since the plan opened, ≈6.5× Rust.
+Implementing value-struct returns for small all-scalar structs is therefore
+the queue's head (it buys its own −32 % AND unlocks the committed machinery
+for the rest); it is a real mechanism with design surface — which structs
+qualify, both backends' call ABI, the retbuf/FnRefBuf interplay — adjacent
+to @PLN101's value-struct copy-elision family.  Remaining after it: P4c
+record scalars and the bound-via-header fix (`h.len` IS the bound where a
+header exists; `len(v)` is a `t_` call per iteration today — probed, hashes
+hold).
+
 Interpreter line-profile agrees: the pixel loop's PROJECTION/dist/idx lines
 dominate, the writes don't rank — M2's write share was overestimated for
 `lock`.  Still ~23× after all layers: the RESOLVE loop (untouched —
