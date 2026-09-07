@@ -96,8 +96,7 @@ case "${1:-status}" in
         # each while holding a clippy or rustfmt error in the same verdict line.
         #
         # The markers are unambiguous, so the verdict names which of the three it is: clippy
-        # prints the lint doc URL, rustfmt prints `Diff in <path>`.  (No apostrophes in here:
-        # this whole wrapper is one single-quoted `bash -c` string.)
+        # prints the lint doc URL, rustfmt prints `Diff in <path>`.
         #
         # nextest prints `FAIL [   1.23s] (12/34) <binary> <test>` once per attempt, so the
         # retries of one test collapse under `sort -u`.
