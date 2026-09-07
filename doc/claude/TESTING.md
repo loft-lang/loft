@@ -2997,6 +2997,25 @@ BOX while `free` showed 55–59 GB available at that very moment.  **State the f
 wall-clock, or a counter like *did it compile?* — and check the repro matches it BEFORE
 reporting a negative.**
 
+**A cell at the EDGE of the data can be right for the wrong reason, so the boundary is the
+worst place to score a width.**  A read that is too WIDE is wrong in the middle of a vector and
+correct at its end, because the bytes past the last element are zero.  Measured 2026-09-07 on
+loft#1420: slice-pattern element reads over a `vector<u8>` used an 8-byte stride, and fixing the
+STRIDE alone corrected `reverse`, the `..rest` materialisation and the TAIL read while the HEAD
+still answered `0x05_04_03_02_01` — all five elements swallowed by one read.  "Tail right, head
+wrong" reads as one straggler and was two independent roots; the tail cell had never tested the
+one it appeared to.  **Score the cell where neighbours exist on BOTH sides**, and keep a boundary
+cell only for the bounds question it actually answers.
+
+**And a value that fits every candidate width tests none of them.**  The sibling half of the same
+trap: a matrix whose cells all hold `7` cannot see a wrong width at all, because `7` reads back
+correctly at one byte, two, four and eight.  Cells holding `1..5` are barely better — they catch a
+read that is too wide (it swallows a neighbour) and say nothing about one that is too narrow.
+**Give each declared width a value the next-narrower one truncates** — `300` for a 2-byte element,
+`70000` for a 4-byte — so the element reads correctly at its declared width and at no other.
+(loft#1409 found the same thing from the other side: a bounds-only `integer limit(0, 100)` storing
+`200` was the cell that discriminated, where every full-range value had not.)
+
 **Racing a race is usually not a falsifiable guard; assert the PROPERTY the race violates.**
 The obvious guard for the cache-publish race — N concurrent cold-cache runs of one source,
 assert all succeed — **passed on the pre-fix build** (18 runs): the window is too narrow to

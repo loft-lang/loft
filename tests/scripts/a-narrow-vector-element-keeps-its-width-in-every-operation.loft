@@ -33,6 +33,11 @@
 // fix complete while the read was still wrong — that is exactly what happened during the walk,
 // and the tail read is the cell that hid it.
 //
+// ⚠ And the VALUES are chosen per width, because 1..5 all fit in one byte: those cells catch a
+// read that is too WIDE (it swallows a neighbour) and say nothing about one that is too NARROW.
+// `each_width_carries_a_value_only_it_can_hold` gives each vector a value the next-narrower
+// width truncates, so the element reads correctly at its declared width and at no other.
+//
 // @falsified-at: 3a83472fe — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
 //   exit 1 -> 0, native 1 assertion failures -> 0 (`make falsify`, both backends, a full build of
 //   that commit).  The first failing cell there is `i8 head/tail: 57345386150500` against the 105
@@ -167,11 +172,64 @@ fn reserve_changes_neither_length_nor_contents() {
   assert(u8s(v) == "1,2,3,", "reserve keeps contents: {u8s(v)}");
 }
 
+// ── each width carries a value only it can hold ──────────────────────────────
+// The cells above all hold 1..5, which fit in ONE byte — so they catch a read that is too WIDE
+// (it swallows neighbours) and would say nothing about one that is too NARROW.  These carry a
+// value the next-narrower width truncates, so the element reads correctly at its declared width
+// and at no other.
+fn hd_u16(v: vector<u16>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn tl_u16(v: vector<u16>) -> integer { match v { [_, .., z] => z, _ => 0 } }
+fn md_u16(v: vector<u16>) -> integer { match v { [_, ..m, _] => m[0] ?? 0, _ => 0 } }
+fn hd_i16(v: vector<i16>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn tl_i16(v: vector<i16>) -> integer { match v { [_, .., z] => z, _ => 0 } }
+fn hd_u32(v: vector<u32>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn tl_u32(v: vector<u32>) -> integer { match v { [_, .., z] => z, _ => 0 } }
+fn md_u32(v: vector<u32>) -> integer { match v { [_, ..m, _] => m[0] ?? 0, _ => 0 } }
+fn hd_i32(v: vector<i32>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn hd_u8(v: vector<u8>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn tl_u8(v: vector<u8>) -> integer { match v { [_, .., z] => z, _ => 0 } }
+fn hd_i8(v: vector<i8>) -> integer { match v { [a, .., _] => a, _ => 0 } }
+fn tl_i8(v: vector<i8>) -> integer { match v { [_, .., z] => z, _ => 0 } }
+
+fn each_width_carries_a_value_only_it_can_hold() {
+  // 1-byte: the full unsigned and signed range.  A wider read swallows a neighbour.
+  b: vector<u8> = [255, 1, 128, 2, 254];
+  assert(hd_u8(b) == 255, "u8 head 255: {hd_u8(b)}");
+  assert(tl_u8(b) == 254, "u8 tail 254: {tl_u8(b)}");
+  a: vector<i8> = [-128, 1, 127, 2, -127];
+  assert(hd_i8(a) == -128, "i8 head -128: {hd_i8(a)}");
+  assert(tl_i8(a) == -127, "i8 tail -127: {tl_i8(a)}");
+
+  // 2-byte: every value here needs more than a byte, so a 1-byte read truncates it.
+  d: vector<u16> = [65535, 300, 1000, 2, 65534];
+  assert(hd_u16(d) == 65535, "u16 head 65535: {hd_u16(d)}");
+  assert(tl_u16(d) == 65534, "u16 tail 65534: {tl_u16(d)}");
+  assert(md_u16(d) == 300, "u16 rest[0] 300: {md_u16(d)}");
+  c: vector<i16> = [-32768, 300, -300, 2, 32767];
+  assert(hd_i16(c) == -32768, "i16 head -32768: {hd_i16(c)}");
+  assert(tl_i16(c) == 32767, "i16 tail 32767: {tl_i16(c)}");
+
+  // 4-byte: beyond 65535, so a 2-byte read truncates it.
+  f: vector<u32> = [4000000000, 70000, 1, 2, 3999999999];
+  assert(hd_u32(f) == 4000000000, "u32 head: {hd_u32(f)}");
+  assert(tl_u32(f) == 3999999999, "u32 tail: {tl_u32(f)}");
+  assert(md_u32(f) == 70000, "u32 rest[0] 70000: {md_u32(f)}");
+  e: vector<i32> = [-2000000000, 70000, -70000, 2, 2000000000];
+  assert(hd_i32(e) == -2000000000, "i32 head: {hd_i32(e)}");
+
+  // and the same values survive the WRITE path
+  reverse(d);
+  assert(hd_u16(d) == 65534 && tl_u16(d) == 65535, "u16 reverse full-width: {hd_u16(d)}/{tl_u16(d)}");
+  insert(f, 0, 3999999998);
+  assert(hd_u32(f) == 3999999998, "u32 insert full-width: {hd_u32(f)}");
+}
+
 fn main() {
   every_width_reads_its_own_element();
   every_width_reverses_in_place();
   every_width_inserts_without_erasing_its_successors();
   a_nullable_narrow_element_keeps_its_own_width();
   reserve_changes_neither_length_nor_contents();
+  each_width_carries_a_value_only_it_can_hold();
   print("a-narrow-vector-element-keeps-its-width-in-every-operation: PASS");
 }
