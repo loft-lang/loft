@@ -2635,6 +2635,7 @@ than by the audit.
 
 
 
+
 **Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
@@ -2672,6 +2673,18 @@ the reason attached rather than a peel added to quiet the count.
 `is_file_var_type` moved in the same commit without changing either total — it swapped a
 hand-rolled `while let Type::RefVar(..)` loop for `Type::peel_link`, which is the same peel
 under a name other sites can ask for.
+
+*The `is`-payload text-binding fix moved one function opaque→peeling, and the totals hide that
+too — in the opposite direction from loft#1420.*  `Parser::parse_is_variant` already
+discriminated on a `Type` variant (the `Reference | Vector | Enum` test that decides which
+capture takes a borrow dep), so it was among the 733 and scored OPAQUE.  Splitting the text
+payload out of the blanket `skip_free` gave it `matches!(field_type.base(), Type::Text(_))`,
+and `.base()` peels the wrapper — so it now reads as PEELING and the opaque column drops to
+361.  The peel is not decoration: a `text?` payload is an owned copy exactly as a `text` one
+is, and asking the bare type would have put the nullable spelling back on the leaking branch
+while the dense twin was fixed.  That is the same one-notion-two-spellings failure this row
+exists to find, caught by writing the predicate the way the match site already wrote it rather
+than by the audit.
 
 **The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
 carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
