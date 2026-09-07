@@ -1137,6 +1137,45 @@ Two rules follow:
   control is only evidence if you know the environment it ran in — otherwise you
   have measured the symlink, not the code.
 
+### Compare the PASSING side, not just the failing one
+
+**A differentiator found by comparing the passing side is worth more than any number of
+hypotheses about the failing side.** A hypothesis about why the red job is red must be
+disproven one at a time and each costs a round trip; a job matrix where something passes hands
+you an axis for free, and one reading of it can retire a whole family at once.
+
+Worked example, loft#1406's macOS leg. Four hypotheses had been offered for
+`reclaim_spares_live_and_fresh_files` failing under the ASan gates — the sentinel pid reading
+as a live process GROUP, the byte accounting losing a removed file, the sanitizer changing the
+allocation shape, the temp directory differing — and reading the failing job could not separate
+them. The per-job conclusions could:
+
+| job | result |
+|---|---|
+| ASan interpreter leak gate (**ubuntu**) | ✅ |
+| ASan UAF/OOB sweep (**ubuntu**) | ✅ |
+| ASan interpreter leak gate (**macos**) | ❌ |
+| ASan UAF/OOB sweep (**macos**) | ❌ |
+
+ASan is on the PASSING side too, so the sanitizer is not the variable — the platform is. That
+one comparison retired every "the sanitizer changed X" hypothesis at once, including the two
+that were being actively worked, and it cost a single API call. The same reading also showed
+the failure is a plain ASSERTION with no sanitizer report at all, which the job NAMES had
+concealed.
+
+**The corollary is about instrumentation, not diagnosis.** When a leg cannot be reproduced
+locally, a round trip costs a day — so the unit to optimise is *does this run ANSWER the
+question*, not *does it narrow it*. Rather than a fifth hypothesis, make the failing assertion
+carry its own evidence: the decision INPUTS the code branched on, and the state it left behind.
+Then force the assertion to fire once locally, so you know the message is not vacuous — a
+diagnostic nobody has seen fire is a hypothesis about a diagnostic.
+
+⚠ **And read the per-JOB log, not the run.** `gh run view --log` / `--log-failed` returns empty
+for these runs; `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` works, and
+`gh run view <run> --json jobs` gives the per-job conclusions the table above is read from. A
+run that reads green overall can carry a red leg, and a job NAME can describe a gate rather
+than the failure it caught.
+
 ## Debugging store-ownership bugs (leaks, double-frees, non-determinism)
 
 The word-addressed `Store` arena (`Vec<u64>`) is **invisible to valgrind** —

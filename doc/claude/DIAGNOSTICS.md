@@ -442,6 +442,14 @@ unreadable message leaves the compiler right and the program wrong, so no test g
 only the author pays; without a check, the next pass converts the sites someone happened to
 have a symptom for and leaves a fourth residue.
 
+**And the error-message BASELINES are not that check, which is measurable rather than
+argued.** The eight conversions found on the joined tree changed no golden output at all — so
+the locked-in baselines contain no case that renders a keyed collection, and every one of them
+would have stayed green through the whole drift. That is a gap in the golden set worth closing
+on its own; it is also the reason this gate is a source-side check rather than an output-side
+one. A baseline can only pin a message someone thought to write down, and the sites that get a
+type's spelling wrong are exactly the ones nobody had a symptom for.
+
 ## Adding a code
 
 1. Emit through `Diagnostics::add_at_coded` (or `diagnostic!(… code = "…", …)`), never the
