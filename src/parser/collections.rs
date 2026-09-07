@@ -609,11 +609,18 @@ impl Parser {
                     // own counter: `e#remove` reads it to decide which way to rewind
                     // the cursor, and without it a `rev()` loop rewound FORWARD and
                     // skipped the next element (loft#903).
-                    self.vars.set_loop(
-                        if reverse { 64 } else { 0 },
-                        self.data.def(vec_tp).known_type(),
-                        code,
-                    );
+                    // @FR-Col-RemoveDense, the `e#remove` half — `OpRemove` reads this back
+                    // as its element type and takes the tail's stride (@FR-H-Stride) from it.  The element DEF cannot
+                    // carry a width — six integer widths share the one `integer` def — so
+                    // recording it slid a narrow element's tail eight bytes per element
+                    // (loft#1412, the `e#remove` spelling of the same fault the explicit
+                    // `v.remove(i)` had).  Ask the same home the storage was built through.
+                    let loop_db_tp = match self.data.vector_element_type(vtp, &mut self.database) {
+                        Some(elem) => elem,
+                        None => self.data.def(vec_tp).known_type(),
+                    };
+                    self.vars
+                        .set_loop(if reverse { 64 } else { 0 }, loop_db_tp, code);
                     if reverse {
                         // Start at length; the first step gives len-1 (last element).
                         *code = v_set(

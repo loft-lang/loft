@@ -938,6 +938,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         vec_tp: &Type,
     ) -> bool {
         if field == "remove" {
+            // @FR-Col-RemoveDense — the successors slide down by ONE element, and the slide
+            // is measured in the ELEMENT's width (@FR-H-Stride).  This is where that width is decided: the
+            // element db type the vector's STORAGE was built with, not the one the DEF names.  Six integer widths share the one `integer` def, so a
+            // def carries no width: `remove_vector_at` took the element's stride from it
+            // and slid the tail eight bytes per element whatever the declaration said, so
+            // a `vector<u8>` read past its live data while `len` stayed right (loft#1412).
+            // `vector_element_type` is the one home the storage is registered through
+            // (`narrow_vector_content`), so the removal and the layout cannot disagree.
+            let e_tp = match vec_tp {
+                Type::Vector(content, _) => self
+                    .data
+                    .vector_element_type(content, &mut self.database)
+                    .map_or(e_tp, i32::from),
+                _ => e_tp,
+            };
             self.lexer.token("(");
             let (tps, ls) = self.parse_parameters();
             let mut cd = ls[0].clone();
@@ -1532,13 +1547,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             td => td,
         };
         let known = self.data.def(elm_td).known_type();
-        // honour narrow vector-element stride when the
-        // content Type::Integer carries a forced_size AND Phase 2 would
-        // register a direct-encoded narrow type (see
-        // `IntegerSpec::vector_narrow_width` — currently 1 and 4 bytes).
-        // Shorts stay wide until Phase 4 aligns the `Parts::Short`
-        // encoding with raw-byte copies.  Falls back to the
-        // bounds-heuristic via `database.size(known_type)` otherwise.
+        // honour narrow vector-element stride when the content Type::Integer carries a
+        // forced_size that registers a direct-encoded narrow type (see
+        // `IntegerSpec::vector_narrow_width`, which accepts 1, 2 and 4 bytes).  Falls back
+        // to the bounds-heuristic via `database.size(known_type)` otherwise.  @FR-H-Stride:
+        // the width is the declared TYPE's, and `known` above cannot carry it — one
+        // `integer` def serves every width.
         let elm_size_raw = if let Type::Integer(spec) = etp
             && let Some(n) = spec.vector_narrow_width(false)
         {

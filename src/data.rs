@@ -5307,15 +5307,15 @@ impl Data {
 
     /// map a vector's content `Type` to a narrow
     /// database element type-nr when the content is a `Type::Integer`
+    /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)
     /// with a `forced_size` annotation that [`IntegerSpec::vector_narrow_width`]
-    /// accepts (currently 1 and 4 bytes; 2 opens in Phase 4b).
+    /// accepts — 1, 2 and 4 bytes, so every narrow alias (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`)
+    /// is direct-encoded.
     ///
     /// Returns `None` for:
     /// - non-Integer content (structs, enums, nested vectors, …);
     /// - `Type::Integer` without `forced_size` (plain `integer`,
-    ///   `integer limit(...)`);
-    /// - `forced_size` values outside the narrow gate (today `Some(2)`
-    ///   and larger).
+    ///   `integer limit(...)`), which keeps the wide 8-byte slot.
     ///
     /// The caller falls back to the default wide storage (the
     /// content's own `known_type`, or the plain-`integer` slot) when
@@ -5400,6 +5400,10 @@ impl Data {
     /// renderer read two 2-byte elements as one 8-byte slot (loft#624 nested,
     /// the named remainder of the plan-58 / loft#437 / #457 / #483 family —
     /// `doc/claude/plans/nested-narrow-width/`).
+    /// The db element type a vector's storage is registered with — the ONE home for
+    /// @FR-H-Stride on the vector side.  A site that derives the element from a DEFINITION
+    /// instead loses the declared width of every narrow integer, because one `integer` def
+    /// serves seven widths (loft#1378 the write, loft#1412 the removal).
     pub fn vector_element_type(
         &self,
         content: &Type,

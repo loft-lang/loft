@@ -100,12 +100,32 @@ value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).
                                                                    index names the element that far
                                                                    from the END (v[-1] is the last)
                 ⟨read(r[i]), σ⟩ → ⟨null, σ⟩                        when i out of bounds (OOB = null, CONTINUE)
+  (H-Stride)    stride(τ) — the distance between consecutive elements, and the distance a dense
+                removal slides by (collections.md `Col-RemoveDense`) — is fixed by the declared
+                TYPE τ, NEVER by the DEFINITION τ resolves to.  A definition names a KIND; the
+                width lives in the type's own spec, and one definition may serve many widths.
 ```
 
 **In words.** Reading a field/element is a read at the pointer's offset (`pos + field_offset`,
 or `pos + stride·index`). Reading through **nullref**, or **out of bounds**, yields **null**
 and execution **continues** — the same spreadsheet discipline as arithmetic (operational.md
 `E-Uncomp`): an absent value degrades to null locally, it never halts the run.
+
+**Why `stride` is read off the type.** Every primitive but one carries its width on its own
+definition — `boolean` is a byte, `single` and `character` are four — so asking the definition
+is right everywhere it is asked, except in the one place it silently is not: `integer` is a
+SINGLE definition serving seven widths (`i8`/`u8`/`i16`/`u16`/`i32`/`u32` and the 8-byte
+default), and the narrowing lives in the type's `IntegerSpec`, which the definition cannot see.
+A site that asks the definition therefore answers **8 bytes for every narrow integer**, and
+does so consistently enough to look correct: the wide default and every non-integer element
+agree with it.
+
+This has been re-derived wrongly three times, in three modules, which is why it is a rule and
+not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
+into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
+both spellings, `len` staying right throughout) and a closure's captured cell (loft#1409). The
+one home for the answer on the vector side is `Data::vector_element_type`, which is what the
+storage itself is registered through — so a site that asks it cannot disagree with the layout.
 
 **An index is end-relative when it is negative**, so "out of bounds" is `i ≥ len(r)` or
 `i < -len(r)`, not simply `i ∉ [0, len)` — `v[-1]` is the last element and `v[-len]` the first

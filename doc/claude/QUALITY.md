@@ -6681,6 +6681,60 @@ function, a `grep` silent on a NUL-containing log, two dep-space errors cancelli
 instrument that cannot say what it is talking about will answer confidently about something
 else**, and the cheap defence is the one already written down: make it fail on purpose first.
 
+#### B8n — loft#1412 closed: a def cannot carry a width, and `(H-Index)`'s stride was never defined (2026-09-07)
+
+Filed the day before as the leftover of loft#1411 and left open for whoever took it.  The issue
+measured two widths (`u8`, `i16`) and inferred the rest.  The sweep says the inference was right
+about the widths and short about everything else:
+
+| declared | pre-fix `remove(0)` on `[1,2,3,4,5]` | what the number is |
+|---|---|---|
+| `i8` (1) | `-128,-128,-128,-128,` | the whole slide lands past the live data |
+| `u8` (1) | `0,0,0,0,` | the same slide, read as unsigned |
+| `i16` (2) | `5,-32768,-32768,-32768,` | 8 bytes = 4 elements: dest 0 takes src 4 |
+| `u16` (2) | `5,0,0,0,` | the same, unsigned |
+| `i32` (4) | `3,4,5,0,` | 8 bytes = 2 elements: slid twice, tail past the end |
+| `u32` (4) | `3,4,5,0,` | the same, unsigned |
+| `integer` (8) | `2,3,4,5,` ✅ | 8 bytes IS one element here |
+
+**One number wearing six disguises**, and the sweep is what says so — sampled alone, `i32`'s
+`3,4,5,0,` reads as an off-by-one and `u8`'s `0,0,0,0,` as a failure to copy at all.  `len` is
+right in every row.  Two further cells belong to the same number and look like separate bugs:
+`remove(2)` answers `1,2,3,4,` (the slide runs entirely past the data, so the prefix survives
+and `len-1` truncates) and `remove(4)` answers `1,2,3,4,` **correctly**, because removing the
+last element slides nothing.  A guard sampling the last index would have passed on the bug.
+
+**The controls are what identified the root**, and they are the half worth keeping.  `boolean`
+is ONE byte wide and `single` and `character` are FOUR, and all three were always correct — so
+the fault was never "narrow storage is wrong".  Each of those owns its size on its own
+definition.  `integer` is the ONE definition serving seven widths, with the narrowing held in
+an `IntegerSpec` the definition cannot see, so *"ask the element's def for its width"* is
+right everywhere it is asked except in the single place it silently is not.
+
+**Two spellings, two emission sites, one question.**  `v.remove(i)` lowers to `OpRemoveVector`
+with the element from `type_elm`; `e#remove` lowers to `OpRemove` with the element recorded on
+the loop variable by `set_loop` from `type_def_nr`.  Both were wrong, and a guard on the
+explicit spelling alone would have called it fixed.  Both now ask
+`Data::vector_element_type` — the home the vector's STORAGE is registered through — so no new
+width logic was written and the removal cannot disagree with the layout.  `LOFT_TRACE_MINT`
+confirms the lookup INTERNS rather than mints (`hit=` on every narrow type, never `MINT=`), so
+`LOFT_STRICT_SCHEMA_IDS=1` stays green and no type order moved.
+
+**The rule was missing, not just the code.**  `(H-Index)` already read `H[r ⊕ stride·i]` — and
+**`stride` was defined nowhere in the rules**.  That is the hole three modules have now
+re-derived wrongly: the element WRITE (loft#1378), this REMOVAL, and a closure's captured cell
+(loft#1409, ../loft's).  `(H-Stride)` now says the width is fixed by the declared TYPE and
+never by the definition it resolves to, and it is cited at the one home plus both fix sites.
+An undefined term inside a rule reads as rigour and carries none — every site that used it
+supplied its own meaning, and five of them agreed by coincidence.
+
+⚠ **Two comments described a predicate that had moved under them.**  `vector_narrow_width`
+accepts 1, 2 and 4 bytes; both its own doc-comment and the read site said *"currently 1 and 4
+bytes"* with shorts *"wide until Phase 4"*.  A reader consulting either would conclude a
+`vector<i16>` is stored eight bytes wide — the exact wrong model — and would then read the
+8-byte slide as correct.  Corrected at both.  A stale comment about a WIDTH is not cosmetic:
+it is a second, confident answer to the question the bug is about.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
