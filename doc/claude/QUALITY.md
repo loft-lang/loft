@@ -2494,69 +2494,6 @@ a trend: **extracting a peel into a helper makes the caller read as opaque even 
 still happens on every path through it.**  A delegating caller is the one shape this classifier
 cannot see through, and it is worth knowing before reading the opaque column as a backlog.
 
-<<<<<<< HEAD
-@PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
-opaque column DOWN by three and added two functions on the seeing-through side: the element's
-variant identity and the element read's borrow dep each have ONE home now
-(`Parser::pattern_variant_enum`, `Parser::element_view_of`), and the ten and five sites that
-asked those questions with a bare `match Type` read them instead.  Every moved function has a
-cell in `1410-a-slice-pattern-over-a-nullable-element-names-its-variant.loft`,
-`1410b-a-slice-pattern-says-which-field-stopped-it.loft` or
-`1414-a-nullable-element-binding-borrows-its-subject.loft`.
-
-**The row is the JOINED tree's, re-measured, and it has now been a number no branch carried
-on two joins running** — `736 | 378 | 5 | 353` after taking loft#1410/#1414's slice-pattern
-family on top, and `734 | 373 | 5 | 356` before that, against `732 | 366 | 5 | 361` on the
-branch the two `@FR-H-Stride` fixes came from, `730 | 374 | 5 | 351` on the one the slice
-family came from, and `730 | 371 | 5 | 354` here between them.  Neither
-endpoint predicts it and the two are not addable: each measured a population the other did
-not have.  The paragraphs below name the count as of THEIR change, which is the history and
-not the current state — do not "fix" them to agree with the row, because each is a correct
-record of its own step and rewriting them is what destroys the audit.  **A number in a merge
-conflict is re-measured, never taken from a side** — that rule has now been applied to this
-one row on four separate joins, and it has been unguessable every time.
-
-Not attributed per function here, deliberately: the delta spans two streams' changes at once
-(the `@FR-H-Stride` pair below, plus loft#1409's cell machinery, loft#1415's null-arm source
-test, loft#1416's enum element arm and bare-variant peels, loft#1418's monomorph key and
-loft#1421's element-slot predicate), and an attribution nobody measured is a hypothesis
-dressed as a record.  Re-run `ir_walker_audit.py optional` for the per-function view.
-
-**Two `@FR-H-Stride` fixes moved this row, and neither opaque entry is a gap.**  The
-distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
-is *correctly* opaque has to say why, or the next reader re-derives it.
-
-*loft#1412 added the 731st and the 360th.*  `Parser::vector_operations` now reads the removal's
-element width off the vector's CONTENT, so it discriminates on a `Type` variant where it
-previously did not.  It scores OPAQUE and stays that way on purpose: its sole caller admits it
-only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is unreachable and a peel there
-would be dead code — `.remove` on a nullable vector does not resolve at all (*"Unknown field
-vector.remove"*), never reaching this function.
-
-*loft#1420 added the 732nd and the 361st, and it is a SWAP the totals hide.*
-`Data::narrow_vector_element` was extracted as the one home for a narrow element's
-`(spec, nullable, width)`, and it carries the `Type::Optional` arm — so it enters as PEELING.
-Its caller `narrow_vector_content` handed that arm over and is left discriminating only on
-`Type::Function`, so it moves peeling→opaque.  The middle column is unchanged at 366 because
-one function left it as another joined, which is why the row is read as four numbers and not as
-a trend: **extracting a peel into a helper makes the caller read as opaque even though the peel
-still happens on every path through it.**  A delegating caller is the one shape this classifier
-cannot see through, and it is worth knowing before reading the opaque column as a backlog.
-
-**Re-measured on the joined tree for loft#1408, and a FOURTH number again**: `730 | 371 |
-5 | 354`, against `730 | 366 | 5 | 359` on this side and `728 | 369 | 5 | 354` on the one
-the cure came from.  Not addable from either: that branch measured against `main`, where
-two of the functions this side had already added do not exist, so its `728` and its `+5
-peeling` are counts of a different population.  The cure moves FIVE functions
-opaque→peeling — the boxable set, the cell's name, the cell's `value` type, the read/write
-ops and the boxed-text LHS test — and the total stays 730 because it adds no
-`Type`-discriminating function, only peels inside existing ones.  The same rule the
-paragraph below states, applied a second time to the same row: **a number in a merge
-conflict is re-measured, never taken from a side**, and it was not guessable from either.
-
-**The row before it was the JOINED tree's, re-measured, and a fourth number that neither
-branch carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
-=======
 *The `(B-Ref-Uniform)` walk (B8p) added the 733rd and the 362nd.*  `Parser::resolve_type_var`
 gained an arm stripping `Type::RefVar` from the concrete argument, beside the one already
 stripping `Type::Rewritten` — both record how an argument was REACHED or ASSEMBLED rather than
@@ -2574,9 +2511,20 @@ the reason attached rather than a peel added to quiet the count.
 hand-rolled `while let Type::RefVar(..)` loop for `Type::peel_link`, which is the same peel
 under a name other sites can ask for.
 
+*The `is`-payload text-binding fix moved one function opaque→peeling, and the totals hide that
+too — in the opposite direction from loft#1420.*  `Parser::parse_is_variant` already
+discriminated on a `Type` variant (the `Reference | Vector | Enum` test that decides which
+capture takes a borrow dep), so it was among the 733 and scored OPAQUE.  Splitting the text
+payload out of the blanket `skip_free` gave it `matches!(field_type.base(), Type::Text(_))`,
+and `.base()` peels the wrapper — so it now reads as PEELING and the opaque column drops to
+361.  The peel is not decoration: a `text?` payload is an owned copy exactly as a `text` one
+is, and asking the bare type would have put the nullable spelling back on the leaking branch
+while the dense twin was fixed.  That is the same one-notion-two-spellings failure this row
+exists to find, caught by writing the predicate the way the match site already wrote it rather
+than by the audit.
+
 **The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
 carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
->>>>>>> e4b23477 (The optional-audit row counts the walk's new arm, and says why it is opaque)
 `729 | 365 | 5 | 359` on the other — the middle column coincidentally equal, the outer two not.
 It reconciles: from main's `728 | 364 | 5 | 359`, `snapshot_kind` adds one OPAQUE, then
 `reshaped_containers` adds one PEELING, then `for_type` moves one opaque→peeling.  Each
