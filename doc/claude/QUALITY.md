@@ -6615,6 +6615,72 @@ the eight walked here were the ones the doc states as conformance bullets, and `
 one whose enforcement is a diagnostic rather than an answer — was not among them.  **A rule whose
 failure mode is SILENCE cannot be checked by running a program that works.**
 
+#### B8m — loft#1407 closed: `(B-Copy)` decided a bind it had not finished reading (2026-09-07)
+
+Taken from ../loft as `451-text-tailcall-nwb-callee`, the last failure in the nightly POISON
+leg, with a diagnosis that named the text return buffer: *the IR frees `__work_c2` immediately
+before `return ___tret_1`, and native emits a COPY where the interpreter aliases.*  **The text
+return is not an axis.**  Minimising one axis at a time turned a return-buffer question into a
+store-lifetime one:
+
+| axis moved | result |
+|---|---|
+| one call instead of two | PASS — the second call onward is the failing side |
+| the caller's local + early `return` removed | still fails |
+| the callee's `if`/`else` removed | **PASS** |
+| both arms made literals | still fails — the arms are irrelevant |
+| the `if` removed entirely (`v = obj.field(n); "yes"`) | still fails — this is the minimum |
+| the local removed, the call chained instead | **PASS** |
+| the JsonValue built inside the callee | **PASS** |
+| `keys()` (a FRESH vector) instead of `field()` | **PASS** |
+| a user struct from a user fn | **PASS** |
+| return type `integer` instead of `text` | still fails, and the VALUE is wrong |
+
+So the conjunction is **a heap PARAMETER, projected by a view-returning native into a LOCAL, in
+a function called more than once** — and the tail form, the `if`, the arm kinds, the caller's
+own local and the intermediate frame are each measured out of it.  `t_9JsonValue_field` returns
+`DbRef { store_nr: self_ref.store_nr, … }`, the receiver's own store, so the local is a
+`(H-View)` projection; typed as an owner, the callee freed a store two frames up.
+
+**The cause: `(B-Copy)` is decided while reading the SOURCE NAME.**  The arm that implements
+*"a plain whole-value bind COPIES"* runs before the postfix is in hand, so it fired for
+`v = obj.field(n)` as readily as for `v = obj`, returned the source's type with its deps
+STRIPPED, and called `make_independent`.  The receiver then reached `call_dependencies`
+borrowing nothing, `field`'s `[self]` resolved to an empty list, and the result read as OWNED.
+It bit on pass 2 only, because on pass 1 the destination's type is still `Unknown` and
+`heap_def_nr()` answers `None` — **the same bind, typed two ways, one pass apart.**  The arm now
+declines when `.`, `[` or `#` follows the name.
+
+⚠ **Three steps, and the first two were invisible.**  The stdlib had no way to SAY `field`
+returns a view: `-> JsonValue[self]` parsed, resolved its parameter, and was dropped by
+`parse_type_inner`'s struct/enum arm, which builds the type by cloning the named def's
+`returned`.  Only after that was fixed could the third step even be measured.  A declaration
+that is silently discarded is not a missing feature — it is a feature that reports success.
+
+⚠ **The values are RIGHT on a broken build.**  The premature free returns the store to the
+allocator, which hands the same block back, so only `LOFT_POISON=1 LOFT_STRICT_STORES=1` sees
+it; the guard says so and is scored by the nightly leg.  A wrong ANSWER exists under the
+instrument (three identical calls answering 1, 0, 0) and is recorded in the issue rather than
+asserted in the guard, because asserting it would pass on the broken build too.
+
+**Two instrument failures cost more than the bug did, and they are the transferable part.**
+
+- ⚠ **A source restore is not a build.**  Checking whether a red belonged to me, I wrote
+  `git show HEAD:src/parser/objects.rs > src/parser/objects.rs`, rebuilt, measured, `cp`ed my
+  version back — and did not rebuild.  Six probes then measured the PRE-FIX binary, my own cure
+  read as not working, and I started hunting a second mechanism that does not exist.  **The tell
+  I ignored was an impossible result**: two files I believed identical disagreed on one binary.
+- ⚠ **A `sed` bisect deleted the line it had just inserted.**  Inserting `  <cell>();` into
+  `main` and then removing the six original call lines by exact text removed the new one too, so
+  all six cells reported "0 violations" from an EMPTY `main`.  A clean sweep is indistinguishable
+  from a real fix.  TESTING.md already says prove the harness can fail; the proof was skipped
+  precisely because the answer was the one I wanted.
+
+Both are the day's recurring shape one more time — `type_timeline` answering about a different
+function, a `grep` silent on a NUL-containing log, two dep-space errors cancelling.  **An
+instrument that cannot say what it is talking about will answer confidently about something
+else**, and the cheap defence is the one already written down: make it fail on purpose first.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
