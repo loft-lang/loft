@@ -241,6 +241,14 @@ pub struct Store {
     /// store borrows (`clone_locked` / `borrow_locked_for_light_worker`).
     /// Cleared via `unlock()`.
     pub read_only: bool,
+    /// Is the `read_only` above the AUTHOR's lock (`d#lock = true`) rather than an
+    /// internal one?  `read_only` is one flag for three different things — the const
+    /// store, a worker borrow, and the user's `#lock` — and only the last is a mistake
+    /// the author can make and fix.  Set exactly where the user route sets the lock
+    /// (`Stores::lock_store`, the one call `n_set_store_lock` makes on both backends)
+    /// and cleared by `unlock()` with it, so a refusal can name the author's fault
+    /// instead of asserting an internal invariant at them (loft#1405).
+    pub user_locked: bool,
     /// SOFT lock: when `true`, only `delete` is illegal — `addr_mut`
     /// and `claim` are still allowed.  Set by the fn-call deep-copy
     /// bracket (`Stores::lock_store(&r)` from
@@ -770,6 +778,7 @@ impl Store {
             file: None,
             free: true,
             read_only: false,
+            user_locked: false,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -891,6 +900,7 @@ impl Store {
             // `free` until the database layer registers it.
             free: false,
             read_only: false,
+            user_locked: false,
             free_protect_depth: 0,
             free_root: 0,
             needs_coalesce: false,
@@ -969,6 +979,7 @@ impl Store {
             // A loaded store carries real data (like `open`), so it is in use.
             free: false,
             read_only: false,
+            user_locked: false,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -1067,6 +1078,7 @@ impl Store {
             file: None,
             free: false,
             read_only: false,
+            user_locked: false,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -1872,6 +1884,7 @@ impl Store {
             crate::loft_eprintln!("[locks] UNLOCK origin-was={:?}", self.lock_origin);
         }
         self.read_only = false;
+        self.user_locked = false;
         self.lock_origin.clear();
     }
 
@@ -2037,6 +2050,9 @@ impl Store {
             file: None,
             free: self.free,
             read_only: true,
+            // A worker borrow, not the author's `#lock`: an internal lock keeps its
+            // assert, because a write through one is a compiler defect (loft#1405).
+            user_locked: false,
             free_protect_depth: 0,
             free_root: 0, // workers never claim/delete; no free tree needed
             needs_coalesce: false,
@@ -2081,6 +2097,7 @@ impl Store {
             file: None,
             free: self.free,
             read_only: false,
+            user_locked: false,
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
             store_nr: self.store_nr,
@@ -2120,6 +2137,9 @@ impl Store {
             file: None,
             free: false,
             read_only: true,
+            // A worker borrow, not the author's `#lock`: an internal lock keeps its
+            // assert, because a write through one is a compiler defect (loft#1405).
+            user_locked: false,
             free_protect_depth: 0,
             free_root: self.free_root,
             needs_coalesce: false,
@@ -2865,6 +2885,20 @@ impl Store {
         }
     }
 
+    /// `@FR-H-WriteLocked`'s user half: refuse the write as a loft fault.
+    ///
+    /// Off the hot path (`#[cold]`), and it does not return — `report_and_exit` renders
+    /// through the same `RuntimeError::render` the interpreter's faults go through, so
+    /// both backends emit one text for this event, as `cr_stack_overflow` does for
+    /// loft#1058.  There is no position to give: `Store` knows the record and field, not
+    /// the source, and `RuntimeError` carries `position: None` with the call chain rather
+    /// than pointing somewhere wrong.
+    #[cold]
+    #[inline(never)]
+    fn refuse_user_locked_write(rec: u32, fld: u32, origin: &str) -> ! {
+        crate::runtime_error::RuntimeError::locked_store_write(rec, fld, origin).report_and_exit()
+    }
+
     #[inline]
     pub fn addr_mut<T: 'static>(&mut self, rec: u32, fld: u32) -> &mut T {
         // Only hard `read_only` blocks writes.  Call-bracket
@@ -2898,11 +2932,17 @@ impl Store {
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
         }
-        assert!(
-            !self.read_only,
-            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            // The author's own `#lock` is a loft fault with the author's frames; an
+            // internal lock reaching here is a compiler defect and stays an assert.
+            if self.user_locked {
+                Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
+            }
+            panic!(
+                "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
+                self.lock_origin
+            );
+        }
         // @PLN154 — the one write hook.  Phase 0 counted 33 sites that write the
         // interpreter stack and 32 of them arrive here, where `T` also names the width;
         // the typed accessor above them carries only 74.5 % of the bytes.  Off, this is

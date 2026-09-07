@@ -1966,6 +1966,10 @@ impl Stores {
             );
             let origin = format!("lock_store(store_nr={}, rec={})", r.store_nr, r.rec);
             self.allocations[r.store_nr as usize].lock_with_origin(origin);
+            // This is the ONLY user route to the lock — `n_set_store_lock`, which both
+            // backends call for `d#lock = true` — so it is where the author's lock is
+            // told apart from the const store and a worker borrow (loft#1405).
+            self.allocations[r.store_nr as usize].user_locked = true;
         }
     }
 
