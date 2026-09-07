@@ -283,6 +283,19 @@ Both macros call into `testing_code` / `testing_expr`, which construct a `Test` 
 
 These two strings determine where the generated test file is written.
 
+⚠ **A `code!` snippet is parsed as STDLIB SOURCE, and some behaviour is gated on that.**  The
+macro parses against the cached stdlib `Data`, so the snippet's source IS `STD_SOURCE` — and any
+feature whose gate reads `source != STD_SOURCE` is OFF inside it.  Measured on
+`null_element_in_value_enum_vector_rejected` (loft#1416): `v: vector<Color?> = [Color.Red, null]`
+compiles as a user file and is still REFUSED in `code!`, because `e2_rewrite_enabled` is one of
+those gates, so the `?` in that snippet is inert and the cell pins the DENSE refusal.  A cell
+whose subject is a nullable ELEMENT belongs in `tests/scripts/`, not here.  Not every `?`
+question is affected — the enum-dispatcher scan is source-independent, so
+`nullable_receiver_implements_its_variant` does go red on the pre-fix build (measured against
+`e9f45817` in the cached falsify worktree) — but which half you are in is not visible from the
+snippet, so **a `code!` cell about nullability is run against the pre-fix build before it is
+trusted**.
+
 ### The `Test` struct
 
 ```rust
@@ -589,6 +602,29 @@ Paste that line into the guard.  `doc_hygiene::every_new_guard_records_its_contr
 requires one on every file added under `tests/scripts/`, against the ratchet in
 `tests/falsified.baseline`; `// @falsified-at: none — <reason>` is the honest opt-out for a
 file that genuinely cannot fail on any earlier build.
+
+### The defect no guard can catch — the corpus EMISSION diff
+
+`make falsify` scores a guard, and a guard scores a program someone wrote.  Neither sees the
+defect whose symptom is *"a program nobody changed is compiled differently now"* — and that is
+not only a refactor's question.  `scripts/introspect_diff.sh <before-loft> <after-loft>` runs
+`loft introspect` (IR + bytecode + generated Rust + stderr) over every corpus file with both
+binaries and names each file that moved; a behaviour-preserving change wants `IDENTICAL`, and a
+FIX wants a list it can explain file by file.
+
+**It found a defect that no test failed on (@PLN153 batch 9, loft#1435).**  The diff after
+loft#1427's fix read `DIFFERENT 6 of 1352`, and two of the six were files the batch had never
+touched: `tests/scripts/05-enums.loft` and `tests/docs/09-enum.loft` had each GAINED a
+synthesised variant dispatcher.  Reading why said that the dispatcher scan bucketed by ENUM
+rather than by method, so an enum with two methods per variant got a dispatcher for one of them
+and — where their parameter shapes disagreed — for neither.  Both files passed on every build
+before and after, because both call their methods on concrete variants; the machinery they
+document was simply not being built.  No guard could have caught that: the missing thing was
+never called.
+
+So the rule is: **run it after a fix, not only after a refactor, and explain every file it
+names.**  A moved file that is one of your own new guards is expected; a moved file you have
+never opened is either a second defect or a second fix, and it is worth the read either way.
 
 **A defect only an instrument can see is scored with the instrument armed.**  `LOFT_POISON=1
 LOFT_STRICT_STORES=1 make falsify GUARD=… REF=…` passes both through to the control and to
