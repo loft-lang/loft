@@ -3126,6 +3126,27 @@ source line, so `print("g6")` appeared in the failure text and the cell reported
 run. Score RAN on something the program cannot forge — a `^error` line, or an exit code —
 never on its own output.
 
+**A cell your new guard fails may belong to somebody else, and the cheapest way to know is to
+revert your own fix and measure again.**  A guard written for one defect exercises shapes the
+suite never had, so it walks into OTHER live defects — and every one of them arrives looking
+like a regression you just caused, at the worst possible moment, with your own change the
+obvious suspect.  Reverting the fix in place (the inverse edit, never `git checkout`) and
+re-running the same cell answers it in one build: same output both ways means the defect is
+older than you.  Measured three times on 2026-09-07 while writing two guards — a `τ?` return
+losing its absence once bound (loft#1421), a minted store leaking through a parameter-bound
+local (loft#1422), and a generic pinned at `i32` refusing a later `integer` (loft#1418).  All
+three were identical with the fix applied and reverted; all three were separately filed with
+that A/B quoted as the evidence, and none of them was the fix under test.  The failure mode
+this avoids is not a wrong fix but a wasted retreat: without the A/B the natural move is to
+back out a correct change because its guard went red.
+
+⚠ **The corollary is that a guard must not assert what it does not own.**  Once the A/B says a
+cell belongs to another defect, take the cell OUT and say why in the header, with the issue
+number — do not weaken the assertion to whatever the tree currently answers.  Asserting the
+broken behaviour freezes it into the contract, and asserting nothing at all loses the fact.
+`1415-a-null-arm-source-that-views-a-parameter.loft` reads its absence inline and through `??`
+for exactly this reason: the bound spelling is loft#1421's, and the header says so.
+
 **The before/after oracle has to PREDATE the defect, and the released binary often does not.**
 The installed release is the usual before-half (the installed release as the before/after oracle),
 and it answers nothing for a bug introduced after it shipped. Measured 2026-09-02 on
