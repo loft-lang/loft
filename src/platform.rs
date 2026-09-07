@@ -369,10 +369,37 @@ fn runtime_scratch_pid(name: &str) -> Option<u32> {
 
 /// Whether `pid` is a live process — `Some(true/false)` on Linux (procfs),
 /// `None` (unknown) elsewhere.
+// `Option` is the cross-platform contract, not a unix one: the unix arm can always
+// decide, and the non-unix arm never can.  Clippy sees only the arm it compiles.
+#[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
 fn pid_alive(pid: u32) -> Option<bool> {
-    if cfg!(target_os = "linux") {
-        Some(std::path::Path::new(&format!("/proc/{pid}")).exists())
-    } else {
+    #[cfg(unix)]
+    {
+        // A value that does not fit a POSITIVE `pid_t` names no process, and must never
+        // reach `kill`: the cast would make it negative, and a negative pid addresses a
+        // process GROUP — so `u32::MAX - 1` would ask about group 2 and could answer
+        // "alive" for a process that cannot exist.
+        let Ok(p) = i32::try_from(pid) else {
+            return Some(false);
+        };
+        if p <= 0 {
+            return Some(false);
+        }
+        // Signal 0 sends nothing; it only asks whether the pid exists.  ESRCH proves it
+        // does not, EPERM proves it does and belongs to someone else, success proves it
+        // does.  This is decidable on every unix, where `/proc` is Linux-only — so the
+        // dead-only sweep reclaims on macOS instead of falling through to the age
+        // fallback there.
+        // SAFETY: `kill` with signal 0 delivers nothing and touches no memory; `p` is a
+        // plain positive integer, and the call's only effect is its return value.
+        if unsafe { libc::kill(p, 0) } == 0 {
+            return Some(true);
+        }
+        Some(std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
         None
     }
 }
@@ -388,7 +415,7 @@ fn pid_alive(pid: u32) -> Option<bool> {
 ///   pressure every space-constrained compile destroyed itself ("couldn't
 ///   read loft_native_<pid>.rs") and could equally race a parallel test's
 ///   in-flight file;
-/// - when liveness is unknowable (no pid in the name, or no procfs), only
+/// - when liveness is unknowable (no pid in the name, or a non-unix host), only
 ///   files older than an hour are deleted.
 ///
 /// Those files ARE the binary cache, so this is called only when a path is
@@ -435,8 +462,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
             if !aged_too {
                 continue;
             }
-            // Liveness unknown (foreign pid without procfs, or no pid in the
-            // name) — fall back to age: anything under an hour old may be an
+            // Liveness unknown (no pid in the name, or a non-unix host where a pid
+            // cannot be probed) — fall back to age: anything under an hour old may be an
             // in-flight emission of a parallel process.
             if pid.is_some_and(|p| p == own_pid || pid_alive(p) == Some(true)) {
                 continue;
@@ -527,6 +554,37 @@ pub fn native_worker_count(
 #[cfg(test)]
 mod reclaim_tests {
     use super::*;
+
+    /// `pid_alive` answers the same three ways on every unix, which is what makes the
+    /// dead-only sweep decidable off Linux.  The out-of-range case is the load-bearing
+    /// one: a value too large for a positive `pid_t` names no process and must answer
+    /// DEAD without reaching `kill`, where the cast would address a process group.
+    #[test]
+    fn pid_liveness_is_decidable_and_never_asks_about_a_group() {
+        assert_eq!(
+            pid_alive(std::process::id()),
+            Some(true),
+            "this process is alive"
+        );
+        assert_eq!(
+            pid_alive(u32::MAX - 1),
+            Some(false),
+            "a pid past pid_t names no process, and must not become group 2"
+        );
+        assert_eq!(
+            pid_alive(0),
+            Some(false),
+            "pid 0 addresses a group, not a process"
+        );
+        // pid 1 exists on every unix and is not ours: the EPERM arm, which must read
+        // ALIVE rather than dead.
+        #[cfg(unix)]
+        assert_eq!(
+            pid_alive(1),
+            Some(true),
+            "pid 1 exists whether or not we may signal it"
+        );
+    }
 
     #[test]
     fn reclaim_spares_live_and_fresh_files() {
