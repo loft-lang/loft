@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TEXT payload bound by an `is` capture is an OWNED copy, so scope cleanup frees it and a
+// write spelled through it reaches the field — both halves as the `match` twin already had.
+//
+// `parse_match_enum_field_bindings` splits on the payload's type: a HEAP binding is a borrowed
+// view into the subject's record and is marked `skip_free`, while a TEXT binding is
+// `_mv_<f> = OpGetText(subj, off)` typed plain `text` — an owned copy with its own allocation —
+// so it is left to normal scope cleanup and registered with `record_text_payload_view`.  The
+// `is` capture in `parse_is_variant` is the same bind at the sibling site and marked EVERY
+// capture `skip_free`, text included, which cost both halves of that split at once:
+//
+//   if w.st is Lab { s } { s = "xy"; }   // the write never reached `w.st.s`
+//
+// `collections.md` already settles the second half — *a write through a variant's `match` / `is`
+// payload binding is resolved back to the field it projects* — and loft#1161 closed it for the
+// field route; the text payload was the route still outside it.  The first half is the leak the
+// same missing branch caused: the copy is never released, once per taken arm.
+//
+// The leak is invisible to the store-leak gate, because the allocation belongs to a Rust
+// `String` and not to a store record, so no store is retained and `LOFT_STRICT_STORES=1` reads
+// clean.  `scripts/valgrind-sweep.sh` is the instrument that sees it, and this file earns that
+// coverage by living in the corpus the sweep walks: 8 bytes per taken arm on a 2-char payload,
+// 33 on a 33-char one, 40 across five iterations of a loop.  The VALUE channel scores only the
+// write-back cell, which is why that one leads.
+//
+// The CONTROLS are what keep the split from being over-applied: a HEAP payload must stay
+// `skip_free` with the borrow #1398 put in its type (freeing it would decrement a store the
+// binding does not own), a VECTOR payload the same, and a NOT-TAKEN arm must survive the new
+// free — it does for the reason it does at the match site, the binding being default-initialised
+// to `""` at block entry, so `OpFreeText("")` reads no garbage.
+//
+// @falsified-at: 39a9d6609 — interpret exit 1 -> 0, interpret 1 assertion failure -> 0, native
+//   exit 1 -> 0, native 1 assertion failure -> 0.  The failing cell is
+//   `test_a_write_through_the_binding_reaches_the_field`, which read `hi` instead of `xy` on
+//   both backends; the leak channel moved with it (8 bytes definitely lost under
+//   `scripts/valgrind-sweep.sh` -> 0), and every control was unmoved.
+
+enum Subj { Holder { inner: Pay }, Empty { z: integer }, Many { xs: vector<integer> }, Lab { s: text } }
+struct Pay { a: integer }
+struct W { st: Subj, t: text }
+
+// The write-back half, and the only cell the value channel can score.
+fn test_a_write_through_the_binding_reaches_the_field() {
+  w = W{st: Lab{s: "hi"}, t: "w"};
+  if w.st is Lab { s } { s = "xy"; }
+  r = match w.st { Lab{s} => s, _ => "?" };
+  assert(r == "xy", "is write-back: got {r}, want the xy the match twin writes");
+}
+
+// CONTROL — the `match` twin, which has resolved its write to the field throughout.
+fn test_the_match_twin_is_unmoved() {
+  w = W{st: Lab{s: "hi"}, t: "w"};
+  g = match w.st { Lab{s} => { s = "xy"; s }, _ => "?" };
+  r = match w.st { Lab{s} => s, _ => "?" };
+  assert(g == "xy", "match twin arm value: got {g}, want xy");
+  assert(r == "xy", "match twin write-back: got {r}, want xy");
+}
+
+// The read the leak rode on: correct before and after, which is why only the sweep saw it.
+fn test_a_plain_read_is_unchanged() {
+  w = W{st: Lab{s: "hi"}, t: "w"};
+  g = "";
+  if w.st is Lab { s } { g = s; }
+  assert(g == "hi", "plain read: got {g}, want hi");
+}
+
+// A payload longer than a small string's capacity — the lost block scaled with it.
+fn test_a_long_payload_reads_through() {
+  w = W{st: Lab{s: "a-much-longer-payload-string-here"}, t: "w"};
+  g = "";
+  if w.st is Lab { s } { g = s; }
+  assert(g == "a-much-longer-payload-string-here", "long payload: got {g}");
+}
+
+// The leak was once per TAKEN ARM, so a loop multiplied it; the value must stay flat.
+fn test_a_repeated_bind_in_a_loop() {
+  n = 0;
+  for _i in 0..5 {
+    w = W{st: Lab{s: "hi"}, t: "w"};
+    if w.st is Lab { s } { n = n + len(s); }
+  }
+  assert(n == 10, "loop: got {n}, want 5 arms of len 2");
+}
+
+// CONTROL — a NOT-TAKEN arm must survive the free the fix adds.  The binding is `""` there.
+fn test_a_not_taken_arm_is_safe() {
+  w = W{st: Empty{z: 7}, t: "w"};
+  g = "none";
+  if w.st is Lab { s } { g = s; }
+  assert(g == "none", "not taken: got {g}, want none");
+}
+
+// CONTROL — a HEAP payload keeps `skip_free` and the borrow #1398 gave its type: `(B-Disturb)`
+// says overwriting the place is not disturbing it, so the binding reads what is there now.
+fn test_a_heap_payload_is_unchanged() {
+  w = W{st: Holder{inner: Pay{a: 1}}, t: "w"};
+  g = -1;
+  if w.st is Holder { inner } { w.st = Empty{z: 0}; g = inner.a; }
+  assert(g == 0, "heap payload: got {g}, want the 0 (B-Disturb) gives");
+}
+
+// CONTROL — a VECTOR payload is a borrow too, and its length still reads through.
+fn test_a_vector_payload_is_unchanged() {
+  w = W{st: Many{xs: [1, 2, 3]}, t: "w"};
+  g = -1;
+  if w.st is Many { xs } { g = len(xs); }
+  assert(g == 3, "vector payload: got {g}, want 3");
+}
+
+// CONTROL — a write through a HEAP binding still reaches the subject.
+fn test_a_write_through_a_heap_binding_reaches_the_subject() {
+  w = W{st: Holder{inner: Pay{a: 4}}, t: "w"};
+  if w.st is Holder { inner } { inner.a = 9; }
+  g = match w.st { Holder{inner} => inner.a, _ => -1 };
+  assert(g == 9, "heap write through: got {g}, want 9");
+}
+
+fn main() {
+  test_a_write_through_the_binding_reaches_the_field();
+  test_the_match_twin_is_unmoved();
+  test_a_plain_read_is_unchanged();
+  test_a_long_payload_reads_through();
+  test_a_repeated_bind_in_a_loop();
+  test_a_not_taken_arm_is_safe();
+  test_a_heap_payload_is_unchanged();
+  test_a_vector_payload_is_unchanged();
+  test_a_write_through_a_heap_binding_reaches_the_subject();
+}

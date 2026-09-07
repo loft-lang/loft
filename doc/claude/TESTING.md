@@ -3540,25 +3540,45 @@ product's own setter, never a test-local mirror of the reader**; and when a test
 implementations agree, say which one is the oracle — if the answer is "neither", the test cannot
 fail for the reason it was written (loft#1431).
 
-**A VALUE assertion is vacuous when the bug is a use-after-free whose bytes survive — guard the
-fix's emitted SIGNATURE instead.**  loft's arena "free" is not a libc `free()`: the record keeps
-its bytes, so a read through the dangling reference answers *correctly*.  Both backends agree, the
-whole corpus is green, and `make ci` cannot see the defect at all — only a gate that WRITES on
-free (`LOFT_POISON=1`, which stamps `0xDEADBEEF`) makes it observable.  A guard written the
-obvious way — do the values come back right? — therefore passes on the broken build and is not a
-guard.
-
-Two measured shapes, and the second is the one to fear:
+**A VALUE assertion is vacuous when the computed value cannot witness the defect — guard the
+fix's emitted SIGNATURE instead.**  Two ways the value misleads, both measured on 2026-09-07.
+loft's arena "free" is not a libc `free()`: the record keeps its bytes, so a read through a
+dangling reference answers *correctly* — both backends agree, the whole corpus is green, and
+`make ci` cannot see the defect at all.  Or the wrong answer is one the program could
+legitimately produce, so nothing about it reads as corruption.  A guard written the obvious way
+— do the values come back right? — is not a guard against either.
 
 - **loft#1361, the loud half.** `u = t` on a nested tuple emitted `OpFreeRef(_tuphold_1.0)` and
   destroyed the source's vector; under poison the freed record surfaces as `0xDEADBEEF` arriving
-  in `vector_append`.  Wrong-looking, once you are looking.
+  in `vector_append`.  A genuine use-after-free, wrong-looking once you are looking.
 - **loft#1441, the quiet half.** A `text` return delivered through a work buffer, two identical
   calls: *the FIRST answers `[world]` and the SECOND answers `[]`*.  The wrong answer is a
-  plausible empty string — a value the program could legitimately produce — so nothing about it
-  reads as corruption.  **The ASYMMETRY is the tell**: identical calls differing by POSITION means
-  a slot REUSED after a free, not a value never written.  A one-call probe cannot see it, and a
-  two-call probe that only checks "is the answer a string" passes.
+  plausible empty string, so it reads as data rather than as damage.  **The ASYMMETRY is the
+  tell** — identical calls differing by POSITION — and a two-call probe that only asks "is the
+  answer a string" passes.
+
+⚠ **The asymmetry says a slot is unsound; it does NOT say which mechanism.**  This entry first
+carried the inference *"differing by position means a slot REUSED after a free"*, and that was
+wrong: loft-c1 suppressed the work buffer's `OpFreeText` behind a switch and ran the repro both
+ways on one binary — call 2 and call 3 answered empty **identically with the free emitted and
+suppressed**.  Removing the free changes nothing, so #1441 is not a use-after-free at all.  Read
+it as a definite-assignment hole — a slot never written — with the position-dependence explained
+by what earlier frames happened to leave, not by a free.
+
+**Which half of `LOFT_POISON` fires tells you which class you have**, and the instrument has
+exactly two sites:
+
+| site | fills | catches |
+|---|---|---|
+| `database/allocation.rs` `free_named` | a freed store's payload, past the 8-byte header | a stale `DbRef` read **after free** — a real UAF (#1361) |
+| `state/mod.rs` `reserve_frame` | the freshly-reserved frame region, above the old TOS | a read of a slot **this call never wrote** (#1441) |
+
+Both are one env read of `LOFT_POISON=1` and both are off by default, which is why "under poison"
+alone does not name a cause.  The stack half poisons at RESERVE precisely because poisoning at
+*free* would clobber the pop primitive and the transient return value still occupying the vacated
+region; a correct program never observes the sentinel, because definite assignment writes every
+slot before it is read.  So a hit there is a claim about ASSIGNMENT, and a hit in the arena half
+is a claim about LIFETIME.
 
 So when the symptom is layout-fragile, assert what the fix DETERMINES rather than what the
 program happens to compute: the emitted IR.  `OpFreeRef(_tuphold` must not appear, because the
@@ -3569,6 +3589,12 @@ it fails on the pre-fix build with its own message, and it needs no sanitizer to
 contain" passes for free the moment the code stops taking that path — it cannot distinguish
 *fixed* from *gone*, which is the failure mode that shape has by construction.  Assert the hold
 exists AND that nothing frees through it.
+
+**The method note, which cost the most.**  Three plausible causes were read off the IR for #1441,
+each surviving until it met an experiment; the one cheap experiment — turn the suspect OFF and
+measure the same repro on the same binary — settled it in a single build.  It should have come
+first.  A coherent explanation is a hypothesis, and a hypothesis that has been read three times
+is still a hypothesis; reading is not a control.
 
 ⚠ The gate's own harness is load-bearing here.  `LOFT_POISON=1 loft --interpret --tests <file>`
 **passes** on the broken build: the nightly runs these through `wrap` under nextest
