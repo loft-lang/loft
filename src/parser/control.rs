@@ -5883,6 +5883,71 @@ impl Parser {
         }
     }
 
+    /// @PLN35 L2 — is the next element a VARIANT sub-pattern of the element enum type
+    /// (`Ship { carrier }` / bare `Ship`)?
+    ///
+    /// Peeks without consuming, so a plain binding name still falls through to the
+    /// binding branch.  Asked in the TAIL as well as the head: `(P-Rest)` counts the fixed
+    /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
+    /// takes the forms the head does — it just reads at a negative index (loft#1419).
+    fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
+        let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
+            return false;
+        };
+        if let LexItem::Identifier(pname) = &self.lexer.peek().has {
+            self.data.variant_of(elm_e_nr, pname) != u32::MAX
+        } else {
+            false
+        }
+    }
+
+    /// How many fixed elements follow a slice `..`, counted without consuming them.
+    ///
+    /// A tail element is read from the END (`-(tail_len - j)`), so its position is not known
+    /// until the whole tail has been seen — which is why only a BARE NAME was ever accepted
+    /// there.  A bare name defers trivially, because the bind loop runs after `]`; a variant
+    /// sub-pattern or a literal emits its test AS it parses and needs the index in hand
+    /// (loft#1419).  Counting first gives every branch the index it needs, so the tail admits
+    /// the element forms the head does — which is what `(P-Rest)` says, `t` being the count of
+    /// fixed patterns after the rest, with `(P-Point)` making a variant one of them.
+    ///
+    /// ONE look-ahead over the region, reverted before the real parse.  Deliberately not a
+    /// second peek over ground `peek_group_kind` has already covered: that is what corrupts
+    /// the replay buffer, and this runs where no group peek has been.
+    fn count_slice_tail_elements(&mut self) -> i32 {
+        let link = self.lexer.link();
+        let mut depth = 0i32;
+        let mut commas = 0i32;
+        let mut seen_any = false;
+        loop {
+            if matches!(self.lexer.peek().has, LexItem::None) {
+                break;
+            }
+            if depth == 0 && self.lexer.peek_token("]") {
+                break;
+            }
+            if self.lexer.peek_token("{")
+                || self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+            {
+                depth += 1;
+                seen_any = true;
+            } else if self.lexer.peek_token("}")
+                || self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+            {
+                depth -= 1;
+            } else if depth == 0 && self.lexer.peek_token(",") {
+                commas += 1;
+            } else {
+                seen_any = true;
+            }
+            self.lexer.cont();
+        }
+        self.lexer.revert(link);
+        if seen_any { commas + 1 } else { 0 }
+    }
+
     /// Recover from a REFUSED slice element by swallowing the rest of the pattern through its
     /// closing `]` — what the group parsers do on the paths that succeed.
     ///
@@ -8704,6 +8769,8 @@ impl Parser {
                 let mut multi_alt = false;
                 let mut head: Vec<String> = Vec::new();
                 let mut tail: Vec<String> = Vec::new();
+                // How many fixed elements follow the `..`, known as soon as the rest is seen.
+                let mut tail_total: i32 = 0;
                 let mut has_rest = false;
                 let mut rest_name: Option<String> = None;
                 loop {
@@ -8728,6 +8795,13 @@ impl Parser {
                         if let Some(name) = self.lexer.has_identifier() {
                             rest_name = Some(name);
                         }
+                        // Everything from here to `]` is the fixed TAIL, and each of its
+                        // elements is read from the end.  Count them now so a variant
+                        // sub-pattern or a literal there knows its own index while it parses
+                        // (loft#1419); a bare name does not need it, which is why only bare
+                        // names used to be admitted.
+                        self.lexer.has_token(",");
+                        tail_total = self.count_slice_tail_elements();
                     } else if self.match_cursor.is_some()
                         && head.is_empty()
                         && !has_rest
@@ -8846,23 +8920,16 @@ impl Parser {
                         }
                         elem_conds.append(&mut sub_conds);
                         head.push("_".to_string());
-                    } else if !has_rest && {
-                        // @PLN35 L2 — is this head element a VARIANT sub-pattern of the element
-                        // enum type (`Ship { carrier }` / bare `Ship`)?  Peek without consuming so a
-                        // plain binding name still falls through to the branch below.
-                        if let Some((elm_e_nr, _)) = self.pattern_variant_enum(&elm_tp) {
-                            if let LexItem::Identifier(pname) = &self.lexer.peek().has {
-                                self.data.variant_of(elm_e_nr, pname) != u32::MAX
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } {
+                    } else if self.peek_is_variant_subpattern(&elm_tp) {
                         // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
                         // placeholder keeps the position count so following bare-name indices align.
-                        let position = head.len() as i32;
+                        // A head element counts forward from 0; a tail element counts BACK from
+                        // the end, exactly as a bare tail name does.
+                        let position = if has_rest {
+                            -(tail_total - tail.len() as i32)
+                        } else {
+                            head.len() as i32
+                        };
                         let read =
                             self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
                         let mut sub_conds: Vec<Value> = Vec::new();
@@ -8877,7 +8944,11 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
-                        head.push("_".to_string());
+                        if has_rest {
+                            tail.push("_".to_string());
+                        } else {
+                            head.push("_".to_string());
+                        }
                     } else if group_kind == SliceGroupKind::Repetition {
                         // @PLN35 Phase 6 — a repetition `[ head…, ( [name:] V )*[(Sep)] [tail…]
                         // [, ..rest] ]` / `…+`.  `head` is any fixed prefix already parsed (its
@@ -8988,15 +9059,20 @@ impl Parser {
                             self.skip_rest_of_slice();
                             break;
                         }
-                    } else if !has_rest && self.peek_is_slice_literal() {
+                    } else if self.peek_is_slice_literal() {
                         // @PLN35 Phase 6.3 (P-Lit) — a LITERAL head element `[ 1, … ]` /
                         // `[ "kw", … ]`.  On a SCALAR element it matches by direct EQUALITY
                         // against `v[pos]`.  On a STRUCT-ENUM element (a token stream) it matches
                         // against the variant's `#lexeme` field — so `"fn"` reads like the
                         // grammar, standing in for `Keyword { name: "fn" }`.  A "_" placeholder
                         // keeps following bare-name indices AND the length gate aligned, and the
-                        // condition is AND'd into the arm like a variant tag test.  Head only.
-                        let position = head.len() as i32;
+                        // condition is AND'd into the arm like a variant tag test.  In the TAIL
+                        // it reads at a negative index, the same way a bare tail name does.
+                        let position = if has_rest {
+                            -(tail_total - tail.len() as i32)
+                        } else {
+                            head.len() as i32
+                        };
                         let mut lit = Value::Null;
                         let lit_tp = self.expression(&mut lit);
                         match self.build_literal_match(
@@ -9013,7 +9089,11 @@ impl Parser {
                             }
                             None => {}
                         }
-                        head.push("_".to_string());
+                        if has_rest {
+                            tail.push("_".to_string());
+                        } else {
+                            head.push("_".to_string());
+                        }
                     } else if let Some(id) = self.lexer.has_identifier() {
                         if has_rest {
                             tail.push(id);
