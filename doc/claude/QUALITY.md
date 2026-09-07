@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 413 | 389 | **24** |
+| 417 | 393 | **24** |
 
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
@@ -489,7 +489,14 @@ loft#1388's capture handover adds one more of the same kind — **411 · 387 · 
 loft#1396's `value_view_container` one more again: **412 · 388 · 24**, and loft#1444's
 `scopes::returned_closure_records` one more after that — it tells `FnRef`, `Block`, `Insert`,
 `If` and `Return` apart to walk the values in RETURN POSITION, and reads each through its
-`Span`: **413 · 389 · 24**.  The unpeeled column does not move.  The `@FR-O-Complete` walk (B7u) added one peeling site — `scopes::adopted_work_refs` reads a
+`Span`: **413 · 389 · 24**.  The unpeeled column does not move.  Joining @PLN157 adds four
+peeling sites of its own — three from P3's non-sentinel pass, all in
+`generation::non_sentinel` (the predicate reads a value's shape through its `Span`, the
+discharge-guard recogniser reads the condition's call and the then-arm through theirs, and
+the escape/Set walks peel before matching `Call`/`Set`/`TuplePut`), and one from P3c's
+self-step recogniser (`non_sentinel::self_step` reads the step call and its first operand
+through their `Span`).  The join re-measures to the row above, which is neither branch's
+number, as every join so far.  The `@FR-O-Complete` walk (B7u) added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
 construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
 `doc_hygiene::quality_unspan_table_matches_the_audit` fails if this row and the tool disagree.
@@ -2474,7 +2481,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 739 | 385 | 5 | **349** |
+| 740 | 386 | 5 | **349** |
+
+@PLN157 P3's non-sentinel pass adds one function on the seeing-through side —
+`non_sentinel::collect_escapes` asks whether a callee parameter is by-reference
+via `at.typedef.base()`, so an `Optional`-wrapped `RefVar` still escapes the
+argument it can write (the conservative answer; a bare match would have silently
+trusted it).
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record

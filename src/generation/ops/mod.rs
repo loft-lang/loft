@@ -31,6 +31,7 @@
 pub mod coroutine;
 pub mod default;
 pub mod float_compare;
+pub mod int_arith;
 pub mod int_compare;
 pub mod key_ops;
 pub mod misc_ops;
@@ -205,8 +206,23 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
 
     // Phase 04 — key-keyed Op emitters.  Replaces ~70 lines of two
     // arms in dispatch.rs (`"OpGetRecord" =>` + `"OpIterate" =>`).
-    // @PLN157 P3 — float/single compares go plain when both operands are
-    // provably non-sentinel; the template form otherwise.
+    // @PLN157 P3 — float/single compares go plain and integer arithmetic
+    // drops its operand pre-tests when the operands are provably
+    // non-sentinel; the template form otherwise.
+    for op in [
+        "OpAddInt",
+        "OpMinInt",
+        "OpMulInt",
+        "OpMinSingleInt",
+        "OpLandInt",
+        "OpLorInt",
+        "OpEorInt",
+        "OpSRightInt",
+        "OpConvFloatFromInt",
+        "OpConvBoolFromInt",
+    ] {
+        r.insert(op, Box::new(int_arith::IntArithEmitter));
+    }
     for op in [
         "OpEqFloat",
         "OpNeFloat",
@@ -473,8 +489,12 @@ mod tests {
         // the parallel family, key_ops, ref-lifetime, coroutine and IntCompare
         // emitters.  This is the intended end state (the registry IS the
         // dispatch mechanism); the cap just makes a surprising jump visible.
+        // @PLN157 P3 raised it by 18: the eight Eq/Ne/Lt/Le × Single/Float
+        // compares (FloatCompareEmitter) and the ten integer
+        // arithmetic/conversion ops (IntArithEmitter) — both emit the
+        // template form unless the non-sentinel proof holds.
         assert!(
-            count <= 80,
+            count <= 98,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

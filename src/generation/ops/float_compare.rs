@@ -27,10 +27,7 @@ impl OpEmitter for FloatCompareEmitter {
         let Some(op) = non_sentinel::plain_float_compare(ctx.def_fn.name()) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        if args.len() != 2
-            || ctx.output.nn_fast_disabled
-            || !ctx.output.non_sentinel_float_pair(&args[0], &args[1])
-        {
+        if args.len() != 2 || ctx.output.nn_fast_disabled || !ctx.output.non_sentinel_args(args) {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
         if ctx.output.nn_verify {

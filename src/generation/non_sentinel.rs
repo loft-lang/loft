@@ -62,37 +62,63 @@ pub fn plain_float_compare(op_name: &str) -> Option<&'static str> {
     }
 }
 
-/// Is `v` provably non-sentinel (non-NaN) as a float expression, given the
-/// per-function var facts from [`non_sentinel_float_vars`]?
+/// Is `v` provably non-sentinel — non-NaN as a float, non-`i64::MIN` as an
+/// integer — given the per-function var facts from [`non_sentinel_vars`]?
+/// The two families' shapes are disjoint by op name, so one predicate serves
+/// both; the closures differ where the sentinels' arithmetic does.
 #[must_use]
-pub fn non_sentinel_float(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
+pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
     match v.unspan() {
         Value::Float(f) => !f.is_nan(),
         Value::Single(s) => !s.is_nan(),
+        // A `Value::Int` is an i32 payload, which can never widen to
+        // `i64::MIN`; a `Value::Long` carries the sentinel only literally.
+        Value::Int(_) => true,
+        Value::Long(l) => *l != i64::MIN,
         Value::Var(nr) => vars.get(nr).copied().unwrap_or(false),
         Value::If(c, t, e) => {
             if discharge_guard(data, c, t) {
-                non_sentinel_float(data, vars, e)
+                non_sentinel(data, vars, e)
             } else {
-                non_sentinel_float(data, vars, t) && non_sentinel_float(data, vars, e)
+                non_sentinel(data, vars, t) && non_sentinel(data, vars, e)
             }
         }
         Value::Block(b) => b
             .operators
             .last()
-            .is_some_and(|tail| non_sentinel_float(data, vars, tail)),
+            .is_some_and(|tail| non_sentinel(data, vars, tail)),
         Value::Call(d_nr, args) => match data.def(*d_nr).name() {
-            // Unary negation: NaN in, NaN out — nothing minted.
-            "OpMinSingleFloat" | "OpMinSingle" if args.len() == 1 => {
-                non_sentinel_float(data, vars, &args[0])
+            // Unary negation, both families: NaN in NaN out; and for i64,
+            // `-x` can only be `MIN` when `x` is (checked_neg minted MIN is
+            // the excluded `x == MIN` case itself).
+            "OpMinSingleFloat" | "OpMinSingle" | "OpMinSingleInt" if args.len() == 1 => {
+                non_sentinel(data, vars, &args[0])
             }
+            // `a & lit` with a non-negative literal: the result lies in
+            // [0, lit] whatever the proven operand holds, so it cannot be
+            // the sentinel.  (Proven & proven does NOT prove: two negative
+            // non-sentinel values can AND to exactly `i64::MIN`.)
+            "OpLandInt" if args.len() == 2 => {
+                (non_negative_literal(&args[1]) && non_sentinel(data, vars, &args[0]))
+                    || (non_negative_literal(&args[0]) && non_sentinel(data, vars, &args[1]))
+            }
+            // `a >> k` for a literal k in 1..=63 halves the magnitude at
+            // least once, so the result can never reach `i64::MIN`.
+            "OpSRightInt" if args.len() == 2 => {
+                matches!(args[1].unspan(), Value::Int(k) if (1..64).contains(k))
+                    && non_sentinel(data, vars, &args[0])
+            }
+            // NOT closed, deliberately: `+`/`-`/`*` mint the sentinel on
+            // overflow (C85's decided edge — the REWRITE to `_nn` keeps that
+            // via checked_*, but the RESULT cannot be trusted onward), `^`
+            // and `|` can compose it bitwise, `/`/`%` mint it on zero.
             _ => false,
         },
         _ => false,
     }
 }
 
-/// The parser's null-discharge shape: `if OpConvBoolFromFloat(x) x else d` —
+/// The parser's null-discharge shape: `if OpConvBoolFrom*(x) x else d` —
 /// true when the condition tests exactly the then-arm, so inside the then
 /// branch the value is proven non-null by the test itself.  (`x ?? d` and
 /// `x?` both lower to this; see the module doc.)
@@ -100,7 +126,11 @@ fn discharge_guard(data: &Data, cond: &Value, then: &Value) -> bool {
     let Value::Call(c_nr, c_args) = cond.unspan() else {
         return false;
     };
-    if data.def(*c_nr).name() != "OpConvBoolFromFloat" || c_args.len() != 1 {
+    if !matches!(
+        data.def(*c_nr).name(),
+        "OpConvBoolFromFloat" | "OpConvBoolFromInt"
+    ) || c_args.len() != 1
+    {
         return false;
     }
     match (c_args[0].unspan(), then.unspan()) {
@@ -109,17 +139,37 @@ fn discharge_guard(data: &Data, cond: &Value, then: &Value) -> bool {
     }
 }
 
+/// A literal the emitter can bound from above and below: `Int(n)`/`Long(n)`
+/// with `n >= 0`.
+fn non_negative_literal(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Int(n) => *n >= 0,
+        Value::Long(l) => *l >= 0,
+        _ => false,
+    }
+}
+
 /// Per-function var facts: a local is non-sentinel iff it has at least one
-/// assignment, EVERY `Set` to it assigns a non-sentinel expression, and it is
-/// never writable behind the map's back — handed to a call as a bare `Var`
-/// argument, a `TuplePut` destination, or an `Iter` variable.  (The parser's
-/// write analysis is a deny-list this pass deliberately does not lean on.)
+/// assignment, EVERY `Set` to it assigns a non-sentinel expression, and it is never
+/// writable behind the map's back — handed to a call through a `RefVar`
+/// parameter, a `TuplePut` destination, or an `Iter` variable.  (The
+/// parser's write analysis is a deny-list this pass deliberately does not
+/// lean on.)
+///
+/// NO self-step induction, deliberately.  An earlier cut admitted
+/// `v = v ± <proven>` (the counted-for counter's shape) on the argument
+/// that overflow-minting-MIN is C85's decided edge — and the corpus
+/// falsified it: `1246-a-nullable-narrow-slot-answers-null.loft` pins that
+/// a plain integer driven past `i64::MAX` reads as null AND that `??`
+/// FIRES on it, so the overflow sentinel is an observable value contract,
+/// not an ignorable edge.  A var that can step itself can overflow itself;
+/// it proves nothing here, whatever C85 says about its static TYPE.
 ///
 /// Pessimistic start, re-walk to fixpoint: each round re-evaluates every
 /// `Set` against the current map, so facts only turn true as their inputs
 /// do, the map grows monotonically, and it settles in at most `vars` rounds.
 #[must_use]
-pub fn non_sentinel_float_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
+pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     collect_escapes(data, code, &mut escaped);
     let mut vars: HashMap<u16, bool> = HashMap::new();
@@ -143,7 +193,7 @@ pub fn non_sentinel_float_vars(data: &Data, code: &Value) -> HashMap<u16, bool> 
 /// into `acc` — a var's entry is true only while every assignment to it is.
 fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMap<u16, bool>) {
     if let Value::Set(nr, expr) = v.unspan() {
-        let ok = non_sentinel_float(data, vars, expr);
+        let ok = non_sentinel(data, vars, expr);
         acc.entry(*nr).and_modify(|e| *e &= ok).or_insert(ok);
     }
     v.for_each_child(&mut |c| scan_sets(c, data, vars, acc));
@@ -161,10 +211,9 @@ fn collect_escapes(data: &Data, v: &Value, escaped: &mut std::collections::HashS
             let def = data.def(*d_nr);
             for (i, a) in args.iter().enumerate() {
                 if let Value::Var(nr) = a.unspan() {
-                    let by_ref = def
-                        .attributes()
-                        .get(i)
-                        .is_some_and(|at| matches!(at.typedef, crate::data::Type::RefVar(_)));
+                    let by_ref = def.attributes().get(i).is_some_and(|at| {
+                        matches!(at.typedef.base(), crate::data::Type::RefVar(_))
+                    });
                     if by_ref {
                         escaped.insert(*nr);
                     }

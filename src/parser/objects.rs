@@ -3234,7 +3234,7 @@ impl Parser {
             // `lo - 1` in range — a narrow unsigned counter's -1 IS its null sentinel.
             let plain_init = match (expr.unspan(), &in_type) {
                 (Value::Int(lo), Type::Integer(spec))
-                    if *lo >= 0 && i64::from(spec.min) <= i64::from(*lo) - 1 =>
+                    if *lo >= 0 && i64::from(spec.min) < i64::from(*lo) =>
                 {
                     Some(lo - 1)
                 }

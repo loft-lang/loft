@@ -287,10 +287,57 @@ reaches ~1.2–2×.
   per call) and the division template's `note_format_fault`, and on `lock`
   M2 dominates everything.  The codegen-subject suite under `LOFT_NN_VERIFY`
   ran fully clean (19 binaries, no assert fired).
-- **Open in P3:** the N3/N5 `_nn` integer wiring (the `& mask` non-negative
-  leaf makes `hash01`'s chain provable; general `+`/`*` closure is blocked on
-  overflow-mints-MIN), and the counter increment itself (`op_add_int` — safe
-  by loop shape, unprovable expression-locally).
+- **P3c — the `_nn` integer wiring (shipped 2026-09-07).**  One merged
+  predicate now serves both families; the integer closure adds literals, the
+  int discharge shape, negation, `& non-neg-literal` (result ∈ [0, lit]),
+  and `>> lit(1..64)`.  **A SELF-STEP induction (`v = v ± proven`, argued
+  from C85) was built and then RETRACTED the same day** — the corpus
+  falsified it: `1246-a-nullable-narrow-slot-answers-null.loft` pins that a
+  plain integer driven past `i64::MAX` reads null AND that `??` fires on
+  it, so the overflow sentinel is an observable value contract; marking a
+  self-stepping var proven let `OpConvBoolFromInt → true` disarm exactly
+  that discharge.  Its measured worth had been ~0 anyway; a self-stepped
+  var now proves nothing, and both 1246's cells and a copy of them in this
+  plan's own guard pin the boundary.  `IntArithEmitter`: `+`/`-`/`*`/neg → the (previously
+  dead) `ops::*_long_nn` family — checked, so overflow→MIN is preserved
+  exactly; `&`/`|`/`^` and literal `>>` → plain operators
+  (release-identical — `sentinel_long!` is a debug-only assert);
+  `OpConvFloatFromInt` → `as f64`; `OpConvBoolFromInt` → `true`.  Division
+  stays out (zero-divisor null is not this proof).  Deliberately NOT closed:
+  `+`/`-`/`*` results (overflow), `^`/`|` of proven pairs (two negative
+  non-sentinels can compose exactly MIN).  Guard
+  `tests/scripts/157-nn-int-arith.loft` (proven cells, null propagation and
+  ordering, and the overflow edge answering null THROUGH `_nn`), falsified
+  by sabotage (proof skipped → "null propagates through +" red on native).
+  Measured: 40 `_nn` sites on the drawing bench (every loop counter);
+  timings flat (lock −0.8 %, hash within noise) — as coverage predicts,
+  because `seed_hash`'s body roots in PARAMETERS, which stay untrusted.
+- **Open in P3 (the coverage frontier):** interprocedural parameter facts —
+  a param is proven when every call site passes a proven argument (whole-
+  program conjunction at emit time; `hash01` unlocks only through it), and
+  store-rooted reads stay blocked on C80 by design.  Weigh against P4's
+  ~90 % share before investing.
+
+**The rustc-first probe protocol (owner, 2026-09-07 — use it before EVERY
+remaining phase).**  A candidate emission is verified by hand-editing the
+already-emitted `.rs` into the proposed form and compiling with bare
+`rustc -O` — seconds, no loft rebuild, no validation pass; the asserted
+output hashes make each hand-edit self-checking.  Only a transform that
+MOVES the number earns emitter code.  First application (probe binaries in
+the session scratchpad; timed dirty under a running gate, clean numbers
+pending):
+
+| hand-edit of the emitted bench | `hash` ns/op | reading |
+|---|---:|---|
+| P3c as emitted | ~1.4M | baseline |
+| + params-proven arithmetic (would-be P3d) | ~1.1–1.3M | ~20 %, second-order |
+| + prelude stripped (`live_flipped`, `cr_call_push`, guard) | **0.47M (4.7 ns/call)** | at the bar — Rust is ~3.3 |
+
+So the `hash`/`smooth` class closes through a LEAN-TIER PRELUDE decision
+(the issue's original ask — an owner's call, since the recursion cap,
+`stack_trace()` and panic frames live in that prelude), with P3d a ~20 %
+follow-up; and P4's store shapes get the same rustc-only probe before any
+emitter work.
 
 ---
 

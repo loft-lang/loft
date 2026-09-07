@@ -1,0 +1,67 @@
+// @PLN157 P3c (loft#1426 M3) — integer arithmetic under the non-sentinel
+// proof: the `_nn`/plain forms and the kept-sentinel forms answer the SAME
+// values on both backends.
+//
+// The native emitter rewrites `+`/`-`/`*`/`&`/`|`/`^`/`>>`/neg and the int
+// conversions when every operand is provably non-`i64::MIN` (literals, the
+// `??` discharge, `& mask`, `>> lit`); a SELF-STEPPED var (`v += x`) proves
+// NOTHING — an earlier self-step induction was falsified by 1246's cells,
+// where a plain integer driven past i64::MAX must read as null AND have
+// `??` fire on it.  Everything unproven keeps the sentinel template.  Cells:
+//   - proven shapes must keep their exact values;
+//   - a REAL integer null (an out-of-bounds read) must still propagate
+//     through unproven arithmetic and sort below every number;
+//   - the C85 overflow edge must still answer null THROUGH the `_nn` form —
+//     the rewrite drops operand pre-tests, never the checked overflow.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-07) — the emitter's proof
+// check disabled (fast emission unconditional) turns the null-propagation
+// cell red on --native ("null propagates through +": plain add on the
+// sentinel answers MIN+1, not null); restored byte-identically, all four
+// lanes green (interpret / native / LOFT_NN_VERIFY / LOFT_NO_NN_FAST).
+
+fn main() {
+  // A self-stepped accumulator computes exactly as before (it keeps the
+  // sentinel template — self-steps prove nothing).
+  s = 0;
+  for i in 0..10 { s += i; }
+  assert(s == 45, "counter sum");
+  // Literal-rooted chains prove: mul -> _nn, & mask and >> literal close.
+  s2 = 45;
+  m = (s2 * 1000003) & 0xFFFF;
+  assert(m == (45 * 1000003) & 0xFFFF, "mul then mask");
+  h = m >> 3;
+  assert(h == m / 8 ?? 0, "shift matches division");
+  assert(-s2 == -45, "negation");
+
+  // The 1246 boundary, pinned HERE too: a self-stepped var that overflows
+  // must read as null and have `??` FIRE — the exact cells that falsified
+  // the self-step induction.
+  e = 9223372036854775807;
+  e += 1;
+  assert(e == null, "a self-stepped integer past i64::MAX is null");
+  assert((e ?? 99) == 99, "and `??` fires on it");
+
+  // The discharge shape proves through `??`.
+  v: vector<integer> = [5, 7];
+  j = 1;
+  w = (v[j] ?? 0) + 10;
+  assert(w == 17, "discharged element + literal");
+
+  // A REAL null: the C80 out-of-bounds read.  Unproven, so the sentinel
+  // forms stay — null must propagate and sort below every number.
+  n = v[9];
+  assert(n == null, "out-of-bounds reads null");
+  assert(n + 1 == null, "null propagates through +");
+  assert(n * 3 == null, "null propagates through *");
+  assert(n < -1000000000000000000, "null sorts below the smallest number");
+
+  // C85's decided edge THROUGH the rewrite: both operands proven (literals),
+  // so the `_nn` form runs — and its checked add must still answer null on
+  // overflow, exactly as the guarded form does.
+  big = 9223372036854775000;
+  assert(big + 1000 == null, "overflow still answers null through _nn");
+  assert(big + 7 == 9223372036854775007, "near-edge addition exact");
+
+  println("nn-int-arith ok");
+}

@@ -1768,24 +1768,25 @@ impl Output<'_> {
         Some(fused)
     }
 
-    /// Are both compare operands provably non-sentinel floats in the current
-    /// function (@PLN157 P3)?  Computes the per-definition var facts on the
-    /// first simplifiable compare a function emits and caches them for the
-    /// rest; the callers are the float-compare emitters, which fall through
-    /// to the `#rust` template on a `false`.
-    pub fn non_sentinel_float_pair(&mut self, a: &Value, b: &Value) -> bool {
+    /// Are ALL of `args` provably non-sentinel (non-NaN float / non-MIN
+    /// integer) in the current function (@PLN157 P3)?  Computes the
+    /// per-definition var facts on the first simplifiable op a function
+    /// emits and caches them for the rest; the callers are the
+    /// float-compare and integer-arithmetic emitters, which fall through to
+    /// the `#rust` template on a `false`.
+    pub fn non_sentinel_args(&mut self, args: &[Value]) -> bool {
         let vars = if let Some(v) = self.nn_cache.get(&self.def_nr) {
             v.clone()
         } else {
-            let map = std::rc::Rc::new(non_sentinel::non_sentinel_float_vars(
+            let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
                 self.data,
                 self.data.def(self.def_nr).code(),
             ));
             self.nn_cache.insert(self.def_nr, map.clone());
             map
         };
-        non_sentinel::non_sentinel_float(self.data, &vars, a)
-            && non_sentinel::non_sentinel_float(self.data, &vars, b)
+        args.iter()
+            .all(|a| non_sentinel::non_sentinel(self.data, &vars, a))
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or

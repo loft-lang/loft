@@ -520,6 +520,14 @@ TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 # `nproc` is Linux; macOS spells it `sysctl -n hw.ncpu` — a bare $(nproc) made the
 # recipe die with `nproc: command not found` on every Mac (same 2808e183 throttle).
 CI_NPROC = $$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4 )
+# A test/build thread costs roughly 0.7 GiB at peak (rustc for native fixtures,
+# the codegen units of the release build), so sizing by cores alone over-commits
+# a small-memory box into swap — measured on a 14 GiB laptop: 20 threads drove
+# swap use to 10 GiB mid-gate.  MemAvailable is the honest budget: it already
+# discounts what the browser / IDE / analyzer residency of a dev box eats.
+# Linux-only (`/proc/meminfo`); empty elsewhere, which the recipe reads as "no cap" so the
+# portable core count above still governs there.
+CI_MEM_JOBS = $$( awk '/MemAvailable/ { print int($$2 / 716800) }' /proc/meminfo 2>/dev/null )
 # The case pattern carries a leading `(` on purpose: macOS's /bin/sh is bash 3.2, which
 # cannot parse a pattern's bare `)` inside `$( )` command substitution — without it,
 # every `make ci` on a Mac died at the recipe with `syntax error near ';;'` (the
@@ -2036,9 +2044,9 @@ ci: ci-guard
 	mkdir -p $(TEST_SCRATCH) && \
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
-	{ [ "$${gates:-1}" -gt 1 ] && echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box" || echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; } | tee -a result.txt && \
+	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
 	$(MAKE) rebuild-native-cdylibs >> result.txt 2>&1 && \
 	cargo fmt -- --check >> result.txt 2>&1 && \
 	cargo clippy -- -D warnings >> result.txt 2>&1 && \
@@ -2055,7 +2063,7 @@ ci: ci-guard
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live" >> result.txt && \
 	cargo nextest run --profile ci >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \

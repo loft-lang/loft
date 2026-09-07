@@ -107,6 +107,16 @@ recorded separately rather than folded in.
 **Measured on 24 cores.** Full run: **572 s**, of which `cargo nextest` is ~478–572 s and the
 three builds ~130 s. So the test step is the whole question.
 
+**The thread count is capped by MEMORY as well as cores (2026-09-07).** `make ci` sizes its
+build and test parallelism as `nproc / live-gates`, floored at 2 — and now also capped at
+`MemAvailable / 0.7 GiB` (`CI_MEM_JOBS` in the Makefile): a thread's peak is roughly 0.7 GiB
+(rustc for native fixtures, the release build's codegen units), so sizing by cores alone
+over-commits a small-memory box into swap — measured on a 14 GiB laptop, 20 threads drove
+swap use from 7.6 to 10.3 GiB mid-gate while a browser and rust-analyzer held their usual
+residency. `MemAvailable` is read once at gate start and already discounts that residency;
+the gate's banner says when the cap bit (`memory-capped`). GH runners are RAM-rich per core,
+so CI itself never throttles.
+
 **When a gate DIES, ask who signalled it before asking why.** Two `make ci` runs ended on
 2026-09-04 with `make: *** [Makefile: ci] Terminated` — SIGTERM, so not the kernel OOM
 killer or `systemd-oomd`, which send SIGKILL and print `Killed` — with no OOM record in the
@@ -117,7 +127,10 @@ a reason: it detaches the gate (`setsid nohup`), records the signal a wrapper re
 with `strace` on the PATH, runs `make` under a signals-only trace so the sender's pid, uid and
 `si_code` land in `target/gate-signals.log`, beside a process-table snapshot taken the moment
 `make` dies (`target/gate-killer-snapshot.txt`). `scripts/ci-run.sh status` then answers
-KILLED with the sender named, instead of a verdict-less `result.txt`.
+KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more instances
+2026-09-07 (one 5 s in, one 7 min in, both launched as agent-tool background tasks; kernel
+journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
+process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
 **And ask `df -h /` before a gate.**  A full disk fails the NATIVE corpus with `FAIL
 unknown-mode` after `low space` lines, which reads as a code fault; `make sweep-scratch`
