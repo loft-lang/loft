@@ -206,6 +206,37 @@ to forget for one that is already detached, which is exactly when it costs the m
 sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
 main checkout stays free to iterate.
 
+**The verdict line names the failing TEST and how many, not the first `error[` in the file.**
+`ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
+test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`
+reported `error[E0425] … generate_register_from_loft_with_bridges` — a registry package the
+branch had never touched, 1500 lines above the real failure (loft#1448).  Both agents on this box
+triaged that line and went looking at the cdylib.  **Read the failing test, not the captured
+detail**, and the verdict now says it: `FAILED 1 test(s) — loft::doc_hygiene::quality_optional…`.
+
+The COUNT is the other half, because it splits two reds that need opposite responses.  **FAILED
+with 0 test failures is the toolchain, the box or the target dir** — a stale `libloft.rlib`, a
+corrupt `target/debug/incremental`, a full disk — **and FAILED with a count is the code.**  That
+distinction was re-derived from error text three times in one evening before it went into the
+line.
+
+**Kill a background sweep by its PARENT, and the parent is not named after the work.**
+`scripts/valgrind-sweep.sh` runs its memchecks under `xargs -P N`, so killing every
+`valgrind.bin` just lets the `xargs` start the next batch, and a `pkill -f valgrind` never
+matches the process that owns the queue.  Worse, if the launching shell is gone the `xargs` is
+reparented to init, so it survives being aimed at through its own session.  Find it with
+`ps -eo pid,ppid,pgid,cmd | grep "[v]algrind"` and kill the PPID the children share.  The
+general shape: a name-based kill can only find processes whose name you already know, and a
+work queue's parent shares no name with its work.
+
+**A background gate whose SUBJECT keeps moving measures nothing, and nothing in the foreground
+says so.**  A valgrind sweep left running against `target/release/loft` while that binary was
+rebuilt five times for an unrelated fix produced 250 rows of results about no particular build.
+The rule — do not rebuild while a gate runs — is easy to hold for a foreground command and easy
+to forget for one that is already detached, which is exactly when it costs the most.  Pin a long
+sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
+main checkout stays free to iterate.
+
 **And ask `df -h /` before a gate.**  A full disk fails the NATIVE corpus with `FAIL
 unknown-mode` after `low space` lines, which reads as a code fault; `make sweep-scratch`
 reclaims loft's own scratch (TESTING.md § Scratch hygiene).
