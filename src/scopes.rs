@@ -7625,9 +7625,18 @@ impl Scopes<'_> {
                             .any(|&d| function.is_argument(d)))
                         && !function.borrows_one_argument(v)
                 };
+                // Through `base()`: `@FR-L-Null` gives `t?` the same storage as `t`, so it is
+                // the same binding and owns its store the same way.  Asked BARE, the one
+                // shape this set exists for fell past it — a local that may be ABSENT is
+                // exactly what a null-arm return is about, and `d: S?` is
+                // `Optional(Reference)`, not `Reference`.  It got no conditional free, and
+                // nobody else frees a return source (`get_free_vars` skips them all), so
+                // every store the minting path handed up was owned by nobody: one record per
+                // call, unbounded (loft#1422).  The dense spelling beside it was always
+                // freed, which is what hid it.
                 for &v in &sources {
                     if matches!(
-                        function.tp(v),
+                        function.tp(v).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
                     ) && !store_is_the_callers(function, v)
                     {
