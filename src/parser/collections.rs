@@ -3173,6 +3173,10 @@ use #count instead"
                 );
                 return;
             }
+            // loft#1453 — how many errors stood BEFORE the iterable was resolved, so the
+            // fallback below can tell "there is no iterable here" from "the iterable already
+            // said what is wrong with it".
+            let errors_before_iterable = self.lexer.diagnostics().error_count();
             let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
                 self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
@@ -3211,11 +3215,20 @@ use #count instead"
                 self.vars.set_coll_value(orig_coll_expr.clone());
             }
             if !self.first_pass && iter_next == Value::Null {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Need an iterable expression in a for statement"
-                );
+                // Only when nothing else reported.  `collections::iterator` diagnoses a
+                // nullable collection precisely — naming the `?` and both discharges — and
+                // then returns `Value::Null`, which is indistinguishable here from "no
+                // iterable at all".  Adding this line on top of that one gave the reader the
+                // right sentence followed by two about the parser's own state (loft#1453).
+                // The fallback itself stays: the case its comment below names is real and
+                // reports nothing of its own.
+                if self.lexer.diagnostics().error_count() == errors_before_iterable {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Need an iterable expression in a for statement"
+                    );
+                }
                 // Balance the loop stack before bailing: `start_loop` (above)
                 // has already pushed this loop's scope, so a bare `return`
                 // leaves `current_loop` pointing at it and the ENCLOSING loop's

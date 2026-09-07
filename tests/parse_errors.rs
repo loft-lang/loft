@@ -3317,14 +3317,18 @@ fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
              collection zero iterations at \
              a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
     )
-    // The two below are CASCADE, not findings: the refusal above bails out of the `for`
-    // without consuming its body, so the statement parse fails twice more at the same
-    // position.  They are asserted because the harness matches the whole list, and named
-    // here so that collapsing them to the one real error reads as the fix it is rather
-    // than as a broken test.
-    .error(
-        "Need an iterable expression in a for statement at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
-    )
+    // The one below is CASCADE, not a finding: the refusal above bails out of the `for`
+    // without consuming its body, so the statement parse fails once more at the same
+    // position.  It is asserted because the harness matches the whole list, and named here
+    // so that collapsing it to the one real error reads as the fix it is rather than as a
+    // broken test.
+    //
+    // There were TWO.  *"Need an iterable expression in a for statement"* went with
+    // loft#1453: `collections::iterator` reports the refusal above and then returns
+    // `Value::Null`, which the caller could not tell from "no iterable at all", so it added
+    // its own line on top.  It now asks `Diagnostics::error_count()` first and speaks only
+    // when nothing else did — the fallback itself stays, because the case its own comment
+    // names reports nothing of its own.
     .error(
         "Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
     );
