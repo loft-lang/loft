@@ -70,7 +70,29 @@ case "${1:-status}" in
         snapshot
         sender=$(grep -oE "SIG[A-Z]+ \{[^}]*\}" target/gate-signals.log 2>/dev/null | tail -1)
         note KILLED "make ci died on signal $((rc-128))${sender:+ — $sender (target/gate-signals.log, target/gate-killer-snapshot.txt)}"
-      else note FAILED "$(grep -m1 -E "^error|FAIL \[" result.txt 2>/dev/null | head -c 90)"
+      else
+        # loft#1448 — name the failing TEST, and say how many.  `grep -m1 "^error|FAIL ["`
+        # took whichever came FIRST in the file, and a cargo error always precedes the test
+        # run: a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the
+        # _audit` reported `error[E0425] … generate_register_from_loft_with_bridges`, a
+        # REGISTRY package the branch had never touched, 1500 lines above the real failure.
+        # Both agents on this box triaged that line and chased the cdylib.
+        #
+        # The COUNT is the other half, and it splits the two kinds of red that need opposite
+        # responses: FAILED with 0 test failures is the toolchain, the box or the target dir
+        # — a stale rlib, a corrupt incremental cache, a full disk — and FAILED with a count
+        # is the code.  Deriving that from the error text cost three gates in one evening.
+        #
+        # nextest prints `FAIL [   1.23s] (12/34) <binary> <test>` once per attempt, so the
+        # retries of one test collapse under `sort -u`.
+        ft=$(grep -oE "FAIL \[[^]]*\].*$" result.txt 2>/dev/null \
+             | awk "{ print \$(NF-1) \"::\" \$NF }" | sort -u)
+        n=$(printf "%s" "$ft" | grep -c . || true)
+        if [ "${n:-0}" -gt 0 ]; then
+          note FAILED "$n test(s) — $(printf "%s" "$ft" | head -3 | tr "\n" " " | head -c 200)"
+        else
+          note FAILED "0 test failures (toolchain/box/target-dir, not the code) — $(grep -m1 -E "^error" result.txt 2>/dev/null | head -c 120)"
+        fi
       fi' >/dev/null 2>&1 &
     echo "RUNNING $! $(date +%s) started" > $V
     echo "gate started (pid $!)"
