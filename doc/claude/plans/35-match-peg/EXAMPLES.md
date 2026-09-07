@@ -117,9 +117,12 @@ fn parse_stmt(ts: vector<Token>) -> Stmt {
 
 Edges to know — the honest limits of the design as scoped:
 
-- **`..rest` is tail-only** — you cannot write `[ Let, Ident{name}, Eq, ..mid, Semi ]` (rest in
-  the middle). Tokenize per statement, or use the L3.6 **iterator** input where the cursor stops
-  before `Semi` and the caller continues from there (the natural streaming-parser model).
+- **A tail element is a bare name** — `[ Let, Ident{name}, Eq, ..mid, last ]` is fine and binds
+  `mid` to everything between, but `[ …, ..mid, Semi ]` is not: a variant sub-pattern or literal
+  after a `..` is not parsed (loft#1419, `formal/matching.md` D-match-4). Destructure the bound
+  name in a nested `match`, or use the L3.6 **iterator** input where the cursor stops before
+  `Semi` and the caller continues from there (the natural streaming-parser model).
+  *(The rest itself was tail-only until 2026-09-07; `(P-Rest)`'s `t` had always said otherwise.)*
 - **No in-pattern rule reference** — `expr:expr` (match the `expr` sub-grammar inline) is not a
   feature; write `parse_expr(rhs)`.
 - **Whole-consume** — an arm matches the ENTIRE slice unless it ends in `..rest`, so `[ Stop ]`
@@ -130,4 +133,4 @@ Edges to know — the honest limits of the design as scoped:
 The arms read like the productions they implement — the `move`/`say`/`stop` alternatives,
 `IDENT ( ':' IDENT )?`, `'[' NUM* ']'` — with `|` / `?` / `*` on named tokens and no regex
 training. The cost lands exactly where [C89](../../DESIGN_DECISIONS.md) said it would: extra parser
-logic (whole-consume, tail-only rest, function-call recursion) bought for a readable surface.
+logic (whole-consume, bare-name tail elements, function-call recursion) bought for a readable surface.

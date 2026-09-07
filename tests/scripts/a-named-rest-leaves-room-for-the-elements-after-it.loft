@@ -1,0 +1,202 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-P-Rest — `..name` binds a FRESH vector holding `src[i .. len - t]`, where `t` counts the
+// fixed elements AFTER the rest.  So elements may follow a named rest, and the captured middle
+// shrinks by however many do.
+//
+// The rule said that and the parser refused it: `[a, ..mid, z]` reported *"a named rest `..mid`
+// must be the last slice element"*.  What makes the refusal the defect rather than the rule
+// over-reaching is the CONTROL below — `[a, .., z]`, the same shape with the middle un-named,
+// has always been legal and has always bound `z` from the end.  Only naming the middle was
+// refused, so the language could match the shape but not say what was in it.
+//
+// Nothing had to be built to close it.  The arm's length gate is `head + tail <= len`, the tail
+// elements are read at negative indices, and `hi = len - tail_len` was already being computed in
+// the refused branch — the diagnostic sat in front of a correct lowering.  Every cell here is
+// therefore also a claim about the un-named form, which is why both spellings are asserted side
+// by side on the same subjects: if they ever disagree, one of the two paths has drifted.
+//
+// ⚠ The empty middle and the under-length subject are the cells that matter, not the roomy one.
+// `[a, ..mid, z]` on a 2-element subject must MATCH with `mid` empty (`lo == hi`), and on a
+// 1-element subject must NOT match at all — `fixed` is 2.  A guard that only ever feeds it five
+// elements passes on a lowering that computed `hi` as `len` and swallowed the tail.
+//
+// The struct and struct-enum cells guard `(H-Alloc)`: the middle is a fresh, independent vector,
+// so mutating it must leave the subject intact, and matching the SAME subject twice must answer
+// the same thing.  That reuse cell is the store-lifetime class `35c-rest-capture.loft` records —
+// a materialised sub-slice that frees a view of the subject's own records reads correct once and
+// wrong the second time.
+//
+// A tail element is a BARE NAME in both spellings; a variant sub-pattern or literal after a `..`
+// is a parse-error cascade (loft#1419), which is the part of `t` still outstanding.
+//
+// @falsified-at: 4e5725a2c — interpret exit 1 -> 0, native exit 1 -> 0 (`make falsify`, both
+//   backends, a full build of that commit).  There every arm below is refused outright with
+//   "a named rest `..mid` must be the last slice element", so the file never reaches `main` —
+//   the channel that moves is the EXIT code, not an assertion count.
+
+enum Tok {
+  Kw { word: text },
+  Num { value: integer },
+}
+struct P {
+  x: integer,
+  y: integer,
+}
+
+// ── head 1 / tail 1, and the un-named CONTROL on the same subjects ───────────
+fn named(v: vector<integer>) -> integer {
+  match v { [a, ..mid, z] => a * 10000 + len(mid) * 100 + z, _ => -1 }
+}
+fn gap(v: vector<integer>) -> integer {
+  match v { [a, .., z] => a * 10000 + z, _ => -1 }
+}
+// the middle's CONTENTS, not just its length
+fn mid_first(v: vector<integer>) -> integer {
+  match v { [_, ..mid, _] => mid[0], _ => -1 }
+}
+fn mid_last(v: vector<integer>) -> integer {
+  match v { [_, ..mid, _] => mid[len(mid) - 1] ?? -1, _ => -1 }
+}
+
+// ── head 0 / tail 2 ──────────────────────────────────────────────────────────
+fn no_head(v: vector<integer>) -> integer {
+  match v { [..mid, y, z] => len(mid) * 1000 + y * 10 + z, _ => -1 }
+}
+
+// ── head 2 / tail 2 ──────────────────────────────────────────────────────────
+fn h2t2(v: vector<integer>) -> integer {
+  match v { [a, b, ..mid, y, z] => a * 100000 + b * 10000 + len(mid) * 1000 + y * 10 + z, _ => -1 }
+}
+
+// ── tail-only rest still means what it always did (t == 0) ───────────────────
+fn tail_only(v: vector<integer>) -> integer {
+  match v { [a, ..rest] => a * 100 + len(rest), _ => -1 }
+}
+
+// ── heap element type ────────────────────────────────────────────────────────
+fn text_mid(v: vector<text>) -> text {
+  match v { [a, ..mid, z] => "{a}/{len(mid)}/{z}", _ => "none" }
+}
+fn text_mid_first(v: vector<text>) -> text {
+  match v { [_, ..mid, _] => mid[0], _ => "none" }
+}
+
+// ── independence: the middle is a fresh vector (H-Alloc) ─────────────────────
+fn struct_mid(v: vector<P>) -> vector<P> {
+  match v { [_, ..mid, _] => mid, _ => [] }
+}
+
+// ── struct-enum: a captured head field escapes, with a rest AND a tail ───────
+fn ntoks(ts: vector<Tok>) -> integer {
+  len(ts)
+}
+fn first_word(ts: vector<Tok>) -> text {
+  match ts { [Kw { word }, ..rhs, _] => "{word}/{ntoks(rhs)}", _ => "none" }
+}
+
+// ── a guard rejects the arm; the next one still binds the middle correctly ───
+fn guarded(v: vector<integer>) -> integer {
+  match v {
+    [a, ..mid, _] if a > 100 => a + len(mid),
+    [a, ..mid, _] => a * 100 + len(mid),
+    _ => -1,
+  }
+}
+
+fn head_1_tail_1_leaves_the_middle_between_them() {
+  // roomy: mid = v[1 .. len-1]
+  assert(named([1, 2, 3, 4, 5]) == 10305, "named five: {named([1,2,3,4,5])}");
+  assert(mid_first([1, 2, 3, 4, 5]) == 2, "mid[0]: {mid_first([1,2,3,4,5])}");
+  assert(mid_last([1, 2, 3, 4, 5]) == 4, "mid[-1]: {mid_last([1,2,3,4,5])}");
+  // ⚠ empty middle — lo == hi, and the arm must still MATCH
+  assert(named([1, 2]) == 10002, "named two (empty mid): {named([1,2])}");
+  // ⚠ under-length — `fixed` is 2, so neither element may double as both
+  assert(named([1]) == -1, "named one must not match: {named([1])}");
+  assert(named([]) == -1, "named empty must not match: {named([])}");
+
+  // CONTROL: the un-named gap agrees on every one of those subjects
+  assert(gap([1, 2, 3, 4, 5]) == 10005, "gap five: {gap([1,2,3,4,5])}");
+  assert(gap([1, 2]) == 10002, "gap two: {gap([1,2])}");
+  assert(gap([1]) == -1, "gap one must not match: {gap([1])}");
+  assert(gap([]) == -1, "gap empty must not match: {gap([])}");
+}
+
+fn the_middle_shrinks_by_however_many_elements_follow_it() {
+  // head 0 / tail 2
+  assert(no_head([1, 2, 3, 4]) == 2034, "no_head four: {no_head([1,2,3,4])}");
+  assert(no_head([1, 2]) == 12, "no_head two (empty mid): {no_head([1,2])}");
+  assert(no_head([1]) == -1, "no_head one must not match: {no_head([1])}");
+
+  // head 2 / tail 2
+  assert(h2t2([1, 2, 3, 4, 5, 6]) == 122056, "h2t2 six: {h2t2([1,2,3,4,5,6])}");
+  assert(h2t2([1, 2, 3, 4]) == 120034, "h2t2 four (empty mid): {h2t2([1,2,3,4])}");
+  assert(h2t2([1, 2, 3]) == -1, "h2t2 three must not match: {h2t2([1,2,3])}");
+
+  // t == 0 is unchanged
+  assert(tail_only([1, 2, 3, 4, 5]) == 104, "tail_only: {tail_only([1,2,3,4,5])}");
+  assert(tail_only([9]) == 900, "tail_only single: {tail_only([9])}");
+}
+
+fn a_middle_of_heap_elements_is_its_own_vector() {
+  assert(
+    text_mid(["a", "b", "c", "d"]) == "a/2/d",
+    "text mid: {text_mid([\"a\",\"b\",\"c\",\"d\"])}"
+  );
+  assert(
+    text_mid_first(["a", "b", "c", "d"]) == "b",
+    "text mid[0]: {text_mid_first([\"a\",\"b\",\"c\",\"d\"])}"
+  );
+  // an empty middle still MATCHES — `fixed` is 2 and the subject has 2
+  assert(text_mid(["a", "b"]) == "a/0/b", "text empty mid: {text_mid([\"a\",\"b\"])}");
+
+  // (H-Alloc) — mutating the middle must not reach the subject
+  src = [
+    P { x: 10, y: 1 },
+    P { x: 20, y: 2 },
+    P { x: 30, y: 3 },
+    P { x: 40, y: 4 },
+  ];
+  m = struct_mid(src);
+  assert(len(m) == 2 && m[0].x == 20 && m[1].x == 30, "struct mid: {m[0].x},{m[1].x}");
+  m[0].x = 99;
+  assert(m[0].x == 99, "struct mid mutated: {m[0].x}");
+  assert(src[1].x == 20, "subject intact after mutating the middle: {src[1].x}");
+}
+
+fn matching_the_same_subject_twice_answers_the_same_thing() {
+  ts = [
+    Kw { word: "let" },
+    Num { value: 1 },
+    Num { value: 2 },
+    Num { value: 3 },
+  ];
+  // the captured head field escapes as a text while a rest AND a tail are present
+  assert(first_word(ts) == "let/2", "struct-enum rest+tail: {first_word(ts)}");
+  // ⚠ the reuse cell — a materialised middle that frees a view of the subject's own
+  // records answers correctly the first time and wrongly the second
+  assert(
+    first_word(ts) == "let/2" && first_word(ts) == "let/2",
+    "struct-enum reuse (subject intact): {first_word(ts)}"
+  );
+  assert(first_word([
+    Num { value: 9 },
+    Num { value: 8 },
+  ]) == "none", "struct-enum fallthrough");
+}
+
+fn a_failed_guard_leaves_the_middle_to_the_next_arm() {
+  assert(guarded([200, 1, 2, 3]) == 202, "guard taken: {guarded([200,1,2,3])}");
+  assert(guarded([5, 1, 2, 3]) == 502, "guard rejected, next arm binds: {guarded([5,1,2,3])}");
+  assert(guarded([7]) == -1, "guard, under-length: {guarded([7])}");
+}
+
+fn main() {
+  head_1_tail_1_leaves_the_middle_between_them();
+  the_middle_shrinks_by_however_many_elements_follow_it();
+  a_middle_of_heap_elements_is_its_own_vector();
+  matching_the_same_subject_twice_answers_the_same_thing();
+  a_failed_guard_leaves_the_middle_to_the_next_arm();
+  print("a-named-rest-leaves-room-for-the-elements-after-it: PASS");
+}

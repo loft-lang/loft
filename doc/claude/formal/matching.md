@@ -128,8 +128,10 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
   (P-Seq)    ⟨[p₁ … pₙ], κ⟩: run p₁ from κ→κ₁, …, pₙ from κ_{n-1}→κₙ; ANY pᵢ ⇓ Fail ⟹ the whole
              sequence ⇓ Fail (κ unchanged).  binds = ⋃ᵢ binds_i.
   (P-Whole)  an ARM's sequence pattern must consume the WHOLE input (κ' = ⟨len(src),src⟩); a proper
-             PREFIX ⇓ Fail for arm-selection UNLESS the sequence ends in `..rest`, which absorbs the
-             remainder.  (This is why `[a,b,c]` needs exact length today.)
+             PREFIX ⇓ Fail for arm-selection UNLESS the sequence CONTAINS a rest, which absorbs
+             whatever the fixed elements around it do not take (`P-Rest`'s `t` counts the ones
+             AFTER it, so the rest need not be last).  (This is why `[a,b,c]` needs exact length
+             today.)
   (P-Alt)    ⟨(a | b), κ⟩: try a from κ; if Match, that; else try b from the SAME κ.  Ordered choice
              — FIRST success wins; both Fail ⟹ Fail.
   (P-Opt)    ⟨(a)?, κ⟩: try a; on Match(bs,κ') that; on Fail ⟹ Match(bs↦null, κ) — succeeds with a's
@@ -244,7 +246,7 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code deviation).
+OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's D-op-1).
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the
@@ -270,10 +272,40 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   pattern the ARM grammar does not have, and the reading that makes the silent skip look
   deliberate.
 
-- **PEG patterns are SHIPPED (@PLN35)** — the *Rules — PEG patterns* § opens **no** deviation: the
-  shipped implementation (phases 1–7 + PC1–PC5, [plans/35-match-peg](../plans/35-match-peg/))
-  conforms to the stated rules, verified both backends. Each rule is pinned by the @PLN89 oracle in
-  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).
+- **D-match-3 — OPENED AND CLOSED 2026-09-07.**  `(P-Rest)` binds `..name` to `src[i .. len−t]`
+  with `t` counting the fixed elements AFTER the rest, and the parser refused every `t > 0`
+  spelling: `[a, ..mid, z]` reported *"a named rest `..mid` must be the last slice element"*.  The
+  refusal — not the rule — was the defect, because the UN-NAMED gap `[a, .., z]` was already legal
+  and already bound `z` from the end: the language could match the shape and not name what was in
+  it.  Nor was anything missing underneath.  The arm gate is `head + tail <= len`, the tail is read
+  at negative indices, and `hi = len − tail_len` was computed inside the refused branch itself, so
+  the diagnostic stood in front of a correct lowering; `materialize_named_rest` already takes
+  runtime bounds (the repetition path passes them, native-verified by `35o-tail-elements`).  Closed
+  by deleting the diagnostic.  Guard
+  `tests/scripts/a-named-rest-leaves-room-for-the-elements-after-it.loft` — head 0/1/2 × tail 1/2,
+  the empty middle (`lo == hi`) and the under-length subject that must NOT match, scalar / text /
+  struct / struct-enum elements, `(H-Alloc)` independence, the reuse cell, and a guarded arm — each
+  asserted beside the un-named spelling on the same subject, so a future drift between the two
+  paths fails here.  Falsified at `4e5725a2c` (both backends refuse, exit 0 → 1).
+
+- **D-match-4 — OPEN (loft#1419).**  `(P-Rest)`'s `t` counts *fixed patterns*, and `(P-Point)`
+  makes a unit variant, a struct variant, a literal, `_` and a bare binding all point patterns.
+  Only `_` and a bare binding are accepted after a `..`: the element loop takes `has_identifier()`
+  there, so `[Kw { word }, .., End { e }]` binds the name `End` and then chokes on `{`, reporting
+  four cascading *"Expect token ,"* messages that name nothing.  Pre-existing and independent of
+  the rest's spelling — it reproduces on the un-named gap and on a literal alike.  Closing it means
+  reading a tail sub-pattern at a NEGATIVE index, so the tail length must be known before the
+  sub-pattern is parsed; the repetition path already does exactly that
+  (`35o-tail-elements.loft`), which is the precedent to follow.  Workaround (verified, both
+  backends): bind a bare name and destructure it in a nested `match`.
+
+- **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
+  [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
+  with the ONE exception D-match-4 records below. Each rule is pinned by the @PLN89 oracle in
+  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).  This bullet read *"opens no
+  deviation"* for as long as `(P-Rest)`'s `t` was refused outright, which is the shape of claim
+  the rule-led walk exists to re-measure: a conformance line is only as strong as the oracle
+  under it, and no oracle case had ever spelled a rest with anything after it.
 - **Conformance is differential** — `match` dispatch is enforced across the two backends by the
   @PLN89 oracle (D-op-1): `20-nested-enum-match` and `07-enum-match-dispatch` carry struct-payload
   variants, recursive walks, and matches whose arms return different variants, precisely because
@@ -303,6 +335,10 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   ("missing: B"); adding a `B => …` arm or a trailing `_` makes it compile.
 - **As an expression (`M-Expr`)** — `r = match c { A => 100, B => 200 }` binds `r` to the arm's
   value (`100`).
+- **A rest need not be last (`P-Rest`)** — `match v { [a, ..mid, z] => … }` over `[1,2,3,4,5]`
+  binds `a=1`, `mid=[2,3,4]`, `z=5`; over `[1,2]` it MATCHES with `mid` empty; over `[1]` it does
+  not match at all (`head + tail` is 2).  `mid` is a fresh vector, so mutating it leaves `v`
+  untouched.  A tail element is a bare name or `_` (D-match-4).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on which
 arm a `match` selects, on a bound payload value, or on whether a match is exhaustive is the

@@ -8986,20 +8986,19 @@ impl Parser {
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
                     }
-                    // @PLN35 Phase 2 (P-Rest) — `..name`: bind `name` to the FRESH sub-slice
-                    // `v[head_len .. len - tail_len]`.  Reuse the proven compile-time slice
+                    // @FR-P-Rest — `..name` binds `name` to the FRESH sub-slice
+                    // `v[head_len .. len - tail_len]`, so fixed elements MAY follow the rest and
+                    // the middle shrinks by however many do.  Reuse the proven compile-time slice
                     // materialisation (`materialize_iterator`): a minimal slice `Value::Iter` over the
                     // index range, copied element-type-aware into a fresh vector (P-Cap-Fresh — the
-                    // result is INDEPENDENT of the subject, so it is safe to return or mutate). Named
-                    // rest is tail-only.  Bounds are in range by the `fixed <= len` arm condition.
+                    // result is INDEPENDENT of the subject, so it is safe to return or mutate).
+                    // Bounds are in range by the `fixed <= len` arm condition, which counts head AND
+                    // tail.  The tail elements are already bound above, at negative indices — the
+                    // same reads the un-named gap `[a, .., z]` has always used, which is why naming
+                    // the middle needs no machinery of its own.  A tail element is a BARE NAME:
+                    // a variant sub-pattern or literal after a `..` is not parsed in either
+                    // spelling (loft#1419), which is the one part of `t` still outstanding.
                     if let Some(name) = rest_name.clone() {
-                        if !tail.is_empty() && !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a named rest `..{name}` must be the last slice element"
-                            );
-                        }
                         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
                         let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
                         self.vars.defined(rest_var);
