@@ -2636,6 +2636,7 @@ than by the audit.
 
 
 
+
 **Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
@@ -2685,6 +2686,17 @@ is, and asking the bare type would have put the nullable spelling back on the le
 while the dense twin was fixed.  That is the same one-notion-two-spellings failure this row
 exists to find, caught by writing the predicate the way the match site already wrote it rather
 than by the audit.
+
+*loft#1434 moved `Type::source_name` opaque→peeling, and this one the row genuinely earned.*
+The function renders a keyed type the way its author spelled it, and its catch-all treated
+everything it does not list as already reading that way — true of a LEAF, false of a WRAPPER,
+whose inner it handed to `name`, the SCHEMA KEY.  So a nullable keyed collection came back
+`hash<It,["k"]>?` at every site that had correctly asked for the source spelling.  Adding the
+`Optional` and `RefVar` arms is exactly what this column measures — seeing through the wrapper
+instead of falling past it — so 367 → 368 and the opaque column to 360.  Worth contrasting with
+the loft#1420 entry above: there a peel was EXTRACTED and the caller read as opaque although the
+peel still happened, and here a peel was genuinely absent.  The column cannot tell those two
+apart, which is the argument for the prose beside it rather than for reading the trend.
 
 **The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
 carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
