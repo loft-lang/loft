@@ -412,7 +412,8 @@ predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather tha
   was never the wrong move — it was half a move, and calling the remaining half "the emission
   path" sent the next reader to rebuild something that was not broken.
 
-The closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a placefor a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
+The closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a place
+for a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
 through a FIELD, and for every place a branch's arms can name rather than only an agreed one;
 D-bind-24 CLOSED 2026-09-06 (loft#1401): a projection
 discharged with `??` is the view its plain spelling is, so it materialises where that one does;
