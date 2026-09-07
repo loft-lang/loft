@@ -3790,6 +3790,11 @@ impl Function {
 
     /// Mark a variable as captured by a closure.
     /// Suppresses the "never read" warning without affecting dead-assignment tracking.
+    ///
+    /// ⚠ This flag is LOAD-BEARING FOR CODEGEN as well as for diagnostics:
+    /// [`rebind_must_mint`](Self::rebind_must_mint) reads it to deny in-place store reuse
+    /// on a rebind (loft#1447).  Narrowing where it is set to quiet a warning would
+    /// silently restore a wrong VALUE, not just a lint.
     pub fn set_captured(&mut self, v: u16) {
         self.variables[v as usize].captured = true;
     }
@@ -3840,6 +3845,32 @@ impl Function {
             return false;
         }
         !self.is_inline_ref(v) && !self.is_skip_free(v) && self.is_independent(v)
+    }
+
+    /// @FR-L-CapHeap — must a whole-value REBIND of this local mint a FRESH store,
+    /// rather than re-mint the one its slot already holds?
+    ///
+    /// Deliberately a separate predicate from [`owns_store`](Self::owns_store) rather
+    /// than a widening of it.  `owns_store` answers who owes the FREE and is shared with
+    /// `generation::dispatch` so parser and codegen cannot drift (loft#664); changing what
+    /// it means changes the free path.  This one asks only whether in-place REUSE is
+    /// licensed, and the two answers differ for exactly one population: a captured heap
+    /// local still owns its store, so `owns_store` is true, while a closure record built
+    /// over it is a SECOND holder and in-place reuse is not licensed.
+    ///
+    /// `(L-CapHeap)` says the closure answers the value it was BUILT with, so re-minting
+    /// the same store in place makes it answer the rebind instead — loft#1447, where a
+    /// captured `d: C = C{5}` read 9 after `d = C{9}` while its nullable twin read 5.
+    ///
+    /// Every rebind, not only one after the build: `set_captured` runs when the closure
+    /// BODY is parsed, so on pass 2 this is known for the whole function, and minting for
+    /// a rebind that precedes the build is semantically identical to re-minting (nothing
+    /// observes the store yet) at the cost of one allocation on a path that is, by
+    /// construction, already building a closure.
+    pub fn rebind_must_mint(&self, v: u16) -> bool {
+        (v as usize) < self.variables.len()
+            && self.is_captured(v)
+            && crate::data::is_dbref(self.tp(v).base())
     }
 
     /// Record that fn_ref variable `fn_ref` has its closure stored in `clos`.

@@ -3717,7 +3717,17 @@ impl Parser {
             // no container VARIABLE to depend on, so a dep-only test read it as
             // owning.  `owns_store` is the one predicate that answers it, shared with
             // `generation::dispatch` so parser and codegen cannot drift (loft#664).
-            if self.vars.owns_store(*v_nr) && type_matches {
+            // @FR-L-CapHeap (loft#1447) — in-place reuse of the slot's store is licensed
+            // only while this local is the store's SOLE holder.  A closure record built
+            // over it is a second holder, and `(L-CapHeap)` says that record answers the
+            // value it was BUILT with — so re-minting the same store here would make it
+            // answer the rebind.  Asked as its own predicate rather than by widening
+            // `owns_store`, which answers the FREE question and is shared with
+            // `generation::dispatch`.  The `else if` below carries the same term, so a
+            // captured local ROUTES to the fresh-buffer arm instead of falling between the
+            // two — without it the field initialisers write into uninitialised storage,
+            // which is the failure that branch's own comment describes.
+            if self.vars.owns_store(*v_nr) && type_matches && !self.vars.rebind_must_mint(*v_nr) {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
                 // (see the hoist in parse_object_field and the splice after
@@ -3774,6 +3784,7 @@ impl Parser {
                 }
                 list.push(self.cl("OpDatabase", &[Value::Var(*v_nr), Value::Int(tp)]));
             } else if (!type_matches
+                || self.vars.rebind_must_mint(*v_nr)
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
