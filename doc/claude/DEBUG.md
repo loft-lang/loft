@@ -101,10 +101,24 @@ Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md
 | `static` | IR tree and bytecode only (no execution) | Codegen bugs, wrong IR, wrong opcode selection |
 | `crash_tail:N` | Last N lines before panic | Crash triage when full output is too large |
 | `locks` | Every store-lock / store-unlock event with store_nr + rec | "Write to locked store at rec=N fld=M" panics — pinpoints which op acquired the lock |
-| `type_timeline:<varname>` | Every type-mutation event for a specific named variable (old → new + origin + the SOURCE LINE that wrote it; set `LOFT_TIMELINE_BT=1` for the stack behind it) | "Why is var X type T at this point?" — flip / change_var_type / depend / substitute_type traces.  A dep list is REPLACED, not merged (`Type::depending`), so "who wrote this dep last" is usually the whole question |
+| `type_timeline:<varname>` | Every type-mutation event for a specific named variable (old → new + origin + the SOURCE LINE that wrote it; set `LOFT_TIMELINE_BT=1` for the stack behind it) | "Why is var X type T at this point?" — flip / change_var_type / depend / substitute_type traces.  A dep list is REPLACED, not merged (`Type::depending`), so "who wrote this dep last" is usually the whole question.  ⚠ Matches by NAME across every parsed function including the stdlib — check `v_nr=` before believing an origin (below) |
 | `ir:<fn_name>` | IR tree dump for the named function only (no bytecode, no execution trace) | "What IR did the parser emit for fn X?" — focused codegen-bug diagnosis |
 | `slots:<fn_name>` | Slot-allocation summary for the named function — each var's final slot OR a reason why it was skipped | "Why is var X at slot 65535?" — `Incorrect var X[65535]` codegen panics |
 | `captures:<fn_name>` | Capture-pipeline summary for the named function + its lambdas — scalars_to_box, mutated_captures, closure_record attrs with auto-Reference status | "Why is closure-record attr X stored inline vs share-by-DbRef?" — closure-encoding diagnosis |
+
+⚠ **`type_timeline` matches by NAME, across every function the run parses — the whole
+stdlib included — so a common name makes it answer about a DIFFERENT variable.**  It filters
+on the name alone (`type_timeline_target()`), and one run reaching for a receiver named `v`
+was told its dep was lost by `make_independent` at `objects.rs:573`, the `(B-Copy)` arm, with
+a plausible before/after type beside it; a print inside that arm showed it never fires for
+that variable at all.  The trace was not wrong about what it saw — it saw another `v`.
+
+Every line carries `v_nr=N`, so **read the `v_nr` and confirm the function before believing
+an origin**, and when the name is common prefer a print at the suspected site over the trace.
+The general form is worth carrying past this instrument: *a tool that cannot say which
+function it is talking about will confidently answer about a different one* — the same shape
+as a guard whose fixture is below the quantum, and the reason two plausible-looking readings
+can cancel into what reads as a deliberate design.
 
 `LOFT_VAR_TABLE=<fn substring>` is the companion to the IR dump, and NOT a `LOFT_LOG`
 preset — it prints after `scopes::check` on every path:
