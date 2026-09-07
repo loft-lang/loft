@@ -533,6 +533,19 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn a_second_method_gets_its_own_missing_variant_warning() {
+    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so the
+    // missing-implementation warning is asked per method.  Keyed by the enum alone, `Sq`
+    // implementing `ar` silenced the warning about `per`, which it does not implement — and
+    // this harness fails on any warning the fixture does not assert, so a regression that
+    // brings the extra one back goes red here too.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { 1 + 1; }"
+    )
+    .warning("no implementation of 'per' for variant 'Sq' at a_second_method_gets_its_own_missing_variant_warning:3:9");
+}
+
+#[test]
 fn stub_suppresses_missing_variant_warning() {
     // Rect has an empty-body stub — no warning should be emitted for either variant.
     code!(

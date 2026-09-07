@@ -9,7 +9,7 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 ## Status
 
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and EIGHT batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and NINE batches landed, the audit row moving DOWN three times (359 → 354 → 351 → 347, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -85,7 +85,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 8 batches landed; the row moved DOWN twice (359 → 354 → 351) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 9 batches landed; the row moved DOWN three times (359 → 354 → 351 → 347) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -792,6 +792,74 @@ the two refusals share.
 Filed rather than fixed: **loft#1425** — a `??` on a vector element whose tuple has a TUPLE
 member does not compile on `--native` (the generated null test reads `.0` as a bool); pre-existing,
 `--interpret` is correct, and it is why this batch's member-kind row stops at three flat members.
+
+**Batch 9 — the DECLARATION-time group in `parser/definitions.rs`, where three questions
+answered NO because a `?` was written (2026-09-07).**  Eleven tier-0 functions, and the family
+question is one: *at a declaration, which facts are read off a written type, and does a `?` on
+that type change an answer that must not change?*  Three of them did, each with a wrong VALUE
+behind the silence, and every one of the three was a bare `matches!` over a `Type` variant that
+a neighbouring function in the SAME FILE already peeled by hand.
+
+- **loft#1427, `sev:high` `silent-wrong`** — a method declared on a NULLABLE receiver
+  (`fn area(self: Square?)`) implemented no variant at all, so the synthesised dispatcher (@F20)
+  never emitted its arm and the dispatch fell to the no-variant-matched tail: a garbage number on
+  `--interpret` (8858, 9303 — it varies run to run) and `0` on `--native`, where the DIRECT call
+  on the same variant answers 16 throughout.  With every implementation spelled that way there is
+  no dispatcher at all and the call is read as a field access.  The rules were silent on which
+  type a method belongs to, so the rule was written: **`(F-Recv)`** in
+  [calls.md](../../formal/calls.md) — the receiver's base type names the method's type, two
+  overloads may differ in the `?` (`fn_key` keys them apart, @PLN25), and the SET of methods of
+  `τ` is the set of methods of `τ?`, which is what every site that ENUMERATES it must see.  One
+  home, `Data::receiver_def_nr`, read by the scan, the arm's discriminant and the warning.
+- **loft#1428, `sev:high` `silent-wrong`** — two `index<E[k]>` in one struct are refused because
+  an index keeps its tree links in a field OF the record; spell either `index<E[k]>?` and the
+  refusal did not fire.  The two trees then overwrote each other's links: `c.a[2]` answered
+  `null` for a record `for e in c.a` yields, and `c.b[1]` answered `a`'s record for a key `b`
+  never received.  `(Col-Group)` already said a nullable member IS a member — the rule was
+  written and the code did not read it — so this is `contract: settled`.
+- **loft#1429, `sev:medium` `silent-wrong`** — `spatial<W[w]>` with `w: text?` was ACCEPTED and
+  then answered null for a point just inserted: loft#799's failure, which the DENSE spelling has
+  been refused for since, reached through the `?`.  The same predicate refused a trie's `text?`
+  key with advice for a field that is not a text.  `(Col-Spatial)` already said *integer-not-null
+  coord keys*; `(Col-Trie)` now says `text`-NOT-NULL, and collections.md carries the paragraph
+  that the three VALUE-keyed kinds do hold an absent key — `hash` finds one, `sorted` orders it
+  first — which is what the two refusals name as the cure and what `1429b` measures.
+
+**The corpus emission diff is what found the batch's fourth defect**, and it is the largest:
+`scripts/introspect_diff.sh` reported two EXISTING files moved, and `05-enums.loft` had gained a
+dispatcher it never had.  The scan's `todo` map is keyed by the ENUM, not by the method — so an
+enum with two methods per variant put both lists in one bucket, `create_enum_dispatch_fn` named
+the dispatcher after whichever definition came first, and the other method's call site failed as
+a field read; where the two lists' parameter shapes disagreed the bucket bailed and NEITHER was
+built (`05-enums.loft`, three `area` and three `describe`, no dispatcher for either — invisible
+only because it calls both on concrete variants).  The same bucket fed the missing-implementation
+warning, so a variant implementing one method silenced the warning about the other.  **loft#1435**,
+`sev:high`; the key is `(enum, method name)` and the walk over it is SORTED, because the
+dispatchers are emitted in creation order and a `HashMap`'s order is not stable across runs.
+
+Guards: `1427-…` (seven cells, each a dispatch beside the direct call it must agree with —
+integer, text and heap payloads, an extra argument, a repeat in a loop, both overloads for one
+variant, and the all-dense control), `1427b-…` (the all-nullable enum, apart because it does not
+COMPILE on the control), `1428-…` (three refusals, the dense pair among them) + `1428b-…` (the
+pairs that stay legal, filled and read), `1429-…` (five refusals, the two type-KIND ones as
+controls) + `1429b-…` (the kinds that hold an absent key, and the two cures the messages name),
+`1435-…` (two and three methods per enum, complete and partial, three return kinds).  The two
+warning halves are in `tests/parse_errors.rs`, whose harness FAILS on an unasserted warning — a
+`.loft` guard cannot assert a warning's absence, which is exactly what both need.  All four
+value guards falsified against `e9f45817` on both backends; the two control files are INERT by
+design and say so.  **The `optional` row moves DOWN by four, the phase's largest single step:
+`732 | 380 | 5 | 347` from `733 | 377 | 5 | 351`** — `enum_numbers` and
+`warn_missing_enum_variants` no longer discriminate on a `Type` at all.
+
+Filed rather than fixed, each a different mechanism: **loft#1430** (two implementations of one
+method, one of which builds its text in a branch and so carries a hidden accumulator its twin
+lacks: the dispatcher is abandoned with no diagnostic — pre-existing, and the reason this batch's
+text cells are symmetric), **loft#1431** (`spatial` admits any non-text axis; `float` and `i16`
+then answer null at the point lookup, which is `(Col-Spatial)`'s integer half and a
+COMPATIBILITY question), **loft#1432** (a `τ?` receiver overload after its dense twin is
+unreachable while the reverse order is refused as a redefinition — one of the two is wrong), and
+**loft#1434** (a nullable collection cannot be ITERATED but can be INDEXED, and the refusal names
+neither the `?` nor the `?? []` that works — the ITERATION family, which is batch 10's group).
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 
