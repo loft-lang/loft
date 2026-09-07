@@ -6698,7 +6698,12 @@ impl Data {
     /// never emitted and a dispatch on that variant answered another variant's bytes.
     #[must_use]
     pub fn receiver_def_nr(&self, d_nr: u32) -> u32 {
-        match self.def(d_nr).attributes().first().map(|a| a.typedef.base()) {
+        match self
+            .def(d_nr)
+            .attributes()
+            .first()
+            .map(|a| a.typedef.base())
+        {
             Some(Type::Reference(nr, _)) => *nr,
             _ => u32::MAX,
         }

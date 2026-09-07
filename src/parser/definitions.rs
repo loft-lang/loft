@@ -3562,7 +3562,8 @@ impl Parser {
             return;
         };
         for a_nr in 0..self.data.attributes(d_nr) {
-            let Type::Index(other_elem, other_keys, _) = self.data.attr_type(d_nr, a_nr).base().clone()
+            let Type::Index(other_elem, other_keys, _) =
+                self.data.attr_type(d_nr, a_nr).base().clone()
             else {
                 continue;
             };
