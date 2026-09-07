@@ -5541,14 +5541,22 @@ use a separate collection or add after the loop"
             {
                 return Type::optional(elem);
             }
-            // loft#1071 — a STRUCT-ENUM element (`vector<Shape?>`) rides the `Optional`
-            // marker for the same reason a scalar does: its slot is a four-byte record
-            // POINTER with an in-band absent value (`0`), so it needs no `__nullable<…>`
-            // tag and no extra storage — only for the type to keep saying it may be
-            // absent.  Without the marker the element typed as a bare `Shape`, so the `?`
-            // was lost at the declaration and a loop binding over it could not be asked
-            // `e == null` at all: the type no longer admitted the question.
-            if crate::keys::pln25_optional_enabled() && matches!(elem, Type::Enum(_, true, _)) {
+            // loft#1071 / loft#1416 — an ENUM element rides the `Optional` marker for the
+            // same reason a scalar does: absence already has a bit pattern in the bytes the
+            // slot occupies, so it needs no `__nullable<…>` tag and no extra storage — only
+            // for the TYPE to keep saying it may be absent.  Both enum kinds qualify, and
+            // each has its own reserved value: a STRUCT-enum slot is a four-byte record
+            // pointer whose in-band absent value is `0`, and a VALUE enum is one byte whose
+            // variants are numbered from 1 precisely because `0` and `255` are spent
+            // (`OpConvBoolFromEnum` reads `@v1 != 255 && @v1 != 0`).  `(L-Null)` covers
+            // every type that reserves a null value, and both do.
+            //
+            // Without the marker the `?` is lost AT THE DECLARATION: the element types as a
+            // bare `Shape` / `Color`, so the store refuses `null` while naming
+            // `vector<Color>` — a type the author did not write — and a loop binding over it
+            // cannot be asked `e == null` at all, because the type no longer admits the
+            // question.
+            if crate::keys::pln25_optional_enabled() && matches!(elem, Type::Enum(_, _, _)) {
                 return Type::optional(elem);
             }
             return elem;

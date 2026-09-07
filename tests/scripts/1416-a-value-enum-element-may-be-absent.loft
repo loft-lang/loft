@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Null — `t?` and `t` share layout for every t that reserves a null VALUE, absence being
+// a sentinel in those bytes.  A plain enum reserves TWO codes, which is exactly why its
+// variants are numbered from 1: `0` is the undefined value and `255` is the null one
+// (`OpConvBoolFromEnum` reads `@v1 != 255 && @v1 != 0`).  So `vector<Color?>` has a
+// representation already, and `(L-Null)` says it is the one to use.
+//
+// The declaration did not reach it.  `e2_nullable_elem` is the one chokepoint every written
+// `vector<…>` element passes through, and it decides how a postfix `?` is carried: a struct
+// element becomes the tagged `__nullable<S>`, and a scalar or a struct-ENUM rides the plain
+// `Optional` marker over its own sentinel.  The list of types allowed to ride that marker was
+// `integer | float | single | boolean | character | text`, plus a separate arm for the
+// struct-enum — a VALUE enum was in neither, so the `?` was dropped where it was written.  The
+// element typed as a dense `Color`, and every attempt to put an absence in was refused while
+// naming `vector<Color>`, a type the author had not written: the refusal was honest about the
+// type the compiler HELD and silent about the one the program DECLARED (loft#1416).
+//
+// A `Color?` LOCAL and a `Color?` FIELD both held null correctly the whole time, which is what
+// says the gap was the element position alone rather than the enum's null encoding.  Those are
+// kept below as controls.
+//
+// @falsified-at: 797a7f9b — interpret exit 1 -> 0, native exit 1 -> 0, and ZERO assertion
+//   failures on the control: the file does not compile there at all, because `v += [null]`
+//   over a `vector<Color?>` is a hard refusal, so no cell runs to fail.  An exit-only move is
+//   the weaker falsification, which is why the dense cell matters — it is the one saying the
+//   cure did not simply delete the refusal, and it must still fire for `vector<Color>`.
+
+enum Color { Red, Green, Blue }
+struct Holder { c: Color? }
+
+fn a_null_element_stores_and_reads_back_absent() {
+  v: vector<Color?> = [Green];
+  v += [null];
+  v += [Blue];
+  assert_eq("{len(v)}", "3", "every element landed");
+  assert(v[0] != null, "a present element is present");
+  assert(v[1] == null, "the absent element is absent");
+  assert(v[2] != null, "and the one after it is present again");
+  assert_eq("{v[0]}", "Green", "the value before the hole is unchanged");
+  assert_eq("{v[2]}", "Blue", "and the value after it too");
+}
+
+// The hole must not disturb its neighbours: absence is a code IN the element's own byte, so
+// the elements around it keep their own.  A whole-vector read is what would show a slide.
+fn the_elements_around_a_hole_are_untouched() {
+  v: vector<Color?> = [Red, null, Green, null, Blue];
+  s = "";
+  for e in v { if e == null { s = "{s}-,"; } else { s = "{s}{e},"; } }
+  assert_eq(s, "Red,-,Green,-,Blue,", "every element reads its own value");
+  assert_eq("{len(v)}", "5", "and the length counts the holes");
+}
+
+fn an_all_absent_vector_is_every_bit_absent() {
+  w: vector<Color?> = [null, null, null];
+  absent = 0;
+  for e in w { if e == null { absent = absent + 1; } }
+  assert_eq("{absent}", "3", "all three are absent");
+  assert_eq("{len(w)}", "3", "and all three are there");
+}
+
+// A bare variant has to resolve against a NULLABLE element type exactly as against the dense
+// one: whether a slot may be absent says nothing about which variants it can hold.  Without
+// the peel this line is "bare variant 'Green' has no type here".
+fn a_bare_variant_resolves_against_a_nullable_element() {
+  v: vector<Color?> = [Green, Red];
+  assert_eq("{v[0]}", "Green", "the first bare variant resolved");
+  assert_eq("{v[1]}", "Red", "and so did the second");
+}
+
+// ── Controls: the two positions that always worked, and the refusal that must remain ──
+
+fn a_nullable_local_and_field_still_hold_absence() {
+  c: Color? = null;
+  assert(c == null, "a nullable local holds absence");
+  p: Color? = Green;
+  assert(p != null, "and a present one does not");
+  empty = Holder { c: null };
+  full = Holder { c: Blue };
+  assert(empty.c == null, "a nullable field holds absence");
+  assert(full.c != null, "and a present one does not");
+  assert_eq("{full.c}", "Blue", "and reads its value");
+}
+
+// A DENSE element is a different declaration and keeps its refusal — the author asked for a
+// vector of `Color`, not of "maybe a Color".  Its cell lives in the expected-error file, since
+// a refusal cannot be asserted from a running program; what is asserted here is that the dense
+// spelling still round-trips its values.
+fn a_dense_value_enum_vector_is_unchanged() {
+  d: vector<Color> = [Green, Red, Blue];
+  s = "";
+  for e in d { s = "{s}{e},"; }
+  assert_eq(s, "Green,Red,Blue,", "the dense spelling is untouched");
+  assert_eq("{len(d)}", "3", "and keeps its length");
+}

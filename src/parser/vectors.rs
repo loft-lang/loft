@@ -4515,17 +4515,25 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone());
             p = Value::Insert(steps);
             t = in_t.clone();
-        } else if matches!(t, Type::Null) && matches!(in_t.base(), Type::Enum(_, false, _)) {
-            // @PLN102 — a `null` element in a value-enum vector (`vector<Color?>`) has
-            // no wired per-element null slot (elements pack the raw disc byte, no
-            // sentinel).  Reject it explicitly: the scalar `convert(Null, Enum)` →
-            // typed-null path (which null-check-fixes `n: Color? = null` VARIABLES) now
-            // SUCCEEDS, so the "cannot store" diagnostic below no longer fires here.
+        } else if matches!(t, Type::Null)
+            && matches!(in_t.base(), Type::Enum(_, false, _))
+            && !matches!(in_t, Type::Optional(_))
+        {
+            // A `null` into a DENSE value-enum element is a real precision loss: the slot
+            // packs the raw discriminant byte and the author asked for a vector that holds
+            // a `Color`, not the absence of one.  A NULLABLE element (`vector<Color?>`) is
+            // a different question and takes the scalar `convert(Null, Enum)` typed-null
+            // path below — `(L-Null)` covers every type that reserves a null VALUE, and a
+            // value enum reserves two codes (`0` undefined, `255` null), which is why its
+            // variants are numbered from 1.  Refusing there rejected the author's own
+            // declared type while naming a type they had not written (loft#1416).
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "cannot store null elements in a vector<{}> (would lose precision); \
-                 cast each element explicitly with 'as {}'",
+                 declare the element nullable (`vector<{}?>`), or cast each element \
+                 explicitly with 'as {}'",
+                in_t.name(&self.data),
                 in_t.name(&self.data),
                 in_t.name(&self.data)
             );
