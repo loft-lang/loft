@@ -3638,6 +3638,19 @@ is still a hypothesis; reading is not a control.
 each test its own process, and the `--tests` spelling reaches none of that.  Reproduce with the
 gate's command or you will report "cannot reproduce" on a defect that is present.
 
+⚠ **And `cargo test --test <name>` names a test TARGET — a `tests/*.rs` file stem — never a
+test function.**  `cargo test --release --test native_scripts` measures NOTHING: `native_scripts`
+is a function in `tests/native.rs`, so cargo answers *"no test target named …"* followed by the
+list of available targets, which through a `| tail` reads like a build log.  The correct spelling
+names the target and then filters: `cargo test --release --test native native_scripts`.
+
+The trap is not the typo, it is what the failure looks like: a run that measured nothing emits no
+`test result:` line, so a wait-loop polling for one waits forever while the buffered output looks
+like work in progress — and reporting *"re-ran it, no failures"* off that is true and worthless.
+**Wait on the SUCCESS sentinel, never on the absence of an error**, and read the `N passed` count
+before believing a re-run: the absence of failures is not a pass, which is the same positive-half
+rule this section applies to guards.
+
 
 **A fixture chosen for convenience lands where every candidate implementation agrees.**  This is
 the cause behind the two entries above and it was sighted three times in one day: `7` fits every
