@@ -435,7 +435,10 @@ class; the pass converts ONE rising class into ONE generalization — a report, 
 per cycle: its state write-up and its committed checklist evidence) · [LIBRARY_DOC_REVIEW.md](doc/claude/LIBRARY_DOC_REVIEW.md) (the monthly by-hand doc review, both
 halves: `make libraries-review` says which libraries owe a review or have moved since their
 watermark, `make features-review` does the same for the `@F` catalogue, `scripts/doc-review.sh
---since` drills into one library's functions — all three REPORT, none gates) · [COMPATIBILITY.md](doc/claude/COMPATIBILITY.md) (the breaking-change policy, @PLN102 arc A) · [MOVING.md](doc/claude/MOVING.md) ·
+--since` drills into one library's functions — all three REPORT, none gates) ·
+[SKILLS_REVIEW.md](doc/claude/SKILLS_REVIEW.md) (the same watermark pass for the agent
+skills: `make skills-review` says which skills owe a read because they or the docs they
+cite moved; the read itself is by hand on three axes — content, usability, conciseness) · [COMPATIBILITY.md](doc/claude/COMPATIBILITY.md) (the breaking-change policy, @PLN102 arc A) · [MOVING.md](doc/claude/MOVING.md) ·
 [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG_TECHNICAL.md](doc/claude/CHANGELOG_TECHNICAL.md) ·
 [DOC.md](doc/claude/DOC.md) (how `gendoc` renders a topic) ·
 [USER_DOCS.md](doc/claude/USER_DOCS.md) — the design for the documentation a DISTRIBUTION

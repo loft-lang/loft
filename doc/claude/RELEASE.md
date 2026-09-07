@@ -1110,6 +1110,12 @@ make reference-review ARGS="--done tests/docs/07-vector.loft"
 
 `A-reference-review` reports the count on the release checklist.
 
+The same watermark pass covers the **agent skills** (`.claude/skills/`), which are
+loaded *instead of* the canonical docs they paraphrase and so drift the same way the
+reference does — [SKILLS_REVIEW.md](SKILLS_REVIEW.md) defines the three axes of that
+read (content / usability / conciseness), `make skills-review` is the worklist, and
+`A-skills-review` reports the count.
+
 ### What the tag pipeline proves about the artifacts
 
 `release.yml` used to build four bundles and upload them without executing one,

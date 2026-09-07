@@ -513,6 +513,38 @@ def check_reference_review():
     )
 
 
+def check_skills_review():
+    """How much of the agent-skill set has been READ against the tree as it behaves.
+
+    A skill (.claude/skills/) is loaded INSTEAD of the canonical doc it paraphrases,
+    so a stale one steers every future session wrong in the one channel nobody
+    cross-checks.  The script decides the mechanical half outright (cited paths, make
+    targets and LOFT_* switches resolve) and counts the by-hand half: each skill's
+    watermark against movement in the skill OR its cited docs/scripts.  The
+    content/usability/conciseness read stays a person's judgement — SKILLS_REVIEW.md
+    defines the three axes; `make skills-review` is the worklist.
+    """
+    code, out = sh(sys.executable, os.path.join(ROOT, "scripts", "skills-review.py"))
+    if code != 0:
+        return UNKNOWN, "scripts/skills-review.py failed"
+    if "BROKEN REFERENCES" in out:
+        n = re.search(r"BROKEN REFERENCES \((\d+)\)", out)
+        return FAIL, (
+            f"{n.group(1) if n else 'some'} cited paths/targets/switches do not resolve "
+            f"— stale by construction; `make skills-review` names them"
+        )
+    m = re.search(r"(\d+)/(\d+) skills reviewed at their current sources", out)
+    if not m:
+        return UNKNOWN, "could not read the skills-review count"
+    done, total = int(m.group(1)), int(m.group(2))
+    if done == total:
+        return OK, f"all {total} skills read at their current sources"
+    return FAIL, (
+        f"{total - done} of {total} skills owe a read — `make skills-review`; a skill "
+        f"quoting last month's procedure steers every session that loads it"
+    )
+
+
 def check_ignored_tests():
     """Every shipped `#[ignore]` still carries a rationale.
 
@@ -988,6 +1020,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "Every reference chapter has been read against the shipped language",
             "make reference-review",
             check=check_reference_review,
+            cadence="mid pre",
+        ),
+        Item(
+            "A-skills-review",
+            "Every agent skill has been read against the tree (content/usability/conciseness)",
+            "make skills-review",
+            check=check_skills_review,
             cadence="mid pre",
         ),
         Item(

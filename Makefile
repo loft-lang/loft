@@ -888,7 +888,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -972,6 +972,17 @@ release-gate:  ## Run every nightly against this commit in one CI run (the relea
 #   make reference-review ARGS="--done tests/docs/07-vector.loft"
 reference-review:  ## Which reference chapters owe a human read (and which have MOVED)
 	@python3 scripts/reference-review.py $(ARGS)
+
+# The same pass for the agent skills (.claude/skills/): a skill is loaded INSTEAD of
+# the canonical doc it paraphrases, and those docs move daily while the skill is only
+# edited when someone notices.  Mechanical half is outright (cited paths, make targets
+# and LOFT_* switches must resolve); the content/usability/conciseness read is by hand,
+# per skill, watermarked so it happens the week a skill's sources move — SKILLS_REVIEW.md.
+#   make skills-review                                # what owes a read
+#   make skills-review ARGS=--verbose                 # + the commits behind each
+#   make skills-review ARGS="--done loft-test"        # record one as validated
+skills-review:  ## Which agent skills owe a human read (and which moved under their sources)
+	@python3 scripts/skills-review.py $(ARGS)
 
 # RELEASE.md § 8, measured instead of grepped.  Every `#[allow(clippy::…)]` under
 # src/ becomes an `#[expect]` in a throwaway worktree and clippy runs the way CI
