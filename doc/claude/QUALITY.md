@@ -2637,6 +2637,36 @@ than by the audit.
 
 
 
+⚠ **The 368 → 372 / 360 → 356 move is the INSTRUMENT, not the code.**  `PEEL_CALL` and
+`PEEL_BIND` named `base` and `peel_optional` and not `peel_link` — so a site that peels MORE
+scored as though it peeled less.  `Type::peel_link`'s first line is `let mut tp = self.base()`
+and it then strips every `&` link as well, so it sees through `τ?` at least as well as `base()`
+does at every site that calls it; the audit read the upgrade as a regression and moved the site
+into the opaque backlog.
+
+Eight entries were mis-scored, and they are exactly the population the `peel_link` doc was
+written for: `parse_sort`, `parse_insert`, `parse_reserve` (twice) and `parse_reverse` — the
+`&File` family from loft#753 — plus `is_file_var_type`, which the paragraph below already
+records as having "swapped a hand-rolled `while let Type::RefVar(..)` loop for `Type::peel_link`
+… without changing either total".  That note was right about the totals and wrong about why:
+the site did not move because the instrument could not see either state, and it sat in the
+opaque column the whole time.
+
+The four numbers therefore decompose cleanly, measured on both source trees with both
+instruments:
+
+| | old instrument | fixed instrument |
+|---|---|---|
+| before loft#1445 | 368 / 360 | **372 / 356** |
+| after loft#1445 | 365 / 363 | **372 / 356** |
+
+loft#1445's own three sites — `is_keyed`, `is_collection`, `keyed_known_type` — read the same in
+both columns of the bottom row because they already peeled `τ?` through `base()` and the change
+only added the `&` peel on top.  The old instrument's 365/363 is the reading to distrust: it
+reports a fix that strictly widened three peels as three new opaque entries.  **An instrument
+that penalises the stronger peel argues against the fix it exists to find**, which is why this
+was fixed in the audit rather than absorbed as a row update.
+
 **Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
