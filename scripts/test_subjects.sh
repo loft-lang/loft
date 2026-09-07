@@ -49,36 +49,48 @@ HEAVY_BINARIES=(
 # Subjects are a convenience for tight loops, NOT the safety mechanism — the
 # default run is subtractive, so a gap here costs seconds, never coverage.  That
 # is the whole reason it is safe to keep them approximate.
-declare -A SUBJECT_PATTERNS=(
-  [parser]='~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint'
-  [scopes]='~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias'
-  [codegen]='~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature'
-  [runtime]='~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash'
-  [store]='~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io'
-  [wasm]='~wasm ~html ~deliver ~browser ~gl_ ~android'
-  [packages]='~registry ~package ~import ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update'
-  [lsp]='~lsp ~dap ~debugger ~repl'
-  [sql]='~lazy_sql ~sql'
-  [docs]='~doc ~features ~index_hygiene ~comment ~viewer'
-  [host]='~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock'
-)
+# Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH
+# /bin/sh and /bin/bash, which has no associative arrays — the array form made
+# every `--subject` run on a Mac die with `parser: unbound variable` while the
+# same script worked on every Linux box.  Same data, portable spelling.
+SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host'
+
+subject_patterns() {
+  case "$1" in
+    (parser)   echo '~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint' ;;
+    (scopes)   echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias' ;;
+    (codegen)  echo '~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature' ;;
+    (runtime)  echo '~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash' ;;
+    (store)    echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io' ;;
+    (wasm)     echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
+    (packages) echo '~registry ~package ~import ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update' ;;
+    (lsp)      echo '~lsp ~dap ~debugger ~repl' ;;
+    (sql)      echo '~lazy_sql ~sql' ;;
+    (docs)     echo '~doc ~features ~index_hygiene ~comment ~viewer' ;;
+    (host)     echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock' ;;
+    (*)        return 1 ;;
+  esac
+}
 
 # ── Which subjects a changed PATH belongs to ────────────────────────────────
 # Used by the default run to pull an excluded heavyweight back in.  A path that
 # matches NOTHING widens to `--full` rather than narrowing — the fail-safe
 # direction, since an unknown path is exactly where a guess is least reliable.
-declare -A SUBJECT_PATHS=(
-  [parser]='^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/'
-  [scopes]='^src/scopes\.rs|^src/use_analysis\.rs|^src/ownership_cfg\.rs'
-  [codegen]='^src/generation/|^src/compile\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs'
-  [runtime]='^src/state/|^src/parallel\.rs|^src/fill\.rs'
-  [store]='^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs'
-  [wasm]='^src/wasm|^src/html|^src/deliver|^lib/graphics/'
-  [packages]='^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_'
-  [lsp]='^src/lsp/'
-  [sql]='^src/database/sql_|^src/database/lazy\.rs'
-  [docs]='^doc/|^default/.*\.loft$|\.md$'
-)
+subject_paths() {
+  case "$1" in
+    (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/' ;;
+    (scopes)   echo '^src/scopes\.rs|^src/use_analysis\.rs|^src/ownership_cfg\.rs' ;;
+    (codegen)  echo '^src/generation/|^src/compile\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs' ;;
+    (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs' ;;
+    (store)    echo '^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs' ;;
+    (wasm)     echo '^src/wasm|^src/html|^src/deliver|^lib/graphics/' ;;
+    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_' ;;
+    (lsp)      echo '^src/lsp/' ;;
+    (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
+    (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
+    (*)        return 1 ;;
+  esac
+}
 
 # The nextest filterset for the DEFAULT run: everything except the heavy eight.
 curated_filter() {
@@ -104,12 +116,13 @@ all_binaries() {
 # a lib module with no binary of its own.  Expanding also makes a selection
 # auditable: `--subject store --dry-run` prints the binaries, not a rule.
 subject_filter() {
-  local name="$1" parts=() p b
-  [[ -v SUBJECT_PATTERNS[$name] ]] || return 1
-  local -A seen=()
-  for p in ${SUBJECT_PATTERNS[$name]}; do
+  local name="$1" parts=() p b pats
+  pats=$(subject_patterns "$name") || return 1
+  local seen=" "
+  for p in $pats; do
     for b in $(all_binaries); do
-      [[ "$b" == *"${p#\~}"* && -z "${seen[$b]:-}" ]] && { seen[$b]=1; parts+=("binary($b)"); }
+      case "$seen" in (*" $b "*) continue ;; esac
+      [[ "$b" == *"${p#\~}"* ]] && { seen="$seen$b "; parts+=("binary($b)"); }
     done
   done
   [[ ${#parts[@]} -gt 0 ]] || return 1
@@ -118,7 +131,7 @@ subject_filter() {
   echo "${joined//+/ + }"
 }
 
-subject_names() { printf '%s\n' "${!SUBJECT_PATTERNS[@]}" | sort; }
+subject_names() { printf '%s\n' $SUBJECT_NAMES | sort; }
 
 # Test binaries no subject pattern matches.
 #
@@ -129,7 +142,7 @@ subject_names() { printf '%s\n' "${!SUBJECT_PATTERNS[@]}" | sort; }
 # binary belongs to none.
 unmatched_binaries() {
   local pats=" " n p
-  for n in "${!SUBJECT_PATTERNS[@]}"; do pats+="${SUBJECT_PATTERNS[$n]} "; done
+  for n in $SUBJECT_NAMES; do pats+="$(subject_patterns "$n") "; done
   local f b hit
   for f in "$(dirname "${BASH_SOURCE[0]}")/../tests"/*.rs; do
     b=$(basename "$f" .rs); hit=""
