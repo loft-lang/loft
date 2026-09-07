@@ -414,11 +414,18 @@ recurse into `source_name`.
 
 ⚠ **Measured 2026-09-07: 79 diagnostics still render a type through `name`.**  The substitution
 is mechanically safe — `source_name` IS `name` except for the keyed collections and their
-wrappers — but a few `@EXPECT_ERROR` cells pin the debug spelling today
-(`tests/scripts/893-field-store-type.loft` among them), so the sweep wants one deliberate pass
-that updates those, not a blind replace.  Nothing else fails when a message is merely
-unreadable: the compiler is right, the program is wrong, and only the author pays — which is
-why this drifts.
+wrappers — but corpus cells pin the debug spelling today, so the sweep wants one deliberate pass
+that updates those rather than a blind replace.
+
+⚠ **Search EVERY expectation kind, not just `@EXPECT_ERROR`.**  A first sweep for
+`@EXPECT_ERROR` found `tests/scripts/893-field-store-type.loft` and missed
+`tests/scripts/1210-a-nullable-append-source-warns-and-stores.loft`, whose stale pin is an
+`@EXPECT_WARNING` — and that one reds `loft_suite` in the full gate, ten minutes in, long after
+the targeted suites are green.  The grep is
+`@EXPECT_(WARNING|ERROR|ADVICE)` with the keyed debug shape `<Name, [`.
+
+Nothing else fails when a message is merely unreadable: the compiler is right, the program is
+wrong, and only the author pays — which is why this drifts.
 
 ## Adding a code
 
