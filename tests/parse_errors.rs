@@ -526,6 +526,12 @@ fn nullable_receiver_implements_its_variant() {
     // warning must name only the variant that has none.  Asked bare, the scan reported `Sq`
     // too — a warning for an implementation written three lines above it — and this harness
     // fails on any warning the fixture does not assert, so the extra one goes red here.
+    //
+    // Measured against e9f45817 in the cached falsify worktree: FAILS there with
+    // *"Found 'Warning: no implementation of 'ar' for variant 'Sq'' Expected ''"*.  Worth the
+    // check rather than assuming — a `code!` snippet parses as STDLIB source, so a feature
+    // gated on `source != STD_SOURCE` is inert inside one (TESTING.md § The `Test` struct).
+    // The dispatcher scan is not one of those, which is what this measurement establishes.
     code!(
         "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { 1 + 1; }"
     )
@@ -539,6 +545,10 @@ fn a_second_method_gets_its_own_missing_variant_warning() {
     // implementing `ar` silenced the warning about `per`, which it does not implement — and
     // this harness fails on any warning the fixture does not assert, so a regression that
     // brings the extra one back goes red here too.
+    //
+    // Measured against e9f45817: FAILS there with *"Found '' Expected 'Warning: no
+    // implementation of 'per' for variant 'Sq''"* — the warning this asserts is simply absent
+    // on that build.
     code!(
         "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { 1 + 1; }"
     )
