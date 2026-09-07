@@ -14,6 +14,30 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A method you write for one variant of an enum is found even when its receiver is `Square?`.**
+Writing `fn area(self: Square?)` — the way to say "this works even when the shape is absent" —
+made the method invisible to the dispatcher that routes `shape.area()` to the right variant, so
+that call answered a meaningless number (or `0`) while calling `area()` on a `Square` directly
+answered correctly.  It also warned that the variant had no implementation, with one written
+right above it.  Both are fixed: the `?` says what the implementation tolerates, not which type
+it belongs to.
+
+**Two methods on one enum both get dispatched now.**  If you wrote `area()` and `describe()` for
+every variant, only one of them could be called through the enum — the other failed with a
+message about a field that has no storage — and if their signatures differed enough, neither
+worked.  Every method now gets its own dispatcher.
+
+**Two `index` collections over the same records are refused however you spell them.**  Writing
+the second one `index<E[k]>?` slipped past the check that says two indexes cannot share a record
+set, and the two then overwrote each other's bookkeeping: a lookup answered "not found" for a
+record the same collection would happily list back to you.
+
+**A key that may be absent is refused where absence has no key.**  `spatial<Point[x, y]>` with a
+`text?` axis compiled and then answered `null` for a point you had just inserted; a `trie` with a
+`text?` key was refused with advice about coordinates.  Both now say what is wrong — an absent
+text has no bytes to walk, an absent coordinate has no position — and point at `hash`, `sorted`
+or `index`, which key on the value and hold an absent key like any other.
+
 **A `?` on a tuple type now says why it cannot be one.**  `t: (integer, integer)? = …` reported
 *"Expect token ;"* and left you looking at the semicolon.  A tuple has nowhere to keep "absent" —
 it is just its members' bytes — so the type is refused, and the message now says that and names

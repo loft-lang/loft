@@ -9,6 +9,54 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Three declaration-time questions answered NO because a `?` was written (2026-09-07)
+
+@PLN153 phase 4 batch 9, the `parser/definitions.rs` tier-0 group.  Each was a bare `matches!`
+over a `Type` variant, and each had a wrong VALUE behind the silence.
+
+**A method on a nullable receiver implemented no variant (loft#1427).**  `fn area(self: Square?)`
+was invisible to the synthesised variant dispatcher (@F20): the arm was never emitted, so the
+dispatch fell to the no-variant-matched tail and answered another variant's bytes on
+`--interpret` and `0` on `--native`, while the DIRECT call on the same variant was right.  With
+every implementation spelled that way there is no dispatcher at all and the call is read as a
+field access.  `fn_key` keys `t_<τ>_m` and `t_<τ?>_m` apart so the two are distinct OVERLOADS
+(@PLN25) and `find_fn` reaches the `τ?` one from a dense receiver — so the methods of τ and the
+methods of τ? are ONE set, which is now the rule `(F-Recv)` in `formal/calls.md` and the one home
+`Data::receiver_def_nr`.  `one_implementation_per_variant` keeps the DENSE overload where both
+are declared, which is the one a direct call takes.
+
+**A dispatcher dispatched whichever method came first (loft#1435).**  The scan's `todo` map was
+keyed by the ENUM, so every method's implementations shared one bucket and the dispatcher was
+named after the first definition in it; the other method's call site failed as a field read, and
+where the two lists' parameter shapes disagreed the bucket bailed and NEITHER was built
+(`tests/scripts/05-enums.loft`: three `area` implementations, three `describe`, no dispatcher for
+either).  The same bucket fed the missing-implementation warning, so one method's coverage
+silenced the other's.  The key is `(enum, method name)`, and the walk over it is SORTED — the
+dispatchers are emitted in creation order and a `HashMap`'s is not stable, so with more than one
+per enum an unsorted walk would make the generated Rust differ between two builds of one program.
+
+**A nullable index field escaped the duplicate refusal (loft#1428).**  Two `index<E[k]>` in one
+struct cannot share a record set — an index keeps its tree links in a field OF the record — and
+spelling either `index<E[k]>?` slipped past the check, after which the two trees overwrote each
+other's links: a lookup answered null for a record its own `for` loop yields.  `(Col-Group)`
+already said a nullable member IS a member; the neighbouring `link_shared_nullable_views` in the
+same file peeled the wrapper by hand, so the drift was inside one file.
+
+**A `text?` key took a spatial axis' place (loft#1429).**  `spatial<W[w]>` with `w: text?` was
+accepted and then answered null for a point just inserted — loft#799's failure, reached through
+the `?`; the same predicate refused a trie's `text?` key with advice for a field that is not a
+text.  The kind question peels and nullability is its own named refusal: `(Col-Trie)` now reads
+`text`-NOT-NULL beside `(Col-Spatial)`'s integer-not-null, while `hash` / `sorted` / `index` key
+on the VALUE and hold an absent key like any other.
+
+The gated `optional` audit row moves `733 | 377 | 5 | 351` → `732 | 380 | 5 | 347`, the phase's
+largest single step.  Filed rather than fixed: loft#1430 (an accumulator asymmetry abandons the
+dispatcher silently), loft#1431 (`spatial` admits any non-text axis; `float` and `i16` then miss
+at the point lookup), loft#1432 (a `τ?` receiver overload after its dense twin is unreachable
+while the reverse order is refused), loft#1434 (a nullable collection can be indexed but not
+iterated) and loft#1436 (an index expression reaching a non-null slot escapes the `(N-Store)`
+gate — phase 3's own residual).
+
 ### A tuple type cannot be nullable, and now says so (2026-09-07)
 
 `(N-Opt)` licenses `τ?` for every τ.  A tuple is its members' bytes — `(L-Null)`'s sentinel needs

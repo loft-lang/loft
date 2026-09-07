@@ -298,6 +298,19 @@ The lowerings that never reach `convert` (the if-join accumulator, the append ro
 struct literal's vector-field deep copy, a `null` return's sentinel, a rewritten tuple
 return) keep `n_store_violation`, now a thin caller of the same two bodies.
 
+⚠ **The arm's own comment says "two askers and no third", and that has been wrong twice
+(2026-09-07).**  Batch 6 found the `&τ?` parameter as a third SPELLING of `τ?` at the gate
+(loft#1413, cured by asking both tests of the pointee), and loft#1436 is a fourth asker that is
+not a spelling of `Optional` at all: an INDEX expression reaching a non-null slot DIRECTLY.
+`take(p[9])` and `e: It = p[9]` on a DENSE vector are silent where the same index bound to a
+declared `It?` local first is reported, and the declared non-null local then holds the sentinel
+— `e.v` answers null, both backends.  `(N-Index)` types `v[i] ⇒ τ?` but the nullability is
+carried as a FLAG beside the type (`fields.rs`'s `expr_not_null` clear, which
+`collections.md:144` anchors `(Col-Lookup)` to), and a type-keyed gate cannot see a flag: two
+homes for one question, at the gate this plan built.  The census above SAW it — *"one hole
+nobody had listed: a nullable INDEX (×6)"* — and it was read as an admitting face rather than
+as a hole.  Measured by the loft2 checkout while working loft#1434, verified here.
+
 **Does the heap half share the chokepoint (open question 2)?**  Yes for the τ? face — a
 `vector<τ>?` peels through the same arm — and the bare-`null` heap gate (loft#1313) rides the
 same entry ask.  The one heap lowering that bypasses `convert` (the deep copy) asks for
