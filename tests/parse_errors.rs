@@ -3270,20 +3270,23 @@ fn keyed_collection_as_a_vector_element_is_refused() {
 /// `tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft`.  They are
 /// separate match arms and are scored separately.
 ///
-/// The message itself is loft#1445's refusal (a `&hash` parameter cannot take `+=`) and is
-/// NOT what this pins — only how it spells the type.  If that refusal is lifted, this cell
-/// moves to whatever names a `&`-wrapped keyed type next; it must not be deleted, because the
-/// wrapper arm has no other guard.
+/// The message itself is NOT what this pins — only how it spells the type.  It used to be
+/// loft#1445's refusal (a `&hash` parameter cannot take `+=`); that refusal is LIFTED, since
+/// `c += [Row{…}]` through a `&` link is the whole point of loft#1445's rework, so the cell
+/// moved to the next thing that names a `&`-wrapped keyed type — a whole-value assignment of
+/// the wrong type to the same parameter, which reaches the identical renderer.  Moving it
+/// rather than deleting it is what the previous note asked for: the `RefVar` arm has no other
+/// guard, and a lifted refusal must not take the spelling guard with it.
 #[test]
 fn a_reference_to_a_keyed_collection_is_named_as_written() {
     code!(
         "struct Row { id: integer, tag: text }\n\
-         fn one(c: &hash<Row[id]>) { c += [Row{id: 7, tag: \"seven\"}]; }"
+         fn one(c: &hash<Row[id]>) { v: vector<Row> = []; c = v; }"
     )
     .error(
         "Variable 'c' cannot change type from &hash<Row[id]> to vector<Row>; use a new \
          variable name or cast with 'as' at \
-         a_reference_to_a_keyed_collection_is_named_as_written:2:60",
+         a_reference_to_a_keyed_collection_is_named_as_written:2:56",
     );
 }
 
