@@ -137,6 +137,9 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                `has_default(τ)` is a STATIC side-condition — where it fails, `e?` is a
                COMPILE error, never a runtime one (§ Defaults below).  The pairing is the
                mnemonic: `??` = the default YOU give, `?` = the default the TYPE gives.
+               ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
+               collection instantiates the empty collection first — collections.md
+               (Col-Insert-Absent).  Every other position keeps the explicit discharge.
   (N-Match)    match e { null ⇒ …,  x ⇒ …(x:τ)… }      eliminates τ?, binds the τ arm
   (N-Store)    storing  e:τ?  into a  τ  slot without discharge is REJECTED — a WARNING for
                most τ (the null is representable-and-distinct in τ's non-null form), a hard
