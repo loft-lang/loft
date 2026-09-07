@@ -1046,7 +1046,9 @@ zero-ignore and skip-list rows (`M-valgrind`, `M-leaks`, `M-ignores`, with
 HEAD's commit, measured — it replaced six hand-dispatched, hand-ticked items), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
-per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`).
+per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, and
+`M-perf-pass` — the performance read over loft AND its libraries; @PLN158 grows it
+into per-routine benches with industry reference twins).
 
 One of those is worth calling out because it is invisible and it ships:
 **`make-release.sh` copies `doc/loft-reference.pdf` into all four bundles and

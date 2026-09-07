@@ -1098,6 +1098,20 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="mid pre",
         ),
         Item(
+            "M-perf-pass",
+            "Performance pass — loft AND its libraries, routines pull their weight",
+            "make speed; per library: python3 bench/compare.py   # the drawing library's "
+            "bench/ is the model (loft#1426); @PLN158 adopts it as the standard",
+            "every routine within the bar of its pure-Rust reference twin, hashes agreeing "
+            "across lanes (a routine whose lanes disagree is not one algorithm).  Verify "
+            "attribution with the PROFILER, not by eye: `LOFT_PROFILE=1 loft --interpret "
+            "bench.loft` with `LOFT_NO_NATIVE_LIBS=1` for library routines (a used library "
+            "is a cdylib the sampler cannot enter), `make profile PROFILE_FLAGS=--engine` "
+            "for the native side — a slow routine whose profile matches its reference's hot "
+            "loop is an engine-class finding (file it, like loft#1426), not a library bug",
+            cadence="mid pre",
+        ),
+        Item(
             "M-liveness",
             "The liveness census — are the gates themselves still live?",
             "make release-liveness",

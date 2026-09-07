@@ -24,7 +24,14 @@ import json
 import re
 import subprocess
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # python < 3.11 (macOS ships 3.9)
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        import sys
+        sys.exit("needs python >= 3.11 (tomllib) or `pip3 install tomli`")
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]

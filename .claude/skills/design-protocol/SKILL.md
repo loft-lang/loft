@@ -313,6 +313,14 @@ That is minutes of scripting, and it pays twice if you **keep it and re-run it**
 one-off answer rots, an instrument does not. But such a tool searches by **shape**, and
 shape is the weaker anchor; the next section is the stronger one.
 
+**The outer radius cuts both ways.** Before writing a routine, verify no library
+already implements it — and when none does, that absence is itself a signal:
+**prioritize building the routine INTO a library** over burying it in the current
+project. Experimenting inside a side project first is fine — prove it where the need
+is concrete — but the end state of a routine worth keeping is *available to more
+projects than this one*. A routine that stays project-local is a duplicate someone
+else has not written yet.
+
 ### As the system grows, anchor the question on the RULE, not on the code
 
 Searching by shape has a **rising false-negative rate**. Early on, two implementations of

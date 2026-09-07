@@ -17,7 +17,14 @@ is what keeps that spelling honest.)
 """
 
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # python < 3.11 (macOS ships 3.9)
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        import sys
+        sys.exit("needs python >= 3.11 (tomllib) or `pip3 install tomli`")
 from pathlib import Path
 
 NEXTEST_TOML = Path(__file__).resolve().parent.parent / ".config" / "nextest.toml"
