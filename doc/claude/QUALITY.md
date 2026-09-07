@@ -2471,7 +2471,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 738 | 384 | 5 | **349** |
+| 738 | 385 | 5 | **348** |
 
 **Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
@@ -2499,6 +2499,14 @@ one function left it as another joined, which is why the row is read as four num
 a trend: **extracting a peel into a helper makes the caller read as opaque even though the peel
 still happens on every path through it.**  A delegating caller is the one shape this classifier
 cannot see through, and it is worth knowing before reading the opaque column as a backlog.
+
+*loft#1434 moved one from opaque to peeling, and it is the rare case where that is the whole
+fix.*  `Type::source_name` renders a type back to its author, and it carried arms for the keyed
+collections and none for the WRAPPERS — so `Optional`, `RefVar` and `Rewritten` fell to
+`_ => self.name(data)`, and `name` (the schema KEY) re-spelled the payload they wrap.  It read
+as opaque because it WAS: the debug spelling leaked through the one character the author added
+(`hash<It,["k"]>?` for a written `hash<It[k]>?`).  Adding the three arms is both the peel and
+the cure, which is why this row moved without a swap.
 
 *The `(B-Ref-Uniform)` walk (B8p) added one of each.*  `Parser::resolve_type_var`
 gained an arm stripping `Type::RefVar` from the concrete argument, beside the one already

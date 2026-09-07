@@ -3250,6 +3250,35 @@ fn keyed_collection_as_a_vector_element_is_refused() {
         );
 }
 
+/// loft#1434 / loft#1445 — a diagnostic names a keyed type as the SOURCE writes it, through a
+/// wrapper.
+///
+/// `Type::source_name` carried arms for the keyed collections and none for `Optional`,
+/// `RefVar` or `Rewritten`, so those fell to `_ => self.name(data)` — and `name`, the schema
+/// KEY, re-spells the payload they wrap.  The debug spelling leaked through the single
+/// character the author added: `&hash<Row[id]>` reached the reader as `&hash<Row,["id"]>`.
+///
+/// This cell is the `RefVar` arm; the `Optional` arm is
+/// `tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft`.  They are
+/// separate match arms and are scored separately.
+///
+/// The message itself is loft#1445's refusal (a `&hash` parameter cannot take `+=`) and is
+/// NOT what this pins — only how it spells the type.  If that refusal is lifted, this cell
+/// moves to whatever names a `&`-wrapped keyed type next; it must not be deleted, because the
+/// wrapper arm has no other guard.
+#[test]
+fn a_reference_to_a_keyed_collection_is_named_as_written() {
+    code!(
+        "struct Row { id: integer, tag: text }\n\
+         fn one(c: &hash<Row[id]>) { c += [Row{id: 7, tag: \"seven\"}]; }"
+    )
+    .error(
+        "Variable 'c' cannot change type from &hash<Row[id]> to vector<Row>; use a new \
+         variable name or cast with 'as' at \
+         a_reference_to_a_keyed_collection_is_named_as_written:2:60",
+    );
+}
+
 /// loft#1275 — a NAMED method required at two arities by one bound set, which stays refused
 /// after the stub key gained the arity.
 ///

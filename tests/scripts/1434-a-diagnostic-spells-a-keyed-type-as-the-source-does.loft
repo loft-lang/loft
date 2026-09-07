@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `Type::source_name` exists because `Type::name` is the SCHEMA KEY and not a renderer: it
+// spells a keyed collection `hash<It,["k"]>` where the author wrote `hash<It[k]>`, and the two
+// are kept apart on purpose — re-spelling a type in `name` re-IDENTIFIES it, which is what
+// generated `init()` replays.
+//
+// `source_name` carried the keyed arms and no WRAPPER arms, so `Optional`, `RefVar` and
+// `Rewritten` fell to `_ => self.name(data)` and `name` re-spelled the payload they wrap.  The
+// debug spelling leaked through the one character the author added: `hash<It[k]>?` reached the
+// reader as `hash<It,["k"]>?`, and `&hash<Row[id]>` as `&hash<Row,["id"]>` (loft#1434,
+// loft#1445).  The arms now recurse into `source_name`.
+//
+// Guarded here rather than left to review because nothing else fails when a message is merely
+// unreadable — the compiler is right, the program is wrong, and only the author pays, which is
+// exactly how this drifted in the first place.
+//
+// ⚠ This cell is the `Optional` wrapper and is chosen for a mechanical reason: it is the one
+// nullable-keyed shape that emits exactly ONE diagnostic.  `for e in h` over the same type
+// draws the refusal AND two cascade errors, and a refusal file must pin exactly one — the
+// constraint `1067b-lambda-no-expected-type-refused.loft` records.  The `RefVar` arm is scored
+// by `parse_errors::a_reference_to_a_keyed_collection_is_named_as_written`.
+//
+// @falsified-at: none — this is a message-SPELLING guard, and the harness scores it by exact
+//   match: the pre-fix build emits `hash<It,["k"]>?` where the `@EXPECT_WARNING` below says
+//   `hash<It[k]>?`, so the cell fails on the control by construction.  A falsify run would add
+//   nothing a reader cannot see from the two strings.
+
+struct It { k: integer, v: integer }
+
+fn take(h: hash<It[k]>) -> integer { len(h) }
+
+// @EXPECT_WARNING: a nullable `hash<It[k]>?` is stored into parameter 1 of `take` of the non-null type `hash<It[k]>` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended
+fn a_keyed_type_is_named_as_the_source_writes_it() {
+  h: hash<It[k]>? = [It { k: 2, v: 20 }];
+  assert_eq("{take(h)}", "1", "the store proceeds — this cell is about the MESSAGE");
+}

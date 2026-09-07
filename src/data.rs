@@ -2754,6 +2754,14 @@ impl Type {
             Type::Radix(tp, key, _) => {
                 format!("spatial<{}[{}]>", data.def(*tp).name, key.join(", "))
             }
+            // A wrapper renders its INNER through this function, not through `name`.
+            // Falling to the `_` arm below sent the whole type through `name`, which
+            // re-spelled the keyed payload it wraps: a `hash<It[k]>?` reached the reader as
+            // `hash<It,["k"]>?` and a `&hash<Row[id]>` as `&hash<Row,["id"]>` — the debug
+            // spelling leaking through the one character the author added.
+            Type::Optional(tp) => format!("{}?", tp.source_name(data)),
+            Type::RefVar(tp) => format!("&{}", tp.source_name(data)),
+            Type::Rewritten(tp) => tp.source_name(data),
             // Everything else — `trie` included — already reads as the source writes it.
             _ => self.name(data),
         }

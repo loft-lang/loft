@@ -2621,14 +2621,17 @@ impl Function {
             && !matches!(var_tp, Type::Optional(_))
             && var_tp.is_equal(type_def.base());
         if widened_to_nullable {
-            let base = var_tp.name(data);
+            // The SOURCE spelling, not the schema key: this message names a type back to the
+            // author four times, and `name` re-spells a keyed payload (`hash<It,["k"]>` for
+            // what they wrote as `hash<It[k]>`).
+            let base = var_tp.source_name(data);
             diagnostic!(
                 lexer,
                 Level::Error,
                 "Variable '{}' cannot change type from {} to {}; discharge the null where it is produced: `?` (the type's default) or `?? <default>`, or declare it `{}?` to let it hold null (do NOT cast with `as`: `as {}` is refused for the same reason this store is, and `as {}?` returns here)",
                 self.name(var_nr),
                 base,
-                type_def.name(data),
+                type_def.source_name(data),
                 base,
                 base,
                 base
@@ -2656,8 +2659,8 @@ impl Function {
             Level::Error,
             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
             self.name(var_nr),
-            var_tp.name(data),
-            type_def.name(data)
+            var_tp.source_name(data),
+            type_def.source_name(data)
         );
     }
 

@@ -397,6 +397,29 @@ to make the library the ENTRY: `loft --interpret lib/parser.loft` prints its own
 the LSP does the same for the file being edited. The durable fix is for these to become
 packages with a manifest and their own CI, at which point their `loft test` sees everything.
 
+## Naming a TYPE in a message — `source_name`, never `name`
+
+`Type::name` is the **schema key**, not a renderer.  It spells a keyed collection
+`hash<It,["k"]>` where the author wrote `hash<It[k]>`, and it cannot be fixed in place: the
+wrapper types in `typedef.rs` are built from it (`main_vector<…>`) and `state` looks stores up
+by it, so re-spelling a keyed type there re-IDENTIFIES it.  `Type::source_name` is the
+user-facing spelling — *"what did they write?"* against *"which type is this?"*.
+
+⚠ **`source_name` must be asked of the WHOLE type, wrapper included.**  It carries the keyed
+arms and delegates everything else to `name`, so for a long time `Optional`, `RefVar` and
+`Rewritten` fell through and re-spelled the payload they wrap: a `hash<It[k]>?` reached the
+reader as `hash<It,["k"]>?` and a `&hash<Row[id]>` as `&hash<Row,["id"]>` — the debug spelling
+leaking through the one character the author added (loft#1434, loft#1445).  Those arms now
+recurse into `source_name`.
+
+⚠ **Measured 2026-09-07: 79 diagnostics still render a type through `name`.**  The substitution
+is mechanically safe — `source_name` IS `name` except for the keyed collections and their
+wrappers — but a few `@EXPECT_ERROR` cells pin the debug spelling today
+(`tests/scripts/893-field-store-type.loft` among them), so the sweep wants one deliberate pass
+that updates those, not a blind replace.  Nothing else fails when a message is merely
+unreadable: the compiler is right, the program is wrong, and only the author pays — which is
+why this drifts.
+
 ## Adding a code
 
 1. Emit through `Diagnostics::add_at_coded` (or `diagnostic!(… code = "…", …)`), never the

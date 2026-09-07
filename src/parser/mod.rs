@@ -4446,7 +4446,10 @@ impl Parser {
         {
             return false;
         }
-        let nm = inner.name(&self.data);
+        // The SOURCE spelling: this message names the type back to the author twice and
+        // `name` is the schema key, which re-spells a keyed payload (`hash<It,["k"]>` for
+        // what they wrote as `hash<It[k]>`).
+        let nm = inner.source_name(&self.data);
         // @FR-N-Decl — a DECLARED `x: τ` is a commitment, so a later nullable write is
         // @FR-N-Store's refusal; this split is where a declared slot's promise is kept.
         // @PLN102 (N-Store) Phase 1 — the warn/error split (types.md § Null-flow, (N-Store)).
@@ -4462,7 +4465,7 @@ impl Parser {
                 Level::Warning,
                 format_args!(
                     "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
-                    target_tp.name(&self.data)
+                    target_tp.source_name(&self.data)
                 ),
             );
             self.nstore_diag(at, Level::Warning, &msg);
@@ -4472,7 +4475,7 @@ impl Parser {
             Level::Error,
             format_args!(
                 "a nullable `{nm}?` cannot be stored into {what} of the non-null type `{}` — discharge it first with `?` (the type's default), `?? <default>`, or `match`",
-                target_tp.name(&self.data)
+                target_tp.source_name(&self.data)
             ),
         );
         self.nstore_diag(at, Level::Error, &msg);

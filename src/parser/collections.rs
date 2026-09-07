@@ -760,8 +760,8 @@ impl Parser {
                              but there is no implicit unwrap.  Discharge it first: add `?` (the \
                              type's default, an empty {}) or `?? {}`; either spelling gives an \
                              absent {} zero iterations",
-                            is_type.name(&self.data),
-                            inner.name(&self.data),
+                            is_type.source_name(&self.data),
+                            inner.source_name(&self.data),
                             thing,
                             empty,
                             thing
@@ -771,7 +771,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "cannot iterate over {}; expected vector, sorted, index, hash, text, or range",
-                            is_type.name(&self.data)
+                            is_type.source_name(&self.data)
                         );
                     }
                 }
