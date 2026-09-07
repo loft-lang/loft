@@ -212,7 +212,10 @@ cost.
 
 A production lesson sits under the whole distribution: **almost no tool or library
 anyone ever adopted was 100 % reliable or a perfect fit** — JVM stack limits, kernel
-NFS locking, databases dropping aged connections without a liveness check.  What
+NFS locking, database connections going stale in ways the client library never surfaced
+(the server unresponsive, the connection dropped, or routing silently switched to
+another replication instance) with no quick way to ask whether a given connection could
+still be trusted.  What
 separated the workable stacks from the rest was never their defect count; it was that
 with an open stack you can **write the fix yourself, ship it to your own users the same
 day, and file it upstream after** — instead of waiting on a vendor's queue with a

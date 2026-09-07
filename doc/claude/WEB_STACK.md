@@ -202,12 +202,24 @@ already one — `one_connection_string_reaches_its_driver_and_a_refusal_behaves_
 `tests/native.rs`), and the items @PLN23's closure record listed as *not yet shipping-grade*:
 data enums, tuples, concurrency, and reading a schema back.
 
-**The one design rule the package must enforce: a query takes parameters, and building a
+**The first design rule the package must enforce: a query takes parameters, and building a
 query by concatenation must be harder than not.** SQL injection is PHP's most famous wound,
 and it is a wound of *ergonomics*, not of ignorance — concatenation was the shortest path.
 Here the shortest path is `q.param(name)`, and the escape hatch for what parameters cannot
 express is spelled out loudly, exactly as `store_lazy_query` already does for the derived-query
 case in the stdlib.
+
+**The second design rule: a held connection is never assumed alive — the package gives a
+QUICK per-connection trust check, and the framework runs it before handing a pooled
+connection to a handler.** Measured in production stacks (GOALS.md § Purpose, *Fixable end
+to end*): a connection goes stale three ways the client never hears about — the server
+stops responding, the connection is dropped, or routing silently switches it to another
+replication instance (so it answers, correctly, from the WRONG place — the silent-wrong
+variant).  The check must be cheap enough for the request path (a protocol-level ping or
+`SELECT 1`-class probe with a tight deadline, not a full query), and its failure verdict
+is "discard and reconnect", never an error surfaced to the handler that did nothing wrong.
+`LOFT_NET_PROFILE`'s margin discipline applies: a probe that passes near its deadline is a
+failure that has not happened yet.
 
 ### `webapp` — the ceremony sink
 
