@@ -603,14 +603,20 @@ mod reclaim_tests {
         std::fs::write(&stem_named, "live source of a sibling worker").unwrap();
         // The dead-only sweep (every compile): the dead pid goes, the fresh no-pid entry
         // stays whatever its age — it is the test runner's cache, not a leftover.
+        //
+        // WHICH FILES GO is the sweep's contract; the byte count is a proxy for it, and the
+        // two fail for opposite reasons — so the contract is asserted first and the proxy
+        // carries the contract's answer in its message.  Asserted the other way round, a
+        // reclaim that WORKED and a reclaim that did nothing both read
+        // "the dead-only sweep must reclaim the dead-pid file", and the macOS ASan leg of
+        // loft#1406 has been failing on exactly that line with no way to tell which it is.
+        // A proxy can read 0 for a working sweep: `reclaim_native_scratch_by` takes the
+        // length from `entry.metadata()` BEFORE removing, and a failed `metadata()` removes
+        // the file and adds zero.
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
-            dead_only > 0,
-            "the dead-only sweep must reclaim the dead-pid file"
-        );
-        assert!(
             !dead.exists(),
-            "dead-pid file must go in the dead-only sweep"
+            "dead-pid file must go in the dead-only sweep (freed {dead_only} bytes)"
         );
         assert!(
             own.exists() && fresh_no_pid.exists(),
@@ -620,6 +626,17 @@ mod reclaim_tests {
             stem_named.exists(),
             "a stem-named suite file survives the dead-only sweep"
         );
+        // The byte count is asserted where it is DETERMINATE, which is the same platform
+        // the exact-count assertion below already restricts itself to.  Reaching here with
+        // `dead_only == 0` on another platform means the file went and the accounting did
+        // not follow — a different defect from the file staying, and one this ordering
+        // now reports as itself.
+        if cfg!(target_os = "linux") {
+            assert!(
+                dead_only > 0,
+                "the dead-only sweep removed the dead-pid file but accounted no bytes for it"
+            );
+        }
         std::fs::write(&dead, "stale").unwrap();
         let freed = reclaim_native_scratch(&dir);
         assert!(own.exists(), "own-pid file must survive the reclaim");
