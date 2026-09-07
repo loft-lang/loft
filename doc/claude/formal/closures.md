@@ -122,6 +122,21 @@ whether a rebind mints. Measured on all three keyed kinds, both backends, and un
 loft#1324's fix — the store-lifetime half is correct either way, so this is a contract question
 rather than a leak, and it is open.
 
+⚠ **Measured 2026-09-08 (loft#1447), and the shape of the fix is now known even though the
+contract call is not.** Both emission sites are the same two lines wearing different names —
+`state::codegen::gen_keyed_null` and `generation::dispatch::emit_null_dbref`, each `if first {
+… }` then `OpDatabase`, the `!first` arm reusing `store_nr`. Asking `rebind_must_mint(v)`
+beside `first` at both makes `hash`, `sorted` and `index` answer the build-time value on both
+backends, with the struct and vector controls unmoved — so making the keyed kinds AGREE with
+the other two is one term in two places. What blocks it is not the contract: it leaks five
+stores, because **`is_captured` is a whole-FUNCTION fact and the licence question is
+POSITIONAL.** `set_captured` runs when the closure BODY is parsed, so the predicate is true for
+assignments that precede the build — and `h: hash<K[id]> = []` emits TWO `Set(v, Null)` (the
+declaration, then the statement's own lowering) with the record built after both, so minting at
+the second orphans the store the first allocated. The dense spelling is correct only because
+`parse_object` is a parser site where position is known. Closing this needs the parser to record
+where the capture is BUILT — not a wider predicate.
+
 **Boxing is invisible, and that is the rule.** A scalar the closure writes to has to live
 somewhere both sides can reach, so it moves off the stack into a one-field record.  That is a
 change of ADDRESS, never of type: a `u8` capture is still a `u8`, one byte wide, refusing what

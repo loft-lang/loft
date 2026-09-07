@@ -177,13 +177,24 @@ or take the tuple by value and return a new one. The refusal message says both.
   `integer?`; `w: (integer?, integer?) = v[i]` is refused as a type change from
   `(integer, integer)?`, which is the landing type the rule names; `t == null` is refused
   (*"No matching operator '=='"*) on BOTH spellings, `(integer?, integer?)` and the in-flight
-  one; a generic `-> T?` at a tuple answers `34359738371 2` on `--interpret` and E0308 on
-  `--native` (loft#1451).  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the
-  identity lives in `Type::optional` (one home — a `Tuple` maps to its member-nullable form),
-  after which the member read, the store and the monomorph's return type follow with no
-  per-site work; the null question gets its one tuple home (`== null` / `??` agree on "every
-  member null", as `1120-…` made them agree for a collection); the typed decoder's tuple arm,
-  when it grows one, yields the same value for a missing key.  The written `(τ, τ)?` stays
+  one.  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the identity lives in
+  `Type::optional` (one home — a `Tuple` maps to its member-nullable form); the null question
+  then needs its one tuple home (`== null` / `??` agreeing on "every member null", as `1120-…`
+  made them agree for a collection), and the typed decoder's tuple arm, when it grows one,
+  yields the same value for a missing key.
+
+  ⚠ **This entry claimed the member read, the store and the monomorph's return type would
+  "follow with no per-site work".  Two of those three are FALSE, measured 2026-09-08 by making
+  the arm and running the cells.**  The store/landing half does follow — `w: (integer?,
+  integer?) = v[i]` starts being accepted.  The MONOMORPH does not: loft#1451's reproducer is
+  byte-identical before and after on both backends, and it was closed separately as
+  `D-call-16` in the return-promotion path, not here.  And the consumers REGRESS rather than
+  follow — `?` on a tuple becomes *"cannot build a default for `(integer?, integer?)`"* (guard
+  `1424`), `??` starts emitting a spurious *"stored into a slot of the non-null type
+  `boolean`"*, and `== null` still has no home.  So closing this is six or seven pieces with
+  `1423b` and `1424` as rewrites rather than passes, and `build_default` already refuses
+  `(integer?, integer)` independently.  **The one-arm change must not be landed alone**: it
+  half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
 
 D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type

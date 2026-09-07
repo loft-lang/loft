@@ -62,12 +62,19 @@ DEF_INLINE = re.compile(r"^\s*\(([A-Z][A-Za-z0-9-]{1,40})\)\s", re.M)
 # free prose: an em-dash, a `(CLOSED)`, or `, part three —`.  So the tag ends at the first
 # character that cannot be part of one — `'` included, or `### D-gen-4's closure summary`
 # reads as a second definition of D-gen-4 (loft#1452).
+# A deviation tag's final segment is a NUMBER for the counted families (`D-bind-28`,
+# `D-heap-1`) and a WORD for the named ones (`D-Opt-NoNull`, `D-col-null`, `D-Null-Guard`).
+# Requiring a number made every named entry invisible — `types.md` declared `D-Opt-NoNull`
+# open while the tool could not see it at all, and three deviations registered on 2026-09-08
+# were unfindable the moment they were written (loft#1452).
+DEV_TAG = r"D[A-Za-z]*(?:-[A-Za-z][A-Za-z0-9]*)*-(?:\d+|[A-Za-z][A-Za-z0-9]*)|DN\d+[A-Za-z-]*"
+
 DEV_COUNT = re.compile(r"OPEN:\s*\**\s*\d+")
 DEV_DATE = re.compile(r"(20\d\d-\d\d-\d\d)")
 
 DEF_DEV = re.compile(
-    r"(?:^#{2,5}\s+`?(?P<h>D[A-Za-z]*-[a-z]+-\d+|DN\d+[A-Za-z-]*)(?![A-Za-z0-9_'-])"
-    r"|^>\s*\*\*(?P<q>D[A-Za-z]*-[a-z]+-\d+|DN\d+[A-Za-z-]*)(?![A-Za-z0-9_'-]))",
+    rf"(?:^#{{2,5}}\s+`?(?P<h>{DEV_TAG})(?![A-Za-z0-9_'-])"
+    rf"|^>\s*\*\*(?P<q>{DEV_TAG})(?![A-Za-z0-9_'-]))",
     re.M,
 )
 # A CITATION is `@FR-<Rule>`, boundary-exact so `@FR-B-View` does not match `@FR-B-View-Base`.
