@@ -3020,6 +3020,23 @@ command line, the same directory, the same cache, the same process. **Ask what t
 puts into the channel being read, and run one cell per invocation when the answer is "the thing
 I am looking for".**  A positive AND a negative control in one run is the commonest way in.
 
+**A matrix with no CONTROL cannot see the regression the fix causes, because that failure
+lands where nothing is looking.**  Every cell in a boundary matrix is a case that is BROKEN, so
+a matrix built only from those cells answers "fixed" and says nothing about the cases that
+already worked — and a fix reached by widening a predicate is exactly the shape that breaks
+one.  Measured 2026-09-07 on loft#1445: teaching `is_keyed` / `is_collection` to peel the `&`
+link made a `&hash<τ[k]>` parameter's `+=` route correctly, and in the same build the
+`&vector<τ>` twin that had worked all along began answering *"cannot append `vector<Row>` to
+`&vector<Row>`"* — the routes now claimed a statement whose DESTINATION was still a `RefVar`,
+which `append_source` matches no arm for.  Both halves were one edit apart, and the cell under
+test was green in both states.  **Put the nearest spelling that ALREADY WORKS in the matrix,
+and re-run it on every build** — for a `&` fix that is the dense twin and the vector twin, for
+a keyed fix the vector, for a nullable fix the plain one.  It costs one line per cell and it is
+the only thing standing between "the bug is fixed" and "the bug is fixed and something else is
+not".  The companion rule for the destination side is loft#1433's: a destination that starts
+EMPTY cannot tell an append that reached the caller's collection from one that built a fresh
+collection and counted itself, so populate it first and read the OLD key as well as the new one.
+
 **A reproduction that hits a WARM CACHE measures nothing — and the tell is the clock.**  A
 red `make ci` named a native cell that took **2.2 s** in the gate; every attempt to reproduce
 it took **51 ms**.  On that basis it was reported "not reproducible" three ways — 20 serial

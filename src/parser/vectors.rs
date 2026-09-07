@@ -3949,7 +3949,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// `hash<S[k]>`, and the collection reads back empty.  Measured on a nullable keyed
     /// LOCAL — a shape [`is_keyed`] still refuses, so nothing reaches it that way today.
     pub(crate) fn keyed_known_type(&mut self, tp: &Type) -> Option<u16> {
-        let tp = tp.base();
+        // @FR-B-Ref-Uniform — through `peel_link`, not `base`.  This asks WHICH KEYED KIND
+        // a type is, which is a question about the shape and never about how the value is
+        // reached, so a `&hash<τ[k]>` parameter has to answer the same as its `hash<τ[k]>`
+        // twin.  Asked through `base`, the link was not peeled, a `&` parameter answered
+        // `None`, and `new_record`'s fallback handed `OpNewRecord` the wrap-`vector<τ>` id
+        // — the exact miss P188 documents one function down, reached by a spelling it did
+        // not cover.  `record_finish` then dispatched through `Parts::Vector`, the keyed
+        // insert never ran, and `len` read 0 with no diagnostic (loft#1445).
+        let tp = tp.peel_link();
         let content = match tp {
             Type::Sorted(td, _, _)
             | Type::Hash(td, _, _)
@@ -5856,7 +5864,7 @@ impl Parser {
 
 pub(crate) fn is_keyed(tp: &Type) -> bool {
     matches!(
-        tp.base(),
+        tp.peel_link(),
         Type::Hash(_, _, _)
             | Type::Sorted(_, _, _)
             | Type::Index(_, _, _)
@@ -5880,7 +5888,7 @@ pub(crate) fn is_keyed(tp: &Type) -> bool {
 /// through to the generic operator lookup and be refused as *"No matching operator 'Add'"*
 /// (loft#1207).
 pub(crate) fn is_collection(tp: &Type) -> bool {
-    is_keyed(tp) || matches!(tp.base(), Type::Vector(_, _))
+    is_keyed(tp) || matches!(tp.peel_link(), Type::Vector(_, _))
 }
 
 /// What a `c += e` source IS, relative to the collection it is being appended to.

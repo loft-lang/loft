@@ -54,6 +54,51 @@ path treats it apart), the struct-field provenance, and the vector + plain-bind 
 
 Fixes #1433.
 
+### A `&` keyed collection is used exactly like its dense twin (2026-09-07, loft#1445)
+
+`(B-Ref-Uniform)` says a `&τ` variable is used EXACTLY like a `τ` variable, with no operation
+special-cased, and `(B-Ref-Intro)` admits `&τ` for every τ.  A keyed collection PARAMETER was an
+exception to both, in three separate lists, and the three fail differently enough that no single
+one of them explains the symptom.
+
+**The routing.**  `is_keyed` / `is_collection` asked `base()`, which peels `Optional` and not the
+`&` link, so a `&hash<τ[k]>` was not a collection to any append route.  `c += [rec]` fell past
+all of them to the generic assignment and was refused as a type change to `vector<Row>` — a
+claim about a vector in a program with no vector in it.  Both backends, all five keyed kinds.
+
+**The kind id, which is why peeling the predicates alone made it worse.**  `keyed_known_type`
+opens with the same `base()`, so a `&`-wrapped keyed type answers `None` and `new_record`'s
+fallback hands `OpNewRecord` the wrap-`vector<τ>` id — `parent_tp=83` where the dense twin emits
+`82`, and 83 is what the `&vector<τ>` twin emits.  `record_finish` then dispatches through
+`Parts::Vector`, the keyed insert never runs, and `len` reads 0 with no diagnostic.  That is a
+refusal traded for a silent drop, and it is the measurement that kept this issue open: it reads
+as "the emission path cannot resolve a keyed store through the parameter's double indirection".
+It resolves it fine — `c[7] = Row{…}` through a `&hash` parameter inserts into the caller's
+collection today, one operator over.  The store was never unreachable; the TYPE NUMBER was wrong.
+
+**The destination.**  Peeling the predicates without peeling `dest` hands `append_source` a
+`RefVar`, which matches no arm — and the `&vector<τ>` twin that had always worked began
+answering *"cannot append `vector<Row>` to `&vector<Row>`"*.  The regression lands in the
+CONTROL rather than in the cell under test, which is the reason the matrix carries vector cells.
+
+**And a fourth list, one layer down.**  The `&` deref in `state/codegen.rs` named
+`Vector | Reference | Enum(value) | Sorted | Hash | Index` and `panic!`ed on the rest, so `&trie`
+and `&spatial` were an ICE — *"Unknown referenced variable type"* — where their three siblings
+worked, under a comment asserting all five keyed kinds are DbRef-backed "just like
+vectors/references".  Two of five.  That arm now derives from `vectors::is_collection`, which
+`(Col-Store)` already defines as the store-backed set, so the kinds are not listed a second time.
+
+Fourth instance of one class after loft#1291, loft#1292 and loft#1433: a type set written as a
+`matches!` LIST with a kind missing from it.  Closes the parameter half of loft#1433, which
+loft#1445 was filed as.
+
+Guard: `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`, both backends — all
+five keyed kinds, the bare-element and element-vector source spellings, the `&vector` control and
+the dense-parameter oracle.  Every destination is POPULATED before the append and every cell
+reads the pre-existing key as well as the new one, because from an EMPTY destination a `len` of 1
+cannot tell an append that reached the caller from one that built a fresh collection and counted
+itself.  A hard compile failure on the parent commit.
+
 ### The unsigned 4-byte encoding gets its own schema Part, and the width→Part choice one home (2026-09-07)
 
 `NarrowIntKind` has carried three 4-byte kinds since `u32` landed — `Int4` (signed, `i32::MIN`
