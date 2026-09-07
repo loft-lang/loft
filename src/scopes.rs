@@ -7852,11 +7852,20 @@ impl Scopes<'_> {
                 // every store the minting path handed up was owned by nobody: one record per
                 // call, unbounded (loft#1422).  The dense spelling beside it was always
                 // freed, which is what hid it.
+                // The free lands where the RETURN is, so it may only name a variable that is
+                // live there.  A match-arm binding lives in the arm's block while the return
+                // sits outside it, and the interpreter tolerated the mismatch — frame slots
+                // have no block scope — while native scopes the Rust `let` to the block and
+                // refused the program (E0425, loft#1415).  `variables(to_scope)` is the
+                // existing one home for *which variables are live at this scope*, so ask it
+                // rather than restate the scope walk.
+                let live_here = self.variables(to_scope);
                 for &v in &sources {
                     if matches!(
                         function.tp(v).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
-                    ) && !store_is_the_callers(function, v)
+                    ) && live_here.contains(&v)
+                        && !store_is_the_callers(function, v)
                     {
                         null_arm_record_sources.push(v);
                     }

@@ -2471,7 +2471,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 730 | 374 | 5 | **351** |
+| 736 | 378 | 5 | **353** |
 
 @PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
 opaque column DOWN by three and added two functions on the seeing-through side: the element's
@@ -2482,9 +2482,11 @@ cell in `1410-a-slice-pattern-over-a-nullable-element-names-its-variant.loft`,
 `1410b-a-slice-pattern-says-which-field-stopped-it.loft` or
 `1414-a-nullable-element-binding-borrows-its-subject.loft`.
 
-**The row is the JOINED tree's, re-measured, and a FIFTH number that no branch carried.**
-`734 | 373 | 5 | 356`, against `732 | 366 | 5 | 361` on the branch the two `@FR-H-Stride`
-fixes came from and `730 | 371 | 5 | 354` on this one at the moment of the join.  Neither
+**The row is the JOINED tree's, re-measured, and it has now been a number no branch carried
+on two joins running** — `736 | 378 | 5 | 353` after taking loft#1410/#1414's slice-pattern
+family on top, and `734 | 373 | 5 | 356` before that, against `732 | 366 | 5 | 361` on the
+branch the two `@FR-H-Stride` fixes came from, `730 | 374 | 5 | 351` on the one the slice
+family came from, and `730 | 371 | 5 | 354` here between them.  Neither
 endpoint predicts it and the two are not addable: each measured a population the other did
 not have.  The paragraphs below name the count as of THEIR change, which is the history and
 not the current state — do not "fix" them to agree with the row, because each is a correct
