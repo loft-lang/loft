@@ -2471,7 +2471,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 736 | 378 | 5 | **353** |
+| RE-MEASURE | RE-MEASURE | 5 | **RE-MEASURE** |
+
+**loft#1412 added a function and an opaque entry** — `Parser::vector_operations` now reads the
+removal's element width off the vector's CONTENT (`@FR-H-Stride`), so it discriminates on a
+`Type` variant where it previously did not.  It scores OPAQUE and stays that way on purpose:
+its sole caller admits it only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is
+unreachable and a peel there would be dead code — `.remove` on a nullable vector does not
+resolve at all (*"Unknown field vector.remove"*), never reaching this function.  An opaque
+entry is not automatically a gap; this one is the classifier counting a shape test whose
+shape the caller has already decided.
 
 @PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
 opaque column DOWN by three and added two functions on the seeing-through side: the element's
