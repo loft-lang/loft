@@ -14,6 +14,17 @@ Baseline per-call/per-pixel budget (the `hash` row): Rust 1.6 ns/call, loft-nati
 17.7 ns/call ≈ 7 ns prelude (M1) + ~5 ns sentinel/NaN floor (M3) + call + body.
 The 4× bar is 6.4 ns/call — no single phase reaches it; P1+P3 together must.
 
+**Priority principle (owner, 2026-09-07): the target is Rust the LLVM layer
+CANNOT reduce** — the sentinel branch, the NaN expansion, the opaque store
+call.  And the win compounds: LLVM optimises best-effort, declining the
+expensive rewrites (vectorise, unroll, LICM) where the inner-loop IR is
+already bloated — so emitting the SIMPLE form directly buys both the removed
+work and the optimisations LLVM then starts attempting on what remains.
+The converse bounds P2: inlining/LTO only exposes a complicated body, which
+LLVM then half-optimises — cheap to take, never the lever.  So the emitted-
+shape phases (P3, P4) are the priority; P2's `#[inline]` step is minutes and
+taken, its LTO half is a probe not an investment.
+
 ---
 
 ## P0 — the pass runs from this tree
@@ -94,11 +105,29 @@ every tier; `--lean`'s meaning is unchanged.
    plus one new test that panics under `catch` (coroutine/`parallel` paths) and
    asserts depth returns to its pre-call value.
 
-**Red:** `hash` row not ≤ 0.6 ms/100k calls; `smooth` not ≥ 5× faster; the
+**Red:** the A/B (same box, alternating runs, min-of-runs) does not cut the
+`hash` row by ≥ 25 % (the ~5 ns/call the push costs, of ~16–18 ns/call); the
 recursion-cap test (`cr_stack_overflow`) or any stack-trace/panic-frame test
-changes output.
+changes output.  (An earlier draft said "≤ 0.6 ms/100k" — that number was the
+issue's P1+P3 combined estimate, not P1's alone; corrected 2026-09-07.)
 **Predicted:** `hash` 10.9× → ~4×; `smooth` 262× → < 40×; `lock` −5 %.
-**Effort:** S.
+**Measured (shipped 2026-09-07):** runtime-only change — `CALL_DEPTH: Cell` +
+`CALL_FRAMES: UnsafeCell<Vec>` replace the `RefCell<Vec>`; pop is one `Cell`
+decrement; every reader slices `[..depth]` and none can fail the way
+`try_borrow` could; the emitted prelude is unchanged, so old generated code
+keeps working.  A/B min-of-runs: `hash` 1.61M → 1.18M ns/op (**0.73×**,
+prediction ≤ 0.75), `lock` −5 %; hash ratio vs Rust ~3.6–4× on the P0
+instrument.  Balance guard `i1058_after_a_contained_overflow_the_call_stack_is_balanced`
+(falsified by neutering `cr_call_pop`: red, restored: green); depth-cap,
+driver-containment and stack-trace suites unchanged.  The consumer's full
+14-row pass (this tree's binary + rlib): **every hash agrees**; `hash`
+10.9→8.9×, `smooth` 262→210×.  The `smooth < 40×` prediction was
+over-optimistic — the push was ~4 ns of the per-call cost, and the remaining
+floor (the `live_flipped` check, the watchdog breadcrumb, the call itself, and
+`smooth`'s sentinel-heavy float body) is P3's, so `smooth`'s bulk moves there.
+Ops note: a stale `target/release/loft` binary beside the rebuilt rlib makes
+`--native-release` fail its LINK with undefined thread-local internals —
+rebuild both (`cargo build --release`), per the known lib-only-rebuild trap.
 
 ---
 

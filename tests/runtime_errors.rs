@@ -911,3 +911,35 @@ fn i1058_an_overflow_inside_a_lazy_driver_is_contained_on_both_backends() {
         "the lookup answers null and the reason reaches `store_lazy_error`; got stdout: {out}"
     );
 }
+
+/// After a contained fault unwinds ~10 000 frames, the call stack is BALANCED again.
+///
+/// The frame count is bookkeeping separate from the frames' storage (on native a
+/// `Cell` depth beside the frame array — @PLN157 P1), so an unwind that skipped the
+/// per-frame drops would leave the depth at ~10 000 while the program runs on at
+/// depth 1: `stack_trace()` is the reader that would see it, and the next real
+/// overflow would fire thousands of calls early.  `< 10` rather than an exact count
+/// so the guard pins balance, not each backend's incidental frame shape; the red
+/// case sits four orders of magnitude away.
+#[test]
+fn i1058_after_a_contained_overflow_the_call_stack_is_balanced() {
+    let (out, _err) = rendering_shared_by_both_backends(
+        "i1058_balance",
+        "struct LzB { const id: integer, v: integer }\n\
+         fn spin1058b(n: integer) -> integer { return spin1058b(n + 1); }\n\
+         fn lazy_fetch(coll: hash<LzB[id]>, source: text, key_int: integer, key_text: text) -> integer {\n\
+         \x20 return spin1058b(0);\n\
+         }\n\
+         fn main() {\n\
+         \x20 people: hash<LzB[id]> = [];\n\
+         \x20 if !store_bind_lazy(people, \"postgres://127.0.0.1:1/nope\") { println(\"bind failed\"); return }\n\
+         \x20 r = people[7];\n\
+         \x20 t = stack_trace();\n\
+         \x20 println(\"null={r == null} balanced={len(t) < 10}\");\n\
+         }\n",
+    );
+    assert!(
+        out.contains("null=true balanced=true"),
+        "the unwound driver fault must leave the call stack at its pre-lookup depth; got stdout: {out}"
+    );
+}
