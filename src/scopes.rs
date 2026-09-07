@@ -2417,6 +2417,106 @@ fn tuple_owned_elem_frees(
     }
     out
 }
+/// @PLN157 § V (Route R, caller half) — allocate a call's hidden RECORD buffer ONCE, so a
+/// callee that builds its return into the buffer it was handed reuses one record per call
+/// SITE instead of minting a store per CALL.
+///
+/// The buffer is `__ref_N`, declared `Set(av, Null)` in the body preamble and passed to the
+/// call; `OpDatabase` right after that null-init is the same pair `parse_object`'s in-place
+/// arm and `gen_set_first_vector_null`'s vector twin already emit, so both backends lower it
+/// from the IR and neither generator needs to know why.
+///
+/// **The gate is `witness_buffer`, and it is the whole soundness argument.**  An allocated
+/// buffer outlives the call, so a call site that frees the RESULT with a plain `OpFreeRef`
+/// releases the buffer's store — and the next turn of the loop writes a record that is back
+/// in the pool.  `witness_buffer` names exactly the sites where @P378(a) already made the
+/// result's free `OpFreeRefIfDistinct(v, av)`, which declines precisely when the callee
+/// handed the buffer back.  A buffer reached any other way (a `__lift_N` temp holding the
+/// result of `keep += [mk(i)]` has a plain free) is left null and keeps its mint-per-call.
+///
+/// Also required: the buffer is USED ONCE.  A work-ref the parser reused at a second site
+/// would have one guarded use and one that is not, and this reads the guarded one alone.
+fn reuse_record_buffers(
+    code: &mut Value,
+    function: &Function,
+    data: &Data,
+    witness_buffer: &HashMap<u16, Vec<u16>>,
+) {
+    if !crate::keys::retbuf_reuse_enabled() {
+        return;
+    }
+    let Value::Block(bl) = code else { return };
+    let ungated = crate::keys::retbuf_witness_gate_disabled();
+    let mut guarded: Vec<u16> = if ungated {
+        // The positive control: every hidden buffer, guarded or not.
+        (0..function.count()).collect()
+    } else {
+        witness_buffer.values().flatten().copied().collect()
+    };
+    guarded.sort_unstable();
+    guarded.dedup();
+    let db_nr = data.def_nr("OpDatabase");
+    // Emitted in variable order so identical source compiles to identical IR.
+    let mut inserts: Vec<(usize, Value)> = Vec::new();
+    for av in guarded {
+        // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
+        // buffer carrying a dep is a view of something else and gets no store of its own.
+        // The release is not this site's: the scan already placed the buffer's scope-exit
+        // free and the result's guarded one.
+        if !function.is_caller_hidden_buf(av) || !function.tp(av).depend().is_empty() {
+            continue;
+        }
+        let Some(td) = function.tp(av).base().heap_def_nr() else {
+            continue;
+        };
+        let known = data.def(td).known_type();
+        if known == u16::MAX {
+            continue;
+        }
+        if !ungated && buffer_call_uses(&bl.operators, av, data) != 1 {
+            // A work-ref the parser handed to a SECOND call has one guarded use and one
+            // this has not looked at; `witness_buffer` names the guarded one either way.
+            continue;
+        }
+        let Some(at) = bl.operators.iter().position(
+            |op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null),
+        ) else {
+            continue;
+        };
+        inserts.push((
+            at + 1,
+            Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]),
+        ));
+    }
+    inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    for (at, op) in inserts {
+        bl.operators.insert(at, op);
+    }
+}
+
+/// How many USER calls in `ops` are handed `av` as an argument.
+///
+/// The buffer's other mentions are its null-init and the frees the scan just emitted
+/// (`OpFreeRefIfDistinct(v, av)` is itself one of them), so a raw occurrence count answers a
+/// different question.  Only a loft-defined callee takes a hidden buffer at all, which is
+/// what `is_loft_defined` is the one home for.
+fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
+    let mut n = 0;
+    for op in ops {
+        op.walk(&mut |v| {
+            if let Value::Call(d_nr, args) = v
+                && data.def(*d_nr).is_loft_defined()
+                && args
+                    .iter()
+                    .any(|a| matches!(a.unspan(), Value::Var(x) if *x == av))
+            {
+                n += 1;
+            }
+        });
+    }
+    n
+}
+
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
@@ -2613,6 +2713,7 @@ fn run_scan_phase(
             bl.operators.insert(0, v_set(v, Value::Text(String::new())));
         }
     }
+    reuse_record_buffers(&mut code, &function, data, &scopes.witness_buffer);
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]

@@ -4530,14 +4530,36 @@ impl Definition {
         }
     }
 
+    /// @PLN157 § V — the variable a return-position struct LITERAL delivers into, when
+    /// this body was rewritten to build into its caller's buffer.
+    ///
+    /// It is an ARGUMENT, and every ownership question below reads an argument as *a store
+    /// the caller already holds and this body must not hand over*.  That reading is right
+    /// for a VISIBLE parameter (`fn id(a: T) -> T { a }`) and wrong for this one: the hidden
+    /// buffer exists FOR the return, and the caller's own lowering — an adopt paired with
+    /// `OpFreeRefIfDistinct(__ref_N, v)` — settles at run time whether the store it gets
+    /// back is that buffer or a fresh one the callee minted from a null slot.
+    ///
+    /// `None` once the return publishes a dep: that is `ref_return`'s promoted-buffer ABI,
+    /// where the caller COPIES out of the buffer and the borrow reading is the correct one.
+    fn value_return_buffer_var(&self) -> Option<u16> {
+        if !self.returned.depend().is_empty() {
+            return None;
+        }
+        let a = self.hidden_return_buffer_attr()?;
+        let v = self.variables.var(&self.attributes[a].name);
+        (v != u16::MAX).then_some(v)
+    }
+
     /// Does ONE return site hand back a store this body owns?  See
     /// [`Self::monomorph_return_is_fresh`] for what the answer is used for and why it
-    /// under-approximates.
-    fn site_is_fresh(v: &Value, vars: &crate::variables::Function) -> bool {
+    /// under-approximates.  `buf` is [`Self::value_return_buffer_var`] — the one argument
+    /// that answers "owned" rather than "borrowed".
+    fn site_is_fresh(v: &Value, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
         match v.unspan() {
             // Null is a value, not a store — it can neither leak nor dangle.
             Value::Null => true,
-            Value::Var(n) => *n < vars.count() && !vars.is_argument(*n),
+            Value::Var(n) => *n < vars.count() && (!vars.is_argument(*n) || buf == Some(*n)),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -4545,13 +4567,13 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars) && Self::site_is_fresh(els, vars)
+                Self::site_is_fresh(then, vars, buf) && Self::site_is_fresh(els, vars, buf)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -4570,7 +4592,7 @@ impl Definition {
             // one both read "capture-free".  The target's own BODY is what tells them
             // apart, which is why the resolution goes to the definition and not the type.
             other => match Self::root_var(other) {
-                Some(n) => n < vars.count() && !vars.is_argument(n),
+                Some(n) => n < vars.count() && (!vars.is_argument(n) || buf == Some(n)),
                 // No readable root (a call, a literal-built aggregate): not proven fresh.
                 None => false,
             },
@@ -4623,13 +4645,14 @@ impl Definition {
     #[must_use]
     pub fn monomorph_fnref_return_slots(&self) -> Option<Vec<u16>> {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
         if sites.is_empty() {
             return None;
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars) {
+            if Self::site_is_fresh(site.unspan(), vars, buf) {
                 continue;
             }
             match site.unspan() {
@@ -4670,13 +4693,14 @@ impl Definition {
     #[must_use]
     pub fn monomorph_direct_call_return_targets(&self) -> Option<Vec<u32>> {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
         if sites.is_empty() {
             return None;
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars) {
+            if Self::site_is_fresh(site.unspan(), vars, buf) {
                 continue;
             }
             match site.unspan() {
@@ -4717,6 +4741,7 @@ impl Definition {
     #[must_use]
     pub fn monomorph_return_is_fresh(&self) -> bool {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let mut seen_return = false;
         let mut all_fresh = true;
         let sites = self.return_sites();
@@ -4725,7 +4750,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars) {
+            if !Self::site_is_fresh(inner, vars, buf) {
                 all_fresh = false;
             }
         }

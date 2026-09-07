@@ -321,6 +321,16 @@ enum RefDelivery {
     /// local, copy the record into `__retbuf`, and let scope analysis free `__fwd`.
     /// The Reference twin of [`Delivery::ForwardCopy`].
     ForwardCopy,
+    /// @PLN157 § V (Route R) — the tail is a fresh struct LITERAL, which builds into a
+    /// work-ref of its own and leaves the caller's buffer untouched.  Substitute that
+    /// work-ref BY the buffer variable so the literal's `OpDatabase` + field writes land
+    /// in the caller's store: one buffer per call SITE instead of one store per CALL.
+    ///
+    /// Distinct from [`Self::Rename`], which promotes the `__retbuf` ATTR onto a local
+    /// and so publishes a return dep — that makes the result a borrow, which the caller
+    /// answers with a deep copy (`gen_set_first_ref_call_copy`).  Here the signature is
+    /// untouched and the caller keeps its adopt-with-witness lowering.
+    BuildIntoBuffer { work_ref: u16, buf_var: u16 },
     /// `ls` empty and no work-ref to recover — the tail already delivers; emit nothing.
     AsIs,
 }
@@ -2708,6 +2718,18 @@ impl Parser {
                 if Self::tail_forwards_own_store(last, &self.data) {
                     return RefDelivery::ForwardCopy;
                 }
+                // @PLN157 § V — the tail is a struct LITERAL.  `AsIs` claims the tail
+                // already wrote `__retbuf`; a literal writes a work-ref of its own, so
+                // the buffer the caller allocated stays empty and the record handed
+                // back is a store minted per call.  Build into the buffer instead.
+                if crate::keys::value_return_enabled()
+                    && let Some(work_ref) = Self::tail_fresh_object_workref(last)
+                    && self.workref_is_only_the_tail(l, work_ref)
+                    && let Some(buf_var) = self.unpromoted_return_buffer_var()
+                    && self.record_is_fully_written_by_a_literal(buf_var)
+                {
+                    return RefDelivery::BuildIntoBuffer { work_ref, buf_var };
+                }
             }
             RefDelivery::AsIs
         } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
@@ -2784,6 +2806,161 @@ impl Parser {
         })
     }
 
+    /// @PLN157 § V — the work-ref a return-position struct LITERAL builds into, or `None`
+    /// for any other tail.
+    ///
+    /// `parse_object`'s fresh-record arm mints a work-ref, emits `OpDatabase` + the field
+    /// writes against it, and closes the block with `Var(w)` — so the block's last operator
+    /// naming a variable IS the literal's destination.  The `"Object"` block name is what
+    /// separates it from every other block that happens to end in a variable: only the
+    /// literal owns a record nothing else has seen yet, which is the whole reason its
+    /// destination may be swapped.
+    ///
+    /// Peels only `Span` and `Return` on the way in.  A literal reached through an `if`
+    /// arm or an inner block is NOT this shape — those tails have a join to deliver and
+    /// the multi-arm machinery already owns them — and answering `None` there leaves them
+    /// on the delivery path they have today.
+    fn tail_fresh_object_workref(tail: &Value) -> Option<u16> {
+        let mut node = tail.unspan();
+        loop {
+            match node {
+                Value::Return(inner) => node = inner.unspan(),
+                Value::Block(bl) if bl.name == "Object" => {
+                    return match bl.operators.last().map(Value::unspan) {
+                        Some(Value::Var(v)) => Some(*v),
+                        _ => None,
+                    };
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// @PLN157 § V — is `w` the tail's own destination and nothing else?
+    ///
+    /// The substitution redirects every write to `w` into the caller's buffer, so a
+    /// SECOND reader of `w` earlier in the body would read the buffer instead of the
+    /// record it was written to.  A literal's work-ref is normally referenced exactly
+    /// once — at the tail that built it — and this is what makes "normally" checkable
+    /// rather than assumed.  A named local never reaches here (the selector only offers
+    /// the `"Object"` block's own destination), so the guard is against a work-ref the
+    /// parser reused, not against user code.
+    fn workref_is_only_the_tail(&self, l: &[Value], w: u16) -> bool {
+        w < self.vars.count()
+            && self.vars.is_compiler_generated(w)
+            && !Self::ir_var_has_live_use(&l[..l.len() - 1], w)
+    }
+
+    /// @PLN157 § V — this function's hidden return buffer, while it is still the
+    /// signature-time placeholder.
+    ///
+    /// `None` once `ref_return` has promoted it: the attr then carries a local's name and
+    /// the return type names the attr, which is a delivery decision already made.  Also
+    /// `None` when the buffer's record type is not the one the tail builds — a mismatch
+    /// means the tail is not this function's return value — and for a lambda or a generic
+    /// template, whose ABI the promotion machinery deliberately leaves alone.
+    fn unpromoted_return_buffer_var(&self) -> Option<u16> {
+        if self.data.def_type(self.context) != DefType::Function
+            || self.data.def(self.context).name().contains("__lambda")
+        {
+            return None;
+        }
+        let def = self.data.def(self.context);
+        let a_idx = def.hidden_return_buffer_attr()?;
+        if def.attributes()[a_idx].name != "__retbuf" {
+            return None;
+        }
+        let buf_def = def.attributes()[a_idx].typedef.heap_def_nr()?;
+        if def.returned().base().heap_def_nr() != Some(buf_def) {
+            return None;
+        }
+        let v = self.vars.var("__retbuf");
+        (v != u16::MAX && self.vars.is_argument(v)).then_some(v)
+    }
+
+    /// @PLN157 § V — does a literal of this record's type write EVERY stored field?
+    ///
+    /// It is what makes reusing a caller's record sound: with no `OpDatabase` in front of
+    /// the writes, a field the literal leaves alone keeps the PREVIOUS call's value rather
+    /// than its zero.  `object_init` emits a default for every field the literal omits, so
+    /// the answer is normally yes — with one documented exception it names itself: a
+    /// synthetic `__nullable<S>` field is SKIPPED there because "absent" is discriminant 0
+    /// and it relies on the fresh record being zeroed.  Refuse those; the record form they
+    /// have today is correct.
+    fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
+        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+            return false;
+        };
+        !self.data.def(td).attributes().iter().any(|a| {
+            matches!(&a.typedef, Type::Enum(e, true, _)
+                if self.data.def(*e).name().starts_with("__nullable<"))
+        })
+    }
+
+    /// @PLN157 § V — redirect the literal's writes into the caller's buffer.
+    ///
+    /// The literal's `OpDatabase` becomes CONDITIONAL, and both halves are load-bearing:
+    ///
+    /// - the caller offered a record (`store_nr` not the sentinel AND `rec != 0`) — write
+    ///   the fields straight into it.  `OpDatabase` must NOT run there: it clears the whole STORE and claims a
+    ///   new record, which for an ordinary `__ref_N` buffer is merely wasted work and for
+    ///   the placement wire's return ARENA destroys the record the other process is about
+    ///   to read (`lib_placement::wire::run_bound` allocates the answer's record there and
+    ///   marshals it back from the same address).
+    /// - the caller offered nothing — `OpDatabase` mints a store into the buffer slot and
+    ///   the answer is handed over exactly as it was before this pass existed.  Every call
+    ///   site that supplies no buffer keeps today's behaviour, which is what makes the
+    ///   rewrite safe without a per-site proof.
+    ///
+    /// Only the TAIL is rewritten, so the work-ref's own `Set(w, Null)` init stays on `w`
+    /// and cannot null the buffer out from under the writes; any copy of it INSIDE the
+    /// literal is dropped for the same reason.  `w` is left with no store of its own,
+    /// which `skip_free` records.
+    fn build_into_return_buffer(&mut self, l: &mut [Value], work_ref: u16, buf_var: u16) {
+        let last = l.len() - 1;
+        // "The caller offered a record" has to refuse BOTH spellings of absent: the null
+        // store (`rec == 0`, `OpConvBoolFromRef`) and the freed slot (`store_nr == u16::MAX`,
+        // `OpRefIsNull`).  A native free nulls only `store_nr` and leaves `rec` standing, so
+        // a buffer variable freed and then handed on — `if … { return r }` followed by a
+        // tail call — arrives as `{u16::MAX, rec != 0}`, and a `rec`-only test wrote into
+        // store 65535.  `if is_null { false } else { has_rec }` is how `&&` lowers.
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(buf_var)]);
+        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(buf_var)]);
+        let guard = v_if(is_null, Value::Boolean(false), has_rec);
+        let db_nr = self.data.def_nr("OpDatabase");
+        Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
+        Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
+        self.vars.set_skip_free(work_ref);
+    }
+
+    /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
+    /// its `OpDatabase` behind `guard` (true = the caller already supplied a record).
+    fn guard_literal_alloc(tail: &mut Value, work_ref: u16, guard: Value, db_nr: u32) {
+        let mut node = tail;
+        loop {
+            match node {
+                Value::Span(b) => node = &mut b.1,
+                Value::Return(inner) => node = inner,
+                Value::Block(bl) if bl.name == "Object" => {
+                    bl.operators.retain(
+                        |op| !matches!(op, Value::Set(s, v) if *s == work_ref && **v == Value::Null),
+                    );
+                    for op in &mut bl.operators {
+                        if matches!(op, Value::Call(d, args) if *d == db_nr
+                            && matches!(args.first(), Some(Value::Var(v)) if *v == work_ref))
+                        {
+                            let alloc = std::mem::replace(op, Value::Null);
+                            *op = v_if(guard, Value::Null, alloc);
+                            return;
+                        }
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
     /// @PLN85 D-own-1 — emit the mechanism the Reference selector chose. The tail of
     /// `l` is rewritten in place; mirrors `dispatch_vector_delivery`.
     fn dispatch_reference_delivery(&mut self, delivery: RefDelivery, td: u32, l: &mut [Value]) {
@@ -2799,6 +2976,9 @@ impl Parser {
                 self.nrvo_collapse_tail_set(l, &[w]);
             }
             RefDelivery::ForwardCopy => self.emit_forward_copy_ref_409(td, l),
+            RefDelivery::BuildIntoBuffer { work_ref, buf_var } => {
+                self.build_into_return_buffer(l, work_ref, buf_var);
+            }
             RefDelivery::AsIs => {}
         }
     }

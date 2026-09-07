@@ -643,6 +643,77 @@ no-interprocedural-in-place rule, gated by `LOFT_NO_VALUE_RETURN=1`.
 census's escaping-site cells answer differently than the record form;
 `lock` not ≤ ~14.5M (T) / ~17M (R) on the P0 instrument once landed.
 
+**SHIPPED 2026-09-08 — Route R, both halves, both backends, hashes exact.**
+
+*Callee half* (`Parser::classify_reference_delivery` → `RefDelivery::BuildIntoBuffer`):
+a return-position `"Object"` block's work-ref is substituted BY the `__retbuf`
+variable, and its `OpDatabase` becomes
+`if <__retbuf addresses a record> null else OpDatabase(__retbuf, tp)` — the field
+writes land in the caller's record when one was offered, and a site offering
+none (a fn-ref dispatch, the host entry, a `parallel` worker, a caller whose
+buffer the gate below declined) mints exactly as before.  The SIGNATURE is
+untouched, so `return_adopts_fresh_store` stays true and the caller keeps its
+adopt-with-witness lowering (`OpFreeRefIfDistinct(v, __ref_N)`), which is the
+ABI leg that always answered *did the callee fill my buffer or mint its own?*
+at run time — this makes the first case common instead of rare.  Two shapes
+were built and refused on the way: `ref_return`'s `Rename` (publishes a return
+dep → the caller COPIES via `gen_set_first_ref_call_copy`, one record copy per
+call — the `s = S{…}; s` shape is SLOWER than the literal it replaces), and an
+unconditional `OpDatabase(__retbuf)` (it clears the whole STORE, which for the
+placement wire's return arena destroys the record the other process reads
+back — `placement_parity` red, 4 cells).  Refused for good: a struct with a
+synthetic `__nullable<S>` field, which `object_init` leaves to the zeroed
+record and a reused record is not zeroed.  And *"addresses a record"* has TWO
+spellings, both refused: the null store (`rec == 0`) and the freed slot
+(`store_nr == u16::MAX`, which a native free leaves with `rec` standing) — a
+`rec`-only test wrote into store 65535 when `rb_cond`'s chain freed its buffer
+variable and handed it on (`1128-…-frees-what-it-displaces`, native only).
+Switch: `LOFT_NO_VALUE_RETURN`.
+
+*Caller half* (`scopes::reuse_record_buffers`): `OpDatabase(__ref_N, tp)` is
+inserted after the buffer's preamble null-init — an IR edit, so both
+generators emit it and neither knows why (the pair `parse_object`'s in-place
+arm and the vector twin already emit).  **The gate is `witness_buffer`:** only
+a buffer whose result's free is already `OpFreeRefIfDistinct(v, __ref_N)`
+(@P378(a)), and which exactly one user call receives.  A buffer reached any
+other way — `keep += [mk(i)]`, whose result lands in a `__lift_N` temp with a
+plain free — is left null.  Positive control `LOFT_NO_RETBUF_WITNESS_GATE=1`
+(allocate every buffer): `LOFT_STRICT_STORES=1` reports USE AFTER FREE at
+exactly that cell, automated in `tests/retbuf_reuse.rs`.  Switch:
+`LOFT_NO_RETBUF_REUSE`.  Guard: `tests/scripts/157-a-struct-return-builds-
+into-the-callers-buffer.loft` (ten cells: inline read, local bind, vector
+escape, field escape, forwarded, two live, survives a later call, declared
+default, zero default, nested).
+
+*The one static fact that moved:* `Definition::site_is_fresh` read an ARGUMENT
+tail as *a store the caller already holds*, right for `fn id(a) -> T { a }` and
+wrong for the hidden buffer, which exists FOR the return; `value_return_buffer_var`
+names it as the one argument that answers owned, while the return publishes no
+dep.  Found by `leak_cases/clean/i1273_generic_delegating_return_inline` —
+40 records leaked once `OpAdd`'s literal built into its buffer and the caller's
+lift stopped owning the answer.
+
+*Census* (the `LOFT_NO_VALUE_RETURN` A/B on one binary, `loft introspect`):
+the whole stdlib is byte-identical — zero sites qualify there (every heap
+return is a promoted local, a vector, or `#rust`); the bench moves six literal
+sites (`Smp`, `Row`×2, `PathPt`, `Brush`, `LockStyle`).
+
+*Measured* (idle box, n=7 medians, `--native-emit` + `rustc -O`, hashes exact):
+
+| form | `lock` ns/op | `hash` ns/op |
+|---|---:|---:|
+| both switches off (P4d) | 47.8M | 2.23M |
+| callee half alone | 48.6M (a wash, as predicted) | — |
+| both halves, gate on | **35.3M (−26 %)** | 1.88M (−16 %) |
+| both halves, gate off (the ceiling) | 32.2M (−33 %) | — |
+
+The 7 pts between the gated and ungated forms are the sites the gate
+declines; `paired_witness` sites where the result OUTLIVES the buffer are also
+safe and are the first widening to measure.  P0 instrument on the idle box:
+`lock` **6.2×** (bar 16 → 10), `hash` 5.1× (bar 7).  Still open from this
+section: the hoist unblock — the def-level *"writes only into its retbuf"*
+fact the resolve loop's P4 hoists wait on (the −17 pts attributed above).
+
 ## P5 — the pass as the per-library standard
 
 A `LIBRARY_CHECKLIST.md` row: a published library carries a `bench/` with a

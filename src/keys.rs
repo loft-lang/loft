@@ -956,6 +956,69 @@ pub fn retbuf_claim_guard_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_CLAIM_GUARD"))
 }
 
+/// @PLN157 § V (Route R): a return-position struct LITERAL builds into the caller's
+/// `__retbuf` — **DEFAULT ON**.  Opt OUT with `LOFT_NO_VALUE_RETURN`.
+///
+/// A `fn f(…) -> S { … S { … } }` carries a hidden `__retbuf` argument like every heap
+/// return does, and the literal ignored it: the tail minted a work-ref store of its own,
+/// so the caller allocated a buffer nothing wrote and then freed the record it got back
+/// instead — one store allocated and freed per call.  In a per-pixel loop that is the
+/// dominant cost (`brush_sample` in the drawing pass: with [`retbuf_reuse_enabled`],
+/// `lock` 47.8M → 35.3M ns/op, −26 %; alone it is a wash, since the buffer is still null).
+///
+/// The tail's work-ref is substituted BY the buffer variable, so the same `OpDatabase`
+/// runs against the caller's slot.  That op is the reuse-or-allocate primitive — it
+/// clears an existing store in place and allocates a fresh one from a null slot — so a
+/// call site that supplied no buffer (a fn-ref dispatch, the host entry, a `parallel`
+/// worker) keeps exactly today's behaviour, which is what makes the substitution safe
+/// without a per-site proof.  The return TYPE is deliberately unchanged: an empty return
+/// dep is what `return_adopts_fresh_store` reads, and that is the ABI leg whose paired
+/// `OpFreeRefIfDistinct(__ref_N, v)` already answers *did the callee fill my buffer or
+/// mint its own?* at run time — the case this makes common rather than rare.
+///
+/// One cached env read.  See `Parser::classify_reference_delivery`'s `BuildIntoBuffer`
+/// cell, `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § V.
+#[must_use]
+pub fn value_return_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
+}
+
+/// @PLN157 § V (Route R, caller half): a call's hidden RECORD buffer is allocated once —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_RETBUF_REUSE`.
+///
+/// `__ref_N` is declared null and never allocated, so even after [`value_return_enabled`]
+/// points the literal at it the callee's `OpDatabase` still mints a store from a null slot
+/// on EVERY call.  Allocating it once at its null-init — what the VECTOR twin
+/// (`gen_set_first_vector_null`) has always done — turns that per-call mint into a record
+/// the callee writes in place: `lock` 47.8M → 35.3M ns/op (−26 %), hashes exact.
+///
+/// The buffer's store then outlives the call, so it may only be allocated where the
+/// RESULT's free is guarded against it — `scopes`'s `witness_buffer`, whose
+/// `OpFreeRefIfDistinct(v, __ref_N)` declines exactly when the two alias.  A site with a
+/// plain free (`keep += [mk(i)]`, whose result lands in a `__lift_N` temp) releases the
+/// buffer's store and the next turn of the loop writes a freed one, so those buffers are
+/// left null and keep today's mint-per-call.  This switch is the A/B on one binary and the
+/// first bisect step for a wrong value out of a struct-returning call in a loop.
+#[must_use]
+pub fn retbuf_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_REUSE"))
+}
+
+/// `LOFT_NO_RETBUF_WITNESS_GATE=1` — the POSITIVE CONTROL for
+/// [`retbuf_reuse_enabled`]'s gate. **OPT-IN, DEFAULT OFF; never set in production.**
+///
+/// Allocates the buffer at EVERY call site instead of only the witness-guarded ones, which
+/// is the unsound half the gate exists to refuse: a result freed with a plain `OpFreeRef`
+/// releases the buffer's store, and the next call clears one that is back in the pool.
+/// Without it the § V guard passes on a build with no gate at all and proves nothing.
+#[must_use]
+pub fn retbuf_witness_gate_disabled() -> bool {
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| env_set("LOFT_NO_RETBUF_WITNESS_GATE"))
+}
+
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
 /// dead-after owned source directly into its destination field/element instead of copy-then-free,
 /// for every proven-safe shape (Record `v[i]=e`/`o.f=src`; Construct field-append, fresh

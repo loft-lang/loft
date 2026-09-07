@@ -6,4 +6,4 @@
 # here: each bench program asserts its own output hash, and the script
 # additionally requires the two lanes' hash columns to agree.
 12_drawing	hash	7
-12_drawing	lock	16
+12_drawing	lock	10
