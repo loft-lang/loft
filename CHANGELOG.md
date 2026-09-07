@@ -120,6 +120,14 @@ whatever was stored there next — a wrong value, quietly, on both backends.  Th
 `pos`.  Given a struct that is neither, loft used to report *"Expect token }"* three times and
 stop.  It now says *"a slice pattern `[ … ]` matches a vector or a cursor; `Cur` is neither — its
 `pos` field is `integer?`, and a cursor's position must be an integer"*, once, and keeps parsing.
+**Adding to a collection you were handed with `&` now works, for every kind of collection.**
+A function that takes `&hash<Row[id]>` — or `&sorted`, `&index`, `&trie`, `&spatial` — and
+writes `c += [Row{…}]` was refused, and the refusal talked about a vector the program never
+mentioned: *"Variable 'c' cannot change type from &hash<Row,[\"id\"]> to vector<Row>"*.  The
+`&`-free spelling of the same function always worked, and so did `&vector<Row>`.  The append
+now lands in the caller's collection, on compiled and interpreted programs alike.  Two of the
+five kinds — `trie` and `spatial` — went further and stopped the compiler outright when passed
+with `&` at all, even for `c[key] = value`, which the other three accepted.
 
 **A `match` arm now has to answer in the type its siblings answer in.**  Every arm was parsed
 without knowing what type the `match` as a whole was expected to produce, so an arm of another

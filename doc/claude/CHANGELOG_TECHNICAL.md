@@ -423,6 +423,82 @@ loft#1408.  Guards `1408-…` (ten nullable/dense pairs across five scalar kinds
 compositions, plus the `(L-CapScalar)` and `(L-CapHeap)` controls), `1408b-…` and `1408c-…`
 (the refusals, split because a firing `@EXPECT_ERROR` stops a file).  A forced-size integer
 capture has the same symptom from a different mechanism and is loft#1409.
+### A `&` keyed collection is used exactly like its dense twin (2026-09-07, loft#1445)
+
+`(B-Ref-Uniform)` says a `&τ` variable is used EXACTLY like a `τ` variable, with no operation
+special-cased.  A keyed collection PARAMETER was an exception: `c += [rec]` on a
+`&hash<τ[k]>` fell past every append route to the generic assignment and was refused as
+*"Variable 'c' cannot change type from &hash<Row,["id"]> to vector<Row>"* — a claim about a
+vector in a program with no vector in it.  All five keyed kinds, both backends.
+
+**The filed diagnosis was wrong, and the tell is a type NUMBER.**  The issue says the work is
+that "the emission side does not resolve a keyed store through the parameter's double
+indirection".  It resolves it, and always has: `c[7] = Row{…}` through a `&hash` parameter
+inserts into the CALLER's collection today, one operator over from the statement that was
+refused.  What is wrong is that `keyed_known_type` opens with `base()`, which peels `Optional`
+and not the `&`, so a `&`-wrapped keyed type answers `None` and `new_record`'s fallback hands
+`OpNewRecord` the wrap-`vector<τ>` id: `parent_tp=83` where the dense twin emits `82`, and 83
+is what the `&vector<τ>` twin emits.  `record_finish` dispatches through `Parts::Vector`, the
+keyed insert never runs, `len` reads 0 with no diagnostic.  That is the exact miss P188
+documents one function down, reached by a spelling its comment did not cover — and it is why
+peeling the routing predicates alone was measured to turn the refusal into a silent drop.
+
+**One name, three questions.**  `is_keyed` was asked *what kind of collection is this* (where
+the `&` must peel — the link records the route, never the shape) and *does this variable own a
+store* (where it must not), across 76 call sites.  Widening `is_keyed` itself answered the
+first at the cost of the second, and failed twice in different disguises:
+
+* an **ICE** — `gen_keyed_null` exists to allocate a keyed LOCAL's own store and resolves its
+  type through `base()`, so a `&hash` reaching it hits `unreachable!("gen_keyed_null on
+  non-keyed type")`;
+* and once that was split out, a **silent wrong answer in a caller two frames down** — the
+  `op == "="` keyed-local replace fired for a `&hash`, so `fn set(x: &hash<E[k]>) { x = mk(9); }`
+  reached through a PLAIN forwarder wrote the callee's records into the caller's collection.
+  `showh(h)` read `9:9,` where `1:1,2:2,` is right.  Not a crash and not a refusal.
+
+So the questions are now two NAMES rather than a documented choice between `base()` and
+`peel_link()` at each site: `keyed_kind` (peels — which kind, which type id, which insert) and
+`owns_keyed_store` (does not — what may be allocated, minted or replaced in place), with
+`keyed_local_kind` beside `keyed_local` for the variable-index form.  A new call site picks a
+name that says which question it is asking.
+
+**The destination is the third piece, and doing it second is what makes the control fail.**
+Peeling the routing predicates without peeling `dest` hands `append_source` a `RefVar`, which
+matches no arm, and the `&vector<Row>` twin that had always worked began answering *"cannot
+append `vector<Row>` to `&vector<Row>`"*.  The regression lands in the CONTROL rather than in
+the cell under test; TESTING.md § How a guard reads green gains that.
+
+**How the sites were found.**  Inspection could not bound "which of the 76 read the widened
+answer".  A temporary env-gated form of `is_keyed` that computes BOTH answers, returns the
+narrow one and backtraces on disagreement named every call site that sees a `&`-wrapped keyed
+type in one run of the boundary matrix — four families, twelve hits in `parse_assign_op_inner`
+alone.  Each was then read for which question it asks.
+
+**And a fourth list, one layer down.**  The `&` deref in `state/codegen.rs` named
+`Vector | Reference | Enum(value) | Sorted | Hash | Index` and `panic!`ed on the rest, so
+`&trie` and `&spatial` were an ICE — *"Unknown referenced variable type"* — where their three
+siblings worked, under a comment asserting all five keyed kinds are DbRef-backed "just like
+vectors/references".  Two of five.  That arm now derives from `vectors::is_collection`, which
+`(Col-Store)` already defines as the store-backed set.
+
+Fourth instance of the missing-kind class after loft#1291, loft#1292 and loft#1433 — and the
+FIRST of the sibling class, a predicate that is asked more than one question.  The narrow ones
+announce themselves as ICEs and missing kinds; this one announced itself as a regression
+somewhere else entirely.
+
+Guards: `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft` (all five keyed
+kinds, three source spellings, the `&vector` control and the dense-parameter oracle) and
+`1445b-an-amp-keyed-parameter-derefs-at-every-kind.loft` (the ICE, with the three kinds that
+already worked as its control).  Both backends; each is a hard compile failure on the parent
+commit.  Every destination is POPULATED before the append and every cell reads the pre-existing
+key as well as the new one, because from an EMPTY destination a `len` of 1 cannot tell an append
+that reached the caller from one that built a fresh collection and counted itself — loft#1433's
+lesson on the sibling spelling.
+
+Not closed: `c += other_hash` through a `&` is still refused as *"No matching operator 'Add'"*
+rather than with the keyed merge message its dense twin earns.  Measured UNCHANGED from the
+parent commit, so it is a pre-existing pass-1 routing gap rather than anything this change
+caused; the statement is refused either way, so nothing is silent.
 
 ### `(B-Disturb)` ends every place a view can name (2026-09-07, D-bind-25/26/27)
 

@@ -3050,8 +3050,11 @@ was a REBIND, which no append matrix carries.  Splitting an `is_owned_keyed` out
 null-init sites was then measured to fail DIFFERENTLY (a slot fault in `__lift_1`), proving more
 than two of the 78 read the widened answer.  **A predicate asked at dozens of sites is asked
 more than one question; widening it is not a local change, and the bound on what you broke
-cannot be established by inspection.**  Fix at the route that asks the question you mean —
-here, peeling at the `+=` entry — and leave the shared predicate alone.
+cannot be established by inspection.**  What closed it was giving each question its own NAME:
+`keyed_kind` peels (which kind / which type id / which insert) and `owns_keyed_store` does not
+(what may be allocated, minted or replaced in place), leaving `is_keyed` to the sites that never
+had to tell them apart.  A separate predicate, never a better condition — the same cure
+`rebind_must_mint` took beside `owns_store` for loft#1447.
 
 **A reproduction that hits a WARM CACHE measures nothing — and the tell is the clock.**  A
 red `make ci` named a native cell that took **2.2 s** in the gate; every attempt to reproduce

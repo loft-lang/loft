@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Ref-Uniform — a `&τ` variable is used EXACTLY like a `τ` variable, with no operation
+// special-cased; @FR-B-Ref-Intro admits `&τ` for every τ.  Stated over every τ, so a keyed
+// collection PARAMETER is not an exception the rules admit.
+//
+// It was one.  `is_keyed` / `is_collection` asked `base()`, which peels `Optional` and not the
+// `&` link, so a `&hash<τ[k]>` was not a collection to any append route: `c += [rec]` fell
+// past all of them to the generic assignment and was refused as *"Variable 'c' cannot change
+// type from &hash<Row,[\"id\"]> to vector<Row>"* — a claim about a vector in a program with no
+// vector in it.  All five keyed kinds, both backends, identically (loft#1445).
+//
+// ⚠ Three questions wear one name, and the fix is which of them each site is asking.
+// `is_keyed` was asked both *what kind of collection is this* — where the `&` must peel,
+// because `(B-Ref-Uniform)` says the link records the route and never the shape — and *does
+// this variable own a store*, where it must not. Teaching `is_keyed` itself to peel answered
+// the first at the cost of the second across 76 call sites, and it failed twice in different
+// disguises: an `unreachable!` in `gen_keyed_null`, which allocates a store a `&` parameter
+// does not have; and, once that was split out, a SILENT WRONG ANSWER — the `op == "="` keyed
+// replace fired for a `&hash`, so `x = mk(9)` reached through a plain forwarder wrote the
+// callee's records into a collection two frames down. The two questions are now two names,
+// `keyed_kind` and `owns_keyed_store`, so a new site picks one rather than a peel spelling.
+//
+// ⚠ And the kind peel alone is not enough either. `keyed_known_type` opens with the same
+// `base()`, so a `&`-wrapped keyed type answered `None` and `new_record`'s fallback handed
+// `OpNewRecord` the wrap-`vector<τ>` id — `parent_tp=83` where the dense twin emits `82`, and
+// 83 is what the `&vector<τ>` twin emits. `record_finish` then dispatched through
+// `Parts::Vector`, the insert never ran, and `len` read 0 with NO diagnostic: a refusal traded
+// for a silent drop. The type NUMBER is the tell, not any story about reachability — a keyed
+// insert through a `&hash` parameter (`c[7] = Row{…}`) has always reached the caller's store.
+//
+// ⚠ Peeling without peeling the DESTINATION breaks the case that already worked. Handed a
+// `RefVar`, `append_source` matches no arm, and the `&vector<τ>` twin began answering "cannot
+// append `vector<Row>` to `&vector<Row>`". The failure lands in the CONTROL, not in the cell
+// under test, which is why `the_vector_twin_still_appends` is in this file.
+//
+// ⚠ Every destination is POPULATED before the append, and every cell reads the pre-existing
+// key as well as the new one.  From an EMPTY destination a `len` of 1 cannot tell an append
+// that reached the caller's collection from one that built a fresh collection and counted
+// itself — which is the shape loft#1433 measured on the sibling spelling.
+//
+// @falsified-at: afbca3342 (built in its own worktree, both backends): every fn here is a
+//   COMPILE error on that build — `&hash<Row,["id"]> to vector<Row>`, and the same line for
+//   sorted, index, trie and spatial — so the file does not run at all rather than failing an
+//   assertion.  The vector cells pass there, which is what makes them a control.
+
+struct Row { id: integer, tag: text }
+struct Wrd { nm: text, n: integer }
+struct Pt { x: integer, y: integer, tag: text }
+
+// ── the append reaches the CALLER's collection, at every keyed kind ────────────────────
+
+fn hash_append(c: &hash<Row[id]>)    { c += [Row{id: 7, tag: "seven"}]; }
+fn sorted_append(c: &sorted<Row[id]>) { c += [Row{id: 7, tag: "seven"}]; }
+fn index_append(c: &index<Row[id]>)  { c += [Row{id: 7, tag: "seven"}]; }
+fn trie_append(c: &trie<Wrd[nm]>)    { c += [Wrd{nm: "kk", n: 7}]; }
+fn spatial_append(c: &spatial<Pt[x,y]>) { c += [Pt{x: 3, y: 4, tag: "three-four"}]; }
+
+fn a_keyed_parameter_append_reaches_the_caller() {
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  hash_append(h);
+  assert_eq("{len(h)}", "2", "the caller's hash grew");
+  assert_eq("{h[7].tag}", "seven", "and holds what the callee appended");
+  assert_eq("{h[1].tag}", "one", "without losing what it already held");
+}
+
+fn a_sorted_parameter_append_reaches_the_caller() {
+  s: sorted<Row[id]> = [];
+  s += [Row{id: 1, tag: "one"}];
+  sorted_append(s);
+  assert_eq("{len(s)}", "2", "the caller's sorted grew");
+  assert_eq("{s[7].tag}", "seven", "and holds what the callee appended");
+  assert_eq("{s[1].tag}", "one", "without losing what it already held");
+}
+
+fn an_index_parameter_append_reaches_the_caller() {
+  ix: index<Row[id]> = [];
+  ix += [Row{id: 1, tag: "one"}];
+  index_append(ix);
+  assert_eq("{len(ix)}", "2", "the caller's index grew");
+  assert_eq("{ix[7].tag}", "seven", "and holds what the callee appended");
+  assert_eq("{ix[1].tag}", "one", "without losing what it already held");
+}
+
+fn a_trie_parameter_append_reaches_the_caller() {
+  // trie and spatial are the two kinds a second, separate list had also missed: the `&`
+  // deref allow-list in codegen named Vector / Reference / Enum / Sorted / Hash / Index and
+  // panicked on the rest, so these two were an ICE where their three siblings worked.
+  t: trie<Wrd[nm]> = [];
+  t += [Wrd{nm: "aa", n: 1}];
+  trie_append(t);
+  assert_eq("{len(t)}", "2", "the caller's trie grew");
+  assert_eq("{t[\"kk\"].n}", "7", "and holds what the callee appended");
+  assert_eq("{t[\"aa\"].n}", "1", "without losing what it already held");
+}
+
+fn a_spatial_parameter_append_reaches_the_caller() {
+  p: spatial<Pt[x,y]> = [];
+  p += [Pt{x: 1, y: 1, tag: "one-one"}];
+  spatial_append(p);
+  assert_eq("{len(p)}", "2", "the caller's spatial grew");
+  // Read back through the range walk `(Slice-Open)` gives spatial, which is the only
+  // point-reading spelling it has.
+  seen = "";
+  for e in p[(0, 0)..(9, 9)] { seen += e.tag; seen += "|"; }
+  assert_eq(seen, "one-one|three-four|", "both records are in the caller's tree");
+}
+
+// ── the other two source spellings a keyed `+=` accepts ────────────────────────────────
+
+fn bare_element(c: &hash<Row[id]>) { c += Row{id: 8, tag: "eight"}; }
+fn element_vector(c: &hash<Row[id]>) { c += [Row{id: 9, tag: "nine"}, Row{id: 10, tag: "ten"}]; }
+
+fn every_keyed_source_spelling_travels_through_the_link() {
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  bare_element(h);
+  assert_eq("{len(h)}", "2", "the bare-element spelling appended one");
+  assert_eq("{h[8].tag}", "eight", "and by key");
+  element_vector(h);
+  assert_eq("{len(h)}", "4", "the element-vector spelling appended two");
+  assert_eq("{h[9].tag}", "nine", "first of them");
+  assert_eq("{h[10].tag}", "ten", "second of them");
+  assert_eq("{h[1].tag}", "one", "and the original survived both");
+}
+
+// ── the controls: the vector twin, which must not move ─────────────────────────────────
+
+fn vector_append(c: &vector<Row>) { c += [Row{id: 7, tag: "seven"}]; }
+
+fn the_vector_twin_still_appends() {
+  v: vector<Row> = [];
+  v += [Row{id: 1, tag: "one"}];
+  vector_append(v);
+  assert_eq("{len(v)}", "2", "the caller's vector grew");
+  assert_eq(v[0].tag, "one", "the original element is still first");
+  assert_eq(v[1].tag, "seven", "and the appended one is second");
+}
+
+fn a_plain_keyed_parameter_is_unchanged() {
+  // The `&`-free spelling has always worked and is the oracle for the cells above: the two
+  // differ only in how the collection is reached, so any cell that answers differently here
+  // than through the `&` is a defect whichever way round it points.
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  plain_append(h);
+  assert_eq("{len(h)}", "2", "the plain parameter appends to the caller");
+  assert_eq("{h[7].tag}", "seven", "with the same result as the `&` spelling");
+}
+
+fn plain_append(c: hash<Row[id]>) { c += [Row{id: 7, tag: "seven"}]; }

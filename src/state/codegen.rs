@@ -2123,7 +2123,9 @@ impl State {
             // `scan_set` no longer elides keyed `Set(v, Null)`.  Without this
             // arm it would fall to `set_var` → `gen_put_var` → panic (no keyed
             // OpPut* arm).
-            if crate::parser::vectors::is_keyed(stack.function.tp(v)) && *value == Value::Null {
+            if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
+                && *value == Value::Null
+            {
                 self.gen_keyed_null(stack, v, false);
                 return;
             }
@@ -3102,7 +3104,9 @@ impl State {
             self.gen_set_first_nullable_collection_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Vector(_, _)) && *value == Value::Null {
             self.gen_set_first_vector_null(stack, v);
-        } else if crate::parser::vectors::is_keyed(stack.function.tp(v)) && *value == Value::Null {
+        } else if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
+            && *value == Value::Null
+        {
             self.gen_set_first_keyed_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Tuple(_)) && *value == Value::Null {
             self.gen_set_first_tuple_null(stack, v);

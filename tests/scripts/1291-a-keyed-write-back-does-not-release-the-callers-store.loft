@@ -45,6 +45,12 @@ struct Pad1291 { a: integer, b: integer, c: integer }
 struct B1291 { items: vector<integer> }
 
 // The RECYCLE.  Without it every cell below passes on a broken build.
+//
+// ⚠ That is not only true of the defect this file was written for.  loft#1445 made the
+// `op == "="` keyed replace fire through a `&hash`, so `set_h1291` wrote its own records into
+// the caller's collection two frames down — a silent wrong answer, caught here and nowhere
+// else in the corpus, and only because the read is separated from the call.  The churn is
+// load-bearing for the whole file, not decoration on one cell.
 fn churn1291(n: integer) -> integer {
   junk: vector<Pad1291> = [];
   for i in 0..n { junk += [Pad1291 { a: i, b: i, c: i }]; }

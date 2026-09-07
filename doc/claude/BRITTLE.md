@@ -434,7 +434,33 @@ construct adding speculative parse could regress it silently.
    would convert ~half the current diagnostic zoo into one clear
    error at a known location.
 
-4. **Golden-IR regression tests** — we have golden PNGs for visual
+4. **A type predicate asked more than one question.** A `matches!` over `Type`
+   variants reads as one fact and is usually serving two: *what is this value*
+   and *what may this frame do with it*. `vectors::is_keyed` answered both — the
+   COLLECTION KIND (where a `&` link must be peeled, since `(B-Ref-Uniform)`
+   makes the link a route and never a shape) and STORE OWNERSHIP (where it must
+   not, since a `&` parameter's collection belongs to the caller) — across 76
+   call sites. Correcting it for the kind silently changed every ownership answer
+   with it, and the two failures wore different clothes: an `unreachable!` in
+   `gen_keyed_null`, then a SILENT WRONG ANSWER in a caller two frames down when
+   the `op == "="` keyed replace fired through a `&` (loft#1445).
+
+   This is the sibling of the missing-kind class (loft#1291, loft#1292,
+   loft#1433) and the harder one to see: a predicate that is too NARROW
+   announces itself where it is asked, as an ICE or a lost case, while a
+   predicate that is too BROAD announces itself somewhere else entirely.
+
+   Two cures, and the second is the one that lasts. **Find the sites by
+   measurement**: give the predicate a temporary env-gated form that computes
+   BOTH answers, returns the old one and backtraces when they disagree — one
+   run of a boundary matrix then names every call site that would move, which
+   inspection over 76 of them cannot. **Then give each question its own NAME**
+   (`keyed_kind` / `owns_keyed_store`), rather than leaving a documented choice
+   between `base()` and `peel_link()` at each site: a new call site should have
+   to type a name that says which question it is asking, because a table in a
+   commit message is one reviewer away from being re-conflated.
+
+5. **Golden-IR regression tests** — we have golden PNGs for visual
    output (Brick Buster) and dump files for bytecode execution, but
    nothing pins the *shape* of the IR produced by the top parser
    constructs.  A small suite would catch silent IR drift that

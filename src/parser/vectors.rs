@@ -3680,7 +3680,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // at compile time.  This eliminates resize calls in vector_append.  A keyed
         // local (loft#703) has no vector to size — its adds go through `hash::add` and
         // friends, which grow the keyed store themselves.
-        if !self.first_pass && !res.is_empty() && vec != u16::MAX && !self.keyed_local(vec) {
+        if !self.first_pass && !res.is_empty() && vec != u16::MAX && !self.keyed_local_kind(vec) {
             let ed_nr = self.data.type_def_nr(in_t);
             if ed_nr != u32::MAX {
                 let known = self.data.def(ed_nr).known_type();
@@ -3854,6 +3854,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         vec != u16::MAX && is_keyed(self.vars.tp(vec))
     }
 
+    /// Is this destination a keyed collection — the KIND question, with the `&` link peeled.
+    ///
+    /// [`Self::keyed_local`] answers the OWNERSHIP question beside it: does this local have a
+    /// keyed store of its OWN.  The two agree everywhere except a `&hash<E[k]>` parameter,
+    /// where the kind is a hash and the store belongs to the caller — so a site that needs
+    /// one and asks the other is wrong in exactly that spelling.  `OpPreAllocVector` is such
+    /// a site: it must not be emitted for ANY keyed destination (loft#703 — a keyed local has
+    /// no vector to size), while `keyed_local_materialise` next door must not fire for a `&`,
+    /// which has nothing of its own to mint.
+    ///
+    /// Two questions in one predicate is the defect this file keeps meeting; asked as one,
+    /// widening it for the kind silently changed every ownership answer with it (loft#1445).
+    pub(crate) fn keyed_local_kind(&self, vec: u16) -> bool {
+        vec != u16::MAX && keyed_kind(self.vars.tp(vec))
+    }
+
     /// The empty keyed collection a NULLABLE keyed LOCAL must be given before a write can
     /// land in it — `if h == null { OpDatabase(h, …) }` — or `None` when `vec` is not one.
     ///
@@ -3949,7 +3965,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// `hash<S[k]>`, and the collection reads back empty.  Measured on a nullable keyed
     /// LOCAL — a shape [`is_keyed`] still refuses, so nothing reaches it that way today.
     pub(crate) fn keyed_known_type(&mut self, tp: &Type) -> Option<u16> {
-        let tp = tp.base();
+        // @FR-B-Ref-Uniform — through `peel_link`, not `base`.  This asks WHICH KEYED KIND
+        // a type is, which is a question about the shape and never about how the value is
+        // reached, so a `&hash<τ[k]>` parameter has to answer the same as its `hash<τ[k]>`
+        // twin.  Asked through `base`, the link was not peeled, a `&` parameter answered
+        // `None`, and `new_record`'s fallback handed `OpNewRecord` the wrap-`vector<τ>` id
+        // — the exact miss P188 documents one function down, reached by a spelling it did
+        // not cover.  `record_finish` then dispatched through `Parts::Vector`, the keyed
+        // insert never ran, and `len` read 0 with no diagnostic (loft#1445).
+        let tp = tp.peel_link();
         let content = match tp {
             Type::Sorted(td, _, _)
             | Type::Hash(td, _, _)
@@ -5863,6 +5887,34 @@ pub(crate) fn is_keyed(tp: &Type) -> bool {
             | Type::Radix(_, _, _)
             | Type::Trie(_, _, _)
     )
+}
+
+/// Is this a keyed collection, however it is REACHED — the SHAPE question, `&` link peeled.
+///
+/// Reach for this wherever the answer decides what the collection IS: which kind's insert to
+/// emit, which type id `OpNewRecord` is given, whether a `[…]` source is a bulk fill.
+/// `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable, so every one of
+/// those has to answer the same for `&hash<E[k]>` as for `hash<E[k]>`.
+///
+/// The counterpart is [`owns_keyed_store`], and the two exist as NAMES rather than as a
+/// documented choice between `base()` and `peel_link()` at each site.  `is_keyed` was asked
+/// both questions across 76 call sites; widening it for the shape silently changed every
+/// ownership answer with it, and the cost was an ICE at one site and a silent wrong answer in
+/// a caller two frames down at another (loft#1445).  A new site now picks a name that says
+/// which question it is asking.
+pub(crate) fn keyed_kind(tp: &Type) -> bool {
+    is_keyed(tp.peel_link())
+}
+
+/// Is this a keyed collection whose store this VARIABLE ITSELF owns — the OWNERSHIP question.
+///
+/// Reach for this wherever the answer decides what may be ALLOCATED, MINTED or REPLACED in
+/// place.  `(B-Ref-Alias)` makes a `&hash<E[k]>` a live link to a collection the caller owns,
+/// so none of those are this frame's to do: `gen_keyed_null` would allocate a store the
+/// variable has no room for, and the `op == "="` keyed replace would write this frame's
+/// records into a collection two frames down.
+pub(crate) fn owns_keyed_store(tp: &Type) -> bool {
+    is_keyed(tp) && !matches!(tp.base(), Type::RefVar(_))
 }
 
 /// Does this type name any collection a `[…]` literal can build — keyed or vector?
