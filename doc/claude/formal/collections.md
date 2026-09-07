@@ -146,22 +146,22 @@ every read would then pay for the check.
 ### 1.3b One field, one decode — `Col-Axis`
 
 ```
-  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes.  The narrow
-                widths store `value - start`, so every reader adds that `start` back; the kind of
-                collection asking does not change what the bytes mean, and neither does the storage
-                asked (resident `Store` or paged image).  A lookup therefore answers a record for
-                exactly the keys its own iteration yields.
+  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes — layout.md
+                `(L-Narrow-Decode)`, of which this is the KEYED refinement.  The kind of collection
+                asking does not change what the bytes mean, and neither does the storage asked
+                (resident `Store` or paged image), so a lookup answers a record for exactly the
+                keys its own iteration yields.
 ```
 *Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
 value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
 
-**In words.** A key's bytes are not its value. Every narrow width is stored biased against the
-declared range's minimum, and the `Key` descriptor carries that minimum precisely so a reader can
-undo it. The rule exists because the question has FOUR askers — two in `keys.rs`, one per storage
-for `spatial` — and a reader that re-derives the decode instead of reading `Key::start` gets a
-different code for the same record than the writer produced. That does not present as an error: it
-presents as `c[k]` answering `null` for a record `for x in c` yields (loft#1431, the two `spatial`
-readers, where `u8` and `integer` stayed correct because their bias is zero).
+**In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
+slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
+descriptor carries the minimum so a reader can undo it. It exists because a reader that
+re-derives the decode instead of reading `Key::start` gets a different code for the same record
+than the writer produced — which does not present as an error, but as `c[k]` answering `null` for
+a record `for x in c` yields (loft#1431, the two `spatial` readers, where `u8` and `integer`
+stayed correct because their bias is zero).
 
 `(Col-Axis)` is about the DECODE only. Which values an axis may take is `(Col-Spatial)`'s
 integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level

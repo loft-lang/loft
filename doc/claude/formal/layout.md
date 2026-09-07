@@ -95,6 +95,11 @@ store written by one build readable by another *of the same layout*.
               minimum.  So the ENCODING is part of layout(τ) exactly as the width is, and every
               consumer of it — the schema `Parts`, the read/write ops, the key descriptor and the
               constructor generated `init()` emits — derives it from ONE choice.
+  (L-Narrow-Decode)  those bytes hold `value - start`, where `start` is the declared range's
+              MINIMUM.  So the width says how MANY bytes, the SIGN says how they are extended,
+              and the minimum says what they MEAN: a reader needs all three.  Every decode of a
+              narrow slot adds `start` back, and the reserved null CODE is a fact about the raw
+              bytes, tested before the bias is undone and only where the slot reserves one.
 ```
 
 **In words.** Each base type has a fixed stored width. A narrow integer (`i32`, `u8`, …) stores in
@@ -106,6 +111,27 @@ bytes and mean different numbers by them, so a reader that knows only *four byte
 and a guess is silent: it answers a plausible number rather than refusing. That is why the choice
 is a single function of the type (`NarrowIntKind`) and not a `match` on the width repeated at each
 consumer — a repeat is a place the two can disagree, and the disagreement never announces itself.
+
+`(L-Narrow-Decode)` is the other half of the same sentence, and it is stated separately because
+using one without the other is a defect that has now shipped five times over. A reader that takes
+the width and drops the minimum returns the RAW STORED BYTE: correct for `u8` and `u16`, whose
+declared range starts at zero and whose bias is therefore nothing, and wrong for `i8`, `i16` and
+every `integer limit(a, b)` with a non-zero `a`. That is why it survives — the two widths a check
+reaches for first are the two it cannot affect.
+
+The question has FIVE readers, and three of them had it wrong: `keys::compare_ref`,
+`keys::get_key` and `keys::hash_key` pass the minimum (`Key::start`) and are correct;
+`radix_db::axis_i64` and `paged_reader::PagedSpatial::axis_value` did not, so a `spatial` point
+lookup answered `null` for a record its own iteration yields (loft#1431); and
+`native::reflect_field_at` did not, so `field_value` on an `i8` holding `-100` answered `28`
+(loft#1438). The sentinel clause is that last one's second half: `255` is the null code only
+where the field is NULLABLE, and reading it as null regardless reported a not-null `u8` holding
+`255`, and a not-null `i8` holding `127`, as absent.
+
+*Anchors:* `Store::get_byte` / `get_short` / `get_short_full` take the minimum as their `min`
+parameter and are the encoding's one home; `database/structures.rs`'s `Enc::Byte(from) =>
+set_byte(.., from, v)` is the WRITER, which is the oracle whenever two readers disagree.
+The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
 
 ### References, collections, and child records
 
