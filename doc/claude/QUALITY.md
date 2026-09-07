@@ -2522,7 +2522,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 733 | 372 | 5 | **356** |
+| 733 | 374 | 5 | **354** |
+
+*This row is a property of the TREE and moves on almost any commit that adds, removes or
+re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather
+than adjusted by hand — the total is the other three columns summed, and a number measured
+before a later commit cannot survive it.*
+
+*loft#1451 moved two out of the opaque column by PEELING: `tuple_return_rewrite` now peels
+`Optional` before deciding whether a return is a tuple, which is the fix itself — it matched
+`Type::Tuple` while the shape it had to catch was `Optional(Tuple(…))`.*
 
 *loft#1449 removed one from each of the first two columns, by MERGING rather than by peeling.*
 `Type::name` and `Type::source_name` were two match statements over the same variants, kept

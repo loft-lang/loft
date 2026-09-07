@@ -45,6 +45,12 @@
 //     dense one — the direction above that a one-sided fallback list breaks.
 //   * every cell is written BOTH ways, `x.area()` and `area(x)`, because one spelling agreeing
 //     with the expected value proves nothing about the other; the defect was that they differed.
+//   * the TAGGED spelling of `t?`. A nullable LOCAL is `Type::Optional`, but an inline slot holds
+//     an absent `Duo` as the synthetic `__nullable<Duo>` enum (`@FR-L-Null-Tag`) — one notion,
+//     two spellings, and dispatch reads the receiver's nullability. Every other cell here uses a
+//     local, so without `Tagged1432` the whole file could pass while a `vector<Duo?>` element and
+//     a `Duo?` field went to the DENSE overload. Reading only the marker is the shape this fix is
+//     about, one level down.
 //
 // The warning COUNT is an assertion in its own right: only the four `Dense1432` cells may warn,
 // which is why those four are the only asserts here whose MESSAGE does not interpolate the call
@@ -76,6 +82,8 @@ fn area(self: Dense1432) -> integer { self.s * 10 }
 
 struct Only1432 { s: integer }
 fn area(self: Only1432?) -> integer { if self == null { -1 } else { 200 } }
+
+struct Tagged1432 { one: Duo1432? }
 
 fn main() {
   // ---- dense declared first, then the nullable overload ----
@@ -121,4 +129,14 @@ fn main() {
   assert(area(o_present) == 200, "and the free spelling agrees: {area(o_present)}");
   assert(o_absent.area() == -1, "an absent receiver reaches it with self == null: {o_absent.area()}");
   assert(area(o_absent) == -1, "and the free spelling agrees: {area(o_absent)}");
+
+  // ---- the TAGGED spelling of `Duo1432?`: an inline slot, not an Optional local ----
+  elems: vector<Duo1432?> = [Duo1432 { s: 4 }, null];
+  assert(elems[0].area() == 200, "a present ELEMENT reaches the nullable overload: {elems[0].area()}");
+  assert(elems[1].area() == -1, "and an absent one reaches it with self == null: {elems[1].area()}");
+
+  held = Tagged1432 { one: Duo1432 { s: 5 } };
+  gone = Tagged1432 { one: null };
+  assert(held.one.area() == 200, "a present FIELD reaches the nullable overload: {held.one.area()}");
+  assert(gone.one.area() == -1, "and an absent one reaches it with self == null: {gone.one.area()}");
 }
