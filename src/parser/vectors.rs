@@ -5880,7 +5880,7 @@ impl Parser {
 
 pub(crate) fn is_keyed(tp: &Type) -> bool {
     matches!(
-        tp.base(),
+        tp.peel_link(),
         Type::Hash(_, _, _)
             | Type::Sorted(_, _, _)
             | Type::Index(_, _, _)
@@ -5932,7 +5932,7 @@ pub(crate) fn owns_keyed_store(tp: &Type) -> bool {
 /// through to the generic operator lookup and be refused as *"No matching operator 'Add'"*
 /// (loft#1207).
 pub(crate) fn is_collection(tp: &Type) -> bool {
-    is_keyed(tp) || matches!(tp.base(), Type::Vector(_, _))
+    is_keyed(tp) || matches!(tp.peel_link(), Type::Vector(_, _))
 }
 
 /// What a `c += e` source IS, relative to the collection it is being appended to.
