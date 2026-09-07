@@ -9,6 +9,44 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### @PLN156: release gates that prove they ran, and a gate that checks the gates (2026-09-07)
+
+2026.8.0's real cost was discovering by hand that several "done" things had never been true —
+step 4 never completed for any release, the validator rejecting loft's own entry, `install.sh`
+leaving installations that do not verify.  @PLN156 lands that reckoning as standing machinery:
+
+- **Step 4's advice became four measured checklist items.**  `A-validator-dryrun`
+  (`scripts/validator-dryrun.py`: the registry's OWN validator against this release's generated
+  entry spliced into a clone of the live index, before the submission; `--replay` re-runs a
+  landed version as-if-new, `--corrupt` is the instrument's falsification — one flipped sha256
+  must red gate 2b, and does), `A-registry-this` (the entry + every triple + each
+  `manifest_sha256`, asked of the index directly — `self-update`'s `Current` verdict prints the
+  RUNNING version either way, so the CLI alone cannot witness a forgotten splice),
+  `A-selfupdate-resolves` (the postscript's command run and read; the empty-index message is a
+  FAIL), and `A-acquisition` (`scripts/acquisition-chain.sh`: install.sh over real transport →
+  `--version` → resolution → the literal anchor line → a program executed; exit 3 keeps "not
+  acquirable yet" apart from "ran and failed").  `M-verify-anchored` retired into it.
+  `.github/workflows/post-publish-verify.yml` runs the chain on every publish and by dispatch
+  against any version.  All four measured green against the live 2026.9.0.
+- **UNKNOWN never aggregates green.**  The checklist summary names every automatic item that
+  never ran, the header stamps the commit measured, and the exit code splits red (1) from
+  not-yet-evidence (3) from green (0).
+- **Cadence on every item.**  `[mid]` = meaningful at the cycle's halfway point (overall
+  stability), `[pre]` = finishable in the month's last days as pre-work, unmarked = the release
+  window; `--phase mid|pre` shows and measures exactly that slice.
+- **`make release-liveness`** (+ the `M-liveness` item): suppressions justified by CLOSED
+  issues, gate workflows that quietly stopped firing (first live run: `win-cdylib.yml` silent
+  48 days), checklist items never recorded in any cycle.  A report, never a gate.
+- **Adversarial install inputs.**  A manifest naming an ABSOLUTE path made `check_manifest`
+  read it — `root.join("/etc/x")` replaces the root — because the escape rule had two homes
+  and only `owned_files` carried the absolute half.  One home now
+  (`verify_self::manifest_path_escapes`), both callers read it, refused before any filesystem
+  access; plus zip-slip cells (`..`/absolute/symlink entries land nothing outside staging).
+- **`make ci` and `find_problems.sh --subject` worked on no Mac since 2808e183.**  macOS's
+  /bin/sh and /bin/bash are bash 3.2: the gate-throttle's `case` pattern inside `$( )` needs
+  the optional leading `(`, `nproc` is `sysctl -n hw.ncpu` (now `CI_NPROC`), and
+  `test_subjects.sh`'s `declare -A` maps are now case-functions.
+
 ### A nullable capture a closure mutates is neither boxed nor guarded (2026-09-07)
 
 A closure that MUTATES a captured scalar boxes it into a shared `__cell_<T>` record, so the

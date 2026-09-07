@@ -556,7 +556,28 @@ ordering — the owner never publishes an empty release and then waits for binar
 > latest published release.  **2026.8.0's entry has to land before the version bump
 > PR can merge.**
 
-**Forgetting step 4 is caught on the NEXT release, not by anyone noticing.**  Only
+**Forgetting step 4 is caught on THIS release now, not only the next one (@PLN156).**
+The postscript's commands stopped being advice: `make release-checklist` measures the
+whole of step 4's effect as four automatic items — `A-validator-dryrun`
+(`scripts/validator-dryrun.py`: the registry's OWN validator run against this
+release's generated entry, spliced into a clone of the live index, BEFORE the
+submission — the rehearsal that would have caught 2026.8.0's rejection months early;
+`--replay`/`--corrupt` are how the instrument itself is falsified), `A-registry-this`
+(the entry, every published triple, and each `manifest_sha256` present in the signed
+index — asked of the index directly, because `self-update`'s `Current` verdict prints
+the RUNNING version whether the index carries this release or merely an older one, so
+the CLI output alone cannot witness a forgotten splice), `A-selfupdate-resolves` (the
+postscript's own command, run and read: the empty-index message is a FAIL, never a
+quiet line), and `A-acquisition` (`scripts/acquisition-chain.sh`: install.sh over the
+real transport → `--version` → resolution → the literal `origin: matches the signed
+registry index` line → a program executed; the 2026-08-31 throwaway-clone verification
+as a per-release gate, with `.github/workflows/post-publish-verify.yml` as its
+standing copy on every publish — dispatchable mid-cycle against the PREVIOUS release,
+since the live chain staying acquirable is a stability property, not a release-day
+one).  `M-verify-anchored` retired into `A-acquisition`, which asserts the anchor line
+on an installation it just made.
+
+**And it is still caught on the NEXT release as the backstop.**  Only
 step 2 fails loudly; a missing registry entry just leaves `loft self-update`
 reporting "no releases published to compare against" forever, which nobody is paged
 by.  So the `previous release reached the registry` CI job goes red on the PR that
@@ -969,6 +990,33 @@ Three things make it worth working through rather than reading:
   extension pass and the native-debug gate are rituals for code most releases
   never change; the script asks git whether they moved since the last tag.  A
   list that includes work nobody needs to do is one people learn to skim.
+
+Two properties added by @PLN156, because 2026.8.0's real cost was discovering by hand
+that several "done" things had never been true:
+
+- **Every item carries its CADENCE, and the early views are commands.**  `[mid]` marks
+  an item that runs meaningfully at the cycle's HALFWAY point, because it measures
+  overall stability rather than a release artifact (the leak/valgrind sweeps, the
+  monthly reviews, the liveness census, `A-registry-prev` — the step-4 backstop, worth
+  asking early); `[pre]` marks what can be finished in the month's LAST DAYS as
+  pre-work, so the release does not spill deep into the new month (changelogs, the PDF,
+  the reference review, the release gate on a near-final candidate); unmarked items
+  need the release window itself (the tag, the draft, or the published assets).
+  `make release-checklist ARGS="--phase mid"` (or `pre`) shows and measures exactly
+  that slice.  An early run of a tag-candidate item (valgrind, leaks, release-gate,
+  wasm) is early warning, not its tick — redo it on the candidate.
+- **A check that could not run never reads as a check that passed.**  The summary names
+  every automatic item that stayed UNKNOWN ("not green: … never ran"), the exit code
+  keeps red (1) apart from not-yet-evidence (3) and green (0), and the header stamps
+  the commit the run measured — release evidence is "these gates ran on this commit",
+  never "nothing was red".
+
+**The liveness census — a gate that checks the gates are live.**  `make
+release-liveness` (the `M-liveness` item makes it per-release; it is a REPORT, never a
+gate) walks the three drifts that accumulate BETWEEN releases: suppressions whose
+justifying issue has since CLOSED, gate workflows that quietly stopped firing or whose
+last verdict was red, and checklist items never recorded as run in any committed cycle
+— the 2026.8.0 class, rescued by hand exactly once and now asked continuously.
 
 Two corrections it carries that this document used to get wrong:
 

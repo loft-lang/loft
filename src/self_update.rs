@@ -277,7 +277,9 @@ fn owned_files(staged: &Path) -> Result<(Vec<String>, bool), String> {
         return walk_files(staged).map(|f| (f, false));
     }
     for (rel, _) in &entries {
-        if rel.contains("..") || Path::new(rel).is_absolute() {
+        // The one home of the escape rule (see `verify_self::manifest_path_escapes`);
+        // this and `check_manifest` carried separate copies until they drifted.
+        if crate::verify_self::manifest_path_escapes(rel) {
             return Err(format!("staged bundle lists an unsafe path: {rel}"));
         }
     }
@@ -970,6 +972,134 @@ mod tests {
             "a refused bundle must leave nothing unpacked"
         );
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── @PLN156 phase 4 — adversarial input: what a download or a bundle CLAIMS may
+    // point anywhere, and every cell asserts the same invariant: nothing lands outside
+    // the directory the operation owns.  The manifest `..` cell above
+    // (`a_bundle_listing_an_escaping_path_is_refused`) was the first of this family;
+    // these are its siblings across the other untrusted inputs.
+
+    /// A zip whose ENTRY NAMES escape — `../x`, an absolute path — must leave nothing
+    /// outside the staging directory, whatever the extractor does with the entries
+    /// themselves.  The hash MATCHES on purpose: traversal is a property of the
+    /// archive's contents, which the hash from the signed index vouches for only
+    /// against substitution, not against a malicious release.
+    #[test]
+    #[cfg(feature = "registry")]
+    fn a_zip_entry_that_escapes_the_staging_directory_lands_nowhere() {
+        use std::io::Write;
+        let base = std::env::temp_dir().join("loft-zip-traversal-test");
+        let _ = std::fs::remove_dir_all(&base);
+        // The canary lives BESIDE the staging dir: the place `../` reaches from inside.
+        let staging = base.join("stage");
+        std::fs::create_dir_all(&staging).unwrap();
+        let escaped = base.join("escaped-by-dotdot.txt");
+        let absolute = std::env::temp_dir().join("loft-zip-traversal-absolute.txt");
+        let _ = std::fs::remove_file(&absolute);
+
+        let zip_path = base.join("evil.zip");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+        // A valid bundle shape around the hostile entries, so a refusal (fine) and a
+        // sanitising extract (also fine) are both reachable outcomes.
+        w.start_file("bin/loft", opts).unwrap();
+        w.write_all(b"#!/bin/sh\n").unwrap();
+        w.start_file("../../escaped-by-dotdot.txt", opts).unwrap();
+        w.write_all(b"escaped").unwrap();
+        w.start_file(absolute.to_str().unwrap(), opts).unwrap();
+        w.write_all(b"escaped").unwrap();
+        w.finish().unwrap();
+
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let hash = crate::integrity::sha256_hex(&bytes);
+        let url = format!("file://{}", zip_path.display());
+        // Refusing the archive and extracting it sanitised are BOTH acceptable
+        // verdicts; writing outside `staging` is the only wrong one.
+        let _ = fetch_bundle(&url, &hash, &staging);
+        assert!(
+            !escaped.exists(),
+            "a `../` zip entry escaped the staging directory: {}",
+            escaped.display()
+        );
+        assert!(
+            !absolute.exists(),
+            "an absolute zip entry landed at its own path: {}",
+            absolute.display()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The absolute-path sibling of the manifest `..` cell: `/etc/...` carries no `..`,
+    /// so it needs its own refusal (and its own test — the guard tests the two shapes
+    /// with separate predicates).
+    #[test]
+    fn a_bundle_listing_an_absolute_path_is_refused() {
+        let (root, staged) = dirs("absolute");
+        bundle(&root, &[("bin/loft", "OLD")]);
+        bundle(&staged, &[("bin/loft", "NEW")]);
+        let mut sums = std::fs::read_to_string(staged.join("SHA256SUMS")).unwrap();
+        sums.push_str("00  /etc/loft-evil\n");
+        std::fs::write(staged.join("SHA256SUMS"), sums).unwrap();
+        let err =
+            apply_bundle(&root, &staged, false).expect_err("an absolute path must be refused");
+        assert!(
+            err.contains("unsafe path") || err.contains("escapes"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            "OLD",
+            "nothing may move when the manifest lists an absolute path"
+        );
+    }
+
+    /// A symlink entry pointing out of the archive: whether the extractor materialises
+    /// it as a link, a file, or not at all, nothing may land outside the staging
+    /// directory — and nothing may be WRITTEN THROUGH it to the link's target.
+    #[test]
+    #[cfg(all(feature = "registry", unix))]
+    fn a_symlink_entry_pointing_outside_writes_nothing_there() {
+        use std::io::Write;
+        let base = std::env::temp_dir().join("loft-zip-symlink-test");
+        let _ = std::fs::remove_dir_all(&base);
+        let staging = base.join("stage");
+        std::fs::create_dir_all(&staging).unwrap();
+        let target_dir = base.join("outside");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let canary = target_dir.join("canary.txt");
+        std::fs::write(&canary, "untouched").unwrap();
+
+        let zip_path = base.join("link.zip");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let plain: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+        // Entry 1: a symlink (unix mode 0o120777) whose body names the outside dir.
+        let link_opts: zip::write::FileOptions<()> =
+            zip::write::FileOptions::default().unix_permissions(0o120_777);
+        w.start_file("bin", link_opts).unwrap();
+        w.write_all(target_dir.to_str().unwrap().as_bytes())
+            .unwrap();
+        // Entry 2: a file UNDER the linked name — through a materialised link this
+        // write would land in `outside/`.
+        w.start_file("bin/loft", plain).unwrap();
+        w.write_all(b"#!/bin/sh\n").unwrap();
+        w.finish().unwrap();
+
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let hash = crate::integrity::sha256_hex(&bytes);
+        let url = format!("file://{}", zip_path.display());
+        let _ = fetch_bundle(&url, &hash, &staging);
+        assert_eq!(
+            std::fs::read_to_string(&canary).unwrap(),
+            "untouched",
+            "a write travelled through a symlink entry out of the staging directory"
+        );
+        assert!(
+            !target_dir.join("loft").exists(),
+            "bin/loft was written through the symlink into {}",
+            target_dir.display()
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

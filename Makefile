@@ -517,7 +517,14 @@ TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 # too, so a naive loop counts our own claim twice and halves the box for a gate that is
 # alone on it.  Measured while writing this — no claims answered 1, one live claim
 # answered 3.  `ci-guard`'s own sibling loop skips self the same way.
-CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f "$$f" ] || continue; d=$$(cd "$$(dirname "$$f")" 2>/dev/null && pwd -P) || continue; case " $$seen " in *" $$d "*) continue;; esac; seen="$$seen $$d"; kill -0 "$$(cat "$$f" 2>/dev/null)" 2>/dev/null && n=$$((n+1)); done; [ $$n -lt 1 ] && n=1; echo $$n )
+# `nproc` is Linux; macOS spells it `sysctl -n hw.ncpu` — a bare $(nproc) made the
+# recipe die with `nproc: command not found` on every Mac (same 2808e183 throttle).
+CI_NPROC = $$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4 )
+# The case pattern carries a leading `(` on purpose: macOS's /bin/sh is bash 3.2, which
+# cannot parse a pattern's bare `)` inside `$( )` command substitution — without it,
+# every `make ci` on a Mac died at the recipe with `syntax error near ';;'` (the
+# optional open-paren is POSIX and is what rebalances 3.2's parser).
+CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f "$$f" ] || continue; d=$$(cd "$$(dirname "$$f")" 2>/dev/null && pwd -P) || continue; case " $$seen " in (*" $$d "*) continue;; esac; seen="$$seen $$d"; kill -0 "$$(cat "$$f" 2>/dev/null)" 2>/dev/null && n=$$((n+1)); done; [ $$n -lt 1 ] && n=1; echo $$n )
 
 
 # Speed REPORT for the slow tests — never a gate.  `speed` measures the tests
@@ -934,6 +941,14 @@ bug-review:  ## Monthly bug-review aid: which mechanism classes are still produc
 # render as a broken target.  A report says what it found; it does not stop the build.
 release-checklist:  ## Per-release checklist: what CI proved, and what is left for a human
 	@python3 scripts/release-checklist.py $(ARGS) || true
+
+# The liveness census (@PLN156): are the gates themselves still live?  Suppressions
+# justified by CLOSED issues, gate workflows that quietly stopped firing, checklist
+# items never run in any recorded cycle.  A REPORT, never a gate — the per-release
+# reader is the M-liveness checklist item; `ARGS="--no-network"` for the offline half.
+.PHONY: release-liveness
+release-liveness:  ## Census: stale suppressions, gates that stopped firing, steps never run
+	@python3 scripts/release-liveness.py $(ARGS)
 
 # Every nightly, run deliberately against THIS commit in one CI run that ends in one
 # verdict — the release evidence RELEASE.md § The nightlies asks for, on demand instead
@@ -1931,7 +1946,7 @@ ci-guard:
 	    kill -0 "$$(cat "$$d/.ci-running" 2>/dev/null)" 2>/dev/null || continue; \
 	    echo "make ci: WARNING — a gate is also running in $$d (pid $$(cat "$$d/.ci-running"))."; \
 	    echo "  Not refused: separate target/ and result.txt, so neither result is fiction."; \
-	    echo "  But you are sharing $$(nproc) threads — expect a slower run, and treat any"; \
+	    echo "  But you are sharing $(CI_NPROC) threads — expect a slower run, and treat any"; \
 	    echo "  300s slow-timeout as 'the machine was busy' until it reproduces alone."; \
 	done
 
@@ -2010,9 +2025,9 @@ ci: ci-guard
 	mkdir -p $(TEST_SCRATCH) && \
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $$(nproc) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
-	{ [ "$${gates:-1}" -gt 1 ] && echo "make ci: THROTTLED to $$jobs of $$(nproc) threads — $$gates gates live on this box" || echo "make ci: $$jobs of $$(nproc) threads (sole gate)"; } | tee -a result.txt && \
+	{ [ "$${gates:-1}" -gt 1 ] && echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box" || echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; } | tee -a result.txt && \
 	$(MAKE) rebuild-native-cdylibs >> result.txt 2>&1 && \
 	cargo fmt -- --check >> result.txt 2>&1 && \
 	cargo clippy -- -D warnings >> result.txt 2>&1 && \
@@ -2029,7 +2044,7 @@ ci: ci-guard
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $$(nproc) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live" >> result.txt && \
 	cargo nextest run --profile ci >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \

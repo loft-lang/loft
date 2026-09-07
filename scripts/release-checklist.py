@@ -36,6 +36,10 @@ Usage:
     scripts/release-checklist.py --undo M-win-selfupdate
     scripts/release-checklist.py --json
 
+Exit codes: 0 every applicable automatic gate ran and passed; 1 at least one FAILED;
+3 none failed but some never ran (UNKNOWN) -- not-yet-evidence, distinct from red,
+because a skipped check must never read as a passed one (@PLN156).
+
 Progress on the manual half is kept in `doc/claude/releases/<cycle>/checklist.json`,
 committed with the tree -- a tick made on one machine is a tick on every machine
 state, never committed, and never consulted for an automatic item.
@@ -133,6 +137,7 @@ class Item:
         passes: str = "",
         check=None,
         applies=True,
+        cadence: str = "",
     ):
         self.id = ident
         self.title = title
@@ -140,6 +145,15 @@ class Item:
         self.passes = passes
         self.check = check
         self.applies = applies
+        # When this item is PRACTICAL to run, earlier than the release window itself
+        # (@PLN156): "mid" = meaningful at the cycle's halfway point, because it
+        # measures overall stability rather than a release artifact; "pre" = can be
+        # completed in the month's last days as pre-work, so the release does not
+        # spill deep into the new month.  Empty = the release window only (it needs
+        # the tag, the draft, or the published assets to exist).  An early run of a
+        # TAG-CANDIDATE item (valgrind, leaks, release-gate, wasm) is early warning,
+        # not the final evidence — redo it on the candidate; ticks belong there.
+        self.cadence = cadence
         self.state = NA
         self.evidence = ""
 
@@ -549,6 +563,151 @@ def check_prev_release_in_registry(version: str, network: bool):
     return FAIL, f"{m.group(1)} — {m.group(2)}" if m else first
 
 
+INDEX_URL = os.environ.get(
+    "LOFT_REGISTRY_INDEX",
+    "https://raw.githubusercontent.com/loft-lang/registry/main/index.json",
+)
+
+
+def check_this_release_in_registry(version: str, network: bool):
+    """THIS release took effect in the signed index — the step-4 'ran AND took effect'
+    gate (@PLN156 phase 1).
+
+    Asked against the index directly, not through `loft self-update`'s output, because
+    that output cannot carry the question: its `Current` verdict prints the RUNNING
+    version whether the index's newest equals it or merely trails it, so a forgotten
+    splice reads identically to a landed one from the CLI alone.  Here the entry, every
+    published triple's binary, and each binary's `manifest_sha256` (what `verify-self`
+    anchors an INSTALLED tree by) are required by name.
+    """
+    if not network:
+        return UNKNOWN, "skipped (--no-network)"
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(INDEX_URL, timeout=30) as r:
+            index = json.load(r)
+    except Exception as e:  # noqa: BLE001 — any transport/parse failure is UNKNOWN
+        return UNKNOWN, f"could not fetch the signed index: {e}"
+    versions = index.get("packages", {}).get("loft", {}).get("versions", {})
+    entry = versions.get(version)
+    if entry is None:
+        have = ", ".join(sorted(versions)) or "none"
+        return FAIL, (
+            f"loft {version} is NOT in the signed index (it carries: {have}) — the "
+            "registry splice has not landed; `self-update` resolves nothing for it "
+            "and no installation of it can ever anchor (RELEASE.md step 4)"
+        )
+    try:
+        triples = published_triples()
+    except (RuntimeError, SystemExit) as e:
+        return UNKNOWN, f"cannot read PUBLISHED_TRIPLES ({e})"
+    binaries = entry.get("binaries", {})
+    missing = [t for t in triples if t not in binaries]
+    if missing:
+        return FAIL, f"the entry lacks binaries for: {', '.join(missing)}"
+    unanchored = [t for t in triples if not binaries[t].get("manifest_sha256")]
+    if unanchored:
+        return FAIL, (
+            "no manifest_sha256 on: " + ", ".join(unanchored)
+            + " — installations from these bundles can never anchor to the signature"
+        )
+    return OK, f"{version} in the signed index, {len(triples)} binaries, each anchored"
+
+
+def local_loft_binary() -> str:
+    """The freshest locally built loft, release preferred."""
+    candidates = [
+        os.path.join(ROOT, "target", "release", "loft"),
+        os.path.join(ROOT, "target", "debug", "loft"),
+    ]
+    have = [p for p in candidates if os.path.isfile(p)]
+    if not have:
+        return ""
+    return max(have, key=os.path.getmtime)
+
+
+def check_selfupdate_resolves(version: str, network: bool):
+    """The command RELEASE.md step 4's postscript gives, run and read instead of
+    advised (@PLN156 phase 1): `loft self-update --dry-run --refresh` must RESOLVE.
+
+    The one output this must never let through quietly is `no releases published to
+    compare against` — a cache predating the splice prints it in the same words as an
+    empty index, and it exits 0 either way.  Content (is THIS version the entry, with
+    every triple anchored) is A-registry-this' half; this half proves the user-facing
+    resolver — signature verification, trust roots, cache refresh — reaches it.
+    """
+    if not network:
+        return UNKNOWN, "skipped (--no-network)"
+    loft = local_loft_binary()
+    if not loft:
+        return UNKNOWN, "no built loft (target/release or target/debug) — cargo build first"
+    code, out = sh(loft, "self-update", "--dry-run", "--refresh", timeout=120)
+    if code != 0:
+        last = out.splitlines()[-1] if out else str(code)
+        return FAIL, f"self-update --dry-run --refresh exited {code}: {last}"
+    if "no releases published to compare against" in out:
+        return FAIL, (
+            "the signed index resolves NOTHING for this binary — the splice has not "
+            "landed (or a stale cache survived --refresh); the step-4 omission this "
+            "gate exists for"
+        )
+    if "is the newest release" in out or "is available" in out:
+        line = next(
+            (l.strip() for l in out.splitlines()
+             if "newest release" in l or "is available" in l),
+            "resolved",
+        )
+        return OK, line
+    if "not built for" in out:
+        return FAIL, "the index has a release but no build for this host"
+    return UNKNOWN, "self-update output matched no known verdict — read it by hand"
+
+
+def check_acquisition(version: str, network: bool):
+    """The whole acquisition chain, end to end (@PLN156 phase 2): install.sh over the
+    real transport, --version match, signed-index resolution, the verify-self ANCHOR
+    line, and a program executed.  scripts/acquisition-chain.sh is the instrument; its
+    exit 3 (release not downloadable yet) is UNKNOWN here, because 'could not run' and
+    'ran and failed' are the two answers a release must never confuse.
+    """
+    if not network:
+        return UNKNOWN, "skipped (--no-network)"
+    code, out = sh(
+        "sh", os.path.join(ROOT, "scripts", "acquisition-chain.sh"),
+        "--version", version, timeout=600,
+    )
+    last = out.splitlines()[-1].strip() if out else str(code)
+    if code == 0:
+        return OK, last
+    if code == 3:
+        return UNKNOWN, "release not acquirable yet (publish first) — " + last
+    return FAIL, last
+
+
+def check_validator_dryrun(version: str, network: bool):
+    """The registry's OWN validator, run against this release's entry BEFORE the splice
+    is submitted (@PLN156 phase 3) — the rehearsal that would have exposed 2026.8.0's
+    rejection months early.  Exit 3 (structural-only: no published assets yet) is
+    UNKNOWN: a structural pass is not the full verdict and must not render as one.
+    Exit 4 (already in the live index) is a pass — the live validator covered it.
+    """
+    if not network:
+        return UNKNOWN, "skipped (--no-network)"
+    code, out = sh(
+        sys.executable, os.path.join(ROOT, "scripts", "validator-dryrun.py"),
+        "--version", version, timeout=1800,
+    )
+    last = out.splitlines()[-1].strip() if out else str(code)
+    if code == 0:
+        return OK, last
+    if code == 4:
+        return OK, last
+    if code == 3:
+        return UNKNOWN, last
+    return FAIL, last
+
+
 def check_draft_assets(version: str, network: bool):
     """The draft the tag built: are all ten assets on it?
 
@@ -761,6 +920,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "CHANGELOG.md has this release's section",
             "write it",
             check=lambda: check_changelog(version, "CHANGELOG.md", "CHANGELOG.md", True),
+            cadence="pre",
         ),
         Item(
             "A-changelog-tech",
@@ -772,60 +932,70 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
                 "CHANGELOG_TECHNICAL.md",
                 False,
             ),
+            cadence="pre",
         ),
         Item(
             "A-clean",
             "Working tree is clean",
             "commit or stash",
             check=check_tree_clean,
+            cadence="mid pre",
         ),
         Item(
             "A-main",
             "HEAD contains origin/main",
             "git fetch && git rebase origin/main",
             check=check_head_on_main,
+            cadence="mid pre",
         ),
         Item(
             "A-ci",
             "`make ci` is green ON THIS TREE",
             "make ci",
             check=check_ci_verdict,
+            cadence="mid pre",
         ),
         Item(
             "A-registry-prev",
             "The PREVIOUS release reached the signed registry index",
             "scripts/check-release-published.py",
             check=lambda: check_prev_release_in_registry(version, network),
+            cadence="mid pre",
         ),
         Item(
             "A-pdf",
             "The reference PDF is current (it ships in every bundle)",
             "cargo run --bin gendoc && make pdf",
             check=check_reference_pdf,
+            cadence="pre",
         ),
         Item(
             "A-pdf-version",
             "The reference PDF says it is THIS release",
             "cargo run --bin gendoc && make pdf",
             check=lambda: check_reference_pdf_version(version),
+            cadence="pre",
         ),
         Item(
             "A-pdf-content",
             "The reference's CONTENT is whole — every chapter, not just a fresh build",
             "cargo run --bin gendoc && make pdf",
             check=check_reference_pdf_content,
+            cadence="pre",
         ),
         Item(
             "A-reference-review",
             "Every reference chapter has been read against the shipped language",
             "make reference-review",
             check=check_reference_review,
+            cadence="mid pre",
         ),
         Item(
             "A-ignores",
             "Every shipped `#[ignore]` carries a rationale",
             "tests/ignored_tests.baseline",
             check=check_ignored_tests,
+            cadence="mid pre",
         ),
         Item(
             "M-valgrind",
@@ -834,6 +1004,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "GREEN — no invalid access and nothing definitely lost on either backend.  A "
             "possibly-lost record is Rust's interior pointers, not a leak, and a leaked STORE is "
             "M-leaks' question (TESTING.md § Occasional valgrind pass)",
+    cadence="mid pre",
 ),
         Item(
             "M-leaks",
@@ -842,6 +1013,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "22-threading.loft and 80-parallel-block.loft",
             "no `Warning: N stores not freed at program exit`.  A release that leaks "
             "one store per loop iteration is unusable for a server or a game loop",
+            cadence="mid pre",
         ),
         Item(
             "M-ignores",
@@ -850,6 +1022,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "SCRIPTS_NATIVE_SKIP / ignored_scripts() in tests/",
             "each traces to a named open blocker.  `A-ignores` checks the rationales "
             "exist; whether they are still acceptable is a judgement",
+            cadence="mid pre",
         ),
         Item(
             "M-wasm",
@@ -857,6 +1030,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "make wasm-html-test && make gallery, then open doc/gallery.html",
             "RELEASE.md § WASM endpoint: the browser bundle is how most users meet "
             "loft.  All examples load with NO console errors",
+            cadence="mid pre",
         ),
         Item(
             "M-docs-review",
@@ -866,6 +1040,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "stale problem docs removed, code links resolve, every doc reachable, "
             "clippy suppressions measured (dead ones named, live ones explained).  "
             "Steps 5-7 are deferred (2026-05-15)",
+            cadence="mid pre",
         ),
         Item(
             "M-monthly-docs",
@@ -873,6 +1048,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "make libraries-review && make features-review",
             "which libraries owe a review or moved since their watermark — the "
             "monthly cadence makes this a per-release step",
+            cadence="mid pre",
         ),
         Item(
             "M-monthly-bugs",
@@ -880,12 +1056,24 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "make bug-review",
             "which mechanism classes still produce bugs, and whether last cycle's "
             "keystone moved its class",
+            cadence="mid pre",
+        ),
+        Item(
+            "M-liveness",
+            "The liveness census — are the gates themselves still live?",
+            "make release-liveness",
+            "read the report: ignored/skip rationales pointing at CLOSED issues, gates "
+            "that have not actually fired recently, checklist items never run in any "
+            "recorded cycle.  2026.8.0's rescue was this census done by hand, once; "
+            "drift surfaces continuously only if it is read per release (@PLN156)",
+            cadence="mid pre",
         ),
         Item(
             "M-close-plans",
             "Close the plans this release shipped",
             "scripts/close-shipped-plans.sh --range <prev-tag>..HEAD",
             "a plan that shipped and stayed open is one nobody can trust the status of",
+            cadence="mid pre",
         ),
         Item(
             "M-changelog-read",
@@ -893,12 +1081,14 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "less CHANGELOG.md",
             "it names what changed, in a user's words, with nothing from the last cycle "
             "left standing as if it were new",
+            cadence="pre",
         ),
         Item(
             "M-libs",
             "The shipped libraries still build against this tree",
             "scripts/revalidate_libs_local.sh",
             "every library green — `make ci` says nothing about them",
+            cadence="mid pre",
         ),
     ]
 
@@ -912,6 +1102,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "The release gate is GREEN on this commit (every nightly, one run, one verdict)",
             "make release-gate    # dispatches release-gate.yml on the pushed branch and waits",
             check=lambda: check_release_gate(network),
+            cadence="pre",
         ),
     ]
 
@@ -975,6 +1166,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "cd editors/vscode && vsce package, then install the .vsix",
             "listed because editors/vscode changed since the last tag",
             applies=editor_touched,
+            cadence="pre",
         ),
         Item(
             "M-ndb",
@@ -982,6 +1174,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "see doc/claude/plans/34-native-debug/",
             "listed because the debugger / codegen paths changed since the last tag",
             applies=debug_touched,
+            cadence="pre",
         ),
         Item(
             "M-publish",
@@ -993,12 +1186,37 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
 
     after_publish = [
         Item(
+            "A-validator-dryrun",
+            "The registry's OWN validator accepts this release's entry (rehearsal of the splice)",
+            f"scripts/validator-dryrun.py --version {version}",
+            check=lambda: check_validator_dryrun(version, network),
+            cadence="mid pre",
+        ),
+        Item(
             "M-registry-splice",
             "Splice the generated entry into the registry index and re-sign",
             f"take loft-{version}-registry-entry.json from the published release into "
             "loft-lang/registry's index.json, then scripts/registry-sign.sh",
             "the ONLY step that puts these binaries under a signature.  Forgetting it "
             "is caught on the NEXT release, not by anyone noticing",
+        ),
+        Item(
+            "A-registry-this",
+            "THIS release took effect in the signed index (entry + every triple anchored)",
+            "the splice landed and re-signed — measured off the index itself",
+            check=lambda: check_this_release_in_registry(version, network),
+        ),
+        Item(
+            "A-selfupdate-resolves",
+            "`loft self-update --dry-run --refresh` RESOLVES against the signed index",
+            "cargo build, then the command — the empty-index message is a FAIL here",
+            check=lambda: check_selfupdate_resolves(version, network),
+        ),
+        Item(
+            "A-acquisition",
+            "The acquisition chain end-to-end: install.sh → version → resolve → ANCHOR → run",
+            f"scripts/acquisition-chain.sh --version {version}",
+            check=lambda: check_acquisition(version, network),
         ),
         Item(
             "M-self-update-win",
@@ -1016,14 +1234,9 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "index predating the splice reports the empty-index message, which reads "
             "like the submission failed",
         ),
-        Item(
-            "M-verify-anchored",
-            "`loft verify-self` now reports the SIGNED-INDEX anchor",
-            "bin/loft verify-self   # after `loft self-update --dry-run --refresh`",
-            "must say `matches the release published in the signed registry index` — at "
-            "tag time it can only say `matches the manifest it shipped with`, and that "
-            "upgrade is the proof the splice landed",
-        ),
+        # M-verify-anchored retired 2026-09 (@PLN156 phase 1): A-acquisition asserts the
+        # anchor line itself, on an installation it just made over the real transport —
+        # the same evidence, measured instead of promised.
         Item(
             "M-pages",
             "The deployed docs site boots in a browser",
@@ -1067,6 +1280,13 @@ def main() -> int:
     ap.add_argument(
         "--no-network", action="store_true", help="skip every check that needs the net"
     )
+    ap.add_argument(
+        "--phase",
+        choices=["mid", "pre"],
+        help="show (and measure) only the items practical at this point of the cycle: "
+        "'mid' = the halfway-point stability audit, 'pre' = the month's-last-days "
+        "pre-work.  Without it, the full release-window list.",
+    )
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args()
 
@@ -1102,15 +1322,32 @@ def main() -> int:
         save_state(version, state)
 
     sections = build_items(version, network)
+    if args.phase:
+        # The early views: only what is practical NOW is shown or measured, so a
+        # mid-cycle audit does not run (or go red on) checks that need the tag, the
+        # draft, or the published assets to exist.
+        sections = [
+            (name, [i for i in items if args.phase in i.cadence.split()])
+            for name, items in sections
+        ]
+        sections = [(name, items) for name, items in sections if items]
     for _, items in sections:
         for item in items:
             item.resolve(state)
+
+    # The evidence names the commit it was measured on: "these gates ran on this
+    # commit", never "nothing was red" (@PLN156 phase 5).
+    _, head = sh("git", "rev-parse", "HEAD")
+    head = head[:12] if head else "?"
 
     if args.json:
         print(
             json.dumps(
                 {
                     "version": version,
+                    "commit": head,
+                    "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "phase": args.phase or "release",
                     "items": [
                         {
                             "id": i.id,
@@ -1118,6 +1355,7 @@ def main() -> int:
                             "title": i.title,
                             "state": i.state,
                             "automatic": i.automatic,
+                            "cadence": i.cadence,
                             "evidence": i.evidence,
                         }
                         for name, items in sections
@@ -1129,17 +1367,29 @@ def main() -> int:
         )
         return 0
 
-    print(f"Release checklist — loft {version}\n")
+    phase_label = {
+        "mid": " — MID-CYCLE stability audit (early warning; redo candidate-bound items on the candidate)",
+        "pre": " — PRE-WORK for the month's last days",
+    }.get(args.phase, "")
+    print(f"Release checklist — loft {version}   (measured on {head}){phase_label}\n")
+    if not args.phase:
+        print(
+            "  cadence: [mid] runs meaningfully at the cycle's halfway point (overall\n"
+            "  stability) · [pre] can be finished in the month's last days as pre-work ·\n"
+            "  unmarked needs the release window itself.  `--phase mid|pre` works each\n"
+            "  view; an early run of a tag-candidate item is early warning, not its tick.\n"
+        )
     for name, items in sections:
         shown = [i for i in items if i.state != NA]
         hidden = len(items) - len(shown)
-        head = f"## {name}"
+        section_head = f"## {name}"
         if hidden:
-            head += f"   ({hidden} item(s) not applicable this release)"
-        print(head)
+            section_head += f"   ({hidden} item(s) not applicable this release)"
+        print(section_head)
         for i in shown:
             kind = "auto" if i.automatic else "    "
-            print(f"  {MARK[i.state]} {kind}  {i.id:<20} {i.title}")
+            tag = "[" + "+".join(i.cadence.split()) + "]" if i.cadence else ""
+            print(f"  {MARK[i.state]} {kind}  {i.id:<20} {tag:<10} {i.title}")
             if i.evidence:
                 print(f"                            {i.evidence}")
             elif not i.automatic:
@@ -1162,12 +1412,26 @@ def main() -> int:
     print(f"{len(manual) - len(left)}/{len(manual)} manual steps done.")
     if bad:
         print("\nBlocking: " + ", ".join(i.id for i in bad))
+    if unknown:
+        # UNKNOWN never aggregates into green (@PLN156 phase 5): a check that could
+        # not run and a check that passed are the two answers a release must never
+        # confuse — several "done" things in 2026.8.0 had simply never been measured.
+        print(
+            "\nNot green: "
+            + ", ".join(i.id for i in unknown)
+            + " never ran — UNKNOWN is not a pass"
+        )
     if left:
         print("\nNext manual step: " + left[0].id + " — " + left[0].title)
     if not bad and not left and not unknown:
         print("\nEverything on this list is answered.")
     print("\nTick a manual step:  scripts/release-checklist.py --done <ID> --note '...'")
-    return 1 if bad else 0
+    # Exit: 1 = a measured gate FAILED; 3 = nothing failed but gates remain unmeasured
+    # (UNKNOWN) — distinct so a caller can tell red from not-yet-evidence; 0 only when
+    # every applicable automatic gate ran and passed.
+    if bad:
+        return 1
+    return 3 if unknown else 0
 
 
 if __name__ == "__main__":
