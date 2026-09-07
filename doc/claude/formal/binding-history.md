@@ -6,9 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) OPENED and CLOSED
-2026-09-07: three independent mechanisms broke it — the vector surface, the keyed BIND
-(loft#1433) and the keyed PARAMETER (loft#1445) — and all three are closed (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+OPEN: **1** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`), 2026-09-07: three
+independent mechanisms broke it — the vector surface and the keyed BIND (loft#1433) are
+CLOSED; the keyed PARAMETER (loft#1445) is OPEN AGAIN, its first fix reverted (below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
 DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
 2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
 D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
@@ -57,8 +57,18 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends, with
 > `a_plain_keyed_bind_still_copies` as the control a share-everything cure fails.
 
-> **D-bind-28, part three — CLOSED (2026-09-07, loft#1445) — the `&hash<τ[k]>`
-> PARAMETER spelling is used exactly like its dense twin.**  `(B-Ref-Uniform)` says a `&τ`
+> **D-bind-28, part three — REOPENED (2026-09-07, loft#1445) — the `&hash<τ[k]>`
+> PARAMETER spelling.**  Closed and reverted the same day: the fix peeled the link in the
+> SHARED `is_keyed` / `is_collection` predicates, which are asked at 78 sites and answer two
+> questions — *which collection kind* (peel) and *does this variable own a store* (do not
+> peel, a `&` parameter aliases the caller's).  `Set(v, Null)` on a `&hash` parameter then
+> routed into `gen_keyed_null`, which allocates a keyed LOCAL's own store and resolves with the
+> unpeeled `base()`: `unreachable!("gen_keyed_null on non-keyed type")`, and
+> `tests/scripts/1291-a-keyed-write-back-does-not-release-the-callers-store.loft` went 8/8 to
+> 8/8 ICE.  The narrow form — peel at the `+=` ROUTE, leave the shared predicates on `base()` —
+> is the one to land; two of the three original sites (`keyed_known_type`, the route's `dest`)
+> are already narrow and are expected to survive.  The account below of what the fault IS
+> remains correct and is what the rework implements.  `(B-Ref-Uniform)` says a `&τ`
 > variable is used exactly like a `τ` variable with no operation special-cased, and
 > `c += [rec]` on a `&hash<Row[id]>` parameter was refused instead — *"Variable 'c' cannot
 > change type from `&hash<Row,["id"]>` to `vector<Row>"*, because the append routes did not

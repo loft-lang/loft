@@ -3726,23 +3726,15 @@ use a separate collection or add after the loop"
         // The two questions stay separate and both still reach the reader: this one says WRITE
         // THE BRACKETS, and `(N-Store)` below says the value may be null where a non-null is
         // expected.  The cure named here (`+= [n]`) earns that warning on its own.
-        // loft#1445 — and the destination is read through `peel_link` for the reason
-        // @PLN25 gives one paragraph up about `?`: the ambiguity is a fact about the
-        // SPELLING of the append, and `&τ` records how the vector is reached, never what
-        // it is.  Read through `base`, the `&vector<τ>` twin of this exact statement was
-        // told *"cannot change type from &vector<Row> to Row"* — a message about a type
-        // change nobody wrote, where the plain spelling is told to write the brackets.
-        // @FR-B-Ref-Uniform: a `&τ` variable is used exactly like a `τ` variable, and that
-        // has to include which diagnostic it earns.
         if op == "+="
-            && let Type::Vector(_, _) = f_type.peel_link()
+            && let Type::Vector(_, _) = f_type.base()
             && !s_type.is_unknown()
             && {
-                let content = f_type.peel_link().content();
+                let content = f_type.base().content();
                 let src = s_type.base().clone();
                 self.holds_element(&content, &src)
             }
-            && !s_type.base().is_equal(f_type.peel_link())
+            && !s_type.base().is_equal(f_type.base())
         {
             diagnostic!(
                 self.lexer,
@@ -3769,34 +3761,18 @@ use a separate collection or add after the loop"
         // The BASE has to be acceptable for this to be the null's fault rather than an
         // ordinary type error: a `text?` appended to a `vector<integer>` is a mismatch that
         // discharging does not fix, and it keeps the plain message it already had.
-        // @FR-B-Ref-Uniform — the destination is read through `peel_link`, not `base`.  Every
-        // question below is about WHAT the destination is (which kind, which element type),
-        // never about how it is reached, and `&τ` records only the route.  Read through
-        // `base` the link stayed on, so a `&hash<τ[k]>` was not a collection to any of these
-        // routes: `c += [rec]` fell past all of them to the generic assignment and was
-        // refused as *"cannot change type from &hash<Row,["id"]> to vector<Row>"*, naming a
-        // vector the program never wrote (loft#1445).
-        //
-        // ⚠ The peel belongs at the DESTINATION as well as at the predicate, and a build that
-        // does one without the other is worse than neither.  Teaching only `is_keyed` /
-        // `is_collection` to peel routes the statement here and then hands `append_source` a
-        // `RefVar` destination, which matches no arm: the `&vector<τ>` twin that had always
-        // worked started answering *"cannot append `vector<Row>` to `&vector<Row>`"* — a
-        // REGRESSION in the control, bought with the fix.  Measured, and it is why `dest`
-        // below reads the same way.
-        let f_shape = f_type.peel_link();
         let nullable_append_source = op == "+="
             && !self.first_pass
             && !s_type.is_unknown()
             && matches!(&s_type, Type::Optional(_))
-            && crate::parser::vectors::is_collection(f_shape)
+            && crate::parser::vectors::is_collection(f_type.base())
             && {
                 let base = s_type.base().clone();
-                base.is_equal(f_shape)
-                    || matches!(f_shape, Type::Vector(elm, _) if (**elm).is_equal(&base))
+                base.is_equal(f_type.base())
+                    || matches!(f_type.base(), Type::Vector(elm, _) if (**elm).is_equal(&base))
                     || matches!(&base, Type::Vector(elm, _)
-                        if crate::parser::vectors::is_keyed(f_shape)
-                            && (**elm).is_equal(&f_shape.content()))
+                        if crate::parser::vectors::is_keyed(f_type.base())
+                            && (**elm).is_equal(&f_type.base().content()))
             };
         if nullable_append_source {
             // The rule decides the severity, and it is not a refusal.  `(N-Store)`'s split is
@@ -3859,9 +3835,9 @@ use a separate collection or add after the loop"
         if op == "+="
             && !self.first_pass
             && !matches!(s_type, Type::Null)
-            && crate::parser::vectors::is_collection(f_type.peel_link())
+            && crate::parser::vectors::is_collection(f_type.base())
         {
-            let dest = f_type.peel_link().clone();
+            let dest = f_type.base().clone();
             let kind = self.append_source(&dest, &s_type);
             // A keyed destination has no route for the WHOLE collection at any place kind, and
             // the two place kinds fail differently — which is why neither one alone settles it.

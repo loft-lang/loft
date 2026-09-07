@@ -3024,7 +3024,8 @@ I am looking for".**  A positive AND a negative control in one run is the common
 lands where nothing is looking.**  Every cell in a boundary matrix is a case that is BROKEN, so
 a matrix built only from those cells answers "fixed" and says nothing about the cases that
 already worked — and a fix reached by widening a predicate is exactly the shape that breaks
-one.  Measured 2026-09-07 on loft#1445: teaching `is_keyed` / `is_collection` to peel the `&`
+one.  Measured 2026-09-07 on loft#1445 (whose first fix was REVERTED for a second regression of
+the same shape — see below): teaching `is_keyed` / `is_collection` to peel the `&`
 link made a `&hash<τ[k]>` parameter's `+=` route correctly, and in the same build the
 `&vector<τ>` twin that had worked all along began answering *"cannot append `vector<Row>` to
 `&vector<Row>`"* — the routes now claimed a statement whose DESTINATION was still a `RefVar`,
@@ -3036,6 +3037,21 @@ the only thing standing between "the bug is fixed" and "the bug is fixed and som
 not".  The companion rule for the destination side is loft#1433's: a destination that starts
 EMPTY cannot tell an append that reached the caller's collection from one that built a fresh
 collection and counted itself, so populate it first and read the OLD key as well as the new one.
+
+⚠ **And the sequel, which is the sharper half: that same widening broke a THIRD thing neither
+matrix could see.**  `is_keyed` / `is_collection` are asked at 78 sites and answer TWO
+questions — *what kind of collection is this* (the link must peel) and *does this variable own
+a store* (it must not, since a `&` parameter aliases the caller's).  Peeling changed the second
+silently, and `Set(v, Null)` on a `&hash` parameter then routed into `gen_keyed_null` — which
+exists to allocate a keyed LOCAL's own store and resolves its type with the UNPEELED `base()` —
+straight to `unreachable!("gen_keyed_null on non-keyed type")`.  `1291-a-keyed-write-back-does-
+not-release-the-callers-store.loft` went 8/8 green to 8/8 ICE, and the shape that surfaced it
+was a REBIND, which no append matrix carries.  Splitting an `is_owned_keyed` out for the two
+null-init sites was then measured to fail DIFFERENTLY (a slot fault in `__lift_1`), proving more
+than two of the 78 read the widened answer.  **A predicate asked at dozens of sites is asked
+more than one question; widening it is not a local change, and the bound on what you broke
+cannot be established by inspection.**  Fix at the route that asks the question you mean —
+here, peeling at the `+=` entry — and leave the shared predicate alone.
 
 **A reproduction that hits a WARM CACHE measures nothing — and the tell is the clock.**  A
 red `make ci` named a native cell that took **2.2 s** in the gate; every attempt to reproduce

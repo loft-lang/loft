@@ -22,15 +22,6 @@ live-flip channel on purpose, and the leaner call frames that decision enables w
 carrying the names.  Naming is now its own setting — a page keeps its frame names unless you
 ask for a lean build with `--lean`, on every backend.
 
-**Adding to a collection you were handed with `&` now works, for every kind of collection.**
-A function that takes `&hash<Row[id]>` — or `&sorted`, `&index`, `&trie`, `&spatial` — and
-writes `c += [Row{…}]` was refused, and the refusal talked about a vector the program never
-mentioned: *"Variable 'c' cannot change type from &hash<Row,[\"id\"]> to vector<Row>"*.  The
-`&`-free spelling of the same function always worked, and so did `&vector<Row>`.  The append
-now lands in the caller's collection, on compiled and interpreted programs alike.  Two of the
-five kinds — `trie` and `spatial` — went further and stopped the compiler outright when passed
-with `&` at all, even for `c[key] = value`, which the other three accepted.
-
 **`a = &h` on a `hash`, `sorted`, `index`, `trie` or `spatial` is now a link, as it always
 was for a vector.**  It was a copy: the alias got its own collection and the two went their
 separate ways from that line on, each seeing only its own writes.  Starting from an empty
@@ -39,7 +30,7 @@ records were never lost, they were going into the alias.  Starting from a collec
 already had records it was harder to see: after one append through each name, both reported
 a length of 2 and they were different pairs.  A write through either name now reaches the
 other, at a local, at a struct field, and for every keyed kind.  Passing one as a `&`
-parameter works too — see the entry above.
+parameter is still refused rather than silently wrong, and says so.
 
 **A `u32` value above 2147483647 no longer reads back as a negative number.**  Four bytes do not
 say whether they are signed, and loft's storage schema had only the signed reading of them: a

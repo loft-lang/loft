@@ -355,10 +355,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0** — **D-bind-28 OPENED AND CLOSED 2026-09-07, the collection half of
-`(B-Ref-Uniform)`.**  The rule says a `&τ` variable is used *exactly* like a `τ` variable and
-that no operation is special-cased.  THREE independent mechanisms broke that for collections;
-all three are now closed.
+**OPEN: 1** — **D-bind-28 OPEN 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
+The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
+special-cased.  THREE independent mechanisms broke that for collections; two are closed and the
+keyed PARAMETER is open again after its first fix was reverted.
 
 * **CLOSED 2026-09-07 — the VECTOR surface.**  Four compiler special-cases (`insert`,
   `reverse`, `sort`, `reserve`) matched `Type::Vector` against the argument type with the `&`
@@ -381,7 +381,13 @@ all three are now closed.
   ("the alias silently drops every append", which is how an EMPTY source presents).  The append
   was never dropped: it landed in the alias's own store.  The bind and the append are two
   faults, and both are now closed.
-* **CLOSED 2026-09-07 (loft#1445) — the keyed PARAMETER.**  `c += […]` on a `&hash` /
+* **OPEN — the keyed PARAMETER (loft#1445).**  ⚠ A first fix was landed and REVERTED the same
+  day: it peeled the link in the SHARED `is_keyed` / `is_collection`, which are asked at 78
+  sites and answer both *which collection kind* and *does this variable own a store*; a
+  `&hash` parameter's `Set(v, Null)` then reached `gen_keyed_null` (which allocates a keyed
+  LOCAL's store, resolving with the unpeeled `base()`) and ICEd, taking loft#1291's guard from
+  8/8 green to 8/8 `unreachable!`.  The diagnosis below is unaffected and is what the narrow
+  rework implements — peel at the `+=` ROUTE, not in the shared predicates.  `c += […]` on a `&hash` /
   `&sorted` / `&index` / `&trie` / `&spatial` PARAMETER was refused, naming a `vector<τ>` the
   program never wrote.  Closed by peeling the link at all THREE predicate sites — `is_keyed`,
   `is_collection` and `keyed_known_type` — plus the `+=` route's DESTINATION.
