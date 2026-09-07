@@ -66,17 +66,17 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-07 | `dc470a0c` |
-| `doc-quality` | 2026-09-07 | `dc470a0c` |
+| `design-protocol` | 2026-09-07 | `ae0c79d2` |
+| `doc-quality` | 2026-09-07 | `ae0c79d2` |
 | `draw` | 2026-09-07 | `04c08d10` |
-| `engineering-rigor` | 2026-09-07 | `dc470a0c` |
-| `formal-rules` | 2026-09-07 | `dc470a0c` |
-| `loft-codegen` | 2026-09-07 | `dc470a0c` |
-| `loft-debug` | 2026-09-07 | `dc470a0c` |
+| `engineering-rigor` | 2026-09-07 | `ae0c79d2` |
+| `formal-rules` | 2026-09-07 | `ae0c79d2` |
+| `loft-codegen` | 2026-09-07 | `ae0c79d2` |
+| `loft-debug` | 2026-09-07 | `ae0c79d2` |
 | `loft-plan-workflow` | 2026-09-07 | `a9743ea6` |
-| `loft-ship` | 2026-09-07 | `04c08d10` |
+| `loft-ship` | 2026-09-07 | `ae0c79d2` |
 | `loft-test` | 2026-09-07 | `04c08d10` |
-| `loft-write` | 2026-09-07 | `04c08d10` |
+| `loft-write` | 2026-09-07 | `ae0c79d2` |
 
 ## Findings that outlive a single review
 
