@@ -3335,9 +3335,7 @@ fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
     // its own line on top.  It now asks `Diagnostics::error_count()` first and speaks only
     // when nothing else did — the fallback itself stays, because the case its own comment
     // names reports nothing of its own.
-    .error(
-        "Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
-    );
+    .error("Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48");
 }
 
 /// loft#1449 — a keyed collection nested inside a FUNCTION type is spelled as its author

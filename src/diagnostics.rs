@@ -644,7 +644,10 @@ impl Diagnostics {
     /// Errors only, deliberately: a WARNING raised while parsing the same expression is not a
     /// reason to stay silent about a genuinely missing iterable.
     pub fn error_count(&self) -> usize {
-        self.entries.iter().filter(|e| e.level == Level::Error).count()
+        self.entries
+            .iter()
+            .filter(|e| e.level == Level::Error)
+            .count()
     }
 
     pub fn last_index(&self) -> Option<usize> {
