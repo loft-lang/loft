@@ -101,7 +101,12 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
 
 ```
   formation
-  (N-Opt)      τ wf  ⟹  τ? wf          τ? is a type for any τ
+  (N-Opt)      τ wf,  has_null(τ)  ⟹  τ? wf     τ? is a TYPE for every τ that has a value to
+               spend on absence — a reserved sentinel (layout.md L-Null) or a discriminant
+               (L-Null-Tag).  A type that is only its parts' bytes has neither: a TUPLE and a
+               `value struct` (@PLN101) are refused BY NAME at the declaration, each naming its
+               cures.  A tuple that ARRIVES absent is a present tuple of null members —
+               tuples.md (T-Absent) — so no `(τ, τ)?` exists even in flight.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 
@@ -573,11 +578,7 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**  `D-Opt-NoNull` — `(N-Opt)` licenses `τ?` for every τ, and two types have no
-representation for absence (a `value struct`, and a TUPLE), so both are refused at the
-declaration; the design call is loft#1423.  Every other deviation this doc has carried is
-closed; the record is in the companion
-[types-history.md](types-history.md).
+**OPEN: 0.**  `D-Opt-NoNull` closed 2026-09-07: `(N-Opt)` now carries the precondition it always implicitly had, and the tuple's absence is ruled and recorded as tuples.md `(T-Absent)` (its code half is `D-tup-10` there).  The register is [types-history.md](types-history.md).
 
 ## Conformance check (how we know a deviation is real)
 

@@ -90,6 +90,25 @@ still builds the type where the type parser cannot spell it (`v[i]` on a `vector
 the same two cures. The gap between the rule and the model is
 [types-history.md](types-history.md) D-Opt-NoNull, and loft#1423 carries the design call.
 
+### Absence — a tuple type is never nullable; a tuple read as null is all-null members (`T-Absent`)
+
+```
+  (T-Absent)  a TUPLE TYPE is never nullable — `(τ₁, …, τₙ)?` is refused BY NAME at every
+              declaration (types.md N-Opt: a tuple is its members' bytes and has no value to
+              spend on absence) — and a tuple that ARRIVES absent is a PRESENT tuple whose
+              members are all null:   optional((τ₁, …, τₙ))  ≡  (τ₁?, …, τₙ?).
+              Every producer of absence synthesises exactly that, and no `Optional(Tuple)` ever
+              exists, not even in flight: an index that misses (`v[i]` on a vector<(τ₁, τ₂)>,
+              N-Index), a generic `T?` instantiated at a tuple, a decoded document whose key is
+              missing.  The null QUESTION on a tuple is answered by its members, from ONE home:
+              `t == null` and `t ?? d` read "every member null"; `t?` reads the members'
+              defaults (N-Default, loft#1424); `t.i` on such a tuple is `τᵢ?` (N-Prop) and
+              N-Store polices where it lands.  Owner ruling 2026-09-07 (loft#1423): a tuple has
+              no faithful document form anyway, so its absence is presented as the tuple that
+              exists with nothing in it.  The tag layout a stack `(τ, τ)?` would need is
+              declined in DESIGN_DECISIONS C119.
+```
+
 ### Reference tuples — `&(…)` writes the caller's elements in place
 
 ```
@@ -149,7 +168,25 @@ or take the tuple by value and return a new one. The refusal message says both.
 
 ## Deviations
 
-**OPEN: 0** — D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
+**OPEN: 1.**
+
+- **D-tup-10** *(open, loft#1423 / loft#1451)* — `(T-Absent)` says no `Optional(Tuple)` exists,
+  and the code still mints one wherever absence is synthesised: `Type::optional` wraps a
+  `Tuple` like any other type.  Measured (both backends unless said): `v[i].0` on a
+  `vector<(integer, integer)>` by a variable index is REFUSED by name where the rule types it
+  `integer?`; `w: (integer?, integer?) = v[i]` is refused as a type change from
+  `(integer, integer)?`, which is the landing type the rule names; `t == null` is refused
+  (*"No matching operator '=='"*) on BOTH spellings, `(integer?, integer?)` and the in-flight
+  one; a generic `-> T?` at a tuple answers `34359738371 2` on `--interpret` and E0308 on
+  `--native` (loft#1451).  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the
+  identity lives in `Type::optional` (one home — a `Tuple` maps to its member-nullable form),
+  after which the member read, the store and the monomorph's return type follow with no
+  per-site work; the null question gets its one tuple home (`== null` / `??` agree on "every
+  member null", as `1120-…` made them agree for a collection); the typed decoder's tuple arm,
+  when it grows one, yields the same value for a missing key.  The written `(τ, τ)?` stays
+  refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
+
+D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
 variable is copied for every binding — a record or a scalar by @PLN153 phase 1, a vector or a
 keyed collection by the @FR-F-Ret walk's boxed monomorph return (loft#1365).  The non-generic
 shape is D-tup-8, closed.
