@@ -488,6 +488,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 
 
+
+
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
 shadow) and loft#1397's lint on top: **410 · 386 · 24**, both additions on the peeling side;
@@ -2647,6 +2649,11 @@ than by the audit.
 
 
 
+
+*@PLN157 P3's non-sentinel pass adds one function on the seeing-through side:
+`non_sentinel::collect_escapes` asks whether a callee parameter is by-reference via
+`at.typedef.base()`, so an `Optional`-wrapped `RefVar` still escapes the argument it can
+write — the conservative answer, where a bare match would have silently trusted it.*
 
 *loft#1460 added `scopes.rs`'s keyed-removal reader and moved all three rows by one: a new
 function that discriminates on `Value` variants (`get_record_literal_keys`), one that resolves an
