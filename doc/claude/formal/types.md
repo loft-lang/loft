@@ -578,7 +578,11 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  `D-Opt-NoNull` closed 2026-09-07: `(N-Opt)` now carries the precondition it always implicitly had, and the tuple's absence is ruled and recorded as tuples.md `(T-Absent)` (its code half is `D-tup-10` there).  The register is [types-history.md](types-history.md).
+**OPEN: 0.**  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
+(loft#1450): `(N-Domain)`'s in-domain elision was asked about the RECEIVER when it only ever
+proved the INDEX, so an element read through an absent collection typed non-null; the `!= null`
+guard that discharges it narrowed scalars only, which is `D-Null-Heap`'s class on the discharge
+side; and the narrowing described the assignment TARGET, against `(N-Decl)`.  `D-Opt-NoNull` closed 2026-09-07: `(N-Opt)` now carries the precondition it always implicitly had, and the tuple's absence is ruled and recorded as tuples.md `(T-Absent)` (its code half is `D-tup-10` there).  The register is [types-history.md](types-history.md).
 
 ## Conformance check (how we know a deviation is real)
 

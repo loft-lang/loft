@@ -14,6 +14,24 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Reading from a collection that is empty-because-absent now tells you it can be absent — and
+`if c != null` finally counts as the check.**  A `vector<Thing>?` or a `hash<Thing[k]>?` holding
+`null` has no element to give, so `m[0]` reads as absent.  The compiler used to say so only when
+you indexed with a variable: written `m[0]`, with a number you typed, the same read on the same
+absent collection was silently promised non-null and handed you the absent value anyway.  The
+number you type is a promise about the INDEX, and it was being read as a promise that the
+collection exists.  Both spellings now ask you to handle the absence, on every collection kind.
+
+Guarding used to be a promise the compiler did not read: `if things != null { things[0] }` was
+reported exactly like the unguarded version, because the check was understood for numbers and
+text but not for structs, vectors or the keyed collections.  It is understood for all of them
+now, so the ordinary way of writing this is quiet again — the guard, `?? default`, `match`, or
+declaring the slot `Thing?`.  Writing still works the way it always has: `c[k] = v` on an absent
+collection creates it and inserts, and needs no check.
+
+Related: a variable you declared as possibly-absent no longer complains when you assign a
+possibly-absent value back into it after a guard.  It is doing what you declared it to do.
+
 **A closure you return keeps its captured value even if you change that variable afterwards.**
 Writing `s: Thing? = Thing { … }`, building a closure that reads `s`, and then assigning `s`
 something else released the value the closure had taken — so the returned closure read freed

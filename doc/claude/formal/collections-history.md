@@ -14,7 +14,43 @@
 - **Candidate OPEN (verify):** the per-query scratch-vector allocation for spatial slices (CAVEATS.md notes
   it as the next efficiency lever) — a performance note, likely NOT a formal deviation.
 
-OPEN: **0** — `D-col-null` was opened and CLOSED the same day (2026-08-28, below).
+OPEN: **1** — `D-col-lookup` OPENED 2026-09-07 (loft#1450, below): `(Col-Lookup)`'s `τ?` is
+recorded by a LINT FLAG and never reaches a type.  `D-col-null` was opened and CLOSED the same
+day (2026-08-28, below).
+
+### `D-col-lookup` — OPEN (2026-09-07, loft#1450): the rule's cited anchor is a lint switch, not a type
+
+`(Col-Lookup)` states `Γ ⊢ c[key] ⇒ τ?` — *"a keyed point lookup is NULLABLE — an absent key
+yields the null record, discharged by `?? d` / `match` like any τ?"* — and cites
+`fields.rs:700-706` as its anchor.  That site clears `expr_not_null`, which is the input to the
+redundant-check and redundant-coalesce LINTS.  It is not the type.  So a lookup that misses in a
+PRESENT collection binds into a non-null slot with nothing said:
+
+```loft
+h: hash<It[k]> = [];
+e: It = h[1];        // silent; `e` typed non-null `It`, holds the null record
+take(h[1]);          // and the same at the call-argument seam (loft#583's (N-Store) site)
+```
+
+All four keyed kinds answer alike (`hash`, `sorted`, `index`, `trie`), and the two arms in
+`fields.rs` — `Hash|Radix|Trie` and `Sorted|Index` — each do only the clear.
+
+⚠ **This is why this register could read `OPEN: 0` over it**, and the reason is worth stating
+because it is not the usual one.  The rules were complete and the enforcement was not missing —
+what was wrong is that the RULE'S OWN ANCHOR pointed at a lint switch, so a reader checking the
+code against the rule would find a cited, existing, correct-looking site and stop.  A citation
+resolving is not a citation enforcing.  This is a THIRD failure mode beside the two
+[types-history.md](types-history.md) records (an incomplete rule; a complete rule nothing
+re-measures), and the cheapest check for it is to ask what an anchor's site actually decides —
+here, whether it writes a `Type`.
+
+Measured before it was deferred: closing it costs **351 corpus sites** across 21 files, where the
+receiver-absent half (`D-Null-Recv` in [types-history.md](types-history.md), closed 2026-09-07)
+cost none.  It is deferred for that reason and for nothing else — the direction is not in doubt.
+⚠ Whoever takes it: the receiver's `?` must NOT reach a keyed WRITE.  `h[k] = v` parses its target
+through the same `parse_index`, and carried into the place the write is no longer recognised as
+one and lowers to a READ, losing the write in silence — `(Col-Insert-Absent)` makes that write
+total.  `parse_assign_op` is the chokepoint that peels it, keyed on `OpGetRecord`.
 
 ### `D-col-null` — OPENED AND CLOSED (2026-08-28, loft#1120): two answers to *"is this collection null?"*
 

@@ -479,7 +479,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 413 | 389 | **24** |
+| 414 | 390 | **24** |
 
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
@@ -488,7 +488,10 @@ loft#1388's capture handover adds one more of the same kind — **411 · 387 · 
 loft#1396's `value_view_container` one more again: **412 · 388 · 24**, and loft#1444's
 `scopes::returned_closure_records` one more after that — it tells `FnRef`, `Block`, `Insert`,
 `If` and `Return` apart to walk the values in RETURN POSITION, and reads each through its
-`Span`: **413 · 389 · 24**.  The unpeeled column does not move.  The `@FR-O-Complete` walk (B7u) added one peeling site — `scopes::adopted_work_refs` reads a
+`Span`: **413 · 389 · 24**, and loft#1450's `control::heap_null_test` one more again — it
+reads an `if` condition through its `Span` to tell `OpRefIsNull` / `OpVectorIsNull` from the
+scalar null comparison, and reads that op's argument through its own: **414 · 390 · 24**.  The
+unpeeled column does not move.  The `@FR-O-Complete` walk (B7u) added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
 construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
 `doc_hygiene::quality_unspan_table_matches_the_audit` fails if this row and the tool disagree.
@@ -1501,11 +1504,15 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 46 | **12** | 34 |
+| 47 | **12** | 35 |
 
 Re-measured on the tree that holds both streams: **45 · 12 · 33**, and **46 · 12 · 34** once
 loft#1396's `value_view_container` joins it — another function resolving a projection by op
-name.  Neither side predicted the joined number and neither tried to: a row can only be true on
+name.  loft#1450's `control::heap_null_test` makes it **47 · 12 · 35**, on the same side and for
+the same reason: it names `OpRefIsNull` / `OpVectorIsNull` to read a heap null test out of an
+`if` condition.  It lands in the third column honestly — a projection's second spelling is not a
+question it can be asked, because the values it screens are null TESTS and never projections —
+so the count is a thermometer for the screen's reach, not a debt against this function.  Neither side predicted the joined number and neither tried to: a row can only be true on
 the tree it is measured on.  The `@FR-O-Owner` walk
 folded two byte-identical container-namer loops into one home and the loft#1384 place walk
 joined it there, so neither branch's row survives the join — the audit classifies FUNCTIONS,
@@ -2473,7 +2480,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 735 | 381 | 5 | **349** |
+| 736 | 382 | 5 | **349** |
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record
@@ -2486,6 +2493,12 @@ loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the 
 for the same reason: it names `Type::Reference` to reach the closure record behind a record
 LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
 the answer, not the omission — 734 -> 735 discriminating, 348 -> 349 opaque.
+
+loft#1450 adds one to the SEEING-THROUGH side, and it is the first addition there whose whole
+job is the wrapper: `parse_assign_op` now asks whether an assignment's target is declared
+`Type::Optional` before letting a flow narrowing describe the slot, because a narrowing says
+what a slot HOLDS and never what it may hold — 735 -> 736 discriminating, 381 -> 382 seeing
+through.  The opaque column does not move.
 
 @PLN153 phase 4 batch 10 (the `scopes.rs` tier-0 group — the store-lifetime pass, loft#1439 /
 loft#1442) leaves the opaque column WHERE IT IS, and the arithmetic is worth reading: it peels

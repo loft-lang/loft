@@ -6,7 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
+OPEN: **0** — `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
+(loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
+guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
+assignment TARGET.  `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
 its `has_null(τ)` precondition by owner ruling, and the tuple's absence is tuples.md `(T-Absent)`
 (code half `D-tup-10` there).  `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
 fix/reconciliation.  The **@PLN102 DN3-Float extension** (below) is also CLOSED — SHIPPED
@@ -14,6 +17,94 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
+
+`(N-Domain)` types a partial operation `τ?` when the reserved null is reachable from an input,
+and elides that only where the input is *"PROVABLY in-domain (constant / range / guard)"*.  The
+elision is `index_provably_fit`, and what it proves is about the INDEX — a literal the developer
+typed, a loop variable, a bounded computation (the loft#1436 trust).  It says nothing about
+whether the COLLECTION exists.  Reading an element of an absent collection answers the element
+type's null (C80) whatever the index names, so the elision was being asked a question it does
+not answer:
+
+```loft
+m: vector<It>? = null;
+z: It = m[0];        // silent — `z` typed non-null It, holds null
+z2: It = m[i];       // warned — same receiver, same absence, untrusted index
+```
+
+The falsifying pair is those two lines: obeying the rule reports both, obeying the code reports
+one, so the promise depended on the SPELLING OF THE SUBSCRIPT rather than on anything about the
+value.  All four keyed kinds answered the same way (`hash`, `sorted`, `index`, `trie`) — the
+keyed arms carried the `expr_not_null` clear and never a type.
+
+The `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods at all, so
+the fix reads the receiver's nullability BEFORE that peel and carries it to the result type.
+Closed at `parse_index`; the dense-receiver trust is untouched, which is the control.
+
+This also closes the *"nullable-receiver index typing"* half that loft#1434's ruling
+(`(Col-Insert-Absent)`, C118) left open for whoever took the fix.
+
+⚠ **Two legs of loft#1450 stay open and are deliberately NOT closed here**, because they are
+migrations rather than one-site fixes and were measured before the split was chosen: a FIELD
+read through a nullable receiver (`n.v` with `n: It?`, which `(N-Prop)` types `τ?`) costs 37
+corpus sites, and a keyed lookup's own `τ?` for a MISSING key in a PRESENT collection
+(`(Col-Lookup)`) costs 351.  This leg costs none.  `(Col-Lookup)`'s cited anchor is
+`fields.rs:700-706`, *the `expr_not_null` clear* — a typing rule whose recorded enforcement is
+a LINT FLAG, which is why `collections.md` could read `OPEN: 0` over it.
+
+### D-Null-Guard — OPENED AND CLOSED (2026-09-07, loft#1450): the discharge narrowed SCALARS only
+
+`(N-Store)` requires a discharge, so a discharge has to exist for every type it governs.  Flow
+narrowing is the one that costs nothing to write — `if x != null { … }` — and it worked for a
+scalar and for no heap value at all:
+
+```loft
+fn g(s: S?) -> S { if s != null { s } else { S{n:0} } }   // warned, though guarded
+```
+
+A heap value asks "is this absent?" through its own opcode — `OpRefIsNull`, `OpVectorIsNull` —
+where a scalar compares against a `…FromNull` literal, and only the scalar spelling was read out
+of the condition.  So the guarded form and the unguarded form were reported identically, and the
+author who did the right thing got the same diagnostic as the author who did not.
+
+⚠ **This is `D-Null-Heap`'s class, recurred on the other side.**  That entry (2026-09-03,
+loft#1313) closed an ENFORCEMENT gated on a scalar-only predicate; this is the DISCHARGE gated on
+a scalar-only spelling, and the two together give the rule a reader can check the next
+implementation against: **when the null model gains a site, ask whether its predicate reads a
+SCALAR spelling of absence** — the heap spelling is a different opcode, not a different value,
+and every one of these has been invisible to a reader checking the code because the scalar story
+is coherent on its own.
+
+That this leg had to be closed BEFORE `D-Null-Recv` could ship is the measurement worth keeping:
+with no working guard, correct guarded code and silent-wrong code produce the same warning, and a
+rule enforced that way cannot be adopted whatever the register says about it.
+
+### D-Null-Place — OPENED AND CLOSED (2026-09-07, loft#1450): a narrowing described the assignment TARGET
+
+`(N-Decl)` makes a declared slot a COMMITMENT: `x: τ?` is `τ?` for the whole of its life.  A flow
+narrowing is the opposite kind of fact — it says what the slot currently HOLDS, and it dies at the
+next write, which the parser already knew (it drops the proof once the store is built).  It was
+still allowed to describe the target of that very write:
+
+```loft
+cur: It? = src;
+if cur == null { return -1; }
+cur = src;            // "a nullable `It?` is stored into the local `cur` of the non-null type `It`"
+```
+
+The target is parsed as an expression, and a proven-non-null variable reads as its peeled base —
+so a declared `τ?` slot answered `τ`, and writing a `τ?` into its own declared type was reported
+as a nullable reaching a non-null slot.  Two separate store checks consumed that same peeled
+type, which is why the fix is at the assignment chokepoint rather than at either of them: the
+left-hand side of an assignment is a PLACE, not a value read.
+
+The entry is a deviation and not a nicety because the diagnostic is `warning`, and `warning` gates
+a library's CI (`LOFT_DENY_WARNINGS=1`) — so a library that guarded a nullable and then rebound it
+failed its own gate on correct code.  It pre-dates loft#1450 on the scalar path and was reachable
+there; the heap narrowing above is what made it reachable for a struct or a vector, and what
+turned it up.
 
 ### D-Opt-NoNull — CLOSED (2026-09-07, loft#1423, by RULE): `(N-Opt)` gains the precondition `has_null(τ)`; a tuple that arrives absent is a present tuple of null members
 

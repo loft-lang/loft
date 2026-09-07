@@ -1,0 +1,197 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1450 — an element read through an ABSENT collection, and the guard that discharges it.
+// Carries the nullable-receiver-index half of loft#1434.
+//
+// `@FR-N-Domain` types a partial operation `τ?` when the null is reachable, and
+// `index_provably_fit` is what elides that for an index the developer can vouch for — a
+// literal, a loop variable, a bounded computation (loft#1436).  That trust is about the
+// INDEX.  It says nothing about whether the COLLECTION exists, and an element read through an
+// absent collection answers the element type's null (C80) whatever the index names.  Read as
+// covering both questions, it made `m: vector<It>? = null; z: It = m[0]` type `z` non-null and
+// hold null, with no diagnostic on either backend — while the SAME receiver read by a variable
+// index was reported correctly, so the promise depended on the spelling of the subscript.
+//
+// The `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods at all,
+// so it has to be read off the receiver before that and carried to the RESULT type.
+//
+// `@FR-N-Store` then asks for the discharge, and a discharge has to EXIST for the fix to be
+// shippable.  It did not for a heap value: `if s != null { … }` narrows a scalar and never a
+// struct or a vector, because a heap null test is its own opcode (`OpRefIsNull`,
+// `OpVectorIsNull`) where a scalar compares against a `…FromNull` literal, and only the scalar
+// spelling was read.  Every guarded read below is a cell of that half.
+//
+// Axes this file MOVES:  the collection kind (vector · hash · sorted · index · trie), whether
+//                        the RECEIVER is nullable, whether the INDEX is trusted (a literal · a
+//                        variable), the discharge (none · `?? d` · a `!= null` guard · an
+//                        `== null` early return · a declared `τ?` slot), and the guarded
+//                        value's kind (struct · vector).
+// Axes it HOLDS FIXED:   the element is a plain struct with scalar fields, and the receiver is
+//                        a LOCAL.  Two legs of loft#1450 are deliberately NOT here: a field
+//                        read through a nullable receiver (`n.v` with `n: It?`, `(N-Prop)`)
+//                        and a keyed lookup's own `τ?` for a MISSING key in a PRESENT
+//                        collection (`(Col-Lookup)`).  Both are measured and still open —
+//                        they cost 37 and 351 corpus sites respectively, where this leg costs
+//                        none, and each wants its own migration.
+//
+// @falsified-at: 2b5bed914 — interpret exit 1 -> 0, native exit 1 -> 0.  The channel that
+//   moves is EXIT, and what moves it is the DIAGNOSTIC: on the pre-fix build the six
+//   `@EXPECT_WARNING` pins below never fire, and a pin that never fires is fatal to the run.
+//   Every VALUE assertion already passed on the control — the reads answered the C80 null
+//   there exactly as they do here — so this guard is pinned on the diagnostic channel by
+//   necessity and would read INERT on values alone.  That IS the defect: the values were
+//   never in question, the types were.
+
+struct It1450 { k: integer, v: integer }
+struct Tk1450 { k: text, v: integer }
+
+// ---------------------------------------------------------------- the defect: absent receiver
+
+// A CONSTANT index is the trusted-index case, and the receiver is still absent.
+// @EXPECT_WARNING: a nullable `It1450?` is stored into the local `z` of the non-null type
+fn test_a_constant_index_on_an_absent_vector_is_nullable() {
+  m: vector<It1450>? = null;
+  z: It1450 = m[0];
+  assert(z == null, "an element of an absent vector is null");
+}
+
+// An index the compiler cannot vouch for, so it carries its own `?` already — right before
+// the fix, and it must stay right.  This is the cell whose disagreement with the constant
+// index above made the promise depend on the SUBSCRIPT's spelling.
+fn untrusted_index_1450() -> integer { 0 }
+
+// @EXPECT_WARNING: a nullable `It1450?` is stored into the local `z` of the non-null type
+fn test_a_variable_index_on_an_absent_vector_is_nullable() {
+  m: vector<It1450>? = null;
+  i = untrusted_index_1450();
+  z: It1450 = m[i];
+  assert(z == null, "a variable index answers the same null");
+}
+
+// Every keyed kind answers the same way: an absent collection has no entry to give.
+// @EXPECT_WARNING: a nullable `It1450?` is stored into the local `e` of the non-null type
+fn test_an_absent_hash_lookup_is_nullable() {
+  h: hash<It1450[k]>? = null;
+  e: It1450 = h[1];
+  assert(e == null, "an absent hash answers null");
+}
+
+// @EXPECT_WARNING: a nullable `It1450?` is stored into the local `e` of the non-null type
+fn test_an_absent_sorted_lookup_is_nullable() {
+  s: sorted<It1450[k]>? = null;
+  e: It1450 = s[1];
+  assert(e == null, "an absent sorted answers null");
+}
+
+// @EXPECT_WARNING: a nullable `It1450?` is stored into the local `e` of the non-null type
+fn test_an_absent_index_lookup_is_nullable() {
+  x: index<It1450[k]>? = null;
+  e: It1450 = x[1];
+  assert(e == null, "an absent index answers null");
+}
+
+// @EXPECT_WARNING: a nullable `Tk1450?` is stored into the local `e` of the non-null type
+fn test_an_absent_trie_lookup_is_nullable() {
+  t: trie<Tk1450[k]>? = null;
+  e: Tk1450 = t["a"];
+  assert(e == null, "an absent trie answers null");
+}
+
+// ------------------------------------------------------- the controls that must NOT move
+
+// loft#1436 — a DENSE receiver with a literal index is the developer's own contract, and
+// nothing about an absent receiver reaches it.  Silent, and this file fails if it warns.
+fn test_a_constant_index_on_a_present_vector_stays_non_null() {
+  m: vector<It1450> = [It1450 { k: 1, v: 7 }];
+  z: It1450 = m[0];
+  assert(z.v == 7, "a present dense vector reads its element");
+}
+
+fn test_a_present_keyed_lookup_is_unchanged() {
+  h: hash<It1450[k]> = [It1450 { k: 1, v: 7 }];
+  assert(h[1].v == 7, "a present hash answers its record");
+}
+
+// ------------------------------------------------- the WRITE, which the `?` must not reach
+
+// `(Col-Insert-Absent)` makes a write to an absent keyed collection TOTAL — the destination is
+// materialised by the write itself (loft#1213), which is what makes the bare spelling and the
+// discharged `h?[k] = v` agree.  That is a fact about the PLACE, so the `?` the READ takes
+// above must not reach it: carried into the target, the write lowered to a read and was lost
+// with nothing reported.
+fn test_a_write_to_an_absent_keyed_local_still_lands() {
+  h: hash<It1450[k]>? = null;
+  h[2] = It1450 { k: 2, v: 20 };
+  assert(len(h?) == 1, "the bare spelling materialises and inserts");
+  assert(h?[2].v == 20, "and the record is readable afterwards");
+}
+
+fn test_a_write_to_an_absent_vector_local_still_lands() {
+  v: vector<It1450>? = null;
+  v += [It1450 { k: 1, v: 10 }];
+  assert(len(v?) == 1, "an append to an absent vector instantiates it");
+}
+
+// ------------------------------------------------------------------- the discharges
+
+fn test_a_coalesce_discharges_an_absent_receiver() {
+  m: vector<It1450>? = null;
+  z: It1450 = m[0] ?? It1450 { k: 0, v: -1 };
+  assert(z.v == -1, "`?? d` discharges and answers the default");
+}
+
+fn test_a_nullable_slot_takes_it_without_a_diagnostic() {
+  m: vector<It1450>? = null;
+  z: It1450? = m[0];
+  assert(z == null, "a `τ?` slot holds the absence");
+}
+
+// A `!= null` guard on a VECTOR: the heap null test narrows, so the read inside is non-null.
+fn test_a_guard_on_a_vector_receiver_discharges() {
+  m: vector<It1450>? = [It1450 { k: 1, v: 7 }];
+  if m != null {
+    z: It1450 = m[0];
+    assert(z.v == 7, "a guarded read needs no discharge");
+  } else {
+    assert(false, "the vector is present");
+  }
+}
+
+// The same guard on a STRUCT receiver, through a field read.
+fn test_a_guard_on_a_struct_receiver_discharges() {
+  s: It1450? = It1450 { k: 1, v: 7 };
+  if s != null {
+    n: integer = s.v;
+    assert(n == 7, "a guarded field read needs no discharge");
+  } else {
+    assert(false, "the struct is present");
+  }
+}
+
+// The `== null` early return proves it for everything after it, which is the guard-clause form.
+fn guarded_by_early_return(xs: vector<It1450>?) -> integer {
+  if xs == null { return -1; }
+  z: It1450 = xs[0];
+  z.v
+}
+
+fn test_an_early_return_guard_discharges_the_rest_of_the_body() {
+  assert(guarded_by_early_return([It1450 { k: 1, v: 7 }]) == 7, "present reads its element");
+  assert(guarded_by_early_return(null) == -1, "absent takes the guard");
+}
+
+// `@FR-N-Decl` — a narrowing says what the slot HOLDS, not what it may hold, so it cannot
+// re-declare the slot: writing a `τ?` into a local the author declared `τ?` is silent, even
+// after a guard has proved that local non-null.
+fn rebind_after_a_guard(src: It1450?) -> integer {
+  cur: It1450? = src;
+  if cur == null { return -1; }
+  cur = src;
+  cur.v ?? -2
+}
+
+fn test_a_declared_nullable_slot_still_takes_a_nullable_after_a_guard() {
+  assert(rebind_after_a_guard(It1450 { k: 1, v: 7 }) == 7, "the rebind lands");
+  assert(rebind_after_a_guard(null) == -1, "the guard still fires");
+}

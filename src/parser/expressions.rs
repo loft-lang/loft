@@ -2667,6 +2667,38 @@ use a separate collection or add after the loop"
         var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
+        // narrowing has nothing to say about it: the proof describes what the slot currently
+        // HOLDS and it dies at this write (`parse_assign_op_inner` drops it once the store is
+        // built).  The target was parsed as an expression, which peels a proven-non-null
+        // variable to its base — so a declared `τ?` slot answered `τ`, and writing a `τ?` into
+        // its own declared type was reported as a nullable reaching a non-null slot.  Restoring
+        // just the marker keeps the deps and the reference spelling the read derived.
+        let declared_face = match to.unspan() {
+            Value::Var(v_nr)
+                if self.vars.exists(*v_nr)
+                    && self.narrowed_non_null.contains(v_nr)
+                    && matches!(self.vars.tp(*v_nr), Type::Optional(_))
+                    && !matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(Type::Optional(Box::new(f_type.clone())))
+            }
+            // A keyed ELEMENT place answers the element's own type, never the receiver's `?`.
+            // `@FR-N-Domain` gives a keyed READ through an absent collection `τ?` (loft#1450),
+            // and that `?` describes the READ: `(Col-Insert-Absent)` makes the WRITE total — an
+            // absent keyed destination is materialised by the write itself (loft#1213), which
+            // is what makes the bare `h[k] = v` and the discharged `h?[k] = v` agree.  Carried
+            // into the place, the receiver's `?` left the target unrecognised as one and the
+            // write lowered to a READ, losing it in silence.
+            Value::Call(d_nr, _)
+                if self.data.def(*d_nr).name() == "OpGetRecord"
+                    && matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(f_type.base().clone())
+            }
+            _ => None,
+        };
+        let f_type = declared_face.as_ref().unwrap_or(f_type);
         let group_parent = parent_tp.clone();
         let group_to = to.clone();
         let already = std::mem::replace(&mut self.rebind_lowered, u16::MAX);
