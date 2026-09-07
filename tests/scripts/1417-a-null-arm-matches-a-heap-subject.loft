@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-N-Match — `match e { null => …, x => … }` eliminates `t?` and binds the `t` arm.  The
+// rule is stated for every t, and it held for a SCALAR and for the synthetic inline element
+// only.  For a heap subject the arm-head parser reads a VARIANT name, `null` is a keyword and
+// not one, so the first pass broke out of the arm loop and the run died on a brace — three
+// "Expect token" errors naming nothing the author could act on (loft#1417).
+//
+// Absence is spelled differently in the two places, which is why one arm shape could not serve
+// both.  An inline `__nullable<S>` element carries it as discriminant 0 and the arm is a
+// discriminant test like any other; a HEAP subject — a local, a parameter, a return — carries
+// it in the store pointer (`@FR-L-Null-Which`), so its arm asks `OpRefIsNull` and names no
+// variant at all.  An arm may now carry its own test for exactly that reason.
+//
+// The `null` arm covers no VARIANT, so exhaustiveness is untouched: an absent subject is not a
+// variant of anything, and a match without a null arm still answers null for one — which is
+// what the last cell holds down.
+//
+// ⚠ NOT closed here: a BINDING arm over a plain struct (`match s { null => -1, x => x.a }`)
+// is still refused with *"'x' does not match struct type S"*.  Measured independently — the
+// same refusal fires with no null arm in the match at all — so it is a separate gap in the
+// binding-arm parser rather than part of this one, and asserting it here would tie two cures
+// to one guard.  The struct cells below use a wildcard, which is what works.
+//
+// @falsified-at: 4ac66f6c — interpret exit 1 -> 0 and native exit 1 -> 0.  The control build
+//   does not compile the file at all (the arm loop breaks and the parse cascades), so no cell
+//   runs and the assertion column is 0 on both sides; the value assertions are what make a
+//   pass mean more than "it parsed".
+
+enum Tok { Fn { x: integer }, Id { x: integer } }
+struct S { a: integer }
+
+fn a_null_arm_matches_an_absent_struct_enum() {
+  t: Tok? = null;
+  r = match t { null => -1, Id { x } => x, Fn { x } => 100 + x };
+  assert_eq("{r}", "-1", "the null arm is taken for an absent subject");
+}
+
+fn a_present_struct_enum_still_reaches_its_variant() {
+  u: Tok? = Id { x: 7 };
+  a = match u { null => -1, Id { x } => x, Fn { x } => 100 + x };
+  assert_eq("{a}", "7", "the Id arm is taken");
+
+  w: Tok? = Fn { x: 3 };
+  b = match w { null => -1, Id { x } => x, Fn { x } => 100 + x };
+  assert_eq("{b}", "103", "and the Fn arm for the other variant");
+}
+
+// A match with NO null arm is unchanged: an absent subject matches no variant and the match
+// answers null, which is how the value was reachable before this arm existed.
+fn a_match_without_a_null_arm_is_unchanged() {
+  v: Tok? = Id { x: 2 };
+  present = match v { Id { x } => x, Fn { x } => 100 + x };
+  assert_eq("{present}", "2", "a present subject still dispatches");
+
+  absent: Tok? = null;
+  m = match absent { Id { x } => x, Fn { x } => 100 + x };
+  assert_eq("{m ?? -1}", "-1", "and an absent one still answers null");
+}
+
+// A plain struct subject takes the null arm too; the other arm is a wildcard, because a
+// binding arm over a struct is a separate refusal (see the header).
+fn a_null_arm_matches_an_absent_struct() {
+  s: S? = null;
+  q = match s { null => -1, _ => 9 };
+  assert_eq("{q}", "-1", "an absent struct takes the null arm");
+
+  t: S? = S { a: 8 };
+  p = match t { null => -1, _ => 9 };
+  assert_eq("{p}", "9", "and a present one does not");
+}
+
+// The scalar spelling the rule always held for, as the control.
+fn the_scalar_spelling_is_unchanged() {
+  n: integer? = null;
+  assert_eq("{match n { null => -1, x => x }}", "-1", "an absent scalar takes the null arm");
+  m: integer? = 5;
+  assert_eq("{match m { null => -1, x => x }}", "5", "and a present one binds");
+}

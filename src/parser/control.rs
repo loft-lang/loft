@@ -407,6 +407,12 @@ struct EnumArm {
     tp: Type,
     guard: Option<Value>,
     bindings: Vec<Value>,
+    /// The arm's test, when it is not a discriminant comparison.  A `null` arm over a
+    /// nullable HEAP subject is the case: absence there is the store-pointer sentinel, not
+    /// a discriminant, so the arm asks `OpRefIsNull` and `discs` says nothing about it
+    /// (`@FR-L-Null-Which` — a local, a parameter and a return spell `S?` as the pointer).
+    /// `None` keeps the ordinary discriminant chain.
+    cond: Option<Value>,
 }
 
 /// One arm of a vector or tuple `match`, collected before the if-chain is assembled.
@@ -4424,10 +4430,21 @@ impl Parser {
             // synth enum (a regular enum's null is the variable store_nr sentinel,
             // not an inline disc — E1).  `null` is a keyword, not an identifier, so
             // it must be matched before the `has_identifier()` variant path below.
-            if valid_enum
-                && e_nr != u32::MAX
-                && self.data.def(e_nr).name.starts_with("__nullable<")
-                && self.lexer.has_token("null")
+            // A nullable HEAP subject spells absence as the store-pointer sentinel rather
+            // than an inline discriminant, so its `null` arm asks `OpRefIsNull` and names no
+            // variant.  `(N-Match)` is stated for every t — it held for a scalar and for the
+            // synthetic inline element only, and the arm-head parser reads a VARIANT name, so
+            // `null` broke out of the loop and the run died on a brace (loft#1417).
+            let synth_null_elem =
+                e_nr != u32::MAX && self.data.def(e_nr).name.starts_with("__nullable<");
+            // Gated on the subject being a HEAP value, not on its declared type carrying a
+            // `?`: by this point the match setup has already peeled `Optional` off the
+            // subject (it reads `Enum(e, true, _)` for a `Tok?` local as much as for a
+            // `Tok` one), so the wrapper is not available to test.  That costs nothing —
+            // `OpRefIsNull` is well defined for any heap subject, and on one that cannot be
+            // absent the arm is simply never taken, exactly like an unreachable `_`.
+            let heap_null_subject = is_struct && !synth_null_elem;
+            if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
                 let arm_write_state = self.vars.save_and_clear_write_state();
@@ -4464,12 +4481,22 @@ impl Parser {
                 if null_variant != u32::MAX {
                     covered.insert(null_variant);
                 }
+                // The inline element reads discriminant 0; the heap subject asks its own
+                // sentinel, and covers no variant — an absent subject is not a variant of
+                // anything, which is why exhaustiveness is untouched for it.
+                let (discs, cond) = if heap_null_subject {
+                    let is_null = self.cl("OpRefIsNull", &[subject_val.clone()]);
+                    (Vec::new(), Some(is_null))
+                } else {
+                    (vec![0], None)
+                };
                 arms.push(EnumArm {
-                    discs: vec![0],
+                    discs,
                     code: arm_body,
                     tp: arm_type,
                     guard: None,
                     bindings: Vec::new(),
+                    cond,
                 });
                 self.lexer.has_token(","); // optional trailing comma
                 continue;
@@ -5027,6 +5054,7 @@ impl Parser {
                 tp: arm_type,
                 guard: guard_opt,
                 bindings: binding_stmts,
+                cond: None,
             });
             // @PLN35 Phase 3: emit one arm per EXTRA listed pattern, each binding
             // the shared slots from its own variant offsets then running a CLONE of
@@ -5053,6 +5081,7 @@ impl Parser {
                         tp: tp.clone(),
                         guard: None,
                         bindings: Vec::new(),
+                        cond: None,
                     });
                 }
             }
@@ -5144,7 +5173,7 @@ impl Parser {
         // typecheck and balance the stack, so it carries the typed null.
         let mut chain = base;
         for arm in arms.iter().rev() {
-            if arm.discs.is_empty() {
+            if arm.discs.is_empty() && arm.cond.is_none() {
                 // Wildcard — always taken; becomes the else branch of the chain.
                 // guarded wildcard wraps body in If(guard, body, chain_rest).
                 chain = match &arm.guard {
@@ -5152,12 +5181,23 @@ impl Parser {
                     None => arm.code.clone(),
                 };
             } else {
-                // build OR'd comparison for all discriminants in this arm.
-                let mut cmp = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
-                for &d in &arm.discs[1..] {
-                    let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
-                    cmp = v_if(cmp, Value::Boolean(true), next);
-                }
+                // An arm that carries its own test uses it; otherwise build the OR'd
+                // comparison over this arm's discriminants.  The `null` arm of a nullable
+                // HEAP subject is the first kind: absence is the store-pointer sentinel
+                // there, which no discriminant names.
+                let mut cmp = match &arm.cond {
+                    Some(c) => c.clone(),
+                    None => {
+                        let mut cmp =
+                            self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
+                        for &d in &arm.discs[1..] {
+                            let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
+                            cmp = v_if(cmp, Value::Boolean(true), next);
+                        }
+                        cmp
+                    }
+                };
+                let _ = &mut cmp;
                 // guarded arms nest the guard inside the pattern branch.
                 chain = match &arm.guard {
                     Some(guard) => {
@@ -5358,6 +5398,7 @@ impl Parser {
             tp: arm_type,
             guard: guard_opt,
             bindings: Vec::new(),
+            cond: None,
         };
         (arm, is_exhaustive)
     }
@@ -5439,6 +5480,7 @@ impl Parser {
             tp: result_type.clone(),
             guard,
             bindings: Vec::new(),
+            cond: None,
         };
         (arm, exhaustive)
     }
