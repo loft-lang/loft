@@ -260,10 +260,18 @@ fn collect_fn_ref_literals(
 ) {
     match val {
         Value::Set(var, inner) => {
-            if matches!(
-                variables.tp(*var),
-                Type::Function(_, _, _) | Type::Routine(_)
-            ) {
+            // Through the LINK as well as bare: `@FR-B-Ref-Intro` gives `&τ` for every τ, so
+            // a `&fn(…)` parameter names a fn-ref slot and a d_nr written through it keeps
+            // that function reachable.  Read bare, a function reached ONLY by a write
+            // through such a link was pruned, had no arm in the native dispatch, and the
+            // call panicked `invalid fn-ref` — the same shape as the @P299, @P328 and
+            // loft#1069 recoveries above, with the link as the spelling that hid it
+            // (loft#1443).
+            let slot_tp = match variables.tp(*var) {
+                Type::RefVar(inner_tp) => inner_tp.base(),
+                other => other.base(),
+            };
+            if matches!(slot_tp, Type::Function(_, _, _) | Type::Routine(_)) {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
             // loft#1069 — a fn-ref stored into a TUPLE MEMBER. `t: (fn(…), integer) =

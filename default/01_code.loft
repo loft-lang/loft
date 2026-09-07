@@ -1544,6 +1544,13 @@ fn OpGetStackText(r: reference) -> text[r];
 fn OpGetStackRef(r: reference, fld: const u16) -> reference;
 // Write a reference from a stack position.
 fn OpSetStackRef(r: reference, v1: reference);
+// Write a fn-ref THROUGH a `&fn(…)` link.  The link's own slot holds a DbRef to the
+// caller's fn-ref slot, so this is the two-step `&text` already performs: read the link
+// at this frame slot, then write the 20-byte blob where it points.  A fn-ref has two
+// representations and this is the STACK one (8 B d_nr + 12 B closure DbRef); the packed
+// heap form a struct field holds is a different write.  Declared `text` for the blob like
+// `OpPutFnRef`, whose signature carries the same 16-vs-20 gap.
+fn OpSetStackFnRef(pos: const u16, v1: text);
 // Append a text to a stack text variable.
 fn OpAppendStackText(pos: const u16, v1: text);
 // Append a character to a stack text variable.

@@ -346,6 +346,16 @@ impl Output<'_> {
                 // second half of loft#655, invisible until the interpreter half was
                 // fixed and compilation got far enough to reach it.
                 let needs_bool_coerce = matches!(inner_slot, Type::Boolean);
+                // The fn-ref half of the same rule: a `&fn(…)` slot holds the `(u32, DbRef)`
+                // PAIR, while a bare fn name or a NON-capturing lambda carries only the d_nr
+                // and emits as an `i64` — rustc E0308 against the pair, where the interpreter
+                // wrote the slot correctly (loft#1443).  Signalled through `fn_ref_context`
+                // rather than by wrapping the emitted text, for the reason the tuple-element
+                // write gives: an if-VALUED source has to build the pair inside EACH branch,
+                // and a wrap around the whole `if` would leave both arms a bare `i64`.  A
+                // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
+                // untouched — which is why this hid behind the shape people write first.
+                let needs_fn_pair = matches!(inner_slot, Type::Function(_, _, _));
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -364,7 +374,12 @@ impl Output<'_> {
                         write!(w, "(")?;
                     }
                 }
+                let prev_fn_ref_ctx = self.fn_ref_context;
+                if needs_fn_pair {
+                    self.fn_ref_context = true;
+                }
                 self.output_code_inner(w, to)?;
+                self.fn_ref_context = prev_fn_ref_ctx;
                 if amp_owned_writeback {
                     // Through the same helper the interpreter's `OpFreeRefIfDistinct`
                     // reaches, so the distinctness test and the caller's

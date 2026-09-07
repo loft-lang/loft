@@ -368,6 +368,32 @@ impl State {
         *t = v1;
     }
 
+    /// Write a fn-ref through a `&fn(…)` link (`@FR-B-Ref-Intro` — `&τ` for every τ).
+    ///
+    /// The `&` parameter's own frame slot holds a `DbRef` to the caller's fn-ref slot, so the
+    /// write dereferences before storing, exactly as [`Self::string_ref_mut`] does for `&text`.
+    /// `put_var`'s direct write is the wrong one here: it would overwrite the LINK with the
+    /// value and the caller would never see the closure.
+    ///
+    /// The blob is the 20-byte STACK representation of a fn-ref (8 B `d_nr` + 12 B closure
+    /// `DbRef`) — the same one `OpVarFnRef` / `OpPutFnRef` move, and NOT the packed form a
+    /// struct field holds.  `pos` is compensated by the popped span the way every other
+    /// pos-taking op that pops first does.
+    #[inline]
+    pub fn set_stack_fn_ref(&mut self) {
+        let pos = self.code::<u16>();
+        let v = *self.get_stack::<[std::mem::MaybeUninit<u8>; 20]>();
+        let n = self.stack_step(20) as u16;
+        let link = *self.database.store(&self.stack_cur).addr::<DbRef>(
+            self.stack_cur.rec,
+            self.stack_cur.pos + self.stack_pos - u32::from(pos - n),
+        );
+        *self
+            .database
+            .store_mut(&link)
+            .addr_mut::<[std::mem::MaybeUninit<u8>; 20]>(link.rec, link.pos) = v;
+    }
+
     pub fn append_stack_text(&mut self) {
         let text = self.string();
         let pos = self.code::<u16>();

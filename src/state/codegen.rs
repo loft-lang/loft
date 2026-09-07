@@ -4859,6 +4859,31 @@ impl State {
             // (`pd = &d; pd = S { n: 2 }`) installed the fresh store through the link and
             // orphaned the one it displaced — a leak on the interpreter, and one more
             // reason the two backends answered this shape differently (loft#1371).
+            // `@FR-B-Ref-Intro` — `&τ` is a type for EVERY τ, with no τ excluded (D-bind-17,
+            // loft#1372), so a fn-typed link writes like any other.  It cannot go through the
+            // allow-list below: a fn-ref is TWENTY bytes on the stack (8 B `d_nr` + 12 B
+            // closure `DbRef`) where every op there moves at most twelve, and the value push
+            // has to be the PAIR — `self.generate` lowers a bare fn name to the lone `d_nr`
+            // and would leave the closure half of the slot garbage.  So it takes the same
+            // shape `&text` does, a deref-and-write op keyed on the link's frame slot
+            // (loft#1443).
+            // A PARAMETER's link, which is the one this covers.  A `&fn(…)` LOCAL bind is a
+            // second spelling with a different unsound step — the `&` bind lowering admits
+            // `Reference`/`Tuple`/`Text` and not `Function`, so the link is never installed
+            // and the bind and the write are indistinguishable here — and it keeps the
+            // pre-existing ICE rather than taking a write path that would run against a
+            // link that does not exist (loft#1443, its own entry).
+            if matches!(*tp, Type::Function(_, _, _)) && stack.function.is_argument(var) {
+                self.gen_fn_ref_value_node(IrNode::Native(value), stack);
+                // AFTER the push: `var_pos` is relative to the current stack top, so the
+                // pair has to be on it already.  The runtime subtracts the popped span
+                // back off, the way every pos-taking op that pops first does.
+                let var_pos = stack.var_pos(var);
+                stack.add_op("OpSetStackFnRef", self);
+                self.code_add(var_pos);
+                stack.position -= stack.fnref_signature_gap();
+                return;
+            }
             let amp_owned_writeback = (matches!(
                 *tp,
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)

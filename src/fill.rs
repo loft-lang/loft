@@ -284,6 +284,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     get_stack_text,
     get_stack_ref,
     set_stack_ref,
+    set_stack_fn_ref,
     append_stack_text,
     append_stack_character,
     clear_stack_text,
@@ -2457,6 +2458,10 @@ fn get_stack_ref(s: &mut State) {
 
 fn set_stack_ref(s: &mut State) {
     s.set_stack_ref();
+}
+
+fn set_stack_fn_ref(s: &mut State) {
+    s.set_stack_fn_ref();
 }
 
 fn append_stack_text(s: &mut State) {

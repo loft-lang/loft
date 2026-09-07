@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1443 — writing a closure into a `&fn(…) -> τ` PARAMETER.
+//
+// `@FR-B-Ref-Intro` gives `&τ` for EVERY τ, with no τ excluded — the register says so in as
+// many words, having closed `D-bind-17` on exactly that sentence one day before this defect
+// was filed (loft#1372: a `&τ?` link, where what was missing was "one spelling of the SLOT
+// behind a link, at the nine sites that each asked the link's inner type bare").  A fn-typed
+// link is the next such spelling, and it was an internal compiler error on both backends:
+// `Unknown reference variable type`, from the write-back's type allow-list.
+//
+// An ICE is never the right answer, and the direction is not a design call: refusing `&fn(…)`
+// at the parameter would be a fresh deviation against a rule closed the day before.  The
+// allow-list that panicked already carried the precedent in its own comment — loft#1292 added
+// the keyed kinds to it because "an allow-list whose omission costs an ICE rather than an
+// optimisation is the trade the other way round".
+//
+// A fn-ref has TWO representations and the write needs the STACK one: 20 bytes, 8 B `d_nr`
+// plus a 12 B closure `DbRef`.  (A struct FIELD holds the packed heap form — a 4-byte d_nr and
+// a child record — so the field write that already worked was the wrong model to copy.)  No op
+// wrote 20 bytes through a link, so `OpSetStackFnRef` does it the way `&text` already does:
+// read the link at the frame slot, then write where it points.
+//
+// Axes this file MOVES:  what the closure captures (nothing · a struct · a nullable struct ·
+//                        an integer · a text), whether it captures at ALL, whether the source
+//                        is a bare fn NAME (a fn-ref with an empty environment) or a lambda,
+//                        the fn's arity and return type, the number of writes through one
+//                        link, and whether the source is an if-VALUED expression.
+// Axes it HOLDS FIXED:   the link is a PARAMETER.  A `&fn(…)` LOCAL bind (`pd: &fn() -> integer
+//                        = &g`) is NOT this defect and is deliberately excluded: the `&` bind
+//                        lowering admits `Reference`/`Tuple`/`Text` and not `Function`, so the
+//                        link is never installed and the bind cannot be told from a write.
+//                        That is a second unsound step in its own site, it still ICEs here as
+//                        it always did, and it is filed separately rather than half-fixed.
+//
+// @falsified-at: f5cd8a37e — interpret exit 1 -> 0, native exit 1 -> 0.  On the control EVERY
+//   cell is the ICE, so the file cannot even reach an assertion there; each cell's VALUE is
+//   hand-computed below and checked on both backends, which is what makes the pass mean
+//   something rather than the two binaries agreeing with each other.
+
+struct S1443 { a: integer }
+
+fn nine1443() -> integer { 9 }
+fn one1443() -> integer { 1 }
+fn two1443() -> integer { 2 }
+
+// --------------------------------------------------- the defect: a write through the link
+
+fn give_capturing(out: &fn() -> integer) {
+  d: S1443 = S1443 { a: 7 };
+  out = fn() -> integer { d.a };
+}
+
+fn test_a_capturing_closure_reaches_the_caller() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_capturing(g);
+  assert(g() == 7, "the caller calls the closure the callee wrote");
+}
+
+// A NON-capturing lambda carries only the d_nr, where a capturing one already carries the
+// pair — the axis the issue's own reproducer holds fixed, and the one `--native` failed on
+// after the interpreter was right.
+fn give_non_capturing(out: &fn() -> integer) { out = fn() -> integer { 42 }; }
+
+fn test_a_non_capturing_closure_reaches_the_caller() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_non_capturing(g);
+  assert(g() == 42, "a closure with an empty environment is written whole");
+}
+
+// A bare fn NAME is `(L-FnRef)`'s fn-ref: a closure with an empty environment.  It also has to
+// stay REACHABLE — a function reached only through a link was pruned, leaving the native
+// dispatch without an arm and the call panicking `invalid fn-ref`.
+fn give_fn_ref(out: &fn() -> integer) { out = nine1443; }
+
+fn test_a_bare_fn_name_reaches_the_caller() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_fn_ref(g);
+  assert(g() == 9, "a fn-ref written through a link is still reachable");
+}
+
+fn give_nullable_capture(out: &fn() -> integer) {
+  d: S1443? = S1443 { a: 5 };
+  out = fn() -> integer { if d == null { -1 } else { d.a } };
+}
+
+fn test_a_nullable_capture_is_not_the_axis() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_nullable_capture(g);
+  assert(g() == 5, "nullability of the capture does not enter into it");
+}
+
+fn give_scalar_capture(out: &fn() -> integer) { n: integer = 3; out = fn() -> integer { n + 1 }; }
+
+fn test_a_scalar_capture_reaches_the_caller() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_scalar_capture(g);
+  assert(g() == 4, "a scalar capture is written like any other");
+}
+
+// Arity and return type are the fn TYPE's own, and the link carries whatever it names.
+fn give_with_argument(out: &fn(integer) -> integer) {
+  k: integer = 10;
+  out = fn(x: integer) -> integer { x + k };
+}
+
+fn test_a_parameterised_fn_type_reaches_the_caller() {
+  g: fn(integer) -> integer = fn(x: integer) -> integer { x };
+  give_with_argument(g);
+  assert(g(5) == 15, "an argument-taking closure is written whole");
+}
+
+fn give_text_returning(out: &fn() -> text) { s: text = "hi"; out = fn() -> text { s }; }
+
+fn test_a_text_returning_closure_reaches_the_caller() {
+  g: fn() -> text = fn() -> text { "" };
+  give_text_returning(g);
+  assert(g() == "hi", "the return type is the fn type's, not the link's");
+}
+
+// TWO writes through one link: the second must land, and the first must not be read after it.
+fn give_twice(out: &fn() -> integer) {
+  out = fn() -> integer { 1 };
+  out = fn() -> integer { 2 };
+}
+
+fn test_the_last_write_through_a_link_wins() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_twice(g);
+  assert(g() == 2, "a link written twice holds the second closure");
+}
+
+// An if-VALUED source is why the pair is asked for through the shared context rather than by
+// wrapping the emitted expression: a wrap around the whole `if` leaves both ARMS bare.
+fn give_if_valued(out: &fn() -> integer, pick: boolean) {
+  out = if pick { one1443 } else { two1443 };
+}
+
+fn test_an_if_valued_source_builds_the_pair_in_each_arm() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_if_valued(g, false);
+  assert(g() == 2, "the else arm's fn-ref is written");
+  h: fn() -> integer = fn() -> integer { 0 };
+  give_if_valued(h, true);
+  assert(h() == 1, "and the then arm's");
+}
+
+// ------------------------------------------------------------------- the control
+
+// The same write with NO link: unchanged by all of this, and the cell that says so.
+fn test_a_plain_fn_local_assignment_is_unchanged() {
+  d: integer = 7;
+  g: fn() -> integer = fn() -> integer { 0 };
+  g = fn() -> integer { d };
+  assert(g() == 7, "a fn local without a link keeps taking its own path");
+}
