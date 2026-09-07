@@ -54,16 +54,20 @@ pub const MAX_AXES: usize = 3;
 /// is one half of it.
 fn axis_i64(store: &Store, rec: u32, key: &Key) -> i64 {
     let p = PAYLOAD + u32::from(key.position);
+    // The narrow widths store `value - start`, so the decode adds `start` back.  It is the
+    // key's own field, carried for exactly this, and the VALUE-keyed decoders next door
+    // (`keys::compare_ref`, `keys::get_key`, `keys::hash_key`) already read it that way —
+    // one field has one decode, whichever kind of collection asks (@FR-Col-Axis).
+    let start = key.start;
     match key.type_nr.unsigned_abs() {
         2 => store.get_long(rec, p),
         8 => i64::from(store.get_i32_raw(rec, p)),
+        // The unsigned 4-byte encoding (@FR-L-Narrow-Enc).  Raw like `Int` above, so it
+        // takes no `start` — the bias belongs to the widths that store `value - start`.
         12 => i64::from(store.get_u32_raw(rec, p)),
-        9 => i64::from(store.get_short(rec, p, 0)),
-        10 => i64::from(store.get_byte(rec, p, 0)),
-        11 => {
-            let raw: u16 = *store.addr(rec, p);
-            i64::from(raw as i16)
-        }
+        9 => i64::from(store.get_short(rec, p, start)),
+        10 => i64::from(store.get_byte(rec, p, start)),
+        11 => i64::from(store.get_short_full(rec, p, start)),
         // type_nr 1 (`integer`) and any other integer default.
         _ => store.get_int(rec, p),
     }

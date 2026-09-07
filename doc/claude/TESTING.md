@@ -3525,6 +3525,31 @@ RETURNS, and the child exits normally. Fault for real in a forked child
 (`std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1)`, volatile so it cannot be optimised
 into something that never faults) and assert `WIFSIGNALED`.
 
+**A round-trip is not an oracle when the writer is the reader's TWIN.**  `radix_db::paged::
+every_axis_width_decodes_to_what_was_written` exists to fix each side of the spatial axis
+decode to the value that was WRITTEN — and its local `write_axis` was written as *"the mirror
+of the `axis_i64` arm that reads it back"*, so it stored what that arm would read.  Reader and
+writer shared one defect (a hard-coded `0` where the key's declared range minimum belongs), the
+round-trip agreed with itself, and every width passed.  The neighbouring
+`a_paged_box_agrees_with_the_resident_one` passed for the same reason one level up: BOTH readers
+were wrong the same way, and its doc comment states the contract as *"the two must not disagree
+with each other"* — the wrong oracle, written down as if it were the right one.  The third party
+neither test asked is the REAL writer (`database/structures.rs`: `Enc::Byte(from) => set_byte(..,
+from, v)`), and it is the only one that decides what the bytes mean.  **Write through the
+product's own setter, never a test-local mirror of the reader**; and when a test asserts that two
+implementations agree, say which one is the oracle — if the answer is "neither", the test cannot
+fail for the reason it was written (loft#1431).
+
+**A fixture chosen for convenience lands where every candidate implementation agrees.**  This is
+the cause behind the two entries above and it was sighted three times in one day: `7` fits every
+width; `1..5` fits one byte; a `u16` spatial axis at `300` sits below the signed midpoint where a
+signed and an unsigned decode return the same number.  All three were picked because they were
+easy to type, and each one put the cell in the region where the bug is invisible.  **Choose each
+fixture as the value that DISCRIMINATES** — past the next-narrower width, past the signed
+midpoint, off a zero bias — and if a value was chosen for any other reason, that cell is not yet
+a measurement.
+
+
 ## Diagnostic tiers — what `--deny-warnings` may fail on
 
 Two tiers, and the difference is contractual rather than cosmetic:
