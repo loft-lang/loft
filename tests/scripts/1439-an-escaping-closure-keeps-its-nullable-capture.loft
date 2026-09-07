@@ -24,7 +24,10 @@
 //                        closures and locals are in play.
 // Axes it HOLDS FIXED:   one capture per closure, and the escape is always the function's own
 //                        return value — a struct holding a capturing closure cannot be
-//                        returned at all (refused by #318), so that is the only route out.
+//                        returned at all (refused by #318) and a `&fn()` parameter does not
+//                        compile (loft#1443, an ICE and a gap rather than a decision — the
+//                        rules admit `&τ` for every τ), so that is the only route out TODAY and
+//                        this file's coverage question reopens when #1443 lands.
 //
 // ⚠ Two closures over the SAME local, one escaping, is loft#1440 and is NOT fixed here: both
 // records adopt the one store and the one left behind frees it.  Its dense twin fails

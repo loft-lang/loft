@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1430 — which parameters the arms of a synthesised dispatcher (@F20) must SHARE.
+//
+// A body that builds its text in a branch is given a hidden `___acc_1: &text` accumulator; one
+// that returns a literal is not.  `create_enum_dispatch_fn` counted those hidden attributes
+// among the parameters every implementation must have in common, so ONE implementation
+// branching and its twin not drove `common` to 0 — and the guard below it then abandoned the
+// dispatcher with NO diagnostic, leaving the call site to fail as a field read:
+// *"field 'lab3' of 'We' has no storage in that type's layout"* and four more errors, none of
+// them about a method.
+//
+// A hidden attribute is the compiler's own and is per IMPLEMENTATION.  It is now excluded from
+// the shared count, taken for the dispatcher from whichever arm HAS one (a dispatcher delivers
+// the same return as its arms, so it needs the same buffer — read only off the first arm, the
+// one that needed a destination was left without one and `--native` rendered it `let _ret = ;`),
+// and forwarded only to the arms that declare one (handed to all, the literal-returning arm is
+// called with an argument it does not have: *"Too many parameters for We.lab3"*).
+//
+// A required VISIBLE parameter one implementation does not share is still no dispatcher — but
+// it is now REFUSED by name where the implementation is written, which is `1430b`.
+//
+// Axes this file MOVES:  which arm carries the accumulator (the first · the second · both ·
+//                        neither), the arity (0 and 1 shared parameters), and the return kind
+//                        (`text`, which is what has a buffer at all, beside an `integer`
+//                        control).
+// Axes it HOLDS FIXED:   two variants with one integer payload, all receivers dense — a
+//                        nullable receiver is loft#1427's file.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, native exit 1 -> 0.  The control does not
+//   COMPILE: e1 and e2 both fail as field reads there, with the parse cascade after them.  The
+//   refusal half is `1430b`, scored on its own `@EXPECT_ERROR` channel, because a firing
+//   expectation stops a file and cannot share one with running cells.
+
+enum W30 { Wa30 { a: integer }, Wb30 { b: integer } }
+// e1 — the SECOND arm branches and the first returns a literal: the shape that was abandoned.
+fn lab30(self: Wa30) -> text { "wa" }
+fn lab30(self: Wb30) -> text { if self.b == 1 { "wb1" } else { "wb2" } }
+
+enum W31 { Wa31 { a: integer }, Wb31 { b: integer } }
+// e2 — the FIRST arm branches: the dispatcher's buffer must come from an arm that has one,
+// whichever it is.
+fn lab31(self: Wa31) -> text { if self.a == 1 { "wa1" } else { "wa2" } }
+fn lab31(self: Wb31) -> text { "wb" }
+
+enum W32 { Wa32 { a: integer }, Wb32 { b: integer } }
+// e3 — a shared VISIBLE parameter beside the asymmetric buffers: it is still forwarded.
+fn lab32(self: Wa32, k: integer) -> text { "wa{k}" }
+fn lab32(self: Wb32, k: integer) -> text { if k == 1 { "wb1" } else { "wb-{k}" } }
+
+enum W33 { Wa33 { a: integer }, Wb33 { b: integer } }
+// e5 — the integer control: no buffers anywhere, which is the case that always worked.
+fn num33(self: Wa33) -> integer { self.a }
+fn num33(self: Wb33) -> integer { if self.b == 1 { 10 } else { 20 } }
+
+fn main() {
+  wa: W30 = Wa30 { a: 1 };
+  wb: W30 = Wb30 { b: 1 };
+  assert(wa.lab30() == "wa", "e1 the literal arm: {wa.lab30()}");
+  assert(wb.lab30() == "wb1", "e1b the branching arm, whose buffer the first one lacks: {wb.lab30()}");
+
+  xa: W31 = Wa31 { a: 1 };
+  xb: W31 = Wb31 { b: 1 };
+  assert(xa.lab31() == "wa1", "e2 the branching arm FIRST: {xa.lab31()}");
+  assert(xb.lab31() == "wb", "e2b and the literal arm second: {xb.lab31()}");
+
+  ya: W32 = Wa32 { a: 1 };
+  yb: W32 = Wb32 { b: 1 };
+  assert(ya.lab32(7) == "wa7", "e3 a shared visible parameter is still forwarded: {ya.lab32(7)}");
+  assert(yb.lab32(2) == "wb-2", "e3b to the branching arm too: {yb.lab32(2)}");
+
+  za: W33 = Wa33 { a: 5 };
+  zb: W33 = Wb33 { b: 1 };
+  assert(za.num33() == 5 && zb.num33() == 10, "e5 the integer control: {za.num33()} {zb.num33()}");
+}

@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1430's other half, in its own file because a firing `@EXPECT_ERROR` stops the run.
+//
+// A REQUIRED visible parameter one implementation does not share is genuinely no dispatcher —
+// the dispatcher has nothing to pass for it — and that was already the answer.  What was wrong
+// is that it was silent: the abandonment left the call site to fail as a field read, naming a
+// field the author never wrote.  It is refused where the implementation is written now, and the
+// message names the parameter and both cures.
+//
+// The `1430` file holds the shapes that must still WORK, which is what keeps this refusal from
+// being a way to pass by refusing everything.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the
+//   suite's verdict, not a count of matches), native the same.  The control emits no diagnostic
+//   here at all: it abandons the dispatcher in silence and reports *"field 'sc30' of 'Ra30' has
+//   no storage in that type's layout"* at the CALL, which is a different line and a different
+//   sentence.
+
+enum Rq30 { Ra30 { a: integer }, Rb30 { b: integer } }
+
+// @EXPECT_ERROR: `sc30` cannot be dispatched on `Rq30`: this implementation takes `k`
+fn sc30(self: Ra30, k: integer) -> integer { self.a * k }
+fn sc30(self: Rb30) -> integer { self.b }
+
+fn dispatch_it() -> integer { x: Rq30 = Ra30 { a: 2 }; x.sc30(3) }

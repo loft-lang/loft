@@ -161,15 +161,35 @@ with the closure's environment in scope.
 
 **OPEN: 1.**
 
-- **D-clo-24** *(open, loft#1440)* — `(L-CapOwn)` says a captured store is freed once, and TWO
-  closures over ONE local both adopt it: where one of them escapes and the other is left behind,
-  the one left behind releases the store the escaped record still holds, and the caller reads a
-  released record.  Both spellings fail, dense and nullable alike, on both backends, so it is
-  adoption itself — an ownership TRANSFER where `(L-CapHeap)` says SHARE — rather than anything
-  about the `?`.  The cure is a design step in the capture model (the second adopter borrows),
-  which is why it is filed rather than fixed.
+- **D-clo-24** *(closed 2026-09-07, loft#1440)* — two closures over ONE store both adopted it,
+  and their deaths are independent: the record left behind released what the escaped one still
+  held.  Closed the way `(L-CapOwn)` says — among the records that adopted a store exactly one
+  keeps it, the one that LEAVES the frame, and the rest borrow; where none leaves, the first
+  keeps it, which is the single-record case unchanged.  The grouping is by the STORE a record
+  adopted, not by the capture's name: a local assigned between two builds gives its two records
+  different stores, and a name-keyed group made one borrow what the other never held.  Guard
+  `1440-one-store-has-one-owner-among-two-closures.loft`.
+- **D-clo-26** *(open, loft#1446)* — the same rule applied correctly still leaves a
+  use-after-free where the shared local is REASSIGNED after both builds: the frame keeps its own
+  free there (`capture_adoption_owns_free` declines to suppress it, loft#1324/#1388), and that
+  free reaches the store the escaped record holds rather than the one the local now names.
+  `(L-CapOwn)` says freed once by whichever outlives the other, and the frame outlives neither
+  here — what it owes is a release by store IDENTITY, which `@FR-O-Witness` already spells for a
+  mixed-ownership local.
+- **D-clo-25** *(closed 2026-09-07, loft#1444)* — "which record leaves the frame" was answered
+  from the declared return type's `DepEntry::CalleeFrame`, which is published once per LAMBDA
+  and overwritten, so wherever a function builds more than one it named the last one BUILT
+  rather than the one the return delivers.  Two consumers read it for two questions — *is this
+  fn-ref handed out, so its closure store must not be freed* and *which record outlives the
+  frame* — and both were answered about the wrong record whenever the escaping closure was not
+  written last.  Closed by asking the VALUES instead: the free-suppression also treats a fn-ref
+  that is a RETURN SOURCE as handed out, and the ownership question reads
+  `returned_closure_records` — the records named in RETURN POSITION, off the tail and off every
+  `return`.  Guard `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`.
 
-> **An `OPEN: 0` was a claim to re-measure, and re-measuring is what moved it to 1.** The
+> **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
+> → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each
+> answer measured rather than argued.  The
 > closing guards are `1248-…` (a fn-ref `??` join's argument witness and single capture witness),
 > `1248b-…` (the capture SLOT: two store-bearing captures, a captured collection, a capture
 > beside a pure mint, a capture returned directly), `1257b-…` (a collection return freed by
@@ -180,11 +200,13 @@ with the closure's environment in scope.
 > either capture may come back, and a capture variable reassigned after the build — and each
 > keeps the leak it had.
 >
-> That first fixed axis is where loft#1439 and loft#1440 both live: a closure that OUTLIVES its
-> frame.  `1439-an-escaping-closure-keeps-its-nullable-capture.loft` covers it now — the
-> nullable capture that was read after release, with the dense, absent, collection, text, kept
-> and record-enum cells beside it — and its own axis note says what it still holds fixed (one
-> adopter per store, which is D-clo-24's).
+> That first fixed axis is where loft#1439, loft#1440 and loft#1444 all live: a closure that
+> OUTLIVES its frame.  `1439-an-escaping-closure-keeps-its-nullable-capture.loft` covers it now
+> — the nullable capture that was read after release, with the dense, absent, collection, text,
+> kept and record-enum cells beside it — and `1440-one-store-has-one-owner-among-two-closures.loft`
+> covers two adopters, and `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`
+> moves the BUILD ORDER those two hold fixed — first, last and middle of three, delivered by a
+> tail, by an `if` over two closures, by an explicit `return`, and written straight out.
 
 `D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to

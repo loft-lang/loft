@@ -7,6 +7,21 @@ use super::{
     is_upper, rename, v_block, v_if,
 };
 
+/// What a synthesised dispatcher (@F20) hands to the arm it calls.
+///
+/// Two halves, because they reach different arms.  A VISIBLE parameter is one the author wrote
+/// and every implementation shares — the refusal in `create_enum_dispatch_fn` guarantees that —
+/// so every arm gets it.  A HIDDEN one is the compiler's own work buffer, given per
+/// IMPLEMENTATION to a body that needs somewhere to build its result, so only an arm that
+/// declares one may be handed it (loft#1430).
+#[derive(Default)]
+pub(crate) struct ForwardedArgs {
+    visible: Vec<Value>,
+    visible_types: Vec<Type>,
+    hidden: Vec<Value>,
+    hidden_types: Vec<Type>,
+}
+
 impl Parser {
     /// loft#799 — a keyed collection whose key field is the wrong TYPE for its kind
     /// is refused at DECLARATION, naming the kind that does key on it.
@@ -198,11 +213,28 @@ impl Parser {
     pub(crate) fn create_enum_dispatch_fn(&mut self, e_nr: u32, nrs: &[usize]) {
         let from_nr = nrs[0] as u32;
         let name = self.data.def(from_nr).original_name().clone();
-        let attrs = self.data.def(from_nr).attributes()[1..].to_vec();
+        // The parameters the arms must SHARE are the ones a caller writes.  A hidden
+        // attribute is the compiler's own — the `___acc_N` text accumulator a body that builds
+        // its result in a branch is given, and the return buffer — and it is per
+        // IMPLEMENTATION: an arm that needs one gets it from the call site like any other
+        // callee.  Counted among the shared parameters, one implementation having an
+        // accumulator its twin lacks drove `common` to 0 and the guard below then abandoned the
+        // dispatcher with no diagnostic at all, so the call site failed as a FIELD read
+        // (loft#1430).
+        let visible = |data: &crate::data::Data, nr: u32| -> Vec<crate::data::Attribute> {
+            data.def(nr)
+                .attributes()
+                .iter()
+                .skip(1)
+                .filter(|a| !a.hidden)
+                .cloned()
+                .collect()
+        };
+        let attrs = visible(&self.data, from_nr);
         let mut common = attrs.len();
         for nr in &nrs[1..] {
             let mut c = 0;
-            for a in &self.data.def(*nr as u32).attributes()[1..] {
+            for a in &visible(&self.data, *nr as u32) {
                 for o in &attrs {
                     if a.name == o.name && a.typedef == o.typedef {
                         c += 1;
@@ -214,9 +246,26 @@ impl Parser {
             }
         }
         for nr in nrs {
-            if self.data.def(*nr as u32).attributes().len() > common + 1 {
-                for a in &self.data.def(*nr as u32).attributes()[common + 1..] {
+            let extra = visible(&self.data, *nr as u32);
+            if extra.len() > common {
+                for a in &extra[common..] {
                     if a.value == Value::Null {
+                        // An implementation with a REQUIRED parameter the others do not share:
+                        // the dispatcher has nothing to pass for it, so there is no dispatcher
+                        // to build.  Say so where the enum is declared rather than leaving the
+                        // call site to fail as a field read (loft#1430).
+                        let at = self.data.def(*nr as u32).position().clone();
+                        diagnostic_at!(
+                            self.lexer,
+                            &at,
+                            Level::Error,
+                            "`{name}` cannot be dispatched on `{}`: this implementation takes \
+                             `{}`, which the other variants' implementations do not, so a call \
+                             through the enum has nothing to pass for it — give every \
+                             implementation the same parameters, or a default",
+                            self.data.def(e_nr).name(),
+                            a.name
+                        );
                         return;
                     }
                 }
@@ -242,6 +291,39 @@ impl Parser {
                 const_pos: (0, 0),
             });
         }
+        // …and the HIDDEN attributes of whichever implementation has them.  The dispatcher
+        // delivers the same return as its arms do, so it needs the same work buffers, and the
+        // arms are called with the dispatcher's own — a variant call must write into the
+        // buffer the caller allocated and not into a fresh work text with no stack slot.
+        // Taken from the first implementation that carries any rather than from `nrs[0]`,
+        // because a body that returns a LITERAL is given none while its branching twin is:
+        // reading only the first left the arm that needed a destination without one, which
+        // `--native` renders as `let _ret = ;` (loft#1430).
+        if let Some(hidden) = nrs
+            .iter()
+            .map(|nr| {
+                self.data
+                    .def(*nr as u32)
+                    .attributes()
+                    .iter()
+                    .skip(1)
+                    .filter(|a| a.hidden)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .find(|h| !h.is_empty())
+        {
+            for a in &hidden {
+                args.push(Argument {
+                    name: a.name.clone(),
+                    typedef: a.typedef.clone(),
+                    default: a.value.clone(),
+                    constant: false,
+                    ref_pos: (0, 0),
+                    const_pos: (0, 0),
+                });
+            }
+        }
         let fn_nr = self.data.add_fn(&mut self.lexer, &name, &args);
         // `add_fn` answers `u32::MAX` when it refused the definition, and it has already
         // said why. Indexing the definition table with that sentinel panicked the compiler
@@ -266,26 +348,29 @@ impl Parser {
         // Build forwarding args for extra (non-self) attributes (e.g. RefVar(Text) buffers).
         // Variant calls must write into the dispatcher's own text-buffer argument, not a
         // freshly-allocated work_text that has no stack slot yet.
-        let mut extra_call_args: Vec<Value> = Vec::new();
-        let mut extra_call_types: Vec<Type> = Vec::new();
+        // Split, because the two halves are forwarded to DIFFERENT arms: a visible parameter
+        // every implementation shares (the bail above guarantees it), a hidden buffer only to
+        // the implementations that declare one.  Forwarded to all, an implementation whose body
+        // returns a literal — and is therefore given no accumulator — is called with an
+        // argument it does not have: *"Too many parameters for We.lab3"* (loft#1430).
+        let mut forwarded = ForwardedArgs::default();
         for a in &args[1..] {
             let v = self.vars.var(&a.name);
-            if v != u16::MAX {
-                extra_call_args.push(Value::Var(v));
-                extra_call_types.push(a.typedef.clone());
+            if v == u16::MAX {
+                continue;
+            }
+            if a.name.starts_with("__") {
+                forwarded.hidden.push(Value::Var(v));
+                forwarded.hidden_types.push(a.typedef.clone());
+            } else {
+                forwarded.visible.push(Value::Var(v));
+                forwarded.visible_types.push(a.typedef.clone());
             }
         }
         let mut ls = Vec::new();
         let get_enum = self.cl("OpGetEnum", &[Value::Var(0), Value::Int(0)]);
         let get_int = self.cl("OpConvIntFromEnum", &[get_enum]);
-        self.enum_numbers(
-            nrs.to_vec(),
-            &name,
-            &mut ls,
-            &get_int,
-            &extra_call_args,
-            &extra_call_types,
-        );
+        self.enum_numbers(nrs.to_vec(), &name, &mut ls, &get_int, &forwarded);
         // No-variant-matched fallback: an explicit `return null`, not a bare
         // `Null` tail. As the tail of a value-typed (e.g. text) block the bare
         // Null was wrapped in `Str::new(<dispatch if>)` and emitted `Str::new(())`
@@ -386,8 +471,7 @@ impl Parser {
         name: &str,
         ls: &mut Vec<Value>,
         get_int: &Value,
-        extra_args: &[Value],
-        extra_types: &[Type],
+        forwarded: &ForwardedArgs,
     ) {
         for nr in nrs {
             let d_nr = nr as u32;
@@ -404,9 +488,22 @@ impl Parser {
             };
             let self_type = self.data.def(d_nr).attributes()[0].typedef.clone();
             let mut call_args = vec![Value::Var(0)];
-            call_args.extend_from_slice(extra_args);
+            call_args.extend_from_slice(&forwarded.visible);
             let mut call_types = vec![self_type];
-            call_types.extend_from_slice(extra_types);
+            call_types.extend_from_slice(&forwarded.visible_types);
+            // The hidden buffers go only to an implementation that DECLARES them: a body
+            // returning a literal has none, and handing it one is "Too many parameters".
+            if self
+                .data
+                .def(d_nr)
+                .attributes()
+                .iter()
+                .skip(1)
+                .any(|a| a.hidden)
+            {
+                call_args.extend_from_slice(&forwarded.hidden);
+                call_types.extend_from_slice(&forwarded.hidden_types);
+            }
             let mut code = Value::Null;
             let name_pos = self.lexer.pos().clone();
             self.call(

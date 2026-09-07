@@ -9,6 +9,38 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### One store, one owner — and a dispatcher's arms do not share its work buffers (2026-09-07)
+
+@PLN153 phase 4 batch 10's follow-on, closing the batch's own filed issues.
+
+**#1430** — `create_enum_dispatch_fn` counted the compiler's hidden `___acc_N` text accumulators
+among the parameters every implementation must share, so one arm branching (and therefore given
+one) beside an arm returning a literal (and therefore not) drove `common` to 0 and abandoned the
+dispatcher with no diagnostic.  Hidden attributes are out of the shared count; the dispatcher
+takes its buffer from whichever arm has one; buffers are forwarded only to the arms that declare
+one.  A required VISIBLE parameter one implementation does not share is refused by name where
+that implementation is written.
+
+**#1440** — two closures over one STORE both adopted it, so the record left behind released
+what the escaped one still held.  Among the adopters exactly one keeps it, the one that LEAVES
+the frame; the rest borrow.  Its dense twin failed identically, so this was
+adoption-as-transfer rather than anything about nullability.  The grouping is keyed on the store
+each record adopted — the capture local plus the number of assignments to it before the build —
+because the capture's NAME is not a store: a local assigned between two builds gives the two
+records different ones, and a name-keyed group made the second borrow what the first never held
+(a leaked `S`, caught by an existing guard in the gate).  D-clo-24 closed; what remains of the
+family is #1446, the frame's own free of a reassigned capture's adopted store.
+
+**#1444** — build the escaping closure FIRST and the same use-after-free returns through a
+different door: the declared return type's `DepEntry::CalleeFrame` is published once per lambda
+and overwritten, so it names the last record BUILT rather than the one the return delivers.  Two
+consumers read it — the free-suppression for a handed-out fn-ref, and the ownership question —
+and both were wrong whenever the escaping closure was not written last.  The free-suppression
+now also treats a fn-ref that is a RETURN SOURCE as handed out, and the ownership question reads
+`returned_closure_records`: the records named in RETURN POSITION, off the tail and off every
+`return`.  Return position ONLY — collecting every `FnRef` in the body makes a kept lambda's
+record look delivered.  D-clo-24 and D-clo-25 closed; `closures.md` is back to `OPEN: 0`.
+
 ### Two stores a nullable local lost, in the pass that decides who frees (2026-09-07)
 
 @PLN153 phase 4 batch 10, the `scopes.rs` tier-0 group.  Both are use-after-free, both on both
