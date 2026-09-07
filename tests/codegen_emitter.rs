@@ -227,6 +227,69 @@ fn pln118_arce_owned_reassign_emits_sentinel() {
     );
 }
 
+/// Gate: a NESTED tuple's copy must not free the source it reads.
+///
+/// `tuple_member_owned_copy` holds the inner tuple in a `_tuphold` local and
+/// copies each of its heap members out individually.  That hold MINTS NOTHING —
+/// unlike the keyed, struct and vector branches beside it, which each allocate a
+/// backing and are rightly created with their deps stripped, because an empty dep
+/// list is `@FR-O-Proxy`'s proxy for "this binding owns its store".  Created the
+/// same way, the hold read as an owner and the scope pass derived a free for it,
+/// so `u = t` emitted `OpFreeRef(_tuphold_1.0)` and destroyed `t`'s own vector
+/// (`@FR-O-Borrow`: a value that aliases another is tracked and never frees).
+///
+/// Why this guards the FIX rather than the SYMPTOM: the freed record keeps its
+/// bytes, so the interpreter, `--native` and the ordinary suite all read the RIGHT
+/// answer off freed memory — a value assertion is vacuous for this class.  Only the
+/// nightly `LOFT_POISON` gate saw it, as 0xDEADBEEF arriving in `vector_append`.
+/// The emitted signature is deterministic: this program emits ZERO
+/// `OpFreeRef(_tuphold` with the fix and one without it (verified by restoring
+/// `owned_create` at that branch and re-introspecting; the same edit puts the free
+/// back in ten other probe shapes).
+#[test]
+fn nested_tuple_copy_does_not_free_its_source() {
+    let dir = std::env::temp_dir();
+    let src = dir.join("nested_tuple_hold_borrows.loft");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         \x20   t = (([1, 2], 1), 5);\n\
+         \x20   u = t;\n\
+         \x20   println(\"{len(u.0.0)}\");\n\
+         }\n",
+    )
+    .expect("write nested-tuple source");
+
+    let out = Command::new(loft_binary())
+        .args(["--introspect", src.to_str().unwrap()])
+        .current_dir(project_root())
+        .output()
+        .expect("failed to spawn loft binary — run `cargo build --release` first");
+    let _ = std::fs::remove_file(&src);
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "introspect failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Non-vacuous in both directions: the hold must still be BUILT (or the program
+    // stopped taking this path and the free-count below would pass for free)...
+    assert!(
+        ir.contains("_tuphold"),
+        "the nested-tuple copy no longer builds a `_tuphold`, so this guard has \
+         stopped measuring what it names — re-derive it against \
+         `tuple_member_owned_copy`.  IR:\n{ir}"
+    );
+    // ...and nothing may free what that hold only borrows.
+    assert!(
+        !ir.contains("OpFreeRef(_tuphold"),
+        "a nested tuple's copy frees the source it reads: `_tuphold` only NAMES the \
+         inner tuple so each member can be copied out, so freeing its member destroys \
+         the SOURCE's heap member (`u = t` frees `t.0.0`).  The value read back stays \
+         correct on both backends, so only LOFT_POISON sees it at runtime.  IR:\n{ir}"
+    );
+}
+
 // ============================================================
 // Phase 01 ABI consolidation gates
 // ============================================================
