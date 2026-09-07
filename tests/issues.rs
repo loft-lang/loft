@@ -1618,13 +1618,16 @@ fn a_nullable_collection_is_refused_with_its_discharge() {
          collection zero iterations at \
          a_nullable_collection_is_refused_with_its_discharge:3:17",
     )
-    // The two that follow are the parser's generic recovery after a `for` whose source did
+    // The one that follows is the parser's generic recovery after a `for` whose source did
     // not resolve — not part of this refusal, and asserted only because the harness matches
     // the diagnostics EXACTLY.
-    .error(
-        "Need an iterable expression in a for statement at \
-         a_nullable_collection_is_refused_with_its_discharge:3:17",
-    )
+    //
+    // There were TWO.  *"Need an iterable expression in a for statement"* went with loft#1453:
+    // `collections::iterator` reports the refusal above and then returns `Value::Null`, which
+    // the caller could not tell from "no iterable at all", so it added its own line on top of
+    // a message that had already named the problem.  It now asks `Diagnostics::error_count()`
+    // and speaks only when nothing else did.  The remaining line is a different cause — the
+    // `for` bails without consuming its body — and is still open on loft#1453.
     .error("Expect token ; at a_nullable_collection_is_refused_with_its_discharge:3:17");
 }
 
