@@ -5340,6 +5340,55 @@ fn escaping_record_holds(data: &Data, function: &Function, d_nr: u32, witness: u
     })
 }
 
+/// Does a closure record that LEAVES this frame hold the store literal buffer `buffer` minted?
+///
+/// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the
+/// frame outlives the other.  Where the answer is the record, the frame owes nothing for that
+/// store and must emit no free for the buffer naming it.
+///
+/// Asked of the BUFFER, not of the capture's name, and that is the whole of it: a buffer names
+/// one store for its entire life, while a capture local reassigned after the build names two.
+/// A name-keyed question then answers about whichever store the local holds LAST, which is the
+/// one nobody adopted — so the frame declines the free it owes and takes the one it does not
+/// (loft#1446).  `@FR-O-Witness` is this same currency, store identity, for a mixed-ownership
+/// local.
+///
+/// Both halves loft#1439 named are kept, per record.  The record must ADOPT the capture — one
+/// that merely borrows leaves the frame's free as the store's only release, and suppressing it
+/// leaks — and its cascade must REACH the store, which is what
+/// [`capture_attr_is_cascade_relevant`] asks; a capture the cascade does not follow is freed by
+/// nobody else.
+fn escaping_record_holds_buffer(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    built_with: &CaptureBuilds,
+    buffer: u16,
+) -> bool {
+    if d_nr == u32::MAX {
+        return false;
+    }
+    let Some(pairs) = built_with.buffer_adopted.get(&buffer) else {
+        return false;
+    };
+    pairs.iter().any(|&(record_var, capture)| {
+        if !record_leaves_frame(data, function, d_nr, record_var) {
+            return false;
+        }
+        let Type::Reference(record, _) = function.tp(record_var) else {
+            return false;
+        };
+        let record = *record;
+        if !data.def(record).name.starts_with("__closure_") {
+            return false;
+        }
+        let a = data.attr(record, function.name(capture));
+        a != usize::MAX
+            && record_adopts_capture(data, function, record, a)
+            && capture_attr_is_cascade_relevant(data, record, a)
+    })
+}
+
 /// The backing local a capture named AT THE CLOSURE BUILD — the store the record actually
 /// holds — or `None` when the code does not settle it.
 ///
@@ -5367,6 +5416,10 @@ pub(crate) fn capture_build_backings(
 ) -> CaptureBuilds {
     let set_dbref = data.def_nr("OpSetDbRef");
     let mut latest: HashMap<u16, u16> = HashMap::new();
+    // The literal buffers a local's LATEST assignment minted — the store a build reached
+    // through that local therefore adopts.  A value branch mints one per arm and the local
+    // adopts whichever ran, so all of them are carried.
+    let mut minted: HashMap<u16, Vec<u16>> = HashMap::new();
     // How many times each local has been ASSIGNED so far in this walk.  Two records hold the
     // SAME store only if they adopted a local at the same generation: a local assigned between
     // two builds gives them different stores (@FR-O-Latest), which the capture NAME cannot say
@@ -5396,6 +5449,9 @@ pub(crate) fn capture_build_backings(
                     .entry(record)
                     .or_default()
                     .push((c, *generation.get(&c).unwrap_or(&0)));
+                for &b in minted.get(&c).into_iter().flatten() {
+                    out.buffer_adopted.entry(b).or_default().push((record, c));
+                }
                 resolved_in_rhs.insert(c);
                 // @FR-O-Latest — this very assignment is the one that moves the local off
                 // the store the record just adopted.
@@ -5422,6 +5478,16 @@ pub(crate) fn capture_build_backings(
             // …and the local now names a different store, so a build after this one adopts
             // something the builds before it never held.
             *generation.entry(*v).or_default() += 1;
+            // The buffer this assignment minted is the store any LATER build adopts through
+            // `v`.  An assignment that mints none leaves the local naming something this walk
+            // cannot pin to a buffer, and a stale entry would name the wrong store outright.
+            let mut bufs = Vec::new();
+            adopted_work_refs(rhs, function, data, &mut bufs);
+            if bufs.is_empty() {
+                minted.remove(v);
+            } else {
+                minted.insert(*v, bufs);
+            }
         }
         Value::Call(d, args) if *d == set_dbref => {
             if let Some(Value::Var(c)) = args.get(2).map(Value::unspan) {
@@ -5438,6 +5504,9 @@ pub(crate) fn capture_build_backings(
                         .entry(*record)
                         .or_default()
                         .push((*c, *generation.get(c).unwrap_or(&0)));
+                    for &b in minted.get(c).into_iter().flatten() {
+                        out.buffer_adopted.entry(b).or_default().push((*record, *c));
+                    }
                 }
             }
         }
@@ -5509,6 +5578,16 @@ pub(crate) struct CaptureBuilds {
     /// — so the capture NAME cannot decide which of them owns, and grouping by it made one
     /// borrow a store the other never held (loft#1440's first cut, measured as a leaked `S`).
     pub(crate) adopted: HashMap<u16, Vec<(u16, u32)>>,
+    /// Per literal BUFFER: the `(closure record, capture local)` pairs that adopted the store
+    /// THAT buffer minted.
+    ///
+    /// `adopted` above answers "which store" with a generation, which is the right currency
+    /// between two builds; the frame's scope-exit free needs the store itself, because the
+    /// thing it is about to release is a buffer and a buffer names exactly one store for its
+    /// whole life.  A capture local does not: reassign it and the name covers two stores, so
+    /// asking about the NAME answers about whichever the local happens to hold last
+    /// (loft#1446).  `@FR-O-Witness` is the same currency for a mixed-ownership local.
+    pub(crate) buffer_adopted: HashMap<u16, Vec<(u16, u16)>>,
 }
 
 /// Is `v` the store behind a capture whose closure record ADOPTS it?
@@ -9349,6 +9428,24 @@ impl Scopes<'_> {
                         } else {
                             ls.push(call("OpFreeRef", v, data));
                         }
+                    } else if is_work_ref
+                        && escaping_record_holds_buffer(
+                            data,
+                            function,
+                            self.d_nr,
+                            &self.capture_build_backing,
+                            v,
+                        )
+                    {
+                        // loft#1446 — a closure record that LEAVES this frame adopted the store
+                        // this buffer minted, so the record's cascade is that store's release
+                        // and the frame owes nothing for it.
+                        //
+                        // There is nothing conditional to emit: which store the record took is
+                        // settled statically, and `OpFreeRefIfDistinct(buffer, local)` below
+                        // cannot express it.  That guard tests the buffer against the LOCAL, so
+                        // a local reassigned after the build reads as "distinct" and the free
+                        // fires on exactly the store the escaped closure is still reading.
                     } else if is_work_ref
                         && let Some(&witness) = self.literal_buffer.get(&v)
                         && (witness == ret_var

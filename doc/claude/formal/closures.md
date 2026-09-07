@@ -169,13 +169,28 @@ with the closure's environment in scope.
   adopted, not by the capture's name: a local assigned between two builds gives its two records
   different stores, and a name-keyed group made one borrow what the other never held.  Guard
   `1440-one-store-has-one-owner-among-two-closures.loft`.
-- **D-clo-26** *(open, loft#1446)* — the same rule applied correctly still leaves a
-  use-after-free where the shared local is REASSIGNED after both builds: the frame keeps its own
+- **D-clo-26** *(closed 2026-09-07, loft#1446)* — the same rule applied correctly still left a
+  use-after-free where the shared local is REASSIGNED after the build: the frame kept its own
   free there (`capture_adoption_owns_free` declines to suppress it, loft#1324/#1388), and that
-  free reaches the store the escaped record holds rather than the one the local now names.
-  `(L-CapOwn)` says freed once by whichever outlives the other, and the frame outlives neither
-  here — what it owes is a release by store IDENTITY, which `@FR-O-Witness` already spells for a
-  mixed-ownership local.
+  free reached the store the escaped record holds rather than the one the local now names.
+  Closed on the currency `@FR-O-Witness` names, store IDENTITY: a literal BUFFER holds one store
+  for its whole life where a capture's NAME covers two, so the adoption is recorded against the
+  buffer (`CaptureBuilds::buffer_adopted`) and the frame's release is decided on it
+  (`escaping_record_holds_buffer`).  The runtime test the arm used to emit cannot express the
+  question — `OpFreeRefIfDistinct(buffer, local)` compares against the LOCAL, which after a
+  rebind names the other store, so the guard read "distinct" and freed exactly what the escaped
+  closure was reading.  **The filed shape was wider than the defect:** it was reported as needing
+  two closures with one escaping, and ONE closure reproduces it, so loft#1440's grouping is not
+  involved.  Guard
+  `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft`.
+- **D-clo-27** *(open, loft#1447)* — `(L-CapHeap)` says a rebind is not a mutation-through for a
+  captured **struct** as much as for a vector, and the DENSE spelling breaks it: `d: C = C{a:5};
+  out = fn() { d.a }; d = C{a:9}` answers 9 on both backends where its nullable twin answers 5.
+  A dense local has no literal buffer — the literal is built straight into it and the rebind
+  re-mints through `OpDatabase(d, …)`, which reuses the slot's store IN PLACE — so one store
+  exists and the record's `DbRef` still names it.  Upstream of every free, so nothing is freed
+  twice and no instrument fires; the in-place re-mint is deliberate (it is what keeps a loop from
+  allocating per pass), and what is missing is that a local a record has ADOPTED cannot take it.
 - **D-clo-25** *(closed 2026-09-07, loft#1444)* — "which record leaves the frame" was answered
   from the declared return type's `DepEntry::CalleeFrame`, which is published once per LAMBDA
   and overwritten, so wherever a function builds more than one it named the last one BUILT
@@ -196,9 +211,12 @@ with the closure's environment in scope.
 > identity, every kind and spelling) and `1320-…` (a branch-joined binding).  What they hold
 > FIXED: **every closure is built in the frame that calls it**, every witness variable is assigned
 > once, and no closure is stored in a container or in a struct a container holds (a decided
-> refusal, C115/#247).  Two shapes are DECLINED and asserted by value only — `c ?? d`, where
-> either capture may come back, and a capture variable reassigned after the build — and each
-> keeps the leak it had.
+> refusal, C115/#247).  ONE shape is still DECLINED and asserted by value only — `c ?? d`, where
+> either capture may come back — and it keeps the leak it had.  The second, **a capture variable
+> reassigned after the build, is no longer declined**: loft#1446 put it on store identity and
+> `1446-…` asserts it, across one and two closures, one and two reassignments, a reassignment
+> between the builds, `null` and a minting call as the source, a vector capture, and a build
+> inside a loop.
 >
 > That first fixed axis is where loft#1439, loft#1440 and loft#1444 all live: a closure that
 > OUTLIVES its frame.  `1439-an-escaping-closure-keeps-its-nullable-capture.loft` covers it now

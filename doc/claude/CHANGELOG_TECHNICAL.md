@@ -115,6 +115,51 @@ signed controls that a "just make four bytes unsigned" cure fails.
 Fixes #1437.
 
 ### @PLN156: release gates that prove they ran, and a gate that checks the gates (2026-09-07)
+### A frame's release of a captured store is by store identity, not by the capture's name (2026-09-07)
+
+**#1446** — a captured local REASSIGNED after the closure build kept the frame's own scope-exit
+free (`capture_adoption_owns_free` declines to suppress a reassigned local's, loft#1324/#1388),
+and that free reached the store the ESCAPED record holds rather than the one the local now names.
+Both directions wrong at once: the adopted store was freed under a live closure, and the store
+the local ends up holding was the one nobody had claimed.
+
+Closed on the currency `@FR-O-Witness` already names — store IDENTITY.  A literal BUFFER holds
+one store for its entire life, where a capture's NAME covers two as soon as it is reassigned, so
+`CaptureBuilds` now records the adoption against the buffer (`buffer_adopted`, filled from
+`adopted_work_refs` at each assignment as the same in-order walk that fills `adopted` and
+`backing` passes it) and `escaping_record_holds_buffer` decides the frame's release on it.  Both
+halves loft#1439 named are kept per record: the record must ADOPT the capture — one that merely
+borrows leaves the frame's free as the store's only release — and its cascade must REACH the
+store (`capture_attr_is_cascade_relevant`).
+
+**The runtime test could not have expressed this.**  The arm emitted
+`OpFreeRefIfDistinct(buffer, local)`, which compares the buffer against the LOCAL; after a rebind
+the local names the other store, so the guard reads "distinct" and frees exactly what the escaped
+closure is reading.  Its comment carried the false premise in words — *"or it was reassigned
+since (differ -> free, the literal store is dead)"* — and the literal store is not dead when an
+escaping record adopted it.  The suppression is now static, because which store the record took
+is a static fact.
+
+**The filed scope was wider than the defect.**  It was reported as needing two closures with one
+escaping; ONE closure reproduces it, so loft#1440's grouping is not involved at all.  The
+report's own reading (loft#1440's rule applied correctly, the frame's free left over) was right
+about the mechanism and wrong about the boundary.
+
+Guard `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft`, falsified at
+`b8fc41273` WITH `LOFT_STRICT_STORES=1` (interpret and native both exit 1 -> 0); per cell the
+control faults in e1, e2, e4, e6, e7, e8 and e10, while e3 (no rebind) and e9 (a vector capture,
+whose half loft#1324 already closed) are clean there and stand as controls.  Every cell answers
+the right VALUE on the control, so the file is meaningless without the instrument and says so.
+
+Filed while closing it, both measured rather than inherited: **#1447**, the DENSE spelling
+`d: C = C{a:5}; out = fn() { d.a }; d = C{a:9}` answering 9 where the nullable twin answers 5 —
+a dense local has no buffer, so the rebind re-mints through `OpDatabase(d, …)` and REUSES the
+slot's store in place, leaving one store the record still names; upstream of every free, which is
+why no instrument fires (`D-clo-27`).  And **#1448**, the published `imaging-0.1.0` being
+unbuildable from the registry — its `build.rs` calls a `loft-ffi-build` 0.2 API while its
+manifest requires `"0.1"`, which cannot resolve to it; the repo fixture correctly says `"0.2"`,
+so the published manifest is stale.
+
 ### One store, one owner — and a dispatcher's arms do not share its work buffers (2026-09-07)
 
 @PLN153 phase 4 batch 10's follow-on, closing the batch's own filed issues.

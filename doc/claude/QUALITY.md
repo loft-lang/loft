@@ -2583,6 +2583,24 @@ thermometer for reachable wrapped shapes, not a score.
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
 
+loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the same side and
+for the same reason: it names `Type::Reference` to reach the closure record behind a record
+LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
+the answer, not the omission — 734 -> 735 discriminating, 348 -> 349 opaque.
+
+@PLN153 phase 4 batch 10 (the `scopes.rs` tier-0 group — the store-lifetime pass, loft#1439 /
+loft#1442) leaves the opaque column WHERE IT IS, and the arithmetic is worth reading: it peels
+`established_stores` (three record tests in one predicate) onto the seeing-through side and adds
+`escaping_record_holds`, the new predicate its other fix needed, on the OPAQUE side — where that
+one belongs, since the closure-record local it classifies is compiler-minted and can never carry
+a `?`.  The rest of the group is closed by probe cells: the text-return-buffer family delivers a
+`-> text?` correctly in five shapes (values and leaks, both backends), and the capture-adoption
+family answers `adopts=true` for every nullable capture — the defect was one layer below it, in
+the work-ref whose free was plain.  `check_ref_leaks` is the group's one KNOWN blind spot left
+alone deliberately: it asks `Type::Reference` bare, so it is blind to every nullable local, and
+it is also `#[cfg(debug_assertions)]` — which `[profile.dev.package.loft]` strips from every
+build this project makes, so widening it would be widening an assert nothing runs.
+
 ⚠ **The counts above are the JOINED tree's, re-measured with `ir_walker_audit.py optional`;
 they are not the sum of any two streams' rows and never were.**  Each of the three fixes below
 was measured against the tree it landed in, so the per-fix ordinals it gave itself do not name
