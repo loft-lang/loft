@@ -13,6 +13,7 @@ mod coroutine;
 mod dispatch;
 mod emit;
 pub mod hoist;
+pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 mod text;
@@ -610,6 +611,19 @@ pub struct Output<'a> {
     /// top of the header hoist could only be estimated. It also bisects a native-only wrong
     /// answer in a vector loop one stage further than the all-or-nothing switch does.
     pub elem_fuse_disabled: bool,
+    /// `LOFT_NN_VERIFY=1` — emit the CHECKING form of every compare the
+    /// non-sentinel pass simplified: assert neither operand is NaN, then
+    /// compare plain.  A wrong proof panics at the exact site instead of
+    /// answering a differently-ordered boolean.  See [`non_sentinel`].
+    pub nn_verify: bool,
+    /// `LOFT_NO_NN_FAST=1` — emit every float compare through its `#rust`
+    /// template, as before @PLN157 P3.  The bisect switch for a native-only
+    /// wrong boolean around floats, same contract as `LOFT_NO_VECTOR_HOIST`.
+    pub nn_fast_disabled: bool,
+    /// Per-definition cache of [`non_sentinel::non_sentinel_float_vars`],
+    /// keyed by `def_nr` — computed on the first simplifiable compare a
+    /// function emits, shared by the rest.
+    nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
     /// O7: number of consecutive format/append ops following the current
     /// `OpClearStackText`/`OpClearText`.  Set by `output_block` before each
     /// op is emitted; consumed (and reset to 0) by `clear_stack_text`.
@@ -1426,6 +1440,9 @@ impl<'a> Output<'a> {
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
             hoist_disabled: std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0"),
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
+            nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
+            nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
+            nn_cache: HashMap::new(),
             next_format_count: 0,
             yield_collect: false,
             yield_collect_text: false,
@@ -1749,6 +1766,26 @@ impl Output<'_> {
         let fused = hoist::fused_element_read(self.data, getter, args)?;
         self.active_vec_header(fused.var)?;
         Some(fused)
+    }
+
+    /// Are both compare operands provably non-sentinel floats in the current
+    /// function (@PLN157 P3)?  Computes the per-definition var facts on the
+    /// first simplifiable compare a function emits and caches them for the
+    /// rest; the callers are the float-compare emitters, which fall through
+    /// to the `#rust` template on a `false`.
+    pub fn non_sentinel_float_pair(&mut self, a: &Value, b: &Value) -> bool {
+        let vars = if let Some(v) = self.nn_cache.get(&self.def_nr) {
+            v.clone()
+        } else {
+            let map = std::rc::Rc::new(non_sentinel::non_sentinel_float_vars(
+                self.data,
+                self.data.def(self.def_nr).code(),
+            ));
+            self.nn_cache.insert(self.def_nr, map.clone());
+            map
+        };
+        non_sentinel::non_sentinel_float(self.data, &vars, a)
+            && non_sentinel::non_sentinel_float(self.data, &vars, b)
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or

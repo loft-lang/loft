@@ -251,6 +251,47 @@ matrix's negative cells).
 reaches ~1.2–2×.
 **Effort:** M.
 
+**Shipped so far (2026-09-07):**
+
+- **P3a — float compares.** `generation::non_sentinel` (the predicate: float
+  literals, the parser's `#ncc` discharge shape — `?? d` and `x?` both lower
+  to `if OpConvBoolFromFloat(t) t else d` — negation, if-merge, and a
+  re-walking per-function var fixpoint whose escapes are `RefVar`-typed
+  arguments, fn-ref args, `TuplePut`/`Iter` slots) + `FloatCompareEmitter`
+  for the eight Eq/Ne/Lt/Le × Single/Float ops.  Float arithmetic closure is
+  deliberately NOT taken (`inf − inf` mints NaN from non-NaN operands).
+  `LOFT_NN_VERIFY=1` emits the checking form; `LOFT_NO_NN_FAST=1` is the
+  bisect switch.  Guard `tests/scripts/157-nn-float-compare.loft` (both-side
+  cells; falsified by sabotage — proof check disabled turns the null-order
+  cell red on native).  Measured: the inner-loop clamp compares in
+  `raster_segment` go plain, but only 7 of 83 `is_nan` sites — the remaining
+  bulk is the division template's `note_format_fault` (3 tests × 2 divisions
+  per pixel, semantics-bound) and parameter-fed compares; `lock` unmoved, as
+  the share predicts.
+- **P3b — counted `for`.** A forward loop over a literal non-negative `lo`
+  lowers with the counter starting at `lo − 1` (folded at parse time) and an
+  unconditional increment — no null-encoded first iteration on EITHER
+  backend.  The break test needs no proof: a null bound is `i64::MIN`, which
+  sorts below every `lo` under both orders, so the empty behaviour is
+  unchanged.  Declines: reverse loops, computed `lo`, and any counter whose
+  `IntegerSpec.min` cannot hold `lo − 1` (a narrow unsigned counter's −1 IS
+  its null sentinel).  16-cell matrix (`157-for-lowering-matrix`,
+  hand-computed expectations: empties, break/continue, `_`-binder nesting,
+  rev, null-discharged bounds) byte-identical before/after on both backends;
+  emitted `op_conv_bool_from*` 34 → 11 on the drawing bench.
+- **Measured honestly (idle box, n=50, alternating):** P3a+P3b together move
+  the `hash` row ≤ ~5 % — inside run noise — and `lock` not at all.  The
+  shapes are the deliverable (they are what LLVM could never remove, and the
+  16-cell matrix + verify sweep pin them); M3's TIME on `hash` sits in the
+  still-open `_nn` integer wiring (`op_mul`/`op_xor`/`op_and` sentinel chain
+  per call) and the division template's `note_format_fault`, and on `lock`
+  M2 dominates everything.  The codegen-subject suite under `LOFT_NN_VERIFY`
+  ran fully clean (19 binaries, no assert fired).
+- **Open in P3:** the N3/N5 `_nn` integer wiring (the `& mask` non-negative
+  leaf makes `hash01`'s chain provable; general `+`/`*` closure is blocked on
+  overflow-mints-MIN), and the counter increment itself (`op_add_int` — safe
+  by loop shape, unprovable expression-locally).
+
 ---
 
 ## P4 — element access and invariant hoisting under writes (M2, ~90 % of `lock`)

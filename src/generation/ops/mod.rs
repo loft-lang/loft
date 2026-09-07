@@ -30,6 +30,7 @@
 
 pub mod coroutine;
 pub mod default;
+pub mod float_compare;
 pub mod int_compare;
 pub mod key_ops;
 pub mod misc_ops;
@@ -204,6 +205,20 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
 
     // Phase 04 — key-keyed Op emitters.  Replaces ~70 lines of two
     // arms in dispatch.rs (`"OpGetRecord" =>` + `"OpIterate" =>`).
+    // @PLN157 P3 — float/single compares go plain when both operands are
+    // provably non-sentinel; the template form otherwise.
+    for op in [
+        "OpEqFloat",
+        "OpNeFloat",
+        "OpLtFloat",
+        "OpLeFloat",
+        "OpEqSingle",
+        "OpNeSingle",
+        "OpLtSingle",
+        "OpLeSingle",
+    ] {
+        r.insert(op, Box::new(float_compare::FloatCompareEmitter));
+    }
     r.insert("OpGetRecord", Box::new(key_ops::OpGetRecordEmitter));
     r.insert("OpIterate", Box::new(key_ops::OpIterateEmitter));
 

@@ -3179,6 +3179,9 @@ impl Parser {
         // the `token(")")` below — leave that gated on `reverse`.
         let want_reverse = reverse || self.reverse_iterator;
         self.reverse_iterator = false;
+        // Set when the forward branch below picks the plain counter form; the
+        // init slot then carries `lo - 1` instead of the typed null.
+        let mut plain_counter_init: Option<Value> = None;
         let test = if want_reverse {
             if incl {
                 ls.push(v_set(
@@ -3220,20 +3223,43 @@ impl Parser {
                 till_tp,
             )
         } else {
-            ls.push(v_set(
-                ivar,
-                v_if(
-                    self.single_op("!", Value::Var(ivar), in_type.clone()),
-                    expr.clone(),
-                    self.conv_op(
-                        "+",
-                        Value::Var(ivar),
-                        Value::Int(1),
-                        in_type.clone(),
-                        I32.clone(),
+            // @PLN157 P3b — a forward loop over a literal non-negative `lo` needs no
+            // null-encoded "not started yet" state: the counter starts at `lo - 1`
+            // (folded here) and every iteration is one increment and one compare,
+            // instead of a null test choosing between init and increment.  The break
+            // test needs no proof — a null bound is i64::MIN, which sorts below every
+            // `lo` under the plain order exactly as under the sentinel-aware one, so
+            // both forms run such a loop zero times.  The null-init form stays for
+            // reverse loops, a computed `lo`, and any counter whose spec cannot hold
+            // `lo - 1` in range — a narrow unsigned counter's -1 IS its null sentinel.
+            let plain_init = match (expr.unspan(), &in_type) {
+                (Value::Int(lo), Type::Integer(spec))
+                    if *lo >= 0 && i64::from(spec.min) <= i64::from(*lo) - 1 =>
+                {
+                    Some(lo - 1)
+                }
+                _ => None,
+            };
+            let step = self.conv_op(
+                "+",
+                Value::Var(ivar),
+                Value::Int(1),
+                in_type.clone(),
+                I32.clone(),
+            );
+            if let Some(init) = plain_init {
+                plain_counter_init = Some(Value::Int(init));
+                ls.push(v_set(ivar, step));
+            } else {
+                ls.push(v_set(
+                    ivar,
+                    v_if(
+                        self.single_op("!", Value::Var(ivar), in_type.clone()),
+                        expr.clone(),
+                        step,
                     ),
-                ),
-            ));
+                ));
+            }
             self.conv_op(
                 if incl { "<" } else { "<=" },
                 till,
@@ -3248,7 +3274,10 @@ impl Parser {
         // bound-clamp prelude (len/lo/hi temps) ahead of the iterator-var reset;
         // `iterator()` keeps this init slot (it drops only `extra_init`), so the
         // clamp is emitted on both the for-loop and the materialisation paths.
-        let init_ivar = v_set(ivar, self.null(&in_type));
+        let init_ivar = v_set(
+            ivar,
+            plain_counter_init.unwrap_or_else(|| self.null(&in_type)),
+        );
         let iter_init = if iter_prelude.is_empty() {
             init_ivar
         } else {
