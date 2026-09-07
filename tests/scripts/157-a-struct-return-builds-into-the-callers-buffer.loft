@@ -6,7 +6,7 @@
 //
 // Before this, `fn mk(u) -> S { S { … } }` ignored the buffer, minted a store of its own
 // and handed it over, so a per-pixel call in a raster loop allocated and freed one store
-// per pixel — the dominant remaining cost of the drawing pass (`lock` 47.8M → 35.3M ns/op,
+// per pixel — the dominant remaining cost of the drawing pass (`lock` 25.6M → 17.9M ns/op,
 // hashes unchanged).  The values are the same either way, which is why this file is a
 // LOCK: it states what may not change while the delivery does.
 //
@@ -29,6 +29,13 @@
 //       variable, and the tail call receives it after the chain freed it.  A native free
 //       nulls `store_nr` and leaves `rec` standing, so "the caller offered a record" has
 //       to refuse that spelling of absent too (it wrote into store 65535 when it did not)
+//   c12 the result local REASSIGNED from another local inside the loop, and c13 from a
+//       second call site under a condition: a reassignment frees the store it displaces,
+//       which under reuse is the buffer's — the gate declines such a local (measured, a
+//       use-after-free on every turn after the first when it did not)
+//   c14 two call sites into one same-scope local, c15 a lift inside a NESTED loop,
+//   c16 the buffer-fed value RETURNED from inside the loop, c17 appended to a vector and
+//       read back after the loop
 //
 // @falsified-at: none — no CELL can change value on an earlier build, because the delivery
 // this changes is invisible to a correct program: both forms answer the same numbers, and
@@ -50,6 +57,11 @@ fn wrap(u: integer) -> S { mk(u + 100) }
 fn chain(c: integer) -> S {
   if c > 0 { r = mk(1); if r.a > 99 { return r; } }
   mk(3)
+}
+fn mk2(u: integer) -> S { S { a: u + 1000, b: 0 } }
+fn pick(stop: integer) -> S {
+  for i in 0..5 { v = mk(i); if v.a == stop { return v; } }
+  mk(99)
 }
 
 pub fn test() {
@@ -109,6 +121,36 @@ pub fn test() {
 
   // c11 — the buffer variable freed by its own chain, then handed to the tail call.
   assert(chain(1).a == 3 && chain(0).a == 3, "c11 freed buffer handed on: {chain(1).a} {chain(0).a}");
+
+  // c12 — the result local reassigned from another local inside the loop.
+  other = S { a: 7, b: 8 };
+  c12 = 0;
+  for i in 0..3 { v = mk(i); v = other; c12 += v.a; }
+  assert(c12 == 21, "c12 displaced by a local: {c12}");
+
+  // c13 — the result local reassigned from a second call site under a condition.
+  c13 = 0;
+  for i in 0..4 { w2 = mk(i); if i % 2 == 1 { w2 = mk2(i); } c13 += w2.a; }
+  assert(c13 == 2006, "c13 displaced by a second site: {c13}");
+
+  // c14 — two call sites into one same-scope local.
+  v14 = mk(5);
+  w14 = v14.a;
+  v14 = mk2(6);
+  assert(w14 + v14.a == 1011, "c14 two sites, one local: {w14 + v14.a}");
+
+  // c15 — a lift inside a nested loop.
+  c15 = 0;
+  for i in 0..2 { for j in 0..3 { c15 += wrap(i + j).a; } }
+  assert(c15 == 609, "c15 nested lift: {c15}");
+
+  // c16 — the buffer-fed value returned from inside the loop.
+  assert(pick(3).a == 3 && pick(42).a == 99, "c16 returned from the loop: {pick(3).a} {pick(42).a}");
+
+  // c17 — appended to a vector, read back after the loop.
+  keep2: vector<S> = [];
+  for i in 0..3 { keep2 += [wrap(i)]; }
+  assert(keep2[0]?.a + keep2[1]?.a + keep2[2]?.a == 303, "c17 appended then read back: {keep2[0]?.a + keep2[1]?.a + keep2[2]?.a}");
 }
 
 fn main() { test(); }

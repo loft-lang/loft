@@ -37,6 +37,20 @@ fn main() {
 }
 ";
 
+/// The second shape the gate refuses: the result local is REASSIGNED inside the loop.  The
+/// set lowering frees the store `v` displaces as an owned one, which under reuse is the
+/// buffer's — the next call writes a store that is back in the pool.
+const DISPLACED: &str = "\
+struct S { a: integer, b: integer }
+fn mk(u: integer) -> S { S { a: u, b: u * 2 } }
+fn main() {
+  other = S { a: 7, b: 8 };
+  t = 0;
+  for i in 0..8 { v = mk(i); v = other; t += v.a; }
+  println(\"{t}\");
+}
+";
+
 fn run(src: &std::path::Path, ungated: bool) -> String {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
@@ -52,8 +66,17 @@ fn run(src: &std::path::Path, ungated: bool) -> String {
 
 #[test]
 fn the_buffer_reuse_gate_is_what_keeps_an_escaping_result_alive() {
-    let src = std::env::temp_dir().join("loft_retbuf_reuse_escaping.loft");
-    std::fs::write(&src, ESCAPING).expect("write probe");
+    both_directions("escaping", ESCAPING);
+}
+
+#[test]
+fn the_buffer_reuse_gate_is_what_keeps_a_reassigned_result_alive() {
+    both_directions("displaced", DISPLACED);
+}
+
+fn both_directions(name: &str, probe: &str) {
+    let src = std::env::temp_dir().join(format!("loft_retbuf_reuse_{name}.loft"));
+    std::fs::write(&src, probe).expect("write probe");
 
     let shipped = run(&src, false);
     let ungated = run(&src, true);
@@ -61,12 +84,12 @@ fn the_buffer_reuse_gate_is_what_keeps_an_escaping_result_alive() {
 
     assert!(
         !shipped.contains("strict-store"),
-        "the shipped gate must leave an escaping result alone:\n{shipped}"
+        "the shipped gate must leave the {name} result alone:\n{shipped}"
     );
     assert!(
         ungated.contains("USE AFTER FREE"),
-        "the gate is INERT — reusing every buffer, guarded or not, no longer reports the \
-         use-after-free this gate exists to refuse, so its silence on the corpus is not \
-         evidence:\n{ungated}"
+        "the gate is INERT on the {name} shape — reusing every buffer, guarded or not, no \
+         longer reports the use-after-free this gate exists to refuse, so its silence on the \
+         corpus is not evidence:\n{ungated}"
     );
 }

@@ -2434,13 +2434,20 @@ fn tuple_owned_elem_frees(
 /// handed the buffer back.  A buffer reached any other way (a `__lift_N` temp holding the
 /// result of `keep += [mk(i)]` has a plain free) is left null and keeps its mint-per-call.
 ///
-/// Also required: the buffer is USED ONCE.  A work-ref the parser reused at a second site
-/// would have one guarded use and one that is not, and this reads the guarded one alone.
+/// Also required: the buffer is USED ONCE, and its result local is ASSIGNED ONCE.  A
+/// work-ref the parser reused at a second site would have one guarded use and one that is
+/// not, and this reads the guarded one alone.  A result local assigned again (`v = mk(i);
+/// v = other`) releases the store it displaces as an owned one — that free is emitted by
+/// each backend's set lowering, not by this scan, and under reuse the displaced store is
+/// the buffer's: the next call then writes a store that is back in the pool (measured, a
+/// use-after-free on every turn after the first).  Guarding that free against the buffer is
+/// the widening that lifts this condition; until then the buffer stays null there.
 fn reuse_record_buffers(
     code: &mut Value,
     function: &Function,
     data: &Data,
     witness_buffer: &HashMap<u16, Vec<u16>>,
+    multi_assigned: &HashSet<u16>,
 ) {
     if !crate::keys::retbuf_reuse_enabled() {
         return;
@@ -2455,6 +2462,13 @@ fn reuse_record_buffers(
     };
     guarded.sort_unstable();
     guarded.dedup();
+    // Every result local a buffer feeds — `witness_buffer` maps the other way round.
+    let mut fed_locals: HashMap<u16, Vec<u16>> = HashMap::new();
+    for (&v, bufs) in witness_buffer {
+        for &av in bufs {
+            fed_locals.entry(av).or_default().push(v);
+        }
+    }
     let db_nr = data.def_nr("OpDatabase");
     // Emitted in variable order so identical source compiles to identical IR.
     let mut inserts: Vec<(usize, Value)> = Vec::new();
@@ -2476,6 +2490,15 @@ fn reuse_record_buffers(
         if !ungated && buffer_call_uses(&bl.operators, av, data) != 1 {
             // A work-ref the parser handed to a SECOND call has one guarded use and one
             // this has not looked at; `witness_buffer` names the guarded one either way.
+            continue;
+        }
+        if !ungated
+            && fed_locals
+                .get(&av)
+                .is_some_and(|vs| vs.iter().any(|v| multi_assigned.contains(v)))
+        {
+            // The result local is reassigned somewhere: its set lowering frees the store
+            // it displaces, which would be this buffer's.
             continue;
         }
         let Some(at) = bl.operators.iter().position(
@@ -2713,7 +2736,13 @@ fn run_scan_phase(
             bl.operators.insert(0, v_set(v, Value::Text(String::new())));
         }
     }
-    reuse_record_buffers(&mut code, &function, data, &scopes.witness_buffer);
+    reuse_record_buffers(
+        &mut code,
+        &function,
+        data,
+        &scopes.witness_buffer,
+        &scopes.multi_assigned,
+    );
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]

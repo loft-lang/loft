@@ -964,7 +964,7 @@ pub fn retbuf_claim_guard_enabled() -> bool {
 /// so the caller allocated a buffer nothing wrote and then freed the record it got back
 /// instead — one store allocated and freed per call.  In a per-pixel loop that is the
 /// dominant cost (`brush_sample` in the drawing pass: with [`retbuf_reuse_enabled`],
-/// `lock` 47.8M → 35.3M ns/op, −26 %; alone it is a wash, since the buffer is still null).
+/// `lock` 25.6M → 17.9M ns/op, −30 %; alone it is a wash, since the buffer is still null).
 ///
 /// The tail's work-ref is substituted BY the buffer variable, so the same `OpDatabase`
 /// runs against the caller's slot.  That op is the reuse-or-allocate primitive — it
@@ -991,7 +991,7 @@ pub fn value_return_enabled() -> bool {
 /// points the literal at it the callee's `OpDatabase` still mints a store from a null slot
 /// on EVERY call.  Allocating it once at its null-init — what the VECTOR twin
 /// (`gen_set_first_vector_null`) has always done — turns that per-call mint into a record
-/// the callee writes in place: `lock` 47.8M → 35.3M ns/op (−26 %), hashes exact.
+/// the callee writes in place: `lock` 25.6M → 17.9M ns/op (−30 %), hashes exact.
 ///
 /// The buffer's store then outlives the call, so it may only be allocated where the
 /// RESULT's free is guarded against it — `scopes`'s `witness_buffer`, whose

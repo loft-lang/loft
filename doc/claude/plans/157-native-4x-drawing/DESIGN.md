@@ -675,7 +675,12 @@ inserted after the buffer's preamble null-init — an IR edit, so both
 generators emit it and neither knows why (the pair `parse_object`'s in-place
 arm and the vector twin already emit).  **The gate is `witness_buffer`:** only
 a buffer whose result's free is already `OpFreeRefIfDistinct(v, __ref_N)`
-(@P378(a)), and which exactly one user call receives.  A buffer reached any
+(@P378(a)), which exactly one user call receives, and whose result local is
+assigned ONCE — a reassignment (`v = mk(i); v = other`) frees the store it
+displaces through each backend's set lowering, and under reuse that store is
+the buffer's (found by the free-guard matrix the day after shipping: a
+use-after-free on every turn after the first, values still right, both
+`--interpret` under `LOFT_STRICT_STORES` and — by the same trace — native).  A buffer reached any
 other way — `keep += [mk(i)]`, whose result lands in a `__lift_N` temp with a
 plain free — is left null.  Positive control `LOFT_NO_RETBUF_WITNESS_GATE=1`
 (allocate every buffer): `LOFT_STRICT_STORES=1` reports USE AFTER FREE at
@@ -698,18 +703,31 @@ the whole stdlib is byte-identical — zero sites qualify there (every heap
 return is a promoted local, a vector, or `#rust`); the bench moves six literal
 sites (`Smp`, `Row`×2, `PathPt`, `Brush`, `LockStyle`).
 
-*Measured* (idle box, n=7 medians, `--native-emit` + `rustc -O`, hashes exact):
+*Measured* (`--native-emit` + `rustc -O`, medians, hashes exact).  Two boxes:
+the first pass ran with a post-reboot load of ~3, the re-measure after the
+gate narrowing on the quiet box — the row to compare with the P4d baseline
+above (25.1M) is the quiet one:
 
 | form | `lock` ns/op | `hash` ns/op |
 |---|---:|---:|
-| both switches off (P4d) | 47.8M | 2.23M |
-| callee half alone | 48.6M (a wash, as predicted) | — |
-| both halves, gate on | **35.3M (−26 %)** | 1.88M (−16 %) |
-| both halves, gate off (the ceiling) | 32.2M (−33 %) | — |
+| loaded box: both switches off (P4d) | 47.8M | 2.23M |
+| loaded box: callee half alone | 48.6M (a wash, as predicted) | — |
+| loaded box: both halves, gate on | 35.3M (−26 %) | 1.88M (−16 %) |
+| loaded box: both halves, gate off (the ceiling) | 32.2M (−33 %) | — |
+| **quiet box: both switches off** | 25.6M | 1.50M |
+| **quiet box: both halves, gate on (shipped)** | **17.9M (−30 %)** | 0.83M |
 
-The 7 pts between the gated and ungated forms are the sites the gate
-declines; `paired_witness` sites where the result OUTLIVES the buffer are also
-safe and are the first widening to measure.  P0 instrument on the idle box:
+The shipped form lands on the § V prediction for Route R (17.8M) to the
+decimal.  The 7 pts between the gated and ungated forms are the sites the
+gate declines.  The widening that lifts every one of them is to guard the FREE
+instead of gating the allocation: each release of a buffer-fed value — the
+lift temp's, the displacement on reassignment, the scope exit — becomes
+`OpFreeRefIfDistinct(v, __ref_N)`, after which "allocate every buffer" is
+sound by construction.  The free-guard matrix (M4–M9 in the guard, cells
+c12–c17) is the instrument for it, and its native control reads a WRONG
+value (`c5 forwarded: 100`) where the interpreter reads a use-after-free —
+a third spelling of absent the callee cannot see, the caller's buffer naming
+a store the lift's free released.  P0 instrument on the idle box:
 `lock` **6.2×** (bar 16 → 10), `hash` 5.1× (bar 7).  Still open from this
 section: the hoist unblock — the def-level *"writes only into its retbuf"*
 fact the resolve loop's P4 hoists wait on (the −17 pts attributed above).
