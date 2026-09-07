@@ -6529,6 +6529,24 @@ impl Data {
     /// — and looking for the plain key missed it, leaving the pass-1 body (which could
     /// not resolve a name declared later in the file) to reach codegen unrepaired
     /// (loft#1086).
+    /// The type definition a method's RECEIVER names — what the method is a method OF —
+    /// whatever spelling declares it.  `u32::MAX` when the definition takes no receiver.
+    ///
+    /// Nullability is not part of that name.  `fn_key` keys `t_<τ>_m` and `t_<τ?>_m` apart so
+    /// the two are distinct OVERLOADS (@PLN25), and `find_fn` reaches the `τ?` one from a
+    /// dense receiver when no dense one is declared — so the methods of `τ` and the methods
+    /// of `τ?` are ONE set, and every site that enumerates it must see both spellings
+    /// (@FR-F-Recv).  The variant dispatcher is that enumeration: asked bare, a
+    /// `fn area(self: Square?)` was no implementation of `Square` at all, so the arm was
+    /// never emitted and a dispatch on that variant answered another variant's bytes.
+    #[must_use]
+    pub fn receiver_def_nr(&self, d_nr: u32) -> u32 {
+        match self.def(d_nr).attributes().first().map(|a| a.typedef.base()) {
+            Some(Type::Reference(nr, _)) => *nr,
+            _ => u32::MAX,
+        }
+    }
+
     #[must_use]
     pub fn fn_key(&self, fn_name: &str, arguments: &[Argument]) -> Option<String> {
         let is_self = !arguments.is_empty() && arguments[0].name == "self";

@@ -521,6 +521,18 @@ fn missing_variant_impl() {
 }
 
 #[test]
+fn nullable_receiver_implements_its_variant() {
+    // loft#1427 — a `self: Sq?` receiver IS an implementation of `Sq` (`@FR-F-Recv`), so the
+    // warning must name only the variant that has none.  Asked bare, the scan reported `Sq`
+    // too — a warning for an implementation written three lines above it — and this harness
+    // fails on any warning the fixture does not assert, so the extra one goes red here.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { 1 + 1; }"
+    )
+    .warning("no implementation of 'ar' for variant 'Tr' at nullable_receiver_implements_its_variant:4:9");
+}
+
+#[test]
 fn stub_suppresses_missing_variant_warning() {
     // Rect has an empty-body stub — no warning should be emitted for either variant.
     code!(

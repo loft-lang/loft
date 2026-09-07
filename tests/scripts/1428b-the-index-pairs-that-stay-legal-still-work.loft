@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1428's reading half: the shapes the duplicate-index refusal must NOT swallow once it
+// sees through a `?`, each one FILLED and READ.  A refusal that over-reaches would take these
+// with it, and a refusal file cannot run a cell — hence the split from `1428`.
+//
+// Axes this file MOVES:  what makes the second member different — a second KEY, a different
+//                        collection KIND over the same records (the refusal's own advertised
+//                        cure), a different ELEMENT type — plus a lone nullable index, which
+//                        is the shape the peel touches most directly.
+// Axes it HOLDS FIXED:   integer keys, two records per collection.
+//
+// @falsified-at: e9f45817 — INERT by design: every cell is accepted and correct on both
+//   builds, which is what it is here to keep true.  Its falsification is `1428`'s, which goes
+//   from two unreported cells to two refusals; scored by hand, both backends.
+
+struct E28d { k: integer, j: integer, v: integer }
+struct E28e { k: integer, v: integer }
+struct E28f { k: integer, v: integer }
+struct F28f { k: integer, v: integer }
+struct E28g { k: integer, v: integer }
+
+struct TwoKeys { a: index<E28d[k]>, b: index<E28d[j]>? }
+struct IndexAndHash { a: index<E28e[k]>, b: hash<E28e[k]>? }
+struct TwoElements { a: index<E28f[k]>, b: index<F28f[k]>? }
+struct LoneNullable { only: index<E28g[k]>? }
+
+fn main() {
+  // A second KEY over the same records: two routes, two trees, no shared link field.
+  tk: TwoKeys = TwoKeys { a: [], b: [] };
+  tk.a += [E28d { k: 1, j: 10, v: 100 }, E28d { k: 2, j: 20, v: 200 }];
+  e1 = tk.a[2];
+  assert(e1 != null && e1.v == 200, "b4 the dense route finds its own key");
+  e1b = tk.b[20];
+  assert(e1b != null && e1b.v == 200, "b4b and the nullable route finds the other key: {e1b}");
+
+  // The refusal's own advertised cure — `hash` over the same records.
+  ih: IndexAndHash = IndexAndHash { a: [], b: [] };
+  ih.a += [E28e { k: 7, v: 70 }];
+  e2 = ih.a[7];
+  assert(e2 != null && e2.v == 70, "b5 the index route");
+  e2b = ih.b[7];
+  assert(e2b != null && e2b.v == 70, "b5b and the hash route over the same record: {e2b}");
+
+  // Two indexes over DIFFERENT element types share nothing.
+  te: TwoElements = TwoElements { a: [], b: [] };
+  te.a += [E28f { k: 1, v: 11 }];
+  te.b += [F28f { k: 1, v: 22 }];
+  e3 = te.a[1];
+  e3b = te.b[1];
+  assert(e3 != null && e3.v == 11, "b6 the first element type");
+  assert(e3b != null && e3b.v == 22, "b6b and the second, unmixed: {e3b}");
+
+  // A lone nullable index: filled, looked up, iterated, and still null-testable.
+  ln: LoneNullable = LoneNullable { only: [] };
+  ln.only += [E28g { k: 3, v: 33 }, E28g { k: 4, v: 44 }];
+  e4 = ln.only[4];
+  assert(e4 != null && e4.v == 44, "b7 a nullable index field looks up: {e4}");
+  n = 0;
+  // The `?? []` is the discharge a nullable collection needs to be iterated at all — the same
+  // value INDEXES without one, which is loft#1434's question and not this file's.
+  for e in ln.only ?? [] { n = n + e.v; }
+  assert(n == 77, "b7b and iterates every record it holds: {n}");
+}

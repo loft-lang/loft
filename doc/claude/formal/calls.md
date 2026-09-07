@@ -223,6 +223,42 @@ collection handed the argument up while its concrete twin copied — measured on
 independence matrix the sentence above states, 13 generic cells wrong on both backends and every
 concrete one right (D-call-13, QUALITY.md B7t).  The concrete twin is the oracle for the instance.
 
+### A method belongs to a type, and a `?` is not part of that name
+
+```
+  (F-Recv)   a method's RECEIVER names the type the method belongs to, and the receiver's
+             NULLABILITY is not part of that name: `fn m(self: τ?)` is a method of τ.  Two
+             overloads may differ in it — the def key carries the `?` (@PLN25), so `m(τ)` and
+             `m(τ?)` are two definitions — but the SET of methods of τ is the same set as the
+             methods of τ?, and every site that enumerates it sees both spellings.
+```
+
+**In words.** Writing `fn area(self: Square?)` declares `area` on `Square`; the `?` says the
+implementation tolerates an absent receiver, not that it belongs to another type. A call on a
+dense receiver reaches it when no dense overload is declared, and a call on an absent one
+reaches it with `self == null` — which is the whole point of the spelling.
+
+The site this rule is about is the one that ENUMERATES: the synthesised variant dispatcher
+(@F20) walks the implementations of an enum's variants, and asked for a bare
+`Type::Reference(v)` it saw none of the `τ?` ones. The dispatch then fell to the
+no-variant-matched tail and answered another variant's bytes on `--interpret` and `0` on
+`--native`, while the DIRECT call on the same variant was right — and the
+"no implementation of `area` for variant `Square`" warning named an implementation written
+five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
+
+*Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
+`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `warn_missing_enum_variants`) and
+`one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
+declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receiver-implements-its-variant.loft`,
+`1427b-…`, and the warning half in `tests/parse_errors.rs`
+(`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
+cannot see.
+
+**What the rule does NOT settle**, and loft#1432 carries: when BOTH overloads are declared, a
+nullable receiver still takes the dense one, and the reverse declaration order is refused as a
+redefinition — so the two spellings are one method for the redefinition check and two for the
+key. This rule is written for the enumeration, where the answer is not in doubt.
+
 ---
 
 ## Deviations

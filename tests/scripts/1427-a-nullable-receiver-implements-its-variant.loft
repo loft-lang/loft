@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1427 — which variant a method's RECEIVER names.
+//
+// `fn_key` keys `t_<τ>_m` and `t_<τ?>_m` apart so the two are distinct overloads (@PLN25), and
+// `find_fn` reaches the `τ?` one from a DENSE receiver when no dense one is declared — so the
+// methods of `τ` and the methods of `τ?` are ONE set (`@FR-F-Recv`).  The synthesised variant
+// dispatcher enumerates that set, and asked bare (`Type::Reference(v)` of an
+// `Optional(Reference(v))` is no match) a `fn area(self: Square?)` implemented no variant at
+// all: the arm was never emitted and the dispatch fell to the no-variant-matched tail, which
+// answers another variant's bytes on `--interpret` and `0` on `--native`.
+//
+// Every cell is a DISPATCH through the enum beside the DIRECT call on the variant, because the
+// defect is precisely the two answering differently: the direct call was right throughout.
+//
+// Axes this file MOVES:  how many implementations are nullable (one · all · one of three ·
+//                        both spellings for one variant), the return kind (`integer`, `text` —
+//                        the dispatcher forwards a text accumulator), the arity (a second
+//                        parameter), the payload kind behind the receiver (`integer` · `text` ·
+//                        `vector<integer>`), the evaluation count (once · in a loop), and the
+//                        receiver at the direct call (dense · nullable · ABSENT, the
+//                        null-tolerant idiom the `self: τ?` spelling exists for).
+// Axes it HOLDS FIXED:   two-variant enums with one integer payload field, except the
+//                        three-variant cell, whose third variant has no implementation at all
+//                        and is what keeps the warning half honest (loft#1427's parse_errors
+//                        twin `nullable_receiver_implements_its_variant` counts the reports;
+//                        a `.loft` guard cannot assert a warning's ABSENCE — unexpected
+//                        warnings are tolerated by the runner).
+//
+// The text cells give BOTH implementations a branching body on purpose: an implementation that
+// builds its text in a branch carries a hidden `___acc_1` accumulator its literal-returning
+// twin does not, and the dispatcher is abandoned silently when only one of them has it
+// (loft#1430, pre-existing and a different mechanism).
+//
+// The ALL-nullable enum is in `1427b`, not here: with no dense implementation there is no
+// dispatcher at all on the pre-fix build, so `t.side()` is read as a field access and the file
+// would prove itself through the exit channel rather than through the values it is about.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  The failing assertion is e1: `b.area()`
+//   answers a garbage number there that varies run to run (8858, 9303) on `--interpret` and `0`
+//   on `--native`, where this file asserts 16.  e3 answers the empty text on the same build and
+//   e4 the same garbage; they are behind e1 in the same run.
+
+// e1 — one dense implementation, one on a nullable receiver.
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn area(self: Circle) -> integer { self.r * 3 }
+fn area(self: Square?) -> integer { if self == null { -1 } else { self.s * self.s } }
+
+// e3 — a `text` return, which the dispatcher delivers through a forwarded buffer.
+enum Word { Wa { a: integer }, Wb { b: integer } }
+fn label(self: Wa) -> text { if self.a == 1 { "wa1" } else { "wa2" } }
+fn label(self: Wb?) -> text { if self == null { "none" } else { "wb" } }
+
+// e4 — a second parameter, which the dispatcher forwards to every arm.
+enum Arg { Ax { x: integer }, Ay { y: integer } }
+fn scale(self: Ax, k: integer) -> integer { self.x * k }
+fn scale(self: Ay?, k: integer) -> integer { if self == null { -1 } else { self.y * k } }
+
+// e5 — the dense control: both implementations dense, which was right throughout.
+enum Sh3 { Ci3 { r: integer }, Sq3 { s: integer } }
+fn ar3(self: Ci3) -> integer { self.r * 3 }
+fn ar3(self: Sq3) -> integer { self.s * self.s }
+
+// e6 — BOTH spellings for one variant.  A direct call takes the dense one, so the arm must
+// too: the dispatcher keeps one implementation per variant and prefers the dense spelling.
+// (The reverse declaration order is refused as a redefinition — loft#1432.)
+enum Sh11 { C11 { r: integer }, S11 { s: integer } }
+fn ar11(self: C11) -> integer { self.r }
+fn ar11(self: S11) -> integer { self.s * 25 }
+fn ar11(self: S11?) -> integer { if self == null { -1 } else { self.s * 50 } }
+
+// e7 — a HEAP payload (a `text` field) read through a nullable receiver, and a vector one
+// beside it: the arm has to project the payload before the body reads it, whichever the field
+// holds.
+enum Note { Tag { t: text }, Nums { ns: vector<integer> } }
+fn plen(self: Tag?) -> integer { if self == null { -1 } else { self.t.len() } }
+fn plen(self: Nums) -> integer { self.ns.len() }
+
+fn main() {
+  // e1 — the dispatch answers what the direct call answers.
+  b: Shape = Square { s: 4 };
+  c: Shape = Circle { r: 2 };
+  assert(b.area() == 16, "e1 a nullable-receiver implementation is dispatched to: {b.area()}");
+  assert(c.area() == 6, "e1d its dense sibling still is: {c.area()}");
+  d: Square = Square { s: 4 };
+  assert(d.area() == 16, "e1n the direct call on a dense receiver: {d.area()}");
+  z: Square? = null;
+  assert(z.area() == -1, "e1z the absent receiver the `self: τ?` spelling is written for");
+
+  // e3 — a text return.
+  wa: Word = Wa { a: 1 };
+  wb: Word = Wb { b: 1 };
+  assert(wa.label() == "wa1", "e3 dense text arm: {wa.label()}");
+  assert(wb.label() == "wb", "e3b nullable text arm: {wb.label()}");
+
+  // e4 — a forwarded second parameter.
+  ax: Arg = Ax { x: 3 };
+  ay: Arg = Ay { y: 3 };
+  assert(ax.scale(2) == 6, "e4 dense arm with an argument: {ax.scale(2)}");
+  assert(ay.scale(2) == 6, "e4b nullable arm with an argument: {ay.scale(2)}");
+
+  // e7 — heap payloads, and the dispatch repeated in a LOOP: an arm that projects a payload
+  // must do it per call, not once.
+  n1: Note = Tag { t: "hi" };
+  n2: Note = Nums { ns: [1, 2, 3] };
+  assert(n1.plen() == 2, "e7 a text payload read through a nullable receiver: {n1.plen()}");
+  assert(n2.plen() == 3, "e7b and its dense sibling over a vector payload: {n2.plen()}");
+  acc = 0;
+  for i in 0..3 { acc = acc + b.area(); }
+  assert(acc == 48, "e7c the same dispatch repeated answers the same each time: {acc}");
+
+  // e5 — the control.
+  e5a: Sh3 = Sq3 { s: 4 };
+  e5b: Sh3 = Ci3 { r: 2 };
+  assert(e5a.ar3() == 16 && e5b.ar3() == 6, "e5 the all-dense enum is unchanged");
+
+  // e6 — both spellings for one variant: dispatch agrees with the direct call.
+  e6: Sh11 = S11 { s: 4 };
+  e6d: S11 = S11 { s: 4 };
+  assert(e6.ar11() == e6d.ar11(), "e6 dispatch and direct call pick the same overload: {e6.ar11()} {e6d.ar11()}");
+  assert(e6.ar11() == 100, "e6b and it is the dense one: {e6.ar11()}");
+}

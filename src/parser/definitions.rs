@@ -31,7 +31,44 @@ impl Parser {
             return; // an unknown field name is reported by the layout pass
         }
         let tp = self.data.attr_type(el, a_nr);
-        let is_text = matches!(tp, Type::Text(_));
+        // @FR-Col-Trie / @FR-Col-Spatial — a trie's key is text-NOT-NULL and a spatial's axes are
+        // integer-NOT-NULL, because a trie walks its key's BYTES and a spatial interleaves its
+        // axes into a Morton code, and an absence has neither.  The three VALUE-keyed kinds key
+        // on the value, where an absence is a value like any other, and never ask this.
+        //
+        // @FR-L-Null — the KIND question peels: `text?` is a text in the same four bytes, and
+        // asked bare it read as "not a text", which let it take a `spatial` axis' place.  That
+        // compiled, iterated its records, and answered null for a point just inserted — the
+        // loft#799 failure the dense spelling is refused for, reached through the `?`.
+        let is_text = matches!(tp.base(), Type::Text(_));
+        // …and nullability is its own answer, because neither kind has a key for absence:
+        // `(Col-Trie)` walks the BYTES of a text and an absent text has none, `(Col-Spatial)`
+        // interleaves integer-NOT-NULL coordinates and an absent one has no position on the
+        // curve.  `hash` / `sorted` / `index` key on the VALUE, where absence is a value like
+        // any other, and they do not ask this.
+        if matches!(tp, Type::Optional(_)) {
+            let shown = tp.name(&self.data);
+            if want_text {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a trie keys on the BYTES of a text field, and `{field}` is `{shown}` — an \
+                     absent text has no bytes to walk; declare the key `text`, or key on the \
+                     VALUE with `hash<{}[{field}]>`, which holds an absent key like any other",
+                    self.data.def(content).name()
+                );
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a spatial index interleaves its axes into a Morton code, and the axis \
+                     `{field}` is `{shown}` — an absent coordinate has no position on the \
+                     curve; declare it `integer`, or key on the VALUE with `sorted` / `index`, \
+                     which order an absent key before every present one"
+                );
+            }
+            return;
+        }
         if is_text == want_text {
             return;
         }
@@ -135,16 +172,14 @@ impl Parser {
     }
 
     pub(crate) fn warn_missing_enum_variants(&mut self, e_nr: u32, nrs: &[usize], name: &str) {
+        // @FR-F-Recv — which variant an implementation is FOR is `receiver_def_nr`'s answer,
+        // so a `self: V?` receiver counts as an implementation of `V`.  Asked bare, this
+        // reported "no implementation of 'area' for variant 'Square'" with one written five
+        // lines above it.
         let implemented: HashSet<u32> = nrs
             .iter()
-            .filter_map(|nr| {
-                if let Type::Reference(a_nr, _) = self.data.def(*nr as u32).attributes()[0].typedef
-                {
-                    Some(a_nr)
-                } else {
-                    None
-                }
-            })
+            .map(|nr| self.data.receiver_def_nr(*nr as u32))
+            .filter(|a_nr| *a_nr != u32::MAX)
             .collect();
         let missing: Vec<(String, Position)> = self
             .data
@@ -277,7 +312,11 @@ impl Parser {
             if d.def_type != DefType::Function || d.attributes.is_empty() {
                 continue;
             }
-            if let Type::Reference(e_tp, _) = &d.attributes[0].typedef
+            // @FR-F-Recv — the receiver's base type names the variant, so both `self: V` and
+            // `self: V?` are implementations of `V` and both belong in the dispatcher.
+            let recv = self.data.receiver_def_nr(d_nr as u32);
+            if recv != u32::MAX
+                && let e_tp = &recv
                 && matches!(self.data.def(*e_tp).returned(), Type::Enum(_, true, _))
                 && self.data.find_fn(
                     u16::MAX,
@@ -296,12 +335,56 @@ impl Parser {
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
             {
-                todo.entry(*e_nr).or_insert(vec![]).push(d_nr);
+                // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
+                // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
+                // alone, an enum with two methods per variant put both lists in one bucket, so
+                // one method got a dispatcher named after whichever definition came first and
+                // the other got none — its call site then failed as a FIELD read (*"field 'per'
+                // of 'Ca' has no storage in that type's layout"*), and where the two lists'
+                // attributes disagreed the shared bucket bailed and NEITHER was built
+                // (`tests/scripts/05-enums.loft` had three `area` and three `describe`
+                // implementations and no dispatcher for either).
+                todo.entry((*e_nr, d.original_name().clone()))
+                    .or_insert(vec![])
+                    .push(d_nr);
             }
         }
-        for (e_nr, nrs) in todo {
-            self.create_enum_dispatch_fn(e_nr, &nrs);
+        // Sorted, because a `HashMap`'s order is not stable across runs and the dispatchers are
+        // emitted in the order they are created: an unsorted walk makes the generated Rust
+        // differ between two builds of one program.
+        let mut keys: Vec<(u32, String)> = todo.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            let nrs = self.one_implementation_per_variant(&todo[&key]);
+            self.create_enum_dispatch_fn(key.0, &nrs);
         }
+    }
+
+    /// One implementation per VARIANT, the way a direct call picks one.
+    ///
+    /// A variant may carry two overloads of a method — `self: V` and `self: V?` — and a call
+    /// on a dense receiver takes the dense one (`find_fn`; the reverse declaration order is
+    /// refused outright as a redefinition).  The dispatcher's arm must answer what that call
+    /// answers, so the dense spelling wins here too, and the arm list keeps ONE def per
+    /// discriminant rather than an unreachable second `if` on the same tag (@FR-F-Recv).
+    fn one_implementation_per_variant(&self, nrs: &[usize]) -> Vec<usize> {
+        let mut kept: Vec<usize> = Vec::with_capacity(nrs.len());
+        for nr in nrs {
+            let variant = self.data.receiver_def_nr(*nr as u32);
+            let dense = !matches!(
+                self.data.def(*nr as u32).attributes()[0].typedef,
+                Type::Optional(_)
+            );
+            match kept
+                .iter()
+                .position(|k| self.data.receiver_def_nr(*k as u32) == variant)
+            {
+                Some(at) if dense => kept[at] = *nr,
+                Some(_) => {}
+                None => kept.push(*nr),
+            }
+        }
+        kept
     }
 
     pub(crate) fn enum_numbers(
@@ -315,10 +398,11 @@ impl Parser {
     ) {
         for nr in nrs {
             let d_nr = nr as u32;
-            let a_nr = if let Type::Reference(nr, _) = self.data.def(d_nr).attributes()[0].typedef {
-                nr
-            } else {
-                0
+            // @FR-F-Recv — the arm's discriminant comes from the variant the receiver names,
+            // which a `self: V?` names exactly as `self: V` does.
+            let a_nr = match self.data.receiver_def_nr(d_nr) {
+                u32::MAX => 0,
+                nr => nr,
             };
             let e_nr = if let Value::Enum(nr, _) = self.data.def(a_nr).attributes()[0].value {
                 nr
@@ -3452,11 +3536,21 @@ impl Parser {
     /// answers, in the same order. A different key is a different type with its
     /// own link triple, so `index<E[k]> + index<E[n]>` is untouched and correct.
     fn reject_duplicate_index(&mut self, d_nr: u32, a_name: &str, a_type: &Type) {
-        let Type::Index(elem, keys, _) = a_type else {
+        // @FR-Col-Group — membership of a record set is not about whether a MEMBER is nullable,
+        // and two `index` members over one element type are refused because an index keeps its
+        // tree links in a field OF the record (DESIGN_DECISIONS.md, the two-index ruling).
+        //
+        // @FR-L-Null — `base()` on both sides: a `?` on a field is a compile-time bit over the
+        // same storage, so `index<E[k]>?` is the same tree over the same records as
+        // `index<E[k]>`.  Asked bare, a nullable spelling escaped this refusal on either side
+        // and the two indexes then overwrote each other's links in the one field the record
+        // has for them — a lookup answering null for a record its own `for` loop yields.
+        let Type::Index(elem, keys, _) = a_type.base() else {
             return;
         };
         for a_nr in 0..self.data.attributes(d_nr) {
-            let Type::Index(other_elem, other_keys, _) = self.data.attr_type(d_nr, a_nr) else {
+            let Type::Index(other_elem, other_keys, _) = self.data.attr_type(d_nr, a_nr).base().clone()
+            else {
                 continue;
             };
             if other_elem != *elem || other_keys != *keys {

@@ -2470,7 +2470,19 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 733 | 377 | 5 | **351** |
+| 732 | 380 | 5 | **347** |
+
+@PLN153 phase 4 batch 9 (the `parser/definitions.rs` tier-0 group — the DECLARATION-time
+questions, loft#1427 / loft#1428 / loft#1429) moves the opaque column DOWN by four, the
+largest single step of this phase: `enum_numbers` and `warn_missing_enum_variants` no longer
+discriminate on a `Type` at all (they read `Data::receiver_def_nr`, the one home for *which
+type is this a method of*), and `check_key_is_text` and `reject_duplicate_index` peel.  Three
+defects, one shape: a `?` on a written type made a declaration-time question answer NO — the
+method implemented no variant, the second index was not an index, the key was not a text — and
+each silence had a wrong VALUE behind it (a dispatch answering another variant's bytes, two
+index trees overwriting each other's links, a spatial that answers null for a point just
+inserted).  Every moved function has a cell; `one_implementation_per_variant` is the one new
+predicate, and it is on the seeing-through side.
 
 Two functions joined the seeing-through column without a walk of their own: the sibling
 checkout's loft#1409 (`synthesize_cell_structs`, the capture-cell templates batch 4's family

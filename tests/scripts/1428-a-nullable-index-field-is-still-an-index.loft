@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1428 — two `index<E[k]>` in one structure, one of them spelled with a `?`.
+//
+// An index keeps its tree links in a field OF the record, so two indexes over the same element
+// type cannot share a record set: the refusal is structural and `@FR-L-Null` says the `?`
+// cannot change it — a nullable field is the same storage with a compile-time bit.  Asked as a
+// bare `Type::Index`, either side spelled `?` escaped the check, and the two trees then
+// overwrote each other's links: a lookup answered `null` for a record its own `for` loop
+// yields, and the second route answered the first's record for a key it never received
+// (`1428b` holds the reading half, on the shapes that stay legal).
+//
+// Axes this file MOVES:  WHICH side carries the `?` (the second field, then both).
+// Axes it HOLDS FIXED:   one integer key, one element type per cell — two structs sharing an
+//                        element type would make one cell's records the other's.
+//
+// The accepted neighbours — a second key, a `hash` over the same records, a different element
+// type — are in `1428b`, where they are FILLED and READ: a refusal file cannot run a cell.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the
+//   suite's verdict, not a count of matches), native the same.  On the control only the DENSE
+//   pair is reported; the two nullable spellings are accepted in silence.
+
+struct E1428a { k: integer, v: integer }
+struct E1428b { k: integer, v: integer }
+struct E1428c { k: integer, v: integer }
+
+// The nullable spelling on the SECOND field: the one that was accepted.
+// @EXPECT_ERROR: 'ib' and 'ia' are both 'index<E1428a[k]>'
+struct Two1428a { ia: index<E1428a[k]>, ib: index<E1428a[k]>? }
+
+// BOTH spellings nullable, so neither side of the comparison is a bare `Type::Index`.
+// @EXPECT_ERROR: 'nb' and 'na' are both 'index<E1428b[k]>'
+struct Two1428b { na: index<E1428b[k]>?, nb: index<E1428b[k]>? }
+
+// The dense pair — refused before this fix and after it, so the file cannot pass by refusing
+// everything.
+// @EXPECT_ERROR: 'db' and 'da' are both 'index<E1428c[k]>'
+struct Two1428c { da: index<E1428c[k]>, db: index<E1428c[k]> }

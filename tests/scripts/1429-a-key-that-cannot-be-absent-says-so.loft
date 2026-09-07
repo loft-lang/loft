@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1429 — the key field of a `trie` and the axes of a `spatial`, written with a `?`.
+//
+// `(Col-Trie)` keys on the BYTES of ONE text field and `(Col-Spatial)` interleaves
+// integer-NOT-NULL coordinates, so neither kind has a key for absence: an absent text has no
+// bytes to walk and an absent coordinate has no position on the curve.  The check asked
+// `matches!(tp, Type::Text(_))` bare and returned early whenever the answer agreed with the
+// kind, which gave both spellings the wrong answer at once —
+//
+//   * `spatial<W[w]>` with `w: text?` was ACCEPTED (a `text?` is not a `Type::Text`), and then
+//     answered `null` for a point just inserted: the loft#799 failure the DENSE spelling is
+//     refused for, reached through the `?`.  Its records iterate, so the collection looks
+//     alive (`1429b` measures the same shapes where they stay legal);
+//   * `spatial<P[x, y]>` with `x: integer?` was accepted the same way;
+//   * `trie<T[k]>` with `k: text?` was refused with advice for a field that is NOT a text —
+//     *"use `spatial<…>` for coordinates, or `sorted<…>` / `index<…>` to order on a number"*.
+//
+// Axes this file MOVES:  the kind (`trie` · `spatial`), the key's base type (`text` ·
+//                        `integer`), and whether the `?` or the KIND is what refuses it.
+// Axes it HOLDS FIXED:   one key / two axes, one element type per cell so no two expectations
+//                        share a substring.
+//
+// The cures the two messages name are measured in `1429b`: a `hash` holds an absent key, and
+// `sorted` / `index` order one before every present key.  A message naming a cure that does
+// not work is the next defect.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 5/5 (the
+//   suite's verdict, not a count of matches), native the same.  On the control the two
+//   `spatial` cells report NOTHING and the trie cell reports the coordinates-or-a-number advice
+//   instead; the two type-KIND controls match on both builds, which is what keeps this file
+//   from passing by refusing everything.
+
+struct Tk1429 { k: text?, n: integer }
+struct Sw1429 { w: text?, n: integer }
+struct Sx1429 { x: integer?, y: integer, n: integer }
+struct Td1429 { k: integer, n: integer }
+struct Sd1429 { w: text, n: integer }
+
+// The `?` on a trie's key: the kind is right and absence is what it cannot hold.
+// @EXPECT_ERROR: `k` is `text?` — an absent text has no bytes to walk
+fn trie_nullable_text() -> integer { t: trie<Tk1429[k]> = []; 1 }
+
+// The `?` on a spatial axis that is a text — refused for the `?` first, since a `text?` axis
+// used to slip past the kind test entirely.
+// @EXPECT_ERROR: the axis `w` is `text?` — an absent coordinate has no position
+fn spatial_nullable_text() -> integer { s: spatial<Sw1429[w]> = []; 2 }
+
+// The `?` on a spatial axis that IS an integer: `(Col-Spatial)` says not-null.
+// @EXPECT_ERROR: the axis `x` is `integer?` — an absent coordinate has no position
+fn spatial_nullable_integer() -> integer { s: spatial<Sx1429[x, y]> = []; 3 }
+
+// The type-KIND refusals, unchanged: a trie over a number, a spatial over a text.  Both were
+// right before this fix and stay word-for-word what they were.
+// @EXPECT_ERROR: a trie keys on the BYTES of a text field, and `k` is integer
+fn trie_integer_key() -> integer { t: trie<Td1429[k]> = []; 4 }
+
+// @EXPECT_ERROR: which needs numbers, and `w` is text
+fn spatial_text_axis() -> integer { s: spatial<Sd1429[w]> = []; 5 }
