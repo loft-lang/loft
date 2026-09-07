@@ -3276,6 +3276,31 @@ impl Parser {
                 }
                 Some((Value::Tuple(values), tp.clone()))
             }
+            // The STORED spelling of the same tuple — `Reference(__tuple<…>)`, the boxed
+            // monomorph return a generic `-> T?` at a tuple delivers (loft#1451).  `(N-Default)`
+            // is stated on the TYPE, not on where it happens to live, so it defaults member-wise
+            // exactly as the stack form above does; the two are one notion, one spelling apart,
+            // and the coalesce already unboxes a stack default against a stored left-hand side.
+            //
+            // Without this arm the stored form fell to `_ => None` and the caller reported
+            // *"`?` cannot build a default for `__tuple<integer,integer>`"* — correct as far as
+            // it went, since loft#1424 replaced a SILENT recovery there with a report, but the
+            // answer is that this tuple has a default rather than that it has none.
+            Type::Reference(_, _) if Self::record_tuple_def(&self.data, tp).is_some() => {
+                let elems: Vec<Type> = self
+                    .data
+                    .def(Self::record_tuple_def(&self.data, tp)?)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect();
+                let mut values = Vec::with_capacity(elems.len());
+                for e in &elems {
+                    let (v, _) = self.build_default(e)?;
+                    values.push(v);
+                }
+                Some((Value::Tuple(values), Type::Tuple(elems)))
+            }
             // Collections are handled by the caller via `pending_default_src` (parsed
             // in-context), never here — see `handle_default_fallback`.
             // An enum defaults to its first-defined variant (a marked default variant
