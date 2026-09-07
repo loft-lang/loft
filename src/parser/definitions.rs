@@ -31,21 +31,16 @@ impl Parser {
             return; // an unknown field name is reported by the layout pass
         }
         let tp = self.data.attr_type(el, a_nr);
-        // @FR-Col-Trie / @FR-Col-Spatial — a trie's key is text-NOT-NULL and a spatial's axes are
-        // integer-NOT-NULL, because a trie walks its key's BYTES and a spatial interleaves its
-        // axes into a Morton code, and an absence has neither.  The three VALUE-keyed kinds key
-        // on the value, where an absence is a value like any other, and never ask this.
-        //
-        // @FR-L-Null — the KIND question peels: `text?` is a text in the same four bytes, and
-        // asked bare it read as "not a text", which let it take a `spatial` axis' place.  That
-        // compiled, iterated its records, and answered null for a point just inserted — the
-        // loft#799 failure the dense spelling is refused for, reached through the `?`.
+        // @FR-L-Null — the KIND question peels, because `text?` is a text in the same four
+        // bytes.  Asked bare it read as "not a text", which let a `text?` take a `spatial`
+        // AXIS' place: accepted, iterating its records, and answering null for a point just
+        // inserted (loft#1429).
         let is_text = matches!(tp.base(), Type::Text(_));
-        // …and nullability is its own answer, because neither kind has a key for absence:
-        // `(Col-Trie)` walks the BYTES of a text and an absent text has none, `(Col-Spatial)`
-        // interleaves integer-NOT-NULL coordinates and an absent one has no position on the
-        // curve.  `hash` / `sorted` / `index` key on the VALUE, where absence is a value like
-        // any other, and they do not ask this.
+        // @FR-Col-Trie / @FR-Col-Spatial — and nullability is its own answer, because neither
+        // kind has a key for absence: a trie walks the BYTES of a text and an absent text has
+        // none, a spatial interleaves integer-NOT-NULL coordinates and an absent one has no
+        // position on the curve.  The three VALUE-keyed kinds hold an absent key like any
+        // other value, so they never ask this — which is what both messages name as the cure.
         if matches!(tp, Type::Optional(_)) {
             let shown = tp.name(&self.data);
             if want_text {
@@ -316,14 +311,12 @@ impl Parser {
             // `self: V?` are implementations of `V` and both belong in the dispatcher.
             let recv = self.data.receiver_def_nr(d_nr as u32);
             if recv != u32::MAX
-                && let e_tp = &recv
-                && matches!(self.data.def(*e_tp).returned(), Type::Enum(_, true, _))
-                && self.data.find_fn(
-                    u16::MAX,
-                    &d.original_name(),
-                    self.data.def(*e_tp).returned(),
-                ) == u32::MAX
-                && let Type::Enum(e_nr, true, _) = self.data.def(*e_tp).returned()
+                && matches!(self.data.def(recv).returned(), Type::Enum(_, true, _))
+                && self
+                    .data
+                    .find_fn(u16::MAX, &d.original_name(), self.data.def(recv).returned())
+                    == u32::MAX
+                && let Type::Enum(e_nr, true, _) = self.data.def(recv).returned()
                 // loft#850 — whether an enum already HAS this dispatcher is a fact about
                 // the enum, so ask the enum. The `find_fn` test above searches the source
                 // being parsed, while the scan it guards runs over EVERY definition in the
