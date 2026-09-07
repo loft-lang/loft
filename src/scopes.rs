@@ -4979,11 +4979,16 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
 /// lives in exactly the frame whose variables decide the verdict.
 fn mark_borrowed_captures(data: &mut Data) {
     let mut borrowed: Vec<(u32, usize)> = Vec::new();
+    // Per function: the capture NAME -> every (closure local, record, attribute) that adopted
+    // its store.  More than one entry is loft#1440's shape.
+    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
     for d_nr in 0..data.definitions() {
+        adopters.clear();
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
         let function = &data.def(d_nr).variables;
+        let builds = capture_build_backings(data, function, data.def(d_nr).code());
         for v in 0..function.next_var() {
             // The DEFINING frame holds the record in the `___clos_N` local
             // `emit_lambda_code` mints for it.  A frame that receives the record as
@@ -5004,15 +5009,184 @@ fn mark_borrowed_captures(data: &mut Data) {
                 if !capture_attr_is_cascade_relevant(data, record, a) {
                     continue;
                 }
-                if !record_adopts_capture(data, function, record, a) {
+                if record_adopts_capture(data, function, record, a) {
+                    adopters
+                        .entry(adopted_store_key(data, function, &builds, v, record, a))
+                        .or_default()
+                        .push((v, record, a));
+                } else {
                     borrowed.push((record, a));
                 }
+            }
+        }
+        // @FR-L-CapOwn — one STORE, one owner.  Two closures over one store both adopted it,
+        // and their deaths are independent: where one record escapes and the other is left
+        // behind, the one left behind released the store the escaped record still holds and the
+        // caller read a released record (loft#1440).  So among the records that adopted ONE
+        // store, exactly one keeps it — the one that LEAVES the frame, because the frame is
+        // gone by the time the question is asked; where none leaves, the first, which is the
+        // single-record case unchanged.  The rest BORROW: their cascade stops there, and the
+        // free-suppression is per LOCAL, so the store still has its one release.
+        //
+        // The grouping is by the store each record ADOPTED (`adopted_store_key`), not by the
+        // capture's name: a local assigned between two builds hands the two records different
+        // stores, and grouping by name made the second borrow one the first never held —
+        // measured as a leaked `S` in
+        // `a-captured-local-reassigned-after-the-build-frees-its-own-store.loft`.
+        for (_, mut group) in std::mem::take(&mut adopters) {
+            if group.len() < 2 {
+                continue;
+            }
+            let owner = group
+                .iter()
+                .position(|(v, _, _)| record_leaves_frame(data, function, d_nr, *v))
+                .unwrap_or(0);
+            group.remove(owner);
+            for (_, record, a) in group {
+                borrowed.push((record, a));
             }
         }
     }
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
     }
+}
+
+/// The STORE a record adopted for capture attribute `a`, as a grouping key.
+///
+/// `(L-CapOwn)` is about a store, and a capture's NAME is not one: `s = S{…}; k1 = |…| s.a;
+/// s = S{…}; k2 = |…| s.a` gives the two records two different stores under one name, and
+/// treating them as one made the second borrow what the first never held.  The build walk
+/// counts assignments, so `(capture local, generation at the build)` identifies the store; a
+/// record whose build this body does not contain — a relayed capture, a rebuilt loop slot —
+/// gets a key of its own and is never grouped, which is the pre-loft#1440 behaviour.
+fn adopted_store_key(
+    data: &Data,
+    function: &Function,
+    builds: &CaptureBuilds,
+    record_local: u16,
+    record: u32,
+    a: usize,
+) -> (u16, u32) {
+    let capture = function.var(&data.attr_name(record, a).clone());
+    if capture == u16::MAX || builds.rebuilt_in_loop.contains(&capture) {
+        return (u16::MAX, u32::from(record_local));
+    }
+    match builds
+        .adopted
+        .get(&record_local)
+        .and_then(|pairs| pairs.iter().find(|(c, _)| *c == capture))
+    {
+        Some((_, generation)) => (capture, *generation),
+        // No build for it in this body: key it uniquely so it groups with nothing.
+        None => (u16::MAX, u32::from(record_local)),
+    }
+}
+
+/// Does the closure record held by local `v` LEAVE the frame that built it?
+///
+/// `@FR-L-CapOwn` — the record that outlives the frame is the one that must keep a store they
+/// both adopted.  The fn-ref's own spelling of "this value carries that record" is a
+/// `DepEntry::CalleeFrame` in the declared return type, which is the only route out TODAY: #318
+/// refuses returning a struct that holds a capturing closure, and a `&fn()` parameter does not
+/// compile at all (loft#1443, an ICE).  That second one is a gap rather than a decision —
+/// `(B-Ref-Intro)` admits `&τ` for every τ with none excluded (binding.md, the paragraph that
+/// closed D-bind-17) — so when it is implemented this predicate gains a second source and must
+/// be told, or an escaping closure written out through a `&` parameter loses its capture the
+/// way loft#1439 lost one.
+///
+/// The declared type's note is the FALLBACK only: it is published once per lambda and
+/// OVERWRITTEN, so wherever a function builds more than one it names the last one BUILT rather
+/// than the one the return delivers (loft#1444).  `returned_closure_records` reads the values
+/// in RETURN POSITION instead, and the note is asked only where that finds nothing — the
+/// `return fn() { … }` written straight out, where the two agree.
+fn record_leaves_frame(data: &Data, function: &Function, d_nr: u32, v: u16) -> bool {
+    if function.is_argument(v) {
+        return false;
+    }
+    let delivered = returned_closure_records(data, function, d_nr);
+    if !delivered.is_empty() {
+        return delivered.contains(&v);
+    }
+    // Nothing in return position names a record — fall back to the declared type's note, which
+    // is what a `return fn() { … }` written straight out publishes.
+    data.def(d_nr).returned().depend().iter().any(|raw| {
+        matches!(crate::data::DepEntry::decode(*raw), crate::data::DepEntry::CalleeFrame(w) if w == v)
+    })
+}
+
+/// The closure records a function's RETURN can DELIVER, read off the values in return position.
+///
+/// `@FR-L-CapOwn` needs "which record outlives the frame", and the declared type's
+/// `DepEntry::CalleeFrame` note cannot answer it: that note is published once per lambda and
+/// OVERWRITTEN, so wherever a function builds more than one it names the last one BUILT rather
+/// than the one the return hands out (loft#1444).  The values themselves do know — a fn-ref
+/// local carries its record in its own type's deps, and a `return fn() { … }` written straight
+/// out is a `FnRef` naming it — so this reads them instead.
+///
+/// Every arm counts: a branch may deliver either, and each of those records outlives the frame
+/// on the path that returns it.
+fn returned_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<u16> {
+    let mut out = Vec::new();
+    let mut sources: Vec<u16> = Vec::new();
+    let body = data.def(d_nr).code();
+    // RETURN POSITION only: the body's tail, and the value of every `return`.  A `FnRef`
+    // anywhere else is a closure this frame keeps — collecting those made the record a KEPT
+    // lambda builds look delivered, which hands it a capture the escaping one owns.
+    let mut delivered: Vec<&Value> = vec![body];
+    body.walk(&mut |n| {
+        if let Value::Return(inner) = n.unspan() {
+            collect_return_sources(inner, data, &mut sources);
+        }
+    });
+    while let Some(v) = delivered.pop() {
+        match v.unspan() {
+            Value::FnRef(_, w, _) => {
+                if !out.contains(w) {
+                    out.push(*w);
+                }
+            }
+            Value::Block(bl) => {
+                if let Some(last) = last_non_free_result(&bl.operators, data) {
+                    delivered.push(last);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = last_non_free_result(ops, data) {
+                    delivered.push(last);
+                }
+            }
+            Value::If(_, t, f) => {
+                delivered.push(t);
+                delivered.push(f);
+            }
+            Value::Return(inner) => delivered.push(inner),
+            other => collect_return_sources(other, data, &mut sources),
+        }
+    }
+    for v in sources {
+        if v >= function.count() {
+            continue;
+        }
+        match function.tp(v) {
+            // A fn-ref LOCAL: its own type names the record it holds.
+            Type::Function(_, _, deps) => {
+                for w in deps.frame_vars() {
+                    if !out.contains(w) {
+                        out.push(*w);
+                    }
+                }
+            }
+            // The record itself, returned directly.
+            Type::Reference(record, _)
+                if data.def(*record).name.starts_with("__closure_") && !out.contains(&v) =>
+            {
+                out.push(v);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The `__ref_N` work-ref an inline record LITERAL built, when the literal's value is that
@@ -5193,6 +5367,11 @@ pub(crate) fn capture_build_backings(
 ) -> CaptureBuilds {
     let set_dbref = data.def_nr("OpSetDbRef");
     let mut latest: HashMap<u16, u16> = HashMap::new();
+    // How many times each local has been ASSIGNED so far in this walk.  Two records hold the
+    // SAME store only if they adopted a local at the same generation: a local assigned between
+    // two builds gives them different stores (@FR-O-Latest), which the capture NAME cannot say
+    // and which decides whether one of them may be made to borrow (@FR-L-CapOwn, loft#1440).
+    let mut generation: HashMap<u16, u32> = HashMap::new();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
     let mut built: HashSet<u16> = HashSet::new();
@@ -5207,12 +5386,16 @@ pub(crate) fn capture_build_backings(
             // the build node is reached AFTER this one, by which time `latest` describes the
             // assignment rather than the capture.  Resolve those builds here, against
             // `latest` as it still stands, and let the walk skip them when it arrives.
-            for (c, backing) in captures_built_in(data, rhs, set_dbref, &latest) {
+            for (record, c, backing) in captures_built_in(data, rhs, set_dbref, &latest) {
                 built.insert(c);
                 if let Some(b) = backing {
                     out.backing.insert(c, b);
                     built.insert(b);
                 }
+                out.adopted
+                    .entry(record)
+                    .or_default()
+                    .push((c, *generation.get(&c).unwrap_or(&0)));
                 resolved_in_rhs.insert(c);
                 // @FR-O-Latest — this very assignment is the one that moves the local off
                 // the store the record just adopted.
@@ -5236,6 +5419,9 @@ pub(crate) fn capture_build_backings(
                     latest.remove(v);
                 }
             }
+            // …and the local now names a different store, so a build after this one adopts
+            // something the builds before it never held.
+            *generation.entry(*v).or_default() += 1;
         }
         Value::Call(d, args) if *d == set_dbref => {
             if let Some(Value::Var(c)) = args.get(2).map(Value::unspan) {
@@ -5246,6 +5432,12 @@ pub(crate) fn capture_build_backings(
                 if let Some(&backing) = latest.get(c) {
                     out.backing.insert(*c, backing);
                     built.insert(backing);
+                }
+                if let Some(Value::Var(record)) = args.first().map(Value::unspan) {
+                    out.adopted
+                        .entry(*record)
+                        .or_default()
+                        .push((*c, *generation.get(c).unwrap_or(&0)));
                 }
             }
         }
@@ -5266,9 +5458,9 @@ fn captures_built_in(
     rhs: &Value,
     set_dbref: u32,
     outer: &HashMap<u16, u16>,
-) -> Vec<(u16, Option<u16>)> {
+) -> Vec<(u16, u16, Option<u16>)> {
     let mut latest = outer.clone();
-    let mut found: Vec<(u16, Option<u16>)> = Vec::new();
+    let mut found: Vec<(u16, u16, Option<u16>)> = Vec::new();
     rhs.walk(&mut |node: &Value| match node.unspan() {
         Value::Set(c, src) => match crate::use_analysis::view_root_slots(data, src).as_deref() {
             Some([root]) if root != c => {
@@ -5279,8 +5471,14 @@ fn captures_built_in(
             }
         },
         Value::Call(d, args) if *d == set_dbref => {
-            if let Some(Value::Var(c)) = args.get(2).map(Value::unspan) {
-                found.push((*c, latest.get(c).copied()));
+            // The RECORD is args[0] and the capture args[2].  Both are needed: which local a
+            // record adopted decides ownership, and one local may be adopted by several
+            // records (@FR-L-CapOwn, loft#1440).
+            if let (Some(Value::Var(record)), Some(Value::Var(c))) = (
+                args.first().map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            ) {
+                found.push((*record, *c, latest.get(c).copied()));
             }
         }
         _ => {}
@@ -5303,6 +5501,14 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: HashSet<u16>,
+    /// Per closure-record local: the `(capture local, generation)` pairs it adopted at ITS
+    /// build, where the generation counts assignments to that local before the build.
+    ///
+    /// This is the STORE identity `(L-CapOwn)`'s "freed once" needs.  Two records may name one
+    /// local and hold two different stores — `s = S{…}; k1 = |…| s.a; s = S{…}; k2 = |…| s.a`
+    /// — so the capture NAME cannot decide which of them owns, and grouping by it made one
+    /// borrow a store the other never held (loft#1440's first cut, measured as a leaked `S`).
+    pub(crate) adopted: HashMap<u16, Vec<(u16, u32)>>,
 }
 
 /// Is `v` the store behind a capture whose closure record ADOPTS it?
@@ -9280,7 +9486,18 @@ impl Scopes<'_> {
                     d.entries()
                         .any(|e| matches!(e, crate::data::DepEntry::CalleeFrame(w) if w == v))
                 });
-                let in_ret = tp.depend().contains(&v) || ret_carries;
+                // …and the fn-ref this return actually DELIVERS, which the declared type's
+                // note does not name: it is published once per lambda and OVERWRITTEN, so the
+                // last lambda BUILT wins wherever a function makes more than one.  A closure
+                // returned through a local, with another built after it, was therefore freed
+                // under the escaping fn-ref — and freeing it cascades into everything it
+                // captured, which is how the caller read a released record (loft#1444).
+                // `return_sources` is the path-local fact this frame already has, and it names
+                // the value rather than the build order.
+                let in_ret = tp.depend().contains(&v)
+                    || ret_carries
+                    || v == ret_var
+                    || return_sources.contains(&v);
                 // The free above is what TRIGGERS the capture cascade (see the
                 // `captured_ref` note earlier in this function: the frame's own free of a
                 // captured cell is suppressed, so the record's cascade is its sole

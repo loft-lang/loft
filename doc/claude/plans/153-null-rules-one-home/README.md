@@ -971,6 +971,69 @@ so it is blind to every nullable local, and it is `#[cfg(debug_assertions)]`, wh
 `[profile.dev.package.loft]` strips from every build this project makes — widening an assert
 nothing runs is not a fix.
 
+**Batch 10's follow-on — the three issues the walk had filed, closed (2026-09-07).**  The owner
+asked for the backlog cleared before a PR, so the batch's own filed items came back rather than
+waiting for a peer's branch.
+
+- **loft#1430** — a dispatcher's arms do not share the compiler's work buffers.  A body that
+  builds its text in a branch is given a hidden `___acc_1: &text`; one returning a literal is
+  not, and `create_enum_dispatch_fn` counted those among the parameters every implementation
+  must have in COMMON, so one branching arm beside a literal one drove `common` to 0 and the
+  dispatcher was abandoned in silence.  Three parts, each measured by breaking it: hidden
+  attributes are out of the shared count; the dispatcher takes its buffer from whichever arm HAS
+  one (reading only the first left the arm that needed a destination without one, which
+  `--native` renders `let _ret = ;`); and buffers are forwarded only to arms that DECLARE one
+  (handed to all, the literal arm gets *"Too many parameters"*).  A required VISIBLE parameter
+  one implementation does not share is still no dispatcher, and is now refused by name where
+  that implementation is written instead of failing later as a field read.
+- **loft#1440** — one STORE, one owner.  Two closures over one local both adopted its store and
+  their deaths are independent, so the record left behind released what the escaped one still
+  held; the DENSE twin failed identically, which is what said it was adoption-as-transfer rather
+  than a `?` question.  Among the adopters exactly one keeps it — the one that LEAVES the frame
+  — and the rest borrow.  **The key is the STORE, and getting that wrong is what the first cut
+  did**: grouped by the capture's NAME, a local assigned between two builds looked like one
+  store with two owners, so the second record was made to borrow one the first never held and
+  the one it did hold was freed by nobody — a leaked `S` that the existing
+  `a-captured-local-reassigned-after-the-build-frees-its-own-store.loft` caught in the gate.
+  Excluding reassigned locals from the grouping made that green and was still wrong, because it
+  drops the rule for every program that reassigns the local at all.  The build walk already
+  counts assignments, so `(capture local, generation at the build)` identifies the store, and
+  the exclusion is gone.  D-clo-24 closed in `closures.md`.
+- **loft#1444, found by the cell that separates the two, and fixed with them** — build the
+  escaping closure FIRST and the defect stays, for a different reason: the declared return
+  type's `DepEntry::CalleeFrame` is published once per LAMBDA and OVERWRITTEN, so wherever a
+  function builds more than one it names the last one BUILT.  Two consumers read that note for
+  two questions — *is this fn-ref handed out, so its closure store must not be freed*
+  (`get_free_vars`) and *which record outlives the frame* (`record_leaves_frame`) — and both
+  were answered about the wrong record whenever the escaping closure was not written last.
+  Neither trusts it alone now: the free-suppression also treats a fn-ref that is a RETURN SOURCE
+  as handed out (the path-local fact that frame already had, and the half that actually frees
+  the store), and the ownership question reads `returned_closure_records` — the records named by
+  the values in RETURN POSITION, off the tail and off every `return`.
+  **The first cut collected every `FnRef` in the body and that is the trap worth keeping**: a
+  KEPT lambda's record then looks delivered and is handed a capture the escaping one owns, which
+  answered `3` where `5` is right.  Return position only.  D-clo-24 and D-clo-25 both closed,
+  and `closures.md` is back to `OPEN: 0` — a count that went 0 → 1 → 2 → 0 in one day, each step
+  a re-measurement of the same oracle sentence.
+
+**What remains of the family, filed rather than fixed: loft#1446.**  A capture the closures
+share, with the local reassigned AFTER both builds, is still a use-after-free — and the
+ownership half is right there: both records adopt one store, the escaping one is chosen, the
+kept one borrows.  The free that lands is the FRAME's, which `capture_adoption_owns_free`
+declines to suppress for a reassigned local (loft#1324/#1388) — correct for the store the local
+names afterwards, wrong for the one the records hold.  That wants the owner witness's
+release-by-IDENTITY (`@FR-O-Witness`), applied to a capture rather than to a mixed-ownership
+local, which is a mechanism `formal/ownership.md` already carries and a change of a different
+size.  Pre-existing on `main`, both backends.
+
+**Three instruments, three questions** — worth stating once, since this batch used all three and
+each is silent where the next one speaks: `LOFT_STRICT_STORES=1` answers WHEN a store was
+released (both of batch 10's guards); `LOFT_POISON=1` answers what a released record's bytes read
+afterwards, which is what makes a use-after-free assertable as a VALUE; and valgrind answers
+about a Rust `String` inside a record, which is not a store at all — the loft2 checkout's
+loft#1406 leak was 8 bytes of exactly that kind, invisible to the store gate, which reads clean
+because nothing was retained.
+
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 
 The opening cell was loft#1374, filed by phase 4's return-delivery matrix: an absent element

@@ -59,9 +59,15 @@ and then an all-green report says nothing about it.
 
 Neither is a value of a domain the language offers; each is a QUESTION about where a
 value goes.  So read an all-green axis report as "the compositions I can see are
-covered", never as "the guard sweeps".  Adding either as an axis would need a detector
-for a fact the file's text does not carry, which is why they are documented here rather
-than implemented.
+covered", never as "the guard sweeps".
+
+Neither is DERIVABLE from the guard either, and that is why they are documented here
+rather than implemented.  `{v[0]}` and `v[0].a` differ by one character and are two
+routes; `h[k]` and `for e in h` are two more.  Telling them apart needs the knowledge
+that an interpolation of a record goes through `Parts` while a field access goes through
+the op — a fact about the IMPLEMENTATION, not about the language surface this vocabulary
+is built from.  ESCAPE is the same shape one question over: whether a closure leaves the
+frame is a fact about the callee's storage, not about the call's spelling.
 
 THE RANKING CLAIM WAS FALSIFIED BY ITS OWN ORACLE, and that is worth knowing before
 reading any output.  The first design ranked files by how many values of an axis they

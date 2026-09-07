@@ -34,6 +34,16 @@ yielded.  A nullable `u32?` was wrong in both directions: an absent one printed 
 present `2147483648` disappeared from the record entirely, because that is exactly the bit
 pattern the signed reading reserves for absence.  Every route now reads a `u32` as a `u32`, and
 `i32` is unchanged.
+**Two methods on an enum where one builds its text in a branch both work now.**  If one
+variant's implementation returned a plain `"text"` and another built its answer inside an `if`,
+the enum dispatch quietly stopped existing and the call failed with a message about a field that
+has no storage.  And where one implementation genuinely takes a parameter the others do not, you
+are now told that where you wrote it, instead of at the call.
+
+**A value captured by two closures survives when one of them is returned.**  Both closures took
+the value as theirs, so whichever was left behind released it and the returned closure read
+freed memory.  One of them owns it now — the one that leaves, whichever order you wrote them in.
+
 **A closure you return keeps the value it captured, when that value may be absent.**  Writing
 `n: Thing? = Thing { … }` and returning a closure that reads `n` handed back a closure whose
 value had already been released — the answer was whatever happened to be in that memory next,

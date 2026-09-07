@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1444 — which closure record a function's RETURN delivers.
+//
+// The declared return type carries a `DepEntry::CalleeFrame` note naming the record a returned
+// fn-ref hands out.  It is published once per LAMBDA and overwritten, so wherever a function
+// builds more than one it names the last one BUILT rather than the one the return delivers —
+// and two consumers read it for two different questions: *is this fn-ref handed out, so its
+// closure store must not be freed* (`get_free_vars`) and *which record outlives the frame, so
+// it keeps a shared capture* (`record_leaves_frame`, loft#1440's rule).  Both were answered
+// about the wrong record whenever the ESCAPING closure was not the last one written.
+//
+// Neither consumer trusts the note alone now.  The free-suppression also treats a fn-ref that
+// is a RETURN SOURCE as handed out — the path-local fact that frame already had — and the
+// ownership question reads `returned_closure_records`: the records named by the values in
+// RETURN POSITION, off the tail and off every `return`.  Return position only, measured: a
+// first cut that collected every `FnRef` in the body made a KEPT lambda's record look
+// delivered and handed it a capture the escaping one owns, answering 3 where 5 is right.
+//
+// Axes this file MOVES:  the BUILD ORDER of the escaping closure (first · last · middle), how
+//                        the return names it (a tail local · an `if` over two locals · a
+//                        `return` statement · the lambda written straight out), whether the
+//                        capture is SHARED with the kept closure, and the local's nullability.
+// Axes it HOLDS FIXED:   one capture per closure and one struct type; the record-`Enum` capture
+//                        the cascade does not follow is `1439`'s cell.
+//
+// @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  The control reports
+//   `USE AFTER FREE (read) store #N type=C46` with `killed by the free of <cascade>` — the
+//   kept record's death reaching a capture the escaped one still holds.  Plain mode reads
+//   INERT for the reason `1439` states: a released record keeps its bytes until something
+//   writes over them.
+
+struct C46 { a: integer }
+
+// e1 — the escaping closure is built FIRST, the kept one after it: the shape the published
+// note gets backwards.  The capture is SHARED, so ownership has to land on the right record.
+fn escape_first() -> fn() -> integer {
+  d: C46 = C46 { a: 6 };
+  out = fn() -> integer { d.a };
+  k = fn() -> integer { d.a * 10 };
+  z = k();
+  if z == 60 { out } else { out }
+}
+
+// e2 — its nullable twin, because the local's spelling is what @PLN153 is about even where the
+// defect is not.
+fn escape_first_null() -> fn() -> integer {
+  n: C46? = C46 { a: 7 };
+  out = fn() -> integer { if n == null { -1 } else { n.a } };
+  k = fn() -> integer { (if n == null { -1 } else { n.a }) * 10 };
+  z = k();
+  if z == 70 { out } else { out }
+}
+
+// e3 — THREE closures with the middle one returned: neither "first" nor "last" is the answer.
+fn escape_middle() -> fn() -> integer {
+  d: C46 = C46 { a: 8 };
+  k1 = fn() -> integer { d.a + 1 };
+  out = fn() -> integer { d.a };
+  k2 = fn() -> integer { d.a + 2 };
+  z = k1() + k2();
+  if z == 19 { out } else { out }
+}
+
+// e4 — delivered by an explicit `return` rather than by the tail, and from an `if` that could
+// hand back EITHER of two closures: both records outlive the frame on the path that returns
+// them, and each keeps its own capture.
+fn escape_by_return(pick: boolean) -> fn() -> integer {
+  p: C46 = C46 { a: 3 };
+  q: C46 = C46 { a: 4 };
+  a = fn() -> integer { p.a };
+  b = fn() -> integer { q.a };
+  if pick { return a; }
+  return b;
+}
+
+// e5 — the lambda written straight into the return, which is what publishes the note
+// correctly: the control that says this fix did not trade one shape for another.
+fn escape_direct() -> fn() -> integer { d: C46 = C46 { a: 9 }; fn() -> integer { d.a } }
+
+fn main() {
+  a = escape_first();
+  b = escape_first_null();
+  c = escape_middle();
+  j1: vector<C46> = [C46 { a: 91 }, C46 { a: 92 }, C46 { a: 93 }, C46 { a: 94 }];
+  assert(a() == 6, "e1 the escaping closure built FIRST keeps its capture: {a()}");
+  assert(b() == 7, "e2 its nullable twin: {b()}");
+  assert(c() == 8, "e3 the MIDDLE of three: {c()}");
+
+  d = escape_by_return(true);
+  e = escape_by_return(false);
+  j2: vector<C46> = [C46 { a: 81 }, C46 { a: 82 }, C46 { a: 83 }];
+  assert(d() == 3, "e4 returned from the first arm: {d()}");
+  assert(e() == 4, "e4b and from the second: {e()}");
+
+  f = escape_direct();
+  j3: vector<C46> = [C46 { a: 71 }, C46 { a: 72 }];
+  assert(f() == 9, "e5 the lambda written straight into the return: {f()}");
+}
