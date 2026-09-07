@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I62 — IR data model (Value/Type/Data)
 
 //! @PLN153 phase 0 — the `τ??` census: an OBSERVER over every type a compiled program carries.
 //!
