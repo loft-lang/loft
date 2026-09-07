@@ -59,10 +59,16 @@ fn at_line(out: &str) -> Option<&str> {
         .find(|l| l.trim_start().starts_with("at ") && l.contains(".loft:"))
 }
 
-/// A write through a locked store panics from inside the store layer.  The write is
+/// A write through a locked store faults from inside the store layer.  The write is
 /// an assignment, which carries no span of its own, so the hook has nothing that
 /// covers it — and the padding statements above give it something plausible to
 /// inherit.  The reported line was 7, the arithmetic; the write is on line 8.
+///
+/// loft#1405 changed what this probe's fault SAYS — the author's own `#lock` now
+/// reaches them as a loft fault instead of the store layer's `assert!`, so the text
+/// moved from "Write to read-only store" to the rendered `locked store` error.  The
+/// property under test is unchanged and still the point: that fault carries
+/// `position: None`, so a pc no span covers must still be given no line at all.
 #[test]
 fn an_uncovered_fault_does_not_borrow_an_earlier_statements_line() {
     let out = run(
@@ -79,8 +85,8 @@ fn an_uncovered_fault_does_not_borrow_an_earlier_statements_line() {
          }\n",
     );
     assert!(
-        out.contains("Write to read-only store"),
-        "the probe must still reach the store-lock panic:\n{out}"
+        out.contains("locked store"),
+        "the probe must still reach the store-lock fault:\n{out}"
     );
     assert!(
         at_line(&out).is_none(),
@@ -104,8 +110,8 @@ fn an_uncovered_fault_never_names_a_file_the_program_never_used() {
          }\n",
     );
     assert!(
-        out.contains("Write to read-only store"),
-        "the probe must still reach the store-lock panic:\n{out}"
+        out.contains("locked store"),
+        "the probe must still reach the store-lock fault:\n{out}"
     );
     assert!(
         at_line(&out).is_none(),
