@@ -67,6 +67,29 @@ statement for statement), so it can always be created — and must be, the momen
 is suspected of not pulling its weight. A routine measured against nothing is a routine
 whose performance claim is unfalsifiable.
 
+### The twin is an instrument — the cure goes to the engine, not the library
+
+```
+  (Perf-Cure)    a routine that fails (Perf-Weight) is closed in the ENGINE
+                 first (the codegen/runtime class the profiler attributes),
+                 then in the loft algorithm itself; REPLACING the loft
+                 implementation with a native one is an edge case decided
+                 per routine and recorded as such — never the default cure.
+```
+
+**In words.** The libraries are written in loft ON PURPOSE, twice over: loft has to be a
+fast language, and the fix that makes ONE routine fast by rewriting it in Rust removes
+the pressure that makes the LANGUAGE fast while leaving every other routine slow.  And
+the libraries double as the project's teaching corpus — an open-source distribution whose
+libraries a reader can actually comprehend (GOALS.md § B, legibility) — so the
+industry-wide pattern this rule refuses is the "fast pass": readable code shadowed by an
+optimized twin nobody can follow.  The reference twin exists to MEASURE, never to ship.
+A native rewrite remains available for the edge case that genuinely needs it, taken per
+routine, with the reason recorded beside it — an exception with a receipt, not a habit.
+loft#1426 is the rule applied: the profiler showed the loft hot loop matching the
+reference's, so the deviation is filed against the ENGINE (N1 class), and the drawing
+library's source does not change.
+
 ## Deviations
 
 OPEN: **1**

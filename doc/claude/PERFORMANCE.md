@@ -10,7 +10,10 @@ design for each planned improvement.
 `(Perf-Weight)` every shipped routine (stdlib + libraries) is measured per release against
 an industry-language reference twin, because drift against a previous loft release compares
 to nothing outside the project; `(Perf-Twin)` where no natural counterpart exists a twin is
-WRITTEN the moment a hit is expected, never waived.  The model harness is the drawing
+WRITTEN the moment a hit is expected, never waived; `(Perf-Cure)` the twin MEASURES and
+never ships — a failed bar is closed in the engine (or the loft algorithm), because the
+libraries stay readable loft (the teaching corpus), and a native rewrite is a recorded
+per-routine edge case, not a habit.  The model harness is the drawing
 library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard read
 by the release checklist's `M-perf-pass`.
 
