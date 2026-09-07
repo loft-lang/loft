@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Col-RemoveDense — a dense removal takes the element out and slides its successors down
+// by ONE element, so index `j > i` names what was at `j+1`.  The slide is measured in the
+// ELEMENT's width, and a `&vector<τ>` parameter is a reference to the same vector, so the
+// removal through it has to mean the same thing as the removal on the local.
+//
+// It did not.  `type_elm` bundled `RefVar` with `Vector` — treating a `&T` as if its payload
+// were already the element — so a `&vector<τ>` receiver answered the VECTOR's def where the
+// bare spelling answers τ's, and the shift ran in the width of a vector record instead of the
+// element's: 16 bytes whatever τ measured.  `len` stayed right, so nothing signalled it
+// (loft#1411).  Every cell here is therefore read against its LOCAL control — the same
+// removal written the way that always worked — because the invariant is that the two
+// spellings agree, not that either matches a number somebody typed.
+//
+// ⚠ DELIBERATELY NOT HERE: a NARROW element (`u8`, `i16`, `u16`) is wrong on BOTH spellings
+// and was wrong before this — `type_elm` answers the generic `integer` def for every width,
+// so the slide runs 8 bytes per element whatever the declaration said.  That is a separate
+// root (the WIDTH, not the reference wrapper) and is filed on its own; adding a cell for it
+// here would tie two cures to one guard.
+//
+// @falsified-at: 937609a90 (hand-measured against a pristine worktree build of that commit) —
+//   interpret exit 0 -> 1 and native exit 0 -> 1, first failing cell `remove(0)` in
+//   `every_index_agrees_with_the_local`: `20,30,40,50,` wanted, `30,40,50,0,` answered.  On
+//   that build the five `&`-parameter cells read `30,40,50,0,` / `10,20,50,0,` /
+//   `10,20,30,40,` / `10,20,30,40,` / `10,20,30,40,` against a correct local column, the
+//   nested cell reads `10,20,50,0,`, and `text` and the struct are corrupt in their own
+//   widths — a `0` past the live data with `len` still 4 in every one of them.
+
+struct P { n: integer, t: text }
+
+fn show(v: vector<integer>) -> text { s = ""; for e in v { s = "{s}{e},"; } return s; }
+fn show_t(v: vector<text>) -> text { s = ""; for e in v { s = "{s}{e},"; } return s; }
+fn show_p(v: vector<P>) -> text { s = ""; for e in v { s = "{s}{e.n},"; } return s; }
+
+fn rem_at(v: &vector<integer>, i: integer) { v.remove(i); }
+fn rem_t(v: &vector<text>) { v.remove(0); }
+fn rem_p(v: &vector<P>) { v.remove(0); }
+
+// The whole index domain, each cell against the local that always worked.
+fn every_index_agrees_with_the_local() {
+  for k in 0..5 {
+    a: vector<integer> = [10, 20, 30, 40, 50];
+    b: vector<integer> = [10, 20, 30, 40, 50];
+    rem_at(a, k);
+    b.remove(k);
+    assert_eq(len(a), len(b), "len at {k}");
+    assert_eq(show(a), show(b), "contents at {k}");
+  }
+}
+
+// The width is the ELEMENT's, so a type whose element is not eight bytes wide is the cell
+// that tells a correct slide from one that happens to line up.
+fn a_text_element_slides_by_its_own_width() {
+  a: vector<text> = ["a", "b", "c", "d", "e"];
+  b: vector<text> = ["a", "b", "c", "d", "e"];
+  rem_t(a);
+  b.remove(0);
+  assert_eq(show_t(a), show_t(b), "text contents");
+  assert_eq(show_t(a), "b,c,d,e,", "text value");
+}
+
+fn a_struct_element_slides_by_its_own_width() {
+  a: vector<P> = [P{n:1,t:"x"}, P{n:2,t:"x"}, P{n:3,t:"x"}, P{n:4,t:"x"}, P{n:5,t:"x"}];
+  b: vector<P> = [P{n:1,t:"x"}, P{n:2,t:"x"}, P{n:3,t:"x"}, P{n:4,t:"x"}, P{n:5,t:"x"}];
+  rem_p(a);
+  b.remove(0);
+  assert_eq(show_p(a), show_p(b), "struct contents");
+  assert_eq(show_p(a), "2,3,4,5,", "struct value");
+}
+
+// A `&` handed on to another `&` is the same reference one frame further down: the element
+// question must survive the hop.
+fn inner_rem(v: &vector<integer>) { v.remove(1); }
+fn outer_rem(v: &vector<integer>) { inner_rem(v); }
+
+fn a_reference_passed_on_still_names_the_element() {
+  a: vector<integer> = [10, 20, 30, 40, 50];
+  outer_rem(a);
+  assert_eq(show(a), "10,30,40,50,", "nested &");
+  assert_eq(len(a), 4, "nested & len");
+}
+
+// The removal answers whether the index named an element, through a reference as directly.
+fn the_answer_is_the_same_through_a_reference() {
+  a: vector<integer> = [1, 2, 3];
+  assert(a.remove(0), "a real index answers true");
+  assert(!a.remove(9), "an index past the end answers false");
+  assert_eq(show(a), "2,3,", "and the failed removal changed nothing");
+}
+
+fn main() {
+  every_index_agrees_with_the_local();
+  a_text_element_slides_by_its_own_width();
+  a_struct_element_slides_by_its_own_width();
+  a_reference_passed_on_still_names_the_element();
+  the_answer_is_the_same_through_a_reference();
+}
