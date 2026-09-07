@@ -57,7 +57,7 @@ impl Parser {
         // position on the curve.  The three VALUE-keyed kinds hold an absent key like any
         // other value, so they never ask this — which is what both messages name as the cure.
         if matches!(tp, Type::Optional(_)) {
-            let shown = tp.name(&self.data);
+            let shown = tp.source_name(&self.data);
             if want_text {
                 diagnostic!(
                     self.lexer,
@@ -2977,7 +2977,7 @@ impl Parser {
             // `formal/types-history.md` D-Opt-NoNull; loft#1423 carries the design question of
             // giving a tuple the tagged representation.
             if self.lexer.has_token("?") {
-                let spelled = Type::Tuple(types.clone()).name(&self.data);
+                let spelled = Type::Tuple(types.clone()).source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,

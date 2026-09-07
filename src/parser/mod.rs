@@ -7037,7 +7037,7 @@ impl Parser {
             } else if let Type::Integer(spec) = concrete.base() {
                 // schema-key — same identity; loft#1418's forced WIDTH is part of which
                 // instantiation this is, so the suffix stays and the two cannot collide.
-                let named = concrete.name(&self.data);
+                let named = concrete.name(&self.data); // schema-key — the method-name identity, as above
                 match spec.forced_size {
                     Some(n) => format!("{named}s{n}"),
                     None => named,

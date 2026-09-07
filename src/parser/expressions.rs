@@ -6301,7 +6301,7 @@ use a separate collection or add after the loop"
                 // has no representation to destructure (`formal/types-history.md` D-Opt-NoNull),
                 // and the cure is the same discharge the member read names (loft#1423).
                 if let Some(elems) = self.nullable_tuple_elems(&rhs_type) {
-                    let spelled = rhs_type.name(&self.data);
+                    let spelled = rhs_type.source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,

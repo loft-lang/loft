@@ -2522,7 +2522,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 733 | 374 | 5 | **354** |
+| 742 | 393 | 5 | **344** |
 
 *This row is a property of the TREE and moves on almost any commit that adds, removes or
 re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather

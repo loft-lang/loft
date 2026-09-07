@@ -1537,7 +1537,7 @@ impl Parser {
                 if self.nullable_tuple_elems(&t).is_some()
                     && matches!(self.lexer.peek().has, crate::lexer::LexItem::Integer(_, _))
                 {
-                    let spelled = t.name(&self.data);
+                    let spelled = t.source_name(&self.data);
                     let idx = self.lexer.has_integer().unwrap_or(0);
                     if !self.first_pass {
                         diagnostic!(
@@ -3221,7 +3221,7 @@ impl Parser {
             // in it, so `v[j]?` answered `null` from a slot typed `(integer, integer)`
             // (loft#1424).  Report instead, and name the discharge that always works.
             if !self.first_pass {
-                let spelled = base.name(&self.data);
+                let spelled = base.source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,

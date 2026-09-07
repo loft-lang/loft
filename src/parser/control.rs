@@ -5888,7 +5888,7 @@ impl Parser {
         {
             return format!("{}?", self.data.def(struct_d).name());
         }
-        elm_tp.name(&self.data)
+        elm_tp.source_name(&self.data)
     }
 
     /// Consume a match arm's body without parsing it — for an arm whose PATTERN was refused, so
@@ -8442,7 +8442,7 @@ impl Parser {
             attrs
                 .iter()
                 .find(|a| !a.constant && pick(a))
-                .map(|a| (a.name.clone(), a.typedef.name(&self.data)))
+                .map(|a| (a.name.clone(), a.typedef.source_name(&self.data)))
         };
         if field_of(&|a| matches!(a.typedef, Type::Vector(_, _))).is_none() {
             return match field_of(&|a| matches!(a.typedef.base(), Type::Vector(_, _))) {
