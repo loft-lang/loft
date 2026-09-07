@@ -9486,6 +9486,9 @@ fn main() {
             // `#[link_name]` decls resolve to the rlib's `#[no_mangle]` symbols.
             out.native_cabi = native_utils::native_cabi_enabled();
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
             }
@@ -9570,6 +9573,9 @@ fn main() {
             // generator refuses the call instead.
             out.wasm_wasi = true;
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
             }
@@ -9774,6 +9780,12 @@ fn main() {
             // The debug name is baked so the client can announce itself to the
             // server, which then addresses debug frames to it over the relay.
             out.emit_live = debug_name.is_some() && !lean;
+            // @PLN157 — frame NAMING is a separate question from the live tier, and
+            // on this path they diverge: a production client is debug-OFF by default,
+            // so `emit_live` is false without `--lean` ever being passed.  Keying the
+            // nameless push off `!emit_live` stripped loft frame names from every
+            // browser panic (`html_panic_names_itself_and_its_loft_frames`).
+            out.lean = lean;
             out.debug_name.clone_from(&debug_name);
             // loft#954 — `--names` promises that a trap's frames resolve to loft
             // function names, which needs BOTH halves: the wasm name section (kept by
@@ -10769,6 +10781,9 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
             }

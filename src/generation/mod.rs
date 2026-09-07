@@ -759,6 +759,17 @@ pub struct Output<'a> {
     /// sets it `false`, so the generated Rust carries ZERO live-dispatch
     /// machinery — the smallest release binary, no live-flip / breakpoints.
     pub emit_live: bool,
+    /// @PLN157 — did the author ask to trade away frame NAMING?  Distinct from
+    /// [`emit_live`](Self::emit_live), which asks whether the live/debug tier ships.
+    /// The two coincide on the NATIVE paths, where `emit_live` is true unless
+    /// `--lean` is passed — and diverge on `--html`, where a production browser
+    /// client is debug-OFF by default (@PLN98 P3.4) and so has `emit_live == false`
+    /// without anybody asking for a lean build.  Selecting the nameless
+    /// [`cr_call_push_lean`](crate::codegen_runtime::cr_call_push_lean) off
+    /// `!emit_live` therefore stripped loft frame names from EVERY browser panic,
+    /// which is what `html_wasm::html_panic_names_itself_and_its_loft_frames`
+    /// caught.  The frame-naming question has one home, and this is it.
+    pub lean: bool,
     /// @PLN98 P3.1 — the program's own source text, emitted as a `static LOFT_SRC`
     /// blob in a live build so the parked interpreter can bootstrap from EMBEDDED
     /// bytes ([`live_dispatch::bootstrap_from_bytes`](crate::live_dispatch::bootstrap_from_bytes))
@@ -1477,6 +1488,7 @@ impl<'a> Output<'a> {
                 .collect(),
             live_fns: Vec::new(),
             emit_live: true,
+            lean: false,
             program_src: None,
             debug_name: None,
             keep_fn_names: false,
@@ -5111,11 +5123,18 @@ extern crate loft;"
                 let fnref_guard = format!(
                     "\n  let _fnref_guard = codegen_runtime::FnRefBufGuard::new(cell, {hands_up});"
                 );
-                // @PLN157 lean tier: without the live tier there is nobody to
-                // name frames FOR at ~7 ns/call — a `--lean` build keeps only
-                // the depth cap (one bounds test + two Cell updates, ~1.2 ns)
-                // and trades away `stack_trace()` frames, the panic frame
-                // block and the watchdog breadcrumb.  See `cr_call_push_lean`.
+                // @PLN157 lean tier: a `--lean` build keeps only the depth cap
+                // (one bounds test + two Cell updates, ~1.2 ns) and trades away
+                // `stack_trace()` frames, the panic frame block and the watchdog
+                // breadcrumb.  See `cr_call_push_lean`.
+                //
+                // Keyed on `lean`, NOT on `!emit_live`.  The original reading was
+                // "without the live tier there is nobody to name frames FOR" —
+                // false, because the PANIC path names them and ships in every
+                // build.  `emit_live` is additionally false for a production
+                // `--html` client (debug-OFF by default, @PLN98 P3.4), so that
+                // reading silently stripped the frame names from every browser
+                // panic while `--lean` was never passed.
                 //
                 // N4 (@PLN157): a LEAF — a body that calls no user function —
                 // carries no frame at all.  It cannot recurse (nothing it
@@ -5129,7 +5148,7 @@ extern crate loft;"
                 let leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
                 let push = if leaf {
                     String::new()
-                } else if self.emit_live {
+                } else if !self.lean {
                     format!(
                         "\n  cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
                          let _call_guard = codegen_runtime::CallGuard;"
