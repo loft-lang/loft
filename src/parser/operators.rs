@@ -2377,6 +2377,21 @@ impl Parser {
             // it, on `--interpret` only.  A `Reference` first element hides it: that one
             // does have a generic path.  Recursion is also what keeps the two answers
             // from drifting, which is the same reason `ref_tuple_element_ok` is one list.
+            // A member that is ITSELF a tuple cannot be reached by recursing on the value:
+            // `TupleGet` addresses a VAR and an index, so `x.0.0` has no spelling, and the
+            // recursion below hands `TupleGet` back into this function where the
+            // `Value::Var` guard rejects it.  The question then fell through to the generic
+            // path, which returns the operand unconverted — `if __ncc_1.0` with a TUPLE
+            // where a boolean belongs, which native refuses (E0308) and the interpreter
+            // reads as raw bytes (loft#1425).  Bind the inner tuple and ask the same
+            // question of THAT, so the sentinel is found however deep it is nested.
+            if matches!(first_tp, Type::Tuple(_)) {
+                let inner = self.create_unique("ncc_inner", &first_tp);
+                self.vars.defined(inner);
+                let bind = v_set(inner, Value::TupleGet(*v, 0));
+                let cond = self.coalesce_not_null(&Value::Var(inner), &first_tp);
+                return v_block(vec![bind, cond], Type::Boolean, "ncc inner tuple");
+            }
             self.coalesce_not_null(&Value::TupleGet(*v, 0), &first_tp)
         } else if let Type::Enum(syn, true, _) = tp
             && self.data.def(*syn).name.starts_with("__nullable<")
