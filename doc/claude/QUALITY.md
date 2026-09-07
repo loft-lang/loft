@@ -2474,7 +2474,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| RE-MEASURE | RE-MEASURE | 5 | **RE-MEASURE** |
+| 739 | 385 | 5 | **349** |
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record
