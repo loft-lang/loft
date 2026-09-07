@@ -6979,10 +6979,23 @@ impl Parser {
             //
             // Non-collection, non-integer concretes are unchanged: a struct's, a float's and
             // a text's type-def name IS their own name.
-            let base = if Self::is_collection_type(concrete.base())
-                || matches!(concrete.base(), Type::Integer(_))
-            {
+            //
+            // loft#1418 — the RANGE is not the whole of an integer's identity either, and
+            // `IntegerSpec`'s own doc says so: *"Test `forced_size` to tell an alias from a
+            // template; the range alone cannot."*  `i32`'s range IS the signed-32
+            // template's, so `Type::name` spells both `integer` and the two collided where
+            // `u8` and `u32` did not — a call at `i32` bound the monomorph and the next call
+            // at plain `integer` was checked against it and refused as a narrowing, in a
+            // function that may be nowhere near the one that bound it.  The declared WIDTH
+            // is part of which instantiation this is, so it belongs in the key.
+            let base = if Self::is_collection_type(concrete.base()) {
                 concrete.name(&self.data)
+            } else if let Type::Integer(spec) = concrete.base() {
+                let named = concrete.name(&self.data);
+                match spec.forced_size {
+                    Some(n) => format!("{named}s{n}"),
+                    None => named,
+                }
             } else {
                 self.data.def(type_nr).name().to_string()
             };
