@@ -1,0 +1,177 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1446 — a captured local REASSIGNED after the build, where the closure escapes.
+//
+// `(L-CapOwn)` says a captured heap store is freed ONCE, by whichever of the record and the
+// frame outlives the other, and `(L-CapHeap)` says a rebind is not a mutation-through: the
+// record keeps the `DbRef` it was built with, so the escaped closure answers the value at the
+// BUILD.  The frame's release was decided per BINDING — "is this local captured, and was it
+// assigned again since?" — where the question is per STORE.  A local reassigned after the build
+// names two stores under one name, so the binding-keyed answer described the store the local
+// holds LAST: the frame declined the free it owed for that one and took the store the escaped
+// record still holds.  Both directions at once, and the reader sees neither.
+//
+// A literal BUFFER names one store for its whole life, so the adoption recorded against the
+// buffer is the store identity `@FR-O-Witness` asks for, and the frame's free is decided on it.
+//
+// Axes this file MOVES:  how many closures share the local (two · one), how many reassignments
+//                        follow the build (one · two · none, the control), whether the
+//                        reassignment falls AFTER both builds or BETWEEN them, what the
+//                        reassignment delivers (a literal · a minting call · `null`), whether
+//                        the closure escapes at all, the capture's kind (struct · vector), and
+//                        whether the build sits inside a LOOP.
+// Axes it HOLDS FIXED:   the local is NULLABLE throughout.  The dense spelling
+//                        `d: C46 = C46 { a: 5 }; out = fn() { d.a }; d = C46 { a: 9 }` is NOT
+//                        this defect and is not asserted here: a dense local has no literal
+//                        buffer at all — the literal is built straight into it and the rebind
+//                        re-mints through `OpDatabase(d, …)`, which REUSES the slot's store in
+//                        place — so ONE store exists, the record's `DbRef` still names it, and
+//                        the escaped closure answers 9 on both backends with nothing freed
+//                        twice.  That is a `(L-CapHeap)` defect of its own, upstream of every
+//                        free this file is about, and it is loft#1447.
+//                        Also fixed: one capture per closure, and the escaping closure is
+//                        always the one built LAST (loft#1444 moves that axis).
+//
+// @falsified-at: b8fc41273, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  Measured per cell on the control, the fault is
+//   `USE AFTER FREE (read) store #N type=C46` in e1, e2, e4, e6, e7, e8 and e10; e3 and e9 are
+//   clean there and are controls.  EVERY cell answers the right VALUE on the control — 5, 9, 7
+//   as asserted below — so plain mode reads INERT and only the instrument sees the fault, for
+//   the reason loft#1439 states at length: a released record keeps its bytes until something
+//   writes over them.  That is also why this file must never be run without the instrument to
+//   decide whether it still holds.
+
+struct C46 { a: integer }
+
+fn mk46(n: integer) -> C46 { C46 { a: n } }
+
+// e1 — the filed shape: two closures over one local, one escaping, the local reassigned after
+// BOTH builds.  loft#1440's grouping is applied correctly here (both records adopted one store
+// at one generation, the escaping one keeps it); what remained is the frame's own free.
+fn two_then_rebound() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  k = fn() -> integer { if s == null { -1 } else { s.a } };
+  y = k();
+  out = fn() -> integer { (if s == null { -1 } else { s.a }) + y - y };
+  s = C46 { a: 9 };
+  out
+}
+
+// e2 — the REAL boundary, narrower than the report: ONE closure is enough.  Nothing about the
+// defect needs a second record, so a fix keyed on loft#1440's grouping would leave this cell.
+fn one_then_rebound() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  out = fn() -> integer { if s == null { -1 } else { s.a } };
+  s = C46 { a: 9 };
+  out
+}
+
+// e3 — the control: no reassignment.  The frame must still not free what the escaped record
+// holds.  Clean on the control build, so it fails only if the suppression is dropped entirely.
+fn one_no_rebind() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  fn() -> integer { if s == null { -1 } else { s.a } }
+}
+
+// e4 — the reassignment falls BETWEEN the builds, so the escaping record holds the SECOND
+// store and the frame owes the FIRST.  This is what says the suppression is keyed on the store
+// the record took and not on "some buffer of a reassigned local": answer the latter and the
+// frame keeps a store nobody frees.
+fn rebound_between() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  k = fn() -> integer { if s == null { -1 } else { s.a } };
+  y = k();
+  s = C46 { a: 9 };
+  out = fn() -> integer { (if s == null { -1 } else { s.a }) + y - y };
+  out
+}
+
+// e5 — the LEAK control: the closure is reassigned-over and never escapes, so the frame is the
+// only thing left to free BOTH stores.  A suppression that fires on adoption alone, without
+// asking whether the record leaves, strands one store here.
+fn kept_then_rebound() -> integer {
+  s: C46? = C46 { a: 5 };
+  k = fn() -> integer { if s == null { -1 } else { s.a } };
+  y = k();
+  s = C46 { a: 9 };
+  y + (if s == null { -1 } else { s.a })
+}
+
+// e6 — TWO reassignments after the build: three stores, one adopted and two orphaned.  The
+// frame owes exactly the two it still names.
+fn rebound_twice() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  out = fn() -> integer { if s == null { -1 } else { s.a } };
+  s = C46 { a: 9 };
+  s = C46 { a: 11 };
+  out
+}
+
+// e7 — the reassignment delivers `null`, so the local names no store afterwards while the
+// record still holds one.
+fn rebound_to_null() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  out = fn() -> integer { if s == null { -1 } else { s.a } };
+  s = null;
+  out
+}
+
+// e8 — the reassignment comes from a CALL that mints, not from a literal at the assignment.
+fn rebound_from_call() -> fn() -> integer {
+  s: C46? = C46 { a: 5 };
+  out = fn() -> integer { if s == null { -1 } else { s.a } };
+  s = mk46(9);
+  out
+}
+
+// e9 — a VECTOR capture, whose store lives in a backing local no closure captured by name.
+// A CONTROL, not a failing cell: the collection half of this question was closed by loft#1324,
+// which finds the backing local through the build rather than through the capture's type, and
+// this cell is clean on the control build.  It is here because the fix moves the STRUCT half
+// onto the same currency, and a change that reached the backing path would break it.
+fn vec_then_rebound() -> fn() -> integer {
+  v: vector<integer> = [5, 6, 7];
+  out = fn() -> integer { v[0] };
+  v = [9, 10, 11];
+  out
+}
+
+// e10 — the build sits inside a LOOP, so the record's slot is rewritten on every pass and only
+// the LAST adoption is the one it still holds.
+fn built_in_loop() -> fn() -> integer {
+  out = fn() -> integer { 0 };
+  for i in 0..3 {
+    s: C46? = C46 { a: 5 + i };
+    out = fn() -> integer { if s == null { -1 } else { s.a } };
+  }
+  out
+}
+
+fn main() {
+  a = two_then_rebound();
+  b = one_then_rebound();
+  c = one_no_rebind();
+  d = rebound_between();
+  e = rebound_twice();
+  f = rebound_to_null();
+  g = rebound_from_call();
+  h = vec_then_rebound();
+  i = built_in_loop();
+
+  // Reuse the freed slots before reading, so a released store is a WRONG value and not merely
+  // an unnoticed one.  Without this every cell answers right by luck.
+  j: vector<C46> = [C46 { a: 91 }, C46 { a: 92 }, C46 { a: 93 }];
+  assert(len(j) == 3, "the reuse vector is built: {len(j)}");
+
+  assert(a() == 5, "e1 two closures, reassigned after both builds: {a()}");
+  assert(b() == 5, "e2 one closure is enough: {b()}");
+  assert(c() == 5, "e3 the no-rebind control is unchanged: {c()}");
+  assert(d() == 9, "e4 reassigned BETWEEN builds, the escaper holds the second store: {d()}");
+  assert(kept_then_rebound() == 14, "e5 nothing escapes, so the frame frees both: {kept_then_rebound()}");
+  assert(e() == 5, "e6 two reassignments, two orphaned stores: {e()}");
+  assert(f() == 5, "e7 reassigned to null: {f()}");
+  assert(g() == 5, "e8 reassigned from a minting call: {g()}");
+  assert(h() == 5, "e9 a vector capture reassigned after the build: {h()}");
+  assert(i() == 7, "e10 the build sits inside a loop: {i()}");
+}

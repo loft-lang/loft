@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A closure you return keeps its captured value even if you change that variable afterwards.**
+Writing `s: Thing? = Thing { … }`, building a closure that reads `s`, and then assigning `s`
+something else released the value the closure had taken — so the returned closure read freed
+memory, and the value it should have kept was gone.  It reads what it was built with now, which
+is what changing a variable has always meant: replacing a variable is not the same as changing
+what it points at.  One closure is enough to have hit this; two, with one of them returned, hit
+it as well.  The answer usually looked right, because released memory keeps its contents until
+something else takes it — which is exactly what made it worth finding.
+
 **Two methods on an enum where one builds its text in a branch both work now.**  If one
 variant's implementation returned a plain `"text"` and another built its answer inside an `if`,
 the enum dispatch quietly stopped existing and the call failed with a message about a field that
@@ -28,8 +37,7 @@ freed memory.  One of them owns it now — the one that leaves, whichever order 
 `n: Thing? = Thing { … }` and returning a closure that reads `n` handed back a closure whose
 value had already been released — the answer was whatever happened to be in that memory next,
 usually still right, sometimes a huge meaningless number.  The dense spelling `n: Thing` was
-never affected.  Two closures over the SAME value where one of them escapes is still wrong the
-same way (loft#1440) and is being worked on.
+never affected.
 
 **A view into a value that may be absent is copied out when you replace that value.**  `v = o.p;
 o = Other { … }` copies `v` first and tells you it did — writes through `v` stop reaching `o` —

@@ -2473,7 +2473,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 734 | 381 | 5 | **348** |
+| 735 | 381 | 5 | **349** |
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record
@@ -2481,6 +2481,11 @@ by naming `Type::Function` and `Type::Reference`.  Opaque is the right column an
 answer: the locals it classifies are a fn-ref and a compiler-minted `___clos_N`, neither of
 which can carry a `?`, and peeling would add a step that never fires.  The count is a
 thermometer for reachable wrapped shapes, not a score.
+
+loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the same side and
+for the same reason: it names `Type::Reference` to reach the closure record behind a record
+LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
+the answer, not the omission — 734 -> 735 discriminating, 348 -> 349 opaque.
 
 @PLN153 phase 4 batch 10 (the `scopes.rs` tier-0 group — the store-lifetime pass, loft#1439 /
 loft#1442) leaves the opaque column WHERE IT IS, and the arithmetic is worth reading: it peels
