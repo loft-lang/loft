@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-H-View — a projection ALIASES the place it names, so the store belongs to whoever owns
+// the container and freeing it is never the viewer's business.  `JsonValue.field` / `.item`
+// answer a `DbRef` into the RECEIVER's own store, so a local bound from one is a view of the
+// caller's arena; the callee must hand it back untouched.
+//
+// @FR-B-Copy — and the rule that governs the OTHER spelling is why this was wrong: a plain
+// whole-value bind copies, and the parser decided that while reading the SOURCE NAME, before
+// it had seen the `.field(…)` that follows.  `v = obj` and `v = obj.field(n)` are not the
+// same bind, and only the first is `(B-Copy)`'s.
+//
+// The shape is a heap PARAMETER, projected into a LOCAL, in a function called MORE THAN ONCE
+// — each cell below is that, and the surrounding detail is deliberately varied to show it is
+// not part of the conjunction: the `if`, the arm kinds, the caller's own local, the
+// intermediate frame and the return type are each measured irrelevant (loft#1407).
+//
+// @EXPECT_WARNING: Variable v is never read
+//
+// ⚠ THE VALUES ARE RIGHT ON A BROKEN BUILD.  The premature free returns the store to the
+// allocator, which hands the same block straight back, so a plain run answers correctly and
+// only an armed instrument sees it.  That is why the falsification below is scored with
+// `LOFT_POISON=1 LOFT_STRICT_STORES=1` — and why the `-> integer` cell is here: with the
+// arena poisoned it answers 0 where 1 is wanted, which is the same defect wearing the shape
+// of a wrong answer rather than a sanitiser report.
+//
+// @falsified-at: 937609a90 (hand-measured against a pristine worktree build of that commit,
+//   instrument armed — `LOFT_POISON=1 LOFT_STRICT_STORES=1`): interpret exit 0 -> 1 and
+//   native exit 0 -> 1, `USE AFTER FREE (read) store #2` and `FAILED: 1 store-lifetime
+//   violation(s)`, with NO assertion failure — the values are right there and the fault is
+//   the free.  ⚠ UNARMED on that build the whole file passes (exit 0), so this guard is
+//   scored by the nightly POISON leg, the same leg that carries
+//   `451-text-tailcall-nwb-callee` for this class.  The wrong-VALUE form of the same defect
+//   is measurable outside the file — `kind_of` answers 1, 0, 0 for three identical calls
+//   under the instrument — and is recorded in loft#1407 rather than asserted here, because
+//   an assertion on it would pass on a broken build too.
+
+fn kind_of(obj: JsonValue, name: text) -> integer {
+  v = obj.field(name);
+  if v.kind() == "JString" { 1 } else { 0 }
+}
+
+// The conjunction, at its smallest: one projection into a local, one function, three calls.
+fn reads_a_field_twice() {
+  r = json_parse("{{\"b\":\"world\"}}");
+  assert_eq(kind_of(r, "b"), 1, "first call");
+  assert_eq(kind_of(r, "b"), 1, "second call");
+  assert_eq(kind_of(r, "b"), 1, "third call");
+}
+
+// The same, delivering TEXT — the shape `451-text-tailcall-nwb-callee` reaches through a tail
+// call.  The `if` and the arms are not part of the conjunction; they are here because the
+// original report was read as a fact about them.
+fn pick(obj: JsonValue, name: text) -> text {
+  v = obj.field(name);
+  if v.kind() == "JString" { v.as_text() } else { "" }
+}
+
+fn delivers_text_every_time() {
+  r = json_parse("{{\"b\":\"world\"}}");
+  assert_eq(pick(r, "b"), "world", "text first");
+  assert_eq(pick(r, "b"), "world", "text second");
+  assert_eq(pick(r, "b"), "world", "text third");
+}
+
+// Nothing in the callee need READ the projection for the free to happen — the local alone is
+// what carries the ownership fact.
+fn binds_it_and_never_reads_it(obj: JsonValue, name: text) -> text {
+  v = obj.field(name);
+  return "fixed";
+}
+
+fn an_unread_projection_leaves_the_arena_alone() {
+  r = json_parse("{{\"b\":\"world\"}}");
+  assert_eq(binds_it_and_never_reads_it(r, "b"), "fixed", "unread first");
+  assert_eq(binds_it_and_never_reads_it(r, "b"), "fixed", "unread second");
+  // The arena is still whole after both calls.
+  assert_eq(pick(r, "b"), "world", "the receiver survived");
+}
+
+// `item` is the same projection one index over.
+fn nth(obj: JsonValue, i: integer) -> integer {
+  e = obj.item(i);
+  if e.kind() == "JInteger" { 1 } else { 0 }
+}
+
+fn an_array_element_is_a_view_too() {
+  a = json_parse("[1, 2, 3]");
+  assert_eq(nth(a, 0), 1, "item first");
+  assert_eq(nth(a, 1), 1, "item second");
+  assert_eq(nth(a, 2), 1, "item third");
+}
+
+// The half that must NOT change: a plain whole-value bind still COPIES, so writing through
+// the destination leaves the source alone.  This is `(B-Copy)` proper, the case the cure
+// narrows around rather than removes.
+struct Cell { n: integer }
+
+fn a_whole_value_bind_still_copies() {
+  a = Cell { n: 1 };
+  b = a;
+  b.n = 99;
+  assert_eq(a.n, 1, "the source is untouched");
+  assert_eq(b.n, 99, "the copy took the write");
+}
+
+// And a struct-typed PROJECTION still VIEWS — the other side of the same boundary.
+struct Outer { inner: Cell, tag: integer }
+
+fn a_struct_projection_still_views() {
+  o = Outer { inner: Cell { n: 1 }, tag: 7 };
+  c = o.inner;
+  c.n = 42;
+  assert_eq(o.inner.n, 42, "the write reached the container");
+}
+
+fn main() {
+  reads_a_field_twice();
+  delivers_text_every_time();
+  an_unread_projection_leaves_the_arena_alone();
+  an_array_element_is_a_view_too();
+  a_whole_value_bind_still_copies();
+  a_struct_projection_still_views();
+}

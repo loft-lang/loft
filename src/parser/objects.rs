@@ -573,7 +573,24 @@ impl Parser {
                 // both emitters copied — a copy nobody freed.  `Data::copies_as` admits the
                 // `(C-Var)` widening `c: E = s` with `s` a variant of `E` beside the
                 // same-def pair.
-                if let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
+                // @FR-B-Copy governs `v = obj`, and this arm decides it while reading the
+                // SOURCE NAME — before the postfix that would make the bind something else
+                // has been seen.  `v = obj.field(n)` is a PROJECTION (@FR-H-View: the local
+                // aliases the place, and freeing it is the owner's business), `v = obj[i]`
+                // and `v = obj#attr` likewise; none of them is a whole-value bind, so none
+                // is this arm's to make independent.
+                //
+                // Taking it anyway cost the receiver its dep: the arm returns the source's
+                // type WITHOUT deps, so a method call's receiver reached `call_dependencies`
+                // borrowing nothing and its declared `[self]` return resolved to an empty
+                // list — the result read as OWNED and the callee freed the CALLER's store
+                // (loft#1407).  It bit on pass 2 only, because on pass 1 the destination's
+                // type is still `Unknown` and `heap_def_nr()` answers `None`, so the arm
+                // never fired: the same bind, typed two ways, one pass apart.
+                if !(self.lexer.peek_token(".")
+                    || self.lexer.peek_token("[")
+                    || self.lexer.peek_token("#"))
+                    && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)
                 {
