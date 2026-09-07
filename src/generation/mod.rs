@@ -640,6 +640,13 @@ pub struct Output<'a> {
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
     pub leaf_elide_disabled: bool,
+    /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
+    /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
+    /// `--html` build also has `emit_live == false` (debug is opt-in there)
+    /// and MUST keep its named frames — the browser panic hook's frame block
+    /// is a pinned contract (`html_panic_names_itself_and_its_loft_frames`),
+    /// and losing it was the regression off-box CI caught on 2026-09-07.
+    pub lean_tier: bool,
     /// `LOFT_NO_WRITE_HOIST=1` — classify in-place element writes as hoist
     /// blockers again (@PLN157 P4a), so a loop that writes keeps the pre-885
     /// per-element form for everything.  One step finer than
@@ -1478,6 +1485,7 @@ impl<'a> Output<'a> {
             nn_cache: HashMap::new(),
             leaf_cache: HashMap::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
+            lean_tier: false,
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
             yield_collect: false,

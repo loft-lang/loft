@@ -9493,6 +9493,7 @@ fn main() {
             out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let main_nr = p.data.def_nr("n_main");
             let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -9580,6 +9581,7 @@ fn main() {
             out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let main_nr = p.data.def_nr("n_main");
             let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -10788,6 +10790,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let result = if native_release {
                 let main_nr = p.data.def_nr("n_main");
