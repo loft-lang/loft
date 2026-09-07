@@ -150,10 +150,13 @@ so thin LTO can do it.*
 
 **Two ordered steps, measured apart:**
 
-1. **`#[inline]` the write path** — `store_mut`, `vec_get_or_raise_runtime`,
-   `length_vector`.  XS; precedent measured 1.7× for the read chain
-   (PERFORMANCE.md § 3b).  Probe = the issue's by-hand rebuild table on the
-   standalone.
+1. **`#[inline]` the write path** — MEASURED 2026-09-07, and the read-chain
+   precedent did NOT transfer wholesale: all three (`store_mut`,
+   `vec_get_or_raise_runtime`, `length_vector`) together ran ~+1.5 % SLOWER
+   on `lock` — `vec_get_or_raise`'s cold raise machinery duplicates at
+   every site.  `store_mut` ALONE (a tiny body, the twin of the
+   already-inlined `store`) is a consistent −2 % on `lock`: kept; the other
+   two declined by measurement.
 2. **Bitcode + thin LTO.** Add `[profile.release] lto = "thin"` to `Cargo.toml`
    (which also stops `-Cembed-bitcode=no`), and `-C lto=thin` beside the `-O`
    in the `native_release` arm.  The profile is the **single chokepoint** — it

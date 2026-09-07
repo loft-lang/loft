@@ -1921,6 +1921,7 @@ impl Stores {
         }
     }
 
+    #[inline]
     pub fn store_mut(&mut self, r: &DbRef) -> &mut Store {
         // @PLN130 F8 — see `store`. A write through a dead reference is the worse half:
         // with slot reuse it lands in whatever now owns the memory.
