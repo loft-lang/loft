@@ -345,10 +345,19 @@ fn cross_type_ne_int_enum() {
 // element in a `vector<Color?>` literal stays rejected even though a nullable-enum
 // VARIABLE's `= null` now converts to the typed null (parse_errors is the guard so
 // the scalar fix doesn't silently enable the unwired vector form).
+//
+// ⚠ What this cell pins is the DENSE refusal, and the `?` in the snippet does not make it
+// nullable HERE.  `code!` parses against the cached stdlib `Data`, so the source is
+// `STD_SOURCE`, and `e2_rewrite_enabled` is `source != STD_SOURCE` — the nullable-element
+// rewrite is off for every harness snippet, exactly as it is off inside the stdlib itself
+// (whose `#rust` bodies write the dense ABI).  A USER file or a library gets the rewrite and
+// the same two lines run: loft#1416 wired the value-enum element, and
+// `tests/scripts/1416-a-value-enum-element-may-be-absent.loft` is where that behaviour is
+// pinned.  So this stays a refusal cell, and the cure line it pins is the one #1416 added.
 #[test]
 fn null_element_in_value_enum_vector_rejected() {
     code!("enum Color { Red, Green, Blue }\nfn test() { v: vector<Color?> = [Color.Red, null]; }")
-        .error("cannot store null elements in a vector<Color> (would lose precision); cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
+        .error("cannot store null elements in a vector<Color> (would lose precision); declare the element nullable (`vector<Color?>`), or cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
 }
 
 // @PLN102 arc-E E2 (B) — a STATICALLY out-of-range constant operation is a
