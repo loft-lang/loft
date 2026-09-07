@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The refusal half of loft#1408.  `accumulate_scalars_to_box`'s scalar list decides TWO things
+// at once: which captures get a shared `__cell_<T>` (the value half, guarded by `1408`) and
+// which captures the three closure-capture refusals are asked about.  A `τ?` fell out of the
+// list, so it was not merely un-boxed — the refusals that protect the dense spelling went
+// quiet for it, and the program compiled and answered wrong instead.
+//
+// This file is separate from `1408` because a firing `@EXPECT_ERROR` stops a file, and each
+// cell below must be REACHED — the same reason `1408c` is separate from this one.  Each is the nullable spelling of a refusal whose dense twin has
+// been refused all along; the dense twins live in `1408` only as working code, so the pairing
+// is stated here in prose rather than compiled beside them.
+//
+// Axes this file MOVES:  the two scalar kinds whose storage differs (integer in-band, text by
+//                        pointer), under the sharing refusal.  The two PARAMETER refusals are
+//                        in `1408c`: these errors abort before the pass that asks them, so
+//                        keeping all five here left three cells unreached.
+// Axes it HOLDS FIXED:   every capture here is a SCALAR one, because the heap spellings share
+//                        their store and take none of these three refusals.
+//
+// @falsified-at: 2808e183 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   On the control build NONE of these five refusals fires and the file compiles and runs to
+//   completion, which is the defect; the dense twin of each was refused on that build too, so
+//   the pair is what moved, not the message.
+//
+// @EXPECT_ERROR: is mutated through a closure and captured by 2 closures
+// @EXPECT_ERROR: is mutated through a closure and captured by 2 closures
+
+// c1 — two closures over one mutable nullable capture.  Sharing a mutable variable between
+// closures is not supported; the dense spelling has said so all along.
+fn two_closures_integer() -> integer {
+  x: integer? = 1;
+  w = fn(d: integer) { x = 42; };
+  r = fn(d: integer) -> integer { (x ?? 0) + d };
+  w(0);
+  r(0)
+}
+
+// c2 — the same refusal for the other storage shape: text is a pointer, integer is in-band,
+// and the refusal is about SHARING rather than about the width.
+fn two_closures_text() -> text {
+  s: text? = "a";
+  w = fn(d: integer) { s = "b"; };
+  r = fn(d: integer) -> text { (s ?? "") };
+  w(0);
+  r(0)
+}
+
+fn main() {
+  println("{two_closures_integer()}");
+  println("{two_closures_text()}");
+}

@@ -2473,10 +2473,21 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 730 | 366 | 5 | **359** |
+| 730 | 371 | 5 | **354** |
 
-**The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
-carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
+**Re-measured on the joined tree for loft#1408, and a FOURTH number again**: `730 | 371 |
+5 | 354`, against `730 | 366 | 5 | 359` on this side and `728 | 369 | 5 | 354` on the one
+the cure came from.  Not addable from either: that branch measured against `main`, where
+two of the functions this side had already added do not exist, so its `728` and its `+5
+peeling` are counts of a different population.  The cure moves FIVE functions
+opaque→peeling — the boxable set, the cell's name, the cell's `value` type, the read/write
+ops and the boxed-text LHS test — and the total stays 730 because it adds no
+`Type`-discriminating function, only peels inside existing ones.  The same rule the
+paragraph below states, applied a second time to the same row: **a number in a merge
+conflict is re-measured, never taken from a side**, and it was not guessable from either.
+
+**The row before it was the JOINED tree's, re-measured, and a fourth number that neither
+branch carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
 `729 | 365 | 5 | 359` on the other — the middle column coincidentally equal, the outer two not.
 It reconciles: from main's `728 | 364 | 5 | 359`, `snapshot_kind` adds one OPAQUE, then
 `reshaped_containers` adds one PEELING, then `for_type` moves one opaque→peeling.  Each

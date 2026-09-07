@@ -1526,9 +1526,12 @@ impl Parser {
             && let Some(d) = crate::parser::vectors::boxed_cell_def(self.vars.tp(v_nr), &self.data)
             && let Some(value_attr) = self.data.def(d).attributes().first()
             && value_attr.name == "value"
-            && (value_attr.typedef.is_equal(tp)
-                || (matches!(value_attr.typedef, Type::Integer(_))
-                    && matches!(tp, Type::Integer(_))))
+            // Compared through `.base()`: assigning a dense `Ï` into a `Ï?` cell is the
+            // scalar-into-boxed-scalar overwrite this guard exists for, and without the peel
+            // the flip is reverted on the first `x = â¦` in the body (loft#1408).
+            && (value_attr.typedef.base().is_equal(tp.base())
+                || (matches!(value_attr.typedef.base(), Type::Integer(_))
+                    && matches!(tp.base(), Type::Integer(_))))
         {
             return;
         }
@@ -4345,7 +4348,11 @@ use a separate collection or add after the loop"
         // logic doesn't apply to boxed-text locals — they're
         // already a Reference(__cell_text, _), not an argument
         // and not a plain text Var.
-        let is_boxed_text_lhs = matches!(f_type, Type::Text(_))
+        // `.base()`, matching the `+=` test six lines below: a boxed `text?` local is a
+        // boxed text local, and the text-special branch does not apply to either.  Spelled
+        // bare here, it sent a nullable one down that branch and emitted `Set(65535, â¦)` —
+        // loft#1206's ICE reached through the cell instead of through a field (loft#1408).
+        let is_boxed_text_lhs = matches!(f_type.base(), Type::Text(_))
             && self.extract_boxed_var_from_lhs(to).is_some_and(|v_nr| {
                 self.vars.exists(v_nr)
                     && crate::parser::vectors::boxed_cell_def(self.vars.tp(v_nr), &self.data)
@@ -7287,12 +7294,16 @@ use a separate collection or add after the loop"
     /// boxed boolean local — this is the same op, read off that lowering rather
     /// than re-derived (the earlier "boolean needs a 4-arg `OpSetByte`" note
     /// described a different write path).
+    /// The `OpSet<T>` a boxed capture's `value` field is written through — the write half of
+    /// `@FR-L-CapWrite`, whose read half is `Parser::auto_deref_boxed_scalar`.
     fn cell_value_set_op(&self, cell_d_nr: u32) -> Option<u32> {
         let value_attr = self.data.def(cell_d_nr).attributes().first()?;
         if value_attr.name != "value" {
             return None;
         }
-        let op_set_name = match &value_attr.typedef {
+        // `.base()` for the same reason the read side peels: a nullable cell's `value` shares
+        // its dense twin's storage, so it takes the same WRITE op (loft#1408).
+        let op_set_name = match value_attr.typedef.base() {
             Type::Integer(_) => "OpSetInt",
             Type::Float => "OpSetFloat",
             Type::Single => "OpSetSingle",

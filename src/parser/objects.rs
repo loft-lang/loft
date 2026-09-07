@@ -1131,7 +1131,10 @@ impl Parser {
         }
         let value_tp = value_attr.typedef.clone();
         let pos = Value::Int(0);
-        let (op_name, is_bool) = match &value_tp {
+        // `.base()`: a nullable cell's `value` is stored in-band (C90), so the READ op is its
+        // dense twin's.  `value_tp` itself is returned unpeeled, so the expression keeps the
+        // `?` and the ordinary discharge rules apply to it (loft#1408).
+        let (op_name, is_bool) = match value_tp.base() {
             Type::Integer(_) => ("OpGetInt", false),
             Type::Float => ("OpGetFloat", false),
             Type::Single => ("OpGetSingle", false),

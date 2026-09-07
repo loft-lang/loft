@@ -9,6 +9,41 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A nullable capture a closure mutates is neither boxed nor guarded (2026-09-07)
+
+A closure that MUTATES a captured scalar boxes it into a shared `__cell_<T>` record, so the
+closure's write reaches the outer variable and a later call sees what the previous one wrote.
+`accumulate_scalars_to_box` chose that set with a bare `matches!` over the scalar `Type`
+variants, so `Optional(τ)` matched no arm and a NULLABLE capture never entered it.
+
+That one list also drives three REFUSALS, so a `τ?` capture was not merely un-boxed — it was
+unguarded.  Four consequences, all silent, identical on both backends: the write is lost once
+the closure is called through another function (`x: integer?` reads 1 where `x: integer` reads
+7), an interleaved write answers the closure's private copy (`11 21 100` against the dense
+twin's `11 110 110`), sharing one mutable capture between two closures is refused for a dense
+local and silently wrong for a nullable one, `const` on a nullable parameter is silently not
+enforced, and C115's `&`-from-closure refusal is never asked.  Same for `text?`.
+
+`(L-CapScalar)` is not what was wrong: a capture is by value at creation, so a closure reading
+the creation-time value is correct and both spellings agree on it.  The rules were silent on
+where the closure's own WRITE lands — which is what the `__cell_` machinery implements — so the
+rule was extended rather than the code bent: `(L-CapWrite)` in `formal/closures.md`, cited at
+its two enforcing sites.
+
+Cured by the peel at seven sites of one family: the boxable set, the cell name and its `value`
+type (a nullable takes a cell of its OWN, `__cell_opt_<T>`, because the `value` field has to
+declare the nullability or `(N-Store)` is violated at the cell), the read and write ops (chosen
+from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under C90, while the declared
+type keeps its `?` so ordinary discharge still applies), the type-flip preservation guard, and
+the boxed-text LHS test — that last one found by the guard rather than by reading: spelled bare
+it sent a boxed `text?` down the text-special branch and emitted `Set(65535, …)`, loft#1206's
+ICE reached through the cell, while the `+=` test six lines below it already peeled.
+
+loft#1408.  Guards `1408-…` (ten nullable/dense pairs across five scalar kinds × five
+compositions, plus the `(L-CapScalar)` and `(L-CapHeap)` controls), `1408b-…` and `1408c-…`
+(the refusals, split because a firing `@EXPECT_ERROR` stops a file).  A forced-size integer
+capture has the same symptom from a different mechanism and is loft#1409.
+
 ### `(B-Disturb)` ends every place a view can name (2026-09-07, D-bind-25/26/27)
 
 Three neighbours of loft#1401, found by its boundary matrix and each failing IDENTICALLY in the
