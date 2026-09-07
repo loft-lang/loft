@@ -85,7 +85,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 4 batches landed; the row moved DOWN for the first time (359 → 354) |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 5 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
 | **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
 
@@ -562,6 +562,43 @@ refusals fire for it, but `cell_struct_name` has no template for it, so an indir
 its write exactly as the nullable did.  It is `synthesize_cell_structs`'s own documented "phase
 02d-ii silent gap".  Kept apart because the cures differ and a blanket refusal would break the
 direct-call form, which compiles and is correct today (`f_u8_direct` measured green).
+
+**Batch 5 — the cursor-match family, and a finding left OPEN on purpose (2026-09-07).**  The
+`parser/control.rs` tier-0 group that batch 3 did not reach: `cursor_shape`, `parse_cursor_match`,
+`peek_subrule_capture`.  `cursor_shape` decides whether a `match` subject IS a cursor with three
+bare `Type` tests — the SUBJECT is a `Reference` to a struct, the first `Vector` field is the
+source, a field named `pos` is an `Integer` — so a `τ?` in any of the three makes the answer
+`None` and the struct silently stops being a cursor.
+
+Three of the positions CLOSED, measured on both backends and guarded
+(`153-a-cursor-match-over-a-nullable-subject-advances`): a nullable SUBJECT works, because the
+subject reaches `cursor_shape` already discharged and its bare test is never asked a wrapped
+question (the var table shows the local is `ref(732)?` while the cursor temps are still minted);
+an unrelated nullable field beside a well-formed cursor is ignored; and a nullable `vector<T>?`
+declared BEFORE the real source is skipped by the first-vector-field rule rather than chosen and
+found null.  Every cell asserts the cursor POSITION as well as the bound value, because a cursor
+match that degraded to a plain struct match could bind the right value while failing to advance.
+
+**Two positions do NOT work, and the second one is why this batch ships without a fix.**  A `?`
+on the `src` or `pos` field turns cursor matching off and the failure surfaces as a parse error
+pointing at the arm PATTERN, naming nothing the author can act on.  And a nullable ELEMENT
+(`src: vector<Tok?>`, or the same shape with no cursor at all — `match v { [Id { x }] => … }`
+over a `vector<Tok?>`) is refused the same way, while its dense twin runs; `control.rs:8541` and
+`:8641` ask the element's ENUM identity bare, and the `Type::Iterator` arm forty lines above
+already asks its own through `elm_tp.base()`, so the drift was in the file.
+
+The peel was BUILT, MEASURED AND REVERTED rather than landed.  It routes correctly and then
+surfaces `No matching operator '==' on 'Tok?' and 'Tok?'` from `parse_field_sub_pattern`, whose
+`if let Type::Enum(e_nr, true, _) = field_type` is bare too — and peeling THAT one would be
+wrong rather than merely incomplete: the tag test it builds is
+`OpEqInt(OpConvIntFromEnum(OpGetEnum(field_val, 0)), disc)`, and for a `vector<S?>` element the
+byte at offset 0 is @PLN25's nullable TAG, not the variant discriminant, so a peeled tag test
+answers a variant question with an absence bit.  The element has to be read THROUGH its tag and
+the pattern must FAIL on an absent element — `(L-Null-Which)`, the rule phase 5 batch 1 closed
+for field reads and method calls, now asked of the @PLN35 slice machinery.  That is a design
+step in the pattern machinery rather than a peel, so it is the batch's OPEN item, recorded here
+with its measurement rather than half-fixed.  The guard says in its header what it does not
+cover and why.
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 
