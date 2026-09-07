@@ -931,11 +931,18 @@ best ratio, because macOS duplicates ubuntu exactly and costs ~50 % more to do i
   definition, no drift. (Copying was the alternative and it is exactly the mistake
   the library-CI unification had just finished undoing.) On a PR the ASan job runs
   **macOS only** — `ci.yml` already gates every PR with an ubuntu ASan job.
-- **Phase 4** — `notify` now files an issue only for `miri / asan / poison /
-  stack-shadow / debug-asserts`, never from a PR; `daily-status` writes the single digest.
-  @PLN154's `stack-shadow` joined that list on the rule the job list states: a gate absent
-  from `needs` reads as green and AUTO-CLOSES the issue, so a gate whose finding means *the
-  language is broken* goes in with the gate.  It costs ~2x the in-process interpreter
+- **Phase 4** — `notify` files an issue only for the gates whose red means *the language
+  is broken*, never from a PR; `daily-status` writes the single digest.  Which gates those
+  are is **not repeated here**: each job in `miri.yml` carries `# @nightly-class:
+  unsound|report` as the first line of its block, and `notify.needs`, `daily-status.needs`
+  and the digest's closing sentence are all derived from it, with
+  `doc_hygiene::nightly_gate_classes_drive_every_list_that_reads_them` failing when they
+  disagree or when a job carries no class at all.  The rule that motivates the marker is
+  the one the job list always stated — a gate absent from `needs` reads as green and
+  AUTO-CLOSES the issue — and the marker exists because prose did not enforce it: `valgrind`
+  was in no list at all, so when memcheck went red on 2026-09-07 the filed issue named only
+  `poison,debug-asserts` and the next green run would have closed it with valgrind still
+  failing.  @PLN154's `stack-shadow` costs ~2x the in-process interpreter
   corpus (67-93 s against ~50 s for `loft_suite` locally, the spread being box contention), needs no sanitizer and no nightly
   toolchain, and covers the residence POISON cannot describe: poison needs the slot to hold
   a distinguishable byte pattern, and a recycled frame slot holds a plausible one.

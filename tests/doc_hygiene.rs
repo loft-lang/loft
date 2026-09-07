@@ -2755,4 +2755,192 @@ fn every_test_binary_matches_a_subject() {
         },
         unmatched.join(", ")
     );
+
+/// The nightly workflow's gate CLASS lives on the job, and every list that reads it agrees.
+///
+/// `.github/workflows/miri.yml` runs fourteen checks and then makes two decisions about
+/// them: which reds open the tracked `nightly-failure` issue (`notify`), and which appear
+/// in the daily digest (`daily-status`).  Both were written as hand-maintained job lists,
+/// and the digest closed with a third copy of the first list in prose — one question with
+/// three decoders and nothing keeping them equal.
+///
+/// Two had already drifted.  `valgrind` was in NONE of them, so memcheck over the shipped
+/// release binary reported to nobody: on 2026-09-07 it went red beside `poison` and
+/// `debug-asserts`, the filed issue named only the other two, and because `notify` closes
+/// the issue when every gate it CAN SEE is green, the next green run would have closed it
+/// with memcheck still failing.  That is the failure mode the job's own comment warns
+/// about — a gate stops gating without ever going red — reached by the route the comment
+/// did not cover: not a gate added and forgotten, a gate added to no list at all.
+///
+/// So the class is declared once, on the job, as `# @nightly-class: unsound|report`, and
+/// this test is what makes the three readers derive from it rather than repeat it.  It
+/// also fails on a job carrying NO marker, which is the half that matters for the next
+/// gate somebody adds: the question has to be answered for the file to compile.
+///
+/// `unsound` means a red says the language is broken — hard UB, a data race, a use-after-
+/// free, an out-of-bounds or uninitialised read, a violated internal invariant.  `report`
+/// means everything else: toolchain drift, doc index, library health, the leak baseline,
+/// coverage replayed for release evidence.  Reclassifying is a one-word edit here.
+#[test]
+fn nightly_gate_classes_drive_every_list_that_reads_them() {
+    let wf = std::fs::read_to_string(".github/workflows/miri.yml").expect("read miri.yml");
+    let lines: Vec<&str> = wf.lines().collect();
+    let jobs_at = lines
+        .iter()
+        .position(|l| *l == "jobs:")
+        .expect("miri.yml has a `jobs:` key");
+
+    // Job keys are the only two-space `name:` lines below `jobs:`; `on:`'s own `schedule:`
+    // sits above it and is why this starts at `jobs_at` rather than scanning the file.
+    let is_job_key = |l: &str| {
+        l.len() > 3
+            && l.starts_with("  ")
+            && !l.starts_with("   ")
+            && l.ends_with(':')
+            && l[2..l.len() - 1]
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let job_starts: Vec<usize> = (jobs_at + 1..lines.len())
+        .filter(|i| is_job_key(lines[*i]))
+        .collect();
+    assert!(
+        job_starts.len() > 10,
+        "found only {} jobs in miri.yml — the key parser stopped matching",
+        job_starts.len()
+    );
+
+    let job_name = |i: usize| lines[i][2..lines[i].len() - 1].to_string();
+    let block = |n: usize| -> &[&str] {
+        let start = job_starts[n];
+        let end = job_starts.get(n + 1).copied().unwrap_or(lines.len());
+        &lines[start..end]
+    };
+
+    // The two CONSUMERS carry no class of their own: they are the readers, not gates.
+    let consumers = ["notify", "daily-status"];
+    let mut unsound: Vec<String> = Vec::new();
+    let mut classified: Vec<String> = Vec::new();
+    let mut unmarked: Vec<String> = Vec::new();
+    for (n, &i) in job_starts.iter().enumerate() {
+        let name = job_name(i);
+        let marker = block(n)
+            .iter()
+            .find_map(|l| l.trim().strip_prefix("# @nightly-class:"))
+            .map(|rest| {
+                rest.split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            });
+        match (consumers.contains(&name.as_str()), marker.as_deref()) {
+            (true, None) => {}
+            (true, Some(c)) => panic!(
+                "job `{name}` reads the classes and must not carry one itself, but it says \
+                 `@nightly-class: {c}`"
+            ),
+            (false, None) => unmarked.push(name),
+            (false, Some(c)) => {
+                assert!(
+                    c == "unsound" || c == "report",
+                    "job `{name}` has `@nightly-class: {c}` — the only classes are \
+                     `unsound` (a red says the language is broken) and `report`"
+                );
+                if c == "unsound" {
+                    unsound.push(name.clone());
+                }
+                classified.push(name);
+            }
+        }
+    }
+    assert!(
+        unmarked.is_empty(),
+        "these nightly jobs carry no `# @nightly-class:` marker, so nothing decides whether \
+         a red opens the tracked issue or only reaches the digest — add one as the first \
+         line of the job block:\n  {}",
+        unmarked.join("\n  ")
+    );
+
+    // `needs:` may wrap across lines (the digest's list does), so read the block from the
+    // `needs:` line to the closing bracket rather than the line alone.
+    let needs_of = |n: usize| -> Vec<String> {
+        let b = block(n);
+        let at = b
+            .iter()
+            .position(|l| l.trim_start().starts_with("needs:"))
+            .unwrap_or_else(|| panic!("job `{}` has no `needs:`", job_name(job_starts[n])));
+        let mut joined = String::new();
+        for l in &b[at..] {
+            joined.push_str(l);
+            if l.contains(']') {
+                break;
+            }
+        }
+        joined[joined.find('[').expect("a needs list") + 1..joined.rfind(']').expect("a `]`")]
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+    let index_of = |name: &str| {
+        job_starts
+            .iter()
+            .position(|&i| job_name(i) == name)
+            .unwrap_or_else(|| panic!("miri.yml has no `{name}` job"))
+    };
+
+    let mut want_notify = unsound.clone();
+    want_notify.sort();
+    let mut got_notify = needs_of(index_of("notify"));
+    got_notify.sort();
+    assert_eq!(
+        got_notify, want_notify,
+        "`notify.needs` disagrees with the `@nightly-class: unsound` markers. A gate it \
+         cannot see does not merely fail to file — its silence reads as green and \
+         AUTO-CLOSES the tracked issue another gate opened."
+    );
+
+    let mut want_digest = classified.clone();
+    want_digest.sort();
+    let mut got_digest = needs_of(index_of("daily-status"));
+    got_digest.sort();
+    assert_eq!(
+        got_digest, want_digest,
+        "`daily-status.needs` omits a classified job, so the digest that calls itself \
+         `the one place to look` is not one."
+    );
+
+    // The digest's closing sentence names the same set in prose. It is the copy that went
+    // stale silently before — it was still naming four gates when `notify` watched five.
+    let digest = block(index_of("daily-status"));
+    let foot_from = digest
+        .iter()
+        .position(|l| l.contains("Gates that FILE an issue"));
+    let foot_to = digest
+        .iter()
+        .position(|l| l.contains("Everything else reports"));
+    let footer: String = match (foot_from, foot_to) {
+        (Some(a), Some(b)) if b >= a => digest[a..=b].join(" "),
+        _ => String::new(),
+    };
+    assert!(
+        !footer.is_empty(),
+        "the daily digest no longer says which gates file an issue"
+    );
+    for g in &unsound {
+        assert!(
+            footer.contains(g.as_str()),
+            "the digest's closing sentence does not name `{g}`, which IS in the \
+             `unsound` class: {footer}"
+        );
+    }
+    for g in &classified {
+        if !unsound.contains(g) {
+            assert!(
+                !footer.contains(g.as_str()),
+                "the digest's closing sentence names `{g}` as a gate that files an issue, \
+                 but its marker says `report`: {footer}"
+            );
+        }
+    }
 }
