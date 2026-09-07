@@ -33,7 +33,7 @@
 // not a weaker assertion here — the question is whether two spellings of one write agree — and
 // it keeps the file to a single instantiation of `assert_eq`'s generic.  Mixing widths through
 // it does not work: a call at `i32` binds `AssertValue` for the whole program and a later call
-// at `integer` is then refused as a narrowing (loft#1414).  That is independent of closures and
+// at `integer` is then refused as a narrowing (loft#1418).  That is independent of closures and
 // of this fix, and a guard that tripped over it would report someone else's defect.
 
 type Small = integer limit(0, 100);
