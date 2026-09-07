@@ -198,6 +198,17 @@ Three shapes that read as correct and are not, each measured in this repo's own 
   adds an `echo` beside it, so **wait on a recorded PID** — `scripts/ci-run.sh status`, or the
   pid `find_problems.sh --bg` prints — which has no pattern to defeat.
 
+  ⚠ **An ALTERNATION defeats the bracket one branch at a time, and that is how it actually
+  bites.** Measured 2026-09-07: `pgrep -f "wasm-pack|[m]ake wasm"` reported "still building" for
+  eight minutes after `make wasm` had finished, because only the SECOND branch was bracketed —
+  the waiter's own argv contains the literal `wasm-pack`, so the first branch matched the
+  waiter. Every branch needs its own bracket, which is precisely the sort of detail that is
+  right when written and wrong after one edit.
+
+  **The check with no pattern at all is to ask the ARTEFACT, not the process.** `ls
+  --time-style=+%H:%M:%S <output>` against `date` answers *is it done?* directly, cannot
+  self-match, and is what finally caught that eight-minute stall.
+
   `pgrep -x` is not the way round it either, and it is WORSE rather than merely inadequate. It
   matches `comm`, which the kernel truncates to `TASK_COMM_LEN` — 16 bytes including the NUL —
   so a name past 15 characters can never match and the check silently always passes. Measured
