@@ -14,6 +14,16 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**`a = &h` on a `hash`, `sorted`, `index`, `trie` or `spatial` is now a link, as it always
+was for a vector.**  It was a copy: the alias got its own collection and the two went their
+separate ways from that line on, each seeing only its own writes.  Starting from an empty
+collection that looks like the alias throwing appends away — `len(h)` stays 0 — but the
+records were never lost, they were going into the alias.  Starting from a collection that
+already had records it was harder to see: after one append through each name, both reported
+a length of 2 and they were different pairs.  A write through either name now reaches the
+other, at a local, at a struct field, and for every keyed kind.  Passing one as a `&`
+parameter is still refused rather than silently wrong, and says so.
+
 **A `u32` value above 2147483647 no longer reads back as a negative number.**  Four bytes do not
 say whether they are signed, and loft's storage schema had only the signed reading of them: a
 `u32` field or element was WRITTEN unsigned and read back sign-extended everywhere the schema

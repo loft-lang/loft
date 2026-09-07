@@ -3120,12 +3120,26 @@ use a separate collection or add after the loop"
         // test saw no vector, took the whole vector COPY lowering, and still left the
         // variable carrying the annotation's `RefVar` over a value — the interpreter then
         // read the vector's buffer as a stack ref and panicked (loft#1371).
-        let amp_vector_source = match &s_type {
+        let amp_source = match &s_type {
             Type::RefVar(inner) => inner.base(),
             other => other.base(),
         };
-        let amp_vector_bind =
-            op == "=" && self.amp_pending && matches!(amp_vector_source, Type::Vector(_, _));
+        // @FR-B-Ref-Alias is stated over ANY binding, so the set of sources whose `&` bind
+        // SHARES the handle is every store-backed collection — `vectors::is_collection`,
+        // which @FR-Col-Store already defines as the `is_keyed` set plus `Vector`.  Asked as
+        // `matches!(source, Type::Vector(_, _))` it was a set of ONE, and the five keyed
+        // kinds took the deep-copy path instead: `a = &h` gave `a` its own store and
+        // `OpReplaceKeyed`-copied `h` into it, so the two were independent from the bind on
+        // and a write through either was invisible to the other.  From an EMPTY collection
+        // that reads as "the alias drops every append" (loft#1433), which is what it was
+        // filed as; `len` through the ALIAS is what says the append landed somewhere.
+        let amp_collection_bind =
+            op == "=" && self.amp_pending && crate::parser::vectors::is_collection(amp_source);
+        // The VECTOR half needs one thing more, which is why it stays a separate fact: its
+        // whole-value write must clear the SHARED store in place (`OpClearVector`, driven by
+        // `amp_vector_locals`).  A keyed whole-value write already replaces contents rather
+        // than minting, so it needs no such registration.
+        let amp_vector_bind = amp_collection_bind && matches!(amp_source, Type::Vector(_, _));
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
         // source untouched with nothing said.  Name the local here so `create_vector` clears
@@ -3179,7 +3193,7 @@ use a separate collection or add after the loop"
         // B-View, so both spellings emit byte-identical IR and the `&` was dropped as
         // redundant.  It stopped being redundant when F2 made a view MATERIALISE on a
         // reshape — from then on `&` also says *"and do not silently copy it"*.
-        let mut amp_unlowered = op == "=" && self.amp_pending && !amp_vector_bind;
+        let mut amp_unlowered = op == "=" && self.amp_pending && !amp_collection_bind;
         // @PLN87 L1 / #2 — a local `&`-binding to a SCALAR lvalue (`b = &a` or
         // `b: &integer = a`) makes `b` a LIVE reference to the source's stack slot:
         // lower it to `b: &T = OpCreateStack(a)` — the SAME stack-ref mechanism a `&T`
@@ -4893,6 +4907,11 @@ use a separate collection or add after the loop"
         if let Some(kt) = keyed_kt
             && crate::parser::vectors::is_keyed(&s_type)
             && !matches!(code, Value::Insert(_) | Value::Null)
+            // @FR-B-Ref-Alias — a `&` bind opts INTO aliasing, so it must NOT deep-copy:
+            // falling through leaves the plain `Set(var, src)` handle share, and the dep on
+            // the source survives (it is this branch's `make_independent` that strips it),
+            // which is exactly the non-owning shape the vector twin already has.
+            && !amp_collection_bind
         {
             // `s = s` self-assign — emit nothing rather than clear+recopy
             // off the same storage.

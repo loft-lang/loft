@@ -9,6 +9,51 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `&` bind to a keyed collection is a link, not a copy (2026-09-07)
+
+`(B-Ref-Alias)` is stated over ANY binding: the `&` annotation makes it a live link to the
+source instead of a copy, and `d += …` writes through.  The `&`-bind's source set in
+`parse_assign_op_inner` was `matches!(amp_vector_source, Type::Vector(_, _))` — a set of ONE —
+so all five keyed kinds took the deep-copy path: `a = &h` gave `a` its own store
+(`OpDatabase`) and `OpReplaceKeyed`-copied `h` into it.  Two independent collections from the
+bind onward.
+
+**The filed root and the measured one differ in a way that changes the guard.**  It was filed
+as *"the `&` alias silently drops every append"*.  The append is not dropped: `len(h)` reads 0
+and `len(a)` reads 1.  From a POPULATED source the symptom hides better — after one write
+through each name, `h` held `{1,3}` and `a` held `{1,2}`, both with length 2 — so a guard
+checking one name's length would have passed.  Every cell in the guard reads both names, and
+`a_plain_keyed_bind_still_copies` is the control a share-everything cure fails.
+
+The set now comes from `vectors::is_collection`, which `(Col-Store)` already defines as the
+`is_keyed` set plus `Vector`; `amp_vector_bind` survives as the narrower fact (the vector's
+whole-value write must clear the shared store in place via `amp_vector_locals`, which emits
+`OpClearVector` and must not see a keyed local).  The keyed deep-copy branch is skipped for a
+`&` bind, so the fall-through leaves the plain `Set(var, src)` handle share and the dep on the
+source survives — that branch's own `make_independent` is what strips it — giving exactly the
+non-owning shape the vector twin had.
+
+⚠ **Third instance of one class.** `Type::is_amp_rebindable_heap` sits beside the defective
+line carrying the full heap set, and its doc records being written as *"one home rather than
+two `matches!` arms, which is how the keyed kinds came to be missing from both (loft#1291)"*.
+loft#1409/#1416 (`cell_stem`'s boxable set) and loft#1443 (`Type::Function` absent from a
+write-back dispatch that panics on its `_` arm) are the same shape.
+
+**What is NOT fixed, and why the refusal stands.** The `&hash<τ[k]>` PARAMETER spelling is
+still refused: the append routes do not claim it, because `is_keyed` / `is_collection` read
+`tp.base()`, which peels `Optional` and not the link, so `c += [rec]` falls into the VECTOR
+route and reports a type change.  Making those predicates peel the link was measured
+here — WITHOUT the keyed emission path resolving its store through the parameter's double
+indirection it converts the refusal into a SILENT DROP (`len` 0, no diagnostic), which is the
+worse state.  Recorded as D-bind-28, open, in `formal/binding-history.md`; D-bind-29 records
+the closed half.
+
+Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends — both
+directions of the link, all five keyed kinds (`spatial` on its own, since the keyed-field copy
+path treats it apart), the struct-field provenance, and the vector + plain-bind controls.
+
+Fixes #1433.
+
 ### The unsigned 4-byte encoding gets its own schema Part, and the width→Part choice one home (2026-09-07)
 
 `NarrowIntKind` has carried three 4-byte kinds since `u32` landed — `Int4` (signed, `i32::MIN`

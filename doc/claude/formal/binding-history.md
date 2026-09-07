@@ -6,7 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+OPEN: **1** — D-bind-28 OPENED 2026-09-07: the `&hash<τ[k]>` PARAMETER spelling is still
+refused where the LOCAL and FIELD ones now link (below).  D-bind-29 OPENED AND CLOSED
+2026-09-07 (loft#1433): a `&` bind to a keyed collection is a LINK, not a copy;
+D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
 DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
 2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
 D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
@@ -25,6 +28,49 @@ reference review.
 B-Ref-Reshape is enforced for all three of B-Disturb's events (D-bind-9,
 opened and closed 2026-08-05); B-Ref-AnnotationOnly is enforced in every position, not
 only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
+
+> **D-bind-29 — OPENED AND CLOSED (2026-09-07, loft#1433) — a `&` bind to a keyed
+> collection is a LINK, not a copy.**  `(B-Ref-Alias)` says the `&` annotation makes **ANY**
+> binding a live link to the source instead of a copy, and names `d += …` as writing through.
+> The `&`-bind's source set was `matches!(amp_vector_source, Type::Vector(_, _))` — a set of
+> ONE — so all five keyed kinds fell to the deep-copy path instead: `a = &h` gave `a` its own
+> store (`OpDatabase`) and `OpReplaceKeyed`-copied `h` into it, and from the bind onward the
+> two were independent.  Measured: after one write through each, `h` held `{1,3}` and `a` held
+> `{1,2}`, *both with `len` 2* — so a length check on either name alone looked healthy.
+>
+> It was filed as *"a `&` alias to a keyed collection silently drops every append"*, which is
+> what the defect looks like from an EMPTY source: `len(h)` stays 0.  The append is not
+> dropped — it lands in the alias's own store, and `len(a)` says so.  That distinction decides
+> what a guard must assert: reading only the source would pass a cure that made the alias
+> unwritable rather than one that made it a link, so every cell reads BOTH names.
+>
+> The set now comes from `vectors::is_collection` — the `is_keyed` set plus `Vector`, which is
+> exactly `(Col-Store)`'s store-backed set — and the keyed deep-copy branch is skipped for a
+> `&` bind, leaving the plain handle share whose dep names the source (non-owning, as the
+> vector twin already was).  Fixed for the LOCAL and struct-FIELD provenances at every keyed
+> kind including `spatial`, which the keyed-field copy path treats apart and which is
+> therefore asserted on its own rather than assumed to follow the other four.
+>
+> ⚠ **This is the third instance of one class**: a type set written as a `matches!` LIST that
+> is missing a kind.  `Type::is_amp_rebindable_heap` sits next to the defective line carrying
+> the full heap set, and its own doc records being written *"one home rather than two
+> `matches!` arms, which is how the keyed kinds came to be missing from both (loft#1291)"*.
+> Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends, with
+> `a_plain_keyed_bind_still_copies` as the control a share-everything cure fails.
+
+> **D-bind-28 — OPENED (2026-09-07) — the `&hash<τ[k]>` PARAMETER spelling is still
+> refused.**  `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable with
+> no operation special-cased, and `c += [rec]` on a `&hash<Row[id]>` parameter is refused
+> instead — *"Variable 'c' cannot change type from `&hash<Row,["id"]>` to `vector<Row>`"*,
+> because the append routes do not claim the statement (`is_keyed` / `is_collection` read
+> `tp.base()`, which peels `Optional` and not the link) and it falls into the VECTOR route.
+>
+> **Measured, and this is why the refusal stands**: making those predicates peel the link
+> WITHOUT the keyed emission path resolving its store through the parameter's double
+> indirection turns the refusal into a SILENT DROP — the statement routes, the emitted IR
+> reads correctly, and `len` answers 0 with no diagnostic.  A refusal is the better of the
+> two states, so the surface peel must not land alone.  Closes when the keyed insert resolves
+> a `RefVar` collection argument.
 
 > **D-bind-25, D-bind-26, D-bind-27 — OPENED AND CLOSED (2026-09-07) — three places
 > `(B-Disturb)` names that the walk could not see.**  All three came out of loft#1401's

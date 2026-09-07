@@ -355,7 +355,25 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0** — the closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a place
+**OPEN: 1.**
+- **D-bind-28** — residual: a `&` link to a keyed collection is honoured at a LOCAL and at a
+  struct FIELD, but the `&hash<τ[k]>` PARAMETER spelling is still refused.  The append routes
+  do not claim it (`is_keyed` / `is_collection` read `tp.base()`, which peels `Optional` and
+  not the link), and making them claim it WITHOUT the keyed emission path resolving its store
+  through the parameter's double indirection was measured to convert the refusal into a
+  SILENT DROP — `len` reads 0 with no diagnostic — which is the worse of the two states.  So
+  `(B-Ref-Uniform)`'s *no operation is special-cased* holds for the two binding provenances
+  and not yet for the parameter one.  Closes when the keyed insert resolves a `RefVar`
+  collection argument.
+
+The closed ones: **D-bind-29 CLOSED 2026-09-07 (loft#1433): a `&` bind to a keyed collection
+is a LINK, not a copy.**  `(B-Ref-Alias)` is stated over ANY binding, and the `&`-bind's
+source set was `matches!(source, Type::Vector(_, _))` — one kind — so all five keyed kinds
+took the deep-copy path: `a = &h` gave `a` its own store and `OpReplaceKeyed`-copied `h` into
+it, leaving two independent collections that each saw only their own writes.  From an EMPTY
+source that reads as the alias dropping every append, which is how it was filed; the append
+in fact lands in the alias's own store.  The set now comes from `vectors::is_collection`, the
+same store-backed set `(Col-Store)` names.  D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a place
 for a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
 through a FIELD, and for every place a branch's arms can name rather than only an agreed one;
 D-bind-24 CLOSED 2026-09-06 (loft#1401): a projection
