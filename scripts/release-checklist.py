@@ -1102,8 +1102,10 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "Performance pass — loft AND its libraries, routines pull their weight",
             "make speed; per library: python3 bench/compare.py   # the drawing library's "
             "bench/ is the model (loft#1426); @PLN158 adopts it as the standard",
-            "every routine within the bar of its pure-Rust reference twin, hashes agreeing "
-            "across lanes (a routine whose lanes disagree is not one algorithm).  Verify "
+            "the formal contract is formal/performance.md (Perf-Like / Perf-Weight / "
+            "Perf-Twin): every routine within the bar of its industry-language reference "
+            "twin, hashes agreeing across lanes (lanes that disagree are not one "
+            "algorithm), and a missing twin is WRITTEN where a hit is expected.  Verify "
             "attribution with the PROFILER, not by eye: `LOFT_PROFILE=1 loft --interpret "
             "bench.loft` with `LOFT_NO_NATIVE_LIBS=1` for library routines (a used library "
             "is a cdylib the sampler cannot enter), `make profile PROFILE_FLAGS=--engine` "

@@ -5,6 +5,15 @@ This document records current benchmark results, a root-cause analysis of every
 performance gap relative to CPython and hand-written Rust, and a detailed implementation
 design for each planned improvement.
 
+**The speed contract itself is formal:** [formal/performance.md](formal/performance.md) —
+`(Perf-Like)` a comparison is admissible only between lanes proven output-hash-equal;
+`(Perf-Weight)` every shipped routine (stdlib + libraries) is measured per release against
+an industry-language reference twin, because drift against a previous loft release compares
+to nothing outside the project; `(Perf-Twin)` where no natural counterpart exists a twin is
+WRITTEN the moment a hit is expected, never waived.  The model harness is the drawing
+library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard read
+by the release checklist's `M-perf-pass`.
+
 ---
 
 ## Contents
