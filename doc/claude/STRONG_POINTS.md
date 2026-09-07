@@ -95,7 +95,7 @@ tired of keeping app objects and database rows in sync by hand.
 
 **The turn-off.** They build the *app*, not just the store, and the libraries that
 make a server or a CRUD tool pleasant **do not meet the bar yet**
-([GOALS.md § six goals](GOALS.md#the-six-goals-at-a-glance)). The substrate is
+([GOALS.md § goals at a glance](GOALS.md#the-goals-at-a-glance)). The substrate is
 coherent; the product layer on top is unfinished, so the coherence they were
 promised stops at the library boundary.
 
@@ -472,7 +472,7 @@ one attracts is still glad they came, one step after they arrive.
 
 ## See also
 
-- [GOALS.md](GOALS.md) — the six goals A–F these strengths serve, each with a Check.
+- [GOALS.md](GOALS.md) — the seven goals A–G these strengths serve, each with a Check.
 - [BROADENING.md](BROADENING.md) — loft's four genuine differentiators beyond games.
 - [FORMALIZATION.md](FORMALIZATION.md) / [INCONSISTENCIES.md](INCONSISTENCIES.md) —
   the ranked rough spots (the negative-space companion to this doc).

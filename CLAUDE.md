@@ -388,7 +388,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·
-[QUALITY.md](doc/claude/QUALITY.md) open work · [GOALS.md](doc/claude/GOALS.md) (purpose + goals A–F) ·
+[QUALITY.md](doc/claude/QUALITY.md) open work · [GOALS.md](doc/claude/GOALS.md) (purpose + goals A–G) ·
 [BUS_FACTOR.md](doc/claude/BUS_FACTOR.md) (the development model — repo + agent, no single point of failure) ·
 [STRONG_POINTS.md](doc/claude/STRONG_POINTS.md) ·
 [CONTROL.md](doc/claude/CONTROL.md) the census of where the programmer is NOT in

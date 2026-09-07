@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # formal/performance.md — routines pull their weight (strict)
 
-**Catalogue:** @PLN158 (the release performance pass), loft#1426 (the first measurement).
+**Catalogue:** GOALS.md § G (the goal this doc is the contract for), @PLN158 (the release performance pass), loft#1426 (the first measurement).
 
 > **Rules then deviations** (see [README](README.md)). Unlike the other docs here, these
 > rules bind the DISTRIBUTION rather than a language construct: what "fast enough" MEANS
@@ -81,7 +81,7 @@ whose performance claim is unfalsifiable.
 fast language, and the fix that makes ONE routine fast by rewriting it in Rust removes
 the pressure that makes the LANGUAGE fast while leaving every other routine slow.  And
 the libraries double as the project's teaching corpus — an open-source distribution whose
-libraries a reader can actually comprehend (GOALS.md § B, legibility) — so the
+libraries a reader can actually comprehend (GOALS.md § B — the teaching corpus) — so the
 industry-wide pattern this rule refuses is the "fast pass": readable code shadowed by an
 optimized twin nobody can follow.  The reference twin exists to MEASURE, never to ship.
 A native rewrite remains available for the edge case that genuinely needs it, taken per

@@ -10,6 +10,13 @@ Always consult this before writing or reviewing `.loft` files.
 
 **Before reimplementing stdlib-or-library functionality, run `make libcatalogue` and read the generated `doc/claude/LIBRARIES.md` (built on demand, git-ignored), plus `loft install <name>` — a registered library may already provide it. Stdlib function signatures: [doc/claude/STDLIB.md](../../../doc/claude/STDLIB.md).** <!--noindex-->
 
+**Readable first.** Library code doubles as loft's teaching corpus, so write the clear
+loft version and keep it: a routine that measures slow is an ENGINE finding (or an
+algorithm fix here, in loft) — never a cue to shadow readable code with an optimized
+"fast pass" or a native rewrite; that escape hatch is a per-routine edge case with its
+reason recorded ([formal/performance.md](../../../doc/claude/formal/performance.md)
+`(Perf-Cure)`).
+
 ---
 
 ## Naming conventions — enforced by the parser

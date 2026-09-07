@@ -44,6 +44,14 @@ step, because the two tiers differ by an order of magnitude:
 State which tier you're in out loud — it sets expectations and stops you from over-building a
 Tier 1 library or under-estimating a Tier 2 one.
 
+**And performance is never the reason to leave Tier 1.** A library is written in readable
+loft on purpose — the libraries are the teaching corpus, and a slow routine is an engine
+finding, not a licence for a native "fast pass"
+([formal/performance.md](../../../doc/claude/formal/performance.md) `(Perf-Cure)`; the
+per-release measurement against an industry-language twin is `(Perf-Weight)`, the drawing
+library's `bench/` is the model). `#native` is for a real host capability, and a native
+rewrite for speed is a per-routine edge case with its reason recorded.
+
 ## The workflow
 
 1. **Scaffold** — `loft new <name>` (or copy a sibling library's `loft.toml`). See
@@ -52,7 +60,7 @@ Tier 1 library or under-estimating a Tier 2 one.
 2. **Write the loft surface** — the `.loft` API. For naming/types/format-strings/known-bugs,
    use the **`loft-write` skill** (this skill is about *shipping*, that one is about *writing
    `.loft`*). Keep the public surface clean per
-   [LIBRARY_CHECKLIST.md](../../../doc/claude/LIBRARY_CHECKLIST.md) (Goals A–F apply per
+   [LIBRARY_CHECKLIST.md](../../../doc/claude/LIBRARY_CHECKLIST.md) (Goals A–G apply per
    library; the stdlib is just the library every program imports).
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
    knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
