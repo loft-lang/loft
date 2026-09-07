@@ -4507,10 +4507,11 @@ impl Parser {
                 if !has_wildcard {
                     continue;
                 }
-                // A total `_` matches everything, so an arm written after it can never be
-                // selected.  Say that here: leaving it to the closing-brace expectation at the
-                // end of the loop reported "Expect token }" — the right caret with the wrong
-                // reason, on the rule the Match chapter states as "put it last".
+                // @FR-M-Wild — a total `_` matches everything, so an arm written after it can
+                // never be selected.  Say that here: leaving it to the closing-brace
+                // expectation at the end of the loop reported "Expect token }" — the right
+                // caret with the wrong reason, on the rule the Match chapter states as "put it
+                // last".
                 //
                 // `continue` rather than `break`, so the unreachable arms are parsed as the
                 // arms they are and the `}` is consumed normally; breaking here produced a
@@ -4575,7 +4576,19 @@ impl Parser {
                 || self.data.def_type(variant_def_nr) != DefType::EnumValue
                 || self.data.def(variant_def_nr).parent() != e_nr;
             if bad_variant {
-                if !self.first_pass && valid_enum && variant_def_nr != u32::MAX {
+                // @FR-M-Unit — an arm's pattern names a VARIANT of the subject's enum, and an
+                // arm that names anything else can never be selected.  The test is on the
+                // SUBJECT enum (`e_nr` resolved, second pass), not on whether the pattern name
+                // resolved to something: a name that resolves NOWHERE is exactly the common
+                // spelling of this mistake — a typo, or a variant that has since been renamed —
+                // and it is the one an author cannot see, because a dead arm looks like a live
+                // one and the value it should have produced comes from `_` instead.
+                //
+                // `e_nr == u32::MAX` stays silent: the subject enum is a cross-package forward
+                // reference whose dependency parses later (#375), so pass 1 skips the arm and
+                // pass 2 reads it with the enum resolved.  The same pairing `valid_enum &&
+                // e_nr != u32::MAX` guards the or-pattern branch below.
+                if !self.first_pass && valid_enum && e_nr != u32::MAX {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4857,6 +4870,11 @@ impl Parser {
                 for c in field_conditions {
                     combined = v_if(combined, c, Value::Boolean(false));
                 }
+                // @FR-P-Guard — the guard runs with the arm's bindings in scope and, when it
+                // is false, the arm fails exactly as if the pattern had not matched: ANDing it
+                // into the arm's own condition is what makes selection move on to the next arm
+                // rather than commit this one.
+                //
                 // If there's also an explicit `if` guard, AND them.
                 if let Some(g) = guard_opt {
                     combined = v_if(combined, g, Value::Boolean(false));
@@ -4866,6 +4884,13 @@ impl Parser {
 
             // Duplicate arm detection.
             // Guarded arms don't count as covering the variant for exhaustiveness.
+            //
+            // @FR-M-Match — selection takes the FIRST arm whose pattern matches, so a variant
+            // named twice makes the later arm dead; that is what `covered` reports.
+            // @FR-M-Total — and it is the same set that decides coverage, which is why the
+            // guarded arm is excluded from BOTH: a guard can reject, so a guarded arm neither
+            // covers its variant nor makes a later one unreachable.  One test, one insertion,
+            // so the two answers cannot drift apart.
             if guard_opt.is_none() {
                 if covered.contains(&variant_def_nr) {
                     if !self.first_pass {
@@ -5019,6 +5044,11 @@ impl Parser {
 
         self.lexer.token("}");
 
+        // @FR-M-Exhaust — a match on an enum covers EVERY variant, or carries a `_`; a match
+        // that forgets one is a STATIC error naming what is missing, never a runtime fault.
+        // The `covered` set it reads is filled by the arm loop above under @FR-M-Total's rule
+        // (an unguarded arm only), so the two halves of the totality judgment share one fact.
+        //
         // Exhaustiveness check (second pass only, when no wildcard, when subject is a known enum).
         if !self.first_pass && !has_wildcard && valid_enum {
             let missing: Vec<String> = self
@@ -5274,6 +5304,9 @@ impl Parser {
 
     fn parse_match_wildcard_arm(&mut self, result_type: &mut Type) -> (EnumArm, bool) {
         let guard_opt = self.parse_optional_guard();
+        // @FR-M-Total — `total(pat if cond) = false`: a guard can reject after the pattern has
+        // matched, so a guarded `_` secures nothing and the arms after it are reachable.  This
+        // one line is why `_ if cond` is not treated as the last arm.
         let is_exhaustive = guard_opt.is_none();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;

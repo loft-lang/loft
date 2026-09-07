@@ -182,10 +182,11 @@ backtracking safe.
                      totality, whatever its pattern.
              ENFORCEMENT splits on whether coverage is DECIDABLE:
                • ENUM subject — the variant set is finite + known, so coverage IS checked.  A variant
-                 counts as covered only by a TOTAL arm (bare `Variant` / `_` / bare binding), NEVER by
-                 a guarded or otherwise non-total arm.  A variant left uncovered with no `_` is a
-                 STATIC ERROR ("match on T is not exhaustive — missing: X; add the missing variants or
-                 a `_ =>` wildcard").
+                 counts as covered only by a TOTAL arm (bare `Variant` / `_`), NEVER by a guarded or
+                 otherwise non-total arm.  A variant left uncovered with no `_` is a STATIC ERROR
+                 ("match on T is not exhaustive — missing: X; add the missing variants or a `_ =>`
+                 wildcard"), and an arm naming something that is NOT a variant of the subject's enum
+                 is a static error at the arm (M-Unit) rather than an arm that never fires.
                • SCALAR subject (integer / character — an unbounded domain) — coverage is NOT decidable
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
                  the C80 spreadsheet model ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)) it then
@@ -196,7 +197,18 @@ backtracking safe.
 
 **In words.** For an ENUM subject this keeps loft's promise that a `match` never falls through to
 nothing: the compiler requires the arms to cover every variant (a variant counts only when a TOTAL
-arm names it — a guard does not), or a final `_`; otherwise the program does not compile. For a
+arm names it — a guard does not), or a final `_`; otherwise the program does not compile.
+
+> ⚠ **A bare binding is an ELEMENT pattern, never an enum ARM.** `total(bare name) = true` above is
+> about a POINT pattern inside a sequence — `[a, b] => a + b` binds two elements — and the ARM
+> position has no such form: the grammar is `pattern ::= '_' | 'null' | literal | range |
+> CamelIdent [ '{' field_bind '}' ]` (LOFT.md § Grammar), so `match c { A => 1, other => 2 }` does
+> not bind `c` to `other`; `other` is read as a variant name and there is no variant of that name.
+> The enum-subject bullet said "bare binding" for two months and the code never had it — corrected
+> 2026-09-07, together with the silence that hid it: an arm whose name resolved NOWHERE was
+> skipped without a diagnostic, so a misspelled or renamed variant fell to `_` and the program
+> answered the wildcard's value on both backends
+> (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
 no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
@@ -243,6 +255,21 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   `tests/boolean_match_exhaustive.rs` (the warning stream, which no corpus channel scores);
   falsified at `dd46146c` — five warnings → none on both backends.
 
+- **D-match-2 — OPENED AND CLOSED 2026-09-07.**  `(M-Unit)` says an arm's pattern names a variant
+  of the subject's enum.  An arm naming something else was refused only when the name resolved to
+  SOME other definition; a name that resolved NOWHERE — a typo, or a variant renamed since the arm
+  was written — was skipped in silence, its body still parsed and type-checked, and the subject
+  fell to whatever arm came next.  With a `_` present that is a wrong ANSWER with no diagnostic on
+  either backend: `match c { Red => "red", Grean => "GREEN", _ => "other" }` answered `"other"` for
+  `Colour::Green`.  The gate was on the PATTERN name resolving; it is now on the SUBJECT enum being
+  resolved (`valid_enum && e_nr != u32::MAX`), which is the condition the skip actually exists for
+  — a cross-package forward reference read on pass 2 (#375).  Guard
+  `tests/scripts/a-match-arm-names-a-variant-that-exists.loft`, three arms, falsified at
+  `a192aecbd` (all three compiled and ran there, zero diagnostics).  The same walk corrected
+  `(M-Total)`'s enum bullet, which offered "bare binding" as a covering arm form — an element
+  pattern the ARM grammar does not have, and the reading that makes the silent skip look
+  deliberate.
+
 - **PEG patterns are SHIPPED (@PLN35)** — the *Rules — PEG patterns* § opens **no** deviation: the
   shipped implementation (phases 1–7 + PC1–PC5, [plans/35-match-peg](../plans/35-match-peg/))
   conforms to the stated rules, verified both backends. Each rule is pinned by the @PLN89 oracle in
@@ -262,6 +289,16 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   Circle { r } => r*r }` is `25`.
 - **Wildcard default (`M-Wild`)** — `match C::D { A => 1, _ => 0 }` is `0`; an arm after `_` is a
   compile error.
+- **An arm names a real variant (`M-Unit`)** — `match c { Red => …, Grean => …, _ => … }` over
+  `enum Colour { Red, Green, Blue }` does NOT compile ("'Grean' is not a variant of Colour"),
+  whether or not a definition of that name exists elsewhere, and whether or not a `_` would have
+  absorbed the subject.
+- **A guard covers nothing (`M-Total`)** — `match c { A if x => 1, B => 2 }` over `enum C { A, B }`
+  does not compile ("missing: A"), and `match c { _ if x => 1 }` does not compile ("missing: A, B");
+  a false guard moves selection to the next arm with no binding left behind (`P-Guard`,
+  `P-Atomic`).
+- **Scalar fall-through is null (`M-Total`)** — `match n { 1 => 10, 2 => 20 }` with `n = 9` is
+  `null`, and the match's type is nullable; no error, no fault.
 - **Exhaustiveness (`M-Exhaust`)** — `match c { A => 1 }` over `enum C { A, B }` does NOT compile
   ("missing: B"); adding a `B => …` arm or a trailing `_` makes it compile.
 - **As an expression (`M-Expr`)** — `r = match c { A => 100, B => 200 }` binds `r` to the arm's

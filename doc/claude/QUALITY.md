@@ -6552,6 +6552,58 @@ and the new pre-sweep also collected the two the baseline run had just leaked.  
 that read one citation apart: *a gate that leaves live processes was recorded as an unexplained
 property of the gate*, and the checkable version of it — which name does the reap actually look
 for — was one grep away.  A defence that cannot report a miss is not evidence that it fired.
+#### B8l — matching.md walked for CITATIONS and one rule was carrying a silent wrong (2026-09-07)
+
+../loft had already walked this chapter's behaviour (55d6b2ca) and reported a NEGATIVE — every
+claim holds — so this was meant to be a receipts pass over the 23 rules at zero citations.  Eight
+rules were covered by that walk; the four it had not reached were measured here and hold
+(`(P-Guard)`'s fall-through to the next arm, `(P-Atomic)`'s invisible provisional binds,
+`(P-Range)`'s `2..=5` / `2..5` split, and `(M-Total)`'s guarded clause on both `_ if c` and
+`V if c`).  The ninth did not.
+
+**`(M-Unit)` was silently ignoring the arms it is about.**  An arm whose pattern name resolves
+NOWHERE — a typo, or a variant renamed since the arm was written — was skipped with no
+diagnostic at all: parsed, its body type-checked, and never selectable.  With a `_` in the match
+that is a WRONG ANSWER rather than a dead arm, on both backends:
+
+    enum Colour { Red, Green, Blue }
+    match c { Red => "red", Grean => "GREEN", _ => "other" }    // Colour::Green answers "other"
+
+⚠ **And the same program IS refused when the misspelling happens to collide with something.**
+`'Grean' is not a variant of Colour` fires only when the name resolves to SOME definition — the
+gate was on the PATTERN name resolving, so declaring `struct Grean` elsewhere turns the silent
+program into a rejected one.  The condition the skip actually exists for is the SUBJECT being
+unresolved (#375, a cross-package forward reference skipped on pass 1 and read on pass 2), which
+is what it now tests: `valid_enum && e_nr != u32::MAX`, the pairing already used by the
+or-pattern branch twenty lines below.
+
+**The rule was carrying the reading that made the silence look deliberate.**  `(M-Total)`'s
+ENUM-subject bullet listed "bare binding" among the arm forms that cover a variant.  The ARM
+grammar has no bare binding — `pattern ::= '_' | 'null' | literal | range | CamelIdent [ '{'
+field_bind '}' ]` — and `total(bare name) = true` above it is about an ELEMENT pattern inside a
+sequence (`[a, b] => a + b`, measured legal).  So `match c { A => 1, other => 2 }` is not a
+catch-all and never was; read the bullet literally and the silent skip looks like a feature
+someone had not finished wiring.  Corrected, and `D-match-2` records the pair as opened and
+closed the same day — the chapter stays `OPEN: 0`.
+
+**Six rules cited** (`M-Unit`, `M-Wild`, `M-Match`, `M-Total`, `M-Exhaust`, `P-Guard`), each at
+the site that decides it, and two of them at ONE site on purpose: the `covered` set answers both
+*"is this arm dead?"* (`M-Match`, first-match-wins) and *"is this variant handled?"*
+(`M-Total`), and the guarded arm is excluded from both by the same test, so the two answers
+cannot drift.
+
+**The tightening was checked against the whole registry before it landed** — COMPATIBILITY.md
+§ *the error surface is one-directional* calls a too-permissive surface a **last-chance-to-add**,
+and the price of adding is that a program which compiled now fails.  `scripts/revalidate_libs_local.sh`:
+**38 pass, 0 COMPILE-BREAK, 4 skipped** for want of a local clone.  No published library has a
+dead match arm.
+
+⚠ **The lesson is about the negative result, not the defect.**  A behaviour walk that comes back
+clean is evidence about the claims it checked, and a chapter has more claims than it has rules:
+the eight walked here were the ones the doc states as conformance bullets, and `(M-Unit)` — the
+one whose enforcement is a diagnostic rather than an answer — was not among them.  **A rule whose
+failure mode is SILENCE cannot be checked by running a program that works.**
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |

@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-M-Unit — an arm's pattern names a VARIANT of the subject's enum.  An arm naming
+// anything else can never be selected, and the compiler says so at the arm.
+//
+// The case this file exists for is the one that answered SILENTLY: a pattern name that
+// resolves NOWHERE — a typo, or a variant renamed since the arm was written.  The
+// diagnostic was gated on the name resolving to SOME definition, so `Grean` was refused
+// when a struct of that name happened to exist and accepted when nothing did.  With a `_`
+// in the match the dropped arm is invisible: the subject falls to the wildcard and the
+// program answers the wildcard's value, on both backends, with nothing said.
+//
+// Deliberately NOT here: an arm whose name resolves to a non-variant definition (already
+// refused with this same message), and a match whose subject enum is an unresolved
+// cross-package forward reference (#375) — that arm is skipped on pass 1 by design and
+// read on pass 2 with the enum resolved, which is why the test is on the SUBJECT being
+// resolved and not on the pattern name resolving.
+//
+// @EXPECT_ERROR: 'Grean' is not a variant of Colour
+// @EXPECT_ERROR: 'other' is not a variant of Colour
+// @EXPECT_ERROR: 'zzz' is not a variant of Colour
+//
+// @falsified-at: a192aecbd (hand-measured) — every one of the three arms below compiled
+//   there and ran to completion: `misspelled_with_a_wildcard(Green)` answered "other"
+//   instead of "GREEN", `lowercase_name` answered 2 for `B`, and `covered_and_extra` ran
+//   silent.  Zero diagnostics on either backend.
+
+enum Colour { Red, Green, Blue }
+
+// The renamed / misspelled variant, hidden by a `_`.  This is the shape that answers
+// wrong rather than failing: `Green` reaches the wildcard.
+fn misspelled_with_a_wildcard(c: Colour) -> text {
+  return match c {
+    Red => "red",
+    Grean => "GREEN",
+    _ => "other",
+  };
+}
+
+// A lowercase name is not a pattern the grammar has (`pattern ::= '_' | 'null' | literal |
+// range | CamelIdent [ '{' field_bind '}' ]`), so it is not a catch-all binding either —
+// it is the same mistake wearing a different case.
+fn lowercase_name(c: Colour) -> integer {
+  return match c { Red => 1, other => 2, Green => 3, Blue => 4 };
+}
+
+// With every variant already covered, the extra arm is pure dead code — no exhaustiveness
+// error follows it, so this arm is the whole of what the diagnostic has to catch.
+fn covered_and_extra(c: Colour) -> integer {
+  return match c { Red => 1, Green => 2, Blue => 3, zzz => 4 };
+}
+
+fn main() {
+  println(misspelled_with_a_wildcard(Colour::Green));
+  println("{lowercase_name(Colour::Green)}");
+  println("{covered_and_extra(Colour::Blue)}");
+}
