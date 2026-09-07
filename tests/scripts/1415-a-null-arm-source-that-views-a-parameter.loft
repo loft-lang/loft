@@ -32,6 +32,13 @@ enum Tok { Fn { x: integer }, Id { x: integer } }
 
 fn head_from_parameter(v: vector<Tok>) -> Tok? { match v { [a, ..] => a, _ => null } }
 
+// The NULLABLE-element twin.  It is the cell this guard was missing: the binding's own type is
+// then `Tok?`, which makes `borrows_one_argument` true of it, and an exclusion written only as
+// "the store is the caller's, unless it is the one-argument borrow that may hold a mint" let it
+// straight back into the null-arm set.  Caught by loft3's #1414 guard on the native corpus, not
+// by this file, which is why it is here now.
+fn head_from_nullable_parameter(v: vector<Tok?>) -> Tok? { match v { [a, ..] => a, _ => null } }
+
 // The control that always compiled: a LOCAL subject materialises the view into a
 // function-scope temp first, so its free was already in a scope that declares it.
 fn head_from_local() -> Tok? {
@@ -67,6 +74,20 @@ fn an_empty_parameter_answers_null_and_leaves_the_caller_alone() {
   again = head_from_parameter(v);
   assert(again != null, "a second call still reads a live store");
   assert_eq("{v[0].x}", "7", "the caller's element is unchanged");
+}
+
+// The same question over a NULLABLE element: the binding is `Tok?` either way, so the free
+// site cannot tell it from a local that may own — only its SCOPE can, and the free is emitted
+// outside the arm that declares it.
+fn a_nullable_element_parameter_answers_and_stays_compilable() {
+  w: vector<Tok?> = [Id { x: 4 }, null];
+  h = head_from_nullable_parameter(w);
+  assert(h != null, "the first element is present");
+  assert_eq("{h.x}", "4", "and reads its payload");
+  assert_eq("{len(w)}", "2", "the caller's vector is intact");
+
+  e: vector<Tok?> = [];
+  assert(head_from_nullable_parameter(e) == null, "an empty one answers null");
 }
 
 fn the_local_subject_control_still_answers() {
