@@ -579,8 +579,8 @@ declared BEFORE the real source is skipped by the first-vector-field rule rather
 found null.  Every cell asserts the cursor POSITION as well as the bound value, because a cursor
 match that degraded to a plain struct match could bind the right value while failing to advance.
 
-**Two positions do NOT work, and the second one is why this batch ships without a fix.**  A `?`
-on the `src` or `pos` field turns cursor matching off and the failure surfaces as a parse error
+**Two positions do NOT work, and the second one is why this batch ships without a fix
+(loft#1410).**  A `?` on the `src` or `pos` field turns cursor matching off and the failure surfaces as a parse error
 pointing at the arm PATTERN, naming nothing the author can act on.  And a nullable ELEMENT
 (`src: vector<Tok?>`, or the same shape with no cursor at all — `match v { [Id { x }] => … }`
 over a `vector<Tok?>`) is refused the same way, while its dense twin runs; `control.rs:8541` and
@@ -596,8 +596,8 @@ byte at offset 0 is @PLN25's nullable TAG, not the variant discriminant, so a pe
 answers a variant question with an absence bit.  The element has to be read THROUGH its tag and
 the pattern must FAIL on an absent element — `(L-Null-Which)`, the rule phase 5 batch 1 closed
 for field reads and method calls, now asked of the @PLN35 slice machinery.  That is a design
-step in the pattern machinery rather than a peel, so it is the batch's OPEN item, recorded here
-with its measurement rather than half-fixed.  The guard says in its header what it does not
+step in the pattern machinery rather than a peel, so it is the batch's OPEN item — filed as
+**loft#1410** with the measurement, rather than half-fixed.  The guard says in its header what it does not
 cover and why.
 
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)

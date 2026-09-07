@@ -23,7 +23,7 @@
 // without a cursor (`match v { [Id { x }] => … }` over a `vector<Tok?>`).  The cure is not a
 // peel — the variant tag test reads the byte at offset 0, which for a `vector<S?>` element is
 // @PLN25's nullable TAG rather than the discriminant, so the element must be read THROUGH its
-// tag first (`(L-Null-Which)`).  Recorded in the plan's phase-4 batch 5 notes.
+// tag first (`(L-Null-Which)`).  loft#1410, with the plan's phase-4 batch 5 notes.
 //
 // Axes this file MOVES:  where the `?` sits relative to the cursor (the subject; an unrelated
 //                        field; a vector field that is NOT the source), and the number of
@@ -34,7 +34,7 @@
 // @falsified-at: none — every cell here passes on the build that motivated the walk.
 //   These are the walk's CLOSED positions, kept so a later change to `cursor_shape`'s three
 //   tests cannot quietly turn cursor matching off for a nullable subject.  The cells that DO
-//   move are in the plan's batch-5 notes, unguarded because the shape does not compile yet.
+//   move are loft#1410, unguarded because the shape does not compile yet.
 
 enum Tok { Fn { x: integer }, Id { x: integer } }
 
