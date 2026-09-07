@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Null — `t?` and `t` share sentinel storage, so a null the callee answers is a null the
+// caller reads.  How that absence is SPELLED depends on where the value lives, and `== null`
+// picks its test from that: a value sitting in an inline element or field slot has absence
+// written in the four-byte word at the slot (discriminant 0, since a struct-enum's variants are
+// numbered from 1), while a HANDLE — a local, a parameter, a return — carries it in the store
+// pointer and is tested with `OpRefIsNull`.
+//
+// The slot test was reached by asking whether the value's dep chain reaches a collection, and
+// that question is true of two different things.  A `for e in v` loop variable over a
+// `vector<Tok?>` is a sub-reference INTO an element slot, which is the case it was written for.
+// A local bound from a view-returning call — `b = head(v)` — deps on the caller's vector too,
+// because that is what the return borrows, yet it is a whole handle.  It took the slot test,
+// read a discriminant through a null handle, and answered PRESENT for the value the callee had
+// just said was absent: `b == null` was FALSE while `head(v) == null` beside it was TRUE, on
+// both backends, with every field of `b` reading null (loft#1421).
+//
+// The half that settles it is the ELEMENT type.  An inline absent slot exists only where an
+// element is ALLOWED to be absent, so a value viewing a DENSE `vector<t>` is necessarily a
+// handle.  Both cells below are kept: the loop variable is what the slot test is FOR, and
+// dropping it would let a cure that simply deleted the slot test read green.
+//
+// @falsified-at: 2170d488 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  ONE failure, not two, because the cell
+//   asserts the inline control first and stops at the bound spelling beneath it: on that build
+//   `head(e) == null` is true and `bound = head(e); bound == null` is false in the same
+//   function, which is what says the defect is the BINDING and not the call.
+
+enum Tok { Fn { x: integer }, Id { x: integer } }
+struct Box { t: Tok? }
+
+fn head(v: vector<Tok>) -> Tok? { match v { [a, ..] => a, _ => null } }
+
+// ── The handle: a call result read as a value, however the caller spells the binding ──
+
+fn a_call_result_bound_to_a_local_is_still_absent() {
+  e: vector<Tok> = [];
+  assert(head(e) == null, "the inline control says absent");
+  bound = head(e);
+  assert(bound == null, "and the bound local agrees");
+  declared: Tok? = head(e);
+  assert(declared == null, "and so does the annotated one");
+}
+
+fn a_present_call_result_is_not_absent() {
+  v: vector<Tok> = [Id { x: 7 }];
+  bound = head(v);
+  assert(bound != null, "a present answer is present");
+  assert_eq("{bound.x}", "7", "and reads its payload");
+}
+
+// A local given the literal always used the handle test, so it is the control that says the
+// cure did not simply move every local onto the slot test.
+fn a_literal_null_local_is_absent() {
+  a: Tok? = null;
+  assert(a == null, "a literal null local is absent");
+  p: Tok? = Id { x: 1 };
+  assert(p != null, "and a literal present one is not");
+}
+
+// ── The slot: what the discriminant test is FOR, and must remain ──
+
+fn a_loop_variable_over_a_nullable_element_reads_its_slot() {
+  w: vector<Tok?> = [Id { x: 1 }, null, Fn { x: 2 }];
+  absent = 0;
+  present = 0;
+  for e in w {
+    if e == null { absent = absent + 1; } else { present = present + 1; }
+  }
+  assert_eq("{absent}", "1", "the absent element is seen as absent");
+  assert_eq("{present}", "2", "and the two present ones as present");
+}
+
+fn a_nullable_field_reads_its_slot() {
+  empty = Box { t: null };
+  full = Box { t: Id { x: 3 } };
+  assert(empty.t == null, "an absent field is absent");
+  assert(full.t != null, "a present field is present");
+  assert_eq("{full.t.x}", "3", "and reads its payload");
+}
+
+// A loop over a DENSE vector is the cell that separates the two questions: its element can
+// never be absent, so the value is a handle even though the dep chain reaches a collection.
+fn a_loop_variable_over_a_dense_element_is_never_absent() {
+  d: vector<Tok> = [Id { x: 4 }, Fn { x: 5 }];
+  seen = 0;
+  for e in d {
+    assert(e != null, "a dense element is never absent");
+    seen = seen + 1;
+  }
+  assert_eq("{seen}", "2", "and every element was visited");
+}

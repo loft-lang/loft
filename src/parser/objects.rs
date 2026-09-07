@@ -133,16 +133,26 @@ impl Parser {
     /// A captured collection is stored in the closure record as a `Reference` DbRef, so
     /// the body must recover its real (collection) type from `capture_context` to keep
     /// `h[key]` / iteration typed correctly.
-    /// loft#1071 — does this type BORROW a collection, directly or one link on?
+    /// loft#1071 — does this value view a collection ELEMENT SLOT that may be absent?
     ///
-    /// A `for e in v` loop variable is a sub-reference into `v`'s element slot, and that
-    /// is what its deps record — but the type at a USE site deps on the variable ITSELF,
-    /// and only the variable's DECLARED type deps on the collection. So the question
-    /// needs the chain followed, not the first link read.
+    /// A `for e in v` loop variable is a sub-reference INTO `v`'s element slot rather than
+    /// a handle of its own, so absence lives in the four-byte word at that slot and not in
+    /// a store-pointer sentinel.  The question has to follow the dep CHAIN rather than read
+    /// the first link, because a use-site type deps on the variable itself and only the
+    /// declaration deps on the collection.
+    ///
+    /// The reached collection's ELEMENT must be nullable, and that half is what makes this
+    /// a slot question instead of a borrow question.  An inline absent slot exists only
+    /// where an element is allowed to be absent: a value viewing a DENSE `vector<t>` is
+    /// necessarily a whole handle, and its absence is the store sentinel.  Asked without
+    /// it, a plain local bound from a view-returning call — `b = head(v)`, whose deps name
+    /// the caller's vector because that is what the return borrows — took the slot test,
+    /// read a discriminant through a null handle, and answered PRESENT for the value the
+    /// callee had just said was absent (loft#1421).
     ///
     /// Bounded, because a self-dep (`e` depending on `e`) is exactly the shape that makes
     /// the walk necessary and would otherwise make it loop.
-    pub(crate) fn views_a_collection(&self, tp: &Type) -> bool {
+    pub(crate) fn views_a_nullable_element_slot(&self, tp: &Type) -> bool {
         let mut deps: Vec<u16> = tp.depend();
         let mut seen: Vec<u16> = Vec::new();
         for _ in 0..3 {
@@ -154,7 +164,9 @@ impl Parser {
                 seen.push(d);
                 let dt = self.vars.tp(d);
                 if Self::is_collection_type(dt.base()) {
-                    return true;
+                    // The walk stops at the FIRST collection: that is the one this value
+                    // would be a slot of, and a dense one settles the question.
+                    return matches!(dt.base(), Type::Vector(elm, _) if matches!(**elm, Type::Optional(_)));
                 }
                 next.extend(dt.depend());
             }
