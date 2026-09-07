@@ -33,10 +33,17 @@
 //
 // @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
 //   interpret exit 1 -> 0, native exit 1 -> 0.  The control fails as a store-lifetime violation
-//   (`USE AFTER FREE (read) store #2 type=C39`), which is the channel this defect has.
+//   (`USE AFTER FREE (read) store #N type=C39`), which is the channel this defect has.
 //   `LOFT_STRICT_STORES` alone is enough and is the load-bearing half — measured; `LOFT_POISON`
 //   adds nothing here, since the question is WHEN the store was released and not what its bytes
 //   read afterwards.
+//
+//   Re-measured on a PRISTINE `git worktree add --detach e9f45817` with its own target dir,
+//   because a cached control can be run in a way that scores the wrong tree: control-native
+//   exit 1 with 6 use-after-free reports and ZERO assertion failures, control-interpret exit 1
+//   with 4.  Both legs carry the claim, and neither carries it through an assertion — which is
+//   why the native harness's "one binary, first failed assertion ends the run" does not weaken
+//   this one: the store channel is reported per violation, not per cell.
 //
 //   ⚠ In PLAIN mode it reads INERT, and that is the finding rather than a harness quirk: the
 //   freed record keeps its bytes until something writes over them, so the escaped closure reads

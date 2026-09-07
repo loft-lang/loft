@@ -22,8 +22,13 @@
 //
 // @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
 //   interpret exit 1 -> 0, native exit 1 -> 0.  The control reports two
-//   `USE AFTER FREE (read) store #2 type=Q42`.  That flag alone is the load-bearing half,
+//   `USE AFTER FREE (read) store #N type=Q42`.  That flag alone is the load-bearing half,
 //   measured; `LOFT_POISON` is not needed, because the question is WHEN the store was released.
+//
+//   Re-measured on a PRISTINE `git worktree add --detach e9f45817` with its own target dir:
+//   control-native exit 1 with 2 use-after-free reports and zero assertion failures,
+//   control-interpret exit 1 with 2.  Both legs carry the claim through the store channel
+//   rather than through an assertion.
 //
 //   ⚠ In PLAIN mode it reads INERT, and that is a fact about the defect: a released record
 //   keeps its bytes until something writes over them, so the same probe answered
