@@ -3793,6 +3793,36 @@ like work in progress — and reporting *"re-ran it, no failures"* off that is t
 before believing a re-run: the absence of failures is not a pass, which is the same positive-half
 rule this section applies to guards.
 
+⚠ **But the converse trap is real too, and it caught two of us on one afternoon: a report that
+cannot say WHAT it checked is not evidence that it checked nothing.**  `loft --interpret --tests
+<file>` on a file carrying FILE-level `@EXPECT_ERROR` pins prints
+
+```
+  ok    893-field-store-type.loft  (0 expected errors: )
+```
+
+— a zero and an empty list, which reads exactly like a run that scored no pins.  It is not.  The
+count is `file_result.tests.len()` (`src/test_runner.rs`), which counts **per-FUNCTION**
+expectations; a file whose pins are file-level has none of those and reports `0` while its pins
+are checked normally.
+
+**Falsified rather than reasoned about, which is the only reason the entry is the right way
+round.**  Take a scratch copy, change ONE pin and nothing else — `hash<E,["k"]>` to
+`hash<E[k]>` — and run the same command, with the unmodified copy beside it as the control:
+
+| copy | result |
+|---|---|
+| one pin wrong | `FAIL  one.loft  (parse errors)` |
+| unmodified | `ok` |
+
+So the pins are scored, per pin, and the check can fail.  Both of the sessions that read that `0`
+as vacuity had already concluded the spelling was blind and were about to write it down.  The
+cheap control — corrupt one cell and look — cost thirty seconds and reversed the finding.
+
+The rule that survives is the pair, not either half: **a report saying `ok` proves nothing until
+you know the instrument can say `FAIL`** — and *"I cannot see what it measured"* is a fact about
+the report, never a measurement of the instrument.
+
 
 **A fixture chosen for convenience lands where every candidate implementation agrees.**  This is
 the cause behind the two entries above and it was sighted three times in one day: `7` fits every
