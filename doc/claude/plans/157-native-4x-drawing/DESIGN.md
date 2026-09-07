@@ -535,6 +535,32 @@ interpret / native / `LOFT_HOIST_VERIFY`.
 
 ---
 
+## Consumer 14-row re-run (2026-09-07, after P4d)
+
+`compare.py --skip-interp` with this tree's binary + auto-built
+`--native-release` cdylibs — so these carry the NAMED prelude, not the
+`--lean` gate row (`hash` reads 15.8x here vs 5.4x lean; the gap is M1,
+which `--lean` or P2's LTO closes for a consumer).  Every row hashes agree.
+
+| routine | baseline | now | note |
+|---|---:|---:|---|
+| hash | 10.9 | 15.8* | cdylib carries the named prelude |
+| hair | 4.3 | ~3.6 | under the bar |
+| smooth | 262 | 202 | call+alloc bound (Pt-vector append) |
+| fronds | 49 | 53 | alloc bound (Frond records) |
+| lock | 30 | 17.2 | P4 write fusion |
+| lock_curved | 34 | 18.0 | P4 write fusion |
+| composite | 26 | 21.8 | |
+| fill_circle | 17 | 7.1 | |
+| fill_star | 17 | 7.5 | |
+| wide_line | 17 | 14.0 | |
+
+The write-heavy rasters moved most (P4); smooth/fronds barely moved because
+they are call-and-alloc bound — the VALUE-RETURN and vector-append classes,
+not anything P1-P4 shaped.  So the two worst rows and lock's bulk all route
+to the same next lever (below): the re-run SHARPENED the target rather than
+shrinking it.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can
@@ -596,9 +622,22 @@ routes:
   auditable per def.  Less than the tuple ceiling (the record write/read
   round-trip stays) but most of the alloc win, at S–M instead of L.
 
-Recommendation: probe Route R's ceiling by hand first (retbuf hoisted, alloc
-skipped, hoists on — the probe harness already has the pieces), and take T
-only if R leaves the bulk on the table.
+**Both ceilings probed (2026-09-07, quiet box, n=50 medians, hashes exact):**
+
+| form | `lock` ns/op | vs P4d |
+|---|---:|---|
+| P4d (committed) | 25.1M | — |
+| Route R (retbuf reused, alloc + 2 frees/pixel gone, resolve hoists on) | 17.8M | **−29 %** |
+| Route T (value tuple, no record round-trip) | 14.2M | −43 % |
+
+**Decision: Route R.**  It captures −29 % of the −43 % available — nearly
+all the allocation win — at S–M effort reusing the existing `__retbuf`
+ABI slot, versus Route T's L-effort statement-run pattern match (the one
+shape this plan has otherwise refused).  T's extra −13 pts is the record
+write/read round-trip that R keeps; a later, separate item if `lock` needs
+it after R + P4c.  R's one new fact — "this callee writes only into its
+retbuf" — is a narrow, per-def-auditable exception to the
+no-interprocedural-in-place rule, gated by `LOFT_NO_VALUE_RETURN=1`.
 
 **Effort:** M–L (T) / S–M (R).  **Red:** any consumer-pass hash moves; the
 census's escaping-site cells answer differently than the record form;
