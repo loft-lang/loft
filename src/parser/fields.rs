@@ -20,8 +20,15 @@ impl Parser {
         // the right signal — `expr_not_null` alone is false even for a non-null
         // constructed struct, which would wrongly suppress genuine warnings, e.g.
         // p285.)
-        let receiver_nullable =
-            matches!(tp, Type::Optional(_)) || self.reads_a_collection_element(code);
+        // `τ?` reaches here under BOTH of its spellings: the `Type::Optional` marker, and the
+        // synthetic `__nullable<S>` enum an INLINE slot holds an absent `S` in
+        // (`@FR-L-Null-Tag`).  A method call dispatches on the receiver's nullability
+        // (`@FR-F-Recv`, below), so reading only the marker would send the tagged spelling to
+        // the dense overload — the same disagreement between two spellings of one notion that
+        // loft#1432 is about between two spellings of one call.
+        let receiver_optional =
+            matches!(tp, Type::Optional(_)) || self.data.is_nullable_wrapper(&tp);
+        let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction
             // (`p = Plyer { … }` with an unknown `Plyer`) assigns to its
@@ -496,6 +503,29 @@ impl Parser {
             }
         }
         if let Type::Routine(r_nr) = self.data.attr_type(dnr, fnr) {
+            // @FR-F-Recv — the attribute slot holds the method's NAME (membership, and what
+            // every enumeration site reads); WHICH of `m(τ)` / `m(τ?)` a call reaches is
+            // `find_fn`'s answer.  Asking it here is what gives `x.m()` and `m(x)` one
+            // resolution: taking the slot's routine sent an absent receiver to the dense
+            // overload written for a present one, and told the author their receiver was
+            // undischarged in a program declaring the overload for exactly that (loft#1432).
+            //
+            // `find_fn` falls through to a free `n_<name>` and to the built-in operator map
+            // when no method matches; those are not candidates here, because reaching this
+            // line means the receiver type DOES carry a method of this name.  So the answer
+            // is taken only when it is one (`t_` keys the method spellings), and the slot's
+            // routine stands otherwise.
+            let dispatch = if receiver_optional {
+                Type::optional(t.clone())
+            } else {
+                t.clone()
+            };
+            let found = self.data.find_fn(u16::MAX, &field, &dispatch);
+            let r_nr = if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+                found
+            } else {
+                r_nr
+            };
             if self.lexer.has_token("(") {
                 t = self.parse_method(code, r_nr, t.clone());
             } else {

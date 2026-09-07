@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `m(t)` and `m(t?)` are TWO definitions of one method, and a call reaches the one spelled
+// for its receiver — whichever order the pair is declared in, and whichever way the call is
+// written.
+//
+// `@FR-F-Recv` gives both halves. The def key carries the `?` (@PLN25), so the two overloads
+// are two definitions; and a call on an absent receiver "reaches it with `self == null`,
+// which is the whole point of the spelling". What the rule lacked was the RESOLUTION ORDER,
+// and this file is that sentence made executable: the receiver's own nullability first, the
+// other second. A `t?` receiver reaching `m(t)` is `(N-Store)`'s case and warns; a `t`
+// receiver reaching `m(t?)` is `(N-Intro)` and is free.
+//
+// Two spellings of ONE call disagreed, in BOTH directions, and each direction hid the other:
+//
+//   * with both overloads declared, `z.area()` on an absent receiver answered the DENSE
+//     overload's value while `area(z)` beside it answered the nullable one. `find_fn` already
+//     implemented the rule; the method spelling never asked it, resolving through the type's
+//     ATTRIBUTE TABLE instead, which holds one routine per name. So the nullable overload was
+//     not merely unreachable but inert — deleting it changed nothing — and the author was
+//     told their receiver was undischarged in a program declaring the overload written for
+//     exactly that (loft#1432).
+//
+//   * with ONLY the nullable overload declared, the disagreement ran the other way:
+//     `d.area()` on a dense receiver answered 200 through that same attribute table, while
+//     `area(d)` was refused as an unknown function, because `find_fn`'s fallback list named
+//     the nullable receiver's direction and not the dense one's. Routing method calls through
+//     `find_fn` without making that list symmetric would have turned a working cell into a
+//     refusal, which is why `only_nullable_is_reached_from_a_dense_receiver` is here.
+//
+// And the declaration ORDER decided which of two things the same two lines meant: dense-first
+// was accepted with a dead overload, nullable-first was refused as a redefinition. No reading
+// of the rule defends that, so `nullable_declared_first_resolves_the_same` is the cell that
+// holds the two orders to one answer. The attribute slot now carries the method's NAME —
+// membership, and what every enumeration site reads — never the choice between its overloads;
+// the DENSE definition owns the slot in either order, which is the one
+// `one_implementation_per_variant` (loft#1427) prefers.
+//
+// Controls, each load-bearing:
+//   * `Dense1432` declares ONLY the dense overload, so a nullable receiver must still reach it
+//     and still warn `(N-Store)`. That is the case the warning is TRUE for, and a cell where it
+//     goes quiet means the fix suppressed the diagnostic rather than resolving the overload.
+//   * `Only1432` declares ONLY the nullable one, reached from all three receivers including a
+//     dense one — the direction above that a one-sided fallback list breaks.
+//   * every cell is written BOTH ways, `x.area()` and `area(x)`, because one spelling agreeing
+//     with the expected value proves nothing about the other; the defect was that they differed.
+//
+// The warning COUNT is an assertion in its own right: only the four `Dense1432` cells may warn,
+// which is why those four are the only asserts here whose MESSAGE does not interpolate the call
+// it is about — an interpolated call is a second call and a second warning, and the count stops
+// meaning "one per cell". An extra warning fails this file exactly as a missing one does, and an
+// extra one is what a fix that widened past nullability would produce.
+//
+// @falsified-at: 3260ec804 — interpret and native both exit non-zero and the file does not run
+//   at all, because `Rev1432` (the nullable-first pair) is refused as a redefinition and
+//   `Only1432`'s `area(o_dense)` is refused as an unknown function. Two compile refusals, so
+//   for this guard the channel is the process exit rather than an assert; the resolution cells
+//   below it cannot be reached on that build to fail on their values.
+//
+// @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
+// @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
+// @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
+// @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
+
+struct Duo1432 { s: integer }
+fn area(self: Duo1432) -> integer { self.s * 10 }
+fn area(self: Duo1432?) -> integer { if self == null { -1 } else { 200 } }
+
+struct Rev1432 { s: integer }
+fn area(self: Rev1432?) -> integer { if self == null { -1 } else { 200 } }
+fn area(self: Rev1432) -> integer { self.s * 10 }
+
+struct Dense1432 { s: integer }
+fn area(self: Dense1432) -> integer { self.s * 10 }
+
+struct Only1432 { s: integer }
+fn area(self: Only1432?) -> integer { if self == null { -1 } else { 200 } }
+
+fn main() {
+  // ---- dense declared first, then the nullable overload ----
+  d_dense = Duo1432 { s: 3 };
+  d_present: Duo1432? = Duo1432 { s: 4 };
+  d_absent: Duo1432? = null;
+  assert(d_dense.area() == 30, "a dense receiver takes the dense overload: {d_dense.area()}");
+  assert(area(d_dense) == 30, "and the free spelling agrees: {area(d_dense)}");
+  assert(d_present.area() == 200, "a present nullable takes the NULLABLE overload: {d_present.area()}");
+  assert(area(d_present) == 200, "and the free spelling agrees: {area(d_present)}");
+  assert(d_absent.area() == -1, "an absent receiver reaches it with self == null: {d_absent.area()}");
+  assert(area(d_absent) == -1, "and the free spelling agrees: {area(d_absent)}");
+
+  // ---- the SAME pair declared in the other order: one answer, not two ----
+  r_dense = Rev1432 { s: 3 };
+  r_present: Rev1432? = Rev1432 { s: 4 };
+  r_absent: Rev1432? = null;
+  assert(r_dense.area() == 30, "nullable-first still gives the dense receiver the dense overload: {r_dense.area()}");
+  assert(area(r_dense) == 30, "and the free spelling agrees: {area(r_dense)}");
+  assert(r_present.area() == 200, "a present nullable takes the nullable overload: {r_present.area()}");
+  assert(area(r_present) == 200, "and the free spelling agrees: {area(r_present)}");
+  assert(r_absent.area() == -1, "an absent receiver reaches it with self == null: {r_absent.area()}");
+  assert(area(r_absent) == -1, "and the free spelling agrees: {area(r_absent)}");
+
+  // ---- control: ONLY the dense overload, so a nullable receiver reaches it AND warns ----
+  s_dense = Dense1432 { s: 3 };
+  s_present: Dense1432? = Dense1432 { s: 4 };
+  s_absent: Dense1432? = null;
+  assert(s_dense.area() == 30, "the only overload there is: {s_dense.area()}");
+  assert(area(s_dense) == 30, "and the free spelling agrees: {area(s_dense)}");
+  assert(s_present.area() == 40, "a present nullable falls back to the dense one");
+  assert(area(s_present) == 40, "and the free spelling agrees");
+  assert((s_absent.area() ?? -99) == -99, "an absent receiver in a dense overload answers null");
+  assert((area(s_absent) ?? -99) == -99, "and the free spelling agrees");
+
+  // ---- control: ONLY the nullable overload, reached from a DENSE receiver too ----
+  o_dense = Only1432 { s: 3 };
+  o_present: Only1432? = Only1432 { s: 4 };
+  o_absent: Only1432? = null;
+  assert(o_dense.area() == 200, "a dense receiver widens into the nullable overload: {o_dense.area()}");
+  assert(area(o_dense) == 200, "and the free spelling agrees — this one used to be refused: {area(o_dense)}");
+  assert(o_present.area() == 200, "a present nullable takes it directly: {o_present.area()}");
+  assert(area(o_present) == 200, "and the free spelling agrees: {area(o_present)}");
+  assert(o_absent.area() == -1, "an absent receiver reaches it with self == null: {o_absent.area()}");
+  assert(area(o_absent) == -1, "and the free spelling agrees: {area(o_absent)}");
+}

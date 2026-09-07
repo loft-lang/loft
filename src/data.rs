@@ -7050,13 +7050,42 @@ impl Data {
         if is_self || is_both {
             let type_nr = self.type_def_nr(&arguments[0].typedef);
             let existing = self.attr(type_nr, fn_name) != usize::MAX;
-            // @PLN25 — a `τ?` overload peels to the base type here, so its type attribute
-            // collides with the `τ` base's (true duplicates were already caught by the
-            // mangled-name check above). The base overload owns the single type attribute;
-            // the `τ?` overload is reachable via its distinct mangled key + the `Dynamic`
-            // dispatcher, so skip re-adding it. (Define the non-null overload first.)
-            if existing && matches!(&arguments[0].typedef, Type::Optional(_)) {
-                // nullability overload — the base owns the type attribute; nothing to add.
+            // @FR-F-Recv — `m(τ)` and `m(τ?)` are TWO definitions: the mangled key carries the
+            // `?` (@PLN25), so they never collide there.  They do collide HERE, because a `τ?`
+            // receiver peels to the base type and the two share one attribute slot.
+            //
+            // The slot carries the method's NAME — membership, and what every enumeration site
+            // reads — never the choice between the two overloads; that choice is `find_fn`'s,
+            // and both call spellings ask it.  So the pair is admitted in EITHER order and the
+            // DENSE definition owns the slot whenever one exists, which is the definition
+            // `one_implementation_per_variant` (loft#1427) prefers.
+            //
+            // Keying the collision on "is the new one Optional" instead made the same two
+            // declarations one method or two depending on which was written first: dense-first
+            // was accepted, nullable-first was refused as a redefinition (loft#1432).  A true
+            // duplicate — the same nullability twice — is caught by the mangled-name check
+            // above, and the two arms below are what that check's own reporting leaves.
+            let new_is_optional = matches!(&arguments[0].typedef, Type::Optional(_));
+            let existing_is_optional = existing && {
+                let attr_idx = self.attr(type_nr, fn_name);
+                match &self.def(type_nr).attributes[attr_idx].typedef {
+                    Type::Routine(nr) => matches!(
+                        self.def(*nr).attributes.first().map(|a| &a.typedef),
+                        Some(Type::Optional(_))
+                    ),
+                    _ => false,
+                }
+            };
+            if existing && new_is_optional != existing_is_optional {
+                // The two nullabilities of one method.  Give the slot to the dense one, which
+                // is this definition exactly when the nullable one got there first.
+                if !new_is_optional {
+                    let attr_idx = self.attr(type_nr, fn_name);
+                    self.definitions[type_nr as usize].attributes[attr_idx].typedef =
+                        Type::Routine(d_nr);
+                }
+            } else if existing && new_is_optional {
+                // The same nullability twice, already reported above; nothing to add.
             } else if existing {
                 // The receiver type already carries a member of this name.  Unlike a free
                 // function (which C97 module-scopes to its library), a method lives in the
@@ -7255,9 +7284,17 @@ impl Data {
         // rejected one is looked up again in the type's OWN source, which is where the
         // right package's method lives. `method_receives` only rejects a demonstrably
         // foreign receiver, so a generic or stub candidate resolves exactly as before.
-        // @PLN25 — a `τ?` receiver tries its own overload first and falls back to the base
-        // (non-null) one; the second spelling is the same string when sig == base (gate-OFF
-        // or a non-nullable receiver), and looking it up twice would only repeat the work.
+        // @FR-F-Recv — the receiver's OWN nullability is tried first and the other second.
+        // A `τ?` receiver reaches `m(τ?)` when it is declared and falls back to `m(τ)` with
+        // the `(N-Store)` warning; a `τ` receiver reaches `m(τ)` when it is declared and
+        // falls back to `m(τ?)` for free, because `(N-Intro)` widens a present value into a
+        // nullable slot at no cost.
+        //
+        // BOTH directions, not one.  With only `m(τ?)` declared, `x.area()` on a dense `x`
+        // answered through the attribute table while the free `area(x)` asked here and was
+        // refused as an unknown function — the two spellings of one call disagreeing in the
+        // opposite direction from loft#1432's headline, and a fallback list that named only
+        // the nullable receiver's could not see it.
         //
         // The type's own source is consulted ONLY to replace a candidate this scope
         // answered with and that turned out to be foreign — never as a second place to
@@ -7269,7 +7306,12 @@ impl Data {
         // separator: character)` and the published library stopped compiling, which the
         // freeze forbids. No candidate here means nothing to disambiguate, so the search
         // falls through to the free function below, as it did before loft#850.
-        let spellings: &[&String] = if sig == base { &[&sig] } else { &[&sig, &base] };
+        let optional = format!("{base}?");
+        let spellings: [&String; 2] = if sig == base {
+            [&base, &optional]
+        } else {
+            [&sig, &base]
+        };
         let own_source = self.definitions[type_nr as usize].source;
         for spelling in spellings {
             let key = format!("t_{}{}_{fn_name}", spelling.len(), spelling);

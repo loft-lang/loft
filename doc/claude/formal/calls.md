@@ -226,17 +226,33 @@ concrete one right (D-call-13, QUALITY.md B7t).  The concrete twin is the oracle
 ### A method belongs to a type, and a `?` is not part of that name
 
 ```
-  (F-Recv)   a method's RECEIVER names the type the method belongs to, and the receiver's
-             NULLABILITY is not part of that name: `fn m(self: τ?)` is a method of τ.  Two
-             overloads may differ in it — the def key carries the `?` (@PLN25), so `m(τ)` and
-             `m(τ?)` are two definitions — but the SET of methods of τ is the same set as the
-             methods of τ?, and every site that enumerates it sees both spellings.
+  (F-Recv)   a method's RECEIVER type may carry `?`, and the two spellings are TWO
+             DEFINITIONS: the def key carries the `?` (@PLN25), so `m(τ)` and `m(τ?)` may both
+             be declared, in either order.  A call reaches the one spelled for its receiver's
+             own nullability when that one is declared, and the other one otherwise — a `τ?`
+             receiver reaching `m(τ)` is (N-Store)'s case and warns, a `τ` receiver reaching
+             `m(τ?)` is (N-Intro) and is free.  A call on an absent receiver reaches `m(τ?)`
+             with `self == null`, which is the whole point of the spelling.  The two call
+             SPELLINGS, `x.m(…)` and `m(x, …)`, resolve identically.
 ```
 
-**In words.** Writing `fn area(self: Square?)` declares `area` on `Square`; the `?` says the
-implementation tolerates an absent receiver, not that it belongs to another type. A call on a
-dense receiver reaches it when no dense overload is declared, and a call on an absent one
-reaches it with `self == null` — which is the whole point of the spelling.
+**In words.** `m(τ)` and `m(τ?)` are one method with two bodies, and which body runs is decided
+by the receiver you have, not by the order you wrote them in. Declaring only one is the ordinary
+case and it answers every receiver: the dense body takes a nullable receiver with a warning, the
+nullable body takes a dense receiver for nothing.
+
+**The last sentence is the one that carries the weight**, because two spellings of one call are
+two different pieces of code in the compiler and they disagreed in BOTH directions (loft#1432).
+`x.m()` resolved through the type's ATTRIBUTE TABLE, which holds one routine per name — so with
+both overloads declared, an absent receiver ran the DENSE body while `m(x)` beside it ran the
+nullable one, and the nullable overload was not merely unreachable but inert. With only the
+nullable overload declared it ran the other way: `x.m()` answered and `m(x)` was refused as an
+unknown function, because the fallback list named the nullable receiver's direction and not the
+dense one's.
+
+So the attribute slot carries a method's NAME — membership, and what every enumeration site
+reads — and never the choice between its overloads. That choice has one home, and both call
+spellings ask it.
 
 The site this rule is about is the one that ENUMERATES: the synthesised variant dispatcher
 (@F20) walks the implementations of an enum's variants, and asked for a bare
@@ -254,10 +270,6 @@ declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receive
 (`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
 cannot see.
 
-**What the rule does NOT settle**, and loft#1432 carries: when BOTH overloads are declared, a
-nullable receiver still takes the dense one, and the reverse declaration order is refused as a
-redefinition — so the two spellings are one method for the redefinition check and two for the
-key. This rule is written for the enumeration, where the answer is not in doubt.
 
 ---
 
