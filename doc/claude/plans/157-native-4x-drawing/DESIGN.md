@@ -535,6 +535,75 @@ interpret / native / `LOFT_HOIST_VERIFY`.
 
 ---
 
+## V — value-struct returns (the queue's head after P4)
+
+**Invariant:** *a qualifying return has no identity — no consumer can
+observe its record.*  loft's copy-bind semantics already make a returned
+struct value-like (`u = a` copies; the 157-write-hoist guard pins it), so a
+small all-scalar struct that is constructed at return position and only
+ever field-read by its caller can travel as a Rust tuple: no `OpDatabase`
+allocation, no retbuf, no per-call `OpFreeRef` pair — and, decisively, the
+CALL stops being a store-writer, so the enclosing loop's hoists unblock
+(the committed P4 machinery fires by itself).
+
+**Measured (the hand probe, 2026-09-07):** `brush_sample`'s `Smp` rewritten
+to `(f64, f64, f64, f64)`: `lock` 25.1M → 17.1M (−32 %); + the unblocked
+resolve hoists → 14.2M.  ≈6.5× Rust.
+
+**Qualifying set, first cut (every miss keeps the record form):**
+- the return type is a struct whose EVERY field is a fixed-width scalar
+  (integer/float/single/boolean/character/plain enum) — no text, vector,
+  reference or nested-struct fields; ≤ 8 fields;
+- the return is NON-nullable (`-> Smp`, not `-> Smp?` — null needs the
+  record's absence spelling);
+- the function is not a coroutine, takes no fn-ref dispatch (the live tier
+  already declines undispatchable returns via `live_entry_check`, so
+  live-flip naturally excludes these), and is not itself reachable through
+  a fn-ref;
+- every CALL SITE either only field-reads the result or materialises: a
+  site that stores/passes/returns the record gets an emitted
+  materialisation (allocate + write the tuple back) — correctness by
+  fallback, the same doctrine as every hoist in this plan.
+
+**Failure paths to pin before code (each a matrix cell):** an escaping call
+site (stored into a struct/vector/returned onward) · a nullable twin ·
+interpreter parity on every cell (records there, values here — outputs must
+match byte-for-byte) · a fn-ref taken to a qualifying fn · a coroutine
+yielding one · the `__retbuf`/FnRefBufGuard interplay at mixed call sites.
+
+**Pre-build probes:** (a) the measured probe above; (b) a corpus census —
+how many definitions qualify and what their call-site shapes are (the
+blast radius, and whether materialisation is rare enough to be the
+fallback); (c) `LOFT_NO_VALUE_RETURN=1` as the bisect switch from day one.
+
+**The implementation fork (found 2026-09-07; owner input welcome):** struct
+literals are ALREADY lowered to `OpDatabase` + `OpSet*` sequences in the
+IR both backends share — there is no `Value::Object` node to re-emit.  Two
+routes:
+
+- **Route T (value tuples — the probed ceiling):** native-only recognition
+  of the lowered constructor block at return position, re-emitted as tuple
+  construction; call sites receive registers.  Cleanest result, hardest
+  emission surgery (pattern-matching a statement RUN, the shape this plan
+  has otherwise avoided).
+- **Route R (the retbuf contract — smaller, reuses machinery):** the
+  constructor honours a caller-PROVIDED retbuf instead of allocating
+  (`var___retbuf` already exists in the ABI, today ignored by struct
+  constructors); the caller hoists ONE buffer out of its loop.  Kills the
+  per-call alloc + both frees.  The loop-hoist unblock then needs one
+  def-level fact — "this callee's only store writes are into its retbuf" —
+  a narrow, attributable exception to the no-interprocedural-in-place rule,
+  auditable per def.  Less than the tuple ceiling (the record write/read
+  round-trip stays) but most of the alloc win, at S–M instead of L.
+
+Recommendation: probe Route R's ceiling by hand first (retbuf hoisted, alloc
+skipped, hoists on — the probe harness already has the pieces), and take T
+only if R leaves the bulk on the table.
+
+**Effort:** M–L (T) / S–M (R).  **Red:** any consumer-pass hash moves; the
+census's escaping-site cells answer differently than the record form;
+`lock` not ≤ ~14.5M (T) / ~17M (R) on the P0 instrument once landed.
+
 ## P5 — the pass as the per-library standard
 
 A `LIBRARY_CHECKLIST.md` row: a published library carries a `bench/` with a

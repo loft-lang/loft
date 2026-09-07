@@ -7,7 +7,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open — design in [DESIGN.md](DESIGN.md), no implementation yet.  Implements
+Open — P0–P4d SHIPPED (see Sub-arcs); the queue's head is value-struct
+returns (Phase ordering below).  Scoreboard vs the issue baseline:
+`hash` 10.9× → 5.4× gate-row / 2.3× at the leaf; `hair` 4.3× → ~3.6×
+(under the bar); `lock` 30× → 11.9× committed, 6.5× probe-proven.
+Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
 byte-identical reference (`loft-libs-graphics/drawing/bench/`, branch
@@ -89,14 +93,31 @@ unaffected — but the phase had shipped without `make ci` green over it.
 
 ## Phase ordering
 
-1. **P0 first** — every later phase reports through it; without it no phase
-   can go red.
-2. **P1, P2, P3 are independent** of each other; order by cost (P1, P2, P3).
-   Each is measurable the day it lands.
-3. **P4 last** — the bulk (~90 % of `lock`/`composite`/`fill_poly`), and it
-   consumes P8's written-set query (PERFORMANCE.md § Design: P8) plus the
-   #885 hoist machinery it extends.
-4. P5 closes the loop once the numbers hold.
+P0–P4d shipped; the original ordering below it stands as history.  What
+remains, ranked by measured value:
+
+1. **Value-struct returns** — the head: −32 % on `lock` alone and it
+   unblocks −17 % more of already-committed hoist machinery (the resolve
+   loop's per-pixel `Smp` allocation is the blocker).  `lock` 25.2M → 14.2M
+   (~6.5×) hand-proven.  M–L, real design surface (qualifying structs, both
+   backends' ABI, the retbuf interplay; adjacent @PLN101) — design-protocol
+   treatment first.
+2. **Consumer re-run before it** — `smooth`/`fronds`/`composite`/`fill_poly`
+   unmeasured since P1, and N4 elided exactly `smooth`'s dominant leaves;
+   one `compare.py` run re-ranks the table.
+3. **P4c record scalars** (S–M, ~5–10 % pixel rows) · **bound-via-header**
+   (`h.len` is the bound where P4 fired; S) · **P2 thin-LTO probe** (the
+   lean tier's 8.5→6.4 ns gap — the `hash`/`smooth` gate rows carry it).
+4. **Closing:** the owner call on `--native-release` implying `--lean`
+   (flag semantics are clean post the html lesson); P5's checklist row; the
+   PR when the owner judges the branch done.
+
+Honest residual: `lock`'s last stretch (~6.5× → 4×) is not yet
+probe-covered; after value-returns land, the next decomposition says
+whether P4c + residual per-pixel machinery closes it.
+
+<details>Original ordering: P0 first; P1/P2/P3 independent by cost; P4 last;
+P5 closes.</details>
 
 ## Open design questions
 
