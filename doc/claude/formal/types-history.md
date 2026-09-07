@@ -6,16 +6,30 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — `D-Opt-NoNull` is OPEN (2026-09-07, loft#1423, below): `(N-Opt)` licenses `τ?` for
-every τ and TWO types have no representation for absence, so the compiler refuses them at the
-declaration.  `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
+OPEN: **0** — `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
+its `has_null(τ)` precondition by owner ruling, and the tuple's absence is tuples.md `(T-Absent)`
+(code half `D-tup-10` there).  `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
 fix/reconciliation.  The **@PLN102 DN3-Float extension** (below) is also CLOSED — SHIPPED
 default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functions type `τ?`
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
 
-### D-Opt-NoNull — OPEN (2026-09-07, @PLN153 phase 4 batch 8, loft#1423): `(N-Opt)` licenses `τ?` for every τ, and two types have no null to spend
+### D-Opt-NoNull — CLOSED (2026-09-07, loft#1423, by RULE): `(N-Opt)` gains the precondition `has_null(τ)`; a tuple that arrives absent is a present tuple of null members
+
+Closed the same day by the owner's ruling rather than by code: *"the tuple type itself is not
+nullable, but if we read it as null we present it as a tuple that exists with all its members
+null"* — a tuple has no faithful document form anyway.  `(N-Opt)` now reads `τ wf, has_null(τ)
+⟹ τ? wf`, which is what it always meant (two formers were refused by name under it), and the
+representation of a tuple's absence is `tuples.md (T-Absent)`: `optional((τ₁, …, τₙ)) ≡
+(τ₁?, …, τₙ?)`, no `Optional(Tuple)` even in flight.  The stack-tag layout that would have
+made `(τ, τ)?` a type is declined in DESIGN_DECISIONS C119 on brittleness (ten-plus silent
+re-assertion sites for a one-clause rule).  The CODE half — `Type::optional` still wraps a
+tuple, so a generic `T?` at a tuple answers garbage / E0308 (loft#1451), `v[i].0` is refused
+where the rule types it `τ?`, and `t == null` has no tuple home — is `D-tup-10` in tuples.md.
+The entry as opened follows.
+
+#### As opened — OPEN (2026-09-07, @PLN153 phase 4 batch 8, loft#1423): `(N-Opt)` licenses `τ?` for every τ, and two types have no null to spend
 
 `(N-Opt)` is `τ wf ⟹ τ? wf` — *"`τ?` is a type for any τ"*.  Two types are refused at the
 declaration instead, and for the same reason: the null MODEL (the @PLN102 keystone, option B,
