@@ -6197,11 +6197,33 @@ use a separate collection or add after the loop"
                 }
                 *code = Value::Insert(steps);
             } else if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot destructure a non-tuple value"
-                );
+                // A NULLABLE tuple is a tuple, and saying it is not sends the author looking at
+                // the wrong half of their program: `(a, b) = v[i]` is `(N-Index)`'s `τ?`, which
+                // has no representation to destructure (`formal/types-history.md` D-Opt-NoNull),
+                // and the cure is the same discharge the member read names (loft#1423).
+                if let Some(elems) = self.nullable_tuple_elems(&rhs_type) {
+                    let spelled = rhs_type.name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot destructure `{spelled}` — the tuple may be absent, and an \
+                         absent tuple has no members; discharge it first (`(a, b) = t?`, or \
+                         `(a, b) = t ?? (…)`)"
+                    );
+                    // Bind the targets to the member types anyway, so the refusal is the ONLY
+                    // report: left undefined, every later use of a destructured name came back
+                    // as "Unknown variable", burying the reason under one error per name.
+                    for (v_nr, tp) in var_nrs.iter().zip(elems) {
+                        self.vars.set_type(*v_nr, tp);
+                        self.vars.defined(*v_nr);
+                    }
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot destructure a non-tuple value"
+                    );
+                }
             }
             return Type::Void;
         }

@@ -1486,8 +1486,33 @@ impl Parser {
             if self.lexer.has_token(".") {
                 wrap_chain = true;
                 *parent_tp = t.clone();
-                // T1.2: tuple element access — t.0, t.1, etc.
-                if let Type::Tuple(ref elems) = t {
+                // A NULLABLE tuple receiver — `(N-Index)` types `v[i]` as `τ?`, and the null
+                // model has no representation for an absent tuple (`formal/types-history.md`
+                // D-Opt-NoNull), so a member read has nothing to answer with where the index
+                // misses.  Say that, and name the discharges that DO work.  Left to the
+                // branches below the receiver matched none of them, the member NUMBER reached
+                // the field parser, and the report was *"Expect a field name"* — a message
+                // about a name, for a program that wrote a number, on a receiver whose real
+                // problem is the `?`.  A nullable STRUCT receiver reads correctly through its
+                // absence (`@FR-L-Null-Which`), which is what makes the tuple's silence on the
+                // same shape read as a bug rather than a rule.  loft#1423.
+                if self.nullable_tuple_elems(&t).is_some()
+                    && matches!(self.lexer.peek().has, crate::lexer::LexItem::Integer(_, _))
+                {
+                    let spelled = t.name(&self.data);
+                    let idx = self.lexer.has_integer().unwrap_or(0);
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`.{idx}` on `{spelled}` — the tuple may be absent, and an absent \
+                             tuple has no members; discharge it first: `t?.{idx}` reads the \
+                             members' defaults, `(t ?? (…)).{idx}` takes a default tuple of \
+                             your own"
+                        );
+                    }
+                    t = Type::Unknown(0);
+                } else if let Type::Tuple(ref elems) = t {
                     let elems = elems.clone();
                     if let Some(idx) = self.lexer.has_integer() {
                         let idx = idx as usize;
@@ -1845,6 +1870,33 @@ impl Parser {
     /// `Reference(__tuple<…>)` (a loop variable, a local bound from a heap-tuple return) or the
     /// same behind the `&` a `&(…)` with a heap element denotes (tuples.md T-Ref).  Both read
     /// and write their elements as that struct's fields.
+    /// The member types of a NULLABLE tuple — `(τ₁, …)?` in either of its two spellings, the
+    /// stack tuple and the `Reference(__tuple<…>)` a stored one names — or `None` when `t` is
+    /// not one.
+    ///
+    /// `(N-Index)` is the route that builds the type: `v[i]` on a `vector<(τ, τ)>` is
+    /// `(τ, τ)?`, which the type parser refuses to SPELL (`types-history.md` D-Opt-NoNull) and
+    /// the index produces anyway.  Every discharge of it works — `??`, `?`, and a chained
+    /// `t?.0` — and only the undischarged reads had no answer: a member read and a destructure,
+    /// which is why the members come back here rather than a bare yes/no (the destructure
+    /// binds its targets to them so its refusal does not cascade).
+    pub(crate) fn nullable_tuple_elems(&self, t: &Type) -> Option<Vec<Type>> {
+        if !matches!(t, Type::Optional(_)) {
+            return None;
+        }
+        match t.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            other => Self::record_tuple_def(&self.data, other).map(|d| {
+                self.data
+                    .def(d)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect()
+            }),
+        }
+    }
+
     fn record_tuple_def(data: &crate::data::Data, t: &Type) -> Option<u32> {
         let d = match t {
             Type::Reference(d, _) => *d,
@@ -3093,8 +3145,20 @@ impl Parser {
             return;
         }
         let Some((default, default_tp)) = self.build_default(&base) else {
-            // `has_default` passed but the builder cannot form the value — recover as the
-            // non-null base so the cascade is bounded (should not happen in practice).
+            // `has_default` admitted the type and the builder cannot form its value — the two
+            // disagree, which is a compiler defect, but the SILENT recovery it used to take is
+            // the worse half: it typed the value as the non-null base and left the absent value
+            // in it, so `v[j]?` answered `null` from a slot typed `(integer, integer)`
+            // (loft#1424).  Report instead, and name the discharge that always works.
+            if !self.first_pass {
+                let spelled = base.name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`?` cannot build a default for `{spelled}` — discharge with \
+                     `?? <default>` instead"
+                );
+            }
             *ctp = base;
             return;
         };
@@ -3125,6 +3189,23 @@ impl Parser {
                 tp.clone(),
             )),
             Type::Text(_) => Some((Value::Text(String::new()), tp.clone())),
+            // A TUPLE defaults member-wise — the value a written `(0, "")` literal builds, which
+            // is what the `??` spelling of the same discharge hands over.  `has_default` has
+            // recursed over the members already; a member IT admits and this cannot build (a
+            // collection, which the caller parses in its own context) makes the whole tuple
+            // unbuildable, and the caller reports that rather than proceeding.  Without this arm
+            // the tuple fell to `_ => None` and the caller's "should not happen" recovery typed
+            // the ABSENT value as the non-null base: `v[j]?` on an out-of-range index answered
+            // `null` from a slot typed `(integer, integer)`, where the struct twin `s[j]?.a`
+            // answers its `0` (loft#1424, both backends).
+            Type::Tuple(elems) => {
+                let mut values = Vec::with_capacity(elems.len());
+                for e in elems.clone() {
+                    let (v, _) = self.build_default(&e)?;
+                    values.push(v);
+                }
+                Some((Value::Tuple(values), tp.clone()))
+            }
             // Collections are handled by the caller via `pending_default_src` (parsed
             // in-context), never here — see `handle_default_fallback`.
             // An enum defaults to its first-defined variant (a marked default variant

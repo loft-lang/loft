@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1423's second half, in its own file because a firing `@EXPECT_ERROR` stops the run.
+//
+// `(N-Index)` types `v[i]` as `τ?`, and for a TUPLE the model has no representation for an
+// absent one (`formal/types-history.md` D-Opt-NoNull) — so an UNDISCHARGED member read has
+// nothing to answer with.  The refusal is right; what was wrong is that the receiver matched
+// none of the tuple branches, the member NUMBER reached the field-name parser, and the report
+// was *"Expect a field name"* — a message about a name, for a program that wrote a number, on a
+// receiver whose real problem is the `?`.  A nullable STRUCT receiver reads correctly through
+// its absence (`(L-Null-Which)`), which is what makes the tuple's answer read as a bug.
+//
+// The discharges the message names all work and are asserted in
+// `1424-a-tuple-default-is-its-members-defaults.loft` — a cure a diagnostic advertises has to be
+// guarded, or the message is the next defect.
+//
+// @falsified-at: d6e665ae — interpret exit 1 -> 0 and expectations FAIL/4 -> ok, native the
+//   same.  Each member-read cell reports "Expect a field name" and a formatter cascade there,
+//   and the destructure cell reports "Cannot destructure a non-tuple value".
+
+// @EXPECT_ERROR: `.0` on `(integer, integer)?`
+fn stack_member(i: integer) -> integer { v: vector<(integer, integer)> = [(1, 2)]; v[i].0 }
+
+// @EXPECT_ERROR: `.1` on `(text, integer)?`
+fn stored_member(i: integer) -> integer { w: vector<(text, integer)> = [("a", 1)]; w[i].1 }
+
+// @EXPECT_ERROR: `.0` on `(float, integer)?`
+fn through_a_local(i: integer) -> float {
+  u: vector<(float, integer)> = [(1.5, 2)];
+  e = u[i];
+  e.0
+}
+
+// A DESTRUCTURE of the same value said *"Cannot destructure a non-tuple value"* — which is not
+// true, and sends the author looking at the wrong half of their program.  Same cure, named.
+// @EXPECT_ERROR: cannot destructure `(character, integer)?`
+fn destructure_it(i: integer) -> integer {
+  c: vector<(character, integer)> = [('x', 2)];
+  (a, b) = c[i];
+  b
+}

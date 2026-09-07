@@ -9,6 +9,52 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A tuple type cannot be nullable, and now says so (2026-09-07)
+
+`(N-Opt)` licenses `τ?` for every τ.  A tuple is its members' bytes — `(L-Null)`'s sentinel needs
+a value the type RESERVES and a tuple reserves none, `(L-Null-Tag)`'s discriminant is for a
+struct stored inline — so `(integer, integer)?` has no representation, exactly as a `value
+struct` has none.  The `value struct` case has been refused by name since @PLN101; the tuple case
+was not refused at all.  The type parser's tuple branch returns before `parse_type`'s postfix-`?`
+handling, so the `?` was left in the stream and every position reported a syntax cascade naming
+nothing: *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"*
+inside a `vector<…>`, *"unexpected '?'"* for a field or an alias.
+
+The refusal now names the tuple and both cures (nullable MEMBERS, or a `struct` wrapper), beside
+the `value struct` case in the same function.  It is emitted wherever the type is parsed rather
+than on the second pass: a local's and a field's declared type reach that branch on pass 1 only,
+so a pass-2 gate would have reported for a parameter and stayed silent for the two positions an
+author writes most often.
+
+Recorded as **D-Opt-NoNull** in `formal/types-history.md` — that register's only open entry,
+since closing it is a representation decision (loft#1423), not a fix.
+
+loft#1423.  Guards `tests/scripts/1423-…` (seven positions) and `1423b-…` (the reads on the
+shape `(N-Index)` builds anyway).
+
+### `v[i]?` on a tuple answered null members in a non-null slot (2026-09-07)
+
+`(N-Index)` builds `(τ, τ)?` whether or not the type can be spelled, so the discharges have to
+answer for it.  `Data::has_default` recurses over a tuple's members and admits it;
+`Parser::build_default` had no `Type::Tuple` arm and refused it; and the recovery for that
+disagreement — *"`has_default` passed but the builder cannot form the value … should not happen
+in practice"* — typed the ABSENT value as the non-null base.  So `v[j]?` on an out-of-range index
+answered `null` from a slot typed `(integer, integer)`, while the struct twin `s[j]?.a` answered
+its `0`.  Both backends, nothing said.
+
+Fixed at both ends: the tuple default is its members' defaults — the value the `??` spelling of
+the same discharge hands over — and the recovery REPORTS instead of proceeding, so a future
+disagreement between the two predicates cannot be silent.
+
+The undischarged reads of the same value are refused by name rather than left to the field-name
+parser (*"Expect a field name"* for `v[i].0`, *"Cannot destructure a non-tuple value"* for
+`(a, b) = v[i]` — neither true), and the destructure binds its targets anyway so its refusal is
+the only report.  A peel of the projection was built and measured first: it ICEs in codegen,
+because the value has no representation to project from.
+
+loft#1424.  Guard `tests/scripts/1424-a-tuple-default-is-its-members-defaults.loft`, both
+backends, falsified on its own assertion.
+
 ### A slice pattern names the same variants over a `vector<E?>` (2026-09-07)
 
 A structural (slice / PEG) `match` pattern over a vector whose ELEMENT type is nullable was

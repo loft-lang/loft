@@ -79,6 +79,17 @@ tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (ver
 integer)`), pass one, and unpack it at the caller. Returning a tuple is the idiomatic
 "return two things," and the result is independent like any return (calls.md).
 
+**A tuple type takes no `?`.** `(N-Opt)` licenses `τ?` for every τ and a tuple is the one former
+with no representation for absence: it is its members' bytes, so `(L-Null)`'s sentinel has no
+value to reserve and `(L-Null-Tag)`'s discriminant is for a struct stored INLINE. So
+`(integer, integer)?` is refused at the declaration, in every position, naming the two cures —
+nullable MEMBERS (`(integer?, text?)`), or a `struct` wrapper, which can be `?`. `(N-Index)`
+still builds the type where the type parser cannot spell it (`v[i]` on a `vector<(τ, τ)>` IS
+`(τ, τ)?`), and every USE of that value is a discharge: `t?` gives the members' defaults,
+`t ?? (…)` a default of your own, and an undischarged member read or destructure is refused with
+the same two cures. The gap between the rule and the model is
+[types-history.md](types-history.md) D-Opt-NoNull, and loft#1423 carries the design call.
+
 ### Reference tuples — `&(…)` writes the caller's elements in place
 
 ```

@@ -2470,7 +2470,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 730 | 374 | 5 | **351** |
+| 731 | 375 | 5 | **351** |
+
+@PLN153 phase 4 batch 8 (the TUPLE tier-0 group, loft#1423 / loft#1424) moved the row NOT AT
+ALL, and that is the honest reading of what it did: the seven functions it walked are opaque to
+a nullable whole tuple, and every route to one is refused or discharged before it reaches them —
+so they are closed by a probe cell rather than by a peel, which is the OTHER half of this
+phase's Verify line.  The denominator gains `Parser::nullable_tuple_elems`, the predicate the two
+refusals it added share.  A batch that closes functions this way leaves the count where it is;
+what it leaves instead is `1423`, `1423b` and `1424`.
 
 @PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
 opaque column DOWN by three and added two functions on the seeing-through side: the element's

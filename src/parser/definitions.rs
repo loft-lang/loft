@@ -2775,6 +2775,30 @@ impl Parser {
             // codegen needs the host field offset.  Mirrors the
             // `sub_type` tuple arm below.  Idempotent.
             self.data.tuple_def(&mut self.lexer, &types);
+            // A `?` after the closing paren.  `(N-Opt)` licenses `τ?` for every τ, but a tuple
+            // is the one type former with NO representation for absence: `(L-Null)`'s sentinel
+            // needs a value the type reserves and a tuple reserves none, and `(L-Null-Tag)`'s
+            // discriminant is for a STRUCT stored inline.  The `?` was left unconsumed here, so
+            // every position spelled it as a syntax cascade naming nothing — *"Expect token ;"*
+            // for a local, *"Expect token )"* for a parameter, *"Expect token >"* inside a
+            // `vector<…>`.  Consume it and name the refusal wherever the type is parsed, the
+            // way the `value struct` case five lines into `parse_type` does — the other type
+            // with no null to spend.  NOT gated on the second pass: a local's and a field's
+            // declared type reach this branch on pass 1 only, so a pass-2 gate reports for a
+            // parameter and stays silent for the two positions an author writes most often.
+            // A `?` after `)` is a syntactic fact, so no resolution can change the answer.
+            // `formal/types-history.md` D-Opt-NoNull; loft#1423 carries the design question of
+            // giving a tuple the tagged representation.
+            if self.lexer.has_token("?") {
+                let spelled = Type::Tuple(types.clone()).name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{spelled}?` is not allowed — a tuple is its members' bytes, with no \
+                     sentinel and no discriminant to spend on absence; make the MEMBERS nullable \
+                     (`(integer?, text?)`), or wrap the tuple in a `struct`, which can be `?`"
+                );
+            }
             Some(Type::Tuple(types))
         } else if self.lexer.has_token("fn") {
             Some(self.parse_fn_type(on_d))

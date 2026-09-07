@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1423 — a `?` on a TUPLE type.
+//
+// `(N-Opt)` licenses `τ?` for every τ, and a tuple is the one type former with no
+// representation for absence: `(L-Null)`'s sentinel needs a value the type reserves and a tuple
+// reserves none, while `(L-Null-Tag)`'s discriminant is for a STRUCT stored inline.  So the
+// refusal is right for now (`formal/types-history.md` D-Opt-NoNull records the gap between the
+// rule and the model, and loft#1423 carries the design question).
+//
+// What was wrong is that it was not a refusal at all: the `?` was left unconsumed by the tuple
+// branch of the type parser, so every position spelled it as a syntax cascade naming nothing —
+// *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"* inside
+// a `vector<…>`, *"unexpected '?'"* for a field or an alias.  Each cell below names the tuple
+// the author wrote, which is also what keeps the cells from making each other vacuous.
+//
+// Axes this file MOVES:  the POSITION the type is written in (local · field · parameter · `&`
+//                        parameter · return · alias · vector element), and the member types, so
+//                        no two expectations share a substring.
+// Axes it HOLDS FIXED:   the members are dense in every cell — a nullable MEMBER is legal and
+//                        is `1123`/`1134`'s, and the cell below proves this file is not
+//                        refusing that instead.
+//
+// The FIELD and the ALIAS cells are declarations with no function to attach to, so their
+// expectations are file-level, here:
+// @EXPECT_ERROR: `(text, integer)?` is not allowed
+// @EXPECT_ERROR: `(character, boolean)?` is not allowed
+//
+// @falsified-at: d6e665ae — interpret exit 1 -> 0 and expectations FAIL/7 -> ok, native the
+//   same.  Each cell reports an "Expect token" cascade naming a comma, a paren or an angle
+//   bracket there, and none of the seven substrings appears.
+
+// The initialiser is a real tuple, so the only report is the type's: with the `?` dropped the
+// declaration is an ordinary dense one and nothing else has anything to say.
+// @EXPECT_ERROR: `(integer, integer)?` is not allowed
+fn local_pos() -> integer { t: (integer, integer)? = (1, 2); t.0 }
+
+struct HasNullableTuple { t: (text, integer)? }
+
+// @EXPECT_ERROR: `(float, integer)?` is not allowed
+fn param_pos(t: (float, integer)?) -> integer { 2 }
+
+// @EXPECT_ERROR: `(integer, integer, integer)?` is not allowed
+fn ref_param_pos(t: &(integer, integer, integer)?) { }
+
+// @EXPECT_ERROR: `(single, integer)?` is not allowed
+fn return_pos() -> (single, integer)? { null }
+
+type NullablePair = (character, boolean)?;
+
+// @EXPECT_ERROR: `(integer, text)?` is not allowed
+fn element_pos() -> integer { v: vector<(integer, text)?> = []; 3 }
+
+// A nullable MEMBER is legal and stays so — this cell exists to prove the refusal above is
+// about the tuple TYPE and not about a `?` anywhere near a tuple.
+fn member_is_fine() -> integer {
+  t: (integer?, integer) = (null, 2);
+  if t.0 == null { t.1 } else { -1 }
+}
