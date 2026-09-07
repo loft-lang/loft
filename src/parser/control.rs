@@ -4485,7 +4485,7 @@ impl Parser {
                 // sentinel, and covers no variant — an absent subject is not a variant of
                 // anything, which is why exhaustiveness is untouched for it.
                 let (discs, cond) = if heap_null_subject {
-                    let is_null = self.cl("OpRefIsNull", &[subject_val.clone()]);
+                    let is_null = self.cl("OpRefIsNull", std::slice::from_ref(&subject_val));
                     (Vec::new(), Some(is_null))
                 } else {
                     (vec![0], None)
@@ -5185,19 +5185,17 @@ impl Parser {
                 // comparison over this arm's discriminants.  The `null` arm of a nullable
                 // HEAP subject is the first kind: absence is the store-pointer sentinel
                 // there, which no discriminant names.
-                let mut cmp = match &arm.cond {
-                    Some(c) => c.clone(),
-                    None => {
-                        let mut cmp =
-                            self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
-                        for &d in &arm.discs[1..] {
-                            let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
-                            cmp = v_if(cmp, Value::Boolean(true), next);
-                        }
-                        cmp
+                let cmp = if let Some(c) = &arm.cond {
+                    c.clone()
+                } else {
+                    let mut cmp =
+                        self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
+                    for &d in &arm.discs[1..] {
+                        let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
+                        cmp = v_if(cmp, Value::Boolean(true), next);
                     }
+                    cmp
                 };
-                let _ = &mut cmp;
                 // guarded arms nest the guard inside the pattern branch.
                 chain = match &arm.guard {
                     Some(guard) => {
