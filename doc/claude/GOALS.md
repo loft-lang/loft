@@ -233,6 +233,16 @@ The obligation runs both ways: when loft's own users hit a defect, they deserve 
 same same-day fixability we demanded from our stacks — which is why an open issue is
 never carried into a release, and why `hit-by:` names the project waiting on it.
 
+**And this is the real reason for the educational half.** No game creation team should
+be forced to work another way: readable libraries and a comprehensible stack are what
+make the fix-it-yourself capability TRANSFERABLE — a team that can understand how
+things work can fix them and ship their game, instead of waiting on us the way we
+refused to wait on vendors.  The teaching corpus (Goal B) is not pedagogy on the side;
+it is same-day fixability, handed downstream.  The loop then closes upstream: loft is
+**open to all submissions and aids them** — a team's fix is welcomed, reviewed, and
+landed ([CONTRIBUTING.md](../../CONTRIBUTING.md), README § Contributing), so the fix
+they shipped their game on becomes everyone's.
+
 ### Why a language, not a store bolted onto an existing one
 
 A key reason loft is a *language* and not an in-memory data store added to Rust
@@ -463,7 +473,8 @@ source, the docs, and the executable skills — so any coding agent can continue
 the project has no single point of failure. See [BUS_FACTOR.md](BUS_FACTOR.md).
 And it governs the **libraries' own source**: they double as loft's teaching corpus —
 an open-source project heads-on, where every part of a library stays as readable as
-possible.  What this refuses by name is the "fast pass" pattern (readable code shadowed
+possible, so a game team can understand it, fix it, and ship — the fixability Purpose
+§ *Fixable end to end* promises, made transferable.  What this refuses by name is the "fast pass" pattern (readable code shadowed
 by an optimized twin nobody can follow): a slow routine is fixed in the engine or in its
 own loft algorithm, and a native rewrite is a recorded per-routine edge case
 ([formal/performance.md](formal/performance.md) `(Perf-Cure)`).
