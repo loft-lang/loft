@@ -1731,11 +1731,18 @@ scan.loft hot loop that's a meaningful share of the ~165 ms
 **Cost:** Small — localised change in `src/generation/mod.rs` +
 purity-classifier extension.
 
-> **Status (audited 2026-06-25): OPEN.** `is_leaf_pure` is absent and `cr_call_push` is
-> still emitted unconditionally for every `n_` function. But the "purity-classifier
-> extension" the cost cites is mostly free: `def.purity` already exists (see N2 status),
-> so `is_leaf_pure` = `def.purity == Purity::Pure` AND the body has no `Call`/`Method` —
-> only the leaf check is new. Stays Small.
+> **Status: SHIPPED 2026-09-07 (@PLN157), with one deviation from the design below.**
+> The gate is STRUCTURAL, not annotation-driven: `Purity::Pure` exists only on `#pure`-
+> annotated fns, and the drawing pass's hot leaves carry no annotation — so
+> `Output::is_elidable_leaf` instead asks "does the body call any user fn (`n_*`, or a
+> loft-bodied `t_*`), fn-ref, `parallel` or `yield`?"  A no makes the fn a leaf: nothing
+> it calls can re-enter it (the depth cap needs no entry), and `stack_trace()`/`assert`/
+> `panic` are themselves calls, so a leaf can never ask for the frame it lacks.  The
+> live-flip check stays (editing a leaf live is the live tier's contract); a runtime
+> fault inside a leaf keeps its exact position and loses only the innermost frame NAME.
+> `LOFT_NO_LEAF_PRELUDE=1` restores the push (the bisect switch).  Measured on the
+> drawing pass (probed by hand-editing the emitted Rust first, then reproduced by the
+> emitter): `hash` −36 % (0.81M ns/op named tier, ~2.3× Rust), `lock` −7 %.
 
 ### Background
 

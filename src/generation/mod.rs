@@ -624,6 +624,12 @@ pub struct Output<'a> {
     /// keyed by `def_nr` — computed on the first simplifiable compare a
     /// function emits, shared by the rest.
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
+    /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
+    leaf_cache: HashMap<u32, bool>,
+    /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
+    /// before N4.  The bisect switch for a diagnostic that lost its
+    /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
+    pub leaf_elide_disabled: bool,
     /// O7: number of consecutive format/append ops following the current
     /// `OpClearStackText`/`OpClearText`.  Set by `output_block` before each
     /// op is emitted; consumed (and reset to 0) by `clear_stack_text`.
@@ -1443,6 +1449,8 @@ impl<'a> Output<'a> {
             nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
+            leaf_cache: HashMap::new(),
+            leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             next_format_count: 0,
             yield_collect: false,
             yield_collect_text: false,
@@ -1787,6 +1795,32 @@ impl Output<'_> {
         };
         args.iter()
             .all(|a| non_sentinel::non_sentinel(self.data, &vars, a))
+    }
+
+    /// N4 (@PLN157): is this definition a LEAF — a body with no call to a
+    /// user function (`n_*`, or a loft-bodied `t_*` method), no fn-ref
+    /// call, no `parallel`, no `yield`?  A leaf cannot recurse — nothing it
+    /// calls can re-enter it — so its prelude can be elided entirely; op
+    /// calls (`Op*`, `#rust`-bodied stubs) are the body's work, not routes
+    /// back into user code.  `stack_trace()`/`assert`/`panic` are calls,
+    /// so a leaf can never ask for the frame it does not have.
+    fn is_elidable_leaf(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.leaf_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let leaf = !data.def(def_nr).code().any_node(&mut |v| match v {
+            Value::Call(d, _) => {
+                let callee = data.def(*d);
+                let name = callee.name();
+                name.starts_with("n_")
+                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+            }
+            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+            _ => false,
+        });
+        self.leaf_cache.insert(def_nr, leaf);
+        leaf
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -5082,15 +5116,33 @@ extern crate loft;"
                 // the depth cap (one bounds test + two Cell updates, ~1.2 ns)
                 // and trades away `stack_trace()` frames, the panic frame
                 // block and the watchdog breadcrumb.  See `cr_call_push_lean`.
-                let push = if self.emit_live {
-                    format!("cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});")
+                //
+                // N4 (@PLN157): a LEAF — a body that calls no user function —
+                // carries no frame at all.  It cannot recurse (nothing it
+                // calls can re-enter it, so the depth cap needs no entry) and
+                // cannot reach `stack_trace()`/`assert`/`panic` (each is a
+                // call); a runtime fault inside it keeps its exact position
+                // and loses only the innermost frame NAME from the chain.
+                // The live-flip check stays — editing a leaf live is the
+                // live tier's contract.  Probed at −39 % on the hash row,
+                // −7 % on lock; `LOFT_NO_LEAF_PRELUDE=1` restores the push.
+                let leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let push = if leaf {
+                    String::new()
+                } else if self.emit_live {
+                    format!(
+                        "\n  cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
+                         let _call_guard = codegen_runtime::CallGuard;"
+                    )
                 } else {
-                    format!("cr_call_push_lean(\"{escaped_file}\", {loft_line});")
+                    format!(
+                        "\n  cr_call_push_lean(\"{escaped_file}\", {loft_line});\n  \
+                         let _call_guard = codegen_runtime::CallGuard;"
+                    )
                 };
                 self.call_stack_prefix = Some(format!(
-                    "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  \
-                     {push}\n  \
-                     let _call_guard = codegen_runtime::CallGuard;{fnref_guard}{vdb_prologue}"
+                    "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\
+                     {push}{fnref_guard}{vdb_prologue}"
                 ));
                 self.output_block(w, body, returns_text, true)?;
                 self.call_stack_prefix = None;

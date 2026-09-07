@@ -371,9 +371,16 @@ Interpreter line-profile agrees: the pixel loop's PROJECTION/dist/idx lines
 dominate, the writes don't rank — M2's write share was overestimated for
 `lock`.  Still ~23× after all layers: the RESOLVE loop (untouched —
 `brush_sample`'s four element reads, `ll_out` writes) and the loop/conv
-machinery are the next probe targets before any P4 emitter work.  N4
-(prelude off pure leaves) graduates from "small change" to a measured
-priority: it is the `hash` row's closer and worth −7 % on `lock`.
+machinery are the next probe targets before any P4 emitter work.
+
+**N4 SHIPPED off the ledger (same day):** `Output::is_elidable_leaf` — the
+structural gate (no user calls / fn-refs / `parallel` / `yield` in the
+body; see PERFORMANCE.md § Design: N4 for the deviation from the
+annotation-driven design and why the cap and diagnostics stay sound) —
+elides the whole frame push on leaves in both tiers, live-flip check kept.
+The emitter reproduced the probe: `hash` 1.26M → 0.81M named (−36 %,
+~2.3× Rust) / 0.75M lean, `lock` −7 %.  All guards, 55-stack-trace and the
+error suites green on both backends; `LOFT_NO_LEAF_PRELUDE=1` bisects.
 
 ---
 
