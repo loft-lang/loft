@@ -50,6 +50,7 @@ by the release checklist's `M-perf-pass`.
 - [Design: BUILD2 — Persist the native-test binary cache across CI runs](#design-build2--persist-the-native-test-binary-cache-across-ci-runs)
 - [See also — bytecode and store internals](#see-also--bytecode-and-store-internals)
 - [Startup cache (shipped, default-on)](#startup-cache-shipped-default-on) — **what a rerun actually costs, and which binary you measured**
+- [The drawing-pass baseline (loft#1426, @PLN157)](#the-drawing-pass-baseline-loft1426-pln157) — **the N-class gap measured by a consumer, and the `make native-ratio` gate**
 - [Open work](#open-work)
 
 ---
@@ -4161,6 +4162,41 @@ Full design, E1/E2/E3 arc, and the zero-copy follow-up: see
 [`plans/11-data-as-store/README.md`](plans/11-data-as-store/README.md).
 
 ---
+
+## The drawing-pass baseline (loft#1426, @PLN157)
+
+The N-class gap measured by a CONSUMER on a real workload, with a byte-identical
+reference: the `drawing` library (loft-libs-graphics, branch `drawing-lock`)
+times 14 routines against a pure-Rust port of the same arithmetic in the same
+order, and every row's FNV-1a-32 output hash agrees across the interpreter,
+`--native-release` and `rustc -O` — so the ratios below are like for like.
+Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio):
+
+| routine | Rust | loft-native | native / Rust |
+|---|---:|---:|---:|
+| `hash` — 100 000 calls of a 4-line seed hash | 162,320 | 1,771,660 | 10.9 |
+| `hair_brush` | 13,260 | 57,200 | 4.3 |
+| `smooth_pts` — 61 points | 220 | 57,640 | 262 |
+| `fronds` — depth 2, 1296 points | 43,620 | 2,149,200 | 49 |
+| `lock_layer` — 22 080 px | 1,032,340 | 30,850,860 | 30 |
+| `lock_layer` curved — 38 250 px | 779,600 | 26,213,820 | 34 |
+| `composite_layer` | 63,100 | 1,656,000 | 26 |
+| `fill_poly` circle — 31 497 px | 34,620 | 594,740 | 17 |
+| `fill_poly` pentagram | 13,460 | 225,100 | 17 |
+| `wide_line` | 4,500 | 78,340 | 17 |
+
+Attribution (measured on the issue): ~7 ns/call of prelude instrumentation
+(M1), the store-resolved element reads/writes and un-hoisted record scalars
+(M2, ~90 % of `lock`/`composite`/`fill_poly`), sentinel/NaN arithmetic on
+non-null operands (M3), and a bitcode-free rlib that blocks post-hoc inlining
+(M4).  Opt flags and the cdylib boundary are ruled out (M0).  @PLN157
+(`plans/157-native-4x-drawing/`) drives every judged row to within **4×**.
+
+Regenerate: the in-tree rows (`hash`, `lock` — `bench/12_drawing/`, hashes
+asserted) with `make native-ratio` (`--gate` fails ratios over
+`bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
+with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
+`drawing-lock`).
 
 ## Open work
 

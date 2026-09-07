@@ -2206,6 +2206,14 @@ bench:
 	cargo build --release -q
 	bash bench/run_bench.sh --warmup
 
+# Per-routine loft-native vs plain-Rust ratios with asserted output hashes
+# (@PLN157 P0, loft#1426).  A REPORT by default; `--gate` (the plan's phases
+# and the release evidence) also fails ratios over bench/ratio_oracle.tsv's
+# bars.  Hash mismatches always fail.
+native-ratio:
+	cargo build --release -q
+	bash scripts/native_ratio.sh
+
 .PHONY: doc doc-packages
 # The whole doc site, the way the release builds it (@PLN149).
 #

@@ -1,0 +1,9 @@
+# native/Rust ratio oracle — read by scripts/native_ratio.sh.
+# Columns: bench-dir <TAB> routine <TAB> bar.
+# `bar` is the CEILING on (loft-native ns_op / rust ns_op) for that routine —
+# the recorded baseline of loft#1426 plus noise headroom, ratcheted DOWN as
+# @PLN157's phases land; the plan's end state is 4.  Hashes are not listed
+# here: each bench program asserts its own output hash, and the script
+# additionally requires the two lanes' hash columns to agree.
+12_drawing	hash	13
+12_drawing	lock	34
