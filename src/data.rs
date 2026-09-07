@@ -1903,6 +1903,34 @@ impl Type {
         self.peel_optional().0
     }
 
+    /// The type's DATA SHAPE — `base()` with every `&` link peeled as well.
+    ///
+    /// @FR-C-Ref — a reference reads through to its referent, so a `&τ` is accepted
+    /// wherever a `τ` is.  @FR-B-Ref-Uniform — a `&τ` variable is used EXACTLY like a `τ`
+    /// variable, because the linkage lives in the TYPE and no operation is special-cased.
+    /// Together they make this the question every site asks that wants to know *what a
+    /// value IS* rather than *how it is reached*: the `&` records the route, never the
+    /// shape.
+    ///
+    /// Reach for it in preference to `base()` at any site that discriminates on a
+    /// CONTAINER kind — `Type::Vector`, the keyed collections, `Type::Reference(File)` —
+    /// because such a site is asking the shape question, and a bare `matches!` against
+    /// the un-peeled type silently answers "no" for every `&` spelling.  That miss is not
+    /// hypothetical: it has now cost the whole `File` surface through a `&File`
+    /// (loft#753), and `insert` / `reverse` / `sort` / `reserve` / `sum` / `min_of` /
+    /// `max_of` plus a keyed `+=` through a `&` parameter.
+    ///
+    /// The loop is a loop rather than one peel because the wrappers nest: a `&τ?` and a
+    /// `&&τ` both reach the shape only by peeling until neither wrapper is on top.
+    #[must_use]
+    pub fn peel_link(&self) -> &Type {
+        let mut tp = self.base();
+        while let Type::RefVar(inner) = tp {
+            tp = inner.base();
+        }
+        tp
+    }
+
     /// Is this a `&` parameter whose whole-value write-back INSTALLS a store the callee
     /// minted and DISPLACES whatever the caller's binding named?
     ///

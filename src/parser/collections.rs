@@ -6222,7 +6222,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        if let Type::Vector(elm, _) = &types[0] {
+        if let Type::Vector(elm, _) = types[0].peel_link() {
             if !matches!(
                 elm.as_ref(),
                 Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
@@ -6257,7 +6257,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let elm_tp = if let Type::Vector(elm, _) = &types[0] {
+        let elm_tp = if let Type::Vector(elm, _) = types[0].peel_link() {
             (**elm).clone()
         } else {
             diagnostic!(
@@ -6323,7 +6323,7 @@ use #count instead"
         // contract is the same one `reserve(v, n)` states: capacity only, never the
         // contents or the length, and a count the collection already covers does
         // nothing.  Filling a 1M-entry hash otherwise rebuilds the table 17 times.
-        if matches!(&types[0], Type::Hash(_, _, _)) {
+        if matches!(types[0].peel_link(), Type::Hash(_, _, _)) {
             let Some(kt) = self.keyed_known_type(&types[0]) else {
                 // The collection type never resolved; the cause is already reported.
                 return Type::Void;
@@ -6334,7 +6334,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let Type::Vector(elm, _) = &types[0] else {
+        let Type::Vector(elm, _) = types[0].peel_link() else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -6370,7 +6370,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let elm_size = if let Type::Vector(elm, _) = &types[0] {
+        let elm_size = if let Type::Vector(elm, _) = types[0].peel_link() {
             self.element_store_size(elm)
         } else {
             diagnostic!(

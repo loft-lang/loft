@@ -355,26 +355,41 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 1.**
-- **D-bind-28** — residual: a `&` link to a keyed collection is honoured at a LOCAL and at a
-  struct FIELD, but the `&hash<τ[k]>` PARAMETER spelling is still refused.  The append routes
-  do not claim it (`is_keyed` / `is_collection` read `tp.base()`, which peels `Optional` and
-  not the link), and making them claim it WITHOUT the keyed emission path resolving its store
-  through the parameter's double indirection was measured to convert the refusal into a
-  SILENT DROP — `len` reads 0 with no diagnostic — which is the worse of the two states.  So
-  `(B-Ref-Uniform)`'s *no operation is special-cased* holds for the two binding provenances
-  and not yet for the parameter one.  Closes when the keyed insert resolves a `RefVar`
-  collection argument.
+**OPEN: 1** — **D-bind-28 OPEN 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
+The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
+special-cased.  THREE independent mechanisms broke that for collections; two are closed.
 
-The closed ones: **D-bind-29 CLOSED 2026-09-07 (loft#1433): a `&` bind to a keyed collection
-is a LINK, not a copy.**  `(B-Ref-Alias)` is stated over ANY binding, and the `&`-bind's
-source set was `matches!(source, Type::Vector(_, _))` — one kind — so all five keyed kinds
-took the deep-copy path: `a = &h` gave `a` its own store and `OpReplaceKeyed`-copied `h` into
-it, leaving two independent collections that each saw only their own writes.  From an EMPTY
-source that reads as the alias dropping every append, which is how it was filed; the append
-in fact lands in the alias's own store.  The set now comes from `vectors::is_collection`, the
-same store-backed set `(Col-Store)` names.  D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a place
-for a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
+* **CLOSED 2026-09-07 — the VECTOR surface.**  Four compiler special-cases (`insert`,
+  `reverse`, `sort`, `reserve`) matched `Type::Vector` against the argument type with the `&`
+  still on it, and `Parser::resolve_type_var` bound a type variable to the argument's shape
+  without stripping the link — so every generic over `vector<T>` (`sum`, `min_of`, `max_of`,
+  and any a USER writes) was unreachable through a reference.  Both now ask `Type::peel_link`,
+  the one home for *what a value IS* as opposed to *how it is reached*.  `(C-Ref)` settled it:
+  a reference reads through to its referent, so the refusals were deviations rather than design
+  calls.  The ordinary operations (`.remove`, `v[i] = x`, `+=`, `len`, `.clear`, `for..in`,
+  `v[a..b]`) went through the normal call path and were correct throughout, which is what
+  localised the fault to the sites that re-derived the shape.
+* **CLOSED 2026-09-07 (loft#1433) — the keyed BIND.**  `a = &h` on any of the five keyed kinds
+  was a COPY rather than a link: the `&`-bind's source set was `matches!(source,
+  Type::Vector(_, _))`, a set of ONE, so a keyed source took the deep-copy path and got its own
+  store with `OpReplaceKeyed` filling it from the source.  The two collections were then
+  independent — measured, after one write through each name `h` held `{1,3}` and `a` held
+  `{1,2}`, *both reporting length 2*.  The set now comes from `vectors::is_collection`, which
+  `(Col-Store)` already defines as the `is_keyed` set plus `Vector`.
+  ⚠ **This was NOT the broken emission path below**, though loft#1433 was filed as if it were
+  ("the alias silently drops every append", which is how an EMPTY source presents).  The append
+  was never dropped: it landed in the alias's own store.  The bind and the append are two
+  faults, and only the second remains.
+* **STILL OPEN — the keyed PARAMETER (loft#1445).**  `c += […]` on a `&hash` / `&sorted` /
+  `&index` / `&trie` PARAMETER is refused, and the refusal is the SAFER state: peeling the link
+  in `is_keyed` / `is_collection` / `append_source` routes the statement and emits
+  correct-looking IR, but the keyed kinds then resolve their store wrongly through the
+  double-indirect `RefVar` and answer without a diagnostic (measured twice, with different
+  symptoms — `len` 0 on one build, `len=1` with empty payload fields on `hash` and `index` on
+  another, `sorted` and `vector` right in both).  The fix belongs in the keyed emission path,
+  not in the predicates.
+
+The closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a placefor a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
 through a FIELD, and for every place a branch's arms can name rather than only an agreed one;
 D-bind-24 CLOSED 2026-09-06 (loft#1401): a projection
 discharged with `??` is the view its plain spelling is, so it materialises where that one does;

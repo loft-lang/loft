@@ -1534,11 +1534,7 @@ impl Parser {
     /// guards decided one question and only one of them peeled.
     pub(crate) fn is_file_var_type(&self, tp: &Type) -> bool {
         let file_def = self.data.def_nr("File");
-        let mut tp = tp.base();
-        while let Type::RefVar(inner) = tp {
-            tp = inner.base();
-        }
-        matches!(tp, Type::Reference(d, _) if *d == file_def)
+        matches!(tp.peel_link(), Type::Reference(d, _) if *d == file_def)
     }
 
     /// The schema type a binary-I/O slot of `width` bytes serialises through, for a value

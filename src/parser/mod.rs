@@ -7865,6 +7865,17 @@ impl Parser {
         if let Type::Rewritten(inner) = concrete_tp {
             return Self::resolve_type_var(template_tp, tv_nr, inner);
         }
+        // A `&` link is the same category as the `Rewritten` marker above: it records how
+        // the argument is REACHED, not what it IS, and a type variable is bound to the data
+        // shape.  @FR-C-Ref says a `&τ` is accepted wherever a `τ` is, so `vector<T>` must
+        // unify with a `&vector<integer>` argument exactly as it does with a plain one —
+        // without this, `zip_children` pairs `Vector` against `RefVar` and answers "these
+        // two types do not relate", which surfaces as "Cannot resolve generic type
+        // parameter from argument type" for `sum` / `min_of` / `max_of` and for EVERY
+        // user-written generic over a collection.
+        if let Type::RefVar(inner) = concrete_tp {
+            return Self::resolve_type_var(template_tp, tv_nr, inner);
+        }
         match template_tp {
             // Same principle as the `Rewritten` strip above: the call-site
             // argument's dep list records what THAT expression borrows in the
@@ -17133,6 +17144,16 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name == "OpHashRemove"
         || name == "OpInsertVector"
         || name == "OpRemoveVector"
+        // Reordering ops rewrite every element of the collection they are given, which is a
+        // write to the first argument in exactly the sense `OpRemoveVector` above it is.
+        // They were missing while `insert` and `remove` were present, so a `&` parameter
+        // whose only mutation was a `reverse` or a `sort` was rejected as "never modified"
+        // — the shape a caller reaches for when the reordering is the function's whole job.
+        // `OpReserveVector` / `OpReserveHash` are deliberately NOT here: reserve is a
+        // capacity hint that changes neither the length nor the contents, so a `&` whose
+        // only use is a reserve really does serve no purpose.
+        || name == "OpReverseVector"
+        || name == "OpSortVector"
         // Delivers into its FIRST arg (`vector_replace(&r, &other, tp)`) — the NRVO return
         // buffer. Today every emit site also writes that slot another way (a
         // `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so the

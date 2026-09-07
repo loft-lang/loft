@@ -6849,6 +6849,53 @@ the DECLARED type is passed down instead of being recovered from a def.
 time and the operations disagreed with it — not "narrow storage is broken".  Both guards keep
 their controls for that reason.
 
+#### B8p — the `(B-Ref-Uniform)` walk: what a value IS versus how it is reached (2026-09-07)
+
+`(B-Ref-Uniform)` says a `&τ` variable is used *exactly* like a `τ` variable, and that **no
+operation is special-cased**.  `(C-Ref)` says the same thing in the conversion relation: `&τ ⤳ σ`
+whenever `τ ⤳ σ`.  Both make a refusal through a `&` a deviation rather than a design call,
+which is what let this walk skip the deliberation the surface invites.
+
+**The matrix found three roots where the filed shape would have been one.**  Sweeping every
+collection operation through a `&` parameter against a PLAIN-parameter control column — the
+control is what separates *"the `&` broke it"* from *"the operation does not exist"* — left 11
+broken cells:
+
+* **the four compiler special-cases** (`insert`, `reverse`, `sort`, `reserve`), each matching
+  `Type::Vector` against the argument type with the link still on it;
+* **generic unification**, where `resolve_type_var` binds a type variable to the argument's data
+  SHAPE, already strips the `Rewritten` construction marker for exactly that reason, and did not
+  strip the link — so `sum`, `min_of`, `max_of` and *every user-written generic over a
+  collection* were unreachable through a reference;
+* **the keyed `+=`**, which read the append as a rebind to `vector<Row>`.
+
+`Type::peel_link` is the one home the first two now ask.  It is not a new idiom: loft#753 fixed
+the same class for `&File` a cycle earlier by hand-rolling that exact peel loop INSIDE one
+predicate, and its own table checked `+=` on a `&vector` and stopped there.  The class outlived
+the instance because the answer had no home.
+
+**The third root is why the walk stopped where it did.**  Peeling the two shared predicates
+routes the keyed append and emits correct-looking IR — and then `hash` and `index` answer LOST
+and CORRUPT records (two appends give `len=1` with empty payload fields) while `sorted` and
+`vector` come out right.  A surface peel there converts a compile error into a `silent-wrong`,
+which is strictly worse: the refusal at least tells the author.  So that half was reverted and
+filed (loft#1433, D-bind-28), and the fix belongs in the keyed emission path.  Measuring the
+value rather than the exit code is the only thing that caught it — all 11 cells *compiled*.
+
+**A second defect surfaced behind the first.**  With the refusals gone, `reverse` and `sort`
+through a `&` drew *"has & but is never modified"* — `op_writes_first_arg`, the one home for
+which ops write their first argument, listed `OpInsertVector` and `OpRemoveVector` but not the
+reordering pair.  Added; `OpReserveVector` / `OpReserveHash` deliberately were not, because
+reserve changes neither length nor contents, so a `&` whose only use is a reserve really does
+serve no purpose.  That list has a divergent inline COPY in `find_field_written_vars` — left
+alone here because unifying them changes dep propagation well beyond this rule, but it is the
+same drift shape and is worth its own walk.
+
+**What the negative controls bought.**  `sort(&text)`, `insert(&integer)`, `reverse(&text)`,
+`reserve(&integer)`, `sort(&struct)` all still refuse, and `sum` over a `vector<text>` still
+refuses *for the bound* (`'text' does not satisfy interface 'Addable'`) rather than for the
+unification — which is what says the generic fix did not slip past `check_satisfaction`.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
