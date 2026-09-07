@@ -188,6 +188,7 @@ split is a merge that would have coupled two rules that must stay free to differ
 | 7 | **the value-carrying `Value` wrappers** | 59 | ✅ **evaluated — FOUR questions, not one**; not mergeable (arms, not predicates). One omission documented as deliberate. ⚠ its "one real gap fixed" claim was **wrong and is corrected** — `walk_check`'s missing `BreakWith` arm was unreachable, see #8 |
 | 8 | **which `Value` shapes hold a statement list** | 13 | ✅ **evaluated — the merged home already exists.** Not a merge: the two arm-sets differ only by whether `Call` shares the body. The finding is one level up — `Value::for_each_child` claims *every* traversal derives from it; measured **31 do, 22 are exhaustive, 127 are a partial match + `_` catch-all**. And **two variants have no producer at all** (`BreakWith`, `ParFor`) — see IMPLEMENTATIONS.md |
 | 1 | scalar — the 5 remaining BARE sites | 5 | ⚠ adopting `is_scalar` ADDS value enums at each: a behaviour change per site, one probe each. Not a sweep |
+| 9 | **what does a slice bound MEAN** (`vector` + `text`) | 3 | ⚠ **the one-home question answered the wrong way round** — not two homes drifting apart, but a CORRECT home orphaned while two copies grew a shared hole.  `ops::sub_text` normalises both bounds and INTERNALS.md documents it; nothing calls it.  The two live halves (`State::get_text_sub`, `codegen_runtime::OpGetTextSub`) each normalised `till` and not `from` — B8j.  The from-end half is fixed and cited at both; what is left is the orphan: delete it, or make the live halves derive from it |
 
 #### B — rules gaps found by citing (spec decisions, not code)
 
@@ -6443,6 +6444,114 @@ deviation"*.  B8h improved a refusal's wording without first asking whether `ite
 anything to say about a null source — it did, and had the answer been about `τ?` the work would
 have been polishing something that should not exist.  It was not, so B8h stands; the process gap
 is the finding, and the cost of closing it was one grep.
+#### B8j — `@FR-Slice-Value` and heap.md's write side walked: the bound that counted from one end only (2026-09-07)
+
+`heap.md` was the queue's first target on ../loft's measurement — 17 of 23 rules uncited,
+including `(H-Materialise)` and `(H-Copy)`, the machinery the whole of B8f moved through.  This
+walk took its READ/WRITE half: `(H-Index)`, `(H-ReadNull)`, `(H-Write)`, `(H-WriteNull)`,
+`(H-WriteOOB)`, `(H-WriteLocked)`.  Three of them hold exactly as written, one is incomplete, one
+holds only in the letter, and the sixth turned up a silent wrong answer one doc over.
+
+**The code defect: a `text` slice counted from the end at ONE bound.**  `s[-2..]` answered `""`
+where `v[-2..]` answers the last two — both backends, no diagnostic — while `s[..-1]` right beside
+it was correct, and `s[-1]`, `char_slice(-2, 6)` and every vector form counted from the end as
+LOFT.md § Vectors (@P384) and STDLIB.md § text slice both document.  Nine cells of the matrix were
+wrong and one of them (`s[-2..2]`, a reversed range) passed by luck.
+
+⚠ **Three implementations of one operation, and the one that had it right is the one nothing
+calls.**  `ops::sub_text` normalises BOTH ends and INTERNALS.md documents it that way — it has no
+callers.  The two live halves, `State::get_text_sub` and `codegen_runtime::OpGetTextSub`, each
+normalise `till` and not `from`, and the native one's own doc-comment says so, which is how the
+asymmetry read as intent.  This is the one-home question answered the wrong way round: not two
+homes drifting, but a correct home orphaned while two copies grew a shared hole.  The fix is one
+line in each live half, placed BEFORE the UTF-8 boundary snap so a bound landing inside a
+multi-byte character resolves to that character exactly as a positive one does.
+
+**`(H-Index)` is INCOMPLETE, not wrong.**  It made every `i ∉ [0, len)` out of bounds and answered
+null, where a negative index in range names the element from the END on both backends and in the
+language reference.  Extended, with the footgun LOFT.md already carries: because a negative index
+in range yields a REAL element, `v[i] ?? d` catches `i ≥ len` and not a `-1` sentinel.  Four homes
+now cite it — `State::vec_get_or_raise`, `Stores::vec_get_or_raise_runtime`, and the two
+text-scalar halves — and the loft#885 hoisted fast path sends every non-fast index back to the
+twin, so the normalisation has ONE definition per backend rather than one per call site.
+
+**`(H-ReadNull)` / `(H-WriteNull)` / `(H-WriteOOB)` hold, and they are one test, not three.**
+Measured on both backends: a read through a keyed miss answers null, a write through it is a
+no-op, a write past the end of a vector is a no-op, and neither touches a neighbouring record or
+the length — across `integer`, `text`, `u8`, `boolean`, a whole-struct element write and a nested
+field write through an out-of-range element.  All of them are `rec == 0` in the shared `#rust`
+accessor bodies in `default/01_code.loft`, which the interpreter's `fill.rs` and the native
+emitter both carry — so the two backends agree here BY CONSTRUCTION rather than by test, and that
+block is where the citation belongs.
+
+**`(H-WriteLocked)` holds in the letter and fails the reader.**  A locked store never takes the
+write, so *"never a silent successful write"* is true; what arrives is a Rust panic naming
+`src/store.rs:2893` with a `RUST_BACKTRACE` note and the store's internal `rec`/`fld`, never the
+author's line — for `d#lock = true; d.val = 99`, which is the feature working as documented.
+Filed as loft#1405 rather than fixed: `read_only` is ONE flag for the const store, worker borrows
+and the author's own `#lock`, and only the last is a user error, so telling them apart is a design
+call.  `tests/scripts/59-locks.loft` covers the attribute and reading through a locked store, and
+never a write — the assert has never been reached by a test.
+
+**`collections.md (Slice-Value)` never mentioned a negative bound at all** — it states the clamp
+and the inclusive/exclusive ends and stops.  Extended, with the units note that goes with it: a
+`vector<τ>` bound is an ELEMENT index and a `text` bound is a BYTE offset, which is why the rule
+is spelled `size + bound` and not `len + bound`, and why `"héllo"[-4..]` lands inside the two-byte
+character and answers `"éllo"`.
+
+**The guard reads each text cell against the vector cell for the same bound.**  The vector is the
+reference implementation — it carries the rule's complete shape (count from the end, floor below
+the start, clamp past the end, reversed ⇒ empty) — so a divergence between the two halves of a row
+is the failure the file is for, rather than a text expectation somebody hand-wrote.  Falsified at
+`d7a2b158` on both backends; the first moving cell is `s[-1..]`.
+
+⚠ **The nearest existing coverage was the one corner of the matrix that was never wrong.**
+`issues.rs::inc28_negative_slice_counts_from_end` is a negative TILL on a VECTOR.  Both axes it
+pins are the safe ones — kind and end — which is what let the hole survive a suite that names the
+rule in a test's own title.  A test named after a rule is not coverage OF the rule until the axes
+it varies are counted.
+
+#### B8k — the gate's own orphans: a reap that greps for a port the process never had (2026-09-07)
+
+Found by running the AFTER-gate orphan check this session's notes ask for, and the count was not
+two: **47 server processes across three checkouts, the oldest alive 1 day 10 hours**, each a
+hot-swap child of an `engine_host_kernel` test.  Two of them were mine, seven minutes after a
+`make ci` that returned `ALL GATES PASSED`.
+
+**The cause is exact and it is not "the gate does not reap".**  It reaps — against the wrong
+name.  `s5_native_swap_under_running_world` and `s7_debugger_loop_end_to_end` each swept for
+`"/.loft/cache/eh_s5_18100-"` / `"eh_s7_18108-"`, the BASE ports, while the child they spawn is
+named for the RESOLVED port — base plus this checkout's `LOFT_TEST_PORT_OFFSET` band, which
+`common::test_port` derives as `(cksum(path) % 6 + 1) * 2000` and so is **never zero on any
+checkout**.  The literal stems therefore matched nothing, ever, on any machine: both the
+pre-spawn sweep and the `S5Hygiene` Drop guard — the one that exists precisely because *"the swap
+child outlives its parent chain by DESIGN"* — ran their `pgrep` against a port no process had.
+
+⚠ **Two defences, interlocked wrongly, and each looked like the other's backstop.**  The
+port-scoped `reap_port(port)` was added exactly for what the stem `pgrep` misses — but it reaps
+the port THIS run resolved, and `resolve_bindable_port` skips a port an orphan already holds, so
+it never aims at the orphan.  The stem sweep aimed at a name that never existed.  Nothing was
+silent about failing, because neither has anything to report when it matches nothing.  That
+compounding is visible in the leaked ports themselves: `26586, 26687, 26788, 26889, 26990,
+27091…` — each run stepping one port past the orphan the last one left.
+
+**Fix, and the reason the two stems are two different numbers.**  A prior run's orphan sits on
+this checkout's CANONICAL port (`common::test_port`, a pure function needing no bind), while our
+own child lands on whatever `bind_port` could actually take — and those differ exactly when an
+orphan holds the canonical one, which is the case the sweep exists for.  So the pre-sweep uses
+the canonical stem and the hygiene guard the resolved one; `S5Hygiene` takes an owned `String`
+because the stem that matters cannot be a literal.  The other four call sites were already right
+(no port in the stem, or built from the resolved port — `run_s8_leg` had the correct pattern in
+the same file).
+
+**Measured.** Before: the two tests leave exactly two orphans behind, every run.  After: zero,
+and the new pre-sweep also collected the two the baseline run had just leaked.  Full
+`engine_host_kernel` binary green (18/18) with zero orphans.
+
+⚠ **This retires a wrong attribution I was carrying**, and it is the same lesson as the census
+that read one citation apart: *a gate that leaves live processes was recorded as an unexplained
+property of the gate*, and the checkable version of it — which name does the reap actually look
+for — was one grep away.  A defence that cannot report a miss is not evidence that it fired.
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |

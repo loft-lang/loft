@@ -450,10 +450,18 @@ fn reap_port(port: u16) {
     }
 }
 
-struct S5Hygiene(&'static str);
+/// Kill this test's own cache-binary orphans when it ends, however it ends.
+///
+/// The stem is OWNED because the one that matters carries the RESOLVED port
+/// (`common::bind_port`), which is not known until the test runs — a `&'static str` can only
+/// spell the BASE port, and the two differ by this checkout's `LOFT_TEST_PORT_OFFSET` band,
+/// which is never zero (`common::test_port`, `(cksum(path) % 6 + 1) * 2000`).  A stem built
+/// from the base port therefore matches nothing on any checkout, and the guard runs its
+/// `pgrep` against a port the process never had.
+struct S5Hygiene(String);
 impl Drop for S5Hygiene {
     fn drop(&mut self) {
-        s5_kill_stale(self.0);
+        s5_kill_stale(&self.0);
     }
 }
 
@@ -464,12 +472,15 @@ fn s5_native_swap_under_running_world() {
         eprintln!("skipping: release loft not built");
         return;
     }
-    const STEM: &str = "/.loft/cache/eh_s5_18100-";
-    s5_kill_stale(STEM); // a stale orphan from a prior run shares the port
-    let _hygiene = S5Hygiene(STEM); // and OUR swap child must die at exit
+    // Both stems carry a PORT, and the two ports are not the same one: a prior run's orphan
+    // sits on this checkout's CANONICAL port (`test_port`, pure), while our own child lands on
+    // whatever `bind_port` could actually take — which differs exactly when an orphan already
+    // holds the canonical one, the case the sweep exists for.
+    s5_kill_stale(&format!("/.loft/cache/eh_s5_{}-", common::test_port(18100))); // a stale orphan from a prior run shares the port
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18100);
     reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5_{port}-")); // OUR swap child dies at exit
     // A test-OWNED always-fails binary: /bin/false varies across platforms
     // and runners (macOS CI refused it — forensics pending); a temp script
     // is deterministic everywhere this unix-only suite runs.
@@ -709,7 +720,7 @@ fn s5_client_swap_under_running_world() {
     let port = common::bind_port(18116);
     const STEM: &str = "/.loft/cache/eh_s5c_";
     s5_kill_stale(STEM);
-    let _hygiene = S5Hygiene(STEM);
+    let _hygiene = S5Hygiene(STEM.to_string());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let srv_prog = test_tmp().join(format!("eh_s5c_srv_{port}.loft"));
@@ -897,7 +908,7 @@ fn s7_client_debug_over_its_own_endpoint() {
     let port = common::bind_port(18115);
     const STEM: &str = "/.loft/cache/eh_s7c_";
     s5_kill_stale(STEM);
-    let _hygiene = S5Hygiene(STEM);
+    let _hygiene = S5Hygiene(STEM.to_string());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // A minimal kernel server for the client to ride against.
@@ -1235,12 +1246,13 @@ fn s7_debugger_loop_end_to_end() {
         eprintln!("skipping: release loft not built");
         return;
     }
-    const STEM: &str = "/.loft/cache/eh_s7_18108-";
-    s5_kill_stale(STEM);
-    let _hygiene = S5Hygiene(STEM);
+    // The canonical port for the prior run's orphan, the resolved one for our own child —
+    // see `s5_native_swap_under_running_world` for why they are two different numbers.
+    s5_kill_stale(&format!("/.loft/cache/eh_s7_{}-", common::test_port(18108)));
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18108);
     reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s7_{port}-"));
     // The edit touches ONLY the named fn (lambdas don't reload — the
     // documented v1 boundary); each build's identity shows in the STEP:
     // +1 = original, +100 = the edit (and post-swap, its compiled form).
@@ -1903,7 +1915,7 @@ fn s5_local_swap_hands_over() {
         eprintln!("skipping: release loft not built");
         return;
     }
-    let _hygiene = S5Hygiene("eh_s5local");
+    let _hygiene = S5Hygiene("eh_s5local".to_string());
     let fixture = r#"use engine_host;
 
 struct World { ticks: integer, gen: integer }
