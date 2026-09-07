@@ -53,9 +53,9 @@
 //
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
-// loft#1434 — the keyed type is named as the SOURCE writes it (`hash<E1210[k]>`), not in the
-// schema's debug spelling.  `Type::source_name` gained its wrapper arms, so a diagnostic that
-// names a keyed type reaches the author in the spelling they used.
+// loft#1434 / loft#1449 — the keyed type is named as the SOURCE writes it (`hash<E1210[k]>`),
+// not in the schema's debug spelling.  `name` and `source_name` are one body carrying a flag
+// through its own recursion, so a wrapper cannot re-spell the payload it wraps.
 // @EXPECT_WARNING: a nullable `vector<E1210>?` is stored into the appended value of the non-null type `hash<E1210[k]>`
 
 struct E1210 { k: integer, nm: text }

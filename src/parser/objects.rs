@@ -1653,7 +1653,7 @@ impl Parser {
         if self.first_pass || db_tp != u16::MAX {
             return db_tp;
         }
-        let name = tp.name(&self.data);
+        let name = tp.source_name(&self.data);
         diagnostic!(
             self.lexer,
             Level::Error,
@@ -2666,7 +2666,7 @@ impl Parser {
                                     self.lexer,
                                     Level::Error,
                                     "a format width must be a number, not {}",
-                                    w_tp.name(&self.data)
+                                    w_tp.source_name(&self.data)
                                 );
                             }
                         }
@@ -2808,7 +2808,7 @@ impl Parser {
                         Level::Error,
                         "a {} cannot be interpolated into a {} — a hole is a scalar or a value \
                          of a named type, handed to the type rather than rendered into it",
-                        tp.name(&self.data),
+                        tp.source_name(&self.data),
                         self.data.def(target).name()
                     );
                 }
@@ -2833,7 +2833,7 @@ impl Parser {
                     Level::Error,
                     "{nm} has no `fn hole_{kind}(self: {nm}, v: {})` — declare one to accept \
                      this hole",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             }
             return;
@@ -4574,7 +4574,7 @@ impl Parser {
                     && !self.data.def(*e).name.starts_with("__")
                     && !self.first_pass
                 {
-                    let tn = tp.name(&self.data);
+                    let tn = tp.source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,

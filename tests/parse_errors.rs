@@ -3239,13 +3239,19 @@ fn keyed_collection_unknown_key_field_lists_the_fields_when_it_cannot_suggest() 
 /// beside `name` rather than re-spelling `name` itself, which is right — `name` is
 /// the SCHEMA KEY, and re-spelling it re-identifies the type.
 ///
-/// It stayed broken for one shape until loft#1434, and the shape is worth naming:
-/// `source_name`'s catch-all assumed everything it did not list "already reads as
-/// the source writes it", which is true of a leaf and false of a WRAPPER, whose
-/// inner it rendered through `name`. So a NULLABLE keyed collection came back
-/// `hash<It,["k"]>?` at every site that had correctly asked for the source
-/// spelling. `a_nullable_keyed_collection_is_refused_in_the_source_spelling`
-/// below is that cell.
+/// Splitting them into two match statements is what kept drifting, and never at a
+/// keyed arm: `source_name`'s catch-all assumed everything it did not list "already
+/// reads as the source writes it", which is true of a leaf and false of a
+/// CONSTRUCTOR, whose inner it rendered through `name`. Each pass added the
+/// constructor someone had a symptom for — `Optional` and `&` in loft#1434, so
+/// `hash<It[k]>?` read right while `fn(&hash<It[k]>)` did not.
+///
+/// loft#1449 closed the shape rather than the next instance: `name` and
+/// `source_name` are two flags on ONE body, the recursion carries the flag, and a
+/// leaf reads the same under both — so a constructor cannot be forgotten. What a
+/// diagnostic asks for is gated by `scripts/diagnostic_spelling.py`.
+/// `a_nullable_keyed_collection_is_refused_in_the_source_spelling` below is the
+/// wrapper cell.
 #[test]
 fn keyed_collection_as_a_vector_element_is_refused() {
     code!("struct Ent { k: integer, v: integer }\nfn test() { vh: vector<hash<Ent[k]>> = []; }")
@@ -3331,6 +3337,29 @@ fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
     // names reports nothing of its own.
     .error(
         "Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
+    );
+}
+
+/// loft#1449 — a keyed collection nested inside a FUNCTION type is spelled as its author
+/// wrote it too.
+///
+/// This is the cell the wrapper fix above could not reach.  `source_name` grew an arm per
+/// wrapper someone had a symptom for — `Optional` and `&` — while every other CONSTRUCTOR
+/// still fell to a catch-all that rendered its inner through `name`, the schema key.  So a
+/// `hash<Ent[k]>?` read correctly and a `fn(&hash<Ent[k]>)` did not, in the same build.
+///
+/// The two spellings are one body now, and its recursion carries which job it is doing, so
+/// what this pins is not the function arm in particular: it is that a type is spelled ONE
+/// way all the way down.  A rendering added for a new constructor is covered by construction.
+#[test]
+fn a_keyed_collection_inside_a_function_type_keeps_the_source_spelling() {
+    code!(
+        "struct Ent { k: integer, v: integer }\nfn keyed(x: &hash<Ent[k]>) -> integer { 1 }\nfn test() { b: integer = keyed; }"
+    )
+    .error(
+        "Variable 'b' cannot change type from integer to fn(&hash<Ent[k]>) -> integer; \
+         use a new variable name or cast with 'as' at \
+         a_keyed_collection_inside_a_function_type_keeps_the_source_spelling:3:32",
     );
 }
 

@@ -94,7 +94,7 @@ impl Parser {
                     "a trie keys on the BYTES of ONE text field, and `{field}` is {} — a \
                      tuple key needs `sorted<…>` / `index<…>` (ordered lexicographically, \
                      element by element) or `hash<…>` (exact lookup)",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
                 return;
             }
@@ -104,7 +104,7 @@ impl Parser {
                 "a trie keys on the BYTES of a text field, and `{field}` is {} — use \
                  `spatial<…>` for coordinates, or `sorted<…>` / `index<…>` to order on a \
                  number",
-                tp.name(&self.data)
+                tp.source_name(&self.data)
             );
         } else {
             diagnostic!(
@@ -1151,7 +1151,7 @@ impl Parser {
                 if let Some(what) = unsupported {
                     refused_as_unbuildable = true;
                     let fn_name = id.to_lowercase();
-                    let tn = tp.base().name(&self.data);
+                    let tn = tp.base().source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -2630,7 +2630,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "Expecting a clear type, found {}",
-                    typedef.name(&self.data)
+                    typedef.source_name(&self.data)
                 );
             }
             (*arguments).push(Argument {
@@ -4970,7 +4970,7 @@ impl Parser {
                 self.lexer.revert(value_start);
                 *value = self.default_value_fn(&dflt_fn, &[], a_type, Vec::new());
             } else if !self.first_pass {
-                let tn = a_type.name(&self.data);
+                let tn = a_type.source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,

@@ -2522,9 +2522,17 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 743 | 392 | 5 | **346** |
+| 733 | 372 | 5 | **356** |
 
-*loft#1445 added the 743rd and the 392nd, and it is a SPLIT rather than a new site.*
+*loft#1449 removed one from each of the first two columns, by MERGING rather than by peeling.*
+`Type::name` and `Type::source_name` were two match statements over the same variants, kept
+apart so the second could spell a keyed collection the way its author wrote it.  Held apart
+they drifted three times, and never at a keyed arm — always at a CONSTRUCTOR the second had
+not learned to recurse through.  They are now one body, `Type::render`, with a flag for which
+of the two jobs it is doing; the arms are exhaustive, so a constructor cannot be forgotten.
+Both entered as PEELING (each had an `Optional` arm), so the opaque count is unmoved.
+
+*loft#1445 added a site to each of the first two columns, and it is a SPLIT rather than a new site.*
 `vectors::owns_keyed_store` is the ownership half of a question `is_keyed` was answering
 twice — *which kind of collection is this*, where a `&` link must peel, and *does this
 variable own a store*, where it must not.  It discriminates on `Type::RefVar` through

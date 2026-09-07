@@ -1911,7 +1911,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "#fields requires a struct variable, got {}",
-                    var_type.name(&self.data)
+                    var_type.source_name(&self.data)
                 );
             }
             // Set code to the source variable so parse_field_iteration receives it.
@@ -2472,7 +2472,7 @@ use #count instead"
                     Level::Error,
                     "`{}` has no effect on {}",
                     Self::radix_letter(state.radix),
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             } else if is_text && state.token == "0" && state.width != Value::Int(0) {
                 diagnostic!(
@@ -2496,7 +2496,7 @@ use #count instead"
                     Level::Error,
                     "a precision has no effect on {} — `.N` sets fractional digits, \
                      which only `float` and `single` have",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             }
         }
@@ -2688,7 +2688,7 @@ use #count instead"
                         self.lexer,
                         Level::Error,
                         "Cannot format type {}",
-                        tp.name(&self.data)
+                        tp.source_name(&self.data)
                     );
                 }
             }
@@ -3337,7 +3337,7 @@ use #count instead"
                             self.lexer,
                             Level::Error,
                             "for-destructure requires a tuple element type, got {}",
-                            var_tp.name(&self.data)
+                            var_tp.source_name(&self.data)
                         );
                     }
                     Vec::new()
@@ -4137,7 +4137,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "par(...) requires a vector<T> input, not {}",
-                    in_type.name(&self.data)
+                    in_type.source_name(&self.data)
                 );
             }
             self.skip_to_parallel_body();
@@ -4387,7 +4387,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "Parallel worker return type '{}' (size {sz}) is not supported",
-                    ret_type.name(&self.data)
+                    ret_type.source_name(&self.data)
                 );
             }
             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
@@ -6244,7 +6244,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "sort is not supported for vector<{}>; use integer, long, float, single, or text",
-                    elm.name(&self.data)
+                    elm.source_name(&self.data)
                 );
                 return Type::Void;
             }

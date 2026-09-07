@@ -107,7 +107,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Parallel method call (form 2) requires a struct element type, not {}",
-                        elem_tp.name(&self.data)
+                        elem_tp.source_name(&self.data)
                     );
                 }
                 return (u32::MAX, Type::Unknown(0));
@@ -154,7 +154,7 @@ impl Parser {
                     Level::Error,
                     "parallel worker '{method_name}' returns {} — \
                      generator functions cannot be used as parallel workers",
-                    ret_type.name(&self.data)
+                    ret_type.source_name(&self.data)
                 );
             }
             return (u32::MAX, Type::Unknown(0));
@@ -391,7 +391,7 @@ impl Parser {
                     let (Type::Tuple(elems), Type::Reference(d, _)) = (t, r) else {
                         return false;
                     };
-                    let inner: Vec<String> = elems.iter().map(|e| e.name(data)).collect();
+                    let inner: Vec<String> = elems.iter().map(|e| e.name(data)).collect(); // schema-key — the `__tuple<…>` SCHEMA KEY this compares against
                     data.def(*d).name() == format!("__tuple<{}>", inner.join(","))
                 };
                 // Either side may carry the boxed spelling: the ELEMENT does when the source
@@ -411,8 +411,8 @@ impl Parser {
                         "par worker '{first_id}': its first parameter '{}' receives the loop \
                          element, but expected {}, got {}",
                         self.data.attr_name(d_nr, p0),
-                        p0_tp.name(&self.data),
-                        elem_tp.name(&self.data)
+                        p0_tp.source_name(&self.data),
+                        elem_tp.source_name(&self.data)
                     );
                 }
             }
@@ -428,7 +428,7 @@ impl Parser {
                          reference.  Pass a scalar, or read the value into a scalar before the \
                          loop (only the loop element may be a reference).",
                         self.data.attr_name(d_nr, a),
-                        tp.name(&self.data)
+                        tp.source_name(&self.data)
                     );
                 }
             }
@@ -507,7 +507,7 @@ impl Parser {
                     Level::Error,
                     "parallel worker '{first_id}' returns {} — \
                      generator functions cannot be used as parallel workers",
-                    ret_type.name(&self.data)
+                    ret_type.source_name(&self.data)
                 );
             }
             return (u32::MAX, Type::Unknown(0), extra_vals, extra_types);
@@ -696,7 +696,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "parallel_for: worker return type '{}' (size {sz}) is not supported",
-                    worker_ret_type.name(&self.data)
+                    worker_ret_type.source_name(&self.data)
                 );
                 return Type::Unknown(0);
             }
@@ -821,7 +821,7 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "par_fold (V1): items element type must be integer; got {}",
-                elem_tp.name(&self.data)
+                elem_tp.source_name(&self.data)
             );
             return Type::Unknown(0);
         }
@@ -831,7 +831,7 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "par_fold (V1): init must be integer; got {}",
-                types[1].name(&self.data)
+                types[1].source_name(&self.data)
             );
             return Type::Unknown(0);
         }
@@ -864,7 +864,7 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "par_fold: threads must be integer; got {}",
-                types[3].name(&self.data)
+                types[3].source_name(&self.data)
             );
             return Type::Unknown(0);
         }

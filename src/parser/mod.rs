@@ -2444,7 +2444,7 @@ impl Parser {
                 .iter()
                 .find(|e| !crate::data::ref_tuple_record_element_ok(e))
         {
-            let bad_name = bad.name(&self.data);
+            let bad_name = bad.source_name(&self.data);
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -4105,7 +4105,7 @@ impl Parser {
                 _ => {}
             }
         }
-        t.name(&self.data)
+        t.source_name(&self.data)
     }
 
     /// @PLAN48 P2: literal exemption — true when `code` is a constant integer that
@@ -4225,7 +4225,7 @@ impl Parser {
             Type::Reference(d, deps) if deps.is_pointer_marker() => {
                 format!("reference<{}>", self.data.def(*d).name())
             }
-            other => other.name(&self.data),
+            other => other.source_name(&self.data),
         }
     }
 
@@ -4757,7 +4757,7 @@ impl Parser {
                 let (what, _, _) = self.store_slot();
                 eprintln!(
                     "[null] -> {} what={} at {}",
-                    should.name(&self.data),
+                    should.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`, not a user diagnostic
                     what.replace(' ', "_"),
                     std::panic::Location::caller()
                 );
@@ -4851,8 +4851,8 @@ impl Parser {
                     let (what, _, _) = self.store_slot();
                     eprintln!(
                         "[unwrap] {} -> {} admit={} what={} at {}",
-                        is_type.name(&self.data),
-                        should.name(&self.data),
+                        is_type.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`
+                        should.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`
                         self.admit_unwrap,
                         what.replace(' ', "_"),
                         std::panic::Location::caller()
@@ -5668,8 +5668,8 @@ impl Parser {
             // forced a mental flip and confused users new to the
             // language.  `pos` is the offending value's start, captured at
             // parse time — the lexer cursor has drifted to the `;` by now.
-            let want = should.name(&self.data);
-            let have = test_type.name(&self.data);
+            let want = should.source_name(&self.data);
+            let have = test_type.source_name(&self.data);
             // Two DIFFERENT definitions can render the same name — loft#1094: a package
             // declaring `Frame` while a module beside it wildcard-imports a dependency
             // that also has one.  Then "expected Frame, got Frame" names the two types
@@ -7004,8 +7004,10 @@ impl Parser {
             // function that may be nowhere near the one that bound it.  The declared WIDTH
             // is part of which instantiation this is, so it belongs in the key.
             let base = if Self::is_collection_type(concrete.base()) {
-                concrete.name(&self.data)
+                concrete.name(&self.data) // schema-key — the method-name IDENTITY `t_<LEN><Type>_`; @FR-G-Mono wants the range in it
             } else if let Type::Integer(spec) = concrete.base() {
+                // schema-key — same identity; loft#1418's forced WIDTH is part of which
+                // instantiation this is, so the suffix stays and the two cannot collide.
                 let named = concrete.name(&self.data);
                 match spec.forced_size {
                     Some(n) => format!("{named}s{n}"),
@@ -10328,7 +10330,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "Field access not supported on type {}",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
                 Value::Null
             }
@@ -10795,7 +10797,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Tuple struct field cannot contain element of type {}",
-                        elem_tp.name(&self.data)
+                        elem_tp.source_name(&self.data)
                     );
                 }
                 Value::Null
@@ -11559,7 +11561,7 @@ impl Parser {
                         Level::Error,
                         "Cannot assign to field '{}' of type {}",
                         self.data.attr_name(d_nr, f_nr),
-                        self.data.attr_type(d_nr, f_nr).name(&self.data)
+                        self.data.attr_type(d_nr, f_nr).source_name(&self.data)
                     );
                     Value::Null
                 }
@@ -12073,8 +12075,8 @@ impl Parser {
                 &self.lexer.peek(),
                 Level::Error,
                 "No matching operator '{spelled}' on '{}' and '{}'",
-                types[0].name(&self.data),
-                types[1].name(&self.data)
+                types[0].source_name(&self.data),
+                types[1].source_name(&self.data)
             );
         } else {
             specific!(
@@ -12082,7 +12084,7 @@ impl Parser {
                 &self.lexer.peek(),
                 Level::Error,
                 "No matching operator {spelled} on {}",
-                types[0].name(&self.data)
+                types[0].source_name(&self.data)
             );
         }
         Type::Unknown(0)
@@ -13146,7 +13148,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unexpected reference type {}",
-                            vtp.name(&self.data)
+                            vtp.source_name(&self.data)
                         );
                         0
                     };

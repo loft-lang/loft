@@ -1146,8 +1146,8 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "`break` value type {} does not match function return type {}",
-                        break_tp.name(&self.data),
-                        ret_tp.name(&self.data)
+                        break_tp.source_name(&self.data),
+                        ret_tp.source_name(&self.data)
                     );
                 }
                 *val = Value::Return(Box::new(break_val));
@@ -3932,7 +3932,7 @@ use a separate collection or add after the loop"
                 && !s_type.is_unknown()
                 && self.source_names_a_collection(code);
             if unroutable_whole {
-                let content = dest.content().name(&self.data);
+                let content = dest.content().source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -3953,13 +3953,13 @@ use a separate collection or add after the loop"
                 // KEYED destination: `d.h += other_h` between two `hash<E[k]>` is itself a
                 // silent drop, and a refusal whose cure is broken sends the reader to a dead
                 // end — that one is loft#1221, the routes that drop an ADMISSIBLE source.
-                let content = dest.content().name(&self.data);
+                let content = dest.content().source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "cannot append `{}` to `{}` — a `+=` source must be one `{}` element \
                      written `[…]`, or a `vector<{}>` of them",
-                    s_type.name(&self.data),
+                    s_type.source_name(&self.data),
                     dest.source_name(&self.data),
                     content,
                     content
@@ -4144,16 +4144,16 @@ use a separate collection or add after the loop"
                      function's identity and has no encoding for absence, so the slot \
                      cannot be cleared; assign another function, or keep the absent \
                      case in a separate field",
-                    f_type.name(&self.data),
+                    f_type.source_name(&self.data),
                 );
             } else {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                    s_type.name(&self.data),
-                    f_type.name(&self.data),
-                    f_type.name(&self.data),
+                    s_type.source_name(&self.data),
+                    f_type.source_name(&self.data),
+                    f_type.source_name(&self.data),
                 );
             }
         }
@@ -5191,8 +5191,8 @@ use a separate collection or add after the loop"
                     self.lexer,
                     Level::Error,
                     "vector `+= other_vec` requires equal types ({} != {})",
-                    f_type.base().name(&self.data),
-                    s_type.name(&self.data)
+                    f_type.base().source_name(&self.data),
+                    s_type.source_name(&self.data)
                 );
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
@@ -5436,9 +5436,9 @@ use a separate collection or add after the loop"
                 self.lexer,
                 Level::Error,
                 "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                s_type.name(&self.data),
-                f_type.name(&self.data),
-                f_type.name(&self.data),
+                s_type.source_name(&self.data),
+                f_type.source_name(&self.data),
+                f_type.source_name(&self.data),
             );
         }
         // A NULLABLE narrow target takes the implicit CHECKED narrowing instead of the

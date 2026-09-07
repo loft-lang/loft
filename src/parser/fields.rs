@@ -2104,7 +2104,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 self.lexer,
                 Level::Error,
                 "Cannot index text with '{}' — an index must be an integer (`s[i]`, `s[i..]`, `s[i..j]`)",
-                index_t.name(&self.data)
+                index_t.source_name(&self.data)
             );
         }
         let mut other = Value::Null;
@@ -2149,7 +2149,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         self.lexer,
                         Level::Error,
                         "Cannot end a text slice at '{}' — a range end must be an integer (`s[i..j]`)",
-                        ot_type.name(&self.data)
+                        ot_type.source_name(&self.data)
                     );
                 }
                 // @PLN110 3a / loft#749 — `s[i..len(s)]` mixes units: a slice bound is a
@@ -2583,7 +2583,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         self.lexer,
                         Level::Error,
                         "this collection keys on {} — a {}-element tuple, but {} were given",
-                        key_types[0].name(&self.data),
+                        key_types[0].source_name(&self.data),
                         want.len(),
                         given.len()
                     );

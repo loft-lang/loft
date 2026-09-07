@@ -1759,6 +1759,51 @@ fn every_rule_citation_resolves() {
     );
 }
 
+/// A diagnostic spells a type the way its reader could have written it.
+///
+/// `Type::name` is the SCHEMA KEY — `typedef.rs` builds wrapper types from it and `state`
+/// looks stores up by it — so it renders a keyed collection in the notation the compiler
+/// identifies it by: `index<Rec,[("id", true)]>`, carrying a Rust tuple and a boolean whose
+/// meaning (ascending) has no spelling in the language, where the author wrote
+/// `index<Rec[id]>`. `Type::source_name` answers the other question. A refusal that names
+/// the first one sends its reader looking for a type that is not in their program.
+///
+/// Nothing FAILS when a message is merely unreadable: the compiler is right, the program is
+/// wrong, and only the author pays — so no gate moves and no test goes red. That is why the
+/// drift returned three times (loft#956, loft#1434, loft#1445), each pass converting the
+/// sites someone happened to have a symptom for and leaving a residue for the next one. This
+/// gate is the structural answer: forgetting is a red check rather than a fourth residue.
+///
+/// Shells out to the same command a person runs, so the gate and the tool cannot drift.
+/// Skipped (not failed) where `python3` is unavailable — a consistency check, not a
+/// capability the build depends on.
+#[test]
+fn diagnostics_spell_types_as_the_author_wrote_them() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = match std::process::Command::new("python3")
+        .arg(root.join("scripts/diagnostic_spelling.py"))
+        .arg("check")
+        .current_dir(root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!(
+                "SKIP diagnostics_spell_types_as_the_author_wrote_them: python3 unavailable ({e})"
+            );
+            return;
+        }
+    };
+    assert!(
+        out.status.success(),
+        "a diagnostic renders a type with the schema key:\n{}{}\n\
+         Run `python3 scripts/diagnostic_spelling.py check` to reproduce; \
+         `list` shows every render the gate governs.",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
 /// `src/ir_schema_gen.rs` must be what `tools/ir_schema/ir.loft` generates.
 ///
 /// The generated file IS the store layout — record sizes, field byte offsets, the `Node`

@@ -2733,6 +2733,28 @@ impl Type {
     /// functions: `name` answers "which type is this?", this answers "what did they write?".
     #[must_use]
     pub fn source_name(&self, data: &Data) -> String {
+        self.render(data, true)
+    }
+
+    /// Which type is this?  The SCHEMA KEY, not a renderer — see [`Type::source_name`] for
+    /// the user-facing spelling and for what changing this one breaks.
+    #[must_use]
+    pub fn name(&self, data: &Data) -> String {
+        self.render(data, false)
+    }
+
+    /// The ONE type renderer; `source` picks which of the two jobs above it is doing.
+    ///
+    /// The two spellings differ at the keyed collections and nowhere else, which is what
+    /// makes a single body with one flag the honest shape.  Held apart as two match
+    /// statements they drifted three times (loft#956, loft#1434, loft#1445) — and never at a
+    /// keyed arm, always at a CONSTRUCTOR that had not learned to recurse: `source_name`
+    /// grew arms for `Optional` and `&`, so `hash<It[k]>?` read right, while a
+    /// `fn(&hash<It[k]>)` still fell to a catch-all that rendered its parameters through the
+    /// schema key.  Here the recursion carries `source` with it, so a type is spelled one
+    /// way all the way down and a constructor cannot be forgotten — the arm either recurses
+    /// or it is a leaf, and a leaf reads the same under both jobs.
+    fn render(&self, data: &Data, source: bool) -> String {
         /// `-` marks a descending field; `parse_fields` stores ascending as `true`.
         fn ordered(keys: &[(String, bool)]) -> String {
             keys.iter()
@@ -2741,40 +2763,9 @@ impl Type {
                 .join(", ")
         }
         match self {
-            Type::Sorted(tp, key, _) => {
-                format!("sorted<{}[{}]>", data.def(*tp).name, ordered(key))
-            }
-            Type::Index(tp, key, _) => {
-                format!("index<{}[{}]>", data.def(*tp).name, ordered(key))
-            }
-            // `hash` and `spatial` carry no direction, so their keys are plain names.
-            Type::Hash(tp, key, _) => {
-                format!("hash<{}[{}]>", data.def(*tp).name, key.join(", "))
-            }
-            Type::Radix(tp, key, _) => {
-                format!("spatial<{}[{}]>", data.def(*tp).name, key.join(", "))
-            }
-            // A wrapper renders its INNER through this function, not through `name`.
-            // Falling to the `_` arm below sent the whole type through `name`, which
-            // re-spelled the keyed payload it wraps: a `hash<It[k]>?` reached the reader as
-            // `hash<It,["k"]>?` and a `&hash<Row[id]>` as `&hash<Row,["id"]>` — the debug
-            // spelling leaking through the one character the author added.
-            Type::Optional(tp) => format!("{}?", tp.source_name(data)),
-            Type::RefVar(tp) => format!("&{}", tp.source_name(data)),
-            Type::Rewritten(tp) => tp.source_name(data),
-            // Everything else — `trie` included — already reads as the source writes it.
-            _ => self.name(data),
-        }
-    }
-
-    /// Which type is this?  The SCHEMA KEY, not a renderer — see [`Type::source_name`] for
-    /// the user-facing spelling and for what changing this one breaks.
-    #[must_use]
-    pub fn name(&self, data: &Data) -> String {
-        match self {
-            Type::Optional(tp) => format!("{}?", tp.name(data)),
-            Type::Rewritten(tp) => tp.name(data),
-            Type::RefVar(tp) => format!("&{}", tp.name(data)),
+            Type::Optional(tp) => format!("{}?", tp.render(data, source)),
+            Type::Rewritten(tp) => tp.render(data, source),
+            Type::RefVar(tp) => format!("&{}", tp.render(data, source)),
             // A type-variable placeholder renders under the spelling its header wrote: two
             // headers may both write `T` and bind different placeholders, so the second is
             // minted as `T#2`, and a diagnostic must name what the reader wrote.
@@ -2784,7 +2775,25 @@ impl Type {
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
-            Type::Vector(tp, _) => format!("vector<{}>", tp.name(data)),
+            Type::Vector(tp, _) => format!("vector<{}>", tp.render(data, source)),
+            // The four keyed arms ARE the difference between the two jobs.  The key list is
+            // a `Vec` the schema key renders with `{:?}` — `index<Rec,[("id", true)]>`,
+            // carrying a Rust tuple and a boolean whose meaning (ascending) has no spelling
+            // in the language — where the author wrote `index<Rec[id]>`.  `trie` carries ONE
+            // key and already renders it as written, so it needs no pair.
+            Type::Sorted(tp, key, _) if source => {
+                format!("sorted<{}[{}]>", data.def(*tp).name, ordered(key))
+            }
+            Type::Index(tp, key, _) if source => {
+                format!("index<{}[{}]>", data.def(*tp).name, ordered(key))
+            }
+            // `hash` and `spatial` carry no direction, so their keys are plain names.
+            Type::Hash(tp, key, _) if source => {
+                format!("hash<{}[{}]>", data.def(*tp).name, key.join(", "))
+            }
+            Type::Radix(tp, key, _) if source => {
+                format!("spatial<{}[{}]>", data.def(*tp).name, key.join(", "))
+            }
             Type::Sorted(tp, key, _) => {
                 format!("sorted<{},{key:?}>", data.def(*tp).name)
             }
@@ -2813,11 +2822,11 @@ impl Type {
             }
             Type::Integer(spec) => format!("integer({}, {})", spec.min, spec.max),
             Type::Keys => "keys".to_string(),
-            Type::Iterator(elem, _) => format!("iterator<{}>", elem.name(data)),
+            Type::Iterator(elem, _) => format!("iterator<{}>", elem.render(data, source)),
             Type::Tuple(elems) => {
                 let inner = elems
                     .iter()
-                    .map(|e| e.name(data))
+                    .map(|e| e.render(data, source))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("({inner})")
@@ -2825,13 +2834,13 @@ impl Type {
             Type::Function(params, ret, _) => {
                 let p = params
                     .iter()
-                    .map(|t| t.name(data))
+                    .map(|t| t.render(data, source))
                     .collect::<Vec<_>>()
                     .join(", ");
                 if matches!(ret.as_ref(), Type::Void) {
                     format!("fn({p})")
                 } else {
-                    format!("fn({p}) -> {}", ret.name(data))
+                    format!("fn({p}) -> {}", ret.render(data, source))
                 }
             }
         }

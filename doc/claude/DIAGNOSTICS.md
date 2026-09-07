@@ -397,35 +397,50 @@ to make the library the ENTRY: `loft --interpret lib/parser.loft` prints its own
 the LSP does the same for the file being edited. The durable fix is for these to become
 packages with a manifest and their own CI, at which point their `loft test` sees everything.
 
-## Naming a TYPE in a message — `source_name`, never `name`
+## How a diagnostic spells a type
 
-`Type::name` is the **schema key**, not a renderer.  It spells a keyed collection
-`hash<It,["k"]>` where the author wrote `hash<It[k]>`, and it cannot be fixed in place: the
-wrapper types in `typedef.rs` are built from it (`main_vector<…>`) and `state` looks stores up
-by it, so re-spelling a keyed type there re-IDENTIFIES it.  `Type::source_name` is the
-user-facing spelling — *"what did they write?"* against *"which type is this?"*.
+**A diagnostic spells a type the way its reader could have written it.** The section above
+decides WHO a message reaches; this decides what it says once it gets there, and the two fail
+the same way — a message addressed correctly but written in a notation the reader has never
+seen is a message they cannot act on.
 
-⚠ **`source_name` must be asked of the WHOLE type, wrapper included.**  It carries the keyed
-arms and delegates everything else to `name`, so for a long time `Optional`, `RefVar` and
-`Rewritten` fell through and re-spelled the payload they wrap: a `hash<It[k]>?` reached the
-reader as `hash<It,["k"]>?` and a `&hash<Row[id]>` as `&hash<Row,["id"]>` — the debug spelling
-leaking through the one character the author added (loft#1434, loft#1445).  Those arms now
-recurse into `source_name`.
+`Type` answers two different questions and has two functions for them:
 
-⚠ **Measured 2026-09-07: 79 diagnostics still render a type through `name`.**  The substitution
-is mechanically safe — `source_name` IS `name` except for the keyed collections and their
-wrappers — but corpus cells pin the debug spelling today, so the sweep wants one deliberate pass
-that updates those rather than a blind replace.
+| | |
+|---|---|
+| `Type::name` | **the schema key** — *which type is this?* `typedef.rs` builds wrapper types from it (`main_vector<…>`) and `state` looks stores up by it, so re-spelling a keyed type here RE-IDENTIFIES it: generated `init()` replays a different type order and the emitted Rust references a temp no line binds (rustc E0425, `tests/lazy_sql_source.rs`). |
+| `Type::source_name` | **the source spelling** — *what did they write?* This is the one a message asks for. |
 
-⚠ **Search EVERY expectation kind, not just `@EXPECT_ERROR`.**  A first sweep for
-`@EXPECT_ERROR` found `tests/scripts/893-field-store-type.loft` and missed
-`tests/scripts/1210-a-nullable-append-source-warns-and-stores.loft`, whose stale pin is an
-`@EXPECT_WARNING` — and that one reds `loft_suite` in the full gate, ten minutes in, long after
-the targeted suites are green.  The grep is
-`@EXPECT_(WARNING|ERROR|ADVICE)` with the keyed debug shape `<Name, [`.
+They differ at the keyed collections and nowhere else. `name` renders the key list with
+`{:?}`, so `index<Rec[id]>` comes out `index<Rec,[("id", true)]>` — a Rust tuple and a boolean
+whose meaning (ascending) has no spelling in the language. That is not a rendering of what the
+author wrote; it is a notation they have never seen, and a refusal that names it sends its
+reader looking for a type that is not in their program.
 
-Nothing else fails when a message is merely unreadable: the compiler is right, the program is
-wrong, and only the author pays — which is why this drifts.
+**Both are one body.** `render(data, source)` carries the flag through its own recursion, so a
+type is spelled one way all the way down. Holding them apart as two match statements is what
+drifted three times (loft#956, loft#1434, loft#1449) — and never at a keyed arm, always at a
+CONSTRUCTOR that had not learned to recurse. `source_name` had arms for `Optional` and `&`, so
+`hash<It[k]>?` read right while `fn(&hash<It[k]>)` rendered its parameters through the schema
+key. One body makes the arms exhaustive: an arm either recurses or it is a leaf, and a leaf
+reads the same under both.
+
+**`scripts/diagnostic_spelling.py check` is the gate** (`make ci`, via
+`tests/doc_hygiene.rs`). It fails on a `Type::name(data)` render inside a diagnostic emitter —
+`diagnostic!`, `diagnostic_at!`, `specific!`, or a direct `diagnostic_format(…)` — and on ANY
+such render in `src/parser/` or `src/variables/`, the layers that talk to the author. A render
+that genuinely means the schema key marks its line `// schema-key` with the reason; there are
+six, and they are type IDENTITY (a `__tuple<…>` comparison, a `t_<LEN><Type>_` method name) or
+a developer trace behind `LOFT_TRACE_UNWRAP`.
+
+The wider rule is why the gate is not span-only. A span cannot see `let nm = tp.name(data);`
+on the line above the `diagnostic!` that interpolates it, nor a helper called from inside one
+— and that is where the sites actually were: after every in-span render in those two layers
+had been converted, 20 of the 26 left were still user-facing, and one message carried both
+spellings three lines apart. **The gate exists because nothing else can fail here.** An
+unreadable message leaves the compiler right and the program wrong, so no test goes red and
+only the author pays; without a check, the next pass converts the sites someone happened to
+have a symptom for and leaves a fourth residue.
 
 ## Adding a code
 

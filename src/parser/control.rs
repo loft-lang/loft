@@ -1877,7 +1877,7 @@ impl Parser {
                     if arm_of_sibling {
                         let same_shape = if let Type::Tuple(elems) = t {
                             let names: Vec<String> =
-                                elems.iter().map(|e| e.name(&self.data)).collect();
+                                elems.iter().map(|e| e.name(&self.data)).collect(); // schema-key — the `__tuple<…>` SCHEMA KEY this compares against
                             format!("__tuple<{}>", names.join(","))
                                 == self.data.def(synthetic_d_nr).name()
                         } else {
@@ -4282,7 +4282,7 @@ impl Parser {
                 "expected {}, got void on a match arm — this `match` is used as a VALUE, so \
                  every arm has to produce one; give the arm a value, or make the `match` a \
                  statement by ending it with `;`",
-                r.name(&self.data),
+                r.source_name(&self.data),
             );
         }
         self.match_void_arm = outer_void;
@@ -4391,7 +4391,7 @@ impl Parser {
                             | Type::Enum(_, true, _)
                     )
                 {
-                    let en = elm_tp.name(&self.data);
+                    let en = elm_tp.source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4505,8 +4505,8 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "cannot unify: {} and {}",
-                        result_type.name(&self.data),
-                        arm_type.name(&self.data)
+                        result_type.source_name(&self.data),
+                        arm_type.source_name(&self.data)
                     );
                 }
                 // A `null` arm (disc 0) covers the synth enum's `Null` variant for
@@ -5055,8 +5055,8 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "cannot unify: {} and {}",
-                    result_type.name(&self.data),
-                    arm_type.name(&self.data)
+                    result_type.source_name(&self.data),
+                    arm_type.source_name(&self.data)
                 );
             }
 
@@ -5421,8 +5421,8 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "cannot unify: {} and {}",
-                result_type.name(&self.data),
-                arm_type.name(&self.data)
+                result_type.source_name(&self.data),
+                arm_type.source_name(&self.data)
             );
         }
         let arm = EnumArm {
@@ -6464,15 +6464,15 @@ impl Parser {
                 Level::Error,
                 "{} has no `#lexeme` field a {} literal can match — mark a field `#lexeme` or write the variant pattern",
                 self.data.def(e_nr).name(),
-                lit_tp.name(&self.data)
+                lit_tp.source_name(&self.data)
             );
         } else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "a {} literal cannot match a {} slice element",
-                lit_tp.name(&self.data),
-                elm_tp.name(&self.data)
+                lit_tp.source_name(&self.data),
+                elm_tp.source_name(&self.data)
             );
         }
     }
@@ -6591,7 +6591,7 @@ impl Parser {
         let cap_name = self.lexer.has_identifier().unwrap_or_default();
         self.lexer.token(":");
         let tname = self.lexer.has_identifier().unwrap_or_default();
-        let elm_name = elm_tp.name(&self.data);
+        let elm_name = elm_tp.source_name(&self.data);
         if !self.first_pass && tname != elm_name {
             diagnostic!(
                 self.lexer,
@@ -7495,8 +7495,8 @@ impl Parser {
                                 Level::Error,
                                 "alternation capture '{}' is {} in one branch but {} in another",
                                 fname,
-                                ftype.name(&self.data),
-                                seen.name(&self.data)
+                                ftype.source_name(&self.data),
+                                seen.source_name(&self.data)
                             );
                         }
                     } else {
@@ -7710,8 +7710,8 @@ impl Parser {
                             Level::Error,
                             "alternation capture '{}' is {} in one branch but {} in another",
                             fname,
-                            ftype.name(&self.data),
-                            seen.name(&self.data)
+                            ftype.source_name(&self.data),
+                            seen.source_name(&self.data)
                         );
                     }
                 } else {
@@ -7814,8 +7814,8 @@ impl Parser {
                                     Level::Error,
                                     "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
                                     field_name,
-                                    field_type.name(&self.data),
-                                    shared_ty.name(&self.data)
+                                    field_type.source_name(&self.data),
+                                    shared_ty.source_name(&self.data)
                                 );
                             }
                             // Skip the assignment into the shared slot on a confirmed
@@ -7871,7 +7871,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "guard must be boolean, got {}",
-                    guard_type.name(&self.data)
+                    guard_type.source_name(&self.data)
                 );
             }
             Some(guard_code)
@@ -8130,8 +8130,8 @@ impl Parser {
                 &pat_pos,
                 Level::Error,
                 "cannot match {} against pattern of type {}",
-                subject_type.name(&self.data),
-                lit_type.name(&self.data)
+                subject_type.source_name(&self.data),
+                lit_type.source_name(&self.data)
             );
         }
         // check for range pattern `lo..hi` or `lo..=hi`.
@@ -8280,7 +8280,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "guard must be boolean, got {}",
-                        guard_type.name(&self.data)
+                        guard_type.source_name(&self.data)
                     );
                 }
                 Some(guard_code)
@@ -8906,7 +8906,7 @@ impl Parser {
                         let name = self.lexer.has_identifier().unwrap();
                         self.lexer.token(":");
                         let tname = self.lexer.has_identifier().unwrap_or_default();
-                        let elm_name = elm_tp.name(&self.data);
+                        let elm_name = elm_tp.source_name(&self.data);
                         if !self.first_pass && tname != elm_name {
                             diagnostic!(
                                 self.lexer,
@@ -9662,7 +9662,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "guard must be boolean, got {}",
-                        gt.name(&self.data)
+                        gt.source_name(&self.data)
                     );
                 }
                 Some(g)
@@ -9926,7 +9926,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "'is' requires an enum type, got {}",
-                        subject_type.name(&self.data)
+                        subject_type.source_name(&self.data)
                     );
                 }
                 return Type::Boolean;
@@ -10249,7 +10249,7 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "Unknown in expression type {}",
-                in_type.name(&self.data)
+                in_type.source_name(&self.data)
             );
             Type::Null
         } else {
@@ -14748,7 +14748,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Unexpected return type in ref_return: {}",
-                        ret.name(&self.data)
+                        ret.source_name(&self.data)
                     );
                     return;
                 }
@@ -15880,7 +15880,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "field_value needs a record — {} has no fields to read",
-                        types[0].name(&self.data)
+                        types[0].source_name(&self.data)
                     );
                     return answer;
                 }
@@ -15896,7 +15896,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "field_value takes a position or a path of positions — {} is neither",
-                        types[1].name(&self.data)
+                        types[1].source_name(&self.data)
                     );
                     return answer;
                 }

@@ -2541,7 +2541,7 @@ impl Function {
                 } else {
                     type_def
                 };
-                let scalar_name = scalar.name(data);
+                let scalar_name = scalar.source_name(data);
                 diagnostic!(
                     lexer,
                     Level::Error,

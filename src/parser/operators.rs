@@ -1382,7 +1382,7 @@ impl Parser {
                             "cannot concatenate a nullable `{}` — discharge the `?` \
                              first (`(a ?? []) + (b ?? [])`), since a null operand has \
                              no defined result for a vector",
-                            current_type.name(&self.data)
+                            current_type.source_name(&self.data)
                         );
                         return current_type;
                     }
@@ -2907,7 +2907,10 @@ impl Parser {
             // here in the parser closes ALL of that on BOTH backends. Falsified over the
             // whole corpus/scripts/libs: zero valid `??` fires this (widen-int, `float?`←int
             // widening, `?? null`, `?? []`, checked-narrow all `convert` cleanly above).
-            let (given, wanted) = (rhs_type.name(&self.data), result_type.name(&self.data));
+            let (given, wanted) = (
+                rhs_type.source_name(&self.data),
+                result_type.source_name(&self.data),
+            );
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -3520,7 +3523,7 @@ impl Parser {
                             "cannot cast a possibly-null `{}` to the non-null `{tps}` — it may \
                              be null; use `as {tps}?` for a checked cast (value or null), or \
                              discharge first with `?` (the type's default) or `?? <default>`",
-                            ctp.name(&self.data),
+                            ctp.source_name(&self.data),
                         );
                     }
                     // Keep `tp` (the non-null target) as the result to bound the cascade.
@@ -3654,7 +3657,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unknown cast from {} to {tps}",
-                            &ctp.name(&self.data),
+                            &ctp.source_name(&self.data),
                         );
                     }
                 }

@@ -560,7 +560,7 @@ impl Parser {
                     code = "redundant-null-negation",
                     "'!' on a 'not null' {} is always false — '!x' tests whether x \
                      is null, and a 'not null' value is never null",
-                    t.name(&self.data)
+                    t.source_name(&self.data)
                 );
                 self.lexer.fix_last(crate::diagnostics::Fix {
                     kind: crate::diagnostics::FixKind::Conditional,
@@ -4560,9 +4560,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 "cannot store null elements in a vector<{}> (would lose precision); \
                  declare the element nullable (`vector<{}?>`), or cast each element \
                  explicitly with 'as {}'",
-                in_t.name(&self.data),
-                in_t.name(&self.data),
-                in_t.name(&self.data)
+                in_t.source_name(&self.data),
+                in_t.source_name(&self.data),
+                in_t.source_name(&self.data)
             );
         } else if self.first_pass
             && (crate::data::Data::type_has_unresolved(&t)
@@ -4603,9 +4603,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         Level::Error,
                         "cannot store {} elements in a vector<{}> (would lose precision); \
                      cast each element explicitly with 'as {}'",
-                        t.name(&self.data),
-                        in_t.name(&self.data),
-                        in_t.name(&self.data)
+                        t.source_name(&self.data),
+                        in_t.source_name(&self.data),
+                        in_t.source_name(&self.data)
                     );
                 }
             } else if self.convert(&mut p, in_t, &t) {
@@ -4617,8 +4617,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     self.lexer,
                     Level::Error,
                     "No common type {} for vector {}",
-                    t.name(&self.data),
-                    in_t.name(&self.data)
+                    t.source_name(&self.data),
+                    in_t.source_name(&self.data)
                 );
             }
         }
