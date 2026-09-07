@@ -54,11 +54,15 @@ Tier 1 library or under-estimating a Tier 2 one.
    `.loft`*). Keep the public surface clean per
    [LIBRARY_CHECKLIST.md](../../../doc/claude/LIBRARY_CHECKLIST.md) (Goals A–F apply per
    library; the stdlib is just the library every program imports).
-3. **Declare targets in `loft.toml`** — list the targets the library supports. Tier 2 adds a
+3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
+   knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
+   (PACKAGES.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
+   opt-out (LIBRARY_CHECKLIST.md). Run the suite per target with
+   `loft --tests --native-wasm <dir>` (and its siblings). Tier 2 adds a
    `[wasm.bridge]` block. Don't claim a target you haven't passed the parity gate on — a
    claimed-but-broken target is worse than an honestly-omitted one.
 4. **(Tier 2 only) Build the wasm bridge** — the host-import module, the host shim, asyncify
-   for any suspending call, and the CBOR ABI across the boundary. This is its own deep
+   for any suspending call, and the value marshalling across the boundary. This is its own deep
    procedure with non-obvious traps → **read `references/wasm-bridge.md` before writing a
    single bridge line.**
 5. **Run the parity gate** (below) — the definition of done.
@@ -87,15 +91,16 @@ These are not theoretical; each one bit a real ZT library this cycle. Skim them 
 start, not after you're stuck.
 
 - **The re-sign foot-gun (publish).** Editing the registry `index.json` *without re-signing*
-  it breaks **all** `loft install`s (the locked-baseline check fails: "registry index
-  signature INVALID"). Every registry PR must re-sign. → `references/publish.md`.
+  it breaks **all** `loft install`s — every install fails with "registry index
+  signature INVALID" (`src/install.rs` verifies before anything else). Every registry PR must re-sign. → `references/publish.md`.
 - **Asyncify for suspending calls (bridge).** A bridge function that yields/awaits (a socket
   read, a frame yield) needs asyncify wiring; `yield_frame()` only *sets a flag*, it does not
   trigger a suspend — a dedicated suspend import (e.g. `loft_web.ws_yield`) does. → bridge ref.
-- **CBOR ABI drift (bridge).** The marshalling across the wasm boundary is where silent
-  corruption hides; validate it with a round-trip *value* check, not "it didn't crash."
-- **CDN staleness (publish).** `loft install` reads `index.json` via the raw-GitHub CDN (~1h
-  cache). A just-published version may not resolve as `@latest` immediately — pin the exact
+- **Boundary-marshalling drift (bridge).** The value marshalling across the wasm boundary
+  is where silent corruption hides; validate it with a round-trip *value* check, not "it
+  didn't crash."
+- **Index staleness (publish).** `loft install` reads `index.json` via the raw-GitHub CDN
+  and keeps a local ~1h-TTL cache of its own (`~/.loft/registry/`). A just-published version may not resolve as `@latest` immediately — pin the exact
   version to verify, and don't conclude "publish failed" from a stale edge.
 - **Claiming the browser column for a `#native` lib without a bridge.** The matrix says ✗
   there for a reason — it will compile-fail or silently no-op. Either build the bridge or drop
@@ -104,7 +109,8 @@ start, not after you're stuck.
 ## References (read on demand — don't inline them)
 
 - `references/wasm-bridge.md` — the Tier-2 `[wasm.bridge]` recipe: host-import module, host
-  shim (`host.js` browser / WASI headless), asyncify, CBOR ABI, and the @PLN84 traps. Read it
+  shim (`host.js` browser / Node headless), asyncify, the marshalling traps, and the @PLN84
+  history. Read it
   the moment a library needs the browser target.
 - `references/publish.md` — the registry publish runbook: `loft.toml` targets, per-target
   build, Ed25519 sign + **re-sign**, sha256/size, the CDN gotcha. Read it before any registry

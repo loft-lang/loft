@@ -8,7 +8,7 @@ user-invocable: false
 
 Always consult this before writing or reviewing `.loft` files.
 
-**Before reimplementing stdlib-or-library functionality, check [doc/claude/LIBRARIES.md](../../../doc/claude/LIBRARIES.md) and `loft install <name>` — a registered library may already provide it.** <!--noindex-->
+**Before reimplementing stdlib-or-library functionality, run `make libcatalogue` and read the generated `doc/claude/LIBRARIES.md` (built on demand, git-ignored), plus `loft install <name>` — a registered library may already provide it. Stdlib function signatures: [doc/claude/STDLIB.md](../../../doc/claude/STDLIB.md).** <!--noindex-->
 
 ---
 
@@ -178,7 +178,8 @@ f = 3.14;
 Explicit type annotations (sometimes required for empty collections):
 ```loft
 v: vector<integer> = [];
-n: integer = null as integer;   // a null integer must be cast; bare `= null` is rejected
+n: integer? = null;             // a null needs a NULLABLE type; `null as integer` is a
+                                // compile error (cannot cast null to non-null integer)
 ```
 
 ### `const` variables
@@ -206,10 +207,10 @@ want the immutability intent visible at the declaration site
 (the bare-name form relies on the UPPER_CASE convention as the only
 visual signal); both forms behave identically.
 
-**UPPER_CASE locals warn unless declared `const`.**  Inside a
-function body, `FOO = 5;` (an assignment with an UPPER_CASE name and
-no `const` keyword) emits a warning telling you to add `const` or
-rename to `lower_case`.  The convention "UPPER_CASE means immutable"
+**UPPER_CASE locals get `advice[upper-case-local]` unless declared
+`const`.**  Inside a function body, `FOO = 5;` (an assignment with an
+UPPER_CASE name and no `const` keyword) emits advice telling you to
+add `const` or rename to `lower_case`.  The convention "UPPER_CASE means immutable"
 is enforced by this check at every scope.
 
 ---
@@ -450,7 +451,7 @@ v[i];                // index read
 
 ## Hash collections
 
-Hash **must be a struct field** — not a standalone local variable:
+A hash works as a struct field or as a plain local:
 
 ```loft
 struct Entry  { key: text, value: integer }
@@ -462,11 +463,12 @@ e = t.data["x"];
 if e == null { /* not found */ }
 else { e.value += 1; }
 t.data["x"] = null;   // remove entry
+
+for e in t.data { … }  // iterates in key order (C60)
 ```
 
-**Hash cannot be iterated directly** — track aggregates separately.
-
-Never use `key` as a field name in a hash-value struct — it conflicts with hash iteration internals.
+(`key` as the key-field name is fine; a standalone `data: hash<Entry[k]> = [];`
+local is fine too.)
 
 ---
 
@@ -768,10 +770,10 @@ compile error naming the reservation. Use `assert(cond, "message")`, and do not 
   local, a tuple element, a parameter, a `for` variable, a struct field — and for
   library functions as much as stdlib ones, which is what stops a library's new
   `pub fn` from taking a word away from its consumers.
-- **Two builtin names still break as a local variable name** — the literal `null`
-  (`Not implemented operation = for type null`), and the higher-order method names
-  `map`/`filter`/`reduce` (a local of that name derails the later `v.map(x => …)`
-  lambda parse → `Expect token )`).  Distinct, descriptive names sidestep both.
+- **One builtin name still breaks as a local variable name** — the literal `null`
+  (assigning to it errors: `Cannot assign integer to a field of type null — use 'as
+  null' to cast explicitly`).  Method names (`map`/`filter`/`reduce`/`len`/`sorted`/…)
+  are fine as locals; the method call still resolves.
 
 ---
 
@@ -795,7 +797,8 @@ wrapping, a caret, truncating); use `s[a..b]` only for numbers from `find` / `rf
 
 **`character == text` is a compile error** — use `"{c}" == t` to compare as text.
 
-**Cannot reassign text parameter** — copy to local first: `local = param; local = ...`
+(Reassigning a `text` parameter works — `msg = msg + "!"` inside the callee is fine;
+the parameter is the callee's own binding.)
 
 **Prefer `h += expr`** over `h = h + expr` for text building.
 
@@ -839,8 +842,10 @@ if f.exists() { }
 size_bytes = f.size;            // integer (i64) — works for any file
 ```
 
-**`f.content()` is UTF-8-only.**  It silently returns `""` on a
-binary file.  For non-text data, use the binary idiom below.
+**`f.content()` is UTF-8-only** (`-> text?`).  On a binary file it
+returns **null** with a warning.  For non-text data use
+`read_bytes(path) -> vector<u8>` / `write_bytes`, or the structured
+binary idiom below.
 
 ### Binary files (structured reads and writes)
 
@@ -904,56 +909,21 @@ Notes:
 - `f#next = offset as integer` seeks.  Reading position advances
   automatically after each `f#read` — don't manually advance it
   between sequential reads.
-- **No `f.bytes()` API** — there's no "read all N bytes into a
-  vector" helper.  If you need the whole buffer, call `f#read(n)`
-  in a loop or read into a typed record via `OpReadFile`.
+- **Whole-buffer reads: `read_bytes(path) -> vector<u8>`** (and
+  `write_bytes(path, v)`), from the stdlib.  Reach for the `f#read`
+  loop only for structured, offset-driven access.
 
 Example binary reader/writer patterns live in
-`lib/graphics/src/glb.loft` (writer) and
-`lib/graphics/tests/glb.loft` (reader).
+`tests/fixtures/libs/graphics/src/glb.loft` (writer) and
+`tests/fixtures/libs/graphics/tests/glb.loft` (reader).
 
 ---
 
-## Warning-clean idioms (LOFT_DENY_WARNINGS=1)
+## Nullable defaults, the copy-write hazard, and null-checking reads
 
-When `LOFT_DENY_WARNINGS=1` (set by the canonical chunk-repo
-`library-ci.yml`), three idioms surface repeatedly during a clean-up
-sweep.  These are the patterns to reach for first.  Sourced from the
-`loft-libs-core::arguments` sweep, 2026-05-30.
-
-### Vector fields are non-null (`[]`) by default — no `not null` needed
-
-**Obsolete under @PLN25 DN1.** A plain `vector<T>` field is already non-null
-and defaults to `[]`, and reading a non-null field never triggers the old
-@PLN46 "read N times and never defended" warning (that warning only ever
-concerned NULLABLE fields, and there are none by default now).  So just
-declare the field plainly:
-
-```loft
-struct Args {
-  options: vector<Arg>,     // non-null, defaults to []
-  results: vector<text>,
-  positionals: vector<text>,
-}
-```
-
-Write `vector<T>?` only when the field must genuinely be able to hold `null`
-(distinct from empty).  The `not null` modifier still parses but is a retired
-no-op — don't add it.
-
-### Capture-into-local before indexing (skip-pattern 5)
-
-The parser's skip-pattern 5 recognises `if idx < len(vec) { … vec[idx] … }`
-and silences the `v[i]` may-be-null warning inside the then-block.  It
-matches a struct-field deref too, so **index the field directly — do not
-capture it into a local first:**
-
-```loft
-// GOOD — bound-guard the field itself; the pattern matches:
-if i < len(self.results) {
-  self.results[i] = "true";
-}
-```
+**A plain `vector<T>` field is non-null and defaults to `[]`** (@PLN25 DN1) — declare
+it plainly; write `vector<T>?` only when null must be distinct from empty.  The
+`not null` modifier still parses but is a retired no-op — don't add it.
 
 **Never capture a vector into a local in order to write through it.**  A
 whole-value bind COPIES the heap value (C86), so every write lands in the
@@ -980,54 +950,11 @@ followed by an unread `w[i] = …`), but a bound-guard such as
 `if i < len(results)` counts as a read and silences it, so the diagnostic
 is a backstop, not a guarantee.
 
-### Capture-and-null-check (v[i] preserves null semantics)
-
-When the value can legitimately be null and the consumer checks
-`if !val { … }`, the warning text suggests `x = v[i]; if x != null { … }`
-as one of the safe forms.  Use this when `??` defaults would change
-semantics (e.g. `?? ""` collapses null and empty-string into the
-same path):
-
-```loft
-// BAD — warning fires on self.results[mi]:
-if !self.results[mi] {
-  self.err = "Required option missing";
-  return false
-}
-
-// GOOD — bound-guard and null-check, preserves the "missing → null" contract:
-if mi < len(self.results) {
-  val = self.results[mi];
-  if val == null {
-    self.err = "Required option missing";
-    return false
-  }
-}
-```
-
-The bound guard satisfies skip-pattern 5 and the null check satisfies the
-parser's "x = v[i]; if x != null" hint.  Index the field directly: binding
-it to a local first would COPY it (C86), which is harmless while you only
-read but silently discards any later write.
-
-### Why these idioms specifically
-
-The warning text itself names three fixes for `v[i]`:
-`v[i] ?? <fallback>`, `if i < len(v) { v[i] }`, or
-`x = v[i]; if x != null { ... }`.  The three idioms above are
-when-to-reach-for-which:
-
-- **`??` fallback** — use when a non-null sentinel makes sense
-  (e.g. `?? Pixel{r:0,g:0,b:0}`).  Changes runtime behaviour:
-  on OOB you get the sentinel back instead of null.
-- **`if i < len(v)` bound** — use when the access is index-bounded
-  in practice but the parser can't see it.  Works on a struct field
-  directly (`if i < len(self.results)`), so no capture is needed.
-  Zero-cost — dead-code guard the optimizer drops when the bound is
-  provable.
-- **capture-and-null-check** — use when the value is genuinely
-  nullable and the consumer's contract is "missing → null".
-  Preserves the null semantics.
+**Reading a maybe-null element `v[i]`, pick by contract:** `v[i] ?? sentinel` when a
+non-null default is meaningful (changes behaviour on OOB); `if i < len(v) { v[i] }`
+when the access is index-bounded (works on a struct field directly — no capture
+needed); `x = v[i]; if x != null { … }` when the consumer's contract is
+"missing → null".
 
 ---
 
@@ -1038,11 +965,10 @@ when-to-reach-for-which:
 | `Too few parameters on n_<fn>` | Per-function name collision — give the loop/local a name distinct from the function's params; avoid `for` in `const vector<T>` recursive fns |
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
-| `Not implemented operation = for type null` | A local named `null` (a literal keyword) — rename it |
-| `Cannot iterate a hash directly` | Track aggregate separately |
+| `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
 | `Undefined type string` | Use `text`, not `string` |
-| `Allocating a used store` | Field named `key` in hash-value struct — rename the field |
-| `<fn> is not found` for `say(...)` | Use `println()` |
+| `Allocating a used store` | A store is being reused while still held — check parallel blocks / store lifetimes (a `key` field name is NOT the cause; that works) |
+| `Unknown function say` | Use `println()` |
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |
 | `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm.  (P206 — was a parser hang before the recovery helper landed.) |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
@@ -1061,9 +987,9 @@ fn main(args: vector<text>) {                // the invocation arguments
 ```
 
 **One `vector<text>` parameter is the ONLY supported shape.** It works on both backends.
-Any other spelling is accepted by the parser and never filled — `main(who: text)` reads
-`""`, `main(a: integer, b: integer)` reads garbage, and a `text` among two parameters
-crashes with a corrupt store reference (loft#1172). There is no `args()` builtin.
+Any other spelling is a clean compile error (*"`main` takes no parameters, or one
+`vector<text>` …"* — loft#1172 made the old silent-garbage fill a refusal). There is
+no `args()` builtin.
 
 A file with no `main` is a library: the interpreter runs nothing, and `--native`
 compile-checks it rather than linking.
@@ -1084,9 +1010,8 @@ loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
 
 - [ ] No loop variable shares a name with a plain local in the same function (loops may share names with each other)
 - [ ] No nested `fn` definitions — helpers live at file scope
-- [ ] Hash collections are struct fields, not standalone locals
 - [ ] No `arr[lo..hi]` passed as `vector<T>` argument
-- [ ] `len`, `sorted`, `ticks`, `round`, `map`, `filter`, `reduce` not used as variable names
+- [ ] No local named `null`
 - [ ] All `use` imports appear before any other declarations
 - [ ] No `long` type / no `l` literal suffix — `integer` is i64; literals are plain (`86400000`), `f.size` compares with `0`
 - [ ] String type in struct fields is `text`, not `string`

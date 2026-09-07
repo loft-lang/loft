@@ -38,7 +38,10 @@ span several sessions.
 | **Plan** — multi-phase, explicit phasing, design-before-build, cross-arc deps, or its own document space | A full plan directory.  Cap active plans at 2–3. |
 
 The light flow is the default.  A plan earns its directory only when the work is
-genuinely multi-phase **and** benefits from its own document space.
+genuinely multi-phase **and** benefits from its own document space.  The sharpest
+promote-up triggers (including the one-liner *"about to `#[ignore]` an existing
+test"*) are in `plans/README.md § When a problem should escalate` — check it when
+the tier is unclear.
 
 ---
 
@@ -58,8 +61,10 @@ One model, stated once:
 - **The directory is flat**: `<id>-<slug>/`.  There are **no
   `future/`/`finished/`/`deferred/` subdirectories** — lifecycle **state lives on
   the issue** (a label), not in the path.
-- **There is no hand-maintained roadmap table.**  The overview is *derived* from
-  the tracker.  Don't curate a parallel roadmap of rows.
+- **The tracker is the source of truth; `ROADMAP.md` is the reading view and IS
+  maintained** — when a plan is added, completed, or its dependencies change, update
+  its ROADMAP row (owner's standing practice; `plans/README.md § Light flow`).  Don't
+  curate any OTHER parallel table of plans.
 
 Everything below assumes this model.  A tree mid-migration will still have **legacy
 plans** in the older layout — lifecycle subdirectories plus hand-maintained
@@ -77,16 +82,18 @@ Use when the deliverable is a feature ship or a fix landing.
    the directory; the number it returns is the plan's id.  Do **not** derive the number
    from the local directory tree — that misses unmerged plans on sibling branches and
    mints colliding duplicates (see [§ A plan's identity](#a-plans-identity-is-its-tracker-issue)).
-2. **Flat directory** `<id>-<slug>/` named for the returned issue number, README copied
-   from the standard template.
+2. **A flat FILE** `<id>-<slug>.md` in the plans home, named for the returned issue
+   number, is the default; a big design or a probe-bearing investigation gets the
+   directory form `<id>-<slug>/` with a README from the standard template.
 3. **Fill Status + Goal first.**  Add Sub-arcs / Phase ordering / Open questions /
    Cross-arc dependencies / See-also as the design clarifies.  Link the source
    issue(s) and carry the plan id in the body.
 4. **Label the issue** — subject + status (`future` planned · `active` in
    progress · `finished`).  (No `plan` type label: in a dedicated plans repo
    every issue is a plan, so it partitioned nothing — retired 2026-06-14.)
-5. **No roadmap row, no per-plan entry in the master-instructions index** — the
-   plan is discoverable via the tracker and the plans-overview doc.  Add a
+5. **Keep `ROADMAP.md` in step** (add/adjust the plan's row), but no per-plan entry
+   in the master-instructions index — the plan is discoverable via the tracker and
+   the plans-overview doc.  Add a
    master-index entry *only* if the plan introduces a genuinely new top-level
    reference concept (vanishingly rare).
 
@@ -164,9 +171,10 @@ commit having reached the trunk — the code lands on main later, on its own clo
 - The doc-side closing below (trim the README, move reference content, rewrite links, swap
   the label + close the issue) is **doc-only work that does not need the code on main** —
   do it when the work is finished.
-- **Close plans in a batch, never a PR-per-plan.**  A ~30-min PR/CI cycle to close a single
-  plan is waste; bundle the closing doc-changes (across several plans, even unrelated) into
-  the next substantive push (`CLAUDE.md` § no-cycle-for-trivial-docs / bundle-subjects).
+- **Close plans in a batch, never a PR-per-plan.**  A full PR/CI cycle (CI_BUDGET.md's
+  20-minute rule) to close a single plan is waste; bundle the closing doc-changes (across
+  several plans, even unrelated) into the next substantive push
+  (`doc/claude/DEVELOPMENT.md` § bundle many subjects into one PR).
 - Because the close is a **hand-close** (issue closed before/independent of a `Closes
   @PLN<n>` PR merge), you MUST swap the status label yourself — see step 4's hand-close note.
 
@@ -175,9 +183,10 @@ commit having reached the trunk — the code lands on main later, on its own clo
 - All phases shipped → **close**.
 - Some/all phases paused with a **concrete trigger** → **defer** (Status table
   grows SHIPPED / DEFERRED rows; the deferred phases keep their full design
-  content).
+  content).  Label per `_LIFECYCLE.md`'s outcome table: `status:parked` if a floor
+  shipped, `status:future` if nothing did.
 - Paused with **no** concrete trigger → the design moves to the closed-by-decision
-  register, not a deferred state.
+  register (`doc/claude/DESIGN_DECISIONS.md`), not a deferred state.
 
 **For each shipped phase:**
 
@@ -193,7 +202,9 @@ commit having reached the trunk — the code lands on main later, on its own clo
 4. Reclassify any overview rows (shipped parts leave; deferred parts stay if
    tracked).  Set the lifecycle **state on the issue** (not a directory move):
    closing → swap `status:active` for `status:finished` **and close the issue**;
-   deferring → swap for `status:future`, issue stays open.  **Don't rely on
+   deferring → `status:parked` when a floor SHIPPED and the rest is paused,
+   `status:future` only when nothing shipped — the outcome table in
+   `_LIFECYCLE.md` § Pick the outcome is the authority — issue stays open.  **Don't rely on
    GitHub's `Fixes #N` — it's same-repo only and can't reach the plans repo.**
    Instead the finishing PR carries a cross-repo close directive (`Closes
    @PLN<n>`); on merge to the trunk a close-on-merge workflow runs the repo's
@@ -282,26 +293,26 @@ Everything above is tree-agnostic.  This section is the **only** loft-specific p
 |---|---|
 | Plan tracker / issue id | [`loft-lang/plans`](https://github.com/loft-lang/plans/issues) issues; id = `@PLN<N>`; next free: `gh issue list -R loft-lang/plans --state all --limit 1` |
 | Plan directory (new model) | `doc/claude/plans/<N>-<slug>/` — **library plans too**.  A single-file plan is `doc/claude/plans/<N>-<slug>.md`; one with companions gets the directory.  ⚠ **`doc/claude/lib_plans/` is CLOSED to new work** (its README, 2026-06-19): it is a legacy archive being migrated here, so read it and never add to it.  The drift is real — @PLN141 landed there 2026-08-18 and @PLN144–147 did too before being moved, both because this row used to say libraries went there. |
-| Legacy layout (mid-migration — most existing plans) | `doc/claude/plans/{future,finished,deferred}/<N>-<slug>/` with rows in `doc/claude/ROADMAP.md` (still maintained — being retired in favor of the tracker).  Plans 51 (finished/) and 54 (future/) live here; new plans use the flat/tracker model above. |
+| Legacy layout (mid-migration) | only `doc/claude/plans/finished/<N>-<slug>/` remains (e.g. plan 51); ROADMAP.md rows are still maintained.  New plans use the flat/tracker model above. |
 | Standard plan template | [`doc/claude/plans/_TEMPLATE.md`](../../../doc/claude/plans/_TEMPLATE.md) |
-| Investigation template | [`doc/claude/plans/_INVESTIGATION_TEMPLATE.md`](../../../doc/claude/plans/_INVESTIGATION_TEMPLATE.md) — canonical example `plans/finished/51-hidden-buffer-aliasing/` (5 clusters, 39 probes) |
+| Investigation template | [`doc/claude/plans/_INVESTIGATION_TEMPLATE.md`](../../../doc/claude/plans/_INVESTIGATION_TEMPLATE.md) — canonical example `plans/finished/51-hidden-buffer-aliasing/` (5 clusters; its README carries the probe census) |
 | Close / defer procedure (full) | [`doc/claude/plans/_LIFECYCLE.md`](../../../doc/claude/plans/_LIFECYCLE.md) |
 | Docs-vs-plans rule, three workflows, lifecycle, value categories | [`doc/claude/plans/README.md`](../../../doc/claude/plans/README.md) |
 | Reference-doc `## Open work` homes | `NATIVE.md` / `PERFORMANCE.md` / `PACKAGES.md` / `QUALITY.md` |
-| Value-category labels | `S/R/G/F/U/C/Q/N` (issue labels — definitions in `plans/README.md § Value categories`) |
+| Value-category letters | `S/R/G/F/U/C/Q/N` — ROADMAP row tags, NOT tracker labels (definitions in `plans/README.md § Value categories`) |
 | Feature catalogue (canonical) | [`loft-lang/features`](https://github.com/loft-lang/features/issues) issues; id = `@F<N>` (`kind:feature`) / `@I<N>` (`kind:infra`).  The ISSUE is the source; @PLN92 is the catalogue's own plan |
 | Feature catalogue tags | `kind:feature` \| `kind:infra` — exactly one.  The wrong one files a language feature under infrastructure, where nobody looking for it will filter |
 | Feature generated shadow (never hand-edit) | `index/features.json` + `doc/features/` + `tests/docs/features/*.loft` |
 | Feature regenerate + drift guard | `make features-fetch && make features-gen`, then `make features-check` (fails on hand-edits or a stale shadow) |
 | Feature example → test | the generator promotes the **first** ` ```loft ` fence in the issue body into a RUN test — put the runnable example first, never a teaching snippet |
-| Feature coverage gate — and its blind spot | `scripts/feature_coverage.sh --check` + `scripts/feature_hygiene.sh --check` (CI), baselined in `.feature_coverage_baseline`.  It counts **uncataloged FILES**, so a new capability landing in an already-tagged file passes at baseline 0.  Measured 2026-08-04: gate green while ~12 shipped capabilities had no entry.  Green here means "no new untagged file", never "the catalogue is complete" |
+| Feature coverage gate — and its blind spot | `scripts/feature_coverage.sh --check` + `scripts/feature_hygiene.sh --check` (CI), baselined in `scripts/.feature_coverage_baseline`.  It counts **uncataloged FILES**, so a new capability landing in an already-tagged file passes at baseline 0.  Measured 2026-08-04: gate green while ~12 shipped capabilities had no entry.  Green here means "no new untagged file", never "the catalogue is complete" |
 | Drift checker | `scripts/check_doc_drift.sh` |
-| Incoming-link grep (close/promote) | `grep -rn "plans/<NN>-<slug>" CLAUDE.md doc/claude/ --include="*.md"` |
+| Incoming-link grep (close/promote) | `./scripts/idx incoming:<path>` (preferred), or `grep -rn "plans/<NN>-<slug>" CLAUDE.md doc/claude/ --include="*.md"` |
 | Investigation regression suite | `tests/scripts/NN-<slug>.loft` |
 | Probe gates (leak / exit) | `LOFT_STORES=warn`; the `loft_suite` leak gate; both backends = interpreter + native |
 | Execution modes to verify across | `--interpret` and `--native` |
 | Canonical examples | partial defer: plan-28 / plan-12 · create-and-move close: `31-html-export → HTML_EXPORT.md` · trim-only close: `04-slot-assignment-redesign → SLOTS.md` |
-| Consumer (dogfood) repos + their trackers | `moros` ([`jjstwerff/moros`](https://github.com/jjstwerff/moros/issues), `plans/<N>-<slug>/`, `make plan-check`) · `dryopea` · `crawler` · `lib/markdown`.  Each keeps its own issue numbers and its own `plans/README.md` binding; the method above is shared verbatim |
+| Consumer (dogfood) repos + their trackers | `moros` ([`jjstwerff/moros`](https://github.com/jjstwerff/moros/issues), `plans/<N>-<slug>/`, its own `plan-check` make target) · `dryopea` · `crawler` · `lib/markdown`.  Each keeps its own issue numbers and its own `plans/README.md` binding; the method above is shared verbatim |
 | Where a consumer files an ENGINE defect | `loft-lang/loft` issues (`bug_report`), `sev:`/`area:` + a verified `wa:*` label — never a plan in the consumer repo |
 | Branch / commit / bug-filing policy | `CLAUDE.md` |
 | Full dev procedures (rebase, commit hygiene) | `doc/claude/DEVELOPMENT.md` |

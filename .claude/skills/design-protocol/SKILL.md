@@ -435,3 +435,20 @@ That is why the method has a second engine: **the dogfood loop** — real consum
 toys — is what converts an unknown axis into a known one, and each harvested lesson is
 appended to the axis list your next design's matrix varies. This protocol makes the
 *visible* axes safe; the dogfood loop grows what is visible.
+
+---
+
+## In the loft tree (bindings — skip outside it)
+
+The body above is tree-agnostic. Working in the loft repo, these are the instruments it
+tells you to reach for:
+
+- The outer radius (dependency manifest / package index / library catalogue) is
+  `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
+  never a clone or installed copy.
+- The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
+  is the citation instrument (`list` · `check` · `sites <tag>` · `dups`), and
+  `formal/README.md` says how a rule is written and cited.
+- The verification questions a finished design answers are
+  `doc/claude/DESIGN_VERIFICATION.md § C1`; declined designs are recorded in
+  `doc/claude/DESIGN_DECISIONS.md` — check it before re-proposing one.

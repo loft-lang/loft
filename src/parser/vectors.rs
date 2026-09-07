@@ -6098,7 +6098,7 @@ fn cell_value_type(tp: &Type) -> Type {
 /// in a struct field default value), `parent_d_nr == u32::MAX`
 /// and the accumulator is a no-op (top-level binds aren't
 /// mutated-captured by their own scope).
-/// Plan-22 phase 02d-iii.e — replace `captured_names` entries
+/// Replaces `captured_names` entries
 /// for names in the parent function's `scalars_to_box` with
 /// their boxed `Reference(__cell_<T>, [])` form.
 ///

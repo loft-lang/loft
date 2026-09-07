@@ -141,7 +141,7 @@ pub struct LogConfig {
     /// Print every store-lock / store-unlock event to stderr with the
     /// store_nr, record nr, and the runtime caller's location.  Use
     /// `LOFT_LOG=locks` to activate.  Highest-leverage diagnostic for
-    /// "Write to locked store at rec=N fld=M" panics — the lock-event
+    /// "Write to read-only store at rec=N fld=M (locked by: …)" panics — the lock-event
     /// trace immediately identifies which op acquired the lock.
     /// This field is informational; `database/allocation.rs` reads
     /// `LOFT_LOG` directly via `lock_trace_enabled()` so it works

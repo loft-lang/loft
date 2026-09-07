@@ -76,10 +76,13 @@ consumer's loft itself carries the needed compiler support.)
      `published` ISO-8601 UTC timestamp), bumps the top-level `updated`, then hands off to
      `registry-sign.sh`, which stages `index.json` + `index.json.sig` **together**, signs, and
      **commits + pushes DIRECTLY to `main` — no PR**.
-   - **Foreign submissions** (an author without signing access): open a **branch + PR** against
-     `loft-lang/registry` instead (see [REGISTRY_SUBMIT.md](../../../../doc/claude/REGISTRY_SUBMIT.md)'s
-     5-step flow). The maintainer merges the green PR and the registry stays unsigned for that
-     entry until the next `registry_maintain.sh` run re-signs the merged result.
+   - **Foreign submissions** (an author without signing access): the current route is a
+     **staging file** `submissions/<name>-<version>.json` in a PR against
+     `loft-lang/registry` — it never touches `index.json`; the maintainer run vets it
+     (`scripts/vet-lib.sh`) and folds + re-signs atomically (REGISTRY_SUBMIT.md § 4; the
+     old direct-index-edit PR still works but is being superseded). Preview your entry
+     first with `loft publish --dry-run`; the maintainer-side wrapper for the whole
+     fold-and-sign run is `loft ship`.
    Either way, editing the JSON:
    - **Match the index's CURRENT unicode convention** when editing with a script: check whether
      descriptions carry raw `—` or escaped `\uXXXX` and pass the matching `ensure_ascii` to
@@ -102,8 +105,8 @@ consumer's loft itself carries the needed compiler support.)
 
 Editing `index.json` **without** regenerating `index.json.sig` leaves a valid-looking index
 with a **stale signature**. Every `loft install` then fails signature verification — *all*
-packages, not just the new one — and the locked-baseline test (`baselines_are_locked_in`)
-reports **"registry index signature INVALID."** This happened in @PLN84 (a `crypto` version was
+packages, not just the new one — every `loft install` fails with **"registry index
+signature INVALID"** (verification runs before anything else in `src/install.rs`). This happened in @PLN84 (a `crypto` version was
 merged into the index un-re-signed and broke installs until a re-sign PR fixed it). So: **every
 change to `index.json` is followed immediately by a re-sign.** Treat them as one atomic edit.
 
@@ -149,8 +152,9 @@ arise there.)
 
 ## The CDN-staleness gotcha (don't misread it as a failed publish)
 
-`loft install` reads `index.json` through the raw-GitHub CDN with roughly a **1-hour cache**
-(local cache under `~/.loft/registry/`). Right after a merge, `@latest` may still resolve to
+`loft install` reads `index.json` through the raw-GitHub CDN and keeps its own local
+cache under `~/.loft/registry/` with roughly a **1-hour TTL** (the TTL is loft's, in
+`src/install.rs` — the CDN adds its own shorter propagation on top). Right after a merge, `@latest` may still resolve to
 the previous version at some edges. To verify a fresh publish, **install the exact version**
 (`loft install <lib>@<version>`) rather than `@latest`; if the pinned version installs and
 verifies, the publish succeeded — `@latest` will catch up as the CDN propagates. Don't conclude

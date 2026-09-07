@@ -57,12 +57,13 @@ if you learn it by hand instead:
 
 Grep the mechanism, not the symptom — the op or the pass (`OpFreeRefIfDistinct`, `work-ref`,
 `classify_ret_promotion`), across `formal/*.md`. `IMPLEMENTATIONS.md` is the index of what is
-already merged; `ownership.md` carries the store-lifetime narrative.
+already merged; `ownership.md` holds the rules and `ownership-history.md` the
+store-lifetime narrative (what was tried, measured, reverted).
 
 ⚠ **The anti-example is loft#1096, and it is recent.** A callee freeing the caller's work-ref
 buffer on a null return was traced to `OpFreeRefIfDistinct`, and the obvious repair — skip the
 free when the witness is null — was written and measured: use-after-free gone on both backends,
-values correct. Then the poison sweep exhausted the store table. `formal/ownership.md` had
+values correct. Then the poison sweep exhausted the store table. `formal/ownership-history.md` had
 already recorded that same move: *"removed the wrong answer and left both leaks — a trade, not
 a closure"*, **reverted as inert**, because *"a guard that cannot fail proves nothing"*. Two
 lines further it names where the fix belongs — *"Closed at the promotion, which is where the
@@ -77,7 +78,7 @@ catch-all lowers its fallthrough to the same null sentinel, so an ordinary two-v
 loses its NRVO) and needs a second half or the null arm delivers an empty vector instead of the
 sentinel. The unsound step was one site over, in `scopes::free_vars`. Read the register for
 what was TRIED and what the measurement was; a closure names where ITS unsound step was, and
-the next defect in the same machinery has to be measured, not inherited (`ownership.md`
+the next defect in the same machinery has to be measured, not inherited (`ownership-history.md`
 D-own-9).
 
 ⚠ **Grep the BELIEF, not the op.** loft#1096 and loft#1097 are one wrong sentence — *a
@@ -142,7 +143,11 @@ byte-identical before/after diff, and an EMPTY diff is the proof.**
    emitted**, on both backends, which is the whole claim of a behaviour-preserving
    refactor. Re-run after `cargo fmt` (it touches the file). One commit per
    sub-step; if the diff is non-empty and you didn't intend it, that line is the
-   bug — bisect by sub-step, don't push through.
+   bug — bisect by sub-step, don't push through. Your corpus proves the branches
+   you touched; **`scripts/introspect_diff.sh` is the corpus-WIDE gate** (every
+   tests/scripts + tests/docs + examples file, per-file verdict — DEBUG.md
+   § Introspection CLI: "verified by this and by nothing weaker"). Run it before
+   calling the refactor done.
 
 **When a refactor SURFACES a real behaviour change** (a latent bug shows up mid-
 collapse — e.g. a leak the old structure hid): the two gates run TOGETHER. The
@@ -250,13 +255,9 @@ If you cannot write the sentence, that is the signal to probe the omitted shapes
 ship the arm. `python3 scripts/ir_walker_audit.py reach` lists these walkers, marks the ones
 whose fallback answers no, and ranks by production reachability.
 
-## One notion, two IR spellings — match the NODE, not the op
+## The projection case in full — match the NODE, not the op
 
-A `Value` matcher that identifies a construct by an OP NAME can only see the construct's
-call-shaped spelling. Where the same language notion also exists as a `Value` VARIANT, every
-such matcher silently excludes it, and no grep for the op name will show the gap.
-
-The measured case is **projection**. `b.items` and `vv[0]` lower to
+The dual above in its measured form: `b.items` and `vv[0]` lower to
 `Call(OpGetField|OpGetVector, [base, …])`; `t.0` lowers to `TupleGet(base, i)`, which carries
 its base as a var NUMBER and is not a `Call` at all. The two return gates that decide whether a
 returned projection must be COPIED into the caller's buffer both matched the call spelling only,
@@ -289,8 +290,9 @@ adding the missing arm at the site that happened to break.
 - **Keep `git diff main` a usable codegen compass** — ONE branch held close to main, rebased on `origin/main` often (the `engineering-rigor` skill § "Keep `git diff main` usable"); a diverged branch loses the working-vs-broken comparison this method depends on.
 
 - [`doc/claude/formal/`](../../../doc/claude/formal/) — the rules AND the record of attempts:
-  `ownership.md` for store-lifetime (which fixes were reverted and why, and where each closure
-  put the unsound step), `IMPLEMENTATIONS.md` for what is already merged. Read BEFORE writing a
+  `ownership.md` for the store-lifetime rules and `ownership-history.md` for the record
+  (which fixes were reverted and why, and where each closure put the unsound step),
+  `IMPLEMENTATIONS.md` for what is already merged. Read BEFORE writing a
   store-lifetime or return-buffer fix, not after it fails.
 - [CODEGEN_METHOD.md](../../../doc/claude/CODEGEN_METHOD.md) — the full method
 - [OWNERSHIP_MODEL.md](../../../doc/claude/OWNERSHIP_MODEL.md) — `deps` as loft's borrow checker (the north star for store-lifetime work)

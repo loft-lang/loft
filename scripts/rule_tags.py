@@ -35,8 +35,13 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FORMAL = os.path.join(ROOT, "doc/claude/formal")
+# Portable by design (the formal-rules skill): another project vendors this file
+# unchanged and points the two roots at its own layout.  RULES_DIR is where the
+# rules docs live; CITE_DIRS (colon-separated) is where citations are scanned.
+FORMAL = os.environ.get("RULES_DIR", os.path.join(ROOT, "doc/claude/formal"))
 SRC = os.path.join(ROOT, "src")
+CITE_DIRS = os.environ.get("CITE_DIRS", "").split(":") if os.environ.get("CITE_DIRS") else [SRC]
+CITE_EXTS = os.environ.get("CITE_EXTS", ".rs").split(",")
 
 # A rule is DEFINED by a rules-block line `  (Name)  prose` or a deviation header `### Name —`.
 # A RULE is defined by a line `  (Name)  prose` INSIDE A FENCED BLOCK — that is the shape the
@@ -119,12 +124,14 @@ def _fenced_lines(text):
 
 
 def citations():
-    """{tag: [(file, line)]} for every `@Tag` in src/."""
+    """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
     out = collections.defaultdict(list)
-    for path in glob.glob(SRC + "/**/*.rs", recursive=True):
-        for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
-            for tag in CITE.findall(line):
-                out[tag].append((os.path.relpath(path, ROOT), n))
+    for d in CITE_DIRS:
+        for ext in CITE_EXTS:
+            for path in glob.glob(os.path.join(d, "**/*" + ext), recursive=True):
+                for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
+                    for tag in CITE.findall(line):
+                        out[tag].append((os.path.relpath(path, ROOT), n))
     return out
 
 

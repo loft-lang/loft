@@ -9,12 +9,12 @@ with `git blame` or `git log` (when a change happened, which plan it came from,
 what the code used to be) is history, not documentation. It belongs in the
 commit message.
 
-**Fast path:** in a hurry, read [§ The rules](#the-rules) — the seven rules. The
+**Fast path:** in a hurry, read [§ The rules](#the-rules). The
 rest is evidence and worked examples.
 
-**Doing a review?** Load the **`doc-quality` skill** (`/doc-quality`) at the start
+**Doing a review?** Load the **`doc-quality` skill** at the start
 of any documentation review (release doc review, a PR's doc changes, a doc-edit
-pass). It is the loadable companion to this doc — the seven rules condensed with
+pass). It is the loadable companion to this doc — the rules condensed with
 the stamp-vs-pointer test — so the review applies them consistently instead of
 from memory.
 
@@ -101,9 +101,11 @@ examples are paraphrased from real comments (file named at the time of writing).
    push-one and concat." A future editor needs this, or they will bring the
    problem back.
 2. **Why the code is written this odd way** (as an *inline* comment inside the
-   body, not in the function description). `parser/vectors.rs` — "skip text when
-   the parent function returns text (this avoids the 'Write to locked store'
-   panic)." It explains why the obvious simpler version is wrong. In a function
+   body, not in the function description). The historic `parser/vectors.rs`
+   example — "skip text when the parent function returns text (this avoids the
+   locked-store panic)" (that skip has since been retired by #687; the SHAPE of
+   the comment is the point). It explains why the obvious simpler version is
+   wrong. In a function
    `///` description, this design reason becomes a pointer instead — see
    [§ Function descriptions](#function-descriptions-say-why-to-use-it-not-why-it-was-written).
 3. **A link between two files you cannot see locally.** Same place: "matches
@@ -139,7 +141,7 @@ the dead *stamp*, not about all references:
   that records which plan and when, with nothing to open. Following it tells you
   only when the line was written.
 - **Live pointer — keep it:** a link to a doc, issue, or plan that *explains* why
-  the code is needed (`see LIFETIME.md § locked-store text for why`). Following it
+  the code is needed (`see LIFETIME.md § Lock bracket for why`). Following it
   teaches you about the present code. It counts **even if the plan or issue is
   closed** — a finished investigation in `plans/finished/` still explains. Prefer
   a stable target (an issue URL, or a tracker ref `./scripts/idx` resolves) over a
@@ -340,8 +342,8 @@ fn box_captured_names_for_outer_scalars(…) { … }
 /// Re-types a lambda's captured outer scalars to their cell form, so the
 /// closure record can hold them by reference. Call this after capture
 /// analysis and before emitting the closure record.
-/// Skips text captures when the parent returns text — see
-/// LIFETIME.md § locked-store text for why.
+/// Capture storage is decided per binding — see loft#687 for why the
+/// blanket text-skip was retired.
 fn box_captured_names_for_outer_scalars(…) { … }
 ```
 

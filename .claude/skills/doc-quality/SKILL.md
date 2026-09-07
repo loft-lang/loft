@@ -43,13 +43,13 @@ not sweep a file to "fix its comments" during unrelated work — that burns effo
 and risks churn. The Check (below) is a thermometer you run on purpose, not a
 gate on every edit.
 
-## The seven rules
+## The rules
 
 1. **Describe the code as it is now, never the change.** If a comment only makes
    sense to someone who saw the old version, it belongs in the commit message.
    *(Goal E: the comment must match the present code.)*
 2. **No plan tags, dates, or resolved-bug history in code comments** — `git blame`
-   keeps that. A **live pointer** to a doc/issue/plan that explains the code is the
+   keeps that. A **live pointer** to a doc, issue or plan that explains the code is the
    allowed exception (see "Stamp vs pointer"). *(Goal F: serve the reader, not the
    author's bookkeeping.)*
 3. **Keep the high-value kinds:** rules the code enforces, the odd-but-needed
@@ -152,10 +152,14 @@ rule is missing — not that the story should stay.
   recording which plan and when, with nothing to open. Following it tells you only
   when the line was written.
 - **Live pointer — keep it:** a link to a doc, issue, or plan that *explains* why
-  the code is needed (`see LIFETIME.md § locked-store text for why`). Following it
+  the code is needed (`see LIFETIME.md § Lock bracket for why`). Following it
   teaches you about the present code. It counts **even if the plan/issue is
   closed** — a finished investigation still explains. Prefer a stable target (an
   issue URL, or a ref `./scripts/idx` resolves) over a raw plan path.
+
+Editing a REFERENCE table (a doc row per function/method): a row naming a method
+that does not exist is worse than no row — verify each named symbol resolves
+(DOC_QUALITY.md rule 8 has the measured case).
 
 The loft tracker tags (CLAUDE.md § "Tracker tags") belong in plans, design docs,
 and commit messages — where `./scripts/idx` resolves them — not in a `.rs`
@@ -163,18 +167,21 @@ comment. The comment carries a *link* to the tagged plan, not the tag.
 
 ## Worked example
 
+Illustrative — the function is real, the comments are written to show the contrast
+(DOC_QUALITY.md carries the same example):
+
 ```rust
 // BEFORE — the description explains why the function was WRITTEN, under a stamp
-/// @PLAN52 (2026-05-30): added during the closure-capture rework to fix the
-/// "Write to locked store" panic; re-types text captures. Mirrors
+/// @PLAN52 (2026-05-30): added during the closure-capture rework to fix a
+/// locked-store panic; re-types text captures. Mirrors
 /// flip_scalars_to_box_types.
 fn box_captured_names_for_outer_scalars(…) { … }
 
 // AFTER — why to USE it (present tense), design reason as a live pointer
 /// Re-types a lambda's captured outer scalars to their cell form so the closure
 /// record can hold them by reference. Call after capture analysis, before
-/// emitting the closure record. Skips text captures when the parent returns
-/// text — see LIFETIME.md § locked-store text for why.
+/// emitting the closure record. Capture storage is decided per binding — see
+/// loft#687 for why the blanket text-skip was retired.
 fn box_captured_names_for_outer_scalars(…) { … }
 ```
 

@@ -66,9 +66,45 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
+| `design-protocol` | 2026-09-07 | `2808e183` |
+| `doc-quality` | 2026-09-07 | `ae756431` |
+| `draw` | 2026-09-07 | `5156c175` |
+| `engineering-rigor` | 2026-09-07 | `2808e183` |
+| `formal-rules` | 2026-09-07 | `2808e183` |
+| `loft-codegen` | 2026-09-07 | `2808e183` |
+| `loft-debug` | 2026-09-07 | `2808e183` |
+| `loft-plan-workflow` | 2026-09-07 | `ae756431` |
+| `loft-ship` | 2026-09-07 | `2e6a04ba` |
+| `loft-test` | 2026-09-07 | `e8ada9b6` |
+| `loft-write` | 2026-09-07 | `2808e183` |
 
 ## Findings that outlive a single review
 
 Per-skill defects are fixed in the skill and disappear; what belongs here is the
 recurring shape a pass observes across skills, recorded so the next pass knows what
 to look for first.
+
+**First full pass (2026-09-07, ten skills, one agent-read per skill, every finding
+verified against the tree before being acted on):**
+
+- **The worst class is an inverted default, not a dead link.** `loft-test` documented
+  the cross-mode matrix as ignore-by-default with a `-- --ignored` run command — after
+  @PLN114 flipped the cells to run by default, that command ran ZERO tests and read as
+  green. A stale skill can be worse than no skill; check documented DEFAULTS first.
+- **Restated volatile facts decay fastest.** Suite counts, timings, ignore-states and
+  binary tables (loft-test's table carried two deleted binaries; its numbers were a
+  dated snapshot). Cure: state the command that measures, never the measurement.
+- **Fixed-bug residue reads as over-caution and occasionally as harm.** Skills kept
+  teaching workarounds for bugs since fixed (loft-write's hash/param traps, #1172;
+  doc-quality's retired skip-text example) — and one "required idiom" had become a
+  compile error. A closed issue cited by a skill is a re-read trigger.
+- **Section renames and file splits break pointers the scanner cannot see.** It
+  checks FILES exist, not SECTIONS (`CLAUDE.md § Debug logging`, `DESIGN_PROTOCOL.md
+  § The other half`, `ownership.md` → `ownership-history.md` all pointed at real files
+  and wrong places). A future scanner improvement: resolve `§`-style anchors too.
+- **Machine-specific values leak into skills** (a sibling checkout's absolute path, a
+  toolchain version pair) — CLAUDE.md's "keep machine-specific values out of shared
+  docs" applies to skills with full force.
+- **The small routing skills aged best.** `loft-ship`'s 117-line SKILL.md needed one
+  wording fix; the two largest restaters produced most of the findings. When adding
+  to a skill, prefer the pointer.
