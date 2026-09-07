@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic `-> T?` instantiated at a TUPLE answers exactly what the non-generic read of the
+// same element answers — on both backends, under both discharges.
+//
+// The oracle is IN THIS FILE, beside every cell it judges. `v[i]` on a `vector<(integer,
+// integer)>` is right today and has been for a long time, so "the generic agrees with the
+// plain read" is a property that can be asserted rather than a value that has to be believed;
+// a cell that pins a NUMBER would go stale the day the tuple-absence rule moves, and this one
+// cannot, because both halves move together.
+//
+// `fn first<T>(v: vector<T>) -> T? { v[0] }` at `T = (integer, integer)` produced a monomorph
+// whose declared return was `(integer, integer)?` — a type the language refuses at every
+// declaration (loft#1423) and which has no layout — while its body still handed up the DbRef
+// the template compiled `T` as. One shape, two different wrong answers: `--interpret` read
+// that pointer's bits as member 0 and printed `34359738371`, which is `(1 << 35) | 3`, and
+// `--native` would not compile the function at all (E0308, `-> (i64, i64)` against a body
+// returning the nullable form). Nothing on the interpreter said so — a plausible-looking
+// number is what a packed DbRef looks like.
+//
+// The cause is ONE NOTION WITH TWO SPELLINGS, twice over in the same code path.
+// `tuple_return_rewrite` boxes a tuple return into the synthetic `__tuple<…>` record and
+// matched `Type::Tuple` only, so `Optional(Tuple(…))` — which is what `-> T?` at a tuple IS —
+// fell through unrewritten; and `from_tv`, the flag deciding whether the template's return is
+// the type variable itself, matched `Reference(tv)` only, so every `-> T?` answered "no, this
+// is a literal shape" and took the branch written for a signature that does not mention `T`.
+// Both now peel, and the second question has one home rather than the same `matches!` written
+// at two call sites.
+//
+// Two further sites had to move with it, and each was a REFUSAL uncovered by removing the
+// silent wrong answer — which is why the cells below score VALUES and not exit codes:
+//
+//   * `first(v) ?? (7, 7)` was refused, because the value now arrives boxed while the default
+//     is written on the page in the stack spelling. The coalesce takes the stack spelling when
+//     the two are the same tuple, which is what the non-generic `v[i] ?? (7, 7)` already
+//     produces.
+//   * `first(v)?` was refused, naming a default *"of type `boolean`"* in a program with no
+//     boolean: `Reference(__tuple<…>)` is a struct to `def_type`, so the record default tried
+//     to sub-parse `__tuple<integer,integer> {}` as loft SOURCE, and that name is not
+//     spellable. Both tuple spellings answer "no default" now, which is what routes the plain
+//     `v[i]?` to its recover-as-base path.
+//
+// Controls, each load-bearing:
+//   * the NON-GENERIC twin of every cell, asserted equal to the generic one. The defect was a
+//     disagreement between two spellings of one read, so a generic cell that matched a
+//     hand-written number would still pass with the oracle broken.
+//   * the ABSENT case under both discharges, because they take different paths and gave
+//     different wrong answers: `??` supplies the author's value, `?` supplies the type's.
+//   * element types past the all-integer pair — a `text` member, a THREE-member tuple, and a
+//     STRUCT member — because the boxing predicate asks whether an element "carries a lifetime
+//     concern", and an all-integer pair is the one shape for which that answer is no.
+//   * the axes `scripts/matrix_axes.py` reported this file did not reach, restricted to the
+//     ones with a history in this machinery: the container arriving as a PARAMETER, as a
+//     FIELD and as a CALLEE-RETURN rather than as a local literal, the value consumed as a
+//     CALL ARGUMENT, and the call made inside a LOOP. The loop cell is the one to keep: a
+//     boxed return is delivered through the caller's buffer, and a buffer reused every turn
+//     is where this class of fix goes wrong (loft#1407, loft#1441) — the single-call cells
+//     above cannot see it, and both the present and the absent path get their own loop.
+//
+// @falsified-at: 87ab33631 — MEASURED on both backends, and the two channels differ, which is
+//   why neither alone is the answer. `--interpret` COMPILES there and answers
+//   `34359738371` for the first member, so its channel is the assert (exit 101, not a
+//   refusal). `--native` never builds: rustc E0308 on the monomorph's signature, so its
+//   channel is the process exit and no assert in this file is reached. A guard read only
+//   through the native leg would therefore report "fails before and after" for the wrong
+//   reason.
+
+fn first1451<T>(v: vector<T>) -> T? { v[0] }
+
+struct Pt1451 { x: integer, y: integer }
+struct Bag1451 { rows: vector<(integer, integer)> }
+
+fn mk1451() -> vector<(integer, integer)> { [(4, 5)] }
+
+fn via_param1451(v: vector<(integer, integer)>) -> integer {
+  a = first1451(v) ?? (7, 7);
+  a.0 * 10 + a.1
+}
+
+fn takes1451(t: (integer, integer)) -> integer { t.0 * 100 + t.1 }
+
+fn main() {
+  full: vector<(integer, integer)> = [(1, 2)];
+  empty: vector<(integer, integer)> = [];
+  i = 0;
+
+  // ---- `??`: the generic answers what the plain read answers, present and absent ----
+  g_present = first1451(full) ?? (7, 7);
+  p_present = full[i] ?? (7, 7);
+  assert(g_present.0 == p_present.0, "present member 0: generic {g_present.0} vs plain {p_present.0}");
+  assert(g_present.1 == p_present.1, "present member 1: generic {g_present.1} vs plain {p_present.1}");
+  assert(g_present.0 == 1, "and the plain read is itself right: {g_present.0}");
+  assert(g_present.1 == 2, "and the plain read is itself right: {g_present.1}");
+
+  g_absent = first1451(empty) ?? (7, 7);
+  p_absent = empty[i] ?? (7, 7);
+  assert(g_absent.0 == p_absent.0, "absent member 0: generic {g_absent.0} vs plain {p_absent.0}");
+  assert(g_absent.1 == p_absent.1, "absent member 1: generic {g_absent.1} vs plain {p_absent.1}");
+  assert(g_absent.0 == 7, "the default is the author's value: {g_absent.0}");
+
+  // ---- `?`: the type's own default, which is the OTHER discharge path ----
+  d_present = first1451(full)?;
+  q_present = full[i]?;
+  assert(d_present.0 == q_present.0, "`?` present member 0: generic {d_present.0} vs plain {q_present.0}");
+  assert(d_present.1 == q_present.1, "`?` present member 1: generic {d_present.1} vs plain {q_present.1}");
+  assert(d_present.0 == 1, "and it is the element's own value: {d_present.0}");
+
+  d_absent = first1451(empty)?;
+  q_absent = empty[i]?;
+  assert((d_absent.0 ?? -1) == (q_absent.0 ?? -1), "`?` absent member 0: the two spellings agree");
+  assert((d_absent.1 ?? -1) == (q_absent.1 ?? -1), "`?` absent member 1: the two spellings agree");
+
+  // ---- element types past the all-integer pair ----
+  txt: vector<(text, integer)> = [("a", 1)];
+  txt_e: vector<(text, integer)> = [];
+  t_present = first1451(txt) ?? ("z", 0);
+  t_absent = first1451(txt_e) ?? ("z", 0);
+  assert(t_present.0 == "a", "a text member survives the boxing: {t_present.0}");
+  assert(t_present.1 == 1, "beside its integer: {t_present.1}");
+  assert(t_absent.0 == "z", "and the absent default is the author's: {t_absent.0}");
+
+  three: vector<(integer, integer, integer)> = [(1, 2, 3)];
+  t3 = first1451(three) ?? (0, 0, 0);
+  assert(t3.0 == 1 && t3.1 == 2 && t3.2 == 3, "a three-member tuple keeps its order: {t3.0} {t3.1} {t3.2}");
+
+  withs: vector<(Pt1451, integer)> = [(Pt1451 { x: 5, y: 6 }, 9)];
+  ws = first1451(withs) ?? (Pt1451 { x: 0, y: 0 }, 0);
+  assert(ws.0.x == 5 && ws.0.y == 6, "a struct member arrives whole: {ws.0.x} {ws.0.y}");
+  assert(ws.1 == 9, "beside its integer: {ws.1}");
+
+  // ---- where the container comes from, and where the value goes ----
+  assert(via_param1451(full) == 12, "the container arrives as a PARAMETER: {via_param1451(full)}");
+
+  from_call = first1451(mk1451()) ?? (7, 7);
+  assert(from_call.0 == 4 && from_call.1 == 5, "and as a CALLEE-RETURN: {from_call.0} {from_call.1}");
+
+  bag = Bag1451 { rows: [(8, 9)] };
+  from_field = first1451(bag.rows) ?? (7, 7);
+  assert(from_field.0 == 8 && from_field.1 == 9, "and as a FIELD: {from_field.0} {from_field.1}");
+
+  assert(takes1451(first1451(full) ?? (7, 7)) == 102, "the value is usable as a CALL ARGUMENT");
+
+  // ---- in a LOOP, where the caller's return buffer is reused every turn ----
+  present_total = 0;
+  turns = 0;
+  for turn in 0..3 {
+    t = first1451(full) ?? (7, 7);
+    present_total = present_total + t.0 + t.1;
+    turns = turns + turn;
+  }
+  assert(turns == 3, "the loop ran three turns — 0 + 1 + 2: {turns}");
+  assert(present_total == 9, "three turns of (1, 2), not one turn's value three times: {present_total}");
+
+  absent_total = 0;
+  absent_turns = 0;
+  for turn in 0..3 {
+    t = first1451(empty) ?? (7, 7);
+    absent_total = absent_total + t.0 + t.1;
+    absent_turns = absent_turns + turn;
+  }
+  assert(absent_turns == 3, "and so did the absent one: {absent_turns}");
+  assert(absent_total == 42, "and the ABSENT path is its own loop: {absent_total}");
+}

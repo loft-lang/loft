@@ -6737,7 +6737,36 @@ impl Parser {
         tv_nr != u32::MAX && t.contains_def(tv_nr)
     }
 
+    /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
+    ///
+    /// `-> T` spells it `Reference(tv)`; `-> T?` spells it `Optional(Reference(tv))`.  One
+    /// notion, two spellings — and reading only the first answered "no, this return is a
+    /// literal shape" for every `-> T?`, so the instantiation took the branch written for a
+    /// signature that does not mention `T` (loft#1451).  Both call sites compute this on the
+    /// PRE-substitution template return and must agree, which is why it is one function
+    /// rather than the same `matches!` written twice.
+    fn return_is_the_type_var(tmpl_returned: &Type, tv_nr: u32) -> bool {
+        matches!(tmpl_returned.base(), Type::Reference(d, _) if *d == tv_nr)
+    }
+
     fn tuple_return_rewrite(&mut self, returned: Type, from_type_var: bool) -> Type {
+        // `τ?` is a SECOND SPELLING of the shape this rewrites, and matching only the first
+        // is what loft#1451 was.  A `-> T?` instantiated at a tuple arrives as
+        // `Optional(Tuple(…))`, which is not a `Type::Tuple`, so it fell through unrewritten:
+        // the monomorph declared `(integer, integer)?` — a type the language refuses at every
+        // declaration and which has no layout — while its body still handed up the DbRef the
+        // template compiled `T` as.  The interpreter read that pointer's bits as member 0
+        // (`34359738371` is `(1 << 35) | 3`) and `--native` would not compile the function at
+        // all, one shape emitting two different wrong answers.
+        //
+        // Peel, decide on the tuple, re-wrap.  The nullability rides along and the boxed form
+        // `Optional(Reference(__tuple<…>))` is an ordinary nullable record reference — which
+        // is exactly the shape the NON-GENERIC `v[i]` spelling produces for the same element
+        // type, and that spelling is right on both backends.  Peeling also puts the bare tuple
+        // in front of the `wide` size test below, which is the type that test means.
+        if let Type::Optional(inner) = returned {
+            return Type::optional(self.tuple_return_rewrite(*inner, from_type_var));
+        }
         let Type::Tuple(elems) = &returned else {
             return returned;
         };
@@ -6809,7 +6838,7 @@ impl Parser {
             return Type::Unknown(0);
         }
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
-        let from_tv = matches!(&tmpl_returned, Type::Reference(d, _) if *d == tv_nr);
+        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
         let predicted = self.tuple_return_rewrite(
             Self::substitute_type(tmpl_returned, tv_nr, &concrete),
             from_tv,
@@ -7079,7 +7108,7 @@ impl Parser {
         // `from_tv` computed on the PRE-substitution template return, identically to
         // `predict_generic_return_type`, so the second-pass instantiated return type
         // matches the first-pass prediction (the cross-pass H5 contract).
-        let from_tv = matches!(&tmpl_returned, Type::Reference(d, _) if *d == tv_nr);
+        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
         let tmpl_ret_deps: Vec<u16> = tmpl_returned.depend();
         let mut new_returned =
             self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
