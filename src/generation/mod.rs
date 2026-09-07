@@ -5077,9 +5077,19 @@ extern crate loft;"
                 let fnref_guard = format!(
                     "\n  let _fnref_guard = codegen_runtime::FnRefBufGuard::new(cell, {hands_up});"
                 );
+                // @PLN157 lean tier: without the live tier there is nobody to
+                // name frames FOR at ~7 ns/call — a `--lean` build keeps only
+                // the depth cap (one bounds test + two Cell updates, ~1.2 ns)
+                // and trades away `stack_trace()` frames, the panic frame
+                // block and the watchdog breadcrumb.  See `cr_call_push_lean`.
+                let push = if self.emit_live {
+                    format!("cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});")
+                } else {
+                    format!("cr_call_push_lean(\"{escaped_file}\", {loft_line});")
+                };
                 self.call_stack_prefix = Some(format!(
                     "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  \
-                     cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
+                     {push}\n  \
                      let _call_guard = codegen_runtime::CallGuard;{fnref_guard}{vdb_prologue}"
                 ));
                 self.output_block(w, body, returns_text, true)?;

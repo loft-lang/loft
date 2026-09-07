@@ -5197,13 +5197,22 @@ thread_local! {
 
 /// Read the live frames — `CALL_FRAMES[..CALL_DEPTH]` — without copying.
 ///
+/// The `min` clamp is load-bearing for the LEAN tier (@PLN157): a `--lean`
+/// binary advances the depth through [`cr_call_push_lean`] without writing
+/// frames, so the array can be shorter than the depth — its readers then see
+/// whatever named frames exist (none, usually) instead of panicking inside
+/// the diagnostic they serve.
+///
 /// SAFETY (of the internal `&*ptr`): the only `&mut` into `CALL_FRAMES` lives
 /// inside `cr_call_push`'s statement on this same thread and is gone by the
 /// time any reader runs; entries below `depth` are fully initialised because
 /// the depth is published after the write.
 fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32)]) -> R) -> R {
     let depth = CALL_DEPTH.get();
-    CALL_FRAMES.with(|frames| f(&unsafe { &*frames.get() }[..depth]))
+    CALL_FRAMES.with(|frames| {
+        let v = unsafe { &*frames.get() };
+        f(&v[..depth.min(v.len())])
+    })
 }
 
 /// The loft frames this native thread is inside, innermost first.
@@ -5288,6 +5297,26 @@ pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 #[inline(never)]
 fn cr_stack_overflow(file: &str, line: u32) -> ! {
     crate::runtime_error::RuntimeError::stack_overflow(file.to_string(), line).report_and_exit()
+}
+
+/// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap
+/// without the frame record.  A `--lean` binary trades the shadow stack's
+/// diagnostics — `stack_trace()` answers no frames, a native `assert`/`panic`
+/// carries no loft frame block, the watchdog breadcrumb is not refreshed —
+/// for a per-call cost of one bounds test and two `Cell` updates (measured
+/// ~1.2 ns against ~6.7 ns for the named prelude).  What it KEEPS is the
+/// depth cap itself, at the same `MAX_CALL_DEPTH` both backends share; the
+/// overflow report names this call's own entry site rather than the frame
+/// below (there is no frame below to read — the one spelling difference from
+/// the named tier).  [`CallGuard`] balances it unchanged: the pop is a bare
+/// decrement either way.
+#[inline]
+pub fn cr_call_push_lean(file: &'static str, line: u32) {
+    let depth = CALL_DEPTH.get();
+    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
+        cr_stack_overflow(file, line);
+    }
+    CALL_DEPTH.set(depth + 1);
 }
 
 /// Pop a frame from the shadow call stack.  Called at the end of every

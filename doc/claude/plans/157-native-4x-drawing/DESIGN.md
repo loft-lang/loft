@@ -327,17 +327,53 @@ MOVES the number earns emitter code.  First application (probe binaries in
 the session scratchpad; timed dirty under a running gate, clean numbers
 pending):
 
-| hand-edit of the emitted bench | `hash` ns/op | reading |
-|---|---:|---|
-| P3c as emitted | ~1.4M | baseline |
-| + params-proven arithmetic (would-be P3d) | ~1.1–1.3M | ~20 %, second-order |
-| + prelude stripped (`live_flipped`, `cr_call_push`, guard) | **0.47M (4.7 ns/call)** | at the bar — Rust is ~3.3 |
+Clean matrix (2026-09-07, idle-ish box, `nice -19` single-threaded, median
+of 6 × `--n 50`, all four binaries hash-verified `7698ffff`/`33e56005`):
 
-So the `hash`/`smooth` class closes through a LEAN-TIER PRELUDE decision
-(the issue's original ask — an owner's call, since the recursion cap,
-`stack_trace()` and panic frames live in that prelude), with P3d a ~20 %
-follow-up; and P4's store shapes get the same rustc-only probe before any
-emitter work.
+| hand-edit of the emitted bench | `hash` ns/call | `lock` ms/op |
+|---|---:|---:|
+| P3c as emitted | 11.8 | 32.9 |
+| params-proven arithmetic only (would-be P3d) | 10.5 (−11 %) | 32.8 (−0.3 %) |
+| **prelude stripped only** (`live_flipped` + `cr_call_push` + guard) | **5.1 (−57 %)** | 29.8 (−9.5 %) |
+| both | ~5–6 (≈ prelude alone) | 29.8 |
+
+Rust reference: 3.3 ns/call — the prelude-stripped form is **~1.55×**, well
+inside the bar, and the arithmetic's 1.3 ns mostly vanishes once the opaque
+prelude calls are gone (the priority principle in numbers: simple emitted
+code lets LLVM fold the rest).  **Rulings (owner, 2026-09-07): build the
+lean-tier prelude; P3d is measured-and-DECLINED (−11 % alone, ~0 on top of
+the prelude fix); P4 gets the same rustc-first probe before any emitter
+work** — its share is everything left on the pixel rows (29.8 vs Rust's
+1.0–1.7 ms).
+
+**The lean tier is BUILT (same day):** `cr_call_push_lean(file, line)` —
+the depth cap without the frame record — emitted whenever `emit_live` is
+off (`--lean`); `CallGuard` balances unchanged, `with_call_frames` clamps
+so lean readers degrade instead of panicking.  Cells verified: the cap
+fires with the clean typed StackOverflow at the entry site, `stack_trace()`
+answers zero frames without panicking, all four plan guards green under
+`--native --lean`.  Measured real `--lean`: `hash` 8.5 ns/call (~2.6× Rust;
+the hand probe's 6.4 ns gap is the cross-crate thread-local access thin-LTO
+would inline — P2's probe), `lock` −6 %.
+
+**The probe LEDGER for `lock` (n=20 medians, each layer a hand-edit of the
+emitted Rust, hashes exact throughout):**
+
+| cumulative layer | `lock` ms/op | delta |
+|---|---:|---|
+| P3c baseline | 32.9 | — |
+| lean prelude | 31.0 | −6 % |
+| + element access via hoisted bases (P4a/b shape: 1 read + 7 writes through per-loop-resolved element-0 `DbRef`s) | 26.3 | **−15 %** |
+| + plain `??`-divisions and idx arithmetic | 25.9 | −2 % (the division machinery already inlines) |
+| + N4 leaf-strip (no prelude on `chan`/`ramp`/`brush_sample`/`seed_hash`) | 24.1 | −7 %; also takes `hash` 1.11M → 0.68M (−39 %) |
+
+Interpreter line-profile agrees: the pixel loop's PROJECTION/dist/idx lines
+dominate, the writes don't rank — M2's write share was overestimated for
+`lock`.  Still ~23× after all layers: the RESOLVE loop (untouched —
+`brush_sample`'s four element reads, `ll_out` writes) and the loop/conv
+machinery are the next probe targets before any P4 emitter work.  N4
+(prelude off pure leaves) graduates from "small change" to a measured
+priority: it is the `hash` row's closer and worth −7 % on `lock`.
 
 ---
 
