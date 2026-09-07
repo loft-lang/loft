@@ -34,6 +34,15 @@
 // they still slide by the DECLARED width.  A `vector<u8>` that reverses to `0,0,0,0,0` would
 // pass a bare "it compiles" check.
 //
+// ⚠ WHAT THIS FILE DELIBERATELY DOES NOT COVER — the KEYED kinds.  `matrix_axes.py` reports
+// `hash`, `sorted`, `index` as unreached container kinds, and that absence is a decision, not an
+// oversight: `c += […]` through a `&` to a keyed collection is still REFUSED (D-bind-28,
+// loft#1433), and the refusal is the safer state.  Peeling the link in `is_keyed` /
+// `is_collection` / `append_source` routes the append and emits correct-looking IR, and then
+// `hash` and `index` answer LOST and CORRUPT records while `sorted` and `vector` come out right
+// — so lifting that refusal without fixing the keyed emission path converts a compile error
+// into a silent wrong answer.  When #1433 closes, the cells belong here.
+//
 // The `&Box` in `amp_field` draws `slow-reference-parameter`, and that advice is CORRECT — a
 // field mutation reaches the caller without the `&`.  It is pinned rather than avoided because
 // the `&` is the whole point of that cell: the composition under test is a special-case reached

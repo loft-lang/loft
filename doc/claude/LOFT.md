@@ -518,6 +518,15 @@ b = 4         // writes a  →  a == 4
 a = 9         // b sees a's value  →  b == 9
 ```
 
+> **One known exception, and it is the KEYED collections.** Appending through a `&` to a
+> `hash` / `sorted` / `index` / `trie` does not work: through a `&` PARAMETER it is refused at
+> compile time, and through a `&` LOCAL alias (`a = &h; a += [rec]`) the append is silently
+> dropped and `len` reads 0 (loft#1433). A `vector` is correct in both spellings. Until it is
+> fixed, reach a keyed collection without the `&` — a keyed collection is already a store
+> handle, so a plain parameter mutates the caller's collection and a direct `h += [rec]` is
+> right. Everything else on this page — including `insert` / `reverse` / `sort` / `reserve`
+> and the generics over `vector<T>` (`sum`, `min_of`, `max_of`) — goes through a `&` as stated.
+
 `&` is **not a general operator** — it appears only in a reference-*binding* position, and its
 operand must be **addressable** (a variable, struct field, or vector element — never a temporary):
 

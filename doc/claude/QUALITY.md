@@ -2473,7 +2473,7 @@ and who does not.
 |---:|---:|---:|---:|
 | RE-MEASURE | RE-MEASURE | 5 | **RE-MEASURE** |
 
-**Two `@FR-H-Stride` fixes moved this row, and neither opaque entry is a gap.**  The
+**Three fixes moved this row, and no opaque entry among them is a gap.**  The
 distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
 is *correctly* opaque has to say why, or the next reader re-derives it.
 
@@ -2494,6 +2494,7 @@ a trend: **extracting a peel into a helper makes the caller read as opaque even 
 still happens on every path through it.**  A delegating caller is the one shape this classifier
 cannot see through, and it is worth knowing before reading the opaque column as a backlog.
 
+<<<<<<< HEAD
 @PLN153 phase 4 batch 7 (the slice-pattern element family, loft#1410 / loft#1414) moved the
 opaque column DOWN by three and added two functions on the seeing-through side: the element's
 variant identity and the element read's borrow dep each have ONE home now
@@ -2555,6 +2556,27 @@ conflict is re-measured, never taken from a side**, and it was not guessable fro
 
 **The row before it was the JOINED tree's, re-measured, and a fourth number that neither
 branch carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
+=======
+*The `(B-Ref-Uniform)` walk (B8p) added the 733rd and the 362nd.*  `Parser::resolve_type_var`
+gained an arm stripping `Type::RefVar` from the concrete argument, beside the one already
+stripping `Type::Rewritten` — both record how an argument was REACHED or ASSEMBLED rather than
+what it IS, and a type variable binds to the shape.  It scores OPAQUE because the new arm reads
+`concrete_tp` bare, and the audit is right to ask whether an `Optional`-wrapped `&` slips past
+it.  **Measured, it does not, because nothing satisfiable arrives in that shape:** a nullable
+vector into a `vector<T>` slot is refused with or without the `&`, and refused with the *same*
+first diagnostic (*"Cannot resolve generic type parameter from argument type"*) — so the `&`
+adds no gap the plain spelling does not already have.  Discharged (`sum(v ?? [])`) the wrapper
+is gone before unification and the link peels normally, verified through a `&vector<integer>?`
+parameter.  A peel here would therefore change no program, and the honest entry is opaque with
+the reason attached rather than a peel added to quiet the count.
+
+`is_file_var_type` moved in the same commit without changing either total — it swapped a
+hand-rolled `while let Type::RefVar(..)` loop for `Type::peel_link`, which is the same peel
+under a name other sites can ask for.
+
+**The row is the JOINED tree's, re-measured, and it is a fourth number that neither branch
+carried**: `730 | 366 | 5 | 359` against `730 | 365 | 5 | 360` on one side and
+>>>>>>> e4b23477 (The optional-audit row counts the walk's new arm, and says why it is opaque)
 `729 | 365 | 5 | 359` on the other — the middle column coincidentally equal, the outer two not.
 It reconciles: from main's `728 | 364 | 5 | 359`, `snapshot_kind` adds one OPAQUE, then
 `reshaped_containers` adds one PEELING, then `for_type` moves one opaque→peeling.  Each
