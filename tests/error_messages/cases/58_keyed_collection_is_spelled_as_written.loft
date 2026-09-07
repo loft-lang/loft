@@ -1,0 +1,38 @@
+// A keyed collection is spelled in a diagnostic the way its author wrote it, including behind
+// a `&` and with a DESCENDING key — `sorted<Row58[-id]>`, which the schema key renders
+// `sorted<Row58,[("id", false)]>`: a Rust tuple and a boolean whose meaning (ascending) has no
+// spelling in the language at all.
+//
+// The golden set had NO case rendering a keyed collection before this one, which is not a
+// guess: the loft#1449 sweep converted eight such sites on the joined tree and changed no
+// baseline output. So the whole drift — three separate passes, loft#956, loft#1434 and
+// loft#1445 — could and did happen with these baselines green throughout. The WRAPPER arms are
+// where it actually was each time, which is why both wrappers appear here rather than the bare
+// form alone.
+//
+// The nullable wrapper is the sibling case in this directory: a `for` over an absent collection
+// refuses and then cascades, which swallows any later error in the same file.
+
+struct Row58 { id: integer, v: integer }
+
+struct Db58 {
+  by_id: hash<Row58[id]>,
+  ranked: sorted<Row58[-id]>,
+}
+
+fn add_hash58(a: &hash<Row58[id]>, b: &hash<Row58[id]>) {
+  a += b;
+}
+
+fn add_sorted58(a: &sorted<Row58[-id]>, b: &sorted<Row58[-id]>) {
+  a += b;
+}
+
+fn main() {
+  one = Db58 { by_id: [], ranked: [] };
+  two = Db58 { by_id: [], ranked: [] };
+  add_hash58(one.by_id, two.by_id);
+  add_sorted58(one.ranked, two.ranked);
+  bare: integer = one.by_id;
+  println("{bare}");
+}

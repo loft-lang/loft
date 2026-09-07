@@ -1,0 +1,22 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: No matching operator 'Add' on '&hash<Row58[id]>' and '&hash<Row58[id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:24:9
+   |
+24 |   a += b;
+   |         ^
+
+error: No matching operator 'Add' on '&sorted<Row58[-id]>' and '&sorted<Row58[-id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:28:9
+   |
+28 |   a += b;
+   |         ^
+
+error: Variable 'bare' cannot change type from integer to hash<Row58[id]>; use a new variable name or cast with 'as'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:36:29
+   |
+36 |   bare: integer = one.by_id;
+   |                             ^
+
+error: aborting due to 3 previous errors

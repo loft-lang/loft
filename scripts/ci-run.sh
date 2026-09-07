@@ -13,6 +13,12 @@
 # The fix is to record the run's own identity and check the PROCESS, not the log.
 # `.ci-verdict` holds one line: STATE PID EPOCH [detail].  `status` re-reads the pid, so a
 # run that vanished reports DIED rather than RUNNING.
+# ⚠ EDITING THIS FILE: the whole `start` wrapper below is ONE single-quoted `bash -c`
+# string, so an APOSTROPHE anywhere inside it — including in a comment — ends that string.
+# The failure does not point at your line: `bash -n` reports a syntax error wherever the
+# NEXT quote happens to be, which was 25 lines away in an unrelated comment.  Write "the lint
+# doc URL", never "the lint's doc URL".  This warning is up here rather than beside the code
+# because the apostrophe gets written before anyone reads the middle of the file.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 V=.ci-verdict
@@ -78,10 +84,19 @@ case "${1:-status}" in
         # REGISTRY package the branch had never touched, 1500 lines above the real failure.
         # Both agents on this box triaged that line and chased the cdylib.
         #
-        # The COUNT is the other half, and it splits the two kinds of red that need opposite
-        # responses: FAILED with 0 test failures is the toolchain, the box or the target dir
-        # — a stale rlib, a corrupt incremental cache, a full disk — and FAILED with a count
-        # is the code.  Deriving that from the error text cost three gates in one evening.
+        # The COUNT is the other half, and it splits the kinds of red that need opposite
+        # responses.  FAILED with a COUNT is the code, in a test.
+        #
+        # FAILED with ZERO is three things, not one, and reading it as "the box" is wrong two
+        # times out of three: `make ci` is fmt -> clippy -> test, so a FORMAT or a LINT failure
+        # never reaches a test and still reports zero.  Both are the CODE and both are fixed in
+        # seconds; only what is left over — a stale rlib, a corrupt incremental cache, a full
+        # disk — is the box.  Measured the hard way: two agents on this box lost time to the
+        # old wording within one hour, one sent to the format phase and one to the target dir,
+        # each while holding a clippy or rustfmt error in the same verdict line.
+        #
+        # The markers are unambiguous, so the verdict names which of the three it is: clippy
+        # prints the lint doc URL, rustfmt prints `Diff in <path>`.
         #
         # nextest prints `FAIL [   1.23s] (12/34) <binary> <test>` once per attempt, so the
         # retries of one test collapse under `sort -u`.

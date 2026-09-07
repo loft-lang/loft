@@ -1,0 +1,22 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: cannot iterate over hash<Row58[id]>? because it is NULLABLE — a `hash<Row58[id]>` is iterable, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection zero iterations
+  --> <cases>/58_nullable_keyed_collection_is_spelled_as_written.loft:13:22
+   |
+13 |   for row in absent {
+   |                      ^
+
+error: Need an iterable expression in a for statement
+  --> <cases>/58_nullable_keyed_collection_is_spelled_as_written.loft:13:22
+   |
+13 |   for row in absent {
+   |                      ^
+
+error: Expect token ;
+  --> <cases>/58_nullable_keyed_collection_is_spelled_as_written.loft:13:22
+   |
+13 |   for row in absent {
+   |                      ^
+
+error: aborting due to 3 previous errors
