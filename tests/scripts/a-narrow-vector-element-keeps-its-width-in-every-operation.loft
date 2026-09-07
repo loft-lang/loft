@@ -1,0 +1,177 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-H-Stride — a vector element's width is fixed by the declared TYPE and never by the
+// definition that type resolves to.  One `integer` def serves all seven widths, so a def cannot
+// carry one; asking it answers the 8-byte base for `u8` as readily as for `integer`.
+//
+// Three separate places asked the def, and each produced a different wrong answer from the SAME
+// number (loft#1420):
+//
+//   the STRIDE   `element_store_size` asked `forced_size(type_elm(elm))` — a test that could
+//                never pass, since `type_elm` maps every `Type::Integer` to the one `integer`
+//                def.  Dead branch, so every narrow element measured 8 while the STORAGE had
+//                been registered 1, 2 or 4 wide: `reverse` on a `vector<u8>` answered
+//                `0,0,0,0,0` and a `..rest` materialised all-zero elements.
+//   the READ     `read_slice_elem` reached `get_val` through `get_field(_, usize::MAX, _)`,
+//                whose `attr_type` answers `def.returned` — the generic integer type.  So the
+//                read was 8 bytes wide: `[a, .., z]` over `[1,2,3,4,5]` answered
+//                **21542142465**, which is `0x05_04_03_02_01` — all five elements swallowed.
+//   the WRITE    `set_field_check` lost the type the same way, so `insert(v, 0, 9)` wrote eight
+//                bytes over a one-byte slot: `9,0,0,0,0,0`, the five successors zeroed.
+//
+// ⚠ The CONTROLS are what make this file able to tell the two candidate stories apart.  A plain
+// index `v[1]` was always CORRECT, and every `vector<integer>` cell was always correct.  So the
+// fault was never "narrow storage is broken" — the storage was right the whole time, and what
+// disagreed with it was every operation that re-derived the width from a def.  Delete the
+// controls and the guard can no longer say which.
+//
+// ⚠ The widths are SWEPT, not sampled.  Each of the three faults is one number wearing six
+// disguises: at width 1 the read swallows eight elements, at 2 it swallows four, at 4 it
+// swallows two, and the tail cell can be accidentally RIGHT because an over-wide read at the
+// last element runs into zeros.  A guard that checked `u8` alone would have called the stride
+// fix complete while the read was still wrong — that is exactly what happened during the walk,
+// and the tail read is the cell that hid it.
+//
+// @falsified-at: 3a83472fe — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0 (`make falsify`, both backends, a full build of
+//   that commit).  The first failing cell there is `i8 head/tail: 57345386150500` against the 105
+//   wanted — the head read swallowing its neighbours, which is the fault this file is named for.
+
+fn s8(v: vector<i8>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn u8s(v: vector<u8>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn s16(v: vector<i16>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn u16s(v: vector<u16>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn s32(v: vector<i32>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn u32s(v: vector<u32>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+fn si(v: vector<integer>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
+
+// ── the READ: head and tail of a slice pattern ───────────────────────────────
+fn h8(v: vector<i8>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn hu8(v: vector<u8>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn h16(v: vector<i16>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn hu16(v: vector<u16>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn h32(v: vector<i32>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn hu32(v: vector<u32>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+fn hint(v: vector<integer>) -> integer { match v { [a, .., z] => a * 100 + z, _ => -1 } }
+
+// ── the STRIDE: a `..rest` materialises element-type-aware ───────────────────
+fn mu8(v: vector<u8>) -> integer { match v { [_, ..m, _] => m[1] ?? -1, _ => -1 } }
+fn m16(v: vector<i16>) -> integer { match v { [_, ..m, _] => m[1] ?? -1, _ => -1 } }
+fn mu32(v: vector<u32>) -> integer { match v { [_, ..m, _] => m[1] ?? -1, _ => -1 } }
+
+// ── CONTROL: a plain index never went through any of the three ───────────────
+fn idx_u8(v: vector<u8>) -> integer { return v[1]; }
+fn idx_i16(v: vector<i16>) -> integer { return v[1]; }
+
+fn every_width_reads_its_own_element() {
+  a: vector<i8> = [1, 2, 3, 4, 5];
+  b: vector<u8> = [1, 2, 3, 4, 5];
+  c: vector<i16> = [1, 2, 3, 4, 5];
+  d: vector<u16> = [1, 2, 3, 4, 5];
+  e: vector<i32> = [1, 2, 3, 4, 5];
+  f: vector<u32> = [1, 2, 3, 4, 5];
+  g: vector<integer> = [1, 2, 3, 4, 5];
+
+  // ⚠ the HEAD is the cell that names the fault: an 8-byte read at offset 0 over 1-byte
+  // elements answers 0x05_04_03_02_01 = 21542142465, not 1.
+  assert(h8(a) == 105, "i8 head/tail: {h8(a)}");
+  assert(hu8(b) == 105, "u8 head/tail: {hu8(b)}");
+  assert(h16(c) == 105, "i16 head/tail: {h16(c)}");
+  assert(hu16(d) == 105, "u16 head/tail: {hu16(d)}");
+  assert(h32(e) == 105, "i32 head/tail: {h32(e)}");
+  assert(hu32(f) == 105, "u32 head/tail: {hu32(f)}");
+  // CONTROL — the wide element was always right
+  assert(hint(g) == 105, "integer head/tail (control): {hint(g)}");
+
+  // the materialised middle carries VALUES, not just a length
+  assert(mu8(b) == 3, "u8 rest[1]: {mu8(b)}");
+  assert(m16(c) == 3, "i16 rest[1]: {m16(c)}");
+  assert(mu32(f) == 3, "u32 rest[1]: {mu32(f)}");
+
+  // CONTROL — a plain index never asked a def for the width
+  assert(idx_u8(b) == 2, "u8 plain index (control): {idx_u8(b)}");
+  assert(idx_i16(c) == 2, "i16 plain index (control): {idx_i16(c)}");
+}
+
+fn every_width_reverses_in_place() {
+  a: vector<i8> = [1, 2, 3, 4, 5];
+  b: vector<u8> = [1, 2, 3, 4, 5];
+  c: vector<i16> = [1, 2, 3, 4, 5];
+  d: vector<u16> = [1, 2, 3, 4, 5];
+  e: vector<i32> = [1, 2, 3, 4, 5];
+  f: vector<u32> = [1, 2, 3, 4, 5];
+  g: vector<integer> = [1, 2, 3, 4, 5];
+  reverse(a);
+  reverse(b);
+  reverse(c);
+  reverse(d);
+  reverse(e);
+  reverse(f);
+  reverse(g);
+  assert(s8(a) == "5,4,3,2,1,", "i8 reverse: {s8(a)}");
+  assert(u8s(b) == "5,4,3,2,1,", "u8 reverse: {u8s(b)}");
+  assert(s16(c) == "5,4,3,2,1,", "i16 reverse: {s16(c)}");
+  assert(u16s(d) == "5,4,3,2,1,", "u16 reverse: {u16s(d)}");
+  assert(s32(e) == "5,4,3,2,1,", "i32 reverse: {s32(e)}");
+  assert(u32s(f) == "5,4,3,2,1,", "u32 reverse: {u32s(f)}");
+  assert(si(g) == "5,4,3,2,1,", "integer reverse (control): {si(g)}");
+}
+
+fn every_width_inserts_without_erasing_its_successors() {
+  a: vector<i8> = [1, 2, 3];
+  b: vector<u8> = [1, 2, 3];
+  c: vector<i16> = [1, 2, 3];
+  d: vector<u16> = [1, 2, 3];
+  e: vector<i32> = [1, 2, 3];
+  f: vector<u32> = [1, 2, 3];
+  g: vector<integer> = [1, 2, 3];
+  insert(a, 0, 9);
+  insert(b, 0, 9);
+  insert(c, 0, 9);
+  insert(d, 0, 9);
+  insert(e, 0, 9);
+  insert(f, 0, 9);
+  insert(g, 0, 9);
+  // ⚠ an 8-byte write over a 1-byte slot answers `9,0,0,0` — the value lands and the
+  // successors are erased, which is why the whole vector is asserted and not just `v[0]`.
+  assert(s8(a) == "9,1,2,3,", "i8 insert: {s8(a)}");
+  assert(u8s(b) == "9,1,2,3,", "u8 insert: {u8s(b)}");
+  assert(s16(c) == "9,1,2,3,", "i16 insert: {s16(c)}");
+  assert(u16s(d) == "9,1,2,3,", "u16 insert: {u16s(d)}");
+  assert(s32(e) == "9,1,2,3,", "i32 insert: {s32(e)}");
+  assert(u32s(f) == "9,1,2,3,", "u32 insert: {u32s(f)}");
+  assert(si(g) == "9,1,2,3,", "integer insert (control): {si(g)}");
+}
+
+fn a_nullable_narrow_element_keeps_its_own_width() {
+  // a nullable narrow element reserves a sentinel, so its width is the NULLABLE one —
+  // a different question from the raw width, and it must survive the same three paths.
+  n: vector<u8?> = [1, 2, 3, 4, 5];
+  hd = match n { [a, .., z] => (a ?? -1) * 100 + (z ?? -1), _ => -1 };
+  assert(hd == 105, "nullable narrow head/tail: {hd}");
+  md = match n { [_, ..m, _] => m[1] ?? -1 ?? -2, _ => -1 };
+  assert(md == 3, "nullable narrow rest[1]: {md}");
+  reverse(n);
+  r = "";
+  for e in n {
+    r = "{r}{e ?? -1},";
+  }
+  assert(r == "5,4,3,2,1,", "nullable narrow reverse: {r}");
+}
+
+fn reserve_changes_neither_length_nor_contents() {
+  v: vector<u8> = [1, 2, 3];
+  reserve(v, 100);
+  assert(len(v) == 3, "reserve keeps len: {len(v)}");
+  assert(u8s(v) == "1,2,3,", "reserve keeps contents: {u8s(v)}");
+}
+
+fn main() {
+  every_width_reads_its_own_element();
+  every_width_reverses_in_place();
+  every_width_inserts_without_erasing_its_successors();
+  a_nullable_narrow_element_keeps_its_own_width();
+  reserve_changes_neither_length_nor_contents();
+  print("a-narrow-vector-element-keeps-its-width-in-every-operation: PASS");
+}

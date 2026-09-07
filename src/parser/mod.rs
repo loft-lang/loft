@@ -10309,6 +10309,30 @@ impl Parser {
         }
     }
 
+    /// Write into a vector ELEMENT slot whose declared type is `elm_tp`.
+    ///
+    /// @FR-H-Stride — the element's width is the declared TYPE's, and the def it resolves to
+    /// cannot answer it, so the type is handed to the write path rather than re-derived from
+    /// `d_nr` (loft#1420).  The read half is `read_slice_elem`.
+    fn set_element(
+        &mut self,
+        elm_tp: &Type,
+        d_pos: u16,
+        ref_code: Value,
+        val_code: Value,
+    ) -> Value {
+        let d_nr = self.data.type_def_nr(elm_tp);
+        self.set_field_check(
+            d_nr,
+            usize::MAX,
+            d_pos,
+            ref_code,
+            val_code,
+            true,
+            Some(elm_tp),
+        )
+    }
+
     fn set_field(
         &mut self,
         d_nr: u32,
@@ -10317,7 +10341,7 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
     ) -> Value {
-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true)
+        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true, None)
     }
 
     /// @PLN130 F4 — writing a KEY field through an element view re-keys the element, and a
@@ -10762,7 +10786,7 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
     ) -> Value {
-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false)
+        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false, None)
     }
 
     /// @PLN25 single-payload — emit the steps that turn a `Some` record (`some_ref`, type
@@ -11096,6 +11120,10 @@ impl Parser {
         set_null
     }
 
+    // The field is addressed by `(d_nr, f_nr, d_pos)` and the write by `(ref_code, val_code)`;
+    // `emit_check` and `elm_override` are the two independent switches over that. Bundling them
+    // would name a struct after this one call site.
+    #[allow(clippy::too_many_arguments)]
     fn set_field_check(
         &mut self,
         d_nr: u32,
@@ -11104,8 +11132,18 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
         emit_check: bool,
+        elm_override: Option<&Type>,
     ) -> Value {
-        let tp = self.data.attr_type(d_nr, f_nr);
+        // @FR-H-Stride — for a vector ELEMENT (`f_nr == usize::MAX`) `attr_type` answers
+        // `def.returned`, and a def cannot carry a width: the one `integer` def serves all
+        // seven, so the write op below was chosen 8 bytes wide however the vector was
+        // declared.  `insert(v, 0, 9)` into a `vector<u8>` then wrote eight bytes over a
+        // one-byte slot and zeroed the five elements after it (loft#1420).  A caller that
+        // holds the DECLARED element type passes it here instead.
+        let tp = match elm_override {
+            Some(t) => t.clone(),
+            None => self.data.attr_type(d_nr, f_nr),
+        };
         // @PLN25 slice (b): an `Optional(τ)` field writes exactly like its base — same
         // sentinel storage, same set-op. Peel the marker here so the whole emit path is
         // transparent to it (nullability is read separately via `attr_nullable`).

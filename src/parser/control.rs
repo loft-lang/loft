@@ -5766,6 +5766,19 @@ impl Parser {
             _ => pos,
         };
         let get = self.cl("OpGetVector", &[Value::Var(v), elm_size.clone(), pos]);
+        // @FR-H-Stride — the WIDTH of the read is the declared TYPE's.  The general path below
+        // reaches `get_val` through `get_field(_, usize::MAX, _)`, which re-derives the type from
+        // the DEF (`attr_type` answers `def.returned` for `usize::MAX`) — and a def cannot carry a
+        // width, because the one `integer` def serves all seven.  So a narrow element was read
+        // EIGHT bytes wide however the vector was declared, and `[a, .., z]` over a `vector<u8>`
+        // answered `21542142465` = `0x05_04_03_02_01`, the five elements swallowed whole
+        // (loft#1420).  `get_val` already selects the narrow read op from the spec when the alias
+        // is absent; it just has to be given the type the caller still holds.
+        if let Some((_, nullable, _)) = crate::data::Data::narrow_vector_element(elm_tp) {
+            self.expr_not_null = !nullable;
+            self.expr_not_null_name.clear();
+            return self.get_val(elm_tp, nullable, 0, get, u32::MAX);
+        }
         let td = self.data.type_def_nr(elm_tp);
         self.get_field(td, usize::MAX, get)
     }

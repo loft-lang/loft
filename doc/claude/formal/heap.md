@@ -120,12 +120,29 @@ A site that asks the definition therefore answers **8 bytes for every narrow int
 does so consistently enough to look correct: the wide default and every non-integer element
 agree with it.
 
-This has been re-derived wrongly three times, in three modules, which is why it is a rule and
+This has been re-derived wrongly **six** times, in five modules, which is why it is a rule and
 not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
 into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
-both spellings, `len` staying right throughout) and a closure's captured cell (loft#1409). The
-one home for the answer on the vector side is `Data::vector_element_type`, which is what the
-storage itself is registered through — so a site that asks it cannot disagree with the layout.
+both spellings, `len` staying right throughout), a closure's captured cell (loft#1409), and
+three more found together (loft#1420) — the vector STRIDE (`element_store_size`, whose narrow
+branch asked `forced_size(type_elm(elm))`, a test that can never pass because `type_elm` maps
+every `Type::Integer` to the one `integer` def: a dead branch, so `reverse` on a `vector<u8>`
+answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_val` through
+`get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
+answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
+the type the same way and zeroing the successors it wrote over).
+
+The shape is worth naming, because it is what makes this rule so easy to violate: each of these
+sites converts a TYPE to a definition and back — `type_elm`, `type_def_nr`, `attr_type(_,
+usize::MAX)` — and the round trip is lossy in exactly one place, for exactly one primitive.
+Nothing at the call site looks like a width decision.
+
+Two homes hold the answer. `Data::vector_element_type` names the element's storage TYPE, and
+`Data::narrow_vector_element` names its `(spec, nullable, width)` — the latter being what
+`narrow_vector_content` registers the storage through, so a site that measures with it cannot
+disagree with the layout it is walking. A site that instead holds the declared type and needs a
+value read or written passes THAT type down (`read_slice_elem`, `Parser::set_element`) rather
+than recovering it from a def.
 
 **An index is end-relative when it is negative**, so "out of bounds" is `i ≥ len(r)` or
 `i < -len(r)`, not simply `i ∉ [0, len)` — `v[-1]` is the last element and `v[-len]` the first

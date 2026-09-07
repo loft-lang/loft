@@ -6148,12 +6148,22 @@ use #count instead"
     /// Compute the in-store byte size of a vector element type.
     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
         let elm_td = self.data.type_elm(elm);
-        // Post-2c: honor size(N) on integer aliases.  Must run before the
-        // generic `known_type → database.size(...)` path below, because
-        // database.size for the 8-byte integer base returns 8 regardless.
-        if matches!(elm, Type::Integer(_))
-            && let Some(n) = self.data.forced_size(elm_td)
-        {
+        // @FR-H-Stride — a narrow element (`u8`/`i16`/`u32`/…) is one, two or four bytes wide,
+        // and the width is the declared TYPE's.  Must run before the generic
+        // `known_type → database.size(...)` path below, which answers 8 for the integer base
+        // whatever the declaration said.
+        //
+        // This used to ask the element's DEF (`forced_size(type_elm(elm))`) — a test that could
+        // never pass, because `type_elm` maps every `Type::Integer` to the one `integer` def and
+        // that def carries no width.  So the branch was dead and every narrow element measured 8
+        // bytes, while `narrow_vector_content` had registered the STORAGE 1, 2 or 4 wide: a
+        // stride that disagreed with the layout it was walking.  One number reached four
+        // operations — a slice pattern's element reads, `insert`, `reverse` and `reserve` — so
+        // `reverse` on a `vector<u8>` answered `0,0,0,0,0` and `[a, .., z]` answered
+        // `21542142465`, which is `0x05_04_03_02_01`: the five elements swallowed whole
+        // (loft#1420).  Ask the home the storage was registered through, so the two cannot
+        // disagree again.
+        if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
             return i32::from(n);
         }
         // B5 (2026-04-13): for a mixed struct-enum element type
@@ -6271,7 +6281,7 @@ use #count instead"
             "OpInsertVector",
             &[list[0].clone(), elm_size, list[1].clone(), db_tp],
         );
-        let set_val = self.set_field(ed_nr, usize::MAX, 0, Value::Var(tmp), list[2].clone());
+        let set_val = self.set_element(&elm_tp, 0, Value::Var(tmp), list[2].clone());
         *val = v_block(vec![v_set(tmp, insert_call), set_val], Type::Void, "insert");
         Type::Void
     }

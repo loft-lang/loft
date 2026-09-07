@@ -2473,16 +2473,28 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 731 | 366 | 5 | **360** |
+| 732 | 366 | 5 | **361** |
 
-**loft#1412 added the 731st and the 360th** — `Parser::vector_operations` now reads the
-removal's element width off the vector's CONTENT (`@FR-H-Stride`), so it discriminates on a
-`Type` variant where it previously did not.  It scores OPAQUE and stays that way on purpose:
-its sole caller admits it only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is
-unreachable and a peel there would be dead code — `.remove` on a nullable vector does not
-resolve at all (*"Unknown field vector.remove"*), never reaching this function.  An opaque
-entry is not automatically a gap; this one is the classifier counting a shape test whose
-shape the caller has already decided.
+**Two `@FR-H-Stride` fixes moved this row, and neither opaque entry is a gap.**  The
+distinction matters more than the numbers: this table drives opaque→peeling, so an entry that
+is *correctly* opaque has to say why, or the next reader re-derives it.
+
+*loft#1412 added the 731st and the 360th.*  `Parser::vector_operations` now reads the removal's
+element width off the vector's CONTENT, so it discriminates on a `Type` variant where it
+previously did not.  It scores OPAQUE and stays that way on purpose: its sole caller admits it
+only under `matches!(t, Type::Vector(_, _))`, so the `_` arm is unreachable and a peel there
+would be dead code — `.remove` on a nullable vector does not resolve at all (*"Unknown field
+vector.remove"*), never reaching this function.
+
+*loft#1420 added the 732nd and the 361st, and it is a SWAP the totals hide.*
+`Data::narrow_vector_element` was extracted as the one home for a narrow element's
+`(spec, nullable, width)`, and it carries the `Type::Optional` arm — so it enters as PEELING.
+Its caller `narrow_vector_content` handed that arm over and is left discriminating only on
+`Type::Function`, so it moves peeling→opaque.  The middle column is unchanged at 366 because
+one function left it as another joined, which is why the row is read as four numbers and not as
+a trend: **extracting a peel into a helper makes the caller read as opaque even though the peel
+still happens on every path through it.**  A delegating caller is the one shape this classifier
+cannot see through, and it is worth knowing before reading the opaque column as a backlog.
 
 **Re-measured on the joined tree for loft#1408, and a FOURTH number again**: `730 | 371 |
 5 | 354`, against `730 | 366 | 5 | 359` on this side and `728 | 369 | 5 | 354` on the one
@@ -6743,6 +6755,53 @@ bytes"* with shorts *"wide until Phase 4"*.  A reader consulting either would co
 `vector<i16>` is stored eight bytes wide — the exact wrong model — and would then read the
 8-byte slide as correct.  Corrected at both.  A stale comment about a WIDTH is not cosmetic:
 it is a second, confident answer to the question the bug is about.
+
+#### B8o — the `(P-Rest)` walk: a refused rule, and the width fault it led to (2026-09-07)
+
+Picked `(P-Rest)` off matching.md's 17 uncited rules.  The rule binds `..name` to
+`src[i .. len−t]` with `t` counting the fixed elements AFTER the rest; the parser refused every
+`t > 0` spelling.  Three sources, two answers — and the deviation section claimed the PEG
+section *"opens no deviation ... conforms to the stated rules"*, with `OPEN: 0` above it.
+
+**What made the refusal, not the rule, the defect.**  The un-named gap `[a, .., z]` was already
+legal and already bound `z` from the end.  Only NAMING the middle was refused, so the language
+could match a shape and not say what was in it.  And nothing was missing underneath: the arm gate
+is `head + tail <= len`, the tail is read at negative indices, and `hi = len − tail_len` was
+being computed *inside the refused branch*.  The diagnostic stood in front of a correct lowering,
+so the work was establishing that it was safe to delete, not writing a lowering.  Recorded as
+D-match-3; `OPEN: 0` is now `OPEN: 1`, because a variant sub-pattern after a `..` is still a
+parse-error cascade in both spellings (loft#1419, D-match-4).
+
+**Then `matrix_axes.py` earned its keep.**  Run on the new guard it reported `narrow-int` as an
+element type the cells did not reach.  Building that one cell found loft#1420: a `vector<u8>`
+answering `21542142465` — `0x05_04_03_02_01`, five elements swallowed by one read.  The axis
+report is DERIVED, and here the derivation named a gap a closing paragraph would have claimed was
+covered.
+
+**Three roots, and the middle one hid behind the fix for the first.**  `element_store_size` asked
+`forced_size(type_elm(elm))` — a test that can never pass, since `type_elm` maps every
+`Type::Integer` to the one `integer` def.  A DEAD BRANCH: every narrow element measured 8 while
+`narrow_vector_content` had registered the storage 1/2/4 wide.  Fixing it corrected `reverse`,
+the `..rest` materialisation and the TAIL read — and left the HEAD read wrong.
+
+⚠ **The tail cell lied.**  An 8-byte read at the LAST element runs into zeros, so it answers the
+right value for the wrong reason; the head, at offset 0, swallows its neighbours.  Reading the
+partial result as "mostly fixed" is available and wrong.  The second root was
+`read_slice_elem` reaching `get_val` through `get_field(_, usize::MAX, _)`, whose `attr_type`
+answers `def.returned`; the third was `set_field_check` losing the type identically, so
+`insert(v,0,9)` wrote eight bytes over a one-byte slot and zeroed the successors — `9,0,0,0,0,0`.
+
+**The shape worth carrying.**  All six sites of this class — loft#1378, #1409, #1412 and the
+three here — convert a TYPE to a definition and back (`type_elm`, `type_def_nr`,
+`attr_type(_, usize::MAX)`).  The round trip is lossy for exactly one primitive, and nothing at
+the call site looks like a width decision.  `Data::narrow_vector_element` is now the one home for
+`(spec, nullable, width)`, shared with the storage registration; where a value is read or written
+the DECLARED type is passed down instead of being recovered from a def.
+
+**Controls carried the diagnosis.**  A plain `v[1]` was always correct and every
+`vector<integer>` cell was always correct, which is what says the storage was right the whole
+time and the operations disagreed with it — not "narrow storage is broken".  Both guards keep
+their controls for that reason.
 
 #### B2 — open, and the owner's call
 

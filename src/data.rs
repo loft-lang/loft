@@ -5327,6 +5327,30 @@ impl Data {
     // semantically — future refactors (e.g. looking up an alias's
     // captured forced_size via a Data-side registry) will need it.
     #[allow(clippy::unused_self)]
+    /// The narrow element a vector's STORAGE is registered with: `(spec, nullable, width)`,
+    /// or `None` when the content is not a direct-encoded narrow integer.
+    ///
+    /// @FR-H-Stride — the width is the declared TYPE's and never the definition's.  One
+    /// `integer` def serves all seven widths, so a def cannot carry one: asking it answers the
+    /// 8-byte base for `u8` as readily as for `integer`.  This is the ONE home for the
+    /// question, so the layout [`narrow_vector_content`] registers and the stride
+    /// [`Parser::element_store_size`] measures are decided by the same code and cannot drift
+    /// (loft#1420, where they had).
+    #[must_use]
+    pub fn narrow_vector_element(content: &Type) -> Option<(&IntegerSpec, bool, u8)> {
+        let (spec, nullable) = match content {
+            Type::Integer(spec) => (spec, false),
+            // A nullable narrow element (`vector<u8?>`) reserves a null sentinel the same way a
+            // nullable FIELD does, so its width is the NULLABLE one.
+            Type::Optional(inner) => match &**inner {
+                Type::Integer(spec) => (spec, true),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some((spec, nullable, spec.vector_narrow_width(nullable)?))
+    }
+
     pub fn narrow_vector_content(
         &self,
         content: &Type,
@@ -5336,16 +5360,7 @@ impl Data {
         // same way a nullable FIELD does — peel the `Optional` and register the
         // NULLABLE narrow Parts so the element can hold null (@PLN25 item 2).  A
         // non-nullable `vector<u8>` element stays raw (full range, no sentinel).
-        let narrow = match content {
-            Type::Integer(spec) => Some((spec, false)),
-            Type::Optional(inner) => match &**inner {
-                Type::Integer(spec) => Some((spec, true)),
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some((spec, nullable)) = narrow {
-            let n = spec.vector_narrow_width(nullable)?;
+        if let Some((spec, nullable, n)) = Self::narrow_vector_element(content) {
             // The Part carries the offset the OPS encode against (`part_min`), not the
             // declared `min` — they differ for a nullable signed narrow slot.
             let m = spec.part_min(n, nullable);
