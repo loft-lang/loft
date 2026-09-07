@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A crash in a browser page names the loft functions it was in again.**  A page built with
+`--html` printed only wasm function indices under a panic, so a report said where in the
+generated code the program stopped and nothing about what the program was doing.  The frame
+names had been switched off with the debug tier: a production browser client ships no
+live-flip channel on purpose, and the leaner call frames that decision enables were also
+carrying the names.  Naming is now its own setting — a page keeps its frame names unless you
+ask for a lean build with `--lean`, on every backend.
+
 **`a = &h` on a `hash`, `sorted`, `index`, `trie` or `spatial` is now a link, as it always
 was for a vector.**  It was a copy: the alias got its own collection and the two went their
 separate ways from that line on, each seeing only its own writes.  Starting from an empty

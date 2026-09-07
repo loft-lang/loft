@@ -61,6 +61,32 @@ unless said otherwise.
 | **P4** — element access via hoisted (base, len) incl. WRITES, field-reached vectors and loop-invariant record scalars; a two-tier gate (pure / in-place-writes-only) extending the #885 allow-list (M2) | [DESIGN.md § P4](DESIGN.md) | `lock` not ≤ 4 ms; `fill_poly`/`composite` not within 4×; `LOFT_HOIST_VERIFY=1` suite clean | Open |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
+## Joined-tree verification (2026-09-07)
+
+The phases' ratios were measured on the plan's own branch.  A ratio measured on
+one tree is not a measurement of another, and the joining tree carries loft#1437
+(`Parts::IntRaw`, a new narrow-integer decode path a drawing pass exercises
+heavily), loft#1433 and loft#1434.  Re-measured after the whole branch
+(`4f99297e..592e51cc`) was cherry-picked onto `tuxedo-1361-tuple-copy`, on an
+idle box, `scripts/native_ratio.sh --gate`:
+
+| bench | routine | rust ns/op | native ns/op | ratio | bar |
+|---|---|---:|---:|---:|---:|
+| 12_drawing | `hash` | 170800 | 1216000 | **7.1** | 8 |
+| 12_drawing | `lock` | 2054400 | 25895200 | **12.6** | 30 |
+
+Exit 0, and the two lanes' output hashes agreed — the half that mattered, since
+a hash mismatch is fatal even in report mode and a faster wrong answer is the
+failure this join could plausibly have produced.
+
+⚠ The join also surfaced a REGRESSION the branch carried, caught by `make ci`'s
+`html_wasm::html_panic_names_itself_and_its_loft_frames`: the lean tier selected
+the nameless `cr_call_push_lean` on `!emit_live`, which is false BY DEFAULT for a
+production `--html` client (@PLN98 P3.4), so every browser panic lost every loft
+frame name with `--lean` never passed.  Fixed by giving frame naming its own
+field (`Output::lean`).  The bench is native-only, so the ratios above are
+unaffected — but the phase had shipped without `make ci` green over it.
+
 ## Phase ordering
 
 1. **P0 first** — every later phase reports through it; without it no phase
