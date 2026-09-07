@@ -727,7 +727,111 @@ sound by construction.  The free-guard matrix (M4–M9 in the guard, cells
 c12–c17) is the instrument for it, and its native control reads a WRONG
 value (`c5 forwarded: 100`) where the interpreter reads a use-after-free —
 a third spelling of absent the callee cannot see, the caller's buffer naming
-a store the lift's free released.  P0 instrument on the idle box:
+a store the lift's free released.
+
+### V-b — guard the free, not the allocation (the widening; design 2026-09-08)
+
+**Invariant:** *a store two variables name is released by exactly one of them,
+and never while the other still names it.*  A buffer-fed result local `v` and
+its buffer `__ref_N` name one store after every call that reused the buffer;
+today the gate keeps the allocation away from any `v` whose releases are not
+all guarded.  The widening turns it round: every release of `v` — scope exit,
+per-iteration, the lift temp's, and the displacement a reassignment performs
+— is `OpFreeRefIfDistinct(v, __ref_N)`, after which allocating every buffer
+is sound by construction and the gate's declined sites (7 pts) land.
+
+**The fact already exists.**  `Scopes::witness_buffer` (v → buffers, @P378(a))
+and `paired_witness` (buffer → v) are *"v may hold `__ref_N`'s store"* in two
+directions; `fed_by(v)` is their union.  Two producers are missing and are
+registered at creation: a **lift temp** bound to a buffer-carrying call
+(`keep += [mk(i)]`, `t += wrap(i).a` — `Parser::collect_hidden_ref_args` on
+the lifted value names the buffer), and a same-scope local through the
+`paired_witness` direction (`v = mk(5); v = mk2(6)`).
+
+**The one new reader** is a rung in the Set arm's `transition_free` ladder,
+placed first: for `Set(v, rhs)` with `fed_by(v)` non-empty and `v` in scope,
+the prefix becomes
+`if OpDistinctStore(v, B1) { if OpDistinctStore(v, B2) { OpFreeRef(v) } }` —
+the nested emitter the scope-exit sweep already uses for a multi-buffer `v` —
+followed by `OpInitRefSentinel(v)`.  The sentinel is what makes the change
+IR-only: both backends' set lowerings still emit their own displacement free
+(`owns_displaced_store` → the pre-Set `OpFreeRef` on the interpreter; the
+`_old_<name>` stash on native), and both are no-ops on the null sentinel
+(`Stores::free` and `codegen_runtime::OpFreeRef` return on `u16::MAX`).  It is
+the detach shape `parse_object` already emits for a rebindable parameter
+(`OpFreeRefIfDistinct(p, orig); OpInitRefSentinel(p)`, @FR-O-Detach), so
+neither generator learns anything new and the IR codec carries no new field.
+The rhs is untouched: a copy (`v = other`) allocates fresh from the nulled slot
+instead of clearing the buffer's store in place, which is the point.
+
+**The allocation rule** (`reuse_record_buffers`) then reads: one user call per
+buffer, and the call's result local has a recorded witness (`fed_by` reaches
+it).  `multi_assigned` goes.  A buffer with no witness — a call whose result
+the scan never paired — stays null: the widening is a widening, not a removal
+of the gate.
+
+**Positive control:** `LOFT_NO_RETBUF_FREE_GUARD=1` — allocate every buffer
+AND drop the guards (the lift registration and the new rung); the two
+automated controls (escaping, displaced) read the use-after-free under it, as
+they do today under the allocation-only switch it replaces.
+
+**Matrix before code** (cells c12–c17 stand; these are added, each with a
+hand-computed value, both backends, `LOFT_STRICT_STORES` + `LOFT_POISON` +
+leak):
+- M10 a NULLABLE-typed local fed by the call (`v: S? = mk(i)`), reassigned in
+  the loop — the nullable set lowering routes through its own guarded free;
+- M11 the rhs READS `v` (`v = mk(v.a + 1)`): old == new == the buffer, so the
+  guarded prefix must decline and the call must still see the old value;
+- M12 a buffer-fed nullable local displaced by `null` — `Set(v, Null)` takes
+  the early exit in the Set arm and must still release nothing it does not own;
+- M13 a lift inside an `if` arm inside the loop (`if c { keep += [mk(i)] }`) —
+  the lift's scope is the arm;
+- M14 the buffer-fed local RETURNED after a reassignment
+  (`v = mk(1); v = mk2(2); v`) — `in_ret` suppresses `v`'s exit free, B1's
+  exit free must fire, B2's must decline;
+- M15 two live buffer-fed locals from one site through a copy
+  (`a = mk(1); b = a; a = mk(2)`) — `b` is a copy and owns its store.
+
+**Predicted:** `lock` 17.9M → ~16.3M on the quiet box (the ungated ceiling's
+ratio, 32.2/35.3), hashes exact; every c12–c17 and M10–M15 cell clean on both
+backends; the two controls red under `LOFT_NO_RETBUF_FREE_GUARD=1`.
+**Red:** any cell moves, either control goes quiet, or the ceiling is not
+reached — the last says a site still declines, and the census names it.
+
+**BUILT AND REVERTED the same day (2026-09-08) — the prediction was falsified,
+and what falsified it is the finding.**  The rung, the lift registration and
+the widened rule were built exactly as above and reverted in the working tree
+by inverse edit — nothing of it is in git; the shapes are fully specified in
+this section, and the matrix cells are in the guard (c12–c23).  Result: M11 answered
+`null` on native, c5 answered 202, the escaping control went quiet on the
+guarded side (92 strict-store violations on the guard), and `lock` read 18.3M
+— no better than the gated 17.9M.  The IR shows why, and it is not a bug in
+the rung: the lift temp's own scope-exit free IS guarded after registration.
+Three OTHER release sites act on the static premise *"a dep-free return is a
+fresh store"* — the premise Route R deliberately keeps, since it is what makes
+the caller adopt instead of copy:
+
+1. the vector append's `OpCopyRecord` **source-claim bit** (`0x8000`,
+   loft#953's `answers_caller_buffer`): `keep += [mk(i)]` copies the lift's
+   record into the element and FREES THE SOURCE — the buffer's store, so the
+   next turn writes a freed one (c3's use-after-free, both backends);
+2. a forwarding wrapper's return type names its buffer (`wrap -> S["__retbuf"]`),
+   so the caller takes the adopt-or-copy dispatch (`gen_set_first_ref_call_copy`)
+   and clears a store in place that the guarded free had already released (c5);
+3. the rung itself nulls the slot BEFORE the rhs runs, so an rhs that reads the
+   local (`v = mk(v.a + 1)`) reads the sentinel (M11) — a snapshot form fixes
+   that one, but it is the least of the three.
+
+Each of these is a PARSER-level ownership decision, so guarding the frees one
+site at a time is the per-shape accretion the codegen method refuses (loft-codegen
+skill, *"the patch is growing per-shape conditions → the fact belongs in the
+type"*).  The honest next design is its *"types next"* step: the fact *this
+value may be the caller's buffer* has to travel in the return TYPE — a dep
+naming the buffer attribute that the ADOPT lowering accepts without copying
+(today a buffer dep means *copy*, which is why Route R kept the dep off) — so
+every static reader (the copy claim, the lift adoption, `site_is_fresh`, the
+displacement) reads one fact.  That is M–L and a separate item; the gated form
+above is what ships.  `LOFT_NO_RETBUF_WITNESS_GATE` stays the control's name.  P0 instrument on the idle box:
 `lock` **6.2×** (bar 16 → 10), `hash` 5.1× (bar 7).  Still open from this
 section: the hoist unblock — the def-level *"writes only into its retbuf"*
 fact the resolve loop's P4 hoists wait on (the −17 pts attributed above).

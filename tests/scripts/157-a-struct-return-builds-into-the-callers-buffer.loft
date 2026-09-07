@@ -36,6 +36,12 @@
 //   c14 two call sites into one same-scope local, c15 a lift inside a NESTED loop,
 //   c16 the buffer-fed value RETURNED from inside the loop, c17 appended to a vector and
 //       read back after the loop
+//   c18 a NULLABLE-typed local fed by the call and reassigned, c19 an rhs that READS the
+//       local (`v = mk(v.a + 1)` — old, new and the buffer are one store, and the rhs must
+//       still see the old value), c20 a nullable local displaced by `null`, c21 a lift
+//       inside an `if` arm inside the loop, c22 the local returned AFTER a reassignment,
+//       c23 two live values from one site through a copy — the § V-b matrix, each a cell
+//       the widening broke or nearly broke
 //
 // @falsified-at: none — no CELL can change value on an earlier build, because the delivery
 // this changes is invisible to a correct program: both forms answer the same numbers, and
@@ -62,6 +68,11 @@ fn mk2(u: integer) -> S { S { a: u + 1000, b: 0 } }
 fn pick(stop: integer) -> S {
   for i in 0..5 { v = mk(i); if v.a == stop { return v; } }
   mk(99)
+}
+fn after_reassign() -> S {
+  v = mk(1);
+  v = mk2(2);
+  v
 }
 
 pub fn test() {
@@ -151,6 +162,35 @@ pub fn test() {
   keep2: vector<S> = [];
   for i in 0..3 { keep2 += [wrap(i)]; }
   assert(keep2[0]?.a + keep2[1]?.a + keep2[2]?.a == 303, "c17 appended then read back: {keep2[0]?.a + keep2[1]?.a + keep2[2]?.a}");
+
+  // c18 — a nullable-typed local fed by the call, reassigned in the loop.
+  c18 = 0;
+  for i in 0..4 { n18: S? = mk(i); if i % 2 == 0 { n18 = mk2(i); } c18 += n18?.a; }
+  assert(c18 == 2006, "c18 nullable local reassigned: {c18}");
+
+  // c19 — the rhs reads the local: old, new and the buffer are one store.
+  r19 = mk(1);
+  for i in 0..3 { r19 = mk(r19.a + 1); }
+  assert(r19.a == 4, "c19 rhs reads the local: {r19.a}");
+
+  // c20 — a nullable local displaced by null.
+  c20 = 0;
+  for i in 0..3 { n20: S? = mk(i); if i == 1 { n20 = null; } if n20 == null { c20 += 100; } else { w20 = n20 ?? mk(0); c20 += w20.a; } }
+  assert(c20 == 102, "c20 displaced by null: {c20}");
+
+  // c21 — a lift inside an if arm inside the loop.
+  keep3: vector<S> = [];
+  for i in 0..4 { if i % 2 == 1 { keep3 += [mk(i)]; } }
+  assert(len(keep3) * 10 + keep3[0]?.a + keep3[1]?.a == 24, "c21 lift in an if arm: {len(keep3) * 10 + keep3[0]?.a + keep3[1]?.a}");
+
+  // c22 — the local returned after a reassignment.
+  assert(after_reassign().a == 1002, "c22 returned after reassignment: {after_reassign().a}");
+
+  // c23 — two live values from one site through a copy.
+  a23 = mk(1);
+  b23 = a23;
+  a23 = mk(2);
+  assert(a23.a * 10 + b23.a == 21, "c23 copy then reassign: {a23.a * 10 + b23.a}");
 }
 
 fn main() { test(); }
