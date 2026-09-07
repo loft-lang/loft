@@ -7,16 +7,10 @@ error: cannot iterate over integer; expected vector, sorted, index, hash, text, 
 2 |   for x in 5 {
   |               ^
 
-error: Need an iterable expression in a for statement
-  --> <cases>/32_iter_wrong_collection_type.loft:2:15
-  |
-2 |   for x in 5 {
-  |               ^
-
 error: Expect token ;
   --> <cases>/32_iter_wrong_collection_type.loft:2:15
   |
 2 |   for x in 5 {
   |               ^
 
-error: aborting due to 3 previous errors
+error: aborting due to 2 previous errors
