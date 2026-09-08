@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `"{t}"` on a whole tuple is refused, and that refusal is a DECIDED non-goal with no cell.
+//
+// `formatting.md` `(F-Render)` gives a row to every scalar, to `vector` and to `struct`, and
+// none to a tuple.  [TUPLES.md § Non-goals](../../doc/claude/TUPLES.md) is where the decision
+// lives — whole-tuple formatting is a compile error, and the cure is a named struct or
+// element-by-element access.  `(T-Absent)` gives the reason one level down: *"a tuple has no
+// faithful document form anyway"*.
+//
+// Nothing pinned it.  A declared non-goal with no guard is the shape that rots quietest: it can
+// become SUPPORTED by an unrelated change and nobody learns, or its message can drift into
+// something that sends a reader looking for a misspelling — which is exactly what
+// *"Unknown field vector.remove"* did for a nullable collection one issue over (loft#1453).
+// The rules doc now states the absence and the reason; this is the cell that holds it.
+//
+// Axes it HOLDS FIXED:   everything.  This file is ONE cell on purpose: the refusal is a
+//                        compile-time error, so any test function beside it never runs — the
+//                        phase masking recorded in TESTING.md § How a guard reads green.  The
+//                        renderable parts of a tuple are the sibling file
+//                        `a-tuple-renders-through-its-members.loft`, and they are the half that
+//                        stops a cure satisfying this by dropping tuples from the formatter
+//                        entirely.
+//
+// @falsified-at: none — this pins a REFUSAL that has never been anything else, so there is no
+//   build on which it fails; `make falsify` compares two binaries and both refuse.  What it
+//   guards against is a FUTURE change making the refusal disappear or reword, which is the
+//   direction a `none` opt-out is for.
+
+// @EXPECT_ERROR: Cannot format type (integer, integer)
+fn whole_tuple_is_refused() -> text {
+  t = (1, 2);
+  "{t}"
+}
