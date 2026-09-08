@@ -612,6 +612,17 @@ which is how this one was found.
 
 ### A guard that never failed is not a guard — `make falsify`
 
+**`make falsify` REFUSES a tree the guard does not pass, and that refusal is the useful half.**
+It reports `THIS TREE IS NOT CLEAN` and scores nothing, because a guard that the current tree
+fails says nothing about what it can CATCH. Measured 2026-09-09: a new guard carried cells with
+two captured locals each, which leaked through a defect unrelated to the one under test; the
+refusal is what forced those cells to be narrowed to one mechanism instead of shipping a file
+that was red for reasons none of its own axes named. The opposite error scores a verdict that is
+worthless: a guard whose CONTROL fails to compile is "falsified" on the exit channel alone,
+proving only that the file is sensitive to the build. **Read the `asserts` column, not the
+verdict** — a guard should move the channel it is about.
+
+
 **`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
 (`scripts/falsify.sh`). It builds `REF` in a cached worktree, runs the guard THERE and
 HERE, and compares four channels apart — **exit code, assertion failures, leaked stores,

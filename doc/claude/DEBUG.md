@@ -1449,6 +1449,38 @@ The matrix-first protocol in CLAUDE.md says how to *measure* a defect. These are
 errors that survive it, each one measured here rather than imagined. They are ordered by how
 expensive each was.
 
+**A baseline must FORK BEFORE the work you are attributing.** To answer *"is this mine?"* the
+control build has to lack the suspect change. A commit inside your own branch's lineage cannot:
+it already contains everything you are asking about, so *"identical on X and on my tip"* only
+rules out what came after X. Measured 2026-09-08 with three checkouts in flight: a worktree at
+the session's own tip-ancestor was used to call four defects pre-existing, and at the true
+merge-base three of them were regressions — including two red corpus tests and a silently-wrong
+capture defect, one of which the session's own earlier notes had already bisected to its own
+commit. `git merge-base <mine> <theirs>` names the honest baseline; build it in its own worktree
+with its own `--target-dir`, and run a positive control first, because a scratchpad binary
+without `--path <worktree>` cannot find `default/` and greps as a clean run.
+
+**A fix that makes the surviving defect QUIETER is a cost, not a neutral.** After a partial fix,
+read what the still-failing cells now PRINT. The same session's fn-ref width fix turned a
+capture defect's symptom from `4294967398` — visibly 2^32 plus the right answer — into a
+plausible `103`, with both leak instruments silent because the store being read is live and
+merely wrong. And backing out the incident-shaped half of that fix, keeping only the general
+one, left thirteen matrix cells wrong with several converting a SIGSEGV into a quiet wrong
+answer. A general fix that trades a loud failure for a quiet one can be worse than the bug; that
+measurement is what made both halves ship together.
+
+**One question with several DECODERS: the defect sits in whichever one the failing route
+consults.** Three times in one cycle (loft#1444, loft#1474, loft#1477), all in the neighbourhood
+of *"which closure records does this return deliver?"* — a fn-ref variable's free read one
+decoder while the record local's free read a stale note; a tail return read a walker that
+handles `Value::FnRef` while an explicit mid-body `return` routed through one that answers in
+variables and has no `FnRef` arm at all. The defect is invisible from every route that consults
+a correct decoder, so the search is not "where is the wrong answer" but "how many places answer
+this question, and do they agree". A related structural warning from the same cycle: the
+`ir_walker_audit` modes measure DESCENT into child-bearing shapes, so a walker missing a LEAF
+arm like `FnRef` is invisible to them by construction — a traverser is checked, a value
+CLASSIFIER is not.
+
 **Start at the PRODUCER of a wrong fact, not the consumer where it surfaces.** When the bug is
 a lie in the data — a dep, a type, a flag that disagrees with runtime — the crash is at the
 reader and the cure is at the writer. loft#457's dep said `out` borrows `__vdb_1` while at
