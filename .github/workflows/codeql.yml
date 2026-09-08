@@ -20,7 +20,11 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
+    # TEMPORARY: this branch is here to PROVE the scoping works before the file reaches
+    # `main`, where `workflow_dispatch` would otherwise be the only way to run it and is
+    # not available for a workflow the default branch does not yet carry.  Removed in the
+    # commit that records the result.
+    branches: [main, tuxedo-work-2026-09-08]
   pull_request:
     branches: [main]
   schedule:
