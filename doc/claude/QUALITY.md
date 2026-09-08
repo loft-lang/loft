@@ -2542,7 +2542,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 750 | 403 | 6 | **341** |
+| 751 | 404 | 6 | **341** |
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
@@ -2550,6 +2550,23 @@ neither branch's numbers survived it, as at every join so far.**  This checkout 
 The KEYSTONE column moved `5 → 6` from the sibling's side (@PLN157 adds a walker that descends
 via the `Type` keystone rather than naming variants), and the opaque column is the one that did
 NOT move — three functions joined the classifier and every one of them peels.
+
+**2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
+function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which
+resolves the subject of `x is Variant { … }` by naming `Type` variants.  It gained a `base()`
+peel because a nullable enum is TESTABLE (`@FR-N-Chain`): `is` asks which variant a value
+carries, and *"none, it is absent"* is an answer to that question, not a reason to refuse it.
+The opaque column did not move, which is the direction that matters here — the peel was ADDED,
+so the site moved from "would have been opaque" straight into the seeing-through column without
+ever being counted in the middle.
+
+⚠ The failure it closes is the audit's own argument, and worth the line: with no peel, an
+`Optional(Enum)` subject fell to the catch-all arm, which answers `Boolean` WITHOUT consuming
+the `{ … }` capture list — so the payload was then read as a block and reported as *"Expect
+token ;"* at the first bound name.  A message about punctuation for a program whose only fault
+was that its subject could be absent, from a site that resolved a shape by naming variants and
+therefore answered for `τ` and not for `τ?`.  That is `spellings` (B6g) with the type former
+swapped for the IR one — exactly the class this table exists to count.
 
 **2026-09-08, loft#1443's lifetime half: `749 · 403 · 6 · 340` → `750 · 403 · 6 · 341`, and the
 unspan row `424 · 400 · 24` → `425 · 401 · 24`.**  One function joined each classifier —

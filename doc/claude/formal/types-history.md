@@ -6,7 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
+OPEN: **0** — `D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
+that issue's three legs, a field read through a nullable receiver typing non-null, closed by the
+new `(N-Chain)` / `(N-Chain-Place)` pair.  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
 (loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
 guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
 assignment TARGET.  `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
@@ -17,6 +19,50 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Null-Chain — OPENED AND CLOSED (2026-09-08, loft#1450): a field read through a nullable receiver typed non-null
+
+The last of loft#1450's three legs, and the one the register could not see: `D-Null-Recv` closed
+the ABSENT-collection read and `D-col-lookup` the keyed MISS, but a plain `s.f` on an `s: S?`
+still typed `f`'s declared type.  `get_field` reads the FIELD's own nullness, which is the field's
+promise about itself and says nothing about whether the receiver is there to hold it — reading
+`s.f` on an absent `s` yields the C80 null whatever `f` declares.
+
+**The site already knew and could not say it.**  `fields.rs`'s own header has said since @PLN102
+that *"a field access can't be MORE non-null than its receiver"*, and it acted on that by clearing
+`expr_not_null` — the input to the redundant-check lints, which is why `s.f ?? d` was never called
+redundant.  That is the same failure `D-col-lookup` recorded one door over: **a lint switch is not
+a type, and `(N-Store)` reads the type.**  Two legs of one issue reaching for the same wrong
+instrument is what makes it a class rather than a slip, and the closing question worth carrying is
+*when a rule gains a site, is the site a TYPE or a flag?*
+
+**What closed it is a rule, not a patch.**  `(N-Chain)` states the projection reading of
+`(N-Prop)`: absence at any link reaches the chain's result type, and ONE discharge at the tail
+covers every link.  That is what the language already DID — measured before the change, `a.b`
+absent and `a.b.c.v ?? -1` answers `-1` two links later — so the type was the only half missing.
+`wrap_projection_nullable` carries `wrap_keyed_lookup_nullable`'s guards for its reasons: no
+marker on an unresolved type, the null model's switch, and no second wrap on a `__nullable<S>`
+receiver that `@FR-N-Idem` forbids.
+
+**The place half was falsified before it shipped, by the matrix.**  The first version of
+`(N-Chain)` claimed PLACE position needed no exemption, because the assignment chokepoint already
+peels a discharge off a target (loft#1205).  The write-side probe matrix said otherwise on its
+first run: with the chain widened, `w.here.items.remove(0)` was refused — *"cannot call `.remove`
+on `vector<Item>?` because it is NULLABLE"* — and the refusal fired on a PRESENT receiver too,
+because it reads the TYPE.  `(N-Chain-Place)` is the answer (owner ruling 2026-09-08: *allow the
+refused spelling, and do nothing in that case*): a mutating method's receiver is a place, peeled
+to its dense type before dispatch.  The runtime needed nothing — a mutation through an absent
+chain was already a total no-op on every mutation kind and both backends, which is the measurement
+that made the ruling cheap to adopt.
+
+⚠ **The peel names `remove` and `clear` as a LIST, and that is the entry's loose end.**  They are
+the collection surface's only mutating methods today (insertion is `+=`, and the keyed kinds spell
+removal as a statement), but a `both:` receiver carries no mutability marker, so nothing derives
+the set.  `is_mutating_op` in `parser/control.rs` is the SAME question asked a second time for the
+`parallel {}` capture check, from a hand-written allow-list of 18 IR ops that omits
+`OpRemoveVector` — and that omission is a live both-backend crash, filed separately.  Two lists
+answering one question is the shape `one-question-many-decoders` warns about; the derived home is
+the work this entry leaves open.
 
 ### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
 

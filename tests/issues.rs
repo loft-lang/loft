@@ -317,7 +317,7 @@ fn chained_coalesce_owned_text_no_double_free() {
     code!(
         "struct CccCache { items: hash<CccEntry[name]> }
 struct CccEntry { name: text, value: text }
-fn ccc_lookup(c: CccCache, k: text) -> text { return c.items[k].value; }
+fn ccc_lookup(c: CccCache, k: text) -> text? { return c.items[k].value; }
 fn test() {
     p = CccCache { items: [] }; p.items[\"theme\"] = CccEntry { name: \"theme\", value: \"dark\" };
     q = CccCache { items: [] }; q.items[\"lang\"] = CccEntry { name: \"lang\", value: \"en\" };
@@ -16196,7 +16196,7 @@ fn run() -> integer {
     b = Node { value: 2, next: null };
     x: Node? = Node { value: 1, next: b };
     x = x.next;
-    x.value
+    x.value ?? 0
 }"
     )
     .expr("run()")

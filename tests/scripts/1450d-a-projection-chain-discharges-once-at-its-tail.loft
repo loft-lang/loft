@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1450 — the FIELD leg, and the write half the owner ruled on.
+//
+// `@FR-N-Chain`: a projection chain carries absence to its END and discharges ONCE there.  The
+// runtime always did this — with `a.b` absent, `a.b.c.v ?? -1` answers -1 two links later —
+// and the TYPE was the half that was missing: `get_field` reads the FIELD's own nullness, which
+// is the field's promise about itself and says nothing about whether the receiver is there to
+// hold it.  So `s.f` on an absent `s: S?` bound into a non-null slot in silence, on both
+// backends, with the value right and the promise not.
+//
+// The site already knew.  `fields.rs` has said since @PLN102 that *"a field access can't be
+// MORE non-null than its receiver"*, and acted on it by clearing `expr_not_null` — the
+// redundant-check LINT input, which is why `s.f ?? d` was never called redundant.  That is the
+// same wrong instrument `D-col-lookup` recorded one door over: a lint switch is not a type, and
+// `@FR-N-Store` reads the type.
+//
+// `@FR-N-Chain-Place`: a chain in PLACE position takes NO discharge and is TOTAL — an
+// assignment target and a mutating method's receiver are admissible whatever the chain's
+// nullability, and when a link is ABSENT the mutation does nothing.  Owner ruling 2026-09-08:
+// *allow the refused spelling, and do nothing in that case*.  This half is a REFUSAL guard as
+// much as a value one: widening the read without it made `w.rooms[0].items.remove(0)` a compile
+// error, and the error fired on a PRESENT receiver too, because a refusal reads the TYPE.
+//
+// Contrast `@FR-Col-Insert-Absent`, which INSTANTIATES instead of skipping: its destination has
+// a HOME to write the empty collection back into, and an absent chain LINK has none.  Both
+// answers are cells below, side by side, because the pair is the rule.
+//
+// Axes this file MOVES:  the discharge spelling (none · `?? d` · `?` · a guard · a declared
+//                        `τ?` slot), the chain LENGTH (one link · two), what is absent (a
+//                        nullable field · a vector element that is not there · a keyed miss),
+//                        the mutation kind (`remove` · `clear` · `+=` · a scalar field write),
+//                        and whether the chain is PRESENT or ABSENT under the same spelling.
+// Axes it HOLDS FIXED:   the leaf field is a scalar, and every collection is a dense vector
+//                        except the keyed cell, which is the one that varies the kind.
+//
+// @falsified-at: PENDING
+
+struct Leaf1450d { v: integer }
+struct Mid1450d  { leaf: Leaf1450d?, items: vector<Leaf1450d>, tag: integer }
+struct Top1450d  { mid: Mid1450d?, rooms: vector<Mid1450d>, sentinel: integer }
+
+fn main() {
+  // ---- READ: one discharge at the tail covers the whole chain ----
+  absent = Top1450d { mid: null, rooms: [], sentinel: 777 };
+  // two links past the absence, and the single `??` still catches it
+  assert((absent.mid.leaf.v ?? -1) == -1, "a two-link chain discharges once at its tail");
+  // the type's own default is the other spelling of the same discharge
+  assert((absent.mid.leaf.v?) == 0, "`?` discharges the chain to the leaf type's default");
+  // a declared nullable slot is a discharge too — it accepts the chain without a cure
+  held: integer? = absent.mid.leaf.v;
+  assert(held == null, "a `τ?` slot holds the chain's absence as a value");
+
+  // ---- and a PRESENT chain reads its leaf, which is what says the `?` cost nothing ----
+  present = Top1450d { mid: Mid1450d { leaf: Leaf1450d { v: 42 }, items: [], tag: 1 },
+                       rooms: [], sentinel: 777 };
+  assert((present.mid.leaf.v ?? -1) == 42, "a present chain reads its leaf");
+  assert((present.mid.leaf.v?) == 42, "`?` on a present chain is the value, not the default");
+
+  // ---- a guard discharges the chain by narrowing its receiver ----
+  if present.mid != null { assert(present.mid.tag == 1, "a guard narrows the chain's receiver"); }
+
+  // ---- WRITE: a mutation through an ABSENT chain is admissible and does NOTHING ----
+  w = Top1450d { mid: null, rooms: [], sentinel: 777 };
+  w.rooms[0].items.remove(0);      // the vector element is not there
+  w.rooms[0].items.clear();
+  w.rooms[0].tag = 42;             // a scalar field write through the same absent link
+  w.mid.items.remove(0);           // a nullable FIELD holding null
+  w.mid.tag = 9;
+  assert(w.rooms.len() == 0, "a mutation through an absent chain adds nothing");
+  assert(w.sentinel == 777, "and leaves its neighbour untouched");
+
+  // ---- the SAME spellings on a PRESENT chain must LAND (the load-bearing control: without
+  //      these, every cell above passes for a compiler that dropped writes entirely) ----
+  p = Top1450d { mid: Mid1450d { leaf: null, items: [Leaf1450d { v: 1 }, Leaf1450d { v: 2 }], tag: 0 },
+                 rooms: [Mid1450d { leaf: null, items: [Leaf1450d { v: 8 }], tag: 0 }],
+                 sentinel: 777 };
+  p.rooms[0].items.remove(0);
+  assert(p.rooms[0].items.len() == 0, "the same remove lands when the chain is present");
+  p.rooms[0].tag = 42;
+  assert(p.rooms[0].tag == 42, "the same field write lands when the chain is present");
+  p.mid.items.remove(0);
+  // the read needs the discharge the WRITE above did not — `(N-Chain)` and
+  // `(N-Chain-Place)` meeting on one line of the same chain, which is the pair in miniature
+  assert((p.mid.items ?? []).len() == 1, "a remove through a PRESENT nullable field lands");
+  p.mid.tag = 9;
+  assert((p.mid.tag ?? -1) == 9, "a field write through a PRESENT nullable field lands");
+
+  // ---- (Col-Insert-Absent) is the OTHER answer, and it is deliberate: an absent
+  //      DESTINATION has a home to write the empty collection back into, so it instantiates ----
+  ins: vector<Leaf1450d>? = null;
+  ins += [Leaf1450d { v: 5 }];
+  assert((ins ?? []).len() == 1, "an absent insert DESTINATION is instantiated, not skipped");
+
+  println("1450d ok");
+}

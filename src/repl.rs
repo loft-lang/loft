@@ -3144,15 +3144,50 @@ impl ReplSession {
         // a `'\\'`.  So a character is evaluable on the INTERACTIVE path and still declines
         // under `--rpc`, which is the honest split: every caller gets what it can encode,
         // and none gets something that only looks encoded.
-        if nullable && is_scalar_type_name(&ret) && !(json && ret == "character") {
-            return self.eval_frame_build_run(
-                &sig,
-                &format!("{seed}__ev = ({expr});\n"),
-                "if __ev == null { \"null\" } else { \"{__ev?}\" }",
-                "text",
-                &arg_names,
-                json,
-            );
+        // …asked of the BARE name.  `base_type_name` deliberately re-attaches the trailing
+        // `?` (it is part of the source name), and `is_scalar_type_name` lists the non-null
+        // spellings — so `integer?` matched neither the scalar branch above nor this one, and
+        // every nullable scalar fell through to the heap branch below, failed to compile
+        // `.to_json()` on an integer, and rendered the text-seed path's graceful `null`.  A
+        // debugger answering "absent" about a value it can see, which is the failure loft#1459
+        // opened this branch to end: the branch was right and unreachable.
+        let ret_bare = ret.strip_suffix('?').unwrap_or(ret.as_str()).to_string();
+        if nullable && is_scalar_type_name(&ret_bare) && !(json && ret_bare == "character") {
+            // TWO re-entries, both on the plain-scalar path above, because that is the only
+            // shape measured to survive a frame teardown.  The single-wrapper form this branch
+            // used to carry — bind `__ev`, then yield `"null"` or `"{__ev?}"` — returns a text
+            // INTERPOLATED in the wrapper's own frame, and unlike the heap branch's
+            // `.to_json()` that is not a call-returned-owned text: it is the raw `Str`-off-the
+            // -stack read @P293 forbids, and it SIGSEGVs on re-entry.  The branch was
+            // unreachable when it was written (`base_type_name` re-attaches the `?`, which
+            // `is_scalar_type_name` rejects), so nothing had ever run it.
+            //
+            // Ask presence first, then the value: a `boolean` and then the bare scalar, each
+            // the shape the first branch already proves safe.  The cost is that `expr` is
+            // evaluated twice, so this is confined to a CALL-FREE expression — a projection or
+            // a subscript, which is what a paused frame is asked about.  Anything with a call
+            // keeps the old graceful decline rather than running a side effect twice.
+            if !expr.contains('(') {
+                let absent = self.eval_frame_build_run(
+                    &sig,
+                    &seed,
+                    &format!("({expr}) == null"),
+                    "boolean",
+                    &arg_names,
+                    json,
+                )?;
+                if absent.trim() == "true" {
+                    return Some("null".to_string());
+                }
+                return self.eval_frame_build_run(
+                    &sig,
+                    &seed,
+                    &format!("({expr})?"),
+                    &ret_bare,
+                    &arg_names,
+                    json,
+                );
+            }
         }
         if is_scalar_type_name(&ret) {
             return self.eval_frame_build_run(&sig, &seed, expr, &ret, &arg_names, json);

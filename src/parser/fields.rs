@@ -36,7 +36,14 @@ impl Parser {
             && !self
                 .narrowed_non_null_exprs
                 .iter()
-                .any(|e| Self::same_projection(e, code));
+                .any(|e| Self::same_projection(e, code))
+            // …and the VAR list, which is the same proof about a NAME.  A guard records a
+            // proven variable in `narrowed_non_null` and a proven projection in
+            // `narrowed_non_null_exprs`; reading only the second was survivable while this
+            // was a LINT (a missed narrowing costs a redundant-coalesce note), and is not
+            // once it decides a TYPE — `if hit { hit.val }` then typed `integer?` inside its
+            // own guard.  Two lists for one question, and the answer needs both.
+            && !matches!(code, Value::Var(v) if self.narrowed_non_null.contains(v));
         let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction
@@ -106,6 +113,25 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Expect a field name");
             return t;
         };
+        // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
+        // its DENSE type: the mutation is admissible whatever the chain's nullability, and it
+        // does nothing when a link is absent (the runtime already skips it — verified on every
+        // mutation kind, both backends).  Peeled HERE, before `type_elm`, so the whole dispatch
+        // below sees one receiver type and the refusal a READ earns cannot fire on a write.
+        //
+        // `remove` and `clear` are the collection surface's only mutating METHODS: insertion is
+        // `+=` (`(Col-Insert)`, whose absent destination is `(Col-Insert-Absent)`), and the
+        // keyed kinds spell a removal as a statement rather than a method.  The set is a LIST
+        // and not a derivation because a `both:` receiver carries no mutability marker — the
+        // same gap `is_mutating_op` carries for the `parallel` capture check, and both want one
+        // derived home.
+        if matches!(field.as_str(), "remove" | "clear")
+            && let Type::Optional(inner) = &t
+            && crate::parser::vectors::is_collection(inner.base())
+            && self.lexer.peek_token("(")
+        {
+            t = inner.as_ref().clone();
+        }
         let enr = self.data.type_elm(&t);
         if enr == u32::MAX {
             let shown = t.show(&self.data, &self.vars);
@@ -655,7 +681,39 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
+        self.wrap_projection_nullable(&mut t, receiver_optional);
         t
+    }
+
+    /// `@FR-N-Chain` — a projection carries its receiver's absence into its own TYPE, so a
+    /// chain discharges ONCE at its tail instead of per link.
+    ///
+    /// `get_field` types the read from the FIELD's declared nullness, which is the field's own
+    /// promise and says nothing about whether the receiver is there to hold it: reading `s.f`
+    /// on an absent `s: S?` yields the C80 null whatever `f` declares.  The lint clear beside
+    /// this call already knew that — it is why `s.f ?? d` is not reported redundant — but a
+    /// lint switch is not a type, and `(N-Store)` reads the type.
+    ///
+    /// The guards are `wrap_keyed_lookup_nullable`'s, for the same reasons: an UNRESOLVED type
+    /// takes no marker (a first-pass `Optional(Unknown)` has no name the rest of the compiler
+    /// can print), the null model's switch gates it, and a `__nullable<S>` receiver is already
+    /// `S?` in the slot's own spelling (`@FR-L-Null-Tag`), so wrapping it again would mint the
+    /// `τ??` that `@FR-N-Idem` forbids and which `Type::optional` cannot see through an `Enum`.
+    ///
+    /// PLACE position is peeled BEFORE this runs (`@FR-N-Chain-Place`, at the top of `field`),
+    /// so a widened chain never reaches a mutating method's dispatch.  Assignment targets are
+    /// already covered one door over: the chokepoint peels a discharge off a target instead of
+    /// reading one (loft#1205), and `??` on a place is refused outright.
+    fn wrap_projection_nullable(&mut self, t: &mut Type, receiver_optional: bool) {
+        if receiver_optional
+            && !t.is_unknown()
+            && !matches!(t, Type::Optional(_))
+            && crate::keys::pln25_dn1_enabled()
+            && self.tagged_pointer_type(t).is_none()
+        {
+            *t = Type::optional(t.clone());
+        }
     }
 
     /// Consume remaining function call arguments after `(` has already been consumed.

@@ -412,6 +412,36 @@ old auto-`τ?` reading. Design record:
             `5-n`, `abs(n)` on a null n stay null).  C85 is the COMPLEMENT — non-null operands
             stay non-null; a sentinel PRODUCED by overflow is a result, not a propagated INPUT.
 
+(N-Chain)   a PROJECTION CHAIN carries absence to its END and discharges ONCE there.  If any
+            link of `a.b.c` is nullable, the whole chain types `υ?` for the final member type
+            υ, and one discharge at the tail covers every link: `a.b.c ?? d`, `a.b.c?`, a guard,
+            or a `υ?` slot.  This is (N-Prop) read over projection rather than arithmetic — the
+            type tracking a propagation the runtime ALREADY performs (verified: `a.b` absent,
+            `a.b.c.v ?? -1` answers -1 two links later).
+            There is deliberately no null-SAFE navigation spelling.  `a?.b?.c?` parses, but each
+            `?` is (N-Default) at that link — "replace THIS structure with an empty one" — so
+            the chain answers the default (0) instead of reporting the absence, and the trailing
+            `?? d` is then flagged redundant.  Per-link is the wrong question: a chain is one
+            projection with one absence, and `a.b.c?` is the spelling that asks it.
+
+(N-Chain-Place)  a chain in PLACE position takes NO discharge and is TOTAL.  An assignment
+            target (`a.b.c = v`) and the receiver of a MUTATING method (`a.b.c.remove(i)`) are
+            admissible whatever the chain's nullability, and when a link is ABSENT the mutation
+            DOES NOTHING — no diagnostic, no fault, neighbours untouched (verified both
+            backends, every mutation kind).  A place is not a value read (types-history
+            D-Null-Place), and an absent link is not a place, so skipping is the only answer
+            that does not invent one.
+            Contrast (Col-Insert-Absent), which INSTANTIATES rather than skipping: that rule's
+            destination has a HOME to write the empty collection back into — a field, a local, a
+            parameter — and an absent chain LINK has none.  The two answers differ because the
+            question does: "which store does this insert use" has one sensible answer, and
+            "where does this write land when there is nowhere" has none.
+            A discharge in this position is therefore the wrong spelling, not the cure: `?`
+            names what to READ when the slot is null, and a place has no read.  The assignment
+            forms already peel it (loft#1205 `peel_place_discharge`, loft#1214 for a keyed
+            receiver) so the write lands in the real place, and `??` on a place is refused
+            outright — it names two values and no place.
+
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys
             (N-Cast) / (N-Cast?): `s as float` asserts (non-null), `s as float?` checks (→

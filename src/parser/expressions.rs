@@ -1427,6 +1427,27 @@ impl Parser {
         } else {
             Value::Null
         };
+        // @PLN25 DN3 — a `while` body is the condition's THEN branch: it runs only while the
+        // condition holds, so a non-null proof narrows the proven var inside it exactly as
+        // `if`'s does (`parse_if`, the same two lists on the same push/truncate discipline).
+        // Without it the two spellings of ONE guard disagreed — `if cur != null { cur.value }`
+        // narrowed and `while cur != null { cur.value }` did not — so under `(N-Chain)` the
+        // canonical linked-list walk could not read its own node, which is the idiom the
+        // nullable pointer field exists for.
+        //
+        // A reassignment inside the body drops the proof at the write (`narrowed_non_null` is
+        // retained-against on assignment), which is what keeps the `cur = cur.next` step
+        // honest: the proof covers the reads BEFORE the advance, and nothing after it.
+        let narrow = self.narrowing_from_condition(&cond);
+        let narrow_base = self.narrowed_non_null.len();
+        if let Some((v, true)) = narrow {
+            self.narrowed_non_null.push(v);
+        }
+        let proj_narrow = self.projection_narrowing_from_condition(&cond);
+        let proj_base = self.narrowed_non_null_exprs.len();
+        if let Some((ref e, true)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
+        }
         let not_cond = self.cl("OpNot", &[cond]);
         let break_if = v_if(
             not_cond,
@@ -1439,6 +1460,8 @@ impl Parser {
         let mut body = Value::Null;
         let loop_write_state = self.vars.save_and_clear_write_state();
         self.parse_block("while", &mut body, &Type::Void);
+        self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         self.vars.restore_write_state(&loop_write_state);
         self.in_loop = in_loop;
         self.vars.finish_loop(loop_nr);

@@ -3991,7 +3991,7 @@ impl Parser {
     /// Deliberately narrow: the operand must be a CALL (a lookup or a field read), never a
     /// bare `Var` — a name is [`Self::narrowing_from_condition`]'s to answer, and answering it
     /// here as well would put one fact in two lists with two lifetimes.
-    fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
+    pub(crate) fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -4042,7 +4042,19 @@ impl Parser {
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
     /// side of a comparison is any `OpConv*FromNull()` (the parser's typed-null lowering).
-    fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+    pub(crate) fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+        // `if v` BEFORE the boolean conversion is materialised — the same truthy test as the
+        // `OpConvBoolFrom*` arm below, just earlier in the pipeline.  PASS 1 leaves the
+        // condition as a bare `Var`; only pass 2 wraps it, so reading `Call` alone made the
+        // two passes disagree about whether the guard narrows, and the parser keeps the FIRST
+        // answer for an inferred local.  `if hit { hit.val }` then typed `integer?` from pass
+        // 1 and `integer` from pass 2, and the `integer?` won — a rule reporting the very code
+        // its own diagnostic asks for.  Recognising the pre-conversion shape is what makes the
+        // proof pass-independent; a boolean var narrows to itself, so the extra arm costs
+        // nothing where the condition was never nullable.
+        if let Value::Var(v) = test.unspan() {
+            return Some((*v, true));
+        }
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -10226,6 +10238,19 @@ impl Parser {
         subject_type: &Type,
         variant_name: &str,
     ) -> Type {
+        // `@FR-N-Chain` — a NULLABLE enum is TESTABLE.  `is` asks which variant a value
+        // carries, and *"none, it is absent"* is an answer to that question rather than a
+        // reason to refuse it: `Sh?` is `Optional(Enum(Sh, true))`, the same record behind a
+        // nullability marker (`@FR-L-Null`), so the variant test reads through the marker
+        // exactly as `match` does under `(N-Match)`.
+        //
+        // Without the peel an `Optional` subject fell to the `_` arm below, which answers
+        // `Boolean` WITHOUT consuming the `{ … }` payload — so the capture list was then read
+        // as a block and reported as *"Expect token ;"* at the first bound name: a message
+        // about punctuation for a program whose only fault was that its subject could be
+        // absent.  Reachable from a plain `s: Sh? = Box{…}` with no projection in sight, so it
+        // predates the chain widening that made the corpus meet it.
+        let subject_type = subject_type.base();
         let (e_nr, is_struct) = match subject_type {
             Type::Enum(nr, true, _) => (*nr, true),
             Type::Enum(nr, false, _) => (*nr, false),

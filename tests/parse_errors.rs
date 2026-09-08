@@ -3244,7 +3244,7 @@ fn b_ref_reshape_non_key_field_through_amp_link_still_writes_through() {
         "struct Elm { key: integer, tag: integer } \
          fn check() -> integer { \
            s: sorted<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
-           c = &s[30]; c.tag = 99; s[30].tag }"
+           c = &s[30]; c.tag = 99; s[30].tag ?? -1 }"
     )
     .expr("check()")
     .result(Value::Int(99));
