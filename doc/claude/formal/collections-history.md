@@ -44,9 +44,20 @@ resolving is not a citation enforcing.  This is a THIRD failure mode beside the 
 re-measures), and the cheapest check for it is to ask what an anchor's site actually decides —
 here, whether it writes a `Type`.
 
-Measured before it was deferred: closing it costs **351 corpus sites** across 21 files, where the
-receiver-absent half (`D-Null-Recv` in [types-history.md](types-history.md), closed 2026-09-07)
-cost none.  It is deferred for that reason and for nothing else — the direction is not in doubt.
+⚠ **The cost this entry deferred on was counting the wrong quantity, and the correction is the
+more useful record.**  It read *"351 corpus sites, deferred on cost"*.  Swept file by file
+(loft2-27, 2026-09-08) the widening adds **zero corpus failures**: those 351 sites emit
+WARNINGS, and no run fails on a warning.  The count was real and it measured something that
+does not block.  What actually blocked the leg was `D-col-view` (loft#1456) — a key write
+through a view of a keyed collection, where the materialise stops being asked for once the
+lookup types `τ?` — and the two landed as one fix.
+
+The same correction applies to `D-Null-Field`'s sibling estimate in
+[types-history.md](types-history.md), and to the general habit: **a "corpus sites" number is a
+count of DIAGNOSTICS, and only the ERROR ones are a migration.**  For the `(N-Prop)` leg the two
+differ by a factor of six (37 sites, 6 error sites); here by 351 to zero.  A leg's real cost is
+the count of things that stop compiling, and every estimate in this register that says
+"sites" without saying which kind should be read as unmeasured.
 ⚠ Whoever takes it: the receiver's `?` must NOT reach a keyed WRITE.  `h[k] = v` parses its target
 through the same `parse_index`, and carried into the place the write is no longer recognised as
 one and lowers to a READ, losing the write in silence — `(Col-Insert-Absent)` makes that write

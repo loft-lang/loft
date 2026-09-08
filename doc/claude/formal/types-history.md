@@ -6,7 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
+OPEN: **0** — `D-Null-Field` was opened and CLOSED 2026-09-08 (loft#1450's `(N-Prop)` leg,
+below): a FIELD read through a nullable receiver typed non-null.  `D-Null-Recv`, `D-Null-Guard`
+and `D-Null-Place` were opened and CLOSED 2026-09-07
 (loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
 guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
 assignment TARGET.  `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
@@ -17,6 +19,46 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Null-Field — OPENED AND CLOSED (2026-09-08, loft#1450): a FIELD read through a nullable receiver typed non-null
+
+`(N-Prop)` types an operation's result nullable when it has a nullable operand whose runtime
+carries the null through, and a field read is one: an ABSENT receiver has no field to answer
+with, so `s.f` on an `S?` yields the field type's null (C80) whatever `f` declares.  `(C-Var)`
+states there is no implicit `S? ⤳ S` unwrap, and dropping the `?` here performed exactly one.
+
+```loft
+n: It? = null;
+x: integer = n.v;      // silent; `x` typed non-null `integer`, holds null
+```
+
+The site had written its own carve-out down: *"a field access can't be MORE non-null than its
+receiver … clear `expr_not_null` below when the receiver's TYPE is `Optional`"*, followed by
+*"(Only the lint signal is cleared; the returned type `t` is unchanged — widening it to
+`Optional` would force `?? d` on every nullable-receiver field read, a far broader change.)"*
+So the rule was known at the site, correctly stated, and declined on COST — which is a
+defensible engineering call and not a defensible reading of the rules, and the register is where
+that distinction gets recorded rather than lost.
+
+⚠ **The cost estimate was the part that turned out wrong, and only measurement moved it.**  The
+comment's *"would force `?? d` on every nullable-receiver field read"* was true when it was
+written, because `D-Null-Guard` (2026-09-07) meant a null GUARD did not narrow a heap value at
+all — so every correct guarded read would have warned, and the blast radius really was the whole
+corpus.  With the guard narrowing fixed the same widening costs **six error sites**: three in
+`lib/code.loft`, two narrow-width fields in one guard, one `rev()` over a collection field.  The
+27 remaining new diagnostics are warnings on cells that read through a nullable receiver on
+purpose — and that split is a lesson of its own: **a "corpus sites" number counts DIAGNOSTICS,
+and only the error ones are a migration.**  Here the two differ by a factor of six; for
+`D-col-lookup` in [collections-history.md](collections-history.md) the same estimate read 351
+and the true cost was zero.  A cost that made a rule unaffordable was a cost created by a second, unfixed
+deviation — worth stating plainly, because "too expensive" recorded at a site does not carry the
+date of its own measurement.
+
+The RECEIVER-TYPE half only.  The site's `receiver_nullable` is also true for a collection
+ELEMENT read, and that half does NOT widen: a constant index into a dense vector is
+`index_provably_fit`'s trusted developer contract (loft#1436), and wrapping it would take back a
+promise the rule grants.  The element half stays a lint signal, and the guard's control cell
+pins it.
 
 ### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
 

@@ -3764,6 +3764,13 @@ impl Parser {
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
     /// side of a comparison is any `OpConv*FromNull()` (the parser's typed-null lowering).
+    /// The `while` site's face of [`Self::narrowing_from_condition`] — same answer, reachable
+    /// from `expressions.rs`.  One body, so a condition shape recognised for an `if` cannot
+    /// silently fail to be recognised for a `while`.
+    pub(crate) fn narrowing_from_condition_pub(&self, test: &Value) -> Option<(u16, bool)> {
+        self.narrowing_from_condition(test)
+    }
+
     fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;

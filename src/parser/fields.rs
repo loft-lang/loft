@@ -20,6 +20,7 @@ impl Parser {
         // the right signal — `expr_not_null` alone is false even for a non-null
         // constructed struct, which would wrongly suppress genuine warnings, e.g.
         // p285.)
+        let receiver_optional = matches!(tp, Type::Optional(_));
         let receiver_nullable =
             matches!(tp, Type::Optional(_)) || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
@@ -602,6 +603,20 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        // `@FR-N-Prop` (loft#1450) — an operation with a NULLABLE operand whose runtime
+        // carries the null through types its result nullable, and a field read is one: an
+        // ABSENT receiver has no field to answer with, so `s.f` on an `S?` yields the field
+        // type's null (C80) whatever the field declares.  `(C-Var)` says there is no implicit
+        // `S? ⤳ S` unwrap, and dropping the `?` here performed exactly one.
+        //
+        // The RECEIVER-TYPE half only.  `receiver_nullable` above is also true for a
+        // collection-ELEMENT read, and that half must NOT widen: a constant index into a dense
+        // vector is `index_provably_fit`'s trusted developer contract (loft#1436), and wrapping
+        // it would take back the trust the rule grants.  The element half stays what it has
+        // always been — a lint signal.
+        if receiver_optional && self.tagged_pointer_type(&t).is_none() {
+            return Type::optional(t);
+        }
         t
     }
 

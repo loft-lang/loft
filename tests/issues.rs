@@ -16096,7 +16096,7 @@ fn run() -> integer {
     m = a.next;
     m.value = 20;
     cur: Node? = a;
-    total = 0;
+    total: integer = 0;
     while cur != null {
         total = total + cur.value;
         cur = cur.next;
@@ -16119,7 +16119,10 @@ fn run() -> integer {
     b = Node { value: 2, next: null };
     x: Node? = Node { value: 1, next: b };
     x = x.next;
-    x.value
+    // `@FR-N-Prop` — `x` is `Node?` and the rebind does not change that, so the field off it is
+    // `integer?`.  The subject here is the self-reassign, not the nullability, so the discharge
+    // says so rather than annotating it away.
+    x.value ?? 0
 }"
     )
     .expr("run()")

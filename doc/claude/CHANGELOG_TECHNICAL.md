@@ -9,6 +9,29 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A field read cannot be more non-null than its receiver (2026-09-08)
+
+**#1450**'s `(N-Prop)` leg — a FIELD read through a nullable receiver typed non-null, so
+`n: It? = null; x: integer = n.v` bound a non-null slot to the C80 null in silence.  An absent
+receiver has no field to answer with, and `(C-Var)` says there is no implicit `S? ⤳ S` unwrap.
+
+The site had the rule written down and declined it on cost: *"widening it to `Optional` would
+force `?? d` on every nullable-receiver field read, a far broader change."*  That was TRUE when
+written — a null guard did not narrow a heap value at all (`D-Null-Guard`, closed 2026-09-07),
+so every correctly-guarded read would have warned.  With the guard fixed the same widening costs
+**six error sites** across the whole 1237-file corpus, migrated here: three in `lib/code.loft`
+(an element read by a variable index is `τ?`, so a field off it is), two narrow-width fields in
+`h12`, and the `rev()`/`for` reads over collection fields of a deliberately-absent holder in
+`1374`.  The 27 remaining new diagnostics are warnings on cells that read through a nullable
+receiver on purpose.
+
+The RECEIVER-TYPE half only: the same predicate is true for a collection ELEMENT read, and that
+half keeps `index_provably_fit`'s trust (#1436) — the guard's control cell pins a dense constant
+index staying non-null through a field.
+
+Registered as `D-Null-Field`.  `(Col-Lookup)` — a keyed lookup's own `τ?` for a missing key in a
+PRESENT collection, 351 corpus sites — remains open as `D-col-lookup` and is owned elsewhere.
+
 ### An element read cannot be more non-null than the collection it reads from (2026-09-07)
 
 **#1450** (its `(N-Domain)` leg) and the nullable-receiver-index half of **#1434** — a keyed or

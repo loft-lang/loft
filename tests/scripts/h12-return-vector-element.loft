@@ -79,7 +79,12 @@ fn f6(b: Bag, i: integer) -> Cell { return b.b_cells[i]; }
 fn f7(i: integer) -> Cell {
   b = make_bag();
   e = b.b_cells[i];
-  return Cell { c_h: e.c_h, c_m: e.c_m };
+  // `@FR-N-Prop` — `b_cells[i]` is `Cell?` for a variable index, so a field of it is the
+  // field type's null when the element is absent, and `c_h`/`c_m` are NARROW widths whose
+  // non-null form has no bit pattern for one.  The hand-written copy this cell exists to be
+  // says what it means by discharging each read, which is what the fix asks for and what
+  // makes it still a copy.
+  return Cell { c_h: e.c_h ?? 0, c_m: e.c_m ?? 0 };
 }
 
 // 8 — CONTROL: a FIELD (not element) of a local, the #488/H9 neighbourhood this fix

@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Reading a field off something that might not be there now says so.**  `thing.name` where
+`thing` may be absent has no field to give you — it reads as absent, and the compiler used to
+promise you a real value and hand you the absent one anyway.  It now asks you to handle it, the
+same way it already did for arithmetic.  The cures are the ordinary ones and they were the
+blocker until recently: guard with `if thing != null`, discharge with `?? default`, `match`, or
+declare the slot nullable.  Reading a field off an element you took out of a collection by a
+number you typed is unchanged — that number is still your promise, and this does not take it
+back.
+
 **Reading from a collection that is empty-because-absent now tells you it can be absent — and
 `if c != null` finally counts as the check.**  A `vector<Thing>?` or a `hash<Thing[k]>?` holding
 `null` has no element to give, so `m[0]` reads as absent.  The compiler used to say so only when

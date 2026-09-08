@@ -1420,6 +1420,9 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Expected condition after 'while'");
             return;
         }
+        // @PLN25 DN3 — read the non-null proof off the condition BEFORE it is consumed into
+        // `OpNot` below; the push happens at the body, where it holds.
+        let while_narrow = self.narrowing_from_condition_pub(&cond);
         // @PLN86 3.1 — keep the raw condition (pass 2 only) to check for a
         // decreasing variant once the body is parsed; the bound check needs both.
         let sandbox_cond = if self.in_sandbox && !self.first_pass {
@@ -1438,7 +1441,19 @@ impl Parser {
         self.in_loop = true;
         let mut body = Value::Null;
         let loop_write_state = self.vars.save_and_clear_write_state();
+        // @PLN25 DN3 — a `while cur != null { … }` proves `cur` non-null for the BODY, the same
+        // way an `if` does: the loop is entered only when the condition holds.  The canonical
+        // linked-list walk is written this way — `while cur != null { total += cur.value; cur =
+        // cur.next; }` — and without this the `(N-Prop)` field read through `cur` warns on the
+        // one idiom the shape exists for.  Sound across the reassignment inside the body,
+        // because `parse_assign_op` drops the proof when the slot is overwritten: `cur.value`
+        // before `cur = cur.next` narrows, a read after it does not (loft#1450).
+        let while_narrow_base = self.narrowed_non_null.len();
+        if let Some((v, true)) = while_narrow {
+            self.narrowed_non_null.push(v);
+        }
         self.parse_block("while", &mut body, &Type::Void);
+        self.narrowed_non_null.truncate(while_narrow_base);
         self.vars.restore_write_state(&loop_write_state);
         self.in_loop = in_loop;
         self.vars.finish_loop(loop_nr);

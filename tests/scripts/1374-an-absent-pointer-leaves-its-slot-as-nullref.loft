@@ -106,16 +106,24 @@ fn iterate_through_absence() {
   w = W { ns: [N { k: 1, subs: [1, 2], srt: [KS { k: 1, n: 5 }], idx: [KX { k: 1, n: 5 }], hs: [KH { k: 1, n: 5 }] }] };
   i = 9;
   count = 0;
-  for x in w.ns[i].subs { count += x; }
-  for y in w.ns[i].srt { count += y.n; }
-  for z in rev(w.ns[i].srt) { count += z.n; }
-  for q in w.ns[i].idx { count += q.n; }
-  for h in w.ns[i].hs { count += h.n; }
+  // `@FR-N-Prop` — `w.ns[i]` is absent by construction here (`i = 9` on a one-element
+  // vector), so every collection read off it is `τ?`, and `for` binds an element an absent
+  // collection does not have.  `?? []` names the absence this cell is ABOUT and leaves each
+  // body unreached exactly as before — which is what `count == 0` below asserts.
+  for x in w.ns[i].subs ?? [] { count += x; }
+  for y in w.ns[i].srt ?? [] { count += y.n; }
+  for z in rev(w.ns[i].srt ?? []) { count += z.n; }
+  for q in w.ns[i].idx ?? [] { count += q.n; }
+  for h in w.ns[i].hs ?? [] { count += h.n; }
   assert(count == 0, "a for over an absent holder's collections visits nothing");
-  assert(len(w.ns[i].subs) == 0 && len(w.ns[i].srt) == 0, "an absent holder's collections have length 0");
+  assert(len(w.ns[i].subs ?? []) == 0 && len(w.ns[i].srt ?? []) == 0,
+         "an absent holder's collections have length 0");
+  // The PRESENT holder takes the same discharge and reaches the other arm of it: `j = 0` is in
+  // range, so `?? []` never fires and the loops run — which is what `count == 8` pins, and what
+  // separates "the discharge is right" from "the discharge hid the cell".
   j = 0;
-  for x in w.ns[j].subs { count += x; }
-  for y in w.ns[j].srt { count += y.n; }
+  for x in w.ns[j].subs ?? [] { count += x; }
+  for y in w.ns[j].srt ?? [] { count += y.n; }
   assert(count == 8, "the present holder's collections iterate as before");
 }
 
