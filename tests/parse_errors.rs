@@ -4103,3 +4103,26 @@ fn a_null_guard_over_a_projection_narrows_it() {
     .expr("check()")
     .result(Value::Int(20));
 }
+
+/// loft#1461 — a tuple element read through a VARIABLE vector index parses.
+///
+/// `operators.rs`'s tuple-element branch tested the receiver in its bare spelling, so a
+/// CONSTANT index (which takes the fit elision and stays `Type::Tuple`) worked while a
+/// VARIABLE one — `τ?` under `(N-Index)`, so `Optional(Tuple)` — declined and fell through
+/// to the FIELD path, where `0` is not an identifier.  The author was told *"Expect a field
+/// name"* about a tuple index that is spelled correctly: the diagnostic named the wrong
+/// thing entirely, mentioning neither nullability nor the index.
+///
+/// The constant cell beside it is the control that says which half was broken — without it,
+/// a fix that made neither work would still look like progress on the one that did.
+#[test]
+fn a_tuple_element_reads_through_a_variable_vector_index() {
+    code!(
+        "fn check() -> integer { \
+           v: vector<(integer, integer)> = [(1, 2), (3, 4)]; \
+           i = 1; \
+           v[i].0 * 1000 + v[i].1 * 100 + v[0].0 * 10 + v[0].1 }"
+    )
+    .expr("check()")
+    .result(Value::Int(3412));
+}
