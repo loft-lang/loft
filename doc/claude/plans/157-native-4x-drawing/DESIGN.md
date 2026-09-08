@@ -1107,9 +1107,14 @@ None of the three is the store model.  What IS the design, and stays:
   serialisation, live editing, shared stores and the never-crash goal (GOALS.md).
 - **Every scalar op can make a null, so every op checks** — `a/b`, `sqrt(a)`, `a+b`
   and `a*b` on overflow produce the sentinel, which is how loft never halts on
-  arithmetic.  A declaration says nothing past the entry; only a proof about the VALUE
-  (a bound, a mask, a non-zero finite divisor) can retire a check, and that proof is
-  finding 2 above.
+  arithmetic.  A declaration says nothing past the entry.  The owner named the only
+  two ways to owe fewer checks (2026-09-08): a proof about the VALUE (a bound, a mask,
+  a divisor proven finite and non-zero — finding 2 above, compiler work inside this
+  plan), or an explicit opt-in to the PROCESSOR's semantics — wrapping integers and
+  IEEE floats as plain values, machine-dependent by declaration, in a scope or a type
+  the author chooses, with a stated rule for a value that crosses back into the
+  null-checked world.  The second is a language surface: frozen, owner-decided, its
+  own plan when wanted; it is recorded here so the fork is not re-derived.
 
 What is NOT the design, each with its queue item (README § Phase ordering):
 
