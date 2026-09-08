@@ -1019,6 +1019,19 @@ pub fn retbuf_witness_gate_disabled() -> bool {
     *OFF.get_or_init(|| env_set("LOFT_NO_RETBUF_WITNESS_GATE"))
 }
 
+/// @PLN157 § V-c: a callee whose only store writes are scalars into its own retbuf, and a
+/// RECORD variable's free, do not decline a vector-header hoist — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_RETBUF_HOIST` (read at GENERATION time: the before-half of the A/B on one
+/// binary — `lock` 18.6M → 15.7M ns/op — and the first bisect step for a native-only wrong
+/// answer in a loop that calls a struct-returning fn).  See
+/// `generation::hoist::retbuf_only_writer` and `hoist::frees_a_record` for the arguments;
+/// `LOFT_HOIST_VERIFY=1` is the falsifier for both.
+#[must_use]
+pub fn retbuf_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
+}
+
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
 /// dead-after owned source directly into its destination field/element instead of copy-then-free,
 /// for every proven-safe shape (Record `v[i]=e`/`o.f=src`; Construct field-append, fresh

@@ -2658,6 +2658,8 @@ than by the audit.
 
 
 
+@PLN157 § V-c adds two in the hoist gate — **732 · 367 · 6 · 359** — `hoist::frees_a_record` reads the freed operand's type through `base()` (a nullable record local's free is a record free too), and `hoist::retbuf_only_writer` asks the record's attributes through the keystone.
+
 @PLN157 § V adds one more on the seeing-through side — **730 · 366 · 5 · 359** — `control::record_is_fully_written_by_a_literal` reads the buffer's record through `base()`, so a nullable buffer type would still be checked for the synthetic-nullable field it refuses.
 
 *@PLN157 P3's non-sentinel pass adds one function on the seeing-through side:

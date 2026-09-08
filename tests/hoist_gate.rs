@@ -157,6 +157,64 @@ const READ: &str = "fn f(v: vector<integer>, n: integer) -> integer {
 }
 fn main() { }";
 
+/// @PLN157 § V-c — a callee whose only store writes are scalars into its own return
+/// buffer (a struct-literal return over an all-scalar record) does not decline the
+/// caller's header hoist; every neighbouring shape still does.
+#[test]
+fn a_scalar_retbuf_writer_does_not_decline_the_hoist() {
+    let script = "\
+struct S { a: float = 0.0, b: float = 0.0 }
+struct V { n: integer = 0, xs: vector<integer> = [] }
+fn mk(u: float) -> S { S { a: u, b: u * 2.0 } }
+fn grow(n: integer) -> V { V { n: n, xs: [n] } }
+fn poke(s: S, u: float) -> S { s.a = u; s }
+fn via(u: float) -> S { t = mk(u); t.b = 1.0; t }
+fn scratch(u: float) -> S { c = S { a: u, b: u }; c.a = 2.0; mk(c.a) }
+fn f_mk(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += mk(v[i]? as float).a; } t }
+fn f_scratch(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += scratch(v[i]? as float).a; } t }
+fn f_bound(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { s = mk(v[i]? as float); t += s.a; } t }
+fn f_grow(v: vector<integer>) -> integer { t = 0; for i in 0..len(v) { t += grow(v[i]?).n; } t }
+fn f_poke(v: vector<integer>, s: S) -> float { t = 0.0; for i in 0..len(v) { t += poke(s, v[i]? as float).a; } t }
+fn f_via(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += via(v[i]? as float).a; } t }
+fn main() { }";
+    assert_eq!(
+        hoistable(script, "n_f_mk"),
+        1,
+        "a scalar-retbuf writer must not decline the hoist"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_grow"),
+        0,
+        "a record with a vector field grows — still a writer"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_poke"),
+        0,
+        "a write to a parameter is not a retbuf write"
+    );
+    // `t = mk(u); t.b = 1.0; t` — NRVO promotes `t` ONTO `via`'s buffer, so both the
+    // inner call and the field write land in the buffer: a retbuf-only writer too.
+    assert_eq!(
+        hoistable(script, "n_f_via"),
+        1,
+        "a promoted local IS the buffer"
+    );
+    // `c` is a scratch record that is never returned: its `OpDatabase` and its field write
+    // target a store that is not the buffer.
+    assert_eq!(
+        hoistable(script, "n_f_scratch"),
+        0,
+        "a write to a scratch local — still a writer"
+    );
+    // The result bound to a local: the loop body carries the local's guarded per-iteration
+    // free, a RECORD free — a release moves no vector header.
+    assert_eq!(
+        hoistable(script, "n_f_bound"),
+        1,
+        "a record free in the loop must not decline the hoist"
+    );
+}
+
 #[test]
 fn a_read_only_loop_hoists() {
     assert_eq!(hoistable(READ, "n_f"), 1);

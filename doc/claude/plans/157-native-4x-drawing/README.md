@@ -7,10 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open — P0–P4d and § V (Route R) SHIPPED (see Sub-arcs); the queue's head is
-now the hoist unblock behind Route R (Phase ordering below).  Scoreboard vs
-the issue baseline: `hash` 10.9× → 5.1× gate-row / 2.3× at the leaf; `hair`
-4.3× → ~3.6× (under the bar); `lock` 30× → **6.2×** shipped.
+Open — P0–P4d, § V (Route R) and § V-c (the hoist unblock) SHIPPED (see
+Sub-arcs); the queue is re-ranked below.  Scoreboard vs the issue baseline:
+`hash` 10.9× → 4.5× gate-row / 2.3× at the leaf; `hair` 4.3× → ~3.6× (under
+the bar); `lock` 30× → **5.3×** shipped.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -37,7 +37,7 @@ hash unchanged.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-08
+- **Last touched:** 2026-09-08 (§ V-c)
 
 ## Composition matrix — Stage A
 
@@ -64,6 +64,7 @@ unless said otherwise.
 | **P3** — plain ops when operands are provably non-sentinel: float compares, counted `for`, then the `_nn` integer wiring (M3) | [DESIGN.md § P3](DESIGN.md) | `LOFT_NN_VERIFY` sweep clean; the 16-cell for-matrix byte-identical on both backends; nullable-operand cells keep the sentinel forms | **In-flight** — P3a (float compares), P3b (counted `for`, `conv_bool` 34→11) and P3c (`_nn` integer wiring, N3/N5 — 40 sites on the bench) shipped 2026-09-07, all falsified; open: interprocedural param facts |
 | **P4** — element access via hoisted (base, len) incl. WRITES, field-reached vectors and loop-invariant record scalars; a two-tier gate (pure / in-place-writes-only) extending the #885 allow-list (M2) | [DESIGN.md § P4](DESIGN.md) | `lock` not ≤ 4 ms; `fill_poly`/`composite` not within 4×; `LOFT_HOIST_VERIFY=1` suite clean | **P4a/b shipped 2026-09-07** — two-tier gate + fused element write, falsified both ways; `hair` −15 % (~3.6×, under the bar); libm ops joined the allow-list (loops calling `sin`/`sqrt` never hoisted before); P4d (path keys — the raster loops: 7 fused writes + 1 read, zero per-element resolutions, `lock` −13–18 %) shipped same day; open: P4c record scalars |
 | **V** — value-struct returns, Route R: a return-position struct literal builds into the caller's `__retbuf`, and the caller allocates that buffer once (loft#1426 M2's allocation half) | [DESIGN.md § V](DESIGN.md) | `lock` not ≤ ~17M on P4d's quiet-box scale; a § V matrix cell answers differently than the record form; `tests/retbuf_reuse.rs`'s positive control goes quiet | **Shipped 2026-09-08** — `lock` 25.6M → 17.9M (−30 %, the § V prediction; quiet box), hashes exact; P0 instrument `lock` 6.2× (bar 16 → 10); gated on `witness_buffer` + a single-assigned result local (the free-guard matrix found the reassignment hole the day after), controls falsified on both backends; the guard-the-free widening (§ V-b) was built and falsified the same day — the fact belongs in the return type (M–L, separate item); open: the hoist-unblock fact |
+| **V-c** — the hoist unblock: a callee whose only store writes are scalars into its own retbuf, and a record's guarded free, no longer decline a header hoist (loft#1426 M2's last per-pixel piece) | [DESIGN.md § V-c](DESIGN.md) | `LOFT_HOIST_VERIFY=1` panics; a hash moves; the resolve loop's hoist count drops below 9 | **Shipped 2026-09-08** — `lock` 18.6M → 15.7M (−16 %, on the prediction), P0 `lock` 5.3× (bar 10 → 8), `hash` 4.5×; pinned both directions in `tests/hoist_gate.rs` |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)
@@ -98,15 +99,14 @@ P0–P4d shipped; the original ordering below it stands as history.  What
 remains, ranked by measured value:
 
 1. ~~**Value-struct returns**~~ — **SHIPPED 2026-09-08 as Route R** (DESIGN.md
-   § V): `lock` −30 %, 6.2× on the P0 instrument.  What it leaves on the
-   table, now the head: **the hoist unblock** — the def-level *"this callee
-   writes only into its retbuf"* fact that lets the resolve loop's committed
-   P4 hoists fire across the `brush_sample` call (the −17 pts § V attributed
-   to it; S–M, one attributable exception to the no-interprocedural-in-place
-   rule).  The gate's declined sites (7 pts) are NOT a widening of the guards:
-   § V-b built that and the matrix falsified it — three parser-level release
-   sites read the dep-free return as a fresh store — so they wait on the
-   type-level fact (a buffer dep the adopt lowering accepts), M–L, separate.
+   § V): `lock` −30 %, 6.2× on the P0 instrument.  ~~**The hoist unblock**~~ —
+   **SHIPPED the same day as § V-c**: the retbuf-only-writer verdict plus the
+   record-free admission, `lock` −16 % more, 5.3×.  What Route R still leaves
+   on the table: the gate's declined sites (7 pts) are NOT a widening of the
+   guards — § V-b built that and the matrix falsified it (three parser-level
+   release sites read the dep-free return as a fresh store) — so they wait on
+   the type-level fact (a buffer dep the adopt lowering accepts), M–L; and
+   Route T's record round-trip (−13 pts) stays a separate item.
 2. ~~**Consumer re-run**~~ — done 2026-09-07 (DESIGN.md § Consumer 14-row
    re-run); it sharpened the target rather than shrinking it, and Route R
    is the lever `smooth`/`fronds` route to as well — re-run after the hoist
@@ -118,10 +118,11 @@ remains, ranked by measured value:
    (flag semantics are clean post the html lesson); P5's checklist row; the
    PR when the owner judges the branch done.
 
-Honest residual: `lock`'s last stretch (6.2× → 4×) is not yet
-probe-covered; the hoist unblock is the one measured lever left from § V,
-and after it the next decomposition says whether P4c + residual per-pixel
-machinery closes it.
+Honest residual: `lock`'s last stretch (5.3× → 4×) is not yet
+probe-covered; the next decomposition (`make profile PROFILE_FLAGS=--engine`
+on the standalone) says whether P4c record scalars + the remaining per-pixel
+machinery close it, or whether the type-level buffer fact (§ V-b) is needed
+first.
 
 <details>Original ordering: P0 first; P1/P2/P3 independent by cost; P4 last;
 P5 closes.</details>

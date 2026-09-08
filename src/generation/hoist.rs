@@ -70,7 +70,12 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 20] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 23] = [
+    // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
+    // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body)
+    "OpRefIsNull",
+    "OpConvBoolFromRef",
+    "OpDistinctStore",
     // element address + length: the vector reads themselves
     "OpGetVector",
     "OpGetVectorNullable",
@@ -164,11 +169,16 @@ pub fn hoistable_vectors(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
 ) -> Vec<(PathKey, Value)> {
-    if body
-        .operators
-        .iter()
-        .any(|op| blocks_header_hoist(op, data, cache, &mut HashSet::new(), allow_in_place))
-    {
+    if body.operators.iter().any(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            cache,
+            &mut HashSet::new(),
+            allow_in_place,
+            Some(data.def(def_nr).variables()),
+        )
+    }) {
         return Vec::new();
     }
     // A rebind (`v = other`) leaves the store untouched and still invalidates the header,
@@ -367,7 +377,7 @@ pub fn is_element_address(data: &Data, d_nr: u32) -> bool {
 /// and is still sound to reuse (it only declines a hoist); a `false` cannot have, because
 /// a cycle contributes `true` and any caller of it answers `true` too.
 pub fn may_write_store(node: &Value, data: &Data, cache: &mut HashMap<u32, bool>) -> bool {
-    writes_store(node, data, cache, &mut HashSet::new())
+    writes_store(node, data, cache, &mut HashSet::new(), None)
 }
 
 fn writes_store(
@@ -375,8 +385,28 @@ fn writes_store(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    vars: Option<&crate::variables::Function>,
 ) -> bool {
-    blocks_header_hoist(node, data, cache, active, false)
+    blocks_header_hoist(node, data, cache, active, false, vars)
+}
+
+/// @PLN157 § V-c — the frees whose operand is a RECORD variable of the enclosing body.
+///
+/// A free releases exactly one store and moves no other, and the store a hoisted header
+/// describes belongs to a loop-invariant vector that is live across the loop — so a
+/// record's release cannot be it.  The operand's TYPE is what carries the argument: a
+/// vector-typed operand (a per-iteration vector local, or a vector work-ref paired by
+/// loft#1201) keeps the writer verdict, and so does a free whose body this cannot see
+/// (`vars == None`).  `OpFreeRefIfDistinct(v, w)` compares `v` against a witness and
+/// releases `v` alone, so only its first operand is the question.
+const RECORD_FREE_OPS: [&str; 2] = ["OpFreeRef", "OpFreeRefIfDistinct"];
+
+fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    let Some(vars) = vars else { return false };
+    RECORD_FREE_OPS.contains(&name)
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(v))
+            if *v < vars.count()
+                && matches!(vars.tp(*v).base(), Type::Reference(_, _) | Type::Enum(_, true, _)))
 }
 
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
@@ -391,13 +421,17 @@ fn blocks_header_hoist(
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
     allow_in_place: bool,
+    vars: Option<&crate::variables::Function>,
 ) -> bool {
     node.any_node(&mut |n| match n {
-        Value::Call(d, _) => {
-            if allow_in_place
-                && (*d as usize) < data.definitions.len()
-                && IN_PLACE_SET_OPS.contains(&data.def(*d).name())
-            {
+        Value::Call(d, args) => {
+            let known = (*d as usize) < data.definitions.len();
+            let in_place_setter =
+                known && allow_in_place && IN_PLACE_SET_OPS.contains(&data.def(*d).name());
+            let record_free = known
+                && crate::keys::retbuf_hoist_enabled()
+                && frees_a_record(data.def(*d).name(), args, vars);
+            if in_place_setter || record_free {
                 false
             } else {
                 call_writes_store(*d, data, cache, active)
@@ -424,7 +458,12 @@ fn call_writes_store(
     let writes = if matches!(def.code(), Value::Null) {
         !native_op_is_store_free(def)
     } else if active.insert(d_nr) {
-        let inner = writes_store(def.code(), data, cache, active);
+        let inner = writes_store(def.code(), data, cache, active, Some(def.variables()));
+        // @PLN157 § V-c — a body whose only writes land in its own scalar return
+        // buffer moves no header a caller could have hoisted.
+        let inner = inner
+            && !(crate::keys::retbuf_hoist_enabled()
+                && retbuf_only_writer(d_nr, data, cache, active));
         active.remove(&d_nr);
         inner
     } else {
@@ -434,6 +473,66 @@ fn call_writes_store(
     // have come from the branch above, since a cycle contributes `true` to every caller.
     cache.insert(d_nr, writes);
     writes
+}
+
+/// @PLN157 § V-c — does this def write nothing but fixed-width scalars into its own
+/// hidden return buffer?
+///
+/// Such a call cannot invalidate a header a caller hoisted: a scalar set through an
+/// address moves nothing and changes no length (the `IN_PLACE_SET_OPS` argument, one call
+/// deep); `OpDatabase` on the buffer allocates from a null slot or clears the buffer's
+/// OWN store, and a store is its own allocation; and the buffer's store hosts no hoisted
+/// header, because the record is ALL-SCALAR — no collection, text or reference field —
+/// and a loop never names its buffer variable.  Every miss keeps the writer verdict: a
+/// record with a vector field (it grows), a write to any other place (a parameter, a
+/// local), a native op that is neither store-free nor one of those setters, a user call
+/// that writes, and a `CallRef` / `Parallel` / `Yield` (what runs is not this body).
+fn retbuf_only_writer(
+    d_nr: u32,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let def = data.def(d_nr);
+    let Some(attr) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    let Some(record) = def.attributes()[attr].typedef.heap_def_nr() else {
+        return false;
+    };
+    if !data
+        .def(record)
+        .attributes()
+        .iter()
+        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
+    {
+        return false;
+    }
+    let buf = def.variables().var(&def.attributes()[attr].name);
+    if buf == u16::MAX {
+        return false;
+    }
+    !def.code().any_node(&mut |n| match n {
+        Value::Call(op, args) => {
+            if (*op as usize) >= data.definitions.len() {
+                return true;
+            }
+            let callee = data.def(*op);
+            if matches!(callee.code(), Value::Null) {
+                if native_op_is_store_free(callee) {
+                    return false;
+                }
+                let name = callee.name();
+                let into_buffer =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
+                !(into_buffer && (name == "OpDatabase" || IN_PLACE_SET_OPS.contains(&name)))
+            } else {
+                call_writes_store(*op, data, cache, active)
+            }
+        }
+        Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
+        _ => false,
+    })
 }
 
 /// Can this native op be ruled out as a writer?

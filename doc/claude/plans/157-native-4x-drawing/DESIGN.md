@@ -831,7 +831,71 @@ naming the buffer attribute that the ADOPT lowering accepts without copying
 (today a buffer dep means *copy*, which is why Route R kept the dep off) — so
 every static reader (the copy claim, the lift adoption, `site_is_fresh`, the
 displacement) reads one fact.  That is M–L and a separate item; the gated form
-above is what ships.  `LOFT_NO_RETBUF_WITNESS_GATE` stays the control's name.  P0 instrument on the idle box:
+above is what ships.  `LOFT_NO_RETBUF_WITNESS_GATE` stays the control's name.
+
+### V-c — the hoist unblock (design 2026-09-08)
+
+**Measured blocker.**  An env-gated print in `blocks_header_hoist`'s call arm
+(inserted and removed the same hour) names what declines the resolve loop
+(`lock_layer`'s `loop_74`): `n_brush_sample` alone — inside it the retbuf
+writes (`OpDatabase(__retbuf)`, four `OpSetFloat(__retbuf, …)`) and
+`OpRefIsNull(__retbuf)`, which the allow-list reads as a writer only because
+its parameter is a reference (it is `store_nr == u16::MAX`, a pure read; the
+R1 guard is what put it in a hot body).  The guarded frees in the loop are
+already non-blocking.  So the unblock is two allow-list entries, each with an
+argument, not a new mechanism.
+
+**Invariant:** *a hoisted vector header stays valid across a call whose only
+store writes are fixed-width scalars into its own retbuf record.*  The
+argument is `IN_PLACE_SET_OPS`'s, one call deep: a scalar set through an
+address moves nothing and changes no length; `OpDatabase` on the buffer
+allocates from a null slot or clears the buffer's own store, and a store is
+its own allocation, so no other store's header moves; and the buffer's store
+cannot itself host a hoisted header, because the record is ALL-SCALAR — no
+collection, text or reference field — and the loop never names the buffer
+variable.  A callee with a collection field in its record (the record grows),
+one that writes a caller-passed record, or one that calls a writer, stays
+blocking.
+
+**The fact** (`hoist::retbuf_only_writer`, memoised beside `call_writes_store`):
+the def has a hidden return buffer whose record type is all-scalar; every
+store-writing native op in the body is `OpDatabase` or an `IN_PLACE_SET_OPS`
+member whose first argument IS the buffer variable; every other native op is
+store-free; every user call is non-writing; no `CallRef`/`Parallel`/`Yield`.
+`call_writes_store` answers *false* for such a def.  Switch:
+`LOFT_NO_RETBUF_HOIST=1` (generation-time, the before-half of the A/B).
+
+**Pinned:** `tests/hoist_gate.rs` — a loop calling a `brush_sample`-shaped
+callee hoists; a callee whose record has a vector field, one that writes its
+parameter, and one that calls a writer keep the loop declined.
+**Falsifier:** `LOFT_HOIST_VERIFY=1` on the bench and the guard (the checking
+form re-derives every hoisted header and panics on a stale one).
+**Predicted:** `lock` 17.9M → ~15M on the quiet box (the −17 pts § V attributed
+to the resolve hoists), hashes exact.  **Red:** a `VERIFY` panic, a hash
+moving, or `lock` not moving — the last says another op in the loop still
+declines, and the same print names it.
+
+**SHIPPED 2026-09-08.**  The callee verdict alone moved nothing — the same
+print, re-armed, named the SECOND blocker: `OpFreeRefIfDistinct(ll_smp,
+__ref_2)`, the guarded per-iteration free of the buffer-fed result, a writer
+to the allow-list only because its operands are references.  Admitted by the
+operand's TYPE (`hoist::frees_a_record`): a free releases one store and moves
+no other, and the store a hoisted header describes is a loop-invariant
+vector's, live across the loop — so a RECORD variable's release cannot be it;
+a vector-typed operand (a per-iteration vector local, a loft#1201 vector
+work-ref) keeps declining, and so does a free whose body the gate cannot see
+(`vars == None`, the external `may_write_store` callers).  Both admissions ride
+one switch, `LOFT_NO_RETBUF_HOIST`.  With both, `lock_layer`'s resolve loop
+carries **9** hoisted reads and fused writes (was 0); `LOFT_HOIST_VERIFY=1` is
+clean on the bench and the guard, hashes exact.  Measured on the quiet box,
+nine alternations of one binary pair: `lock` 18.6M → **15.7M** (−16 %; minima
+18.1M → 15.0M), on the prediction; `hash` is untouched — its two functions are byte-identical between the halves, so the row's sample noise is noise.  P0
+instrument: `lock` **5.3×** (bar 10 → 8), `hash` 4.5×.  Pinned in
+`tests/hoist_gate.rs` (`a_scalar_retbuf_writer_does_not_decline_the_hoist`):
+the scalar-retbuf callee and the record free hoist; a record with a vector
+field, a write to a parameter, and a write to a scratch local decline — and
+the promoted-local shape (`t = mk(u); t.b = 1.0; t`) is a retbuf-only writer,
+which the first cut of the pin got wrong: NRVO makes `t` the buffer.  P0 instrument on the idle box:
 `lock` **6.2×** (bar 16 → 10), `hash` 5.1× (bar 7).  Still open from this
 section: the hoist unblock — the def-level *"writes only into its retbuf"*
 fact the resolve loop's P4 hoists wait on (the −17 pts attributed above).
