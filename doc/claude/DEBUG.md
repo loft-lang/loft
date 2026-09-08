@@ -1466,7 +1466,11 @@ you believe is missing, then ask whether the invariant could be met by changing 
 the first green build of it is not a regression check — it is a first measurement. Two defects
 this cycle were found this way and both were invisible until the refusal above them was gone
 (one leaked only under `LOFT_STRICT_STORES=1` while the value was right). After removing a
-refusal, run the newly-reachable cells under the instruments before believing the value.
+refusal, run the newly-reachable cells under the instruments before believing the value — a guard
+that suddenly compiles is a guard whose cells have never been measured.  The worked example is
+loft#1479: right answer on both backends, clean on `--interpret`, and one leaked record on
+`--native` that only `LOFT_STRICT_STORES=1` sees, found because `make falsify` refused to score
+the tree.
 
 **A baseline must FORK BEFORE the work you are attributing.** To answer *"is this mine?"* the
 control build has to lack the suspect change. A commit inside your own branch's lineage cannot:
