@@ -549,6 +549,18 @@ The pieces exist; they are incomplete:
 - **But the computation is partial** and supplemented by heuristics (above). The
   store-lifetime bug class is the catalogue of those gaps.
 
+**How partial, measured.** `make licence-census` (@PLN155 phase 0) classifies every free the
+compiler EMITS by the fact that licensed it. Over the 1412-file corpus, 80 325 emitted frees:
+56.3 % rest on an owner fact the oracle derived from the binding's own definitions, 21.9 % on
+an `OpDatabase` mint, 11.6 % were emitted where the oracle answers `Borrowed`/`Join`, and
+**8.0 % — 6412 frees at 2478 sites — rest on the empty-`deps` PROXY alone**, with the oracle
+having nothing to read. Two-thirds of those sites are `__ref_N` return buffers, which the
+oracle deliberately cannot classify; 804 are bindings the author named.
+
+That is the number this doc's "partial" means, and it is a report rather than a defect count:
+it says what each licence RESTS on, not which frees are wrong. `make licence-census
+ARGS=--control` proves the buckets can move in both directions before any of it is believed.
+
 ## The invariants the system must enforce (sound AND complete)
 
 1. **Single owner.** Every heap store has exactly one owner at any moment.

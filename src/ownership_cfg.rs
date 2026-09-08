@@ -969,11 +969,18 @@ pub fn oracle_free_checks(data: &Data) {
     let leak = mode == "check" || mode == "check-leak"; // leak scan is promoted onto `check`
     let over = mode == "check"; // over-free Check B is promoted onto `check` (beside the leak scan)
     let dev = mode == "check-dev";
-    if !leak && !dev {
+    // @PLN155 phase 0 — a REPORT, never promoted onto `check`: it emits no RED and answers a
+    // question about the compiler rather than about the program.
+    let census = mode == "census";
+    if !leak && !dev && !census {
         return;
     }
     let free_ops = free_op_nrs(data);
     let mut total_reds = 0usize;
+    let mut tally: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut spellings: BTreeMap<String, usize> = BTreeMap::new();
+    let mut examples: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    let mut walked = 0usize;
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
@@ -983,6 +990,19 @@ pub fn oracle_free_checks(data: &Data) {
             continue;
         }
         let name = data.def(d_nr).name();
+        if census {
+            run_licence_census(
+                name,
+                &body,
+                data,
+                d_nr,
+                &mut tally,
+                &mut spellings,
+                &mut examples,
+            );
+            walked += 1;
+            continue;
+        }
         if leak {
             total_reds += run_leak_scan(name, &body, data, d_nr);
         }
@@ -997,6 +1017,36 @@ pub fn oracle_free_checks(data: &Data) {
             total_reds += run_free_checks(name, &body, &cfg, data, d_nr);
         }
     }
+    if census {
+        let total: usize = tally.values().sum();
+        // `scopes::check` runs once per SOURCE, and each run walks every definition known so
+        // far — so a program that loads the three stdlib files prints a report per source and
+        // only the LAST one covers the whole program.  The function count is what identifies
+        // it; `scripts/licence_census.py` reads the last block for that reason.
+        eprintln!(
+            "OWN-CENSUS over {walked} function(s): {total} emitted free(s), \
+             by the fact that licensed them"
+        );
+        for (bucket, n) in &tally {
+            // A share for a human to read, over counts in the tens of thousands — the
+            // precision clippy warns about is orders of magnitude below what this prints at.
+            #[allow(clippy::cast_precision_loss)]
+            let pct = if total > 0 {
+                100.0 * *n as f64 / total as f64
+            } else {
+                0.0
+            };
+            eprintln!("  {bucket:<18} {n:6}  {pct:5.1}%");
+            for ex in examples.get(bucket).into_iter().flatten() {
+                eprintln!("      {ex}");
+            }
+        }
+        eprintln!("  -- by free spelling --");
+        for (op, n) in &spellings {
+            eprintln!("  {op:<22} {n:6}");
+        }
+        return;
+    }
     let tier = if dev {
         "DEV-FREE (exit-state under-free)"
     } else if over {
@@ -1005,6 +1055,102 @@ pub fn oracle_free_checks(data: &Data) {
         "LEAK (definite)"
     };
     eprintln!("OWN-CHECK-{tier}: {total_reds} RED finding(s)");
+}
+
+/// @PLN155 phase 0 — the LICENCE census: which FACT licensed each emitted free?
+///
+/// The plan's kill probe.  `Scopes::owns_freeable_store` licenses a free from the deps PROXY
+/// (`depend().is_empty()`) plus the `is_skip_free` veto and the parameter carve-out; the
+/// ORACLE (@FR-O-Oracle, `use_analysis::ownership_of`) derives the same fact independently and
+/// never consults `deps`, "which is why they can disagree".  This counts, over every free the
+/// compiler actually emits, how many rest on a positively-derived owner fact and how many on
+/// the proxy alone.
+///
+/// **If proxy-alone is a handful, @PLN155's phases 2-4 are not worth their cost** and the plan
+/// closes with this number as its product — the census staying as the guard that says when
+/// that changes.  So the categories are chosen to be a partition of the frees, not a list of
+/// suspicions:
+///
+///  * `oracle-derived` — the oracle read this binding's own definitions and answered `Owned`.
+///    A positive fact; the proxy agreeing with it is the healthy case.
+///  * `minted` — `OpDatabase` minted a store into this var.  Also a positive fact, and the
+///    strongest one: no `Set` is needed for it.
+///  * `proxy-alone` — the proxy said "empty deps, therefore owned" and the oracle had NOTHING
+///    to read: no definition, no mint, not a parameter, so its `Owned` is the permissive
+///    default rather than a derivation.  **The category the plan is about.**
+///  * `oracle-disagrees` — the oracle answers `Borrowed`/`Join` and a free was emitted anyway.
+///    Not necessarily wrong (a transition free reads the `owned_refs` memo, which this cannot
+///    see), but it is the population where the two derivations differ.
+///  * `veto` — the binding is `skip_free`, whose contract is *no ownership-derived free in any
+///    spelling*.  Check D's population; it should be empty of live spellings.
+///
+/// ⚠ **A category reading 0 is a claim to check, not a result.**  The control is
+/// `LOFT_OWN_INJECT_FREE_BORROWED=<var>`, which forces an unconditional free of a borrowed
+/// binding: it must move `oracle-disagrees`.  A census whose buckets cannot be moved is
+/// measuring its own walk.
+///
+/// Reports per FREE SITE, not per binding: one binding freed on three paths is three licences
+/// to account for, and collapsing them would under-count exactly where the paths differ.
+fn run_licence_census(
+    name: &str,
+    body: &Value,
+    data: &Data,
+    d_nr: u32,
+    tally: &mut BTreeMap<&'static str, usize>,
+    spellings: &mut BTreeMap<String, usize>,
+    examples: &mut BTreeMap<&'static str, Vec<String>>,
+) {
+    let func = &data.def(d_nr).variables;
+    let sets = data.op_sets();
+    // One `function_defs` for the whole function: `ownership_evidence` per site would walk and
+    // clone the whole body each time, which is loft#854's thirteen-minute shape.
+    let defs = crate::use_analysis::function_defs(data, d_nr);
+    let mut sites: Vec<(u16, String)> = Vec::new();
+    body.walk(&mut |x| {
+        if let Value::Call(d, args) = x
+            && sets.frees.contains(d)
+            && let Some(a0) = args.first()
+        {
+            let v = match a0.unspan() {
+                Value::Var(v) => *v,
+                Value::TupleGet(v, _) => *v,
+                _ => return,
+            };
+            sites.push((v, data.def(*d).name().to_string()));
+        }
+    });
+    for (v, op) in sites {
+        *spellings.entry(op).or_default() += 1;
+        let (own, evidence) = crate::use_analysis::ownership_evidence_with(data, d_nr, v, &defs);
+        let bucket = if func.is_skip_free(v) {
+            "veto"
+        } else if !matches!(own, Own::Owned) {
+            "oracle-disagrees"
+        } else {
+            match evidence {
+                crate::use_analysis::OwnEvidence::Derived => "oracle-derived",
+                crate::use_analysis::OwnEvidence::Minted => "minted",
+                // A parameter answering `Owned` cannot happen (the arm returns `Borrowed` of
+                // itself), so this is the promoted-retbuf carve-out reached another way; kept
+                // separate rather than folded, because merging it would hide it.
+                crate::use_analysis::OwnEvidence::Parameter => "parameter",
+                crate::use_analysis::OwnEvidence::Fallback => "proxy-alone",
+            }
+        };
+        *tally.entry(bucket).or_default() += 1;
+        let ex = examples.entry(bucket).or_default();
+        // Every `proxy-alone` site is listed, never a sample: it is the category the plan's
+        // kill criterion reads, and "a handful" is a claim about the SET, which a sample
+        // cannot support.  The other buckets get six examples — enough to see what is in
+        // them, and they are not what the decision turns on.
+        if bucket == "proxy-alone" || ex.len() < 6 {
+            ex.push(format!(
+                "{name}:{} (v{v}) dep={:?}",
+                func.name(v),
+                func.tp(v).depend()
+            ));
+        }
+    }
 }
 
 /// The DEFINITE-leak scan (PROMOTED: runs under `LOFT_OWN_ORACLE=check` and `check-leak`). Flags a

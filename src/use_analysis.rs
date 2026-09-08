@@ -4043,6 +4043,64 @@ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
 }
 
+/// WHY the oracle answers what it answers about a BINDING — @PLN155 phase 0.
+///
+/// [`ownership_of`] returns a verdict and hides how much evidence is under it, and the two
+/// are not the same fact.  Its `Value::Var` arm answers `Own::Owned` for a var with no local
+/// definition and no mint, which is a FALLBACK and not a derivation: nothing about that
+/// binding was read, and the permissive value was taken because it is the permissive value.
+/// A free licensed by such an answer rests on the deps PROXY alone.
+///
+/// The census that counts those cannot tell them apart from the verdict, and re-deriving
+/// "does this var have a definition" at the census site would be a second spelling of the
+/// question this function already owns — which is the defect @PLN155 exists to remove, so
+/// the evidence is published here instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnEvidence {
+    /// The verdict is joined from the binding's own defining right-hand sides.
+    Derived,
+    /// `OpDatabase` minted a store into this var — a positive fact, no `Set` needed.
+    Minted,
+    /// A parameter with no local definition: the caller owns it, so `Borrowed` of itself.
+    Parameter,
+    /// No definition, no mint, not a parameter — `Owned` because that is the default.
+    /// This is the fail-open the plan's phase 2 is about.
+    Fallback,
+}
+
+/// [`ownership_of`] for a BINDING, with the evidence its verdict rests on, against an
+/// already-computed [`function_defs`].
+///
+/// Only the `_with` form exists: every caller asks about MANY bindings of one function (that
+/// is what a census is), and a one-shot spelling beside it would be the quadratic trap
+/// [`function_defs`] documents, sitting there waiting to be reached for.
+#[must_use]
+pub(crate) fn ownership_evidence_with(
+    data: &Data,
+    d_nr: u32,
+    v: u16,
+    defs: &Defs,
+) -> (Own, OwnEvidence) {
+    let own = ownership_of_with(data, d_nr, &Value::Var(v), defs);
+    // The same three questions the `Value::Var` arm asks, in the same order, read off the
+    // same `defs` — so the evidence cannot describe a branch the verdict did not take.
+    let has_def = defs
+        .rhs
+        .get(&v)
+        .is_some_and(|rhss| rhss.iter().any(|r| !holds_no_store(data, r)));
+    let minted = defs.db_vars.contains(&v);
+    let evidence = if has_def {
+        OwnEvidence::Derived
+    } else if minted {
+        OwnEvidence::Minted
+    } else if data.def(d_nr).variables.is_argument(v) {
+        OwnEvidence::Parameter
+    } else {
+        OwnEvidence::Fallback
+    };
+    (own, evidence)
+}
+
 /// The whole-function half of [`ownership_of`]: every var's defining right-hand
 /// sides, the `OpDatabase` vars, and the vars a branch fills in place.
 ///

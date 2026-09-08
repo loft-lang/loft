@@ -902,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -945,6 +945,14 @@ bug-review:  ## Monthly bug-review aid: which mechanism classes are still produc
 #   make campaign-review ARGS=--control        # the negative control (run after a gate edit)
 campaign-review:  ## Which mechanism class earns a CAMPAIGN next, on four measured gates
 	@python3 scripts/campaign_review.py $(ARGS)
+
+# @PLN155 phase 0 — which FACT licensed each emitted free?  The kill probe: a small
+# `proxy-alone` count means the plan's phases 2-4 are not worth their cost.
+#   make licence-census                     # the whole corpus (~minutes)
+#   make licence-census ARGS="--limit 100"  # a sample, for a quick read
+#   make licence-census ARGS=--control      # the injected-free control; run it after a gate edit
+licence-census:  ## @PLN155: how many emitted frees rest on the deps PROXY alone?
+	@python3 scripts/licence_census.py $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this

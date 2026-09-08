@@ -9,8 +9,11 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 ## Status
 
-**Active — arc A landed 2026-09-08, and it does not confirm the plan's premise.**  @PLN153
-closed the same day, so the sequencing hold is lifted.  The ownership MODEL is not reopened
+**Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
+phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
+same day, so the sequencing hold is lifted.  **Next: phase 1** — one home for *may this
+binding's store be freed here* — which phase 0 has now sized (2478 sites, two-thirds of them
+`__ref_N` return buffers).  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -34,12 +37,33 @@ window has not passed.**  Four days is not a measurement — a 2.8-bug differenc
 an unfinished measurement of exactly the kind gate 4 exists to refuse.  The report says so
 rather than ranking the class.
 
-That does not close the plan.  Phase 0 is the probe that can, it is independent of every
-gate above, and it asks the question no bug-share can: **how many emitted frees are licensed
-by the PROXY alone?**  A handful means this collapses to a walk whatever the trend does; a
-large number means the class is worth a campaign whether or not the share has started to
-fall.  Phase 0 is therefore next, and phases 1-4 wait on its count rather than on the
-bug-review window.
+**Phase 0 answers what the gates could not, and it does NOT kill the plan.**  `make
+licence-census` over the whole 1412-file corpus: **6412 of 80 325 emitted frees (8.0 %) rest
+on the deps PROXY alone**, at **2478 distinct `function:binding` sites, 804 of them
+author-named bindings rather than compiler temps.**  The kill criterion was *a handful*; this
+is not one.  Phases 1-4 are worth their cost, and they are worth it on a measurement of the
+COMPILER rather than on a bug share that a three-day window cannot read.
+
+| the fact that licensed the free | frees | share |
+|---|---|---|
+| `oracle-derived` — the oracle read the binding's own definitions and answered `Owned` | 45 192 | 56.3 % |
+| `minted` — `OpDatabase` minted a store into it; the strongest positive fact | 17 555 | 21.9 % |
+| `oracle-disagrees` — the oracle answers `Borrowed`/`Join` and a free was emitted anyway | 9 349 | 11.6 % |
+| **`proxy-alone` — empty deps, and the oracle had NOTHING to read** | **6 412** | **8.0 %** |
+| `veto` — a `skip_free` binding, whose contract is no ownership-derived free at all | 1 817 | 2.3 % |
+
+Phase 0's own finding about the population, which shapes phase 2: the largest family in
+`proxy-alone` is `__ref_N` (1579 of 2478 sites) — the NRVO/return buffers, which the oracle's
+`Value::Var` arm *deliberately* cannot classify (*"a store the function minted in place with
+no `Set` at all … else a parameter"*).  So the fail-open is not an accident at the margins; it
+is load-bearing for the return-buffer machinery, and phase 2's `Own::Unknown` has to give
+those a positive answer rather than merely refuse them.
+
+⚠ **What the number is NOT.**  It is not 6412 wrong frees.  It counts what each licence RESTS
+on, not what is broken: a `__ref_N` buffer really is owned, and the oracle simply cannot see
+it.  The claim phase 0 supports is the plan's premise — that the licence is derived from a
+proxy with no positively-derived owner fact behind it at one free in twelve — and nothing
+stronger.
 
 ## Goal
 
@@ -55,7 +79,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A landed).
+- **Last touched:** 2026-09-08 (arc A + phase 0 landed).
 
 ## Why this family, measured
 
@@ -90,7 +114,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **A** — the reassessment instrument: the four campaign gates as a command | § Arc A | reproduces the 2026-09-07 ranking from measurements alone; fed the pre-2026-08 bands it must NOT name generic/monomorph (whose keystone paid off) | ✅ **done** — `scripts/campaign_review.py`, `make campaign-review`.  Control: `--control` PASSES (no class is named a PLAN on the pre-2026-08 population), and it FAILS when a gate is mis-wired — proved by making gates 3 and 4 pass on an unmeasured reading, which named generic/monomorph and tuple |
-| **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | Open |
+| **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | ✅ **done — 8.0 %, the plan is NOT killed.**  `LOFT_OWN_ORACLE=census` + `make licence-census`.  Both controls PASS, in the two directions a bucket can move; no category reads 0, so nothing had to be shown reachable |
 | **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | Open |
 | **2** — fail closed: `Own::Unknown` | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | Open |
 | **3** — the refusal at the free, on a `report → deny` ladder | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open |
@@ -134,12 +158,33 @@ unfilled payoff row is not a candidate, it is an unfinished measurement — whic
 where keyed collections sits (15.5 % and RISING, `Scopes::owns_freeable_store` landed 2026-09,
 row blank).  A report that ranked it first would be reading three gates out of four.
 
-### Phase 0 — the probe that can kill the plan
+### Phase 0 — the probe that can kill the plan — RUN, and it does not
 
 An env-gated census over the corpus classifying every emitted free by the fact that licensed
 it: oracle-agreeing · proxy + veto · **proxy alone** · `owned_refs` only.  If proxy-alone is a
 handful, phases 2–4 are not worth their cost and the plan closes with the number as its
 product; the census stays as the guard that says when that changes.
+
+**Built** as `LOFT_OWN_ORACLE=census` (`ownership_cfg::run_licence_census`), summed over the
+corpus by `scripts/licence_census.py` / `make licence-census`.  The verdict is in § Status:
+8.0 % of emitted frees, 2478 sites.  Two things about the instrument are worth carrying
+forward.
+
+**The oracle had to publish its EVIDENCE, not only its verdict.**  `ownership_of`'s
+`Value::Var` arm answers `Own::Owned` for a var with no definition and no mint — a FALLBACK,
+not a derivation, and indistinguishable from a real `Owned` in the return value.  That
+distinction IS the census, so `use_analysis::ownership_evidence` publishes it
+(`Derived` · `Minted` · `Parameter` · `Fallback`) rather than the census re-deriving *"does
+this var have a definition"* at its own site — which would have been a second spelling of the
+question `ownership_of` already owns, the exact defect this plan exists to remove.
+
+**The decisive bucket moves in only ONE direction, and the reason is structural.**  The
+existing over-free injector (`LOFT_OWN_INJECT_FREE_BORROWED=bview`) moves `oracle-disagrees`
+5 → 6, so the census is not vacuous — but it cannot move `proxy-alone`, because such a binding
+is by definition one the proxy already licenses, so its free is EMITTED rather than suppressed
+and there is nothing for an injector of suppressed frees to force.  The control that reaches
+it is the drop direction: `LOFT_OWN_INJECT_DROP_FREE=__ref_1` takes `proxy-alone` 1 → 0.
+`make licence-census ARGS=--control` runs both and requires both to move.
 
 ### Phase 3 — the ladder, and what `deny` may do
 
@@ -199,6 +244,7 @@ feeds it changes).  2 before 3 (a refusal over a fail-open verdict refuses the w
   [STABILITY_METHOD.md](../../STABILITY_METHOD.md) § The rule-led walk — the cheaper tier, and
   when arc A should route a class there instead.
 - `make campaign-review` (arc A's own report, `--control` for its negative control),
+  `make licence-census` (phase 0's census, `--control` for its two injection controls),
   `make bug-review`, `scripts/rule_predicate_audit.py`, `scripts/ir_walker_audit.py`,
   `scripts/o_proxy_check.py`, `scripts/introspect_diff.sh`, `make falsify`,
   `LOFT_OWN_ORACLE=check` — the instruments.
