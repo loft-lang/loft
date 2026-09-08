@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 420 | 396 | **24** |
+| 422 | 398 | **24** |
 
 
 
@@ -1526,7 +1526,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 48 | **12** | 36 |
+| 49 | **12** | 37 |
 
 
 
@@ -2660,6 +2660,7 @@ than by the audit.
 
 
 
+
 @PLN157 § V-d adds one on the OPAQUE side on purpose — **733 · 367 · 6 · 360** — `vectors::element_call_takes_record_buffer` matches the callee's return type bare, because a NULLABLE record return is excluded from building into a vector element (its buffer carries a different delivery); the audit counting it opaque is the exclusion made visible.
 
 @PLN157 § V-c adds two in the hoist gate — **732 · 367 · 6 · 359** — `hoist::frees_a_record` reads the freed operand's type through `base()` (a nullable record local's free is a record free too), and `hoist::retbuf_only_writer` asks the record's attributes through the keystone.
@@ -2670,6 +2671,15 @@ than by the audit.
 `non_sentinel::collect_escapes` asks whether a callee parameter is by-reference via
 `at.typedef.base()`, so an `Optional`-wrapped `RefVar` still escapes the argument it can
 write — the conservative answer, where a bare match would have silently trusted it.*
+
+*The three rows above were re-measured ONCE over the finished @PLN157 join, and none of them
+is either side's number — the quality walk read `49 · 12 · 37` / `422 · 398 · 24` /
+`741 · 383 · 6 · 352` only after the join, where the two branches read `48/47`, `420/416` and
+`736/730`.  That is the normal outcome and the reason these rows are taken from a run rather
+than carried across a merge: a running total written on a branch describes a tree that no
+longer exists.  The `optional` KEYSTONE column moved 5 -> 6 for the first time in this row's
+history, which is @PLN157's own doing — a new walker descends via the `Type` keystone rather
+than naming variants.*
 
 *loft#1460 added `scopes.rs`'s keyed-removal reader and moved all three rows by one: a new
 function that discriminates on `Value` variants (`get_record_literal_keys`), one that resolves an
