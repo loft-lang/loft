@@ -4878,13 +4878,14 @@ impl State {
             // and would leave the closure half of the slot garbage.  So it takes the same
             // shape `&text` does, a deref-and-write op keyed on the link's frame slot
             // (loft#1443).
-            // A PARAMETER's link, which is the one this covers.  A `&fn(…)` LOCAL bind is a
-            // second spelling with a different unsound step — the `&` bind lowering admits
-            // `Reference`/`Tuple`/`Text` and not `Function`, so the link is never installed
-            // and the bind and the write are indistinguishable here — and it keeps the
-            // pre-existing ICE rather than taking a write path that would run against a
-            // link that does not exist (loft#1443, its own entry).
-            if matches!(*tp, Type::Function(_, _, _)) && stack.function.is_argument(var) {
+            // Every write THROUGH the link, whether the link came from a parameter or from a
+            // local `&` bind — `@FR-B-Ref-Uniform`: a `&τ` variable is used exactly like a τ
+            // variable, and how the link was INTRODUCED is not the question.  The one value
+            // excluded is the link INSTALL itself (`OpCreateStack(src)`), which gives the
+            // variable its link and is not a fn-ref reaching a slot through one (loft#1454).
+            let installs_link = matches!(value.unspan(), Value::Call(d, _)
+                if stack.data.def(*d).name() == "OpCreateStack");
+            if matches!(*tp, Type::Function(_, _, _)) && !installs_link {
                 self.gen_fn_ref_value_node(IrNode::Native(value), stack);
                 // AFTER the push: `var_pos` is relative to the current stack top, so the
                 // pair has to be on it already.  The runtime subtracts the popped span

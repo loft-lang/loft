@@ -3282,7 +3282,10 @@ use a separate collection or add after the loop"
                     if is_scalar(self.vars.tp(src))
                         || matches!(
                             self.vars.tp(src).base(),
-                            Type::Reference(..) | Type::Tuple(_) | Type::Text(_)
+                            Type::Reference(..)
+                                | Type::Tuple(_)
+                                | Type::Text(_)
+                                | Type::Function(_, _, _)
                         ) =>
                 {
                     Some(src)
