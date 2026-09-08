@@ -355,7 +355,19 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0** — **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
+**OPEN: 1.**
+
+* **D-bind-29** *(open, loft#1463)* — the FUNCTION half of `(B-Ref-Uniform)`, on `--native`
+  only.  A write through a `&fn(…) -> τ` link does not land when the caller's slot already
+  holds a CAPTURING closure: the interpreter writes it, native leaves the old value in place
+  and says nothing.  A capturing closure occupies the 20-byte stack form (8 B `d_nr` + a 12 B
+  closure `DbRef`) where an empty-environment one carries only the `d_nr`, and the native
+  write-back is right for the second and not the first.  loft#1443's guard pins the caller's
+  slot to a non-capturing initial value in every one of its cells, which is why the axis was
+  never moved; measured on both sides of that issue's own lifetime fix, so it is independent
+  of it.  `silent-wrong`: the caller keeps calling its own closure and gets a plausible answer.
+
+**D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
 special-cased.  THREE independent mechanisms broke that for collections and all three are now
 closed; the keyed PARAMETER took two attempts, and what closed it was splitting the overloaded

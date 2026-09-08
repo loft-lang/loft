@@ -185,7 +185,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 2.**
 
 - **D-clo-24** *(closed 2026-09-07, loft#1440)* — two closures over ONE store both adopted it,
   and their deaths are independent: the record left behind released what the escaped one still
@@ -209,6 +209,33 @@ with the closure's environment in scope.
   two closures with one escaping, and ONE closure reproduces it, so loft#1440's grouping is not
   involved.  Guard
   `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft`.
+- **D-clo-28** *(closed 2026-09-08, loft#1443)* — `(L-CapOwn)` says the record that LEAVES its
+  defining frame takes the release over, and the code recognised exactly one way of leaving: a
+  RETURN.  A `&fn(…)` link is a second, and loft#1443 opened it — before that the parameter did
+  not compile — so the callee freed the record it had just written out and the cascade took the
+  capture with it; the caller then called a closure over `0xDEADBEEF`.
+  `scopes::record_leaves_frame` had reserved the place for it in as many words (*"when it is
+  implemented this predicate gains a second source and must be told"*) and the implementing
+  change did not tell it.  Closed by reading the link writes the way `returned_closure_records`
+  reads the returns — the records the assigned value YIELDS, on every arm — at the three sites
+  that each ask "does this leave the frame": the heap sweep, the fn-ref sweep whose free
+  TRIGGERS the cascade, and `record_leaves_frame` itself.  Two refinements the return route does
+  not need, because a return ends the frame and a link does not: a write DISPLACED by a later
+  write to the same link in the same operator list delivers nothing and is the frame's to free
+  after all, while an `if`'s two arms are separate lists and both deliver.  The source
+  resolution is one home (`closure_records_of_source`) for both routes.  **The guard was green
+  over the live defect**: all 13 cells of
+  `1443-a-closure-written-through-a-fn-parameter-link.loft` pass on the broken build, because a
+  freed arena slot still reads back the bytes it held; `LOFT_POISON=1` fails 8 of them, which is
+  the nightly gate that caught it.
+- **D-clo-29** *(open, loft#1464)* — `(L-CapOwn)` says a captured heap store is freed ONCE, and
+  where the closure BUILD sits inside a conditional block it is freed ZERO times on the path that
+  skips the build.  The frame gives up its own release in favour of the record's cascade
+  (`capture_adoption_owns_free`), but the suppression is decided from the CAPTURE relation — a
+  static fact about the function — while the cascade that replaces it happens only if the build
+  EXECUTES.  Struct and vector captures leak, text does not (its own free path is separate); a
+  zero-iteration loop body is the same shape.  Not a link question: it reproduces with no `&fn`
+  anywhere.
 - **D-clo-27** *(open, loft#1447)* — `(L-CapHeap)` says a rebind is not a mutation-through for a
   captured **struct** as much as for a vector, and the DENSE spelling breaks it: `d: C = C{a:5};
   out = fn() { d.a }; d = C{a:9}` answers 9 on both backends where its nullable twin answers 5.

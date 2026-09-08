@@ -5416,7 +5416,13 @@ fn record_leaves_frame(data: &Data, function: &Function, d_nr: u32, v: u16) -> b
     if function.is_argument(v) {
         return false;
     }
-    let delivered = returned_closure_records(data, function, d_nr);
+    let mut delivered = returned_closure_records(data, function, d_nr);
+    // The second route out, the one this doc comment reserved a place for.  Both are
+    // DELIVERY — the value leaves this frame and the caller holds it — so they union
+    // rather than take turns: a function that both returns one closure and writes another
+    // out through a link delivers both, and asking only the returns would free the one the
+    // link handed over.
+    delivered.extend(link_written_closure_records(data, function, d_nr));
     if !delivered.is_empty() {
         return delivered.contains(&v);
     }
@@ -5477,28 +5483,146 @@ fn returned_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<
         }
     }
     for v in sources {
-        if v >= function.count() {
-            continue;
-        }
-        match function.tp(v) {
-            // A fn-ref LOCAL: its own type names the record it holds.
-            Type::Function(_, _, deps) => {
-                for w in deps.frame_vars() {
-                    if !out.contains(w) {
-                        out.push(*w);
-                    }
-                }
-            }
-            // The record itself, returned directly.
-            Type::Reference(record, _)
-                if data.def(*record).name.starts_with("__closure_") && !out.contains(&v) =>
-            {
-                out.push(v);
-            }
-            _ => {}
-        }
+        closure_records_of_source(data, function, v, &mut out);
     }
     out
+}
+
+/// The closure records a SOURCE VARIABLE stands for, appended to `out`.
+///
+/// Two spellings reach a record through a variable, and both count: a fn-ref LOCAL, whose
+/// own type names the record it holds, and the record itself handed over directly.
+///
+/// One home because two deliveries ask it — [`returned_closure_records`] for a `return` and
+/// [`link_written_closure_records`] for a write through a `&fn(…)` link — and a record the
+/// two disagreed about would be freed by the frame on one route and kept on the other. That
+/// is the `is_dbref` / `deps_mut` / `is_keyed` family's failure mode, and this list is
+/// exactly the shape that drifts when it is written out twice.
+fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut Vec<u16>) {
+    if v >= function.count() {
+        return;
+    }
+    match function.tp(v) {
+        // A fn-ref LOCAL: its own type names the record it holds.
+        Type::Function(_, _, deps) => {
+            for w in deps.frame_vars() {
+                if !out.contains(w) {
+                    out.push(*w);
+                }
+            }
+        }
+        // The record itself, delivered directly.
+        Type::Reference(record, _)
+            if data.def(*record).name.starts_with("__closure_") && !out.contains(&v) =>
+        {
+            out.push(v);
+        }
+        _ => {}
+    }
+}
+
+/// The closure records a function writes OUT through a `&fn(…)` LINK.
+///
+/// [`record_leaves_frame`]'s second source, and its own doc comment predicted it: *"a
+/// `&fn()` parameter does not compile at all (loft#1443, an ICE) … when it is implemented
+/// this predicate gains a second source and must be told, or an escaping closure written
+/// out through a `&` parameter loses its capture the way loft#1439 lost one."*  loft#1443
+/// made the write compile and did not tell it, so the record the write handed to the caller
+/// was still freed at the callee's scope exit — `OpFreeRef(___clos_N)` sits directly after
+/// the write in the IR — and the caller then called a closure over its own poison
+/// (`0xDEADBEEF`).  Silent without `LOFT_POISON=1`, because a freed arena slot still reads
+/// back the bytes it held: every cell of the loft#1443 guard passed on stale data.
+///
+/// A write through a link IS a delivery, exactly as a `return` is: `(B-Ref-Uniform)` says a
+/// `&τ` variable is used exactly like a τ variable, and the caller holds what the callee
+/// wrote. So the reading is the one [`returned_closure_records`] already does — the records
+/// the assigned value can YIELD, on every arm it may take — asked at each `Set` whose
+/// destination is a `RefVar` over a function type.
+///
+/// Narrow on purpose. Only a `RefVar` destination counts: a plain `fn`-typed LOCAL
+/// (`g = fn() { … }`) is a closure this frame keeps, and collecting those would hand a
+/// kept lambda the capture an escaping one owns — the same trap `returned_closure_records`
+/// documents for a `FnRef` outside return position.
+fn link_written_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<u16> {
+    let is_fn_link = |v: u16| matches!(function.tp(v), Type::RefVar(inner) if matches!(**inner, Type::Function(..)));
+    // Almost no function has a `&fn(…)` at all, and this walks a whole body — so ask the
+    // variable table first, which is a scan of the one thing already in hand.  The sweep that
+    // calls this runs once per scope exit.
+    if !(0..function.count()).any(is_fn_link) {
+        return Vec::new();
+    }
+    let mut out: Vec<u16> = Vec::new();
+    let mut superseded: Vec<u16> = Vec::new();
+    let body = data.def(d_nr).code();
+    body.walk(&mut |n| {
+        if let Value::Set(v, value) = n.unspan()
+            && is_fn_link(*v)
+        {
+            records_of_link_write(data, function, value, &mut out);
+        }
+        // A write DISPLACED by a later write to the same link, in the same straight line of
+        // operators, never reaches the caller: the second write overwrites the slot before
+        // the frame returns, so that record is this frame's to free after all. Only a
+        // sibling supersedes — an `if`'s two arms are separate lists and BOTH deliver, on
+        // the path that runs, which is the same reading `returned_closure_records` gives a
+        // branching return.
+        let ops: &[Value] = match n.unspan() {
+            Value::Block(bl) => &bl.operators,
+            Value::Insert(ops) => ops,
+            _ => return,
+        };
+        let writes: Vec<(u16, &Value)> = ops
+            .iter()
+            .filter_map(|o| match o.unspan() {
+                Value::Set(v, value) if is_fn_link(*v) => Some((*v, &**value)),
+                _ => None,
+            })
+            .collect();
+        for (idx, (dest, value)) in writes.iter().enumerate() {
+            if writes[idx + 1..].iter().any(|(later, _)| later == dest) {
+                records_of_link_write(data, function, value, &mut superseded);
+            }
+        }
+    });
+    out.retain(|r| !superseded.contains(r));
+    out
+}
+
+/// The closure records ONE write through a `&fn(…)` link hands to the caller.
+///
+/// The value's own yield, on every arm it may take — a `FnRef` built in place, an `if` that
+/// chooses between two, a block whose tail is one — plus the second stage for the records a
+/// value only NAMES: `out = h`, where the record lives in the fn-ref local's type.
+fn records_of_link_write(data: &Data, function: &Function, value: &Value, out: &mut Vec<u16>) {
+    let mut sources: Vec<u16> = Vec::new();
+    let mut delivered: Vec<&Value> = vec![value];
+    while let Some(cur) = delivered.pop() {
+        match cur.unspan() {
+            Value::FnRef(_, w, _) => {
+                if !out.contains(w) {
+                    out.push(*w);
+                }
+            }
+            Value::Block(bl) => {
+                if let Some(last) = last_non_free_result(&bl.operators, data) {
+                    delivered.push(last);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = last_non_free_result(ops, data) {
+                    delivered.push(last);
+                }
+            }
+            Value::If(_, t, f) => {
+                delivered.push(t);
+                delivered.push(f);
+            }
+            other => collect_return_sources(other, data, &mut sources),
+        }
+    }
+    for v in sources {
+        closure_records_of_source(data, function, v, out);
+    }
 }
 
 /// The `__ref_N` work-ref an inline record LITERAL built, when the literal's value is that
@@ -9447,6 +9571,12 @@ impl Scopes<'_> {
         let suppress_source = |function: &Function, v: u16| {
             return_sources.contains(&v) && crate::data::is_dbref(function.tp(v).base())
         };
+        // loft#1443's second half — the closure records this frame writes OUT through a
+        // `&fn(…)` link.  A write through a link DELIVERS, exactly as a `return` does
+        // (`(B-Ref-Uniform)`: a `&τ` variable is used exactly like a τ variable), so the
+        // caller holds the record and this frame must not free it.  Computed once here
+        // rather than per variable: the reading walks the body.
+        let link_delivered = link_written_closure_records(data, function, self.d_nr);
         for v in vars {
             if v == ret_var || suppress_source(function, v) {
                 continue;
@@ -9535,8 +9665,18 @@ impl Scopes<'_> {
                 let backs_return_source = return_sources
                     .iter()
                     .any(|&src| src != v && function.tp(src).depend().contains(&v));
+                // `in_ret` is really *"does `v` leave this frame"*, and until loft#1443 the
+                // return was the only way out — a `&fn(…)` parameter did not compile.  Now it
+                // does, and a closure record written through one is delivered to the caller,
+                // which frees it at ITS scope exit under the fn-ref that received it.  Without
+                // this term the callee freed the record it had just handed over, and its
+                // cascade took the capture with it: the caller then called a closure over
+                // `0xDEADBEEF`.  Invisible without `LOFT_POISON=1`, because a freed arena slot
+                // still reads back the bytes it held — every cell of the loft#1443 guard passed
+                // on stale data.
                 let in_ret = ret_borrows_v
                     || backs_return_source
+                    || link_delivered.contains(&v)
                     || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v);
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
@@ -9903,8 +10043,19 @@ impl Scopes<'_> {
                 // captured, which is how the caller read a released record (loft#1444).
                 // `return_sources` is the path-local fact this frame already has, and it names
                 // the value rather than the build order.
+                // …and the fn-ref that carries a record OUT through a `&fn(…)` link, the
+                // route loft#1443 opened.  The free below is what TRIGGERS the capture
+                // cascade, so emitting it for a fn-ref whose record the caller now holds
+                // destroys the closure the caller was just handed — `h = fn() { d.a };
+                // out = h;` kept the record (the heap sweep's own link term) and then had
+                // it taken by this one. Asked through `frame_vars()`, the same tagged
+                // decode `closure_records_of_source` uses, so the two cannot disagree
+                // about which record a fn-ref holds.
+                let link_carries = matches!(function.tp(v), Type::Function(_, _, deps)
+                    if deps.frame_vars().iter().any(|w| link_delivered.contains(w)));
                 let in_ret = tp.depend().contains(&v)
                     || ret_carries
+                    || link_carries
                     || v == ret_var
                     || return_sources.contains(&v);
                 // The free above is what TRIGGERS the capture cascade (see the

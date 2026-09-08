@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 424 | 400 | **24** |
+| 425 | 401 | **24** |
 
 
 
@@ -2542,7 +2542,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 749 | 403 | 6 | **340** |
+| 750 | 403 | 6 | **341** |
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
@@ -2550,6 +2550,17 @@ neither branch's numbers survived it, as at every join so far.**  This checkout 
 The KEYSTONE column moved `5 → 6` from the sibling's side (@PLN157 adds a walker that descends
 via the `Type` keystone rather than naming variants), and the opaque column is the one that did
 NOT move — three functions joined the classifier and every one of them peels.
+
+**2026-09-08, loft#1443's lifetime half: `749 · 403 · 6 · 340` → `750 · 403 · 6 · 341`, and the
+unspan row `424 · 400 · 24` → `425 · 401 · 24`.**  One function joined each classifier —
+`link_written_closure_records`, which asks whether a variable is a `&fn(…)` link
+(`Type::RefVar(inner)` over a `Type::Function`).  It lands in the OPAQUE column and belongs
+there: a nullable function type has no spelling in the language, so there is no wrapped shape
+for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
+`(fn() -> integer)?` as a local and as a struct field are all refused at the parser
+(*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
+RETURN type, which this site never asks about.  The unspan site peels, which is why that
+column's `neither` did not move.
 
 loft#1423's tuple walk moves ONE function out of the opaque column (`341 → 340`, and
 `399 → 400` on the seeing-through side): `parser::operators::coalesce_not_null` reads each tuple
@@ -8025,6 +8036,41 @@ The **5 remaining sites spell the BARE five** — `scopes.rs`'s return-type chec
 behaviour change per site and needs its own probe.  They stay on the checklist rather than being
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
+
+### "Does this closure record leave the frame?" — three sites, one of them documented (2026-09-08)
+
+`(L-CapOwn)` turns on ONE question: does the record outlive the frame that minted it?  Three
+places answer it, and loft#1443's use-after-free needed all three taught the same new fact —
+that a `&fn(…)` link is a second way out, beside the return:
+
+| site | spelling |
+|---|---|
+| `scopes.rs` heap sweep | `let in_ret = ret_borrows_v \|\| backs_return_source \|\| …` |
+| `scopes.rs` fn-ref sweep | `let in_ret = tp.depend().contains(&v) \|\| ret_carries \|\| …` |
+| `scopes::record_leaves_frame` | `returned_closure_records(…)`, then the declared type's note |
+
+Two of them are even called `in_ret`, which is the name of the ANSWER the return route gives
+rather than of the question.  Only the third carries a doc comment, and that comment is what
+made the fix findable: it had written down, a day in advance, that this predicate would gain a
+second source and *"must be told"*.  It was not told, and neither were the other two — the
+first free destroyed the record, and once that was fixed the second one's cascade destroyed it
+again.
+
+What was merged: the SOURCE RESOLUTION, `closure_records_of_source` — the two spellings by
+which a variable stands for a record (a fn-ref local naming it in its own type, or the record
+handed over directly).  It had one copy, inside `returned_closure_records`; the link route needs
+the identical reading, and a record the two disagreed about would be freed by one route and kept
+by the other.
+
+What was NOT merged, and is the open row: the three `in_ret` computations themselves.  They are
+not obviously one predicate — each is asked at a different point with a different set of facts
+in hand, and collapsing them is the early-abstraction failure the thread above warns about.  The
+cheap half is the naming: `in_ret` should say `leaves_frame`, so the next route out reads as
+something the name already covers rather than as an exception to it.
+
+☐ **ACTION** — rename the two `in_ret` locals to `leaves_frame` and cite `@FR-L-CapOwn` at all
+three sites, so `scripts/rule_tags.py sites @FR-L-CapOwn` answers "which sites enforce this?"
+with three rather than with one.
 
 ### The heap-record family — one declared home, four sites that drifted off it (2026-08-30)
 

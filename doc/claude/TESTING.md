@@ -3112,6 +3112,34 @@ is false and sends the next reader to the harness.  The residue is tracked on lo
 recovery fix is a parser change with its own matrix, because several guards pin the cascade
 text by hand.
 
+**A use-after-free guard passes on the bytes the freed slot still holds — every assertion, on
+every cell.**  loft's arena free is not a `libc` free: the record is marked dead and the bytes
+stay put until something else claims the slot.  So a guard over a value that is read AFTER its
+store was freed reads the right value and goes green, and stays green for as long as nothing
+reallocates over it.  Measured on
+`tests/scripts/1443-a-closure-written-through-a-fn-parameter-link.loft`: on the build where the
+callee freed the closure record it had just handed to its caller, the file reported **13 passed**
+— all of it, including five cells whose whole subject was that record.  Under `LOFT_POISON=1`,
+which fills a freed record with `0xDEADBEEF`, the same file on the same build reports **8
+failed**.
+
+Two consequences, and the second is the one that bites:
+
+- **A lifetime guard is a POISON-gate guard, and its file has to say so.**  Its cells are not
+  self-sufficient; a green `loft test` over them says nothing about the lifetime half, and the
+  nightly `LOFT_POISON` sweep is what actually reads them.  Write that into the file, beside the
+  `@falsified-at:` line, or the next reader takes a local green as coverage.
+- **`make falsify` on such a guard measures nothing unless it runs under the poison switch.**
+  Exit codes and assertion counts are identical on both sides of the fix without it.  So the
+  falsification line records the switch: *"interpret 8 assertion failures → 0, 13 passed both
+  times WITHOUT poison"* — that second number is the whole point, and a falsification that omits
+  it is a claim the guard cannot support.
+
+`LOFT_STRICT_STORES=1` is the sharper instrument for the same class — it names the store, the
+type, the freeing op and the reading op — but it REPORTS rather than gates: on the build above it
+printed twenty `USE AFTER FREE` lines while the run still reported `13 passed`.  Reach for it to
+diagnose, and for `LOFT_POISON` to gate.
+
 **A guard over the newly-ACCEPTED shape does not reach the sites that CONSUME it — and knowing
 the class does not save you.**  Measured twice on 2026-09-08, in both checkouts, four hours
 apart.  Peeling a type at a PARSER site makes a spelling parse that used to be refused; every

@@ -36,10 +36,45 @@
 //                        because admitting the fn source there makes the INTERPRETER right and
 //                        leaves `--native` emitting an empty initialiser and a non-deref write.
 //
+// ── The second half: the record the write HANDS OVER ────────────────────────────────────────
+//
+// Making the write compile was not the whole fix.  A capturing closure's environment lives in
+// a `__closure_N` store record the callee minted, and `scopes.rs` decided the frame's exit
+// frees by asking whether the value is RETURNED — the only route out of a frame before this
+// issue existed.  A link is a second route, so the callee freed the record it had just handed
+// to the caller, and the free cascaded into the capture: the caller then called a closure over
+// `0xDEADBEEF`.  `record_leaves_frame`'s doc comment had reserved the place for it in as many
+// words — *"when it is implemented this predicate gains a second source and must be told"* —
+// and loft#1443 did not tell it.
+//
+// ⚠ **Every cell below passed while that was broken.**  A freed arena slot still reads back
+// the bytes it held, so the assertions read the right values off a dead record.  Measured on
+// the pre-fix build: `13 passed` with no poison, and `8 failed, 5 passed` under
+// `LOFT_POISON=1`, which fills a freed record with `0xDEADBEEF`.  `LOFT_STRICT_STORES=1` on
+// that same build printed twenty `USE AFTER FREE` lines and the run still reported `13
+// passed` — it names the fault without failing the run.  So these cells are not
+// self-sufficient: this file is a poison-gate guard as much as a value guard, and a green
+// `loft test` over it says nothing about the lifetime half.
+//
+// Axes the lifetime half MOVES:  how the closure reaches the link (written straight in · through
+//                        a fn-ref LOCAL, whose own scope-exit free cascades into the same
+//                        record), how many records one frame mints and delivers (one · two
+//                        through the same link, where only the LAST reaches the caller and the
+//                        displaced one is still this frame's to free), and whether the frame
+//                        delivers by BOTH routes at once (a return and a link write).
+// Axes it HOLDS FIXED:   the caller's slot holds a NON-capturing closure before the write.
+//                        Moving it is a `--native` wrong answer that predates this file — the
+//                        write does not land at all, `interpret` says 88 and `--native` says
+//                        99 — and it is loft#1463, measured on the build before this fix as
+//                        well as after.
+//
 // @falsified-at: f5cd8a37e — interpret exit 1 -> 0, native exit 101 -> 0.  On the control EVERY
 //   cell is the ICE, so the file cannot even reach an assertion there; each cell's VALUE is
 //   hand-computed below and checked on both backends, which is what makes the pass mean
 //   something rather than the two binaries agreeing with each other.
+// @falsified-at: 8e242d34 (the lifetime half, under `LOFT_POISON=1`) — interpret 8 assertion
+//   failures -> 0, 13 passed both times WITHOUT poison.  That second number is the point: the
+//   control build is wrong and silent, and only the poison sweep separates the two.
 
 struct S1443 { a: integer }
 
@@ -146,6 +181,56 @@ fn test_an_if_valued_source_builds_the_pair_in_each_arm() {
   h: fn() -> integer = fn() -> integer { 0 };
   give_if_valued(h, true);
   assert(h() == 1, "and the then arm's");
+}
+
+// ── the record the write hands over ─────────────────────────────────────────────────────────
+
+// The closure reaches the link through a fn-ref LOCAL rather than being written straight in.
+// Two frees aim at one record here — the record's own scope-exit free and the CASCADE that
+// `h`'s free triggers — and suppressing only the first leaves the second to destroy it.
+fn give_via_local(out: &fn() -> integer) {
+  d: S1443 = S1443 { a: 21 };
+  h = fn() -> integer { d.a };
+  out = h;
+}
+
+fn test_a_closure_reaches_the_link_through_a_local() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_via_local(g);
+  assert(g() == 21, "a closure handed to the link through a local: {g()}");
+}
+
+// TWO capturing writes through one link.  The caller holds the SECOND, so the first is this
+// frame's to free after all — suppressing both hands the caller one record and leaks the
+// other.  `test_the_last_write_through_a_link_wins` is this cell's non-capturing twin and
+// cannot see the difference: with no captures there is no record either way.
+fn give_twice_capturing(out: &fn() -> integer) {
+  d: S1443 = S1443 { a: 1 };
+  out = fn() -> integer { d.a };
+  e: S1443 = S1443 { a: 2 };
+  out = fn() -> integer { e.a };
+}
+
+fn test_the_displaced_capturing_write_is_still_this_frames_to_free() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give_twice_capturing(g);
+  assert(g() == 2, "the second capturing write is what the caller holds: {g()}");
+}
+
+// BOTH routes out of one frame at once.  The two must union rather than take turns: asking
+// only the returns would free the record the link handed over.
+fn give_both_ways(out: &fn() -> integer) -> fn() -> integer {
+  d: S1443 = S1443 { a: 6 };
+  out = fn() -> integer { d.a };
+  e: S1443 = S1443 { a: 60 };
+  fn() -> integer { e.a }
+}
+
+fn test_a_frame_delivers_by_both_routes_at_once() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  r = give_both_ways(g);
+  assert(g() == 6, "the link-written closure: {g()}");
+  assert(r() == 60, "and the returned one, from the same frame: {r()}");
 }
 
 // ------------------------------------------------------------------- the control
