@@ -71,13 +71,21 @@ plus a `#[cold]` body put the fully checked row at its plain-arithmetic floor
 (`hash` 2.6× in the consumer lane).  `scripts/native_call_census.py <binary>`
 is the instrument; what remains on its list is the allocation work of items 4
 and 5, `get_vector` at 35 sites outside hoisted loops, and `__rust_dealloc`
-in the text functions.  **The next unit is `fronds`' deep-copy class** (item 4, DESIGN.md
-§ fronds): the sub-call's result Fronds are copied one by one into the parent
-with their inner vectors and the source freed — a quarter of the row.  Design
-first: the source is a temporary whose elements die after the loop, so the
-append should MOVE the records and adopt their inner vectors, or the callee
-should build into the caller's vector; write the cells before the code, as
-§ V-g did.  Item 3 (sentinel elision by RANGE proof — `n_seed_hash`'s
+in the text functions.  **The next unit is `fronds`' deep-copy class as a MOVE** (item 4 = § V-j,
+designed in DESIGN.md § V-i): the sub-call's result Fronds are copied one by
+one into the parent with their inner vectors and the source freed — after
+§ V-i what that costs is two claims and two frees per element, not
+bookkeeping.  The design: the call whose result feeds only an append loop
+into `V` is delivered into `V`'s store through the `__ref` retbuf the callee
+already receives, and the loop's `V += [f]` becomes a move (the element's
+bytes copied shallowly, the source element marked moved, the temporary's free
+shallow).  "Build into the caller's vector" is ruled OUT — `fronds` indexes
+its own level with `len(fd_out)`, so sharing the vector folds the caller's
+levels into the recursion.  The twelve cells are written and pass on both
+backends under the copy semantics (`bytecode-comparisons/
+V-j-move-append-cells.loft`); add the nested-container and enum-payload
+element cells, run `LOFT_POISON=1` over the set, then the code — the
+interpreter's op is the native emitter's op, because the IR is shared.  Item 3 (sentinel elision by RANGE proof — `n_seed_hash`'s
 `& 0xFFFFFFFF` bounds every operand, and a bounded operand cannot overflow;
 the owner ruled that null is made by ordinary arithmetic, so the declaration
 is never the fact, the range is) keeps its argument but lost its measured
