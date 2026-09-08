@@ -2646,6 +2646,12 @@ than by the audit.
 
 
 
+*loft#1456 moved one out of the opaque column by peeling: `@FR-O-Proxy`'s materialise gate now
+reads the element view through `base()`, because the `?` on a nullable element view says nothing
+about whether the local owns a store.  Its NATIVE twin peels too, but through `heap_def_nr`
+rather than a `match`, so the audit does not count it — a reminder that this row measures one
+SHAPE of the question and not the question.*
+
 *This row is a property of the TREE and moves on almost any commit that adds, removes or
 re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather
 than adjusted by hand — the total is the other three columns summed, and a number measured
