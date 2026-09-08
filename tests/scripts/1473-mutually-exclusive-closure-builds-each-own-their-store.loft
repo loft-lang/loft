@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1473 — several closure records adopting ONE store, built in arms that cannot both run.
+//
+// `@FR-L-CapOwn` says a captured heap store is freed ONCE, and among the records that adopted
+// one store exactly one keeps it while the rest borrow.  That is the right answer for records
+// that COEXIST — loft#1440 is two builds in a straight line where the one left behind released
+// the store the escaping one still held — and it is the wrong answer for records that cannot.
+// Arms of one branch are the second case: at most one of them is ever built, so each is the
+// sole owner ON ITS OWN RUN, and demoting either leaves the run that builds it with no release
+// at all while the frame has already given its own free away.
+//
+// So the rule gains a coexistence condition rather than a new site: where the group's builds are
+// pairwise mutually exclusive every member owns, and the frame's conditional release stands down
+// for ANY of them being present instead of for one statically chosen record.  Both halves have to
+// move together — the marking and the release read the same predicate — or a record left owning
+// by one and unnamed by the other has the frame free the store out from under that run's cascade.
+//
+// Conditional is NOT exclusive, and that distinction is the whole of the bound: `if p { k1 }
+// if q { k2 }` over one store has two conditional builds that can BOTH run, and calling those
+// exclusive would hand one store to two cascades.  Exclusivity is read off a branch that builds
+// one record in each arm and neither in both; a `match` lowers to nested `If`s, so its arms come
+// out of the same walk.
+//
+// Axes this file MOVES:  the branch's SPELLING (`if` · `match` · a three-arm match, where the
+//                        middle arm is neither first nor last) · how many arms build · whether
+//                        the fn-ref ESCAPES or is called in the frame · whether it leaves
+//                        directly or through a local first · and, as the controls, the two
+//                        shapes that must NOT become owners — a straight-line pair that
+//                        coexists, and two SEQUENTIAL conditionals that can both run.
+// Axes it HOLDS FIXED:   every arm captures the SAME local, so all the records really do adopt
+//                        one store.  Arms capturing DIFFERENT locals are loft#1474's question —
+//                        one record per store, and the fault there is which record the return
+//                        delivers rather than which one owns.
+//
+// @falsified-at: 15fc37df3, WITH THE INSTRUMENTS ARMED — `LOFT_STRICT_STORES=1 LOFT_POISON=1
+//   make falsify`: interpret exit 1 -> 0, native exit 1 -> 0 and 1 assertion failure -> 0.
+//   Plain mode reads INERT on several cells and that is the ticket: the released store still
+//   holds its bytes, so the answer is right and nothing says otherwise until the instrument is
+//   armed.  Under `LOFT_POISON=1` the control answers `-2401053088876216588` for the arm whose
+//   record was demoted to a borrow.
+
+struct E73 { a: integer }
+enum W73 { One, Two }
+
+// e1 — two `if` arms, both building a closure over the SAME local, fn-ref returned.
+fn if_two(p: boolean) -> fn() -> integer {
+  e: E73 = E73 { a: 2 };
+  if p { fn() -> integer { 3 + e.a } } else { fn() -> integer { 5 + e.a } }
+}
+
+// e2 — the `match` spelling, which lowers to the same `If` and so must be read by the same walk.
+fn match_two(p: boolean) -> fn() -> integer {
+  e: E73 = E73 { a: 2 };
+  match p { true => fn() -> integer { 3 + e.a }, false => fn() -> integer { 5 + e.a } }
+}
+
+// e3 — an ENUM subject, whose arms are built by the other chain builder.
+fn match_enum(p: W73) -> fn() -> integer {
+  e: E73 = E73 { a: 2 };
+  match p { One => fn() -> integer { 3 + e.a }, Two => fn() -> integer { 5 + e.a } }
+}
+
+// e4 — THREE arms, all building over the one store.  Pairwise is the condition, so the middle
+// arm — exclusive with the first through the outer `If` and with the last through the inner one
+// — is the cell that says the walk reaches a nested branch and not just the top one.
+fn three_arms(p: integer) -> fn() -> integer {
+  e: E73 = E73 { a: 2 };
+  match p { 0 => fn() -> integer { 3 + e.a }, 1 => fn() -> integer { 5 + e.a }, _ => fn() -> integer { 7 + e.a } }
+}
+
+// e5 — the fn-ref leaves through a LOCAL rather than straight out of the branch.
+fn via_local(p: boolean) -> fn() -> integer {
+  e: E73 = E73 { a: 2 };
+  g: fn() -> integer = if p { fn() -> integer { 3 + e.a } } else { fn() -> integer { 5 + e.a } };
+  g
+}
+
+// e6 — bound and called INSIDE the frame, never delivered.  The store is still alive at the
+// call either way, so the value was always right; what moves here is the leak.
+fn in_frame(p: boolean) -> integer {
+  e: E73 = E73 { a: 2 };
+  g: fn() -> integer = if p { fn() -> integer { 3 + e.a } } else { fn() -> integer { 5 + e.a } };
+  g()
+}
+
+// c1 — CONTROL: two SEQUENTIAL conditional builds over one store.  Both are conditional and both
+// can run, so they COEXIST and the single-owner rule must still apply.  Reading "conditional" as
+// "exclusive" would give one store two cascades and free it twice — this cell is what stops the
+// predicate being widened to `built_conditionally`.
+fn sequential(p: boolean, q: boolean = true) -> integer {
+  e: E73 = E73 { a: 2 };
+  t = 0;
+  if p { k1 = fn() -> integer { 100 + e.a }; t += k1(); }
+  if q { k2 = fn() -> integer { 200 + e.a }; t += k2(); }
+  t
+}
+
+// c2 — CONTROL: ONE arm builds and the other does not.  A single record, so the group never
+// reaches the coexistence question at all; loft#1464's conditional release is what carries it.
+fn one_arm(p: boolean) -> integer {
+  e: E73 = E73 { a: 2 };
+  if p { h = fn() -> integer { 3 + e.a }; h() } else { 7 }
+}
+
+fn main() {
+  a1 = if_two(true);  b1 = if_two(false);
+  assert(a1() == 5, "e1 `if`, first arm: {a1()}");
+  assert(b1() == 7, "e1b `if`, second arm: {b1()}");
+  a2 = match_two(true); b2 = match_two(false);
+  assert(a2() == 5, "e2 `match`, first arm: {a2()}");
+  assert(b2() == 7, "e2b `match`, second arm: {b2()}");
+  a3 = match_enum(W73.One); b3 = match_enum(W73.Two);
+  assert(a3() == 5, "e3 enum subject, first arm: {a3()}");
+  assert(b3() == 7, "e3b enum subject, second arm: {b3()}");
+
+  a4 = three_arms(0); b4 = three_arms(1); c4 = three_arms(2);
+  assert(a4() == 5, "e4 three arms, first: {a4()}");
+  assert(b4() == 7, "e4b three arms, MIDDLE — exclusive through the nested branch: {b4()}");
+  assert(c4() == 9, "e4c three arms, last: {c4()}");
+
+  a5 = via_local(true); b5 = via_local(false);
+  assert(a5() == 5, "e5 delivered through a local, first arm: {a5()}");
+  assert(b5() == 7, "e5b delivered through a local, second arm: {b5()}");
+
+  assert(in_frame(true) == 5, "e6 called in frame, first arm: {in_frame(true)}");
+  assert(in_frame(false) == 7, "e6b called in frame, second arm: {in_frame(false)}");
+
+  assert(sequential(true, true) == 304, "c1 two sequential builds, BOTH run: {sequential(true, true)}");
+  assert(sequential(true, false) == 102, "c1b only the first runs: {sequential(true, false)}");
+  assert(sequential(false, true) == 202, "c1c only the second runs: {sequential(false, true)}");
+  assert(sequential(false, false) == 0, "c1d neither runs: {sequential(false, false)}");
+
+  assert(one_arm(true) == 5, "c2 one building arm, taken: {one_arm(true)}");
+  assert(one_arm(false) == 7, "c2b one building arm, skipped: {one_arm(false)}");
+
+  println("1473-mutually-exclusive-closure-builds-each-own-their-store ok");
+}

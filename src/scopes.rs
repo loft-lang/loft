@@ -5347,6 +5347,15 @@ fn mark_borrowed_captures(data: &mut Data) {
             if group.len() < 2 {
                 continue;
             }
+            // …unless the records CANNOT COEXIST.  "One store, one owner" answers loft#1440,
+            // where two records are built in a straight line and both exist; records in opposite
+            // arms of one branch are the other case, and there at most one is ever built, so each
+            // is the sole owner on its own run.  Demoting either leaves the run that builds it
+            // with no release at all — the frame gave its free away to a record that this run
+            // never made (loft#1473).
+            if group_is_pairwise_exclusive(data.def(d_nr).code(), &group) {
+                continue;
+            }
             let owner = adoption_owner_index(data, function, d_nr, &group);
             group.remove(owner);
             for (_, record, a) in group {
@@ -5359,10 +5368,73 @@ fn mark_borrowed_captures(data: &mut Data) {
     }
 }
 
+/// Is closure record `r` built anywhere inside `n`?
+///
+/// The build is the `FnRef(d_nr, r, _)` node `emit_lambda_code` leaves — the only thing that
+/// mints into the record local — so the presence of that node IS the presence of the build.
+fn subtree_builds_record(n: &Value, r: u16) -> bool {
+    let mut hit = false;
+    n.walk(&mut |m| {
+        if let Value::FnRef(_, w, _) = m.unspan()
+            && *w == r
+        {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Can closure records `a` and `b` ever exist on the SAME run?
+///
+/// `@FR-L-CapOwn`'s "one store, one owner" is a statement about records that COEXIST: loft#1440
+/// is two records built in a straight line, one escaping and one left behind, where the one left
+/// behind released the store the escaped one still held.  Records in OPPOSITE arms of one branch
+/// are the other case — at most one of them is ever built — so each is the sole owner on its own
+/// run, and demoting either to a borrow leaves that run's store with no release at all.
+///
+/// Answers "yes, exclusive" only on a branch that builds `a` in one arm and `b` in the other and
+/// NEITHER in both.  A `match` lowers to nested `If`s, so its arms are covered by the same walk;
+/// two sequential `if`s are not, and must not be — `if p { k1 } if q { k2 }` over one store can
+/// run both, and calling that exclusive would hand one store to two cascades.
+///
+/// The fallback is `false`, which is the conservative direction: an exclusive pair reported as
+/// coexisting keeps today's single-owner behaviour, while a coexisting pair reported as exclusive
+/// would double-free.
+fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
+    let mut found = false;
+    body.walk(&mut |n| {
+        if found {
+            return;
+        }
+        if let Value::If(_, t, f) = n.unspan() {
+            let (ta, tb) = (subtree_builds_record(t, a), subtree_builds_record(t, b));
+            let (fa, fb) = (subtree_builds_record(f, a), subtree_builds_record(f, b));
+            if (ta && fb && !tb && !fa) || (tb && fa && !ta && !fb) {
+                found = true;
+            }
+        }
+    });
+    found
+}
+
+/// Are the records adopting one store pairwise unable to coexist?
+///
+/// The condition under which every member of the group OWNS: on any given run at most one of
+/// them is built, so each one's cascade is that run's only release.  Pairwise and not merely
+/// "every build is conditional", because conditional is not exclusive — see
+/// [`builds_are_mutually_exclusive`].
+fn group_is_pairwise_exclusive(body: &Value, group: &[(u16, u32, usize)]) -> bool {
+    group.iter().enumerate().all(|(i, (la, _, _))| {
+        group[i + 1..]
+            .iter()
+            .all(|(lb, _, _)| builds_are_mutually_exclusive(body, *la, *lb))
+    })
+}
+
 /// This function's closure records, grouped by the STORE each adopted.
 ///
 /// One home for `@FR-L-CapOwn`'s "which records are in the running for this store", read by
-/// [`mark_borrowed_captures`] (which makes the losers borrow) and by [`owning_record_local`]
+/// [`mark_borrowed_captures`] (which makes the losers borrow) and by [`owning_record_locals`]
 /// (which asks the winner whether it exists at run time).  The two have to agree by
 /// construction: a record the marking makes borrow while the free-suppression still credits it
 /// leaves the store with no release at all, which is the shape loft#1464 is.
@@ -5439,27 +5511,42 @@ fn adoption_owner_index(
 /// whose cascade still follows the capture.  Asking it any other way is how the two drift:
 /// naming an adopter the marking made BORROW would decline the frame's free in favour of a
 /// cascade that stops at that attribute.
-fn owning_record_local(
+fn owning_record_locals(
     data: &Data,
     function: &Function,
     d_nr: u32,
     builds: &CaptureBuilds,
     v: u16,
-) -> Option<u16> {
+) -> Vec<u16> {
     // Both spellings of "the record took this local's store", the pair `CaptureBuilds` carries:
     // a STRUCT capture names the local outright, a COLLECTION capture names a view whose
     // backing local is this one.
     let name = function.name(v).to_string();
     let (adopters, _) = capture_store_adopters(data, function, builds);
     for group in adopters.values() {
-        let owner = adoption_owner_index(data, function, d_nr, group);
-        let (local, record, a) = group[owner];
-        let attr = data.attr_name(record, a).clone();
-        if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
-            return Some(local);
+        // Every member owns where the records CANNOT COEXIST, which is the same condition
+        // `mark_borrowed_captures` uses to leave them all owning.  The two must agree by
+        // construction: a record the marking left owning while this side declined to name it
+        // would have the frame free the store out from under that run's cascade, which is
+        // loft#1473 in the other direction.
+        let owners: Vec<usize> = if group_is_pairwise_exclusive(data.def(d_nr).code(), group) {
+            (0..group.len()).collect()
+        } else {
+            vec![adoption_owner_index(data, function, d_nr, group)]
+        };
+        let mut locals = Vec::new();
+        for owner in owners {
+            let (local, record, a) = group[owner];
+            let attr = data.attr_name(record, a).clone();
+            if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
+                locals.push(local);
+            }
+        }
+        if !locals.is_empty() {
+            return locals;
         }
     }
-    None
+    Vec::new()
 }
 
 /// The STORE a record adopted for capture attribute `a`, as a grouping key.
@@ -9772,15 +9859,16 @@ impl Scopes<'_> {
                 // suppression site below, declining by store identity where the witness is
                 // about to release the store itself.
                 if adoption_build_is_conditional(&self.capture_build_backing, v)
-                    && let Some(record) = owning_record_local(
+                    && let records = owning_record_locals(
                         data,
                         function,
                         self.d_nr,
                         &self.capture_build_backing,
                         v,
                     )
+                    && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, record, Some(w), data));
+                    guarded.push(free_unless_record_built(v, &records, Some(w), data));
                 }
                 ls.push(release_witness(w, data));
                 continue;
@@ -10026,15 +10114,16 @@ impl Scopes<'_> {
                 if !emit
                     && captured_ref
                     && adoption_build_is_conditional(&self.capture_build_backing, v)
-                    && let Some(record) = owning_record_local(
+                    && let records = owning_record_locals(
                         data,
                         function,
                         self.d_nr,
                         &self.capture_build_backing,
                         v,
                     )
+                    && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, record, None, data));
+                    guarded.push(free_unless_record_built(v, &records, None, data));
                 }
                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
                     ls.push(Value::Call(
@@ -13652,12 +13741,23 @@ fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
 /// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
 /// releases that separately, so the release here declines by store identity where the two
 /// would name one store.  Without the witness the free is plain.
-fn free_unless_record_built(v: u16, record: u16, witness: Option<u16>, data: &Data) -> Value {
-    let present = v_if(
-        call("OpRefIsNull", record, data),
-        Value::Boolean(false),
-        call("OpConvBoolFromRef", record, data),
-    );
+fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data: &Data) -> Value {
+    // ANY of them being there is the fact: where several records can hold this store they are
+    // mutually exclusive builds, so on a given run at most one exists — and that one's cascade
+    // is the release this free stands down for.  Folded right so the last record is the base
+    // case and each earlier one short-circuits to `true`, which is how `||` lowers.
+    let present = records
+        .iter()
+        .rev()
+        .map(|&record| {
+            v_if(
+                call("OpRefIsNull", record, data),
+                Value::Boolean(false),
+                call("OpConvBoolFromRef", record, data),
+            )
+        })
+        .reduce(|acc, one| v_if(one, Value::Boolean(true), acc))
+        .unwrap_or(Value::Boolean(false));
     let release = match witness {
         Some(w) => Value::Call(
             data.def_nr("OpFreeRefIfDistinct"),
