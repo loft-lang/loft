@@ -3832,6 +3832,51 @@ impl Parser {
         None
     }
 
+    /// Deliver an indirect call THROUGH a `&fn(…)` link.
+    ///
+    /// `Value::CallRef` names a VARIABLE, and `State::fn_call_ref` reads the 20-byte fn-ref pair
+    /// straight out of that variable's slot (`get_var`, behind an `assert!(fn_var >= 20)`).  A
+    /// link's slot holds a 12-byte stack reference instead, so naming the link is not something
+    /// the call can be taught — the pair has to EXIST at a slot first.
+    ///
+    /// So the pair is materialised into a temp of plain `fn(…)` type and the call names the
+    /// temp.  Reading the link already yields the pair (`OpGetStackFnRef`, loft#1455), which is
+    /// why this needs no new primitive.  `@FR-B-Ref-Uniform`: a `&τ` variable is used exactly
+    /// like a τ variable, and this is what "exactly like" costs for a call.
+    ///
+    /// ONE home for both arities.  The zero-argument call and `try_fn_ref_call` each resolve a
+    /// fn-ref call in their own place, and a second spelling of this materialisation is how the
+    /// two would come to disagree (loft#1455).
+    fn call_through_fn_link(
+        &mut self,
+        v_nr: u16,
+        slot_tp: &Type,
+        args: Vec<Value>,
+        ret: &Type,
+    ) -> Value {
+        let temp = self.create_unique("__fnlink", slot_tp);
+        v_block(
+            vec![
+                Value::Set(temp, Box::new(Value::Var(v_nr))),
+                Value::CallRef(temp, args),
+            ],
+            ret.clone(),
+            "fnlink",
+        )
+    }
+
+    /// The fn-ref slot a variable names, looking THROUGH a `&` link.
+    ///
+    /// `@FR-B-Ref-Uniform` — a `&τ` variable is used exactly like a τ variable, so a
+    /// `&fn(…)` local names a fn-ref slot and is callable.  Both indirect-call sites ask
+    /// through this rather than each peeling for itself.
+    fn fn_slot_type(tp: &Type) -> &Type {
+        match tp {
+            Type::RefVar(inner) => inner.base(),
+            other => other.base(),
+        }
+    }
+
     /// The variable a HEAP null test names, when `test` is one.
     ///
     /// A struct or a vector answers "is this absent?" through its own opcode — `OpRefIsNull`,
@@ -15217,7 +15262,12 @@ impl Parser {
             // Check for zero-argument fn-ref call
             if self.vars.name_exists(name) {
                 let v_nr = self.vars.var(name);
-                if let Type::Function(param_types, ret_type, _) = self.vars.tp(v_nr).clone()
+                // Through the LINK as well as bare (`@FR-B-Ref-Uniform`).  A `&fn(…)` local
+                // names a fn-ref slot and is callable; read bare this matched nothing and the
+                // call fell through to `Unknown function` (loft#1455).
+                let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
+                let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
+                if let Type::Function(param_types, ret_type, _) = slot_tp.clone()
                     && param_types.is_empty()
                 {
                     // @PLN85 L1 — callee-attr-space deps must not leak into the
@@ -15248,7 +15298,11 @@ impl Parser {
                         for &cv in &std::mem::take(&mut self.last_closure_captured_vars) {
                             self.var_usages(cv, true);
                         }
-                        *val = Value::CallRef(v_nr, args);
+                        *val = if through_link {
+                            self.call_through_fn_link(v_nr, &slot_tp, args, ret_type.as_ref())
+                        } else {
+                            Value::CallRef(v_nr, args)
+                        };
                     }
                     return *ret_type;
                 }
@@ -15892,7 +15946,10 @@ impl Parser {
             }
         }
         let v_nr = self.vars.var(name);
-        let Type::Function(param_types, ret_type, _) = self.vars.tp(v_nr).clone() else {
+        // Through the LINK as well as bare — see the zero-argument twin (loft#1455).
+        let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
+        let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
+        let Type::Function(param_types, ret_type, _) = slot_tp.clone() else {
             return None;
         };
         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
@@ -15992,7 +16049,11 @@ impl Parser {
             // at runtime.  `get_field` produces the (d_nr,
             // closure_DbRef) tuple via the new fn_ref_field_read
             // gate added in P215 (parser/mod.rs::get_field).
-            let call_ir = Value::CallRef(v_nr, converted);
+            let call_ir = if through_link {
+                self.call_through_fn_link(v_nr, &slot_tp, converted, ret_type.as_ref())
+            } else {
+                Value::CallRef(v_nr, converted)
+            };
             // P215: detect "this name was captured from outer scope" by
             // checking `captured_names` (populated either in this turn
             // through Step 1 above, or in a prior pass).  `name_exists`

@@ -23,17 +23,24 @@
 // Axes this file MOVES:  the fn's arity and return type, whether the closure CAPTURES, whether
 //                        the local was WRITTEN through its link before being read, and whether
 //                        the argument is linked at all (the dense control).
-// Axes it HOLDS FIXED:   the link is read by PASSING it, never by CALLING through it.  `pd()`
-//                        is refused "Unknown function pd" on both backends, before this fix and
-//                        after it, unchanged.  That is a THIRD mechanism, not this one: the
-//                        call reads its callee from a stack POSITION, so a linked local hands
-//                        it the 12-byte link where it wants the 20-byte pair — measured
-//                        `fn_call_ref: fn_var=12 < 20` once the parser is allowed to accept the
-//                        call, which is why accepting it without materialising the pair turns a
-//                        clean refusal into a panic.  Left refused deliberately, and recorded
-//                        on the issue with the measurement.
+// Axes it HOLDS FIXED:   the element behind the link is a plain fn local, and the link is a
+//                        LOCAL rather than a parameter.
 //
-// @falsified-at: 154f9f522 — interpret exit 1 -> 0, native exit 101 -> 0.  On the control every
+// CALLING through the link was a held-fixed axis when this file was written — `pd()` was
+// refused "Unknown function pd" — and it is now a section below.  It needed the third mechanism
+// the header used to describe: `Value::CallRef` names a VARIABLE and `State::fn_call_ref` reads
+// the 20-byte pair straight out of that variable's slot, behind an `assert!(fn_var >= 20)`, so
+// a link's 12-byte slot is not something the call can be taught to accept.  Peeling the two
+// parser type-tests alone turned the clean refusal into an ICE (measured, both arities), which
+// is why the refusal was the better answer until the pair could be MADE to exist at a slot.
+// It now is: the pair is materialised into a temp of plain `fn(…)` type, and the call names the
+// temp.  The read that fills it is this file's own subject.
+//
+// @falsified-at: 5bb081e22 (the CALLING section) — interpret exit 1 -> 0, native exit 1 -> 0.
+//   Two claims falsified at two commits, because they landed apart and re-running the older one
+//   would fail to build the newer cells rather than measure them.
+//
+// @falsified-at: 154f9f522 (the READ) — interpret exit 1 -> 0, native exit 101 -> 0.  On the control every
 //   cell but the dense one is the ICE, so the file cannot reach an assertion there.  Values are
 //   hand-computed; the backends agreeing is not the test.
 
@@ -76,6 +83,68 @@ fn test_a_text_returning_fn_crosses_the_link() {
   g: fn() -> text = fn() -> text { s };
   pd: &fn() -> text = &g;
   assert(call_text1455(pd) == "hi", "the return type is the fn type's");
+}
+
+// ------------------------------------------------- CALLING through the link
+
+// `@FR-B-Ref-Uniform` — a `&τ` variable is used exactly like a τ variable, and for a fn that
+// means it is callable.  The pair is materialised into a temp because `fn_call_ref` reads it
+// from a variable's SLOT; a link's slot holds a 12-byte stack reference.
+fn test_a_zero_argument_call_through_a_link() {
+  d: integer = 5;
+  p: fn() -> integer = fn() -> integer { d + 2 };
+  pd: &fn() -> integer = &p;
+  assert(pd() == 7, "a capturing closure is called through its link");
+}
+
+fn nine1455() -> integer { 9 }
+
+fn test_a_bare_fn_name_is_called_through_a_link() {
+  p: fn() -> integer = nine1455;
+  pd: &fn() -> integer = &p;
+  assert(pd() == 9, "a fn-ref with an empty environment is called through its link");
+}
+
+// Arity is the fn TYPE's own and the two call-resolution sites are DIFFERENT — zero-argument
+// calls are claimed inside `parse_call`, the rest by `try_fn_ref_call` — so both need a cell or
+// one can regress alone.
+fn test_a_two_argument_call_through_a_link() {
+  q: fn(integer, integer) -> integer = fn(a: integer, b: integer) -> integer { a * b };
+  qd: &fn(integer, integer) -> integer = &q;
+  assert(qd(6, 7) == 42, "arguments cross the link");
+}
+
+fn test_a_text_returning_call_through_a_link() {
+  s: text = "hi";
+  t: fn() -> text = fn() -> text { s };
+  td: &fn() -> text = &t;
+  assert(td() == "hi", "the return type is the fn type's");
+}
+
+// Twice in one expression: the temp is minted per call site, so a second call must not read a
+// slot the first one left behind.
+fn test_two_calls_through_one_link() {
+  p: fn() -> integer = fn() -> integer { 3 };
+  pd: &fn() -> integer = &p;
+  assert(pd() + pd() == 6, "each call materialises its own pair");
+}
+
+// Write through the link, then call through it — the two halves of a link in one cell.
+fn test_a_link_written_then_called() {
+  p: fn() -> integer = fn() -> integer { 1 };
+  pd: &fn() -> integer = &p;
+  pd = fn() -> integer { 8 };
+  assert(pd() == 8, "the call sees what was written through the link");
+}
+
+// ⚠ The cell that proves it is a LINK and not a copy: the write reaches the SOURCE, so calling
+// `p` directly answers what was written through `pd`.  Without this, every cell above would
+// pass on an implementation that quietly copied.
+fn test_a_write_through_the_link_reaches_the_source() {
+  p: fn() -> integer = fn() -> integer { 1 };
+  pd: &fn() -> integer = &p;
+  pd = fn() -> integer { 8 };
+  assert(p() == 8, "the source answers the closure written through its link");
 }
 
 // ------------------------------------------------------------------- the control
