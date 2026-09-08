@@ -49,7 +49,13 @@ SPELL = re.compile(r"^  (Op\w+)\s+(\d+)$")
 #   ADD  `LOFT_OWN_INJECT_FREE_BORROWED=bview` forces a free of a binding the oracle calls
 #        Borrowed.  It moves `oracle-disagrees` (5 -> 6) and the total (30 -> 31).
 #   DROP `LOFT_OWN_INJECT_DROP_FREE=__ref_1` suppresses a free that IS emitted.  It moves
-#        `proxy-alone` (1 -> 0) and the total (30 -> 29).
+#        `delivery-buffer` (1 -> 0) and the total (30 -> 29).
+#
+# ⚠ That control named `proxy-alone` until 2026-09-08, and it FAILED the day the oracle
+# learned to classify delivery buffers (@PLN155 phase 3a) — `n_exists:__ref_1` is a `__ref`
+# buffer, so it moved bucket and the control's target went empty.  That is the control doing
+# its job: it is pinned to a NAMED bucket precisely so a category changing underneath it is
+# loud.  Re-point it, never relax it to "some bucket moved".
 #
 # The ADD control cannot move `proxy-alone`, and that is not a gap in the census: a
 # proxy-alone binding is BY DEFINITION one the proxy already licenses, so its free is emitted
@@ -58,6 +64,8 @@ SPELL = re.compile(r"^  (Op\w+)\s+(\d+)$")
 CONTROL = "doc/claude/plans/94-cfg-ownership-dataflow/probes/08-overfree-positive-control.loft"
 CONTROL_VAR = "bview"
 CONTROL_DROP_VAR = "__ref_1"
+# The bucket that var occupies — `delivery-buffer` since the oracle learned about buffers.
+CONTROL_DROP_BUCKET = "delivery-buffer"
 
 
 def loft_bin():
@@ -125,8 +133,8 @@ def run_control():
     rows = [
         ("oracle-disagrees", f"+free of a borrowed binding ({CONTROL_VAR})",
          base[1].get("oracle-disagrees", 0), add[1].get("oracle-disagrees", 0), "up"),
-        ("proxy-alone", f"-free of a proxy-licensed binding ({CONTROL_DROP_VAR})",
-         base[1].get("proxy-alone", 0), drop[1].get("proxy-alone", 0), "down"),
+        (CONTROL_DROP_BUCKET, f"-free of a proxy-licensed binding ({CONTROL_DROP_VAR})",
+         base[1].get(CONTROL_DROP_BUCKET, 0), drop[1].get(CONTROL_DROP_BUCKET, 0), "down"),
     ]
     ok = True
     for bucket, what, before, after, way in rows:

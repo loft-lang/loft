@@ -1150,6 +1150,9 @@ fn run_licence_census(
             match evidence {
                 crate::use_analysis::OwnEvidence::Derived => "oracle-derived",
                 crate::use_analysis::OwnEvidence::Minted => "minted",
+                // A delivery buffer the callee mints into — a positive owner fact the caller's
+                // frame has no `Set` for, and two-thirds of what `proxy-alone` used to hold.
+                crate::use_analysis::OwnEvidence::SynthBuffer => "delivery-buffer",
                 // A parameter answering `Owned` cannot happen (the arm returns `Borrowed` of
                 // itself), so this is the promoted-retbuf carve-out reached another way; kept
                 // separate rather than folded, because merging it would hide it.

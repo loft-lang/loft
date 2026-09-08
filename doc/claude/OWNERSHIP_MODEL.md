@@ -553,9 +553,11 @@ The pieces exist; they are incomplete:
 compiler EMITS by the fact that licensed it. Over the 1412-file corpus, 80 325 emitted frees:
 56.3 % rest on an owner fact the oracle derived from the binding's own definitions, 21.9 % on
 an `OpDatabase` mint, 11.6 % were emitted where the oracle answers `Borrowed`/`Join`, and
-**8.0 % — 6412 frees at 2478 sites — rest on the empty-`deps` PROXY alone**, with the oracle
-having nothing to read. Two-thirds of those sites are `__ref_N` return buffers, which the
-oracle deliberately cannot classify; 804 are bindings the author named.
+**1.8 % — 1464 frees — rest on the empty-`deps` PROXY alone**, with the oracle having nothing
+to read at all. It read 8.0 % until the oracle was told about DELIVERY BUFFERS: 6.2 % of frees
+are a `__vdb`/`__ref`/`__retbuf` whose store was minted to back that var, a positive owner fact
+`use_analysis::is_synth_buffer` already stated and the oracle had never consulted (@PLN155
+phase 3a).
 
 That is the number this doc's "partial" means, and it is a report rather than a defect count:
 it says what each licence RESTS on, not which frees are wrong. `make licence-census

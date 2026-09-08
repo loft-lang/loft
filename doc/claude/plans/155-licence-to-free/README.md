@@ -11,10 +11,12 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 **Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
 phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: give the oracle a positive
-answer for the `__ref_N` return buffers** — phase 0 says they are two-thirds of the
-proxy-alone sites and phase 3a says the refusal set has to shrink before a `deny` rung can
-exist at all.  The ownership MODEL is not reopened
+same day, so the sequencing hold is lifted.  **Next: the plan needs a decision it
+cannot take from measurement alone** — phase 3a's follow-up shows `deny` costs 27 of 140 files
+a leak even at the plan's own refusal set, so either the licence derivation becomes a plan of
+its own (positively classify the remaining 1464, as `is_synth_buffer` did for the buffers) or
+the refusal stays a REPORT.  Phase 4 (the heap half) is independent and can proceed either
+way.  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -120,7 +122,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **2a** — the verdict exists and every reader disposes of it | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | ✅ **done** — `Own::Unknown`, 20 readers disposed.  Prediction (EMPTY diff) written first and **falsified twice**, each falsification naming a reader that silently inherited the permissive answer; **IDENTICAL 1412/1412** once both were fixed |
 | **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | ✅ **done — all four candidates REFUTED, and none lands.**  `LOFT_OWN_DECLINE=<name>` is the instrument that says so: `witness` is a WRONG VALUE on both backends, `owned-slot` moves three files' emit with every channel unchanged (unverified, not safe), `collection` and `join` are inert |
 | **3a** — where the refusal has to LIVE, and what `deny` costs | § Phase 3a | the ladder fires at all (a gate that never fires is not a gate); the default path byte-identical | ✅ **done — and it corrects the plan twice.**  `owns_freeable_store` is NOT the sweep's licence (the ladder attached there NEVER FIRED); and `deny` is not safe-by-direction — 31 of 140 files leak, and **one answers WRONG** |
-| **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open — and phase 3a says the refusal SET must shrink first |
+| **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | **Open, and phase 3a's own follow-up says `deny` cannot be the top rung.**  The refusal set was shrunk 77 % (6412 → 1464 frees) and the deny cost moved by four files: 27 of 140 still leak and one still answers wrong |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
 | **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
 
@@ -410,6 +412,60 @@ says where it goes: **two-thirds of those sites are `__ref_N` return buffers the
 deliberately cannot classify.**  Giving the oracle a positive answer for those is what shrinks
 the refusal set, and it is now evidence-backed rather than guessed: it is the work phase 3b
 depends on, not an optimisation of it.
+
+## Phase 3a follow-up — the buffers had a positive fact all along, and it did not save `deny` (2026-09-08)
+
+Phase 0 said two-thirds of the `proxy-alone` sites are `__ref_N` return buffers the oracle
+cannot classify, and phase 3a said shrinking that set is 3b's prerequisite.  **The fact already
+existed in the tree.**  `use_analysis::is_synth_buffer` — *"a var whose store the var itself
+OWNS: the vector-delivery / NRVO / materialise-copy / return buffers"* — answers exactly the
+question the oracle's `Value::Var` fallback could not, and the oracle never consulted it.
+
+The callee mints into the caller's buffer, so the caller's frame has no `Set` and no
+`OpDatabase` for it, and reading that silence as *nothing is known* is what put these in the
+fail-open population.  `OwnEvidence::SynthBuffer` states it, asked AFTER the parameter test
+(a promoted `__retbuf` is an argument, and the caller owns that store).
+
+**The VERDICT is unchanged — `Owned` either way — so only the evidence sharpens**, which is
+why `introspect_diff.sh` reads IDENTICAL 1412/1412.  What moves is the census:
+
+| licensing fact | before | after |
+|---|---|---|
+| `proxy-alone` | 6412 (8.0 %) | **1464 (1.8 %)** |
+| `delivery-buffer` | — | **4948 (6.2 %)** |
+
+**So phase 0's headline was mostly a naming problem.**  *One free in twelve rests on the proxy
+alone* becomes *one in fifty-five*; 77 % of that population was a positive owner fact the
+codebase already knew and the oracle had never been told.
+
+### And it did not help `deny` at all, which is the finding
+
+The obvious expectation — a smaller refusal set costs less — is wrong here, and measurably:
+
+| `LOFT_OWN_FREE=deny`, 140 files | unchanged | leak | wrong answer |
+|---|---|---|---|
+| before the buffer evidence | 108 | 31 | 1 |
+| after (77 % fewer refusals) | 108 | 31 | 1 |
+| after, **rung narrowed to the plan's own set** | 112 | 27 | 1 |
+
+The first row to the second moved NOTHING, and chasing that found a second error — **in the
+rung, not in the compiler.**  It was refusing every oracle DISAGREEMENT as well as every
+proxy-only free, so it rejected 9349 frees where the plan specifies ~1600, and the
+disagreements were carrying the entire cost.  Those are mostly ownership-TRANSITION frees
+reading the `owned_refs` memo (@FR-O-Latest) — a fact this question cannot see, which the
+census's own doc already said — so refusing them was the predicate exceeding what it knows.
+
+Narrowed to the plan's set, on the smallest refusal set the oracle can currently justify:
+**27 of 140 files still leak and one still answers wrong.**  Shrinking the refusal set by
+three-quarters bought four files.
+
+**What that means for the plan's Goal.**  *"A free without a licence is refused at the point
+every free ends up"* is not reachable by refusing at the free with today's licence derivation:
+the residue is load-bearing, not marginal.  Either the derivation gets much stronger — the
+oracle must positively classify the remaining 1464, and `is_synth_buffer` shows what that
+looks like — or the refusal stays a REPORT and the deny rung is a measurement mode rather than
+a terminal behaviour.  On this evidence the second is the honest reading, and the first is a
+plan of its own.
 
 ## Phase ordering
 

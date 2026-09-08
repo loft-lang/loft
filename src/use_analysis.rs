@@ -4155,8 +4155,15 @@ pub(crate) enum OwnEvidence {
     Minted,
     /// A parameter with no local definition: the caller owns it, so `Borrowed` of itself.
     Parameter,
-    /// No definition, no mint, not a parameter — `Owned` because that is the default.
-    /// This is the fail-open the plan's phase 2 is about.
+    /// No definition and no mint, but the var IS a SYNTHESIZED delivery buffer
+    /// ([`is_synth_buffer`]) — a `__vdb`/`__ref`/`_mvcopy`/`__retbuf` whose store was minted
+    /// to back this var alone.  A POSITIVE fact reached without a `Set`: the callee mints
+    /// into the caller's buffer, so the caller's frame sees no definition, and reading that
+    /// silence as "nothing is known" is what made these two-thirds of @PLN155 phase 0's
+    /// `proxy-alone` population.
+    SynthBuffer,
+    /// No definition, no mint, not a parameter, not a delivery buffer — `Owned` because that
+    /// is the default.  This is the fail-open the plan's phase 2 is about.
     Fallback,
 }
 
@@ -4187,6 +4194,11 @@ pub(crate) fn ownership_evidence_with(
         OwnEvidence::Minted
     } else if data.def(d_nr).variables.is_argument(v) {
         OwnEvidence::Parameter
+    } else if is_synth_buffer(data.def(d_nr).variables.name(v)) {
+        // Asked AFTER the parameter test on purpose: a promoted `__retbuf` is an argument and
+        // the caller owns that store, so the parameter answer must win.  Only a frame-local
+        // delivery buffer reaches here.
+        OwnEvidence::SynthBuffer
     } else {
         OwnEvidence::Fallback
     };

@@ -9013,12 +9013,20 @@ impl Scopes<'_> {
         let defs = crate::use_analysis::function_defs(data, self.d_nr);
         let (own, evidence) =
             crate::use_analysis::ownership_evidence_with(data, self.d_nr, v, &defs);
-        matches!(own, crate::use_analysis::Own::Owned)
-            && matches!(
-                evidence,
-                crate::use_analysis::OwnEvidence::Derived
-                    | crate::use_analysis::OwnEvidence::Minted
-            )
+        // The plan's refusal set, and NOT a wider one: *a free whose licence is proxy-only,
+        // with no oracle agreement*.  So the refusal is `Fallback` (nothing to read) and
+        // `Own::Unknown` (read, could not conclude) — the two the census calls `proxy-alone`
+        // and `no-answer`.
+        //
+        // ⚠ An oracle DISAGREEMENT (`Borrowed`/`Join`) is deliberately NOT refused, and
+        // getting that wrong is measured: refusing it too made the rung reject 9349 frees
+        // instead of ~1600, and shrinking the proxy-only set by 77 % then moved the deny cost
+        // by nothing at all, because the disagreements were carrying it.  Those are mostly
+        // ownership-TRANSITION frees reading the `owned_refs` memo (@FR-O-Latest), a fact this
+        // question cannot see — the census's own doc says so — so calling them unlicensed is
+        // this predicate exceeding what it knows.
+        !matches!(own, crate::use_analysis::Own::Unknown)
+            && !matches!(evidence, crate::use_analysis::OwnEvidence::Fallback)
     }
 
     fn free_vars(
