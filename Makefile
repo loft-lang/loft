@@ -902,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -953,6 +953,13 @@ campaign-review:  ## Which mechanism class earns a CAMPAIGN next, on four measur
 #   make licence-census ARGS=--control      # the injected-free control; run it after a gate edit
 licence-census:  ## @PLN155: how many emitted frees rest on the deps PROXY alone?
 	@python3 scripts/licence_census.py $(ARGS)
+
+# @PLN155 re-aimed: the frees are in the right places; what needs bounding is the code that
+# DERIVES whether one is needed.  This counts that code and groups the derivations.
+#   make free-licences                  # the two tables
+#   make free-licences ARGS=--sites     # + every construction site with its facts
+free-licences:  ## @PLN155: how many pieces of code decide *is a free needed here*?
+	@python3 scripts/free_licence_audit.py $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this

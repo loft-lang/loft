@@ -82,7 +82,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b, 3a landed).
+- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b, 3a landed; re-aimed onto the derivation count).
 
 ## Why this family, measured
 
@@ -466,6 +466,65 @@ oracle must positively classify the remaining 1464, and `is_synth_buffer` shows 
 looks like — or the refusal stays a REPORT and the deny rung is a measurement mode rather than
 a terminal behaviour.  On this evidence the second is the honest reading, and the first is a
 plan of its own.
+
+## The count, verified — how much code decides *is a free needed* (2026-09-08)
+
+The owner's statement of the concern: **the frees are fine where they are; what needs bounding
+is the code that derives whether one is needed.**  That re-aims the plan away from refusing
+frees (phase 3's ladder) and onto phase 1's question, asked exhaustively.
+`scripts/free_licence_audit.py` is that count, re-runnable so it can be re-measured on a join.
+
+**Named predicates: 8, of which 4 decide a FREE.**
+
+| predicate | asks | facts it reads |
+|---|---|---|
+| `Function::proxy_says_owned` | free | proxy + veto |
+| `Scopes::owns_freeable_store` | free | **through `proxy_says_owned`** + param |
+| `Function::owns_displaced_store` | free | proxy (WIDENED) + veto + capture — **both written out by hand** |
+| `Parser::materialize_vector_arms_collect` | free | param + veto + work-ref — a WALKER that contains a free site, not a predicate |
+| `vec_copy_needs_db`, `vector_needs_db` | alloc | param + proxy — **identical facts, identical question, two functions** |
+| `materialises_element`, `frame_owns_capture_store` | ? | proxy + witness / param + proxy |
+
+**Inline: 35 free-construction sites in 13 distinct fact-sets**, 7 of those sets used at more
+than one site.  The healthy shape is visible in the largest group: **9 constructions share ONE
+derivation** — the scope-exit sweep's `emit`, computed once from `capture + proxy + transferred
++ veto + witness + work-ref` and read by all nine.  That is what "a limited amount of code"
+looks like when it works.
+
+### What the comparison exposes
+
+`owns_displaced_store` is the outstanding fold.  It sits **99 lines above `proxy_says_owned` in
+the same file** and writes both halves of the pair out by hand:
+
+```rust
+&& (self.tp(v).depend().is_empty() || self.borrows_one_argument(v))   // the proxy, WIDENED
+&& !self.is_skip_free(v)                                             // the veto, by hand
+```
+
+Its veto is exactly `proxy_says_owned`'s.  Its proxy is that one OR `borrows_one_argument` — a
+deliberate widening, so it cannot simply call the pair, and that is the decision to take rather
+than a reflex: either the widened proxy becomes its own named notion (`proxy_says_owned_or_arg`)
+or the two stay apart with the difference stated.  @PLN155 phase 1 found three sites that read
+alike and ask differently; this is a fourth candidate for that register, not an automatic merge.
+
+`vec_copy_needs_db` and `vector_needs_db` are the clean duplicate — same facts, same question
+(`alloc`, not `free`), two functions.  Adjacent to this plan rather than in it, and recorded so
+it is not lost.
+
+### What the audit cost to make honest
+
+The first run said **79 sites, 58 guarded by nothing** — a number about the script.  Four
+faults, each found by reading the residue rather than believing it:
+
+1. a free op NAMED is not one CONSTRUCTED — the emitter registry and the `OpSets` list name all
+   five spellings;
+2. a `def_nr` in a COMPARISON is a matcher, not a construction;
+3. **the licence is usually not written at the free.**  `get_free_vars` computes `owns` from
+   four disjuncts and `emit` from `owns` plus four more, and the construction forty lines below
+   says only `if emit {`.  Resolving two levels of local is what took the unguarded residue
+   from 33 to 9;
+4. an EARLY-EXIT guard licenses what it falls THROUGH to — `o_proxy_check.py`'s discrimination
+   1 and 4, needed again here.
 
 ## Phase ordering
 
