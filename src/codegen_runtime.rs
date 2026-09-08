@@ -5335,6 +5335,7 @@ pub fn cr_call_pop() {
 pub struct CallGuard;
 
 impl Drop for CallGuard {
+    #[inline]
     fn drop(&mut self) {
         cr_call_pop();
     }
@@ -5470,6 +5471,7 @@ impl FnRefBufGuard {
     /// declared return type is a heap value, which is the only way a buffer it delivered
     /// into can still be reachable after it ends.
     #[must_use]
+    #[inline]
     pub fn new(cell: &std::cell::UnsafeCell<Stores>, hands_up: bool) -> Self {
         Self {
             cell: std::ptr::from_ref(cell),
@@ -5477,13 +5479,15 @@ impl FnRefBufGuard {
             hands_up,
         }
     }
-}
 
-impl Drop for FnRefBufGuard {
-    fn drop(&mut self) {
-        if self.hands_up || FNREF_LEN.with(Cell::get) == self.mark {
-            return;
-        }
+    /// The out-of-line half of the drop: the frame DID deliver fn-ref return buffers, so
+    /// split them off the list and release the ones the frame still holds.  Kept apart
+    /// from `drop` so the test a frame pays on every exit -- two `Cell` reads -- inlines
+    /// across the rlib boundary (@PLN157 § The floor: the guards were three calls per
+    /// non-leaf frame on the drawing bench).
+    #[cold]
+    #[inline(never)]
+    fn release(&mut self) {
         let mine: Vec<(DbRef, u64)> = FNREF_BUFS.with(|b| {
             let mut list = b.borrow_mut();
             let from = usize::try_from(self.mark)
@@ -5513,6 +5517,16 @@ impl Drop for FnRefBufGuard {
             }
             OpFreeRef(cell, buf, "__vc_hbuf");
         }
+    }
+}
+
+impl Drop for FnRefBufGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if self.hands_up || FNREF_LEN.with(Cell::get) == self.mark {
+            return;
+        }
+        self.release();
     }
 }
 

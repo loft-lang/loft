@@ -1097,6 +1097,9 @@ shipped tier.  Per iteration that loop does, beside Rust's four ALU ops:
    halts.  What licenses eliding one is a proof about the value: here `& 0xFFFFFFFF`
    bounds every operand, and a bounded operand cannot overflow.  Range propagation
    over the P3 facts, which already refuse arithmetic for exactly this reason.
+   **Re-measured the same evening (§ The out-of-line calls): the third of the row this
+   finding charged to the checks was the un-inlined fault note BESIDE them; with that
+   inlined the fully checked row sits at its plain-arithmetic floor.**
 3. A `(0..64).contains(&_v_v2)` range test on `x >> 8`, whose amount is a literal.
 
 None of the three is the store model.  What IS the design, and stays:
@@ -1122,12 +1125,91 @@ What is NOT the design, each with its queue item (README § Phase ordering):
   decision § V-g showed can move to compile time;
 - a struct temporary is a store creation and a vector growth is a claim in a general
   arena — frame-local records and a vector-specific growth path;
-- the program and the runtime are two crates, so only `#[inline]` crosses — LTO.
+- the program and the runtime are two crates, so only `#[inline]` crosses — LTO; until
+  then `scripts/native_call_census.py` names every helper still crossing as a call
+  (§ The out-of-line calls).
 
 **The floor this predicts:** a record-heavy loop with hoisted headers, known non-null
 facts and frame-resident temporaries sits near 1.5–2× of Rust.  `hair` at 2.6× is at
 that floor already; every row at 8–19× is there for a reason in the closable list, and
 `hash`'s three are the cheapest of them.
+
+## The out-of-line calls — the census and the split (2026-09-08)
+
+**The steer.**  After C67 declined machine-dependent arithmetic, the owner's next
+sentence: *"that doesn't mean we cannot do some trickery here (the llvm code will
+probably use flags on the registers to indicate overflow)"* — keep the semantics, make
+the checks near-free.  Checked in the disassembly of the shipped `n_seed_hash` before
+anything was changed: LLVM had already inlined every `op_*_int` across the rlib boundary,
+compiles `checked_mul` to `imul` + `jo` on the hardware overflow flag, and a sentinel
+test to one `cmp`/`je` against `i64::MIN` in a register (one of them even as `neg` +
+`jno`).  Rust's safe low-level forms — `checked_*` (an `Option`), `overflowing_*` (value
+plus flag), `wrapping_*`, `saturating_*` — all lower to the same `*.with.overflow`
+intrinsics, so there was no cheaper checked form to switch to.  **The trickery was
+already done; the checks were not the cost.**
+
+**What was.**  The same listing had three `call QWORD PTR [rip+…]` — GOT-indirect calls
+into the runtime — and xmm spills around each: the leaf guard's `new` and `drop` (elided
+since by N4) and `ops::note_format_fault(1, r.is_nan() && …)`, emitted after EVERY float
+division.  Its body is `if faulted && ARMED.get() && !bare_null() { TAG.set(…) }` and it
+carried no `#[inline]`, so a one-`bool` test that is false on every ordinary division was
+a cross-crate call.  The program and the runtime are two crates with no LTO (§ The
+floor's last bullet): a helper reaches the emitted code inlined only when it says so.
+
+**The instrument** — `scripts/native_call_census.py <binary> [--fn <substr>]`: objdump
+the emitted program, resolve every GOT slot the emitted functions call through to the
+runtime symbol behind it, rank by call SITE.  On the emitted drawing bench (`b12`,
+`--lean`, 76 emitted functions) before the change: 1523 sites, 102 targets; the top of
+the list was `strict_stores_init`/`strict_store_violation` at 247 each (cold halves of
+the § V-f atomic — the design working), then `__rust_dealloc` 129, `OpFreeRef` 89,
+**`note_format_fault` 66**, `note_integer_overflow` 65 (cold, right), the two per-frame
+guards' `drop` at 28 each, `length_vector` 26, **`FnRefBufGuard::new` 14**.  A site
+count, not a dynamic one — `profile.sh --engine` says which are hot — but the class it
+exposes is exact: a fast path that is a test, compiled as a call.
+
+**The split.**  Three helpers, one shape each: the test stays in a `#[inline]` function
+the emitted code calls, the work moves to a `#[cold] #[inline(never)]` sibling.
+`note_format_fault(kind, faulted)` → `if faulted { note_format_fault_slow(kind) }`;
+`FnRefBufGuard::drop` → the two `Cell` reads inline, `release()` cold;
+`CallGuard::drop` and `FnRefBufGuard::new` `#[inline]` (their bodies are the fast path);
+`length_vector` `#[inline]`.  Semantics untouched: the same tests, in the same order,
+with the same effects — `runtime_warnings` (the `(reason)` suffix) 54/54, the codegen
+subject clean, 14/14 consumer hashes agree.
+
+**Measured** (`b12` rows, `--n 200`, three runs each, same rlib for both arms except
+the change under test):
+
+| variant | `hash` ns/op | `lock` ns/op |
+|---|---|---|
+| shipped tier at HEAD (leaf guard already elided) | 330–407k | — |
+| + `note_format_fault` split | 219–287k | 10.60–10.73M |
+| + the guards and `length_vector` | 222–272k | 10.30–10.35M (−2.8 %) |
+| hand-written wrapping arithmetic, no checks (the floor) | 225–272k | — |
+
+`n_seed_hash` after the change is 22 instructions with **zero calls** on its fast path,
+every sentinel and overflow test still in it.  Emitted-bench census 1523 → 1459 sites;
+`length_vector`, `FnRefBufGuard::new` and the two `drop`s gone from the list, 29 sites
+of the cold `release` in their place.  Consumer lane (best of 3, all hashes agree):
+`hash` 6.5× → **2.63×**, `hair` 2.3× → 2.09×, `composite` 8.9× → **7.47×**, `wide_line`
+9.0× → **6.51×**, `fill_circle` 4.8× → **3.97×**, `fill_star` 5.3× → 4.05×, `lock` 6.9×
+→ 6.74×, `smooth` 17.5× → 16.65×, `fronds` 18.9× → 18.09×, `lock_curved` 10.0× → 10.12×.
+P0 gate row `hash` 2.4× (bar 7), `lock` 4.4× (bar 8).
+
+**What it corrects.**  § The floor finding 2 charged a third of `hash` to the sentinel
+checks (553–584k → 370–396k with them removed).  That A/B removed the checks AND the
+fault-note call that only exists beside a checked division, and the call was the third.
+Item 3 (range proofs) keeps its soundness argument and loses its measured payoff on this
+row: a checks-only loop with no helper beside the checks has yet to show up as hot.
+
+**What is left on the census** is work, not overhead: `OpFreeRef`, `OpNewRecord`,
+`OpFinishRecord`, `OpDatabase`, `pre_alloc_vector`, `vector_add`, `set_field_nullable`
+(the allocation classes of items 4 and 5), `get_vector` at 35 sites in 6 functions (a
+store resolution that the hoist already removes from loops — the sites left are outside
+them), and `__rust_dealloc` at 129 sites in 22 functions — `String` temporaries in the
+text-handling functions, none on a judged row.  **The rule for the runtime** (also in
+PERFORMANCE.md § Native vs Rust): a helper the emitted code calls per op is `#[inline]`,
+and if its fast path is a test the body is a `#[cold]` sibling; the census is the check
+that a new helper obeyed it.
 
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 

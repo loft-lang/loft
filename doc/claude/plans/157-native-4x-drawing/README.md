@@ -14,10 +14,11 @@ SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
-`hash` 10.9× → **9.1×** consumer / 2.7–5.4× gate row; `hair` 4.3× → **2.6×**
-(under the bar); `lock` 30× → **7.8×** (6.5–7.4× gate row); `smooth` 262× →
-**19×**; `fronds` 49× → **18×**; `composite` 26× → **11×**; the fills 17× →
-4.5–5×; `wide_line` 17× → 8.9×.
+`hash` 10.9× → **2.6×** consumer / 2.4× gate row (under the bar); `hair` 4.3×
+→ **2.1×** (under the bar); `lock` 30× → **6.7×** (4.4× gate row); `smooth`
+262× → **17×**; `fronds` 49× → **18×**; `composite` 26× → **7.5×**; the fills
+17× → **4.0×** (at the bar); `wide_line` 17× → 6.5×; `lock_curved` 10.1×
+(2026-09-08 evening, after § V-h).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -62,16 +63,25 @@ runtime subject suites were green on the rebased tree locally, `packages` was
 stopped before its verdict to free the box and is covered by the dispatch.
 
 **Item 1 shipped** (the hoisted loop bound) with the leaf guard elision beside
-it.  **The next unit is `fronds`' deep-copy class** (item 4, DESIGN.md
+it, and **§ V-h the same evening** (DESIGN.md § The out-of-line calls): the
+owner's steer that LLVM would already be using the overflow flags was checked
+in the disassembly and found true — what the `hash` row paid was the
+un-inlined helpers BESIDE the checks, and splitting those into an inline test
+plus a `#[cold]` body put the fully checked row at its plain-arithmetic floor
+(`hash` 2.6× in the consumer lane).  `scripts/native_call_census.py <binary>`
+is the instrument; what remains on its list is the allocation work of items 4
+and 5, `get_vector` at 35 sites outside hoisted loops, and `__rust_dealloc`
+in the text functions.  **The next unit is `fronds`' deep-copy class** (item 4, DESIGN.md
 § fronds): the sub-call's result Fronds are copied one by one into the parent
 with their inner vectors and the source freed — a quarter of the row.  Design
 first: the source is a temporary whose elements die after the loop, so the
 append should MOVE the records and adopt their inner vectors, or the callee
 should build into the caller's vector; write the cells before the code, as
-§ V-g did.  Beside it, item 3 as re-stated: sentinel elision by RANGE proof —
-`n_seed_hash`'s `& 0xFFFFFFFF` bounds every operand, and a bounded operand
-cannot overflow; the owner ruled that null is made by ordinary arithmetic, so
-the declaration is never the fact, the range is.  Then item 5 (frame-local
+§ V-g did.  Item 3 (sentinel elision by RANGE proof — `n_seed_hash`'s
+`& 0xFFFFFFFF` bounds every operand, and a bounded operand cannot overflow;
+the owner ruled that null is made by ordinary arithmetic, so the declaration
+is never the fact, the range is) keeps its argument but lost its measured
+payoff to § V-h: rank it again when a checks-only loop shows as hot.  Then item 5 (frame-local
 record temporaries, ceiling measured) and the small emitter items of `fronds`'
 allocation class (4b, ceiling −9 %).
 
@@ -149,6 +159,7 @@ unless said otherwise.
 | **V-e** — the runtime's per-allocation overhead, found by `perf` once it could run: three uncached env reads per allocation/free, a scan of every type per allocation, field-list clones per copy, a formatted `String` per protected call | [DESIGN.md § V-e](DESIGN.md) | any consumer hash disagrees; `LOFT_STORES=log` stops reporting; the profile's `getenv` line returns | **Shipped 2026-09-08** — standalone `smooth` −50 %; consumer `smooth` 104× → 44×, `fronds` 37× → 24×, every allocation-heavy row moved; behaviour-preserving (hashes exact, both backends) |
 | **V-f** — the runtime's per-record bookkeeping: the claims set as a bitset, per-type heap facts (`owns_heap`, `zero_default`) that skip the scalar walks, `strict_stores` as one atomic load, the live-store count and the `"File"` lookup off the hot path, `Store::valid` inlined | [DESIGN.md § V-f](DESIGN.md) | any consumer hash disagrees; `fl_validate` / the "Unknown record" assert stop firing in the armed build; a struct-enum's collection payload leaks; `lock` regresses on the P0 instrument | **Shipped 2026-09-08** — standalone `smooth` −48 %; consumer `smooth` 44× → 25×, `fronds` 24× → 19×, `composite` 19× → 12×, fills 6–7× → 4.5–5×, `lock` 9.0× → 8.0×; behaviour-preserving (hashes exact, both backends) |
 | **V-g** — read-only view elision at a record join: a record local bound once from a call whose return borrows a value-const, never-rebound argument, and read only through projections, keeps the VIEW (the copy `(O-Move)` asks for is unobservable there) and releases the callee's minted arm by identity at scope exit — the collection join's route; the mark is a stored variable field | [DESIGN.md § V-g](DESIGN.md) | a control cell stops copying; a strict-store violation on either backend; `tests/view_elision.rs` goes quiet under the switch; a warm `LOFT_PROGRAM_CACHE=1` run copies again | **Shipped 2026-09-08** — standalone `smooth` −28 % (38 → 14 stores per call); consumer `smooth` 25× → 21×; `fronds` unmoved (not this class); 17-cell LOCK + the shape test, falsified; the c11 rebind hole found by the matrix and closed in the collection twin too |
+| **V-h** — the out-of-line calls: a runtime helper the emitted code calls per op crosses the rlib boundary as a real call unless it is `#[inline]`, so `note_format_fault` (after every float division), the two per-frame guards and `length_vector` split into an inline test and a `#[cold]` body; `scripts/native_call_census.py` ranks what still crosses | [DESIGN.md § The out-of-line calls](DESIGN.md) | the census names a fast-path symbol; `hash` above its plain-arithmetic floor | **Shipped 2026-09-08** — `hash` row 330–407k → 219–287k ns/op against a 225–272k floor with every check kept; consumer `hash` 6.5× → 2.6×, `composite` 8.9× → 7.5×, `wide_line` 9.0× → 6.5×, fills at the bar; 14/14 hashes agree |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)
@@ -189,7 +200,7 @@ What remains, ranked by measured value per unit of work:
 |---|---|---|---|---|
 | 1 | **bound-via-header** — the loop bound re-reads the vector length through the runtime on every iteration even where the header was hoisted (`length_vector` beside `get_elem_hoisted` in `n_fnv`) | every `for` over a vector | `hash` and every element loop | S |
 | 2 | **constant shift amounts need no range check** — `x >> 8` emits a `(0..64).contains` test on a literal | `n_fnv` | XS, folds into 1 | XS |
-| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md C67) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null; the checks are a third of the row (553–584k → 370–396k ns/op) | `hash` and every masked-arithmetic loop | M–L |
+| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md C67) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null — but the third of the row charged to the checks (553–584k → 370–396k ns/op) was the un-inlined fault note BESIDE them: with it inlined the fully checked row sits at its plain-arithmetic floor (219–287k vs 225–272k, DESIGN.md § The out-of-line calls), LLVM compiling each overflow test to `imul` + `jo` and each sentinel test to one `cmp`/`je` | none measured yet — re-rank when a checks-only loop with no helper call beside it shows as hot | M–L |
 | 4 | **`fronds`' deep-copy class** — the sub-call's result Fronds are copied one by one into the parent with their inner vectors, then the source freed: a quarter of the row (`copy_claims`, `owned_walk`, `copy_block`, `memmove`); move the records of a dying temporary, or build into the caller's vector | the standalone row's profile (DESIGN.md § fronds) | `fronds` 18× → ~13× | M–L |
 | 4b | **`fronds`' allocation class** — the sides literal, the two builders, the per-sub-array spec; CEILING MEASURED at −9 % by a source-level variant (−64 % stores, hash exact) — small emitter items, not the half the census suggested | DESIGN.md § fronds | `fronds` −9 % | S each |
 | 5 | **frame-local record temporaries** — 12 of `smooth`'s 14 remaining stores are `pt(…)` results bound to locals; the scalar-tangent probe gained 11 % while DOUBLING the helper calls, so a temporary that lives in the frame takes at least that | § V-g's ceiling probe | `smooth` 19× → ~14×; the same class in every routine that names a struct temporary | M–L |

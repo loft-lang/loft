@@ -493,6 +493,7 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
 /// one question — how many elements does this source have — and `nullref` is a RUNTIME null of
 /// a non-nullable type.  A source whose TYPE is `τ?` never reaches here: it is refused at parse
 /// time, since `types.md` admits no implicit unwrap (`Parser::iterator`).
+#[inline]
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
     // the null sentinel is checked first so it never indexes stores[u16::MAX].

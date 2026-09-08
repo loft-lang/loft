@@ -658,6 +658,23 @@ Two lessons worth keeping:
 The rule generalises: a runtime helper on a per-element path needs `#[inline]`, and the
 reason belongs beside it, because the attribute looks removable and is not.
 
+**Its second half (@PLN157 § The out-of-line calls, 2026-09-08): a helper whose FAST path
+is a test and whose slow path is the work is split** — the test `#[inline]`, the body
+`#[cold] #[inline(never)]` — so the emitted code pays the test and nothing else.
+`note_format_fault` was one `bool` test in front of two thread-local reads, un-inlined, and
+the drawing bench's `hash` row called it on every float division: a real call plus the
+caller's xmm spills around it, a third of the row.  With the split the row measures AT its
+hand-written wrapping-arithmetic floor (219–287k vs 225–272k ns/op) while every sentinel
+and overflow check stays — LLVM already compiles `checked_mul` to `imul` + `jo` and a
+sentinel test to one `cmp`/`je`, so the checks were never the cost; the call beside them
+was.  The same split on the two per-frame guards (`CallGuard::drop`, `FnRefBufGuard::new`
+and `::drop`) and `#[inline]` on `length_vector` took the emitted bench from 1523 to 1459
+out-of-line call sites.  **`scripts/native_call_census.py <binary>` is how to find the next
+one**: it ranks every runtime symbol the emitted functions still call through the GOT by
+call SITE (pair it with `scripts/profile.sh --engine` for which sites are hot); a
+`#[cold]` slow half on its list is the design working, a `…::new`, `…::drop` or a length
+read on it is the finding.
+
 **3c. Inlining does not buy loop-invariant code motion — the guards prevent it**
 
 Inlining lets the caller *see* the chain; it does not let rustc hoist it. Every store
