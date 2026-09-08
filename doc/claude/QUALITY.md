@@ -2522,7 +2522,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 743 | 397 | 5 | **341** |
+| 735 | 379 | 5 | **351** |
+
+*loft#1459 moved one out of the opaque column, and it is the cheapest kind of move: the
+debugger's `render_frame_local` matched bare `Type` variants and let every `Optional` fall to
+`other => format!("<{}>", …)`, so a nullable local printed its TYPE where every other local
+prints a value.  The arm that fixes it is the peel, so the count and the fix are the same
+edit — which is what this row is for.*
 
 *loft#1456 moved one out of the opaque column by peeling: `@FR-O-Proxy`'s materialise gate now
 reads the element view through `base()`, because the `?` on a nullable element view says nothing
