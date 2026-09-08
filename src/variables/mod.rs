@@ -3894,6 +3894,21 @@ impl Function {
     /// its store?* — so a site that changes the first owes the second.  Two passes have now
     /// learned that separately; a third that strips deps should call this rather than rediscover
     /// it.
+    ///
+    /// **Audited 2026-09-08, and the class is CONTAINED — measured, not assumed.**  24 sites in
+    /// `src/` make a binding an owner (`make_independent`, or a `set_type` to `Deps::none()`).
+    /// A source scan cannot judge them: most act on a variable that was never marked, so it
+    /// reports 21 undischarged and cries wolf.  Nor can a state check at free time — "marked AND
+    /// dep-empty" is a LEGITIMATE resting state, a borrow whose dep list nobody populated, which
+    /// is the same proxy weakness `scripts/o_proxy_check.py` exists for.
+    ///
+    /// The decidable signal is the TRANSITION: a variable losing a dep while still marked.
+    /// Instrumented at `make_independent` — its one home, so every caller is covered — 14 corpus
+    /// files reach it (`_mv_*` from `(B-View)`'s materialise, `__ncc_*` from @PLN101's), and
+    /// NONE of them leaks under `LOFT_STORES=warn`.  Every live transition is already followed by
+    /// the clear.  So the two callers below are the whole of it today, and the instrument to
+    /// re-run if a third pass starts stripping deps is that one: probe the transition, then ask
+    /// the corpus whether it leaks.
     pub fn clear_skip_free(&mut self, v: u16) {
         self.variables[v as usize].skip_free = false;
     }
