@@ -684,10 +684,25 @@ impl Output<'_> {
         // loft#1336) — asked bare, `c = keep(other)` on a `c: S?` fell to the plain
         // assignment below and ALIASED the argument.  A FIRST bind keeps the bare question
         // plus the join fallback loft#1106 gave it; widening that is a separate walk.
+        //
+        // ⚠ The first bind's question is a NULLABILITY one and has to SAY so, which is what
+        // `@FR-N-Shape` asks of a site that must tell `τ` from `τ?`: read the marker, never
+        // a missing arm.  It used to get the answer from `heap_def_nr`'s own blindness, and
+        // when that verb learned to peel, this branch became the reassignment branch in
+        // silence — the widening the sentence above calls a separate walk, landed by
+        // accident.  What that costs is a `t = head(q)` on a `t: S?` where `head` returns a
+        // VIEW of its argument: `--native` took the copy-or-adopt split against an IR that
+        // says alias, so it answered a stale `q[0]` where `--interpret` answered the
+        // written one, and the store it minted had no owner to free it (the caller's type
+        // still names `q`'s dep, so `owns_freeable_store` emits no free).  The value half
+        // was silent on both backends.
         let record_def = if self.declared.contains(&var) {
             variables.tp(var).base().heap_def_nr()
         } else {
-            variables.tp(var).heap_def_nr()
+            match variables.tp(var).peel_optional() {
+                (_, true) => None,
+                (shape, false) => shape.heap_def_nr(),
+            }
         }
         .or_else(|| {
             crate::use_analysis::nullable_join_first_bind(
