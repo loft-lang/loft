@@ -5202,6 +5202,14 @@ extern crate loft;"
                 // live tier's contract.  Probed at −39 % on the hash row,
                 // −7 % on lock; `LOFT_NO_LEAF_PRELUDE=1` restores the push.
                 let leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
+                // user function and no fn-ref, so it can neither push a buffer nor sit
+                // between the frame that pushed one and the frame that releases it —
+                // its guard's drop would find nothing above its mark, every time.
+                // Measured on the hash row (100 000 leaf calls): the guard's two `Cell`
+                // reads and its drop were a third of the row (553–584k → 370–396k
+                // ns/op with the guard line removed from the emitted leaf).
+                let fnref_guard = if leaf { String::new() } else { fnref_guard };
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
