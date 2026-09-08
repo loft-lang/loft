@@ -3,33 +3,16 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# 159 — Gate efficiency: one build, one profile, diff-first, and a cdylib key that ignores the loft build
+# 159 — Gate efficiency: one build, one profile, diff-first, and a fingerprint that moves with the tree
 
 Tracker: [`@PLN159`](https://github.com/loft-lang/plans/issues/159) · `subject:loft` ·
-value **Q** · **Effort: M · Design: ~** · opened 2026-09-08.
+value **Q** with one **S** phase · **Effort: M · Design: ~** · opened 2026-09-08.
 
 ## Status
 
-**DONE / SHIPPED 2026-09-08** — closed by the owner the same day, on branch
-`tuxedo-159-gate-efficiency` (commits `834b39432`, `91bdf49d6`, `4610dff3e` and the closing
-one).  A, B, C, D, E, G, H and I are built and proven on this box; C shipped with its premise
-CORRECTED (below).  This file is now the closed record — the measurements, the proofs and the
-two falsifications; the living reference is [CI_BUDGET.md](../CI_BUDGET.md) (§ The gate builds
-the test binaries TWICE, and its `## Open work`), [TESTING.md](../TESTING.md) (§ What a test
-run selects) and the code the rows below point at.  What the plan leaves as OPEN WORK, in
-CI_BUDGET.md rather than here: E's wall clock read off the first real PR run; F′, the wasm-
-output cache (designed, seam named, pays only on a docs-only re-gate); G's default (queue, as
-shipped, or throttle — the owner's call); and the artefact-pinning follow-up.
-
-**Phase I is a correctness fix as much as a speed one** (loft-c1's reading, 2026-09-08): the
-old rebuild step refreshed the release *lib* and never the release *binary*, so the 29 test
-binaries that spawn `target/release/loft` were measuring whatever `make ci` last built — a
-binary from an unrelated earlier run, or from a tree temporarily reverted for a
-falsification.  Nothing tied the artefact to the source that was supposed to have produced
-it.  Now the step rebuilds both whenever a selected binary spawns it, and the one test that
-spawned it without needing to uses the test-profile binary instead.  Every number
-below was read off a real run between 2026-09-06 and 2026-09-08 and names its source; none
-is a projection except where the word appears.  [CI_BUDGET.md](../CI_BUDGET.md) stays the reference doc for
+Open — measured, no implementation yet.  Every number below was read off a real run
+between 2026-09-06 and 2026-09-08 and names its source; none is a projection except
+where the word appears.  [CI_BUDGET.md](../CI_BUDGET.md) stays the reference doc for
 where gate time goes: this plan's measurements move there when a phase closes, and its
 phase 5 ("sccache / asymmetric macOS — measure first") is superseded by this plan.
 
@@ -98,48 +81,15 @@ corpus file is ~5 ms.
 measured afternoon had three of five gate cycles end on a docs-side item — the cycles a
 content cache would make free.
 
-**The fingerprint churn (corrected 2026-09-08 — filed as a hole, measured as waste).**
-`native_artifact_cache_key` (`src/cache.rs`) folded the FFI ABI, RUSTFLAGS, `LOFT_VERSION`
-and `BUILD_ID`, the git HEAD.  The first reading of this plan called that a dirty-tree hole
-for the generated `loft_auto_*` cdylibs.  It is not: those are content-addressed by
-`loft_build_fingerprint` (the rlib's bytes) in their file NAME (`cached_or_build_shared_cdylib`,
-loft#715), so they move on every rebuild, committed or not.  The HEAD-keyed stamp governs only
-a package's HAND-WRITTEN `native/` crate — and no such crate in the tree, the fixtures or the
-registry depends on the `loft` crate (every `native/Cargo.toml` names loft-ffi, loft-ffi-macros,
-loft-ffi-build only), so a codegen change cannot reach it.  What the fold bought was nothing;
-what it cost was a rebuild of every package cdylib on every commit — each CI run's
-`cdylibstale` events, a cold `cache warm` after every local commit, and a stamp ping-pong
-between the three checkouts sharing `~/.loft/build-cache`.  The comment at `src/main.rs`
-describing a content hash was wrong either way.  Phase C therefore drops `BUILD_ID` from the
-key instead of adding a dirty hash to it; the value category falls from S to Q.
-
-**What one edit costs rustc, per profile (2026-09-08, load 20–40 on the shared box).**  The
-owner asked how rustc compares with a C compiler's per-file `.o` model.  Rust's unit is the
-CRATE: one `rustc` parses, resolves, type-checks and borrow-checks all 325 k lines of `loft`
-on every build, then splits codegen into codegen units.  The dev profile is *incremental*
-(the default): it keeps a query graph and the units' object files under
-`target/debug/incremental/` and re-runs only what an edit invalidates — the `.o` model, at
-codegen-unit rather than file granularity, and with a wider blast radius because a generic
-or `#[inline]`/MIR-inlined function is compiled into every unit that instantiates it
-(opt-level 1 inlines).  The release profile is *not* incremental: every edit is the whole
-crate.
-
-| edit | dev (incremental) | release (non-incremental) |
-|---|---|---|
-| touch only, same bytes, leaf `src/registry.rs` | 5.0 s | 55.0 s |
-| comment-only edit in `src/lexer.rs` | 3.0 s | 41.5 s |
-| one function body edited in `src/lexer.rs` | 21.6 s | 41.9 s |
-| …then the 261 test binaries that link the lib (relink, incremental re-check) | 15.8 s | — |
-| …or only the ten parser binaries a `--subject parser` run needs | 4.1 s | — |
-
-So the C-like behaviour exists and the loop was not using it: every `find_problems` run
-rebuilt the release rlib (that is the 55 s column, on every edit, for an rlib only 29 test
-binaries link through `target/release/loft`) and both wasm rlibs (two more non-incremental
-crate builds).  Phase I keeps the loop on the incremental column, so an edit-to-tests cycle on a subject
-is now the lib (3–22 s) plus the subject's binaries (~4 s) plus the tests.  The remaining
-22 s for a real edit is the crate's size: the structural cure is a workspace split (parser · typing ·
-store · runtime · codegen · cache/registry), so cargo's crate-level "unchanged, not rebuilt"
-applies — the true analogue of a Makefile's per-file rule — sized H and out of this plan.
+**The fingerprint hole (S).**  `native_artifact_cache_key` (`src/cache.rs:607`) folds the
+FFI ABI, RUSTFLAGS, `LOFT_VERSION` and `BUILD_ID`; `BUILD_ID` is `git rev-parse --short
+HEAD` (`build.rs`).  Deliberate — debug, release and test in one CI job share cdylibs — but
+in a dirty tree an uncommitted codegen edit followed by `make ci` reuses the `loft_auto_*`
+cdylibs generated by the previous compiler, and `loft cache warm` reports them current.  The
+program and stdlib caches close this gap with the running binary's mtime
+(`build_signature`); the artifact key does not, and the doc comment at `src/main.rs:4248`
+claims a content hash that is not there.  Read off the code; the probe in phase C is the
+reproduction.
 
 ## Sub-arcs
 
@@ -149,22 +99,17 @@ same number before and after.
 
 | Item | Source | Verify | E | Status |
 |---|---|---|---|---|
-| **A** — one build: `[profile.dev] debug = 1` so dev and test share artifacts | `Cargo.toml` `[profile.test]` / `[profile.dev]` | after `cargo build --all-targets`, `cargo nextest run --no-run` prints no `Compiling`; one hash per test binary in `target/debug/deps`; the next PR run's `Finished test profile` line inside `Test` under 10 s (today 4m05s) | XS | Shipped 2026-09-08: `cargo test --no-run` after `cargo build --all-targets` compiled nothing (0.19 s), and the dev build reused the test-profile `wrap-76c0…` |
-| **B** — one profile for the local loop: `find_problems.sh` drops `--release` | `scripts/find_problems.sh:177` | touch one `src/` file, run `--subject parser` then `make ci`: exactly one `Compiling loft` for the lib across both logs; the 60 s per-test budgets hold (they already hold in this profile on CI's 4 vCPUs) | XS | Shipped 2026-09-08: after `touch src/lexer.rs`, `--subject parser` built the lib once and both gate build steps compiled nothing |
-| **C** — the package-cdylib key without the loft build: `native_artifact_cache_key` = FFI ABI ⊕ RUSTFLAGS ⊕ version; the four comments that described the old key corrected | `src/cache.rs`, `src/extensions.rs`, `src/main.rs`, `tests/features.rs`, `Makefile` | `cargo build` in `tests/lib/native_pkg/native` stays Fresh across the loft source edit that is this phase (0.17 s, no `Compiling`: cargo's own fingerprint says the crate does not depend on loft); `loft cache warm --from tests` rebuilds every package cdylib ONCE (new key) and reports them current on the next run and after the next commit; the unit test pins the key's inputs | S | Shipped 2026-09-08 — the after-commit `cache warm` read is owed |
-| **D** — diff-first: `find_problems.sh --changed` from `SUBJECT_PATHS`; `make ci` passes a generated `--tool-config-file` with nextest `priority` overrides for the diff's binaries | `scripts/test_subjects.sh` (`SUBJECT_PATHS` is defined and read by nothing), `.config/nextest.toml` | a planted failure in a diff-touched binary is reported inside the first minute of nextest (today: whenever the pool reaches it, ≥ 5 min); `--changed` on a diff under `src/parser/` prints the `parser` filter | S | Implemented 2026-09-08; the planted-failure timing is owed |
-| **E1** — the native corpus as its own shard: `binary(native) & test(native_scripts)`, heavy = serial groups minus it | `scripts/ci_test_filter.py`, `ci.yml` `changes` job | the four shards are an exact partition (counts sum to the unsharded count, zero overlap — the discipline the existing split records); the real PR run's heavy job under 20 min | S | Implemented 2026-09-08; partition proven (120 + 1 + 1457 + 3130 = 4708, zero duplicates); the wall clock is owed to the PR run |
-| **E2** — the cache save off the long pole | `ci.yml` `Save cargo cache` (`shard == 'heavy'`) | measured, not assumed: one run saving from `rest-a` and the run after it — `Build` shows deps Fresh and `~/.loft/build-cache` warm; if heavy-only artifacts go cold, split the save (target from `rest-a`, build-cache from heavy) | XS | Implemented 2026-09-08 as the split: `target` from `rest-a`, the corpus binaries from `corpus`, the build cache from `heavy`, all three restored everywhere; the run-after read is owed |
-| **I** — the iteration loop builds only what the selection needs (added 2026-09-08 when the owner ranked this box's agents above the PR clock).  Measured in B's proof: after a one-file edit, `--subject parser` spent 158 s in `rebuild_native_cdylibs` — the release rlib (158 s) and the two wasm rlibs (99 s, in parallel) — before 13 s of tests, and a parser test uses none of them: the loft the tests spawn is the test-profile binary (`CARGO_BIN_EXE_loft`, 152 binaries), which resolves its rlib beside itself; the release rlib serves only the 29 binaries that spawn `target/release/loft`, and the wasm rlibs only the html/wasm suites.  So: always `cargo build --lib` (dev, ~1 s, the uplift beside the debug loft); the release lib AND `--bin loft` only when a selected binary spawns the release loft (today's loop rebuilt the release lib but never the binary those 29 spawn — a stale-binary verdict in the loop); the wasm rlibs only when a selected binary is a wasm/html one; curated and full keep everything | `scripts/find_problems.sh` `rebuild_native_cdylibs`, `scripts/test_subjects.sh` | after `touch src/lexer.rs`: `--subject parser`'s timing summary shows no release or wasm row and its wall is the dev lib compile plus the tests; `--subject wasm` still rebuilds both wasm rlibs and advances `target/release/loft`'s mtime; the curated run is unchanged | S | Shipped 2026-09-08: after `touch src/lexer.rs`, `--subject parser` rebuilt for 4.3 s (dev rlib 4.2 s; the two skip rows printed) instead of 158 s, 782 tests, 65 s wall, `target/release/loft` untouched; `--subject scopes` rebuilt the release rlib + binary (94.9 s, needed by one test) and advanced its mtime, 368 tests green |
-| **F** — a content cache for the compile-spawning tests — RE-SCOPED 2026-09-08 after two falsifications.  (1) The emitted Rust embeds the script's absolute path (`// loft:<path>:<line>` comments and `cr_call_push("main", "<path>", …)` for stack traces), so two byte-identical probes under different names differ in the emitted source: a content key is a per-name key, and making the emitter path-independent is a codegen design change (the runtime must still name the file in a crash report), sized M, with no gate payoff.  (2) A small `--native` probe compiles in 0.3 s cold and answers in 33 ms cached, so a hit is worth ~270 ms per probe.  What is expensive and has NO cache is the wasm side: `--html` and `--native-wasm` write `<dir>/.loft/<stem>.wasm` with no key and recompile on every run (`html_embed` 60 s per test isolated).  F′: a `<stem>-<hash>` cache for those two outputs, keyed like the native one (generated Rust bytes ⊕ wasm rlib CONTENT ⊕ the `wasm-opt` version ⊕ flags).  It pays only on a run whose wasm rlib did not move — a docs- or tests-only re-gate — never on the fix iteration the owner asked about, so it ranks last | `src/main.rs` (the `--html` / `--native-wasm` paths near `default_artifact_path(…, "wasm")`), the native cache at `src/main.rs:10882` as the model | F′: two back-to-back runs of `html_embed` with no source change — the second run's `[loft-timing]` shows wasm HITS and its wall drops to the browser step; a one-byte `src/` edit rebuilds every page (the rlib hash moved) | S | Open — last |
-| **G** — gate queue across checkouts: `ci-run.sh start` takes a box-wide flock; `CI_LIVE_GATES` throttle stays as fallback | `scripts/ci-run.sh`, `Makefile:520` | two gates started 5 s apart on two checkouts: the second's `result.txt` header records the wait, the first runs at 24 threads, peak load ≤ a solo gate's | XS | Implemented 2026-09-08 as a queue by default (`/tmp/loft-gate.lock` in `make ci`), `LOFT_GATE_PARALLEL=1` for the old throttle — open question 1 stands for the owner |
-| **H** — subject-coverage guard + growth rule | `scripts/test_subjects.sh` (`unmatched_binaries` is printed, never checked), `TESTING.md` | a `doc_hygiene` test that `unmatched_binaries` is empty goes red on a synthetic `tests/zz_probe.rs`; TESTING.md states the rule (guards to the corpus; new Rust tests join an existing binary; a compile-spawning test shares its binary's fixture) | S | Implemented 2026-09-08: 80 of 261 binaries matched no subject, the map now reaches all 261, the guard is strict |
+| **A** — one build: `[profile.dev] debug = 1` so dev and test share artifacts | `Cargo.toml` `[profile.test]` / `[profile.dev]` | after `cargo build --all-targets`, `cargo nextest run --no-run` prints no `Compiling`; one hash per test binary in `target/debug/deps`; the next PR run's `Finished test profile` line inside `Test` under 10 s (today 4m05s) | XS | Open |
+| **B** — one profile for the local loop: `find_problems.sh` drops `--release` | `scripts/find_problems.sh:177` | touch one `src/` file, run `--subject parser` then `make ci`: exactly one `Compiling loft` for the lib across both logs; the 60 s per-test budgets hold (they already hold in this profile on CI's 4 vCPUs) | XS | Open |
+| **C** — a fingerprint that moves with the tree: `BUILD_ID` = HEAD + hash of the uncommitted `src/` + `default/` diff; fix the `main.rs:4248` comment | `build.rs`, `src/cache.rs:607` | probe: uncommitted edit under `src/generation/`, rebuild, `loft cache warm --from tests` reports the cdylib REBUILT; control with no edit reports current; a debug and a release `loft` of the same tree accept each other's `.loft-build-fp` | S | Open |
+| **D** — diff-first: `find_problems.sh --changed` from `SUBJECT_PATHS`; `make ci` passes a generated `--tool-config-file` with nextest `priority` overrides for the diff's binaries | `scripts/test_subjects.sh` (`SUBJECT_PATHS` is defined and read by nothing), `.config/nextest.toml` | a planted failure in a diff-touched binary is reported inside the first minute of nextest (today: whenever the pool reaches it, ≥ 5 min); `--changed` on a diff under `src/parser/` prints the `parser` filter | S | Open |
+| **E1** — the native corpus as its own shard: `binary(native) & test(native_scripts)`, heavy = serial groups minus it | `scripts/ci_test_filter.py`, `ci.yml` `changes` job | the four shards are an exact partition (counts sum to the unsharded count, zero overlap — the discipline the existing split records); the real PR run's heavy job under 20 min | S | Open |
+| **E2** — the cache save off the long pole | `ci.yml` `Save cargo cache` (`shard == 'heavy'`) | measured, not assumed: one run saving from `rest-a` and the run after it — `Build` shows deps Fresh and `~/.loft/build-cache` warm; if heavy-only artifacts go cold, split the save (target from `rest-a`, build-cache from heavy) | XS | Open |
+| **F** — content-keyed artifact cache for the uncached compile sites, ONE helper in `tests/common`, migrated one binary at a time | `src/native_utils.rs:896` (`native_cache_key`), the 49 `Command::new("rustc")` / wasm sites | per binary: two back-to-back runs with no source change — the second run's binary wall drops to run cost (JUnit); then rebuild after a one-byte `src/` edit — every artifact rebuilds (spawn count = artifact count, via `LOFT_TIMING`); order `codegen_emitter`, `exit_codes`, `native_loader`, `html_embed`/`html_wasm`, `deliver_wasm` | M | Open |
+| **G** — gate queue across checkouts: `ci-run.sh start` takes a box-wide flock; `CI_LIVE_GATES` throttle stays as fallback | `scripts/ci-run.sh`, `Makefile:520` | two gates started 5 s apart on two checkouts: the second's `result.txt` header records the wait, the first runs at 24 threads, peak load ≤ a solo gate's | XS | Open — see open question 1 |
+| **H** — subject-coverage guard + growth rule | `scripts/test_subjects.sh` (`unmatched_binaries` is printed, never checked), `TESTING.md` | a `doc_hygiene` test that `unmatched_binaries` is empty goes red on a synthetic `tests/zz_probe.rs`; TESTING.md states the rule (guards to the corpus; new Rust tests join an existing binary; a compile-spawning test shares its binary's fixture) | S | Open |
 
 ## Phase ordering
-
-**The owner's priority (2026-09-08): this box's agents, not the PR clock** — most of an agent's
-time goes to waiting on validations.  So the local phases rank first: A, B, I, D, G, H; then
-F; E only shortens the PR.
 
 1. **A then B**, the same day: XS each, and the win every gate sees (about 4 min per CI
    shard on the critical path, about 1 min per local gate, half the disk under
@@ -202,13 +147,6 @@ E2; a docs-only local re-gate from ~10 min to under 1 min after A + F.
 - **The flake-rerun multiplier.**  One branch on 09-01 needed 6 CI runs, the 09-02 join PR
   4.  Out of scope here (the flake list is its own work), but it multiplies every minute
   this plan saves.
-- **Pin the artefact a long gate measures** (from loft-c1's morning, 2026-09-08).  A
-  25-minute valgrind sweep ran `target/release/loft` per file while a rebuild replaced that
-  binary under it, and a `--subject parser` run rebuilt it again against a temporarily
-  reverted tree — two of three measurements were about a tree that no longer existed and
-  neither said so.  A gate that consumes a build artefact should record its hash at start
-  and fail loudly when it moves (or copy the binary aside); the gate lock is `make ci`-only
-  and does not stop a `cargo build` beside a sweep.  Sized S; not started.
 - **`cargo check` for the `--no-default-features` compile gate** (27 s locally): the
   defect class it exists for is a resolution error `check` reports, but `check` misses link
   errors; not worth the risk for 27 s.
