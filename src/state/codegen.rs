@@ -4542,7 +4542,8 @@ impl State {
                 Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpGetStackRef", self);
                 }
-                other if crate::parser::vectors::is_collection(other) => {                    stack.add_op("OpGetStackRef", self);
+                other if crate::parser::vectors::is_collection(other) => {
+                    stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
             }
