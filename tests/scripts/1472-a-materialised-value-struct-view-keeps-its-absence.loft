@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COPY of an absent value is absent — `@FR-B-Copy` over `@FR-L-Null`.
+//
+// @PLN101's zero-cost elision leaves a `value struct` view as a view IFF nothing can mutate the
+// backing during its lifetime; where the local (or any base it projects from) is TAINTED — field
+// or element written, or escaping — the view is MATERIALISED as a copy so it cannot observe a
+// later write.  That materialisation was emitted unconditionally: null the destination,
+// ALLOCATE, copy.  `OpCopyRecord` from a null source does nothing at all, so an absent source
+// left the destination allocated and ZEROED, and every downstream null test then answered
+// present.
+//
+// The visible cost was a `??` whose default never ran: `v[i] ?? d` on an out-of-range index
+// answered a zero record instead of `d`, silently, on both backends.
+//
+// ⚠ The axis is OWNER vs BORROW, not the index.  Reading an element of a LOCAL vector copies
+// (the local is tainted by the writes that filled it); reading through a PARAMETER borrows and
+// was always correct.  A constant index only changes whether `@FR-N-Domain` elides the `?`,
+// which is a different question — the filed report blamed the index and then the element type,
+// and both were wrong.
+//
+// A REFERENCE struct is unaffected and is the control: it never copies, because the element IS
+// the `DbRef`, so the test always landed on the source.
+//
+// Axes this file MOVES:  the subject's position (a LOCAL's element · a PARAMETER's element),
+//                        the index (constant · variable), presence vs absence, and the element
+//                        kind (value struct · reference struct).
+// Axes it HOLDS FIXED:   the payload is two scalars, so what is asserted is the ABSENCE and
+//                        never the payload's own nullability.
+//
+// @falsified-at: 04531a0fe — interpret exit 1 -> 0 and 1 assertion failure -> 0; native the same.
+//   MEASURED both backends.  The ASSERT channel moves, which is the right one for a
+//   silent-wrong: the control reaches the cell, runs it, and answers a zero record where the
+//   file says the default.
+//
+//   ⚠ The LEAK half of this fix is NOT captured here.  `falsify` reports `leak: none` on both
+//   sides because it does not arm the store check, and the stale `skip_free` cost one record
+//   per evaluation rather than a wrong answer.  It was measured separately against a pristine
+//   build — absent path 1 leaked before / 0 after, present path 1 before / 0 after — and it is
+//   the present-path cells above that exercise it.  A guard whose channel cannot see half its
+//   own fix should say so.
+
+value struct VPt1472 { x: integer, y: integer }
+struct RPt1472 { x: integer, y: integer }
+
+fn via_param(v: vector<VPt1472>, i: integer) -> integer { (v[i] ?? VPt1472 { x: -1, y: -1 }).x }
+
+fn main() {
+  vv: vector<VPt1472> = [VPt1472 { x: 7, y: 8 }];
+  rr: vector<RPt1472> = [RPt1472 { x: 7, y: 8 }];
+  j = 9;
+
+  // ---- the CELLS: a LOCAL's element, which is the copying path ----
+  assert((vv[9] ?? VPt1472 { x: -1, y: -1 }).x == -1, "absent, constant index: the default runs");
+  assert((vv[j] ?? VPt1472 { x: -1, y: -1 }).x == -1, "absent, variable index: the default runs");
+
+  // ---- and PRESENCE through the same path, which is what says the fix did not simply make
+  //      everything absent ----
+  assert((vv[0] ?? VPt1472 { x: -1, y: -1 }).x == 7, "present: the element's own payload");
+  k = 0;
+  assert((vv[k] ?? VPt1472 { x: -1, y: -1 }).y == 8, "present by variable index too");
+
+  // ---- the BORROW twin, which never copied and was always right ----
+  assert(via_param(vv, 9) == -1, "absent through a parameter");
+  assert(via_param(vv, 0) == 7, "present through a parameter");
+
+  // ---- the CONTROL: a REFERENCE struct never takes the copy path at all ----
+  assert((rr[9] ?? RPt1472 { x: -1, y: -1 }).x == -1, "a reference struct is absent when absent");
+  assert((rr[0] ?? RPt1472 { x: -1, y: -1 }).x == 7, "…and present when present");
+
+  // ---- the materialisation still MATERIALISES: a copy taken before a write must not see it,
+  //      which is the whole reason @PLN101 copies a tainted view rather than aliasing it ----
+  snap = vv[0];
+  vv[0] = VPt1472 { x: 99, y: 99 };
+  assert(snap.x == 7, "the copy kept its value across a write to the source: {snap.x}");
+  assert(vv[0].x == 99, "…and the source took the write");
+
+  println("1472 ok");
+}

@@ -3876,11 +3876,24 @@ impl Function {
     /// into the result vector store).
     /// Lift the never-free mark — the binding has stopped being the borrow it was marked for.
     ///
-    /// The one caller is `(B-View)`'s materialise: a view live across a disturbance of its
-    /// container is given a store of ITS OWN, and a binding that owns a store must free it.
-    /// Stripping the deps without lifting the mark is what left a materialised `_mv_<field>_N`
-    /// holding a record nothing released.  `@FR-O-Override`'s contract is that a MARKED
-    /// binding is never freed; this retires the marking rather than freeing around it.
+    /// Two callers, and they are the same fact in two passes: a view that is given a store of
+    /// ITS OWN stops being a view, and a binding that owns a store must free it.
+    /// `@FR-O-Override`'s contract is that a MARKED binding is never freed; this retires the
+    /// marking rather than freeing around it.
+    ///
+    /// * `(B-View)`'s materialise — a view live across a disturbance of its container.
+    ///   Stripping the deps without lifting the mark left a materialised `_mv_<field>_N`
+    ///   holding a record nothing released: one leaked record per call on `--native`.
+    /// * @PLN101's value-struct copy (`value_struct_copy`) — a view into a TAINTED local is
+    ///   materialised for the same reason, and it inherited the same omission: the parser marks
+    ///   the `??` temp `skip_free` because its subject is a borrowed place read, that pass makes
+    ///   it an owner, and the stale mark suppressed the free.  `(v[0] ?? d)` on a value struct
+    ///   leaked one record per evaluation, both backends (loft#1472).
+    ///
+    /// ⚠ The DEP LIST and this MARK are two spellings of one question — *does this variable own
+    /// its store?* — so a site that changes the first owes the second.  Two passes have now
+    /// learned that separately; a third that strips deps should call this rather than rediscover
+    /// it.
     pub fn clear_skip_free(&mut self, v: u16) {
         self.variables[v as usize].skip_free = false;
     }

@@ -4687,14 +4687,23 @@ fn value_struct_copy(data: &mut Data) {
     }
     let op_database = data.def_nr("OpDatabase");
     let op_copy_record = data.def_nr("OpCopyRecord");
-    if op_database == u32::MAX || op_copy_record == u32::MAX {
+    let op_conv_bool_from_ref = data.def_nr("OpConvBoolFromRef");
+    if op_database == u32::MAX || op_copy_record == u32::MAX || op_conv_bool_from_ref == u32::MAX {
         return;
     }
+    let ops = VsCopyOps {
+        database: op_database,
+        copy_record: op_copy_record,
+        conv_bool_from_ref: op_conv_bool_from_ref,
+    };
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
         let mut code = data.definitions[d_nr as usize].code.clone();
+        // The walk needs `&mut Data` to mint its source temp, so the taint oracle's view of the
+        // body is taken HERE, once, rather than re-borrowed inside it.
+        let body_snapshot = code.clone();
         // Read-only-elision oracle (function scope; rescoped per loop body inside the walk): the
         // TAINTED set — variables whose backing may be mutated, or which escape, during a view's
         // lifetime. Seeded from field/element writes (`find_field_written_vars`, catches nested
@@ -4707,10 +4716,10 @@ fn value_struct_copy(data: &mut Data) {
             &mut code,
             data,
             d_nr,
-            op_database,
-            op_copy_record,
+            ops,
             &tainted,
             &mut cleared,
+            &body_snapshot,
         );
         if cleared.is_empty() {
             continue;
@@ -4724,6 +4733,16 @@ fn value_struct_copy(data: &mut Data) {
                     .variables
                     .set_type(v, Type::Reference(p, Deps::none()));
             }
+            // …and the `skip_free` mark with it.  The PARSER sets it on a `??` temp whose
+            // subject is a borrowed place read — right at the time, because a borrow must not
+            // free what it points at.  This pass then makes that same temp an OWNER, and the
+            // stale mark suppressed the free of the store it now owns: `(v[0] ?? d)` on a
+            // value struct leaked one record per evaluation, silently, on both backends.
+            //
+            // The dep and the mark are two spellings of ONE fact — "does this variable own its
+            // store?" — so the site that changes the first owes the second.  Clearing them
+            // together here is what keeps them from drifting again.
+            data.definitions[d_nr as usize].variables.clear_skip_free(v);
         }
     }
 }
@@ -4924,27 +4943,32 @@ fn vs_scope_taint(ops: &[Value], data: &Data) -> HashSet<u16> {
 /// oracle (computed once by the caller): a value-struct view-bind is left as a zero-cost view (like
 /// a reference struct) when neither the local nor any base variable is tainted; otherwise the copy
 /// is emitted for value semantics.
+/// The three opcode def-numbers `vs_copy_walk` emits, resolved once by its caller.
+///
+/// Bundled because they travel together through every arm of the walk and are meaningless
+/// apart: `OpDatabase` allocates the copy's store, `OpCopyRecord` fills it, and
+/// `OpConvBoolFromRef` is the presence test that decides whether either runs at all
+/// (`@FR-B-Copy` over `@FR-L-Null` — a copy of an absent value is absent).
+#[derive(Clone, Copy)]
+struct VsCopyOps {
+    database: u32,
+    copy_record: u32,
+    conv_bool_from_ref: u32,
+}
+
 fn vs_copy_walk(
     node: &mut Value,
-    data: &Data,
+    data: &mut Data,
     d_nr: u32,
-    op_database: u32,
-    op_copy_record: u32,
+    ops: VsCopyOps,
     tainted: &HashSet<u16>,
     cleared: &mut Vec<u16>,
+    body: &Value,
 ) {
     match node {
         Value::Set(v, rhs) => {
             let vv = *v;
-            vs_copy_walk(
-                rhs,
-                data,
-                d_nr,
-                op_database,
-                op_copy_record,
-                tainted,
-                cleared,
-            );
+            vs_copy_walk(rhs, data, d_nr, ops, tainted, cleared, body);
             if let Type::Reference(p, _) = *data.def(d_nr).variables.tp(vv)
                 && data.is_value_struct(p)
                 && matches!(
@@ -4957,32 +4981,55 @@ fn vs_copy_walk(
                 // identical to a copy — so skip the copy and keep the reference-struct-cheap view.
                 let mut affected: HashSet<u16> = HashSet::new();
                 affected.insert(vv);
-                vs_base_vars(rhs, data, &data.def(d_nr).code, &mut affected);
+                vs_base_vars(rhs, data, body, &mut affected);
                 let needs_copy = affected.iter().any(|x| tainted.contains(x));
                 if !needs_copy {
                     return;
                 }
                 let kt = i32::from(data.def(p).known_type());
                 let source = (**rhs).clone();
+                // ⚠ The materialisation must preserve ABSENCE.  Emitted unconditionally — null
+                // the destination, ALLOCATE, copy — it did not: `OpCopyRecord` from a null
+                // source "does nothing at all" (its own documented behaviour), so the
+                // destination was left ALLOCATED and zeroed and every downstream null test
+                // answered present.  A `??` on the copied view then never ran its default and an
+                // absent value read back as a zero record, on both backends (loft#1472).
+                //
+                // A copy of an absent value is absent (`@FR-B-Copy` over `@FR-L-Null`), so the
+                // allocate-and-copy moves under a presence test.  The source is bound to its own
+                // temp FIRST because it must be evaluated exactly once: it is a place read, but
+                // the index inside it can be an arbitrary expression, and splicing it into both
+                // the test and the copy would run `v[f()]`'s `f` twice.
+                //
+                // The temp is a VIEW — it carries the source's deps, so the ownership scan
+                // classifies it `Borrowed` and emits no free for it; only `vv` owns, exactly as
+                // before.  Named after the destination so the mint is stable and idempotent.
+                let view_type = data.def(d_nr).variables.tp(vv).clone();
+                let src_name = format!("__vs_src_{vv}");
+                let src_tmp = data.definitions[d_nr as usize]
+                    .variables
+                    .add_temp_var(&src_name, &view_type);
                 *node = Value::Insert(vec![
+                    Value::Set(src_tmp, Box::new(source)),
                     Value::Set(vv, Box::new(Value::Null)),
-                    Value::Call(op_database, vec![Value::Var(vv), Value::Int(kt)]),
-                    Value::Call(op_copy_record, vec![source, Value::Var(vv), Value::Int(kt)]),
+                    v_if(
+                        Value::Call(ops.conv_bool_from_ref, vec![Value::Var(src_tmp)]),
+                        Value::Insert(vec![
+                            Value::Call(ops.database, vec![Value::Var(vv), Value::Int(kt)]),
+                            Value::Call(
+                                ops.copy_record,
+                                vec![Value::Var(src_tmp), Value::Var(vv), Value::Int(kt)],
+                            ),
+                        ]),
+                        Value::Null,
+                    ),
                 ]);
                 cleared.push(vv);
             }
         }
         Value::Block(b) => {
             for op in &mut b.operators {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    tainted,
-                    cleared,
-                );
+                vs_copy_walk(op, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::Loop(b) => {
@@ -4990,58 +5037,34 @@ fn vs_copy_walk(
             // view read inside the loop, only an in-body mutation/escape does.
             let loop_taint = vs_scope_taint(&b.operators, data);
             for op in &mut b.operators {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    &loop_taint,
-                    cleared,
-                );
+                vs_copy_walk(op, data, d_nr, ops, &loop_taint, cleared, body);
             }
         }
-        Value::Insert(ops) => {
-            for op in ops {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    tainted,
-                    cleared,
-                );
+        Value::Insert(items) => {
+            for item in items {
+                vs_copy_walk(item, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::If(c, t, e) => {
-            vs_copy_walk(c, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(t, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(e, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(c, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(t, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(e, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Return(x) | Value::Drop(x) => {
-            vs_copy_walk(x, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(x, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Call(_, args) => {
             for a in args {
-                vs_copy_walk(a, data, d_nr, op_database, op_copy_record, tainted, cleared);
+                vs_copy_walk(a, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::Iter(_, a, b, c) => {
-            vs_copy_walk(a, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(b, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(c, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(a, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(b, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(c, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Span(b) => {
-            vs_copy_walk(
-                &mut b.1,
-                data,
-                d_nr,
-                op_database,
-                op_copy_record,
-                tainted,
-                cleared,
-            );
+            vs_copy_walk(&mut b.1, data, d_nr, ops, tainted, cleared, body);
         }
         _ => {}
     }
