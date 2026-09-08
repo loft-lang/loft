@@ -105,7 +105,9 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                spend on absence — a reserved sentinel (layout.md L-Null) or a discriminant
                (L-Null-Tag).  A type that is only its parts' bytes has neither: a TUPLE and a
                `value struct` (@PLN101) are refused BY NAME at the declaration, each naming its
-               cures.  A tuple that ARRIVES absent is a present tuple of null members —
+               cures.  A FUNCTION type is the third: `(fn() -> integer)?` is refused at the
+               declaration and a yielded fn-ref has no sentinel to test, so `(N-Chain)` does not
+               wrap one either — a fn-ref field read through an absent receiver stays a fn-ref.  A tuple that ARRIVES absent is a present tuple of null members —
                tuples.md (T-Absent) — so no `(τ, τ)?` exists even in flight.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>

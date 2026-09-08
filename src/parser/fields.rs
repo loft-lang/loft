@@ -709,6 +709,14 @@ impl Parser {
         if receiver_optional
             && !t.is_unknown()
             && !matches!(t, Type::Optional(_))
+            // `@FR-N-Opt` — `τ?` is a type only for a τ that HAS a value to spend on absence.
+            // A function type has none: `(fn() -> integer)?` is refused at the declaration, and
+            // a yielded fn-ref has no null sentinel to test.  A TUPLE is the rule's own named
+            // case (`(T-Absent)`: an absent tuple is a present tuple of null members, so no
+            // `(τ, τ)?` exists even in flight).  Wrapping either mints a type the language
+            // cannot spell, and every bare `Type::Function` match downstream then misses it —
+            // measured: `e.f(3)` on an `e: E?` stopped parsing its own arguments.
+            && !matches!(t.base(), Type::Function(_, _, _) | Type::Tuple(_))
             && crate::keys::pln25_dn1_enabled()
             && self.tagged_pointer_type(t).is_none()
         {

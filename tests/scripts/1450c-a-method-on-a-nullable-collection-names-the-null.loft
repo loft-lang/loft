@@ -14,15 +14,26 @@
 // `rev` refusal leaves the PARSE desynchronised, so a later expectation never gets its chance —
 // not because the harness stops at one (it checks every annotation and fails on each miss).
 //
+// ⚠ The METHOD this asks about changed with `(N-Chain-Place)`, and the change is the rule, not
+// a weakening of this guard.  It used to ask `.remove`, which is a MUTATING method: an
+// assignment target and a mutating receiver are PLACES, so they take no discharge and do
+// nothing when the receiver is absent (owner ruling 2026-09-08).  Asking a place for a
+// discharge is the one thing this refusal must NOT do — the cure it would advertise, `?`,
+// builds an empty collection and removes from that, which loses the write in silence.  So the
+// subject moves to a READING method, where the refusal is right and still exactly as written:
+// `.sum` on a `vector<integer>?` names the `?` instead of *"Unknown field vector.sum"*.
+// The place half is guarded in `1450d`, including the `.remove` / `.clear` cells this file
+// used to own.
+//
 // Axes it HOLDS FIXED:  the receiver is DECLARED `vector<…>?`, so the refusal is reachable
 //                       today without loft#1450's `(N-Prop)` leg.
 //
-// @falsified-at: 8ba3e755 — reports *"Unknown field vector.remove"* there, so the
+// @falsified-at: 8ba3e755 — reports *"Unknown field vector.sum"* there, so the
 //   `@EXPECT_ERROR` misses and the file fails.
 
 struct Bag1450c { xs: vector<integer>? }
 
-// @EXPECT_ERROR: cannot call `.remove` on vector<integer>? because it is NULLABLE
-fn remove_from_it(b: Bag1450c) {
-  b.xs.remove(0);
+// @EXPECT_ERROR: cannot call `.sum` on vector<integer>? because it is NULLABLE
+fn sum_it(b: Bag1450c) {
+  q = b.xs.sum();
 }

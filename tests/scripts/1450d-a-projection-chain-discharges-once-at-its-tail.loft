@@ -93,5 +93,18 @@ fn main() {
   ins += [Leaf1450d { v: 5 }];
   assert((ins ?? []).len() == 1, "an absent insert DESTINATION is instantiated, not skipped");
 
+  // ---- the same place rule on a DECLARED nullable collection, which is where the refusal
+  //      used to fire (`1450c` owned these cells until the ruling): a mutating METHOD takes no
+  //      discharge and does nothing when absent, while a READING method still asks for one ----
+  bag_absent: vector<integer>? = null;
+  bag_absent.remove(0);
+  bag_absent.clear();
+  assert((bag_absent ?? []).len() == 0, "a mutating method on an absent collection does nothing");
+  bag_present: vector<integer>? = [1, 2, 3];
+  bag_present.remove(0);
+  assert((bag_present ?? []).len() == 2, "and lands when the collection is there");
+  bag_present.clear();
+  assert((bag_present ?? []).len() == 0, "clear lands too");
+
   println("1450d ok");
 }

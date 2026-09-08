@@ -79,7 +79,10 @@ fn f6(b: Bag, i: integer) -> Cell { return b.b_cells[i]; }
 fn f7(i: integer) -> Cell {
   b = make_bag();
   e = b.b_cells[i];
-  return Cell { c_h: e.c_h, c_m: e.c_m };
+  // `(N-Chain)` — `e` came from `b.b_cells[i]`, a variable index, so each field read through
+  // it is `τ?`; the narrow widths make the store a hard ERROR rather than a warning, which is
+  // `(N-Store)`'s split doing its job on a `u16` / `u8`.
+  return Cell { c_h: e.c_h ?? 0, c_m: e.c_m ?? 0 };
 }
 
 // 8 — CONTROL: a FIELD (not element) of a local, the #488/H9 neighbourhood this fix

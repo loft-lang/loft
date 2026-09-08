@@ -106,16 +106,23 @@ fn iterate_through_absence() {
   w = W { ns: [N { k: 1, subs: [1, 2], srt: [KS { k: 1, n: 5 }], idx: [KX { k: 1, n: 5 }], hs: [KH { k: 1, n: 5 }] }] };
   i = 9;
   count = 0;
-  for x in w.ns[i].subs { count += x; }
-  for y in w.ns[i].srt { count += y.n; }
-  for z in rev(w.ns[i].srt) { count += z.n; }
-  for q in w.ns[i].idx { count += q.n; }
-  for h in w.ns[i].hs { count += h.n; }
+  // `(N-Chain)` — the holder is absent, so each collection FIELD reached through it is `τ?`
+  // and iteration asks for the discharge.  That is `iteration.md`'s deliberate answer and the
+  // opposite of `(Col-Insert-Absent)`'s: a loop body binds a DENSE element, so the only way
+  // there is an unwrap, while an insert has no such binding.  `?? []` is the whole cure and it
+  // keeps this cell's question exactly — zero iterations for an absent holder, and the real
+  // collection for the present one below.
+  for x in w.ns[i].subs ?? [] { count += x; }
+  for y in w.ns[i].srt ?? [] { count += y.n; }
+  for z in rev(w.ns[i].srt ?? []) { count += z.n; }
+  for q in w.ns[i].idx ?? [] { count += q.n; }
+  for h in w.ns[i].hs ?? [] { count += h.n; }
   assert(count == 0, "a for over an absent holder's collections visits nothing");
-  assert(len(w.ns[i].subs) == 0 && len(w.ns[i].srt) == 0, "an absent holder's collections have length 0");
+  assert(len(w.ns[i].subs ?? []) == 0 && len(w.ns[i].srt ?? []) == 0,
+         "an absent holder's collections have length 0");
   j = 0;
-  for x in w.ns[j].subs { count += x; }
-  for y in w.ns[j].srt { count += y.n; }
+  for x in w.ns[j].subs ?? [] { count += x; }
+  for y in w.ns[j].srt ?? [] { count += y.n; }
   assert(count == 8, "the present holder's collections iterate as before");
 }
 
