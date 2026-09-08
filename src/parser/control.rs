@@ -737,6 +737,8 @@ impl Parser {
         // by a guard clause inside this block holds only for the rest of THIS block, and var
         // slots collide across functions, so leaking it would elide a `τ?` somewhere unrelated.
         let ib_base = self.index_bounded.len();
+        // …and the DIVISOR proof, the third of `@FR-N-Domain`'s families, on the same discipline.
+        let dz_base = self.divisor_nonzero.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
         loop {
@@ -984,6 +986,17 @@ impl Parser {
                     if !self.index_bounded.contains(&pair) {
                         self.index_bounded.push(pair);
                     }
+                }
+                // The DIVISOR twin, and the reason all three of these sit together: `if d == 0 {
+                // return … } … a / d` is the index gap one family over, and the fact was already
+                // being computed — `divisor_proof_from_condition` answers "proven on the ELSE
+                // side" for `d == 0` — with nothing consuming it on the fall-through.  Walking
+                // `@FR-N-Domain` as a RULE rather than as a site is what turned that up: one
+                // promise, three families, three sets of admissible spellings.
+                if let Some((v, false)) = self.divisor_proof_from_condition(test)
+                    && !self.divisor_nonzero.contains(&v)
+                {
+                    self.divisor_nonzero.push(v);
                 }
             }
             if let Value::Insert(ls) = n {
@@ -1508,6 +1521,7 @@ impl Parser {
         // proof does not escape the block (see `nn_base` above).
         self.narrowed_non_null.truncate(nn_base);
         self.index_bounded.truncate(ib_base);
+        self.divisor_nonzero.truncate(dz_base);
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -4253,6 +4267,14 @@ impl Parser {
             return None;
         };
         let name = self.data.def(*op).name();
+        // ⚠ NOT the truthy spellings.  `if d { … }` / `if !d { … }` prove a NULLABLE value
+        // present — which is why `narrowing_from_condition` reads them one door over — and they
+        // prove NOTHING about an integer being non-zero here: measured, `if 0 { … }` takes the
+        // THEN branch and `!0` is `false`, exactly as `!3` is.  An arm for them was written and
+        // reverted the same hour: it elided the `?` on `if !d { return -1; } … a / d`, where the
+        // guard never fires, so `f(10, 0)` answered a silent null through a non-null slot.  A
+        // widening that removes a diagnostic has to be measured on the cell the diagnostic was
+        // ABOUT, not only on the cells it was annoying in.
         let then_branch = if name.starts_with("OpNe") {
             true
         } else if name.starts_with("OpEq") {

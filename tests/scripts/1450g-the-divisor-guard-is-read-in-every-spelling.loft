@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Domain`'s GUARD licence, third family: the DIVISOR.
+//
+// The rule promises one elision — "provably in-domain (constant / range / GUARD)" — over every
+// partial operation it names, and it names three families: `÷0`/`%0`, the domain-partial float
+// functions, and `v[i]` OOB.  Walked as a RULE rather than as a site, the promise turned out to
+// be kept unevenly, and the divisor's row was the INDEX's row one family over:
+//
+//     if d == 0 { return -1; }
+//     x = a / d;                  // in-domain, and reported nullable
+//
+// The fact was already being computed.  `divisor_proof_from_condition` answers "proven on the
+// ELSE side" for `d == 0` — the shape a guard clause needs — and nothing consumed it on the
+// fall-through.  The index half got its guard-clause twin the same day, mirroring the null
+// model's own (loft#585); this is the divisor taking the same one.
+//
+// ⚠ The truthy spelling is NOT part of this, and finding out why is the other half of the
+// lesson.  `if !d { return … } … a / d` looks like the same guard without the zero, and an arm
+// for it was written and reverted within the hour: in loft an integer condition is always TRUE
+// (measured — `if 0 { … }` takes the THEN branch, and `!0` is `false` exactly as `!3` is), so
+// that guard never fires and eliding on it made `f(10, 0)` answer a silent null through a
+// non-null slot.  A widening that REMOVES a diagnostic has to be measured on the cell the
+// diagnostic was about, not only on the cells where it was noise — and the cell that caught it
+// is the refusal assertion below, which is why this file asserts both directions.
+//
+// Axes this file MOVES:  the guard's spelling (positive · early return), and
+//                        which fact the guard establishes (the right var · the wrong var · the
+//                        wrong side · a body that does not diverge).
+// Axes it HOLDS FIXED:   integer division; the float twin rides the same proof.
+//
+// @falsified-at: 023afd963 — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED both backends.
+//
+//   The EXIT channel moves on `cast_through_guard`: on the control the guarded division types
+//   `integer?`, `(N-Cast)` refuses a possibly-null subject, and the file does not compile.  The
+//   value cells are inert against that control by construction — the values were always right,
+//   and a too-conservative type is invisible to a value assertion.
+
+// The spelling that already worked — the control that says nothing was traded away.
+fn positive(a: integer, d: integer) -> integer {
+  if d != 0 { return a / d; }
+  -1
+}
+
+// The guard-clause spelling.
+fn early(a: integer, d: integer) -> integer {
+  if d == 0 { return -1; }
+  a / d
+}
+
+// The cell that carries the FALSIFICATION.  Every assertion below asserts a VALUE, and the
+// values were always right — a too-conservative type is invisible to a value assertion.  A CAST
+// reads it: `(N-Cast)` is an assertion and refuses a possibly-null subject, so this is a hard
+// ERROR before the fix and the whole file fails to compile.
+fn cast_through_guard(a: integer, d: integer) -> integer {
+  if d == 0 { return -1; }
+  ((a / d) as float * 2.0) as integer
+}
+
+fn main() {
+  assert(positive(10, 2) == 5, "the positive guard divides");
+  assert(early(10, 2) == 5, "the guard clause divides");
+  assert(cast_through_guard(10, 2) == 10, "a cast through a guarded divisor compiles");
+
+  // ---- the guards still turn away what they guard against ----
+  assert(positive(10, 0) == -1, "the positive guard still refuses zero");
+  assert(early(10, 0) == -1, "the guard clause still refuses zero");
+
+  // ---- and the runtime is unchanged where the contract IS broken: `÷0` is still the C80 null,
+  //      never a fault, which is what makes trusting a guarded divisor safe ----
+  z = 0;
+  q: integer = (10 / z) ?? -9;
+  assert(q == -9, "an unguarded ÷0 is still the reserved null: {q}");
+
+  println("1450g ok");
+}

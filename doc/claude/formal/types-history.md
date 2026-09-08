@@ -6,7 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
+OPEN: **1** — `D-Domain-Guard` (opened 2026-09-08, below): `(N-Domain)`'s GUARD licence is not
+uniform across its three families — the index and divisor rows are closed, and whether the
+domain-partial MATH row is a code gap or a rule that over-promises is an owner call.
+`D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
 that issue's three legs, a field read through a nullable receiver typing non-null, closed by the
 new `(N-Chain)` / `(N-Chain-Place)` pair.  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
 (loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
@@ -19,6 +22,59 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Domain-Guard — OPENED 2026-09-08 (loft#1450's walk): `(N-Domain)`'s GUARD licence is not uniform across its families
+
+`(N-Domain)` promises ONE elision — *"Non-null when the input is PROVABLY in-domain (constant /
+range / guard)"* — and states it over every partial operation it names.  Walked as a rule rather
+than as a site, the promise is kept unevenly.  Measured, one tree, both backends:
+
+| licence | index `v[i]` | divisor `a / d` | `sqrt` `ln` `asin` … |
+|---|---|---|---|
+| constant | ✓ | ✓ | ✓ |
+| expression proof | ✓ arithmetic over trusted leaves | ✓ `x / 2.0` | ✓ sign/interval lattice |
+| guard, positive (`if d != 0 { … }`) | ✓ | ✓ | ✗ |
+| guard, early return (`if d == 0 { return }`) | ✓ (2026-09-08) | ✓ (2026-09-08) | ✗ |
+
+**The divisor row was the index row's defect, one family over, and is CLOSED the same day.**
+`if d == 0 { return -1; } … a / d` typed `integer?`, and `divisor_proof_from_condition` already
+answered *"proven on the ELSE side"* for `d == 0` — the fact existed and nothing consumed it on
+the fall-through.  Both now take the guard-clause twin the null model has had since loft#585.
+
+⚠ **The TRUTHY spelling is not part of it, and the attempt is the entry's most useful line.**
+`if !d { return … } … a / d` reads like the same guard without the zero, and an arm for it was
+written and reverted within the hour: in loft an INTEGER CONDITION IS ALWAYS TRUE — measured,
+`if 0 { … }` takes the THEN branch and `!0` is `false` exactly as `!3` is — so that guard never
+fires, and eliding on it made `f(10, 0)` answer a silent null through a non-null slot.  A
+widening that REMOVES a diagnostic must be measured on the cell the diagnostic was ABOUT, not
+only on the cells where it was noise; what caught it was the guard file's refusal assertion,
+while every positive cell passed.  (That `if 0` takes the then branch is its own open question,
+not decided here: it is what makes the C-shaped reading of `if !d` plausible to a reader.)
+
+**The math row is a RULES-vs-HISTORY disagreement, not a plain deviation, and the difference
+matters.**  `DN3-Float` above never claimed flow guards for the domain-partial functions; it
+claimed a sign/interval lattice over EXPRESSIONS, and that claim was re-measured here rather than
+read off the word "shipped": `sqrt(dx*dx + dy*dy)` and `sqrt(max(x, 0.01))` are non-null and a
+bare `sqrt(x)` is correctly nullable.  So the code does what its history promised; it is
+`types.md`'s own sentence that promises more, by naming "guard" for the whole family list.  Which
+side moves is an owner call — narrow the rule to say where each licence applies, or widen the
+lattice to take flow facts.
+
+**Why it recurred, and the generalisation.**  *"Is this input provably in-domain?"* is answered in
+THREE places — `index_bounded`, `divisor_nonzero`, and the float lattice — each with its own set
+of admissible spellings, and none of them a home the others read.  That is
+`one-question-many-decoders` at the level of a RULE rather than a routine, and it is why fixing
+the index guard on the morning of 2026-09-08 left the identical hole in the divisor that
+afternoon.  A single "what does this guard prove about this value" home, consulted by each
+partial op, is what would make the rule's three licences one thing.
+
+⚠ **Found because a too-CONSERVATIVE type became observable.**  None of this was visible while a
+projection dropped the receiver's `?`: the over-wide `?` on an index sat harmless until
+`(N-Chain)` carried it one step further into a CAST, and `(N-Cast)` refuses a possibly-null
+subject — so strictness the rules never asked for surfaced as a REFUSAL in code that was always
+correct, in two PUBLISHED libraries (`web` 0.3.0, `stage` 0.18.1).  The direction is the lesson:
+widening one rule is what audits another, and a value assertion cannot see a type that is merely
+too wide — only something that READS the type can.
 
 ### D-Null-Chain — OPENED AND CLOSED (2026-09-08, loft#1450): a field read through a nullable receiver typed non-null
 
