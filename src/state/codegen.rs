@@ -4539,11 +4539,18 @@ impl State {
                 //
                 // The `_ =>` below is a `panic!`, so a kind missing here is an ICE and
                 // not a lost optimisation: the cost of an omission is the whole program.
+                //
+                // ⚠ loft3-19 measured this on their branch before converging to the derived
+                // form, and it was not merely a stale spelling: `&trie` and `&spatial` were a
+                // LIVE ICE there while `&hash`, `&sorted` and `&index` worked.  The hand-written
+                // list two lines from a comment describing how such a list loses kinds still had
+                // two missing.  One predicate answers "is this a collection?" for every kind at
+                // once, and a kind added to the language reaches this site without anyone
+                // remembering to.
                 Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpGetStackRef", self);
                 }
-                other if crate::parser::vectors::is_collection(other) => {
-                    stack.add_op("OpGetStackRef", self);
+                other if crate::parser::vectors::is_collection(other) => {                    stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
             }
