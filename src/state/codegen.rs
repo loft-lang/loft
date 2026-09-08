@@ -4530,7 +4530,7 @@ impl State {
                 // they came to be missing from the `&` deref list loft#1445 fixed.  One
                 // predicate answers "is this a collection?" for every kind at once, and a
                 // kind added to the language reaches this site without anyone remembering to.
-                ref other if crate::parser::vectors::is_collection(other) => {
+                other if crate::parser::vectors::is_collection(other) => {
                     stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
