@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The READ side of a `&<collection>` link, at every kind — the half loft#1445's guard does not
+// reach, which is how `trie` and `spatial` came to ICE while their three siblings worked.
+//
+// `@FR-B-Ref-Uniform` — a `&τ` variable is used exactly like a τ variable — so which KIND the
+// collection is cannot decide whether the link works.  The deref that reaches the collection
+// behind the link was a hand-spelled list (`Vector | Sorted | Hash | Index`), and a kind absent
+// from it fell to `panic!("Unknown referenced variable type")`: `&trie` and `&spatial` were an
+// internal compiler error on both backends while `&vector`, `&hash`, `&sorted` and `&index`
+// were correct.  The list is now DERIVED from `vectors::is_collection`, so a kind added to the
+// language reaches the site without anyone remembering to.
+//
+// ⚠ The comment two lines above that list already said *"the list spelled out is exactly how
+// `trie` and `spatial` came to be missing while their three siblings worked"* — and the list
+// beneath it still had them missing.  The cure for that is not a better comment; it is a cell
+// per kind, which is this file.
+//
+// Every cell WRITES through the link as well as reading, because a `&` parameter that is never
+// modified is refused ("has & but is never modified") — so the read is reached through the
+// write's own need to address the collection behind the link, which is exactly the path that
+// panicked.
+//
+// Axes this file MOVES:  the collection KIND — vector, hash, sorted, index, trie, spatial —
+//                        which is the only axis the defect had.
+// Axes it HOLDS FIXED:   the link is a PARAMETER, the element is a plain struct, and the write
+//                        is a single insert.  `+=` and the keyed write-back are loft#1445's own
+//                        guard; this file exists for the KIND coverage those two do not have.
+//
+// @falsified-at: 1d95fa50a — interpret exit 1 -> 0, native exit 101 -> 0.  On the control the
+//   `trie` and `spatial` cells are the ICE, so the file cannot reach an assertion there, while
+//   the other four already passed — which is the shape of the defect: four kinds right and two
+//   missing from a list, with nothing to distinguish them but the list.
+
+struct E1445 { k: integer, v: integer }
+struct T1445 { k: text, v: integer }
+struct P1445 { x: integer, y: integer, v: integer }
+
+fn add_vector(c: &vector<E1445>) { c += [E1445 { k: 2, v: 9 }]; }
+fn add_hash(c: &hash<E1445[k]>) { c[2] = E1445 { k: 2, v: 9 }; }
+fn add_sorted(c: &sorted<E1445[k]>) { c[2] = E1445 { k: 2, v: 9 }; }
+fn add_index(c: &index<E1445[k]>) { c[2] = E1445 { k: 2, v: 9 }; }
+fn add_trie(c: &trie<T1445[k]>) { c["b"] = T1445 { k: "b", v: 9 }; }
+fn add_spatial(c: &spatial<P1445[x, y]>) { c[3, 4] = P1445 { x: 3, y: 4, v: 9 }; }
+
+fn test_a_vector_is_reached_through_the_link() {
+  x: vector<E1445> = [E1445 { k: 1, v: 7 }];
+  add_vector(x);
+  assert(len(x) == 2, "the caller's vector gained the element");
+  assert(x[1].v == 9, "and it is the one the callee wrote");
+}
+
+fn test_a_hash_is_reached_through_the_link() {
+  x: hash<E1445[k]> = [E1445 { k: 1, v: 7 }];
+  add_hash(x);
+  assert(len(x) == 2, "the caller's hash gained the record");
+  assert(x[2].v == 9, "and it is reachable by its key");
+}
+
+fn test_a_sorted_is_reached_through_the_link() {
+  x: sorted<E1445[k]> = [E1445 { k: 1, v: 7 }];
+  add_sorted(x);
+  assert(len(x) == 2, "the caller's sorted gained the record");
+  assert(x[2].v == 9, "and it is reachable by its key");
+}
+
+fn test_an_index_is_reached_through_the_link() {
+  x: index<E1445[k]> = [E1445 { k: 1, v: 7 }];
+  add_index(x);
+  assert(len(x) == 2, "the caller's index gained the record");
+  assert(x[2].v == 9, "and it is reachable by its key");
+}
+
+// The two the spelled-out list omitted.  Before the derived list these were an ICE, not a wrong
+// answer — so this cell is the one that would have caught it.
+fn test_a_trie_is_reached_through_the_link() {
+  x: trie<T1445[k]> = [T1445 { k: "a", v: 7 }];
+  add_trie(x);
+  assert(len(x) == 2, "the caller's trie gained the record");
+  assert(x["b"].v == 9, "and it is reachable by its text key");
+}
+
+fn test_a_spatial_is_reached_through_the_link() {
+  x: spatial<P1445[x, y]> = [P1445 { x: 1, y: 2, v: 7 }];
+  add_spatial(x);
+  assert(len(x) == 2, "the caller's spatial gained the record");
+}
