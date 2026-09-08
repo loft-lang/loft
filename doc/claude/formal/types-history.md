@@ -6,8 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Null-Field` was opened and CLOSED 2026-09-08 (loft#1450's `(N-Prop)` leg,
-below): a FIELD read through a nullable receiver typed non-null.  `D-Null-Recv`, `D-Null-Guard`
+OPEN: **1** — `D-Null-Field` OPENED 2026-09-08 (loft#1450's `(N-Prop)` leg, below): a FIELD read
+through a nullable receiver types non-null.  The fix is written and was REVERTED on migration
+cost; the entry carries the measurement.  `D-Null-Recv`, `D-Null-Guard`
 and `D-Null-Place` were opened and CLOSED 2026-09-07
 (loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
 guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
@@ -20,7 +21,7 @@ exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, reta
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
 
-### D-Null-Field — OPENED AND CLOSED (2026-09-08, loft#1450): a FIELD read through a nullable receiver typed non-null
+### D-Null-Field — OPEN (2026-09-08, loft#1450's `(N-Prop)` leg): a FIELD read through a nullable receiver types non-null
 
 `(N-Prop)` types an operation's result nullable when it has a nullable operand whose runtime
 carries the null through, and a field read is one: an ABSENT receiver has no field to answer
@@ -53,6 +54,22 @@ and only the error ones are a migration.**  Here the two differ by a factor of s
 and the true cost was zero.  A cost that made a rule unaffordable was a cost created by a second, unfixed
 deviation — worth stating plainly, because "too expensive" recorded at a site does not carry the
 date of its own measurement.
+
+⚠ **REVERTED on migration cost, and the cost was mis-measured twice — which is the entry's real
+content.**  The first estimate (*"six error sites"*) swept `tests/scripts/*.loft`, 1237 files,
+and reported the count of things that stop compiling there.  The tree holds **1690 more `.loft`
+files outside that directory**, and the widening breaks **16** of them: the sqldb `schema` and
+`registry` fixtures (which the `loft::native` suite compiles), nine multiplayer integration
+programs, `p244_smoke`, and four demo tools.  The `loft::native` suite is what caught it, not the
+measurement.
+
+So the register now carries the correction to its own correction.  The first read counted the
+wrong KIND of diagnostic (warnings, which fail nothing) and the second counted the right kind
+over the wrong POPULATION.  The general form: **a migration estimate names a count, a kind, and
+a population, and dropping any one of the three makes it unfalsifiable.**  The fix is a day's
+mechanical work — two shapes, `for x in <collection field of a nullable receiver>` wanting
+`?? []` and a `text` field cast wanting a discharge — and it is deferred, not declined.  The
+widening itself is one `return Type::optional(t)` at the site, which carries this note.
 
 The RECEIVER-TYPE half only.  The site's `receiver_nullable` is also true for a collection
 ELEMENT read, and that half does NOT widen: a constant index into a dense vector is

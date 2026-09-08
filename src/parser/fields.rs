@@ -614,9 +614,15 @@ impl Parser {
         // vector is `index_provably_fit`'s trusted developer contract (loft#1436), and wrapping
         // it would take back the trust the rule grants.  The element half stays what it has
         // always been — a lint signal.
-        if receiver_optional && self.tagged_pointer_type(&t).is_none() {
-            return Type::optional(t);
-        }
+        // ⚠ DEFERRED, not declined — `D-Null-Field` in formal/types-history.md is OPEN, and the
+        // widening that closes it is `return Type::optional(t)` here, gated on
+        // `receiver_optional`.  It is correct by the rules and was reverted on MIGRATION COST,
+        // measured over the WHOLE tree rather than `tests/scripts` alone: 16 files, the sqldb
+        // schema and registry fixtures (which the `loft::native` suite compiles), nine
+        // multiplayer integration programs and four demo tools.  Two shapes, both mechanical —
+        // `for x in <collection field of a nullable receiver>` wants `?? []`, and a `text`
+        // field cast wants a discharge — so this is a day's migration and not a redesign.
+        let _ = receiver_optional;
         t
     }
 

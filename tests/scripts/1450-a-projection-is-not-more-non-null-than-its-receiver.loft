@@ -191,49 +191,6 @@ fn test_an_early_return_guard_discharges_the_rest_of_the_body() {
 // `@FR-N-Decl` — a narrowing says what the slot HOLDS, not what it may hold, so it cannot
 // re-declare the slot: writing a `τ?` into a local the author declared `τ?` is silent, even
 // after a guard has proved that local non-null.
-// ------------------------------------------------- `(N-Prop)`: a FIELD through the receiver
-
-// `@FR-N-Prop` — an operation with a nullable operand whose runtime carries the null through
-// types its result nullable, and a field read is one: an ABSENT receiver has no field to answer
-// with, so `n.v` yields the field type's null whatever `v` declares.  Dropping the `?` here
-// performed exactly the implicit `S? -> S` unwrap `(C-Var)` says does not exist.
-// @EXPECT_WARNING: a nullable `integer?` is stored into the local `x` of the non-null type
-fn test_a_field_read_through_an_absent_receiver_is_nullable() {
-  n: It1450? = null;
-  x: integer = n.v;
-  assert(x == null, "a field of an absent struct is that field type's null");
-}
-
-fn absent_it1450() -> It1450? { null }
-
-// The receiver's own source is not the axis — a `-> It?` call is as absent as a `null` local.
-// @EXPECT_WARNING: a nullable `integer?` is stored into the local `y` of the non-null type
-fn test_a_field_read_through_a_call_result_is_nullable() {
-  y: integer = absent_it1450().v;
-  assert(y == null, "the receiver's provenance is not the axis");
-}
-
-// A guard discharges it, which is what keeps this leg adoptable at all — the same heap
-// narrowing the index cells above rely on.
-fn test_a_guarded_field_read_needs_no_discharge() {
-  n: It1450? = It1450 { k: 1, v: 42 };
-  if n != null {
-    x: integer = n.v;
-    assert(x == 42, "a guarded field read is not widened");
-  } else {
-    assert(false, "the struct is present");
-  }
-}
-
-// The CONTROL that bounds the leg: only the receiver's TYPE widens.  A field read off a
-// collection ELEMENT keeps `index_provably_fit`'s trust (loft#1436) — widening that half would
-// take back a promise the rule makes, so a dense constant index stays non-null through a field.
-fn test_a_field_off_a_trusted_dense_element_stays_non_null() {
-  m: vector<It1450> = [It1450 { k: 1, v: 7 }];
-  x: integer = m[0].v;
-  assert(x == 7, "the dense constant-index contract survives a field read");
-}
-
 fn rebind_after_a_guard(src: It1450?) -> integer {
   cur: It1450? = src;
   if cur == null { return -1; }

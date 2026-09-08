@@ -578,9 +578,10 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  `D-Null-Field` opened and closed 2026-09-08 (loft#1450's `(N-Prop)` leg): a field
-read through a nullable receiver typed non-null, declined at the site on a cost that
-`D-Null-Guard` was itself creating.  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
+**OPEN: 1.**  `D-Null-Field` (loft#1450's `(N-Prop)` leg, opened 2026-09-08): a field read
+through a nullable receiver types non-null.  The fix is written and was reverted on migration
+cost — 16 files across fixtures, integration programs and tools — and the register carries the
+measurement.  Deferred, not declined.  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
 (loft#1450): `(N-Domain)`'s in-domain elision was asked about the RECEIVER when it only ever
 proved the INDEX, so an element read through an absent collection typed non-null; the `!= null`
 guard that discharges it narrowed scalars only, which is `D-Null-Heap`'s class on the discharge

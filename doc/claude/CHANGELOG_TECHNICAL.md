@@ -9,7 +9,7 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### A field read cannot be more non-null than its receiver (2026-09-08)
+### A field read cannot be more non-null than its receiver — WRITTEN, REVERTED, deferred (2026-09-08)
 
 **#1450**'s `(N-Prop)` leg — a FIELD read through a nullable receiver typed non-null, so
 `n: It? = null; x: integer = n.v` bound a non-null slot to the C80 null in silence.  An absent
@@ -29,8 +29,25 @@ The RECEIVER-TYPE half only: the same predicate is true for a collection ELEMENT
 half keeps `index_provably_fit`'s trust (#1436) — the guard's control cell pins a dense constant
 index staying non-null through a field.
 
-Registered as `D-Null-Field`.  `(Col-Lookup)` — a keyed lookup's own `τ?` for a missing key in a
-PRESENT collection, 351 corpus sites — remains open as `D-col-lookup` and is owned elsewhere.
+⚠ **Reverted the same day, and the reason is the entry's content.**  The "six error sites" above
+was measured over `tests/scripts/*.loft` — 1237 files — and the tree holds 1690 more `.loft`
+files outside it.  The widening breaks **16**: the sqldb `schema` and `registry` fixtures (which
+the `loft::native` suite compiles), nine multiplayer integration programs, `p244_smoke` and four
+demo tools.  The suite caught it; the measurement did not.
+
+`D-Null-Field` is therefore OPEN, not closed, and the widening is one `return Type::optional(t)`
+carrying a note at the site.  Deferred on a day's mechanical migration — two shapes, `for x in
+<collection field of a nullable receiver>` wanting `?? []` and a `text` field cast wanting a
+discharge — not on doubt about the rule.
+
+**What DID ship from this work** is the `while` narrowing (independently correct and unrelated to
+the 16), and the discharges already migrated in `lib/code.loft`, `h12`, `1374` and two
+`tests/issues.rs` snippets, each correct on its own terms.
+
+The general lesson, now recorded twice in one day at two scales: **a migration estimate names a
+count, a KIND and a POPULATION, and dropping any one of the three makes it unfalsifiable.**  The
+first reading of this leg counted the wrong kind (warnings, which fail nothing); the second
+counted the right kind over the wrong population.
 
 ### An element read cannot be more non-null than the collection it reads from (2026-09-07)
 
