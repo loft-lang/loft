@@ -2846,8 +2846,43 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 prelude.push(lookup);
                 v_block(prelude, elem_type, "keyed_tuple_lookup")
             };
-            if matches!(typedef, Type::Hash(_, _, _)) && nr < key_types.len() {
-                diagnostic!(self.lexer, Level::Error, "Too few key fields");
+            // @FR-Col-Spatial / @FR-Col-Trie (loft#1457) — a short key is refused at every
+            // keyed kind that has no partial-key ITERATION story, which is stated as the
+            // COMPLEMENT of the kinds that do rather than by naming the kinds that do not.
+            // Named the other way round this read `matches!(typedef, Type::Hash(…))`, and
+            // `spatial` fell through both branches: `s[5]` on a `spatial<P[x, y]>` built a
+            // complete lookup from a malformed key and answered null, indistinguishable from
+            // a genuine miss, on both backends.  A kind added to the language now refuses by
+            // default and someone has to argue it into the iterating set — which is the trade
+            // the right way round, since the cost of an omission here is a silent null.
+            //
+            // `Index` and `Sorted` are the exception because a partial key is a real
+            // operation there: it rewrites to `idx[k1..=k1]` and iterates, refused only in a
+            // VALUE position (the branch above).  `spatial` is NOT that case even though its
+            // Morton code has prefixes — a Z-order prefix is a quadrant, not a 1-D range, so
+            // routing it through the range path would iterate the wrong records rather than
+            // report.  And a raw Morton-code subscript is not a surface operation the rules
+            // admit: `(Col-Trie)` shows what it looks like when a kind's own operation IS
+            // admitted — *"a PREFIX slice — the operation the kind exists for"* — and
+            // `(Col-Spatial)` names axes and an internal representation, nothing more.
+            if nr < key_types.len()
+                && !matches!(typedef, Type::Index(_, _, _) | Type::Sorted(_, _, _))
+            {
+                // Name the collection and both counts.  *"Too few key fields"* alone does not
+                // say how many are wanted, which of several subscripts in a line is wrong, or
+                // on what — and it made a guard with two cells VACUOUS, because two cells
+                // expecting the identical string are satisfied by one error between them
+                // (loft#1457's own first draft; `1423-…` states the rule: each cell names what
+                // the author wrote, which is what keeps the cells from making each other
+                // vacuous).  `source_name` rather than `name`, per loft#1449.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Too few key fields for `{}` — {} given, {} declared",
+                    typedef.source_name(&self.data),
+                    nr,
+                    key_types.len()
+                );
             }
         }
     }

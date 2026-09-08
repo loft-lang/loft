@@ -193,6 +193,19 @@ RECEIVER-absent case IS typed, at `parse_index` (`@FR-N-Domain`, loft#1450).  Mi
 *Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
 value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
 
+**Arity is part of the key.** A point lookup supplies every field the declaration names, and
+a SHORT key is refused — at `hash`, at `spatial` and at `trie`.  `index` and `sorted` are the
+exception and not a hole in it: a partial key there is a real operation, rewritten to
+`c[k..=k]` and iterated, refused only in a VALUE position.  A `spatial` is not that case even
+though its Morton code has prefixes — a Z-order prefix is a QUADRANT, not a 1-D range — and a
+raw Morton-code subscript is not a surface this doc admits: `(Col-Trie)` shows what it looks
+like when a kind's own operation IS admitted (*"a PREFIX slice — the operation the kind exists
+for"*), while `(Col-Spatial)` names axes and an internal representation and nothing more.  An
+implementation detail is not a surface.  Stated as the COMPLEMENT of the iterating kinds, so a
+kind added to the language refuses by default — the cost of an omission here is a lookup that
+answers `null` from a malformed key, which no reader can tell from a genuine miss (loft#1457,
+`1457-…` and `1457b-…`).
+
 **In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
 slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
 descriptor carries the minimum so a reader can undo it. It exists because a reader that
