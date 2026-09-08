@@ -4517,16 +4517,20 @@ impl State {
                     stack.add_op("OpGetStackFnRef", self);
                     stack.position += stack.fnref_signature_gap();
                 }
-                Type::Vector(_, _)
-                | Type::Reference(_, _)
-                | Type::Enum(_, true, _)
-                // @P305 — keyed collections passed by `&` are DbRef-backed
-                // just like vectors/references; referencing one (e.g. as the
-                // `coll` arg of `OpSetKeyed` for `h[k] = v` on a `&hash`
-                // param) needs the same stack-ref deref.
-                | Type::Sorted(_, _, _)
-                | Type::Hash(_, _, _)
-                | Type::Index(_, _, _) => {
+                Type::Reference(_, _) | Type::Enum(_, true, _) => {
+                    stack.add_op("OpGetStackRef", self);
+                }
+                // @P305 — a collection passed by `&` is DbRef-backed just like a vector or a
+                // reference, so referencing one (as the `coll` arg of `OpSetKeyed` for
+                // `h[k] = v` on a `&hash` param) needs the same stack-ref deref.
+                //
+                // DERIVED, never spelled out: the list written by hand here named
+                // `Vector | Sorted | Hash | Index` and omitted `trie` and `spatial`, so those
+                // two ICE'd at this panic while their three siblings worked — the same way
+                // they came to be missing from the `&` deref list loft#1445 fixed.  One
+                // predicate answers "is this a collection?" for every kind at once, and a
+                // kind added to the language reaches this site without anyone remembering to.
+                ref other if crate::parser::vectors::is_collection(other) => {
                     stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
