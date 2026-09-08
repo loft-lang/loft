@@ -4476,9 +4476,25 @@ use a separate collection or add after the loop"
         // "A call" means one to a function with a BODY.  An operator or a bodiless `#rust`
         // native publishes fixed deps that pass 1 reads correctly — and `Value::Call` covers
         // those too, `v[0]` among them — so the test is on the CALLEE, not on the node.
+        //
+        // And it means one whose callee this site can READ.  A `CallRef` goes through a fn-ref
+        // whose target is not known statically, so the premise above — "pass 1 published a guess
+        // and pass 2 has the truth" — cannot be established for it; clearing there is done on
+        // the assumption that pass 1 was wrong.  Measured: it is not always.  A `??`-joining
+        // lambda called through a local (`g = fn(q: vector<integer>?) -> vector<integer>
+        // { q ?? [7, 8] }`) returns its ARGUMENT's store on the non-null arm, and the borrow
+        // recording that is contributed by the `??` materialisation, not by the call at all —
+        // so the clear wiped a dep no call-result guess had put there and nothing re-added it.
+        // The binding then read OWNS, the loop freed the caller's vector, and the second pass
+        // through that arm saw an empty one (loft#1320's `two-base local` cell).
+        //
+        // A dep list is one list per binding for every route that writes it, so a wholesale
+        // clear can only be justified where the site knows which route it is correcting.  For a
+        // direct call it does; for a `CallRef` it does not, and the conservative answer there is
+        // to leave pass 1's list alone — an over-kept borrow leaks at worst, while an
+        // over-cleared one frees a store somebody else still holds.
         let call_has_body = match code.unspan() {
             Value::Call(d, _) => !matches!(self.data.def(*d).code(), Value::Null),
-            Value::CallRef(_, _) => true,
             _ => false,
         };
         let rebuild_call_deps = match to.unspan() {

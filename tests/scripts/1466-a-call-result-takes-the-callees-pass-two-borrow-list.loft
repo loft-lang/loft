@@ -103,6 +103,14 @@ fn head_dense(p: vector<S66>) -> S66? { match p { [a, ..] => a, _ => null } }
 // c3 — CONTROL: the callee's subject is a LOCAL, so no parameter dep is ever published.
 fn head_of_local() -> S66? { p: vector<S66?> = [S66 { a: 7 }]; match p { [a, ..] => a, _ => null } }
 
+// e12 — the SAME materialising shape reached through a FN-REF rather than a direct call.
+// The pass-2 rebuild is opened by a call whose callee this site can READ, and a `CallRef` is
+// not one: its target is not known statically, so the "pass 1 guessed, pass 2 knows" premise
+// cannot be established and the list is left alone there (loft#1320 is what happens when it is
+// cleared on that assumption instead).  This cell is the negative half of that bound — it says
+// the defect this file exists for does NOT reach the caller through a fn-ref, so declining to
+// clear there costs nothing.  Without it the file tests one call spelling and silently licenses
+// the other.
 fn main() {
   q: vector<S66?> = [S66 { a: 7 }];
   q2: vector<S66?> = [S66 { a: 7 }, S66 { a: 3 }];
@@ -163,5 +171,10 @@ fn main() {
 
   nb = 0;
   for i in 0..10 { tb = head_of_local(); if tb != null { nb = nb + tb.a + i * 0; } }
+
+  head_ref = fn(p: vector<S66?>) -> S66? { match p { [a, ..] => a, _ => null } };
+  nc = 0;
+  for i in 0..10 { tc = head_ref(q); if tc != null { nc = nc + tc.a + i * 0; } }
+  assert(nc == 70, "e12 the materialising shape through a fn-ref: got {nc}");
   assert(nb == 70, "c3 a local subject publishes no parameter dep: {nb}");
 }
