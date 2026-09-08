@@ -1449,6 +1449,25 @@ The matrix-first protocol in CLAUDE.md says how to *measure* a defect. These are
 errors that survive it, each one measured here rather than imagined. They are ordered by how
 expensive each was.
 
+**"Needs design" is a claim about your SEARCH, not about the defect — re-test it.** Declaring a
+fix impossible without new surface is a hypothesis about the solution space, and it deserves the
+same scepticism as a hypothesis about a cause. Measured on loft#1476: several closure records
+adopt one store, exactly one must CASCADE to release the capture, and it must be the one that
+escapes — a per-run fact against a marker set at compile time. The op surface was checked for a
+non-cascading free and had none, so the conclusion was a new IR node plus per-run ownership.
+Every step was true and the conclusion was wrong. The cure needed per-run **reach**, not per-run
+ownership: let every record own, and NULL the left-behind record's capture slots before freeing
+it, so its cascade follows nothing. No new node, no new op, no witness. The tell is that the
+search had fixed the CASCADE as given and looked for a way to control it; the move was to change
+what the cascade can REACH. So when routing something as needs-design, write down the primitive
+you believe is missing, then ask whether the invariant could be met by changing a different term.
+
+**Lifting a refusal RUNS never-run code.** A shape that did not compile has never been scored, so
+the first green build of it is not a regression check — it is a first measurement. Two defects
+this cycle were found this way and both were invisible until the refusal above them was gone
+(one leaked only under `LOFT_STRICT_STORES=1` while the value was right). After removing a
+refusal, run the newly-reachable cells under the instruments before believing the value.
+
 **A baseline must FORK BEFORE the work you are attributing.** To answer *"is this mine?"* the
 control build has to lack the suspect change. A commit inside your own branch's lineage cannot:
 it already contains everything you are asking about, so *"identical on X and on my tip"* only
