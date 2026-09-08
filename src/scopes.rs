@@ -5354,7 +5354,9 @@ fn mark_borrowed_captures(data: &mut Data) {
             // is the sole owner on its own run.  Demoting either leaves the run that builds it
             // with no release at all — the frame gave its free away to a record that this run
             // never made (loft#1473).
-            if group_is_pairwise_exclusive(data.def(d_nr).code(), &group) {
+            if group_is_pairwise_exclusive(data.def(d_nr).code(), &group)
+                || group_every_record_leaves(data, function, d_nr, &group)
+            {
                 continue;
             }
             let owner = adoption_owner_index(data, function, d_nr, &group);
@@ -5367,6 +5369,26 @@ fn mark_borrowed_captures(data: &mut Data) {
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
     }
+}
+
+/// The capture slots a closure record's build writes, as byte offsets.
+///
+/// Read off the builds themselves (`OpSetDbRef(record, offset, capture)`) rather than from the
+/// record's attribute table, so the offsets are exactly the ones the emitted code used.
+fn record_capture_slots(code: &Value, record: u16, set_dbref: u32) -> Vec<i32> {
+    let mut out = Vec::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == set_dbref
+            && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+            && *r == record
+            && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
+            && !out.contains(off)
+        {
+            out.push(*off);
+        }
+    });
+    out
 }
 
 /// Does this ARM VALUE hand out closure record `r`?
@@ -5415,17 +5437,17 @@ fn free_record_in_omitting_arms(
     op: &mut Value,
     r: u16,
     function: &Function,
-    data: &Data,
     tp: &Type,
+    release: &[Value],
 ) {
     match op {
-        Value::Span(b) => free_record_in_omitting_arms(&mut b.1, r, function, data, tp),
+        Value::Span(b) => free_record_in_omitting_arms(&mut b.1, r, function, tp, release),
         Value::Return(inner) | Value::Drop(inner) => {
-            free_record_in_omitting_arms(inner, r, function, data, tp);
+            free_record_in_omitting_arms(inner, r, function, tp, release);
         }
         Value::If(_, t, f) => {
-            free_record_in_omitting_arms(t, r, function, data, tp);
-            free_record_in_omitting_arms(f, r, function, data, tp);
+            free_record_in_omitting_arms(t, r, function, tp, release);
+            free_record_in_omitting_arms(f, r, function, tp, release);
         }
         // A BLOCK takes the free as a STATEMENT before its value, never as a wrapper around it.
         // Wrapping produces an `Insert` standing in value position, and native then emitted the
@@ -5437,10 +5459,12 @@ fn free_record_in_omitting_arms(
             };
             if arm_value_delivers_record(last, r, function) {
                 let idx = bl.operators.len() - 1;
-                free_record_in_omitting_arms(&mut bl.operators[idx], r, function, data, tp);
+                free_record_in_omitting_arms(&mut bl.operators[idx], r, function, tp, release);
             } else {
                 let idx = bl.operators.len() - 1;
-                bl.operators.insert(idx, call("OpFreeRef", r, data));
+                for (n, op) in release.iter().enumerate() {
+                    bl.operators.insert(idx + n, op.clone());
+                }
             }
         }
         Value::Insert(ops) => {
@@ -5449,10 +5473,12 @@ fn free_record_in_omitting_arms(
             };
             if arm_value_delivers_record(last, r, function) {
                 let idx = ops.len() - 1;
-                free_record_in_omitting_arms(&mut ops[idx], r, function, data, tp);
+                free_record_in_omitting_arms(&mut ops[idx], r, function, tp, release);
             } else {
                 let idx = ops.len() - 1;
-                ops.insert(idx, call("OpFreeRef", r, data));
+                for (n, op) in release.iter().enumerate() {
+                    ops.insert(idx + n, op.clone());
+                }
             }
         }
         leaf => {
@@ -5468,7 +5494,9 @@ fn free_record_in_omitting_arms(
             // One notion, two spellings, and this rewrite must hand on the complete one
             // (loft#1469's widening, applied here because this site creates the position).
             crate::parser::widen_bare_fn_ref(&mut held, tp);
-            *leaf = Value::Insert(vec![call("OpFreeRef", r, data), held]);
+            let mut ops = release.to_vec();
+            ops.push(held);
+            *leaf = Value::Insert(ops);
         }
     }
 }
@@ -5543,6 +5571,29 @@ fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
         }
     });
     found
+}
+
+/// Does EVERY record adopting this store leave the frame?
+///
+/// `@FR-L-CapOne`'s second admissible group.  The single owner exists because a record left
+/// BEHIND would otherwise release what the escaping one still holds (loft#1440) — but that
+/// premise needs the left-behind record to be FREED, and one the return delivers on some path is
+/// exempt from the frame's sweep on all of them.  Where every member is delivered, none of them
+/// is ever released by this frame, so no cascade can run here and each may own: the run hands
+/// one out, its cascade frees the capture in the CALLER, and the others simply die with the
+/// frame having released nothing.
+///
+/// Without this the group keeps a statically chosen owner, and the run that delivers a demoted
+/// BORROWER leaves the capture with no cascade at all — it is freed by nobody (loft#1476).
+fn group_every_record_leaves(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    group: &[(u16, u32, usize)],
+) -> bool {
+    group
+        .iter()
+        .all(|(local, _, _)| record_leaves_frame(data, function, d_nr, *local))
 }
 
 /// Are the records adopting one store pairwise unable to coexist?
@@ -8954,28 +9005,42 @@ impl Scopes<'_> {
             if is_return && self.d_nr != u32::MAX {
                 let (adopters, _) =
                     capture_store_adopters(data, function, &self.capture_build_backing);
+                let set_dbref = data.def_nr("OpSetDbRef");
+                let null_ref = data.def_nr("OpNullRefSentinel");
+                let body = data.def(self.d_nr).code();
                 for group in adopters.values() {
                     // A record that ALONE adopts its store may be released on a path that does
-                    // not deliver it: its cascade takes the capture, and on that path nobody
-                    // escaped holding either.
+                    // not deliver it: its cascade takes the capture with it, and on that path
+                    // nobody escaped holding either.
                     //
-                    // In a group of several, the same is true of every record the marking
-                    // DEMOTED to a borrow — its cascade stops at the attribute, so releasing it
-                    // frees its own record store and reaches no capture.  The one it does NOT
-                    // hold for is the group's OWNER: that one still cascades, and the run that
-                    // delivers a borrower instead would lose the capture out from under it.
-                    // Closing that needs the delivered record to own, which is a per-run fact
-                    // and a marker set at compile time — loft#1476's open half.
-                    let owner = if group.len() == 1 {
-                        usize::MAX
-                    } else {
-                        adoption_owner_index(data, function, self.d_nr, group)
-                    };
-                    for (i, (r, _, _)) in group.iter().enumerate() {
-                        if i == owner || !record_leaves_frame(data, function, self.d_nr, *r) {
+                    // Where several records SHARE a store, every member owns — none of them is
+                    // freed by this frame (`group_every_record_leaves`), so no cascade runs
+                    // here — and a plain release on the one left behind would follow its capture
+                    // slots into the store the DELIVERED record still holds.  Null those slots
+                    // first: the cascade then finds nothing, this record's own store is
+                    // reclaimed, and the capture stays for the record that escaped to free in
+                    // the caller.  The offsets come from the BUILDS, so they are exactly the
+                    // slots the emitted code wrote.
+                    let shared = group.len() > 1;
+                    for (r, _, _) in group {
+                        if !record_leaves_frame(data, function, self.d_nr, *r) {
                             continue;
                         }
-                        free_record_in_omitting_arms(&mut copy, *r, function, data, tp);
+                        let mut release: Vec<Value> = Vec::new();
+                        if shared {
+                            for off in record_capture_slots(body, *r, set_dbref) {
+                                release.push(Value::Call(
+                                    set_dbref,
+                                    vec![
+                                        Value::Var(*r),
+                                        Value::Int(off),
+                                        Value::Call(null_ref, Vec::new()),
+                                    ],
+                                ));
+                            }
+                        }
+                        release.push(call("OpFreeRef", *r, data));
+                        free_record_in_omitting_arms(&mut copy, *r, function, tp, &release);
                         touched = true;
                     }
                 }

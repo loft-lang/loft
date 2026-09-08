@@ -14,30 +14,31 @@
 // without a runtime witness — the arm IS the path — and on that path nothing escaped holding the
 // record, so cascading into its capture is exactly right.
 //
-// ⚠ Sound only where the record ALONE adopts its store, and the file's last cell is the reason
-// the bound is drawn there rather than wider.  Where several records adopt ONE store, the one
-// left behind may be the static OWNER while the delivered one BORROWS; freeing it would cascade
-// into a capture the escaping record still holds.  Exactly one record must cascade and it must
-// be the one that escapes — a per-run fact against a marker set at compile time — so that half
-// stays open on loft#1476, and the shape is written out as a comment at the end of this file
-// rather than run, so the absence is deliberate and findable.
+// Where several records SHARE one store the release needs a second half, because each of them
+// OWNS: a plain free on the one left behind would follow its capture slots into the store the
+// DELIVERED record still holds.  The slots are NULLED first, so the cascade finds nothing — the
+// record's own store is reclaimed and the capture stays for whoever escaped with it.  That is
+// what lets the static owner pick be dropped entirely for such a group: "exactly one record
+// cascades, and it is the one that escapes" becomes true by construction rather than by a
+// marker chosen at compile time.
 //
 // Axes this file MOVES:  the branch's SPELLING (`if` · `match` · a three-arm match) · WHICH arm
 //                        delivers (first · middle · last · every arm) · what the omitting arm
 //                        yields (a bare non-capturing lambda, which is the shape that also has
 //                        to be WIDENED as it is wrapped — a bare def-number placed in a value
 //                        position loses the fn-ref's closure half otherwise) · and whether the
-//                        record leaves the frame AT ALL, which is the control.
-// Axes it HOLDS FIXED:   one capture per record, and one record per store except in the final
-//                        residual cell.  Two records over one store is the open half above; a
-//                        build sitting inside a branch arm is loft#1464's question, answered by
-//                        the conditional release rather than by this one.
+//                        record leaves the frame AT ALL, which is the control · and how many
+//                        records ADOPT one store (one · two · three), which is what decides
+//                        whether the capture slots must be nulled before the release.
+// Axes it HOLDS FIXED:   one capture per record.  A build sitting inside a branch ARM is
+//                        loft#1464's question, answered by the conditional release rather than
+//                        by this one.
 //
 // @falsified-at: e5f44328f, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
 //   interpret exit 101 -> 0 and panicked -> clean; native exit 1 -> 0 and
-//   `kt=82 E76×7, kt=87 __closure_4×2, kt=88 __closure_7×2, …` leaked -> clean.  Every VALUE is
-//   correct on the control too — the record is simply never returned — so an unarmed run reads
-//   INERT, which is the whole shape of this ticket.
+//   `kt=82 E76×10, kt=87 __closure_4×2, kt=88 __closure_7×2, …` (11 kinds) leaked -> clean.
+//   Every VALUE is correct on the control too — the record is simply never returned — so an
+//   unarmed run reads INERT, which is the whole shape of this ticket.
 
 struct E76 { a: integer }
 enum W76 { One, Two }
@@ -95,20 +96,28 @@ fn never_leaves(p: boolean) -> integer {
   if p { g1() } else { 7 }
 }
 
-// r1 — the KNOWN RESIDUAL is deliberately ABSENT, and its absence is the statement.  Two
-// records adopting ONE store with conditional delivery still leaks the owner record and the
-// shared capture on the run that delivers the BORROWER, because the delivered record would have
-// to be the one that CASCADES and that is decided at compile time.  A cell for it would leave
-// this file red under `LOFT_STRICT_STORES=1` for a reason none of its own axes name, and
-// `make falsify` refuses to score a guard on a tree that fails it.  The shape lives on
-// loft#1476's open half with its own measurement; it comes back here when that closes.
-//
-//   fn two_records(p: boolean) -> fn() -> integer {
-//     e: E76 = E76 { a: 2 };
-//     g1: fn() -> integer = fn() -> integer { 3 + e.a };
-//     g2: fn() -> integer = fn() -> integer { 5 + e.a };
-//     if p { g1 } else { g2 }
-//   }
+// e6 — TWO records adopting ONE store, delivered conditionally: the shape the ticket was filed
+// on, and the one the per-arm release alone cannot carry.  Each record OWNS here (none is freed
+// by this frame, so none of their cascades runs in it), and the release on the one left behind
+// NULLS its capture slots first — so the cascade finds nothing, that record's own store is
+// reclaimed, and the shared capture stays for the record that escaped to free in the caller.
+// Both directions matter: the run delivering the FIRST and the run delivering the SECOND each
+// leave a different record behind.
+fn two_records(p: boolean) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  g2: fn() -> integer = fn() -> integer { 5 + e.a };
+  if p { g1 } else { g2 }
+}
+
+// e7 — THREE records over one store, so "the one left behind" is two of them on every run.
+fn three_records(p: integer) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  g2: fn() -> integer = fn() -> integer { 5 + e.a };
+  g3: fn() -> integer = fn() -> integer { 7 + e.a };
+  match p { 0 => g1, 1 => g2, _ => g3 }
+}
 
 fn main() {
   a1 = if_one(true);  b1 = if_one(false);
@@ -138,6 +147,14 @@ fn main() {
   assert(never_leaves(true) == 5, "c2 never leaves the frame, called: {never_leaves(true)}");
   assert(never_leaves(false) == 7, "c2b never leaves the frame, skipped: {never_leaves(false)}");
 
+
+  a8 = two_records(true); b8 = two_records(false);
+  assert(a8() == 5, "e6 two records over one store, first delivered: {a8()}");
+  assert(b8() == 7, "e6b two records over one store, second delivered: {b8()}");
+  c8 = three_records(0); d8 = three_records(1); f8 = three_records(2);
+  assert(c8() == 5, "e7 three records, first delivered: {c8()}");
+  assert(d8() == 7, "e7b three records, middle delivered: {d8()}");
+  assert(f8() == 9, "e7c three records, last delivered: {f8()}");
 
   println("1476-a-record-delivered-on-some-paths-is-freed-on-the-others ok");
 }
