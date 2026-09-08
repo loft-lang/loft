@@ -268,10 +268,12 @@ fn collect_fn_ref_literals(
             // call panicked `invalid fn-ref` — the same shape as the @P299, @P328 and
             // loft#1069 recoveries above, with the link as the spelling that hid it
             // (loft#1443).
-            let slot_tp = match variables.tp(*var) {
-                Type::RefVar(inner_tp) => inner_tp.base(),
-                other => other.base(),
-            };
+            // `peel_link` IS this question — `base()` and then every `&` — and asking it by
+            // name rather than by a local `match` is `@FR-B-Ref-Uniform`'s own argument: the
+            // linkage lives in the TYPE, so a site that wants to know what a value IS says so
+            // once.  Hand-rolled here and at four more sites across loft#1443/#1454/#1455
+            // before the accessor reached this tree.
+            let slot_tp = variables.tp(*var).peel_link();
             if matches!(slot_tp, Type::Function(_, _, _) | Type::Routine(_)) {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
