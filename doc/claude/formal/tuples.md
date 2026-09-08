@@ -197,6 +197,26 @@ or take the tuple by value and return a new one. The refusal message says both.
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
 
+D-tup-11 closed 2026-09-08 (loft#1423): `(T-Absent)` says a tuple is absent when EVERY member
+is null, and the null question has ONE home shared by `t == null` and `t ?? d`.  Neither held.
+`coalesce_not_null` carried its own convention — *"a tuple is null when its FIRST FIELD is its
+type's null sentinel"* — which is the SAME test as the rule's for an index miss, where
+`OpGetVectorNullable` nulls every member at once, and a different one for every tuple a program
+builds partly present: `t: (integer?, integer?) = (null, 2)` was discharged WHOLLY, so
+`(t ?? (9, 9)).1` answered `9` and the present `2` was gone, silently, on both backends.  And
+`t == null` had no answer at all — it fell past every gate in the comparison lowering and was
+refused *"No matching operator '=='"* for a type whose `??` beside it worked, so the language
+had a null question a tuple could be asked one way and not the other.  Closed as an OR-fold over
+the members in `coalesce_not_null`, which `null_test`'s new tuple arm negates rather than
+restating: two spellings each carrying their own member walk is what let the first-member
+convention live in one of them unseen.  Guards `1477` (the `??` half: 4 of 10 cells fail on the
+pre-fix build, and the six that pass are every cell whose FIRST member is present) and `1477b`
+(the `==` half, held apart because it does not COMPILE there).  A third defect fell out of the
+same site: the null TEST asked the nullable→non-null STORE face, so `??` reported *"a nullable
+`integer?` is stored into a slot of the non-null type `boolean`"* — a slot the author never
+wrote, at the site of their own discharge — and a tuple made the count its ARITY.  @FR-N-Store
+admits a test, which `null_test` already knew and the coalesce did not; they now admit alike.
+
 D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
 variable is copied for every binding — a record or a scalar by @PLN153 phase 1, a vector or a
 keyed collection by the @FR-F-Ret walk's boxed monomorph return (loft#1365).  The non-generic
@@ -207,6 +227,14 @@ the companion [tuples-history.md](tuples-history.md).
 
 ## Conformance
 
+- **Absence (`T-Absent`)** — a tuple is absent only when EVERY member is null, and both
+  spellings of the question agree: `(null, 2) ?? (9, 9)` keeps the `2` and `(null, 2) == null`
+  is `false`, while `(null, null)` takes the default and answers `true`.  Checked with the
+  absent member at the FRONT, at the BACK and in the MIDDLE, at arity 2 and 3, with a `text`
+  and a nested-tuple member, and for both spellings of the type — the written `(τ?, τ?)` and
+  the in-flight `(τ, τ)?` an index miss produces.  Both backends.  A conformance entry naming
+  one member of a family is a claim about that member (see the history file's note on the
+  keyed half), so the front/back/middle split is the point of the list rather than its length.
 - **Construct + project (`T-Cons` / `T-Proj`)** — `t = (3, 7); t.0` is `3`, `t.1` is `7`.
 - **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.
 - **Tuple return + unpack (`T-Ret` + `T-Destr`)** — `fn pair() -> (integer,integer) { (2,3) }`,

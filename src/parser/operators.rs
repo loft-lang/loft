@@ -727,6 +727,28 @@ impl Parser {
             } else {
                 self.cl("OpNot", &[valid])
             });
+        } else if matches!(tp.base(), Type::Tuple(_)) {
+            // @FR-T-Absent — a tuple's absence is "every member null", and the rule names
+            // `t == null` and `t ?? d` as ONE question.  So this asks the coalesce's own
+            // answer and negates it, rather than restating the fold: two spellings of one
+            // question that each carried their own member walk would be exactly the drift
+            // `(T-Absent)` says must not exist, and the members' sentinels are already
+            // `coalesce_not_null`'s to know.
+            //
+            // `coalesce_not_null` addresses members through `Value::TupleGet(var, i)`, so it
+            // needs a VAR: an operand that is already one is asked directly, and anything
+            // else (a call result, an index read) is bound first.  Without the bind it would
+            // fall through to its generic arm and test the tuple's raw bytes as a boolean.
+            let not_null = if let Value::Var(_) = operand.unspan() {
+                self.coalesce_not_null(operand.unspan(), tp.base())
+            } else {
+                let holder = self.create_unique("nulltest_t", tp.base());
+                self.vars.defined(holder);
+                let bind = v_set(holder, operand.clone());
+                let cond = self.coalesce_not_null(&Value::Var(holder), tp.base());
+                v_block(vec![bind, cond], Type::Boolean, "tuple null-test bind")
+            };
+            self.cl("OpNot", &[not_null])
         } else if self.is_value_enum(tp) {
             // A VALUE enum (`Color`, no payload variants) is a disc byte, and BOTH of
             // its absent bytes are asked for through the one predicate the coalesce and
@@ -2408,40 +2430,72 @@ impl Parser {
         // and have no `.rec != 0` discriminant; testing the WHOLE tuple as a
         // DbRef (the default `convert(Tuple, Boolean)` path) produces wrong
         // codegen (native E0308: `expected bool, found tuple`) and silent
-        // corruption on interpret (treating bytes as a DbRef tag).  Convention:
-        // a tuple is null when its FIRST FIELD is its type's null sentinel —
-        // which matches what `OpGetVectorNullable` produces for OOB tuple reads
-        // (each field gets its own null sentinel).
+        // corruption on interpret (treating bytes as a DbRef tag).
+        //
+        // `@FR-T-Absent` says which members decide it: **a tuple is absent when EVERY
+        // member is null**, `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  So this is an OR of
+        // the members' own not-null answers, and it stops at the first present one.
+        //
+        // Reading only member 0 — the convention this used to carry — is the same test for
+        // an OOB read (`OpGetVectorNullable` nulls every member at once) and a DIFFERENT
+        // one for every tuple that is partly present, which is the case a program actually
+        // builds: `t: (integer?, integer?) = (null, 2)` was discharged WHOLLY, so
+        // `(t ?? (9, 9)).1` answered 9 and the present 2 was gone with no diagnostic.
         if let Type::Tuple(elems) = tp
             && !elems.is_empty()
             && let Value::Var(v) = src
         {
-            let first_tp = elems[0].clone();
-            // RECURSE rather than calling the generic `convert(first_tp, Boolean)`: the
-            // heap-DbRef branch below exists precisely because that generic path has no
-            // registered `OpConv*FromX -> Boolean` for a collection and hands back the
-            // bare Var, which the interpreter then tests as raw bytes.  Asking it here
-            // puts a `vector`-first tuple through exactly that hole: `v[0] ?? fb` then
-            // answers the FALLBACK for a PRESENT element, losing the scalar half with
-            // it, on `--interpret` only.  A `Reference` first element hides it: that one
-            // does have a generic path.  Recursion is also what keeps the two answers
-            // from drifting, which is the same reason `ref_tuple_element_ok` is one list.
-            // A member that is ITSELF a tuple cannot be reached by recursing on the value:
-            // `TupleGet` addresses a VAR and an index, so `x.0.0` has no spelling, and the
-            // recursion below hands `TupleGet` back into this function where the
-            // `Value::Var` guard rejects it.  The question then fell through to the generic
-            // path, which returns the operand unconverted — `if __ncc_1.0` with a TUPLE
-            // where a boolean belongs, which native refuses (E0308) and the interpreter
-            // reads as raw bytes (loft#1425).  Bind the inner tuple and ask the same
-            // question of THAT, so the sentinel is found however deep it is nested.
-            if matches!(first_tp, Type::Tuple(_)) {
-                let inner = self.create_unique("ncc_inner", &first_tp);
-                self.vars.defined(inner);
-                let bind = v_set(inner, Value::TupleGet(*v, 0));
-                let cond = self.coalesce_not_null(&Value::Var(inner), &first_tp);
-                return v_block(vec![bind, cond], Type::Boolean, "ncc inner tuple");
+            let elems = elems.clone();
+            let mut prelude = Vec::new();
+            // Fold from the LAST member back, so the emitted form is
+            // `if m₀ { true } else { if m₁ { true } else { … } }` — short-circuit in source
+            // order, and a member is only read when every earlier one answered null.
+            let mut acc: Option<Value> = None;
+            for (i, elem_tp) in elems.iter().enumerate().rev() {
+                // RECURSE rather than calling the generic `convert(elem_tp, Boolean)`: the
+                // heap-DbRef branch below exists precisely because that generic path has no
+                // registered `OpConv*FromX -> Boolean` for a collection and hands back the
+                // bare Var, which the interpreter then tests as raw bytes.  Asking it here
+                // puts a `vector` member through exactly that hole: `v[0] ?? fb` then
+                // answers the FALLBACK for a PRESENT element, losing the scalar half with
+                // it, on `--interpret` only.  A `Reference` member hides it: that one does
+                // have a generic path.  Recursion is also what keeps the answers from
+                // drifting, which is the same reason `ref_tuple_element_ok` is one list.
+                //
+                // A member that is ITSELF a tuple cannot be reached by recursing on the
+                // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no
+                // spelling, and the recursion hands `TupleGet` back into this function
+                // where the `Value::Var` guard rejects it.  The question then fell through
+                // to the generic path, which returns the operand unconverted — `if __ncc_1.0`
+                // with a TUPLE where a boolean belongs, which native refuses (E0308) and the
+                // interpreter reads as raw bytes (loft#1425).  Bind the inner tuple and ask
+                // the same question of THAT, so the sentinel is found however deep it is.
+                let member = if matches!(elem_tp, Type::Tuple(_)) {
+                    let inner = self.create_unique("ncc_inner", elem_tp);
+                    self.vars.defined(inner);
+                    prelude.push(v_set(
+                        inner,
+                        Value::TupleGet(*v, u16::try_from(i).unwrap_or(0)),
+                    ));
+                    self.coalesce_not_null(&Value::Var(inner), elem_tp)
+                } else {
+                    self.coalesce_not_null(
+                        &Value::TupleGet(*v, u16::try_from(i).unwrap_or(0)),
+                        elem_tp,
+                    )
+                };
+                acc = Some(match acc {
+                    None => member,
+                    Some(rest) => v_if(member, Value::Boolean(true), rest),
+                });
             }
-            self.coalesce_not_null(&Value::TupleGet(*v, 0), &first_tp)
+            let cond = acc.unwrap_or(Value::Boolean(true));
+            if prelude.is_empty() {
+                cond
+            } else {
+                prelude.push(cond);
+                v_block(prelude, Type::Boolean, "ncc tuple members")
+            }
         } else if let Type::Enum(syn, true, _) = tp
             && self.data.def(*syn).name.starts_with("__nullable<")
         {
@@ -2489,7 +2543,18 @@ impl Parser {
             self.cl("OpNeBool", &[src.clone(), null_b])
         } else {
             let mut nc = src.clone();
-            self.convert(&mut nc, tp, &Type::Boolean);
+            // @FR-N-Store admits a null TEST: this reads whether the value is absent, it
+            // does not store it anywhere, so the nullable→non-null store face must not
+            // ask.  Plain `convert` asked it and reported *"a nullable `integer?` is
+            // stored into a slot of the non-null type `boolean`"* — a warning naming a
+            // `boolean` slot the author never wrote, at the site of their own `??`, whose
+            // whole job is to discharge that null.  `null_test` reaches the same question
+            // through `convert_admitting` for the same reason; the two are one question
+            // (@FR-T-Absent says so for a tuple explicitly) and now admit alike.
+            //
+            // A tuple made it loud rather than new: the members are tested one by one, so
+            // the count of warnings became the ARITY of the tuple.
+            self.convert_admitting(&mut nc, tp, &Type::Boolean);
             nc
         }
     }
@@ -4020,6 +4085,16 @@ impl Parser {
             let senum_null = (operator == "==" || operator == "!=")
                 && ((opt_senum_l && second_type == Type::Null)
                     || (*ctp == Type::Null && opt_senum_r));
+            // @FR-T-Absent — a tuple has no `Optional` spelling and no sentinel of its own;
+            // its absence IS "every member null", and the rule names `t == null` and `t ?? d`
+            // as ONE question answered from one home.  Only `??` had an answer: `t == null`
+            // fell past every gate here and was refused outright (*"No matching operator '=='
+            // on '(integer?, integer?)' and 'null'"*) for a type whose `??` beside it worked.
+            // Matched on `base()`, so the in-flight `(integer, integer)?` an index miss
+            // produces asks what the member-nullable spelling asks.
+            let tuple_null = (operator == "==" || operator == "!=")
+                && ((matches!(ctp.base(), Type::Tuple(_)) && second_type == Type::Null)
+                    || (*ctp == Type::Null && matches!(second_type.base(), Type::Tuple(_))));
             // @PLN102 pre-freeze — a boolean and an integer are NOT comparable with `==`/`!=`.
             // The old path coerced the integer to boolean by "is non-null", so `true == 0` was
             // TRUE and `true == 2` was TRUE (nonsense) — while `bool < int` already errored.
@@ -4082,7 +4157,7 @@ impl Parser {
                     },
                 );
                 *ctp = Type::Boolean;
-            } else if vec_null || float_null || enum_null || ref_null || senum_null {
+            } else if vec_null || float_null || enum_null || ref_null || senum_null || tuple_null {
                 if !self.first_pass {
                     let (n_code, n_tp) = if *ctp == Type::Null {
                         (second_code, second_type.clone())

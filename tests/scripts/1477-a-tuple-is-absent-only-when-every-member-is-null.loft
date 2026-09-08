@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Absent)` — a tuple is absent when EVERY member is null, not when its FIRST one is.
+//
+// `coalesce_not_null` carried a different convention: *"a tuple is null when its FIRST FIELD is
+// its type's null sentinel"*.  That is the same test as the rule's for an out-of-range read —
+// `OpGetVectorNullable` nulls every member at once — and a DIFFERENT one for every tuple a
+// program builds partly present.  So `t: (integer?, integer?) = (null, 2)` was discharged
+// WHOLLY: `(t ?? (9, 9)).1` answered `9` and the present `2` was gone, on both backends, with
+// no diagnostic.  A tuple whose first member is the one likely to be absent — a parse result, a
+// lookup key beside its payload — loses the payload silently.
+//
+// Axes this file MOVES:  which member is absent (first · last · middle · none · all), the
+//                        arity (2 · 3), the member kinds (integer · text · nested tuple), and
+//                        how the tuple ARRIVES (a written literal, and an index that MISSES,
+//                        which is where the old convention was accidentally right).
+// Axes it HOLDS FIXED:   the spelling of the question is `??` — `== null` is the same question
+//                        under `(T-Absent)` and is `1477b`'s, held apart because it does not
+//                        COMPILE on the build this file is falsified against, so a single file
+//                        would fail before running a single one of these assertions; the
+//                        members are declared nullable, since the written `(integer, integer)?`
+//                        stays refused by name and is `1419`'s; and the undischarged member
+//                        read is `1423b`'s.
+//
+// The all-null and index-miss cells are the CONTROLS: they passed under the old convention too,
+// so a cure that answered "present" for everything is caught by them, and a cure that answered
+// "absent" for everything is caught by the partly-present cells.
+//
+// @falsified-at: 4f29a473 — `--tests`, interpret: **4 failed, 6 passed** (native the same);
+//   every failure is a partly-present tuple whose FIRST member is null and whose present member
+//   came back as the default — `first-null keeps the present 2, got 9`, `got zz` for the text
+//   member, `got 9` for the nested one.  The six that pass are the informative half: the two
+//   CONTROLS (all-null, index-miss) plus every cell whose first member is PRESENT, including
+//   `test_three_members_with_a_middle_hole`.  So the old convention was right exactly when
+//   member 0 was present and wrong exactly when it was not, which is what says the walk and not
+//   one shape was the defect.  That build also emits **9** spurious *"a nullable `integer?` is
+//   stored into a slot of the non-null type `boolean`"* warnings here, against 0 now — a second
+//   channel, and the one that says the null test stopped asking the STORE face
+
+// Each cell is its own test function, so a `--tests` run names EVERY broken one.  A single
+// `main` halts at the first failing `assert`, which cannot tell "the member walk is wrong" from
+// "one shape is" — and it is the ratio of broken partly-present cells to green controls that
+// says which.
+
+fn test_first_null_keeps_a_present_member() {
+  a: (integer?, integer?) = (null, 2);
+  wa = a ?? (9, 9);
+  assert((wa.1 ?? -1) == 2, "first-null keeps the present 2, got {wa.1 ?? -1}");
+  assert((wa.0 ?? -1) == -1, "first-null keeps its own absent member, got {wa.0 ?? -1}");
+}
+
+fn test_last_null_keeps_a_present_member() {
+  b: (integer?, integer?) = (1, null);
+  wb = b ?? (9, 9);
+  assert((wb.0 ?? -1) == 1, "last-null keeps the present 1, got {wb.0 ?? -1}");
+}
+
+fn test_wholly_present_is_itself() {
+  c: (integer?, integer?) = (1, 2);
+  wc = c ?? (9, 9);
+  assert((wc.0 ?? -1) == 1, "wholly present is itself, got {wc.0 ?? -1}");
+}
+
+// CONTROL — all null IS absent, which is what the old first-member convention also answered.
+fn test_all_null_takes_the_default() {
+  d: (integer?, integer?) = (null, null);
+  wd = d ?? (9, 9);
+  assert((wd.0 ?? -1) == 9, "all-null takes the default, got {wd.0 ?? -1}");
+}
+
+// Arity 3, absent at the FRONT and in the MIDDLE — a first-member test sees neither.
+fn test_three_members_only_the_last_present() {
+  e: (integer?, integer?, integer?) = (null, null, 3);
+  we = e ?? (9, 9, 9);
+  assert((we.2 ?? -1) == 3, "3-member with only the last present, got {we.2 ?? -1}");
+}
+
+fn test_three_members_with_a_middle_hole() {
+  f: (integer?, integer?, integer?) = (1, null, 3);
+  wf = f ?? (9, 9, 9);
+  assert((wf.2 ?? -1) == 3, "3-member with a middle hole, got {wf.2 ?? -1}");
+}
+
+// A text member — a different sentinel, reached through the same recursion.
+fn test_a_text_member_survives_a_null_first_member() {
+  g: (integer?, text?) = (null, "hi");
+  wg = g ?? (9, "zz");
+  assert((wg.1 ?? "-") == "hi", "text member survives a null first member, got {wg.1 ?? \"-\"}");
+}
+
+// A NESTED tuple member: the walk has to bind it and ask the same question of it.
+fn test_a_nested_tuple_member_is_walked() {
+  h: ((integer?, integer?), integer?) = ((null, 2), null);
+  wh = h ?? ((9, 9), 9);
+  hi = wh.0;
+  assert((hi.1 ?? -1) == 2, "nested present member survives, got {hi.1 ?? -1}");
+}
+
+fn test_a_nested_all_null_tuple_is_absent() {
+  i: ((integer?, integer?), integer?) = ((null, null), null);
+  wi = i ?? ((9, 9), 9);
+  assert((wi.1 ?? -1) == 9, "nested all-null takes the default, got {wi.1 ?? -1}");
+}
+
+// CONTROL — an index MISS nulls every member at once, so the answer is absent, and an in-range
+// read is present.  This pair is where the old convention agreed with the rule; it must not move.
+fn test_an_index_miss_and_an_in_range_read() {
+  v: vector<(integer, integer)> = [(1, 2)];
+  miss = 5;
+  hit = 0;
+  wm = v[miss] ?? (9, 9);
+  assert(wm.0 == 9, "an index miss takes the default, got {wm.0}");
+  wt = v[hit] ?? (9, 9);
+  assert(wt.0 == 1, "an in-range read is itself, got {wt.0}");
+}
