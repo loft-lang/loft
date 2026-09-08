@@ -390,7 +390,11 @@ gh run watch <run-id> --exit-status         # or poll: gh run view <run-id>
 ```
 
 `os=ubuntu-latest` is the local gate's twin: the PR matrix is Linux-only (macOS and
-Windows are placeholders there), and so is `make ci`.  A dispatch takes the push-to-main
+Windows are placeholders there), and so is `make ci`.  One dispatch per push: the
+workflow's concurrency group cancels an in-progress run on the same ref (every ref but
+`main`), so a second dispatch after a follow-up commit CANCELS the first — which is the
+right outcome (the newer commit supersedes), but a cancelled run is no verdict for the
+older one.  A dispatch takes the push-to-main
 path rather than the PR path, so it also runs the non-PR extras (the stdlib round-trip, the
 differential oracle) — strictly more than `make ci`, in ~20 min.  `os=all` adds macOS and
 the ~30-min Windows leg; reach for it when the change touches a platform seam.  `make
