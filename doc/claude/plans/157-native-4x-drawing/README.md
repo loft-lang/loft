@@ -48,11 +48,18 @@ hash unchanged.
 
 ## Where to resume
 
-Written 2026-09-08 after § V-g landed: HEAD on `157-native-4x`, pushed; the
-gate is the GitHub `ci.yml` dispatch on that commit (the local `make ci` was
-dying under memory pressure — CI_BUDGET.md § When the local gate is
-unreliable).  Nothing is in flight; the working tree is clean apart from
-untracked local artefacts.
+Written 2026-09-08 after § V-g landed, updated the same evening: the branch
+was REBASED onto `main` (#1465 squashed this branch through § V-d together
+with 55 other issues; the 13 commits after it were replayed with `git rebase
+--onto`, conflicts resolved by carrying main's new `Parts::IntRaw` kind into
+§ V-e's `Shape` and § V-f's facts, and main's `Output::lean` frame-naming
+home into the shipped tier).  After it: queue item 1 (the hoisted loop bound)
+and the leaf guard elision shipped, and the runner's death signal + the tests'
+orphan reaper closed the engine-host leak.  The gate is the GitHub `ci.yml`
+dispatch on the head (the local `make ci` was dying under memory pressure —
+CI_BUDGET.md § When the local gate is unreliable); codegen, scopes, store and
+runtime subject suites were green on the rebased tree locally, `packages` was
+stopped before its verdict to free the box and is covered by the dispatch.
 
 **The next unit is the loop's own overhead — queue items 1–3** (§ Phase
 ordering): the loop bound read through the runtime per iteration, the range
