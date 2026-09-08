@@ -2762,6 +2762,19 @@ impl Parser {
         } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
             // #306: the tail borrows a LOCAL's store — copy it before it escapes.
             RefDelivery::MaterializeView
+        } else if self.return_buffer().is_none() && self.return_views_an_argument(ls) {
+            // loft#1468, `@FR-F-Ret` — the tail borrows an ARGUMENT's store, so handing it
+            // back is a view where the rule promises a fresh, independent value.  The leg
+            // above does not catch it because it does not DANGLE: the store is the caller's
+            // and outlives the frame.  It aliases instead, and a write through the result
+            // lands on the argument the caller passed.
+            //
+            // Only a BUFFER-LESS return arrives here with an argument borrow.  A dense heap
+            // return keeps the promise through its hidden `__retbuf` — the caller allocates
+            // and `ref_return`'s copy leg writes into it — so `-> S` copies while `-> S?`,
+            // the SAME body, did not.  That asymmetry is what `@FR-N-Shape` refuses: a shape
+            // question answers alike for `τ` and `τ?`.
+            RefDelivery::MaterializeView
         } else {
             // Owned / arg-borrow: rename the tail's work-ref(s) onto `__retbuf`.
             RefDelivery::Rename(ls.to_vec())
@@ -12568,8 +12581,20 @@ impl Parser {
             Value::Null => true,
             Value::Var(v) => {
                 *v >= self.vars.count()
+                    // The leaf IS a parameter: `keep(s) -> S? { s }`.  Handing a parameter
+                    // straight back is loft#1368's settled shape and the CALLER copies it, so
+                    // copying here as well would only add a second one.
                     || self.vars.is_argument(*v)
-                    || !self.return_views_local(&[*v])
+                    // …but a LOCAL that views a parameter is not owned either, and it was
+                    // read as owned because `return_views_local` walks PAST an argument dep
+                    // (that store outlives the frame, so nothing dangles).  loft#1468: it
+                    // aliases instead — `match p { [a, ..] => a, … }` binds the element to a
+                    // local whose dep is `p`, and the view escaped into the caller, where a
+                    // write through the result landed on the argument.  `@FR-F-Ret` asks for
+                    // a FRESH value, not merely a non-dangling one, and the dense twin
+                    // already copies through its `__retbuf` — `@FR-N-Shape` refuses that
+                    // asymmetry between `-> S` and `-> S?`.
+                    || !(self.return_views_local(&[*v]) || self.return_views_an_argument(&[*v]))
             }
             Value::Call(d, args) => {
                 let name = self.data.def(*d).name();
@@ -13466,6 +13491,35 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    /// loft#1468 — do the tail's bindings BORROW an argument's store?
+    ///
+    /// The `ls` twin of [`Self::return_views_a_caller_store`], and the one that fires for the
+    /// filed shape: a `match` arm binds the element to `a` and the tail is then the bare `a`,
+    /// so no projection is visible AT the tail and the fact lives in the binding's dep list
+    /// instead.  `@FR-F-Ret` asks for a fresh value however the callee spelled the route to it.
+    ///
+    /// The mirror of [`Self::return_views_local`], which asks the same question about a LOCAL
+    /// root and copies for the other reason — that one dangles, this one aliases.
+    fn return_views_an_argument(&self, ls: &[u16]) -> bool {
+        // `&T` is `(F-Ret)`'s own exception: it exists to hand out a view.
+        if matches!(
+            self.data.def(self.context).returned().base(),
+            Type::RefVar(_)
+        ) {
+            return false;
+        }
+        ls.iter().any(|&v| {
+            v < self.vars.count()
+                && !self.vars.is_argument(v)
+                && self
+                    .vars
+                    .tp(v)
+                    .depend()
+                    .iter()
+                    .any(|&d| d < self.vars.count() && self.vars.is_argument(d))
+        })
     }
 
     fn site_value_ref(&self, tail: &Value) -> Option<u16> {

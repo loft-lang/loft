@@ -6,11 +6,58 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
+
+### D-call-17 — OPENED AND CLOSED (2026-09-08, loft#1468): a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller
+
+`(F-Ret)` makes a returned value FRESH and independent — *"a function that returns a whole heap
+value hands out an OWNED value … never a view of a local. EXCEPTION: a `&T` return"*.  A DENSE
+heap return earns that through its hidden `__retbuf`: the caller allocates and `ref_return`'s
+copy leg writes into it.  A NULLABLE one has no buffer — loft#896's `__nullable<S>` is a
+different representation, and `ret_promo_base` records that giving it one as well leaks a record
+per call — so nothing materialised it and the view escaped:
+
+```loft
+fn head(p: vector<S>)   -> S? { match p { [a, ..] => a, _ => null } }        // aliased
+fn head_d(p: vector<S>) -> S  { match p { [a, ..] => a, _ => S { a: 0 } } }  // fresh
+```
+
+A write through `head`'s result landed on the caller's own vector, identically on both
+backends, with no diagnostic.  That is also `(N-Shape)`'s complaint in one line — a shape
+question answering differently for `τ` and `τ?` — and the dense twin is the oracle that settles
+which answer is right.
+
+**Two sites, and the pair is the point.**  `classify_reference_delivery` never asked whether the
+tail borrows an ARGUMENT (`return_views_an_argument`, the mirror of `return_views_local`), and
+`return_leaf_is_owned_or_null` then called such a leaf OWNED, because `return_views_local` walks
+PAST an argument dep — deliberately, since that store outlives the frame and nothing dangles.
+Both sites were right about DANGLING and neither was asking about FRESHNESS, so a local bound to
+`p`'s element passed both.  Fixing either alone leaves the defect: the first without the second
+publishes an owned signature over an unchanged view, which is worse than the alias.
+
+**Measured, not assumed.**  A third leg was written first — a tail-shape test that materialises a
+projection rooted at an argument — and REMOVED once the matrix showed it changed no cell: the
+filed shape's tail is a bare `Var` (the arm binds the element, then the tail names the binding),
+so the fact is in the dep list rather than in the tail, and every field-projection spelling
+(`o.inner`, `b.v[0]`, an `if`-arm of either) was already fresh through the caller's own first-bind
+copy.  Fourteen cells, both backends, value + `LOFT_STRICT_STORES` + `LOFT_POISON`.
+
+**What must NOT move, and does not:** `keep(s) -> S? { s }` and `first(p) -> S? { p[0] }` are
+loft#1368's settled shapes and stay fresh; `-> &T` is `(F-Ret)`'s own exception and is excluded
+by name; a callee whose subject is a LOCAL still aliases within its own frame, which is what a
+local subject means.  Guard
+`1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft` plus the cross-backend driver
+`tests/nullable_first_bind_copy.rs`, falsified at 33b72675 on both backends with
+`the match arm's result is FRESH, so the source keeps 7 — got 93`.
+
+⚠ **A guard cell that recorded the OPEN answer had to be tightened in the closing commit.**  The
+file was written while this was open and asserted `93 || 7` on purpose, so that a known-wrong
+value was not frozen into the contract; leaving that disjunction behind would have left a closed
+deviation with a guard that cannot see it re-open.
 
 ### D-call-16 — OPENED AND CLOSED (2026-09-08, loft#1451): a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape
 

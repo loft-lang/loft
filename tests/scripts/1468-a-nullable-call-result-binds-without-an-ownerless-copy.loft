@@ -28,12 +28,13 @@
 // The REASSIGNMENT cells are the control from the other side: that branch keeps the peeled
 // question (loft#1319, loft#1336) and must go on copying, or the fix reverted too much.
 //
-// ⚠ The `match`/slice-binding spelling is **loft#1468, open**: it aliases on BOTH backends
-// where the dense twin copies, because the arm binding is already a local and a view, so
-// loft#1368's join-arm lift has nothing to copy.  It is exercised here for its LEAK and its
-// backend agreement only — its freshness is deliberately not asserted, because asserting
-// today's answer would freeze a known-wrong value into the contract.  When loft#1468 closes,
-// `head_alias_is_1468` becomes an equality against 7 in the same commit.
+// The `match`/slice-binding spelling was **loft#1468**, and it is CLOSED: it aliased on both
+// backends where the dense twin copies, because the arm binding is already a local and a view,
+// so loft#1368's join-arm lift had nothing to copy.  This file was written while it was open
+// and asserted `93 || 7` there deliberately, so that today's known-wrong answer was not frozen
+// into the contract; that cell is now the equality against 7 the note asked for, landed in the
+// commit that closed it.  `(F-Ret)` asks for a fresh, independent return value and
+// `(N-Shape)` refuses the `-> S` / `-> S?` asymmetry the defect was.
 //
 // @falsified-at: 62118945a — native leaked `kt=81 S1468×11` -> clean; interpret INERT, which
 //   is expected for a backend-divergence guard: only the side that diverged can move.
@@ -78,16 +79,17 @@ fn main() {
   t3.a = 93;
   assert(q3[0].a == 7, "the dense twin is fresh, got {q3[0].a}");
 
-  // loft#1468, open.  Asserted on the channels that are settled — the result is USABLE and
-  // the two backends agree on the source — and not on freshness.  `q4[0].a` reads 93 today
-  // and 7 once loft#1468 closes; both are recorded so the cell fails on neither.
+  // loft#1468, CLOSED.  The callee materialises the arm now (`materialized_view_return`) and
+  // publishes `-> S1468?` owned rather than `-> S1468["p"]?`, so the write lands on the
+  // caller's own copy and the source is untouched — the same answer its dense twin above has
+  // always given.
   q4: vector<S1468> = [S1468 { a: 7 }];
   t4 = head_1468(q4);
   if t4 != null { t4.a = 93; }
   head_alias_is_1468 = q4[0].a;
   assert(t4.a == 93, "the match arm's result must carry the write, got {t4.a ?? -1}");
-  assert(head_alias_is_1468 == 93 || head_alias_is_1468 == 7,
-         "loft#1468: aliased (93) or fresh (7), never a third answer — got {head_alias_is_1468}");
+  assert(head_alias_is_1468 == 7,
+         "loft#1468: the match arm's result is FRESH, so the source keeps 7 — got {head_alias_is_1468}");
 
   // The leak half.  Ten binds of loft#1468's shape: a copy emitted here has no owner, so
   // `LOFT_STRICT_STORES=1` reports one store per iteration.  The driver arms that; this

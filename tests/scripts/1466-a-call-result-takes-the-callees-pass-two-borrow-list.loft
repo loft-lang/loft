@@ -40,9 +40,8 @@
 //                        `@FR-O-Witness`'s question and not this one, and a file that mixes
 //                        them measures neither.
 // Axes it HOLDS FIXED:   one subject per callee.  A DENSE `vector<S>` parameter is a control
-//                        here and not a cell: its callee returns a genuine view and the
-//                        published borrow is correct, so what it pins is that the re-take does
-//                        NOT strip a real borrow.  `vector<text?>` is left out — it does not
+//                        here and not a cell — see its own note, which records that
+//                        loft#1468 later removed the borrow it was written to protect.  `vector<text?>` is left out — it does not
 //                        compile on `--native` at all (`error[E0308]`), before this change as
 //                        much as after, which is a separate defect about the nullable-text
 //                        element's channel.
@@ -87,10 +86,18 @@ fn head_int(p: vector<integer?>) -> integer? { match p { [a, ..] => a, _ => null
 // so the two passes agreed and this cell never leaked.  It must keep not leaking.
 fn head_local(p: vector<S66?>) -> S66? { match p { [a, ..] => { x = a; x }, _ => null } }
 
-// c2 — CONTROL: a DENSE element.  The callee returns a genuine VIEW into the parameter and
-// publishes `-> S66["p"]?` on both passes, so the caller's borrow is correct and the re-take
-// must leave it standing.  A cure that simply emptied a call result's deps frees `q`'s record
-// here.
+// c2 — CONTROL: a DENSE element.  When this file was written the callee published
+// `-> S66["p"]?` on both passes — a genuine argument borrow — and this cell pinned that the
+// rebuild does not strip one: the replace-at-every-assignment cure freed `qd`'s record here
+// and read `USE AFTER FREE store #13 type=main_vector<S66>`.
+//
+// loft#1468 then removed the borrow it named.  `(F-Ret)` asks for a FRESH return, so this
+// callee now MATERIALISES the arm and publishes `-> S66?` owned, and no `-> τ?` return in the
+// spread above still hands back an argument view.  The cell stays because what it pins is
+// still worth pinning — the materialised copy is freed exactly once, so a dense element costs
+// no leak — but the "a real borrow must survive" reading is HISTORY, and the property it
+// protected has no witness here any more.  Say so rather than leave the old sentence
+// standing: a control whose subject moved reads as covering something it no longer touches.
 fn head_dense(p: vector<S66>) -> S66? { match p { [a, ..] => a, _ => null } }
 
 // c3 — CONTROL: the callee's subject is a LOCAL, so no parameter dep is ever published.
@@ -152,7 +159,7 @@ fn main() {
 
   na = 0;
   for i in 0..10 { ta = head_dense(qd); if ta != null { na = na + ta.a + i * 0; } }
-  assert(na == 70, "c2 a dense element publishes a REAL borrow that must survive: {na}");
+  assert(na == 70, "c2 a dense element costs no leak and no wrong value: {na}");
 
   nb = 0;
   for i in 0..10 { tb = head_of_local(); if tb != null { nb = nb + tb.a + i * 0; } }
