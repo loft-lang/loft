@@ -5413,6 +5413,28 @@ fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
             let (fa, fb) = (subtree_builds_record(f, a), subtree_builds_record(f, b));
             if (ta && fb && !tb && !fa) || (tb && fa && !ta && !fb) {
                 found = true;
+                return;
+            }
+            // An arm that TERMINATES is exclusive with everything after the branch, not just
+            // with its sibling.  `if p { return fn() { … e.a }; } return fn() { … e.a };` builds
+            // one record inside the arm and one after it — never in opposite arms, so the test
+            // above says nothing — yet the arm returns, so the code after it does not run on the
+            // path that built the first.  Reading only sibling arms left this pair sharing an
+            // owner, and the run that delivered the demoted one read a released capture
+            // (loft#1477's `same_local` cell, visible only under `LOFT_POISON=1`).
+            //
+            // Exactly one of the two must be inside the terminating arm: two records BOTH built
+            // inside it are ordinary coexisting siblings, and the arm's own termination says
+            // nothing about them.
+            for arm in [t, f] {
+                if !expr_ends_in_return(arm) {
+                    continue;
+                }
+                let (ia, ib) = (subtree_builds_record(arm, a), subtree_builds_record(arm, b));
+                if ia != ib {
+                    found = true;
+                    return;
+                }
             }
         }
     });
@@ -5642,6 +5664,28 @@ fn returned_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<
     body.walk(&mut |n| {
         if let Value::Return(inner) = n.unspan() {
             collect_return_sources(inner, data, &mut sources);
+            // …and the `FnRef` spelling, which `collect_return_sources` has no arm for.  That
+            // decoder answers in VARIABLES, and a capturing lambda is not one: it is a `FnRef`
+            // naming its `___clos_N` directly.  So `return fn() { … }` written straight out
+            // contributed nothing, and the frame freed the record it had just handed over.
+            //
+            // The `delivered` stack below does read a `FnRef` — but it only reaches a block's
+            // LAST operator, so it sees the tail `return` and never one standing earlier in an
+            // `if` arm.  Two decoders for one question, and the blind one is on the route an
+            // explicit mid-body `return` takes (loft#1477, found by the loft2 session).
+            //
+            // Collected from the whole returned subtree: a `return` of an `if` delivers a
+            // different record per arm and every one of them outlives the frame on its own
+            // path.  A lambda BODY is a separate definition, so a closure the returned lambda
+            // builds internally cannot be swept in.
+            inner.walk(&mut |m| {
+                if let Value::FnRef(_, w, _) = m.unspan()
+                    && *w != u16::MAX
+                    && !out.contains(w)
+                {
+                    out.push(*w);
+                }
+            });
         }
     });
     while let Some(v) = delivered.pop() {

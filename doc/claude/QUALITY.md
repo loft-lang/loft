@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 431 | 407 | **24** |
+| 432 | 408 | **24** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 754 | 409 | 6 | **339** |
+| 755 | 410 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2268** shape tests, **1520** of them opaque
@@ -2603,6 +2603,19 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-08, the closure-lifetime arc (loft#1469/#1473/#1474/#1475): the unspan row
+`431 · 407 · 24` → `432 · 408 · 24`, and the Optional row `754 · 409 · 6 · 339` →
+`755 · 410 · 6 · 339`.**  Both moves are one function each and both PEEL, so the third and
+fourth columns — the ones that matter — are unchanged.  `scopes::builds_are_mutually_exclusive`
+is the new `Value` discriminator: `@FR-L-CapOne` asks whether two closure records sit in
+opposite arms of one branch, which is a question about `Value::If` and so needs a walk of its
+own.  On the `Optional` side `parser::widen_bare_fn_ref` classifies a target type as a function
+type and asks it through `tp.base()`, which is why it lands on the PEELING side rather than the
+opaque one — a `-> fn(…)?` return is the same twenty-byte slot as a `-> fn(…)`, so the wrapper
+is not a distinction the widening may make.  Recorded rather than absorbed: a derived row taken
+without a reason stops being a ratchet, and the reason here is that the arc added exactly two
+classifiers and neither is opaque.
 
 **2026-09-08, the debug-assertions gate's last hard failure: the unspan row `425 · 401 · 24`
 → `431 · 407 · 24`.**  One function joined the classifier and it peels —

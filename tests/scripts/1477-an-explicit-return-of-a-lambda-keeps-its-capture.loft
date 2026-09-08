@@ -1,0 +1,142 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1477 — a capturing lambda handed out by an EXPLICIT `return` standing inside a branch.
+//
+// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the frame
+// outlives the other, and a record the return DELIVERS is the caller's.  Deciding that needs
+// "which closure records can this return deliver", and `returned_closure_records` answers it two
+// ways: the tail walks a stack that reads a `Value::FnRef`, while every `Value::Return` in the
+// body routes through `collect_return_sources`, whose arms are `Var`, `Block`, `Return`/`Drop`,
+// `Insert`, `If`, `Span` — and `_ => {}`.
+//
+// That decoder answers in VARIABLES, and a capturing lambda is not one: it is a `FnRef` naming
+// its `___clos_N` directly.  So `return fn() { … }` written straight out contributed nothing,
+// the record was not in the delivered set, and the frame freed what it had just handed over —
+// which cascades into the capture.  The tail path would have caught it, but it only reaches a
+// block's LAST operator, so it sees the trailing `return` and never one standing earlier in an
+// arm.  One question, two decoders, and the blind one on this route.
+//
+// Same family as loft#1474, where the record local's free still read the declared return's
+// overwritten `CalleeFrame` note after the fn-ref variable's free had been moved off it.  The
+// recurring shape is worth more than either fix: when one question has several decoders, the
+// defect sits in whichever of them the failing route happens to consult.
+//
+// Axes this file MOVES:  where the `return` STANDS (an `if` arm · a `match` arm · nested two
+//                        deep · a loop body · the trailing one, which was always right) ·
+//                        whether the lambda CAPTURES, since a bare one carries no record and
+//                        cannot show this · how many arms return · and whether the two arms
+//                        capture the SAME local or different ones, because the delivered set is
+//                        per RECORD and a shared store is a different question.
+// Axes it HOLDS FIXED:   the caller CALLS the returned lambda — an uncalled one reads nothing
+//                        and the released capture stays invisible.  And the frame owns a heap
+//                        local, without which there is no scope-exit free to get this wrong.
+//
+// @falsified-at: ab951b7d3, WITH THE INSTRUMENTS ARMED — `LOFT_STRICT_STORES=1 LOFT_POISON=1
+//   make falsify`: interpret exit 1 -> 0 and `kt=82 E77×4` leaked -> clean, native the same.
+//   The control's own value channel already shows it — `e1` answers `null` where `102` is
+//   wanted, and the instrument names the cause (`USE AFTER FREE (read) store #4 type=E77`,
+//   created / freed / read-now pcs all reported).  The trailing-`return` control is INERT
+//   either side, which is the point: only the branch-borne `return` takes the blind route.
+
+struct E77 { a: integer }
+enum W77 { One, Two }
+
+// e1 — the filed shape: an explicit `return` in an `if` arm, two arms over two locals.
+fn if_arm(p: boolean) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  if p { return fn() -> integer { 100 + e.a }; }
+  return fn() -> integer { 204 };
+}
+
+// e2 — both arms capturing the SAME local.  The delivered set is per RECORD, so a shared store
+// asks `(L-CapOne)`'s question as well as this one, and the two must both hold.
+fn same_local(p: boolean) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  if p { return fn() -> integer { 100 + e.a }; }
+  return fn() -> integer { 200 + e.a };
+}
+
+// e3 — a `match` arm rather than an `if` arm.
+fn match_arm(p: W77) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  match p { One => { return fn() -> integer { 100 + e.a }; }, Two => { } }
+  return fn() -> integer { 204 };
+}
+
+// e4 — nested two deep, so the `return` is neither the block's last operator nor one level in.
+fn nested(p: boolean, q: boolean = true) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  if p {
+    if q { return fn() -> integer { 100 + e.a }; }
+    return fn() -> integer { 300 + e.a };
+  }
+  return fn() -> integer { 204 };
+}
+
+// e5 — the `return` sits in a LOOP body.
+fn loop_body(n: integer) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  for i in 0..n { if i + e.a > 0 { return fn() -> integer { 100 + e.a }; } }
+  return fn() -> integer { 204 };
+}
+
+// e6 — THREE returning arms, so a fix that found only the first would still be short.
+fn three_returns(p: integer) -> fn() -> integer {
+  x: E77 = E77 { a: 1 };
+  if p == 0 { return fn() -> integer { 100 + x.a }; }
+  if p == 1 { return fn() -> integer { 201 + x.a }; }
+  return fn() -> integer { 302 + x.a };
+}
+
+// c1 — CONTROL: the TRAILING `return`, which the tail path always reached.  Inert either side.
+fn ctl_trailing(p: boolean) -> fn() -> integer {
+  d: E77 = E77 { a: 4 };
+  if p && d.a > 0 { return fn() -> integer { 200 + d.a }; }
+  return fn() -> integer { 200 + d.a };
+}
+
+// c2 — CONTROL: a NON-capturing lambda from a branch `return`.  It carries no record, so there
+// is nothing for the frame to free wrongly; a cure that fired here would be reaching too wide.
+fn ctl_bare(p: boolean) -> fn() -> integer {
+  e: E77 = E77 { a: 2 };
+  if p && e.a > 0 { return fn() -> integer { 102 }; }
+  return fn() -> integer { 204 };
+}
+
+fn main() {
+  g1 = if_arm(true);  h1 = if_arm(false);
+  assert(g1() == 102, "e1 explicit return in an `if` arm: {g1()}");
+  assert(h1() == 204, "e1b the trailing return, bare: {h1()}");
+
+  g2 = same_local(true); h2 = same_local(false);
+  assert(g2() == 102, "e2 both arms over one local, branch return: {g2()}");
+  assert(h2() == 202, "e2b both arms over one local, trailing: {h2()}");
+
+  g3 = match_arm(W77.One); h3 = match_arm(W77.Two);
+  assert(g3() == 102, "e3 explicit return in a `match` arm: {g3()}");
+  assert(h3() == 204, "e3b match arm not taken: {h3()}");
+
+  a4 = nested(true, true); b4 = nested(true, false); c4 = nested(false);
+  assert(a4() == 102, "e4 nested, inner return: {a4()}");
+  assert(b4() == 302, "e4b nested, second return in the same arm: {b4()}");
+  assert(c4() == 204, "e4c nested, trailing: {c4()}");
+
+  g5 = loop_body(3); h5 = loop_body(0);
+  assert(g5() == 102, "e5 return from a loop body: {g5()}");
+  assert(h5() == 204, "e5b zero iterations, trailing: {h5()}");
+
+  a6 = three_returns(0); b6 = three_returns(1); c6 = three_returns(2);
+  assert(a6() == 101, "e6 first of three returns: {a6()}");
+  assert(b6() == 202, "e6b second of three returns: {b6()}");
+  assert(c6() == 303, "e6c trailing of three: {c6()}");
+
+  g7 = ctl_trailing(true); h7 = ctl_trailing(false);
+  assert(g7() == 204, "c1 both returns capture one local, branch: {g7()}");
+  assert(h7() == 204, "c1b both returns capture one local, trailing: {h7()}");
+  g8 = ctl_bare(true); h8 = ctl_bare(false);
+  assert(g8() == 102, "c2 non-capturing from a branch return: {g8()}");
+  assert(h8() == 204, "c2b non-capturing, trailing: {h8()}");
+
+  println("1477-an-explicit-return-of-a-lambda-keeps-its-capture ok");
+}

@@ -94,7 +94,10 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  run and a borrow there would leave that run's store with no release.  Being
                  CONDITIONAL is not being exclusive — two sequential `if`s over one store can
                  both run — so the condition is mutual exclusion, not "the build might not
-                 happen".
+                 happen".  An arm that TERMINATES is exclusive with everything after the branch
+                 and not only with its sibling: `if p { return |…| e.a; } return |…| e.a;`
+                 builds one record inside the arm and one after it, never in opposite arms, and
+                 the arm's return is what says the second cannot follow the first.
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -195,6 +198,18 @@ with the closure's environment in scope.
 
 **OPEN: 1.**
 
+- **D-clo-31** *(closed 2026-09-08, loft#1477)* — `returned_closure_records` decides which
+  closure records a return DELIVERS, and it had two decoders: the tail walks a stack that reads
+  a `Value::FnRef`, while every `Value::Return` routed through `collect_return_sources`, whose
+  arms answer in VARIABLES and have no `FnRef` case at all.  A capturing lambda is not a
+  variable, so `return fn() { … }` written straight out contributed nothing, the record was
+  absent from the delivered set, and the frame freed what it had just handed over — the caller
+  read a released capture (`null`, both backends, exit 0).  The tail path would have caught it
+  but only reaches a block's LAST operator, so an explicit `return` standing in an `if` arm took
+  the blind route.  Closed by giving that route the missing spelling.  `(L-CapOne)` also gained
+  its terminating-arm clause here: the same shape over ONE local left the two records sharing an
+  owner, because they are never in opposite arms.  Guard
+  `1477-an-explicit-return-of-a-lambda-keeps-its-capture.loft`.
 - **D-clo-30** *(closed 2026-09-08, loft#1473)* — `(L-CapOwn)`'s single owner was picked for
   every group, including records that CANNOT COEXIST.  Arms of one branch each build a record
   over the same store; the marking demoted all but one to a borrow, and on the run that built a
