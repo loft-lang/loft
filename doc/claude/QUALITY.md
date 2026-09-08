@@ -2522,7 +2522,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 745 | 399 | 5 | **341** |
+| 745 | 400 | 5 | **340** |
+
+loft#1423's tuple walk moves ONE function out of the opaque column (`341 → 340`, and
+`399 → 400` on the seeing-through side): `parser::operators::coalesce_not_null` reads each tuple
+MEMBER's type through `base()` now.  It had to — its own arms match some types in their bare
+spelling (`matches!(tp, Type::Boolean)`) because every caller before the member walk peeled
+first, so an unpeeled `boolean?` member missed its arm and `false` read as absent.  That is this
+row's thesis reaching a live defect rather than a hygiene score: one notion, two spellings, and
+the site that could not see through the wrapper answered the wrong one.
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record

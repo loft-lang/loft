@@ -2129,25 +2129,67 @@ impl Parser {
                 _ => None,
             }
         }
-        let outer_kind = match code.unspan() {
-            Value::Call(def_nr, args) => {
-                let outer_name = data.def(*def_nr).original_name();
-                let direct = classify(&outer_name);
-                if direct.is_some() {
-                    direct
-                } else if matches!(
-                    outer_name.as_str(),
-                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
-                ) && let Some(first) = args.first()
-                    && let Value::Call(inner_nr, _) = first.unspan()
-                {
-                    classify(&data.def(*inner_nr).original_name())
-                } else {
-                    None
+        // The OUTERMOST classifiable node ANYWHERE in the hole, not just at the top.
+        //
+        // Arming used to require the top node itself to be fault-prone, on the reasoning that
+        // *"inner faults have no renderer to feed the tag to"*.  That conflates the outermost
+        // OP with the HOLE: the hole always has a renderer, and an inner fault's null
+        // propagates to it.  So `{v[9] / 2}` reported `null(oob)` while `{v[9] + 1}` reported
+        // bare `null` — the same overrun, the same null, and a cause only when the arithmetic
+        // around it happened to be divisive.  Measured on both backends for `+`, `-`, `*`, a
+        // fault on the RIGHT operand, and two faults in one hole; `@FR-F-FaultSafe` says the
+        // render is *"'null' annotated with the fault cause"* without qualifying it by what
+        // encloses the fault.
+        //
+        // The KIND this returns is only the initial value: `note_format_fault` is a SET, so
+        // whichever op actually faults overwrites it, and a peer that did not fault leaves it
+        // alone.  That is why `{v[9] / z}` answers `oob` and not `/0` — the overrun is what
+        // produced the null.  Arming at all is the load-bearing half; the kind is a fallback.
+        fn outermost_kind(code: &Value, data: &crate::data::Data) -> Option<u8> {
+            fn classify_call(def_nr: u32, args: &[Value], data: &crate::data::Data) -> Option<u8> {
+                let name = data.def(def_nr).original_name();
+                if let Some(k) = classify(&name) {
+                    return Some(k);
                 }
+                // For an integer-vector read the IR is `OpGetInt(OpGetVector(v, 4, i), 0)`:
+                // the outer is the width accessor and the fault-prone op is the inner read.
+                if matches!(
+                    name.as_str(),
+                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
+                ) && let Some(Value::Call(inner_nr, _)) = args.first().map(Value::unspan)
+                {
+                    return classify(&data.def(*inner_nr).original_name());
+                }
+                None
             }
-            _ => None,
-        };
+            match code.unspan() {
+                Value::Call(def_nr, args) => classify_call(*def_nr, args, data)
+                    .or_else(|| args.iter().find_map(|a| outermost_kind(a, data))),
+                Value::CallRef(_, args)
+                | Value::Tuple(args)
+                | Value::Insert(args)
+                | Value::Parallel(args) => args.iter().find_map(|a| outermost_kind(a, data)),
+                Value::Block(b) | Value::Loop(b) => {
+                    b.operators.iter().find_map(|c| outermost_kind(c, data))
+                }
+                Value::If(cond, then_b, else_b) => outermost_kind(cond, data)
+                    .or_else(|| outermost_kind(then_b, data))
+                    .or_else(|| outermost_kind(else_b, data)),
+                Value::Set(_, src)
+                | Value::Return(src)
+                | Value::Drop(src)
+                | Value::Yield(src)
+                | Value::TuplePut(_, _, src) => outermost_kind(src, data),
+                Value::Iter(_, init, step, body) => outermost_kind(init, data)
+                    .or_else(|| outermost_kind(step, data))
+                    .or_else(|| outermost_kind(body, data)),
+                // Every other variant carries no nested fault-prone call — the same set
+                // `rewrite_subtree_to_nullable` below treats as leaves, so the two walks
+                // cover the same tree and a shape one reaches cannot be missed by the other.
+                _ => None,
+            }
+        }
+        let outer_kind = outermost_kind(code, data);
         Self::rewrite_subtree_to_nullable(code, data);
         outer_kind
     }
