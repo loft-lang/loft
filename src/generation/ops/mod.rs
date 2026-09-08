@@ -393,6 +393,8 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         r.insert(name, Box::new(vector_ops::FusedElementReadEmitter));
     }
     r.insert("OpGetVector", Box::new(vector_ops::OpGetVectorEmitter));
+    // @PLN157 — the loop bound reads the hoisted header's length, not the store table.
+    r.insert("OpLengthVector", Box::new(vector_ops::HoistedLengthEmitter));
     r.insert(
         "OpGetVectorNullable",
         Box::new(vector_ops::OpGetVectorNullableEmitter),
