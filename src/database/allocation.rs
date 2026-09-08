@@ -954,8 +954,9 @@ impl Stores {
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
     */
     pub fn free_named(&mut self, db: &DbRef, name: &str) {
-        // u16::MAX is the null-sentinel used by OpNullRefSentinel for inline-ref temporaries
-        // that were never assigned a real store.  Nothing to free in this case.
+        // @FR-H-FreeNull — `free(nullref)` is a no-op.  u16::MAX is the null sentinel
+        // `OpNullRefSentinel` gives an inline-ref temporary that was never assigned a real
+        // store, and it is not an index into `allocations`; this is the rule's runtime home.
         if db.store_nr == u16::MAX {
             return;
         }

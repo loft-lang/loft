@@ -82,7 +82,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-09 (re-aimed onto the derivation count; two reduction rounds).
+- **Last touched:** 2026-09-09 (re-aimed onto the derivation count; two reduction rounds; phase 4 done).
 
 ## Why this family, measured
 
@@ -123,7 +123,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | ✅ **done — all four candidates REFUTED, and none lands.**  `LOFT_OWN_DECLINE=<name>` is the instrument that says so: `witness` is a WRONG VALUE on both backends, `owned-slot` moves three files' emit with every channel unchanged (unverified, not safe), `collection` and `join` are inert |
 | **3a** — where the refusal has to LIVE, and what `deny` costs | § Phase 3a | the ladder fires at all (a gate that never fires is not a gate); the default path byte-identical | ✅ **done — and it corrects the plan twice.**  `owns_freeable_store` is NOT the sweep's licence (the ladder attached there NEVER FIRED); and `deny` is not safe-by-direction — 31 of 140 files leak, and **one answers WRONG** |
 | **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | **Open, and phase 3a's own follow-up says `deny` cannot be the top rung.**  The refusal set was shrunk 77 % (6412 → 1464 frees) and the deny cost moved by four files: 27 of 140 still leak and one still answers wrong |
-| **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
+| **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | ✅ **done — and the verify could not be met as written, which is the answer.**  The runtime already enforces three of the four at ONE chokepoint, so no cell was red before.  `(H-FreeLIFO)` is enforced nowhere and was deliberately retired — registered as **D-heap-LIFO**.  `tests/heap_free_discipline.rs`, 5 cells, each recording whether it was falsified: one was, two were not and say why |
 | **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
 
 ### Arc A — the reassessment instrument
@@ -591,6 +591,45 @@ count — *repeated collect-then-emit shapes* — would show it, and does not ex
    one home for *which question does this site ask*, rather than a second guess at it.  Every
    one of the ten predicates is classified now; three were `?` before, including the licence
    home itself.
+
+## Phase 4 — the heap half: one chokepoint, three rules, and a fourth that was retired (2026-09-09)
+
+The phase asks whether the compile-time refusal covers the record/element frees or whether they
+need their own gate.  **Neither — they already have one.**
+
+`Stores::free_named` is a genuine chokepoint: every free of a live store reaches it, and the
+three paths that set `Store::free` without it are a sentinel constructor, a unit test and the
+debugger's own teardown.  It enforces `(H-Free)`'s side conditions, `(H-FreeNull)`,
+`(H-FreeTwice)` and `(H-FreeStack)` on its own, and the compile-time licence never has to reach
+them.  `(H-FreeNull)`'s runtime home was uncited and now is.
+
+**`(H-FreeLIFO)` is the finding, and it is a stale RULE rather than missing code.**  It states
+that freeing out of allocation order is a FAULT.  Nothing enforces it; `rule_tags.py` reports
+**zero** citations, alone among heap.md's five free rules; and `Stores::free_bits` records in
+its own doc that the requirement was deliberately removed — a bitmap of free slots, so an
+allocation reuses the lowest free slot below `max`, which *"eliminates the LIFO-order
+requirement on `free()`"*.  Registered as **D-heap-LIFO**, OPEN, because the wording is a design
+call: delete the rule, or rewrite it as the weaker invariant that actually holds.  Phase 4
+measured it and did not take that call.
+
+⚠ **The verify could not be met as written, and that is the result rather than a shortfall.**
+It asked for *double-free, free-null and LIFO-order cells RED before the arc, green after* —
+which assumes the phase would find the runtime unguarded.  It is guarded, so nothing was red.
+The substitute is falsification: every guard was removed by hand and the cells re-run.
+
+| cell | falsified? |
+|---|---|
+| `freeing_the_stack_store_is_refused` | ✅ goes RED without its guard |
+| `a_freed_slot_is_reused…` | characterisation by intent — pins slot reuse |
+| `lifo_order_is_not_a_fault` | characterisation — pins D-heap-LIFO's measured state |
+| `freeing_null_is_a_no_op` | ❌ **not falsified** — the out-of-range check catches the same call in a release build, so the cell cannot tell which guard did the work |
+| `freeing_twice_is_refused` | ❌ **not falsified** — re-running the release sets an already-set flag and an already-set bit, both idempotent.  The real consequence is the CASCADE (a closure record's adopted `DbRef` fields are read out of the store and freed), which needs a `__closure_` fixture |
+
+Both failures are recorded at the cells rather than papered over.  A cell that cannot fail is
+not a guard, and two of five here are not — saying which is worth more than five that look
+alike.  They are also the reason these live in a Rust test and not in `tests/scripts/`: **no
+loft program can express a double free, a stack free, or a free out of order**, which is
+precisely why the runtime's refusals had no coverage at all before this phase.
 
 ## Phase ordering
 
