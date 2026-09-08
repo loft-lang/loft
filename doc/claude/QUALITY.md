@@ -484,6 +484,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 
 
+
+
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
 shadow) and loft#1397's lint on top: **410 · 386 · 24**, both additions on the peeling side;
@@ -2636,6 +2638,7 @@ is, and asking the bare type would have put the nullable spelling back on the le
 while the dense twin was fixed.  That is the same one-notion-two-spellings failure this row
 exists to find, caught by writing the predicate the way the match site already wrote it rather
 than by the audit.
+
 
 
 
