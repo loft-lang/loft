@@ -4092,14 +4092,26 @@ fn a_null_guard_over_a_projection_narrows_it() {
 ///
 /// The constant cell beside it is the control that says which half was broken — without it,
 /// a fix that made neither work would still look like progress on the one that did.
+///
+/// ⚠ And the LOCAL-BOUND cell is why this has a codegen half.  Peeling only the parser makes
+/// the read parse and then panic — `e = v[i]; e.0` reached `TupleGet` with an
+/// `Optional(Tuple)` and tripped *"TupleGet on non-tuple variable"*, an ICE on both backends
+/// where the refusal had been clean.  That is the same shape as loft#1455 half 1 and it is
+/// the reason a parser peel is never the whole fix: the sites that CONSUME the accepted
+/// shape have to accept it too.  `TuplePut` is peeled with its read twin rather than after
+/// it — they address one slot, and a pair where one accepts what the other panics on is the
+/// drift the pair exists to avoid.
 #[test]
 fn a_tuple_element_reads_through_a_variable_vector_index() {
     code!(
         "fn check() -> integer { \
            v: vector<(integer, integer)> = [(1, 2), (3, 4)]; \
            i = 1; \
-           v[i].0 * 1000 + v[i].1 * 100 + v[0].0 * 10 + v[0].1 }"
+           e = v[i]; \
+           w = v[i]; \
+           w.0 = 9; \
+           v[i].0 * 100000 + e.0 * 10000 + w.0 * 1000 + v[i].1 * 100 + v[0].0 * 10 + v[0].1 }"
     )
     .expr("check()")
-    .result(Value::Int(3412));
+    .result(Value::Int(339412));
 }
