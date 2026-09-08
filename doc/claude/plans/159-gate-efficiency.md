@@ -10,15 +10,24 @@ value **Q** · **Effort: M · Design: ~** · opened 2026-09-08.
 
 ## Status
 
-In progress (2026-09-08) — A, B, C, D, G, H and I are implemented and proven on this box
-(commits `834b39432`, `91bdf49d6` on `tuxedo-159-gate-efficiency`); C shipped with its premise
-CORRECTED (below); E1/E2 are implemented with the partition proven locally and the wall-clock
-owed to a real PR run, which needs the owner's PR; F was falsified twice and re-scoped to F′,
-a cache for the wasm builds, designed (its seam: a lookup after `prog.rs` is emitted at
-`src/main.rs` "Compile to wasm32-unknown-unknown cdylib", a publish after `wasm_bytes` is
-read before "Assemble HTML") and deliberately left last — it pays only on a run whose wasm
-rlib did not move, never on the fix iteration.  Open for the owner: G's default (queue, as
-shipped, or throttle) and E's PR run.  Every number
+**DONE / SHIPPED 2026-09-08** — closed by the owner the same day, on branch
+`tuxedo-159-gate-efficiency` (commits `834b39432`, `91bdf49d6`, `4610dff3e` and the closing
+one).  A, B, C, D, E, G, H and I are built and proven on this box; C shipped with its premise
+CORRECTED (below).  This file is now the closed record — the measurements, the proofs and the
+two falsifications; the living reference is [CI_BUDGET.md](../CI_BUDGET.md) (§ The gate builds
+the test binaries TWICE, and its `## Open work`), [TESTING.md](../TESTING.md) (§ What a test
+run selects) and the code the rows below point at.  What the plan leaves as OPEN WORK, in
+CI_BUDGET.md rather than here: E's wall clock read off the first real PR run; F′, the wasm-
+output cache (designed, seam named, pays only on a docs-only re-gate); G's default (queue, as
+shipped, or throttle — the owner's call); and the artefact-pinning follow-up.
+
+**Phase I is a correctness fix as much as a speed one** (loft-c1's reading, 2026-09-08): the
+old rebuild step refreshed the release *lib* and never the release *binary*, so the 29 test
+binaries that spawn `target/release/loft` were measuring whatever `make ci` last built — a
+binary from an unrelated earlier run, or from a tree temporarily reverted for a
+falsification.  Nothing tied the artefact to the source that was supposed to have produced
+it.  Now the step rebuilds both whenever a selected binary spawns it, and the one test that
+spawned it without needing to uses the test-profile binary instead.  Every number
 below was read off a real run between 2026-09-06 and 2026-09-08 and names its source; none
 is a projection except where the word appears.  [CI_BUDGET.md](../CI_BUDGET.md) stays the reference doc for
 where gate time goes: this plan's measurements move there when a phase closes, and its

@@ -114,6 +114,14 @@ through `rustc` 0.20 s — and the gate's minutes were structural:
 | two gates on one box | each at half the threads, both ~2×, plus the OOM and load-flake reruns | 10 → 19 min |
 | the iteration loop, every edit | `find_problems.sh` rebuilt the release rlib and both wasm rlibs — three NON-incremental whole-crate builds — before a `--subject parser` run that links none of them; the dev profile is incremental (a comment edit 3 s, a one-function edit 22 s) and the release profile is not (42–55 s, every edit) | 158 s ahead of 13 s of tests |
 
+One of these was a correctness hole, not only a cost: the loop's rebuild step refreshed the
+release LIB and never the release BINARY, so the 29 test binaries that spawn
+`target/release/loft` measured whatever `make ci` last built — a binary from an unrelated
+earlier run, or from a tree temporarily reverted for a falsification (loft-c1 hit the
+consumer-side twin the same morning: a 25-minute valgrind sweep whose binary a rebuild
+replaced under it).  Nothing tied the artefact to the source that was supposed to have
+produced it.
+
 What changed: `[profile.dev] debug = 1` (one build); `find_problems.sh` without `--release` (one
 profile); a `corpus` PR shard and per-shard cache saves; the package-cdylib key without the git
 HEAD; `make ci` takes `/tmp/loft-gate.lock` (one gate at a time, `LOFT_GATE_PARALLEL=1` opts out)
@@ -122,6 +130,16 @@ and runs the diff's subjects first (`scripts/nextest_priority.sh`, an order, nev
 (the dev rlib always, the release binary and the wasm rlibs only for the binaries that use
 them); and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
 phase's proof — and the numbers the next PR run must confirm — are in the plan file.
+
+### Open work (from @PLN159, closed 2026-09-08)
+
+| item | what | trigger / size |
+|---|---|---|
+| **E — read the PR** | On the first real PR run after the split: the four shards' walls (`gh run view --json jobs`), the `Finished test profile` line inside `Test` (expected seconds, was 4m05s), and the run AFTER it restoring warm (`Build` shows deps Fresh, the corpus and build caches restored).  Record here; the projection was heavy 29.3 → ~18 min | the next PR; XS |
+| **F′ — a cache for the wasm builds** | `--html` / `--native-wasm` write `<dir>/.loft/<stem>.wasm` with no key and recompile every run (`html_embed` 60 s per test isolated).  A `<stem>-<hash>` entry keyed like the native cache (generated Rust ⊕ wasm rlib CONTENT ⊕ `wasm-opt --version` ⊕ flags); seam: a lookup after `prog.rs` is emitted at `src/main.rs` "Compile to wasm32-unknown-unknown cdylib", a publish after `wasm_bytes` is read before "Assemble HTML".  Pays only on a run whose wasm rlib did not move — a docs- or tests-only re-gate — never on a fix iteration; a `--native` probe needs no cache (0.3 s cold, and the emitted Rust embeds the script's path, so a content key is a per-name key) | when docs-only re-gates are measured to matter; S |
+| **G — the gate lock's default** | `make ci` queues behind another checkout's gate (`/tmp/loft-gate.lock`); `LOFT_GATE_PARALLEL=1` restores the throttle.  Queue finishes the first gate at 1× and the second at the same 2× the throttle gave both, and removes the OOM and load-flake reruns; an agent waiting on the lock is idle | the owner's call; XS to flip |
+| **Pin the artefact a long gate measures** | A sweep that consumes `target/release/loft` records its hash at start and fails loudly when it moves (or copies the binary aside); the gate lock is `make ci`-only and does not stop a `cargo build` beside a sweep | when the next sweep is contaminated; S |
+| **The crate split** | The 22 s a one-function edit costs is the 325 k-line crate's frontend; a workspace (parser · typing · store · runtime · codegen · cache/registry) gives cargo's crate-level "unchanged, not rebuilt" — the true analogue of a Makefile's per-file rule | H; a plan of its own |
 
 ## A LOCAL `make ci` is ~10 min, and it is two tests (2026-08-21)
 

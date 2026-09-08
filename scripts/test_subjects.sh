@@ -49,11 +49,6 @@ HEAVY_BINARIES=(
 # Subjects are a convenience for tight loops, NOT the safety mechanism — the
 # default run is subtractive, so a gap here costs seconds, never coverage.  That
 # is the whole reason it is safe to keep them approximate.
-# Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH
-# /bin/sh and /bin/bash, which has no associative arrays — the array form made
-# every `--subject` run on a Mac die with `parser: unbound variable` while the
-# same script worked on every Linux box.  Same data, portable spelling.
-#
 # Every test binary must match at least one pattern — `tests/doc_hygiene.rs::
 # every_test_binary_matches_a_subject` asks `unmatched_binaries` below and goes red on
 # a name it reports (@PLN159 phase H).  A binary no subject reaches never runs in the
@@ -61,22 +56,37 @@ HEAVY_BINARIES=(
 # the edit is warm; it still runs in the curated and full sets, so this is a guard on
 # the LOOP's reach, never on coverage.  Adding a binary: name it so an existing pattern
 # picks it up, or add the pattern here in the same commit.
-#
-# ⚠ That guard cannot see a WRONG match, only a missing one — a binary pulled into the
-# wrong subject still matches something.  Reading each subject's selected list once is
-# the only check for that, which is how `~par` was found taking `group_apart_lint` and
-# `~import` taking a browser test.
+# `~stem` matches a binary whose name CONTAINS the stem; `=name` matches the whole
+# name.  Read each subject's list once after editing a pattern
+# (`--list-subjects` prints the counts; `subject_filter <name>` the names): a bare
+# stem over-matches as easily as it under-matches — `~par` (for par_*/parallel)
+# also took `group_apart_lint`, `~own` took `viewer_markd*own*`, and `~import`
+# took the browser test `html_gl_imports`, which made `--subject packages` rebuild
+# the wasm rlibs it never links.  The doc_hygiene guard below catches an UNMATCHED
+# binary, never a wrongly matched one; only reading the list does.
+pattern_matches() {
+  local p="$1" b="$2"
+  case "$p" in
+    =*) [[ "$b" == "${p#=}" ]] ;;
+    *)  [[ "$b" == *"${p#\~}"* ]] ;;
+  esac
+}
+
 SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host'
 
+# Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH /bin/sh and
+# /bin/bash, which has no associative arrays — the array form made every `--subject` run on a
+# Mac die with `parser: unbound variable` while the same script worked on every Linux box.
+# Same data, portable spelling.
 subject_patterns() {
   case "$1" in
     (parser)    echo '~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14' ;;
-    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
+    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
     (codegen)   echo '~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows' ;;
-    (runtime)   echo '~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
+    (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package ~import ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
+    (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
@@ -135,7 +145,7 @@ subject_filter() {
   for p in $pats; do
     for b in $(all_binaries); do
       case "$seen" in (*" $b "*) continue ;; esac
-      [[ "$b" == *"${p#\~}"* ]] && { seen="$seen$b "; parts+=("binary($b)"); }
+      pattern_matches "$p" "$b" && { seen="$seen$b "; parts+=("binary($b)"); }
     done
   done
   [[ ${#parts[@]} -gt 0 ]] || return 1
@@ -160,7 +170,7 @@ unmatched_binaries() {
   for f in "$(dirname "${BASH_SOURCE[0]}")/../tests"/*.rs; do
     b=$(basename "$f" .rs); hit=""
     for p in $pats; do
-      [[ "$b" == *"${p#\~}"* ]] && { hit=1; break; }
+      pattern_matches "$p" "$b" && { hit=1; break; }
     done
     [[ -n "$hit" ]] || echo "$b"
   done
