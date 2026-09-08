@@ -3051,14 +3051,32 @@ impl ReplSession {
         let shown = self.infer_frame_type(&sig, &seed, expr)?;
         let nullable = shown.ends_with('?');
         let ret = base_type_name(&shown).to_string();
-        // A **scalar** result rides the frame base and is read straight back.  A NULLABLE
-        // scalar reaches here too and keeps its existing behaviour deliberately: it has no
-        // `.to_json()` to route through (that method is heap-only), and the interpolation
-        // that would replace it renders a `character` and a `text` as bare unquoted tokens
-        // — invalid JSON on the one path whose caller reads the result AS JSON.  A nullable
-        // scalar at a paused frame is unevaluable today, and the frame RENDERER shows it as
-        // `<integer?>` rather than its value, so that gap is two sites wide and predates
-        // this rule; it is reported rather than half-closed here.
+        // A **scalar** result rides the frame base and is read straight back.
+        if is_scalar_type_name(&ret) && !nullable {
+            return self.eval_frame_build_run(&sig, &seed, expr, &ret, &arg_names, json);
+        }
+        // A **NULLABLE scalar** cannot: the wrapper would declare `-> integer` and be handed
+        // a `τ?`.  It has no `.to_json()` to route through either — that method is heap-only
+        // (`integer.to_json` is *Unknown field*) — so it binds and interpolates, which is
+        // what the frame RENDERER does one site over for the same values (loft#1459).
+        //
+        // Measured, because the whole question is whether the result is still JSON on the
+        // path whose caller reads it as JSON: `integer` → `42`, `float` → `1.5`, `single` →
+        // `2.5`, `boolean` → `true` are all valid JSON tokens bare.  `character` → `x` is
+        // NOT, and quoting it here would need JSON escaping loft cannot spell for a `'"'` or
+        // a `'\\'`.  So a character is evaluable on the INTERACTIVE path and still declines
+        // under `--rpc`, which is the honest split: every caller gets what it can encode,
+        // and none gets something that only looks encoded.
+        if nullable && is_scalar_type_name(&ret) && !(json && ret == "character") {
+            return self.eval_frame_build_run(
+                &sig,
+                &format!("{seed}__ev = ({expr});\n"),
+                "if __ev == null { \"null\" } else { \"{__ev?}\" }",
+                "text",
+                &arg_names,
+                json,
+            );
+        }
         if is_scalar_type_name(&ret) {
             return self.eval_frame_build_run(&sig, &seed, expr, &ret, &arg_names, json);
         }
@@ -3246,6 +3264,19 @@ impl ReplSession {
                     continue;
                 }
                 p.push_str(name);
+                // A `null` literal carries NO TYPE, so `ni = null;` does not compile and
+                // the whole reconstruct fails — the expression degrades to "couldn't
+                // evaluate" even when the question was only *what is `ni`* (loft#1459).
+                // Annotate the seed so the absence has a type to be absent OF.  Only for
+                // the null literal: every other seed already carries its type in its own
+                // syntax, and annotating those would turn a rendering difference into a
+                // compile error.
+                if lit == "null"
+                    && let Some(ty) = state.frame_local_source_type(name, &self.parser.data)
+                {
+                    p.push_str(": ");
+                    p.push_str(&ty);
+                }
                 p.push_str(" = ");
                 // Seed a HEAP local from the LIVE store, UNBOUNDED (the render path-A
                 // `eval_frame_heap` trusts for a bare ident) rather than the captured BOUNDED display

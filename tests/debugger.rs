@@ -1527,3 +1527,109 @@ fn rx3_ring_is_bounded_to_the_depth() {
         "the dropped step (the origin line) is unreachable — the cap held"
     );
 }
+
+/// loft#1459 — a `τ?` LOCAL renders its VALUE, not its type.
+///
+/// `render_frame_local` matches on bare `Type` variants and fell to
+/// `other => format!("<{}>", …)` for every `Optional`, so a nullable local printed
+/// `<integer?>` where every other local prints a value — a debugger declining exactly the
+/// locals whose null-ness is being debugged.  @PLN25 made `τ?` the only nullable form and
+/// `@FR-Col-Lookup` gives every keyed point lookup one, so these are ordinary now.
+///
+/// The cells that matter are the NEGATIVE ones, and they are why the sentinels are read off
+/// `fill.rs`'s `OpConv*FromNull` rather than re-derived: a renderer that guesses one wrong
+/// reports a real value as `null`, which is the one lie a debugger must not tell.  So this
+/// pins the two values ADJACENT to a sentinel — an empty `text` (not the `"\0"` null handle)
+/// and `i64::MIN + 1` (not `i64::MIN`) — beside the nulls themselves.  Without those, a fix
+/// that answered `null` for everything would pass.
+#[test]
+fn a_nullable_local_renders_its_value_not_its_type() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &[
+            // every local is READ on the breakpoint line, so none has its slot
+            // reused before the pause — a reused slot renders `<reused by …>` and
+            // would make this cell vacuous rather than failing loudly.
+            "fn probe() -> integer {\n  \
+               ni: integer? = null;   vi: integer? = 42;\n  \
+               nc: character? = null; vc: character? = 'x';\n  \
+               nt: text? = null;      et: text? = \"\";\n  \
+               fi: integer? = -9223372036854775807;\n  \
+               all = \"{ni ?? 0}{vi ?? 0}{nc ?? '?'}{vc ?? '?'}{nt ?? \"\"}{et ?? \"\"}{fi ?? 0}\";\n  \
+               size(all)\n}",
+        ],
+        "probe()",
+        "probe",
+        6, // the tail, with every local still live
+    );
+    assert_eq!(hits.len(), 1, "breakpoint fired once: {hits:?}");
+    let got = |name: &str| {
+        hits[0]
+            .locals
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{name} absent>"))
+    };
+    // absent reads `null` — never `<integer?>`, and never the raw sentinel
+    assert_eq!(got("ni"), "null", "a null integer: {hits:?}");
+    assert_eq!(got("nc"), "null", "a null character: {hits:?}");
+    assert_eq!(got("nt"), "null", "a null text: {hits:?}");
+    // …and PRESENT reads the value, which is what says the arm did not just answer null
+    assert_eq!(got("vi"), "42", "a present integer: {hits:?}");
+    assert_eq!(got("vc"), "'x'", "a present character: {hits:?}");
+    // the two neighbours of a sentinel, which is where a guessed one would show
+    assert_eq!(
+        got("et"),
+        "\"\"",
+        "an EMPTY text is not the null handle: {hits:?}"
+    );
+    assert_eq!(
+        got("fi"),
+        "-9223372036854775807",
+        "i64::MIN + 1 is a value, not the integer sentinel: {hits:?}"
+    );
+}
+
+/// loft#1459, the seed half — and this one is a REGRESSION guard on the fix above rather
+/// than a guard on the defect.
+///
+/// `seed_frame` consumes the very literals `render_frame_local` produces, so changing what
+/// a null local RENDERS changes what the REPL bridge and every conditional breakpoint are
+/// handed.  Before the fix that literal was `<integer?>`; now it is `null`.  Measured
+/// rather than assumed: seeding already worked across that change, so nothing needed
+/// doing — but a later "improvement" to the rendering (a raw sentinel, a type suffix, a
+/// bare empty string) would break seeding silently, and no cell above would see it.
+///
+/// The discharge is the half worth pinning: `ni ?? -1` is what someone debugging a null
+/// actually writes, and it has to survive the round trip through the seed.
+#[test]
+fn a_null_local_seeds_with_its_type() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &["fn calc(n: integer) -> integer {\n  \
+             ni: integer? = null;\n  \
+             a = n + 1;\n  \
+             (ni ?? 0) + a\n}"],
+        "calc(10)",
+        "calc",
+        4,
+    );
+    let hit = &hits[0];
+    assert!(
+        hit.locals.iter().any(|(n, v)| n == "ni" && v == "null"),
+        "the frame shows the null: {hits:?}"
+    );
+    let mut s = ReplSession::new("default").expect("stdlib");
+    let bound = s.seed_frame(hit);
+    assert!(bound >= 2, "ni AND a seeded — a null is a value: {bound}");
+    assert!(
+        matches!(
+            s.eval("assert((ni ?? -1) == -1, \"discharged null\")"),
+            Eval::Ran
+        ),
+        "a discharged null evaluates over the seeded frame"
+    );
+}
