@@ -7,8 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open — P0–P4d, § V (Route R) and § V-c (the hoist unblock) SHIPPED (see
-Sub-arcs) and § V-d (append in place) SHIPPED; the queue is re-ranked below.
+Open — P0–P4d, § V (Route R), § V-c (the hoist unblock), § V-d (append in
+place) and § V-e (the runtime's per-allocation overhead) SHIPPED (see
+Sub-arcs); the queue is re-ranked below, and **§ Where to resume** is the
+hand-off for the next session.
 Scoreboard vs the issue baseline: `hash` 10.9× → 4.5× gate-row / 2.3× at the
 leaf; `hair` 4.3× → 3.3× (under the bar); `lock` 30× → **5.3×** shipped (9.0× in
 the consumer lane); `smooth` 262× → **44×**; `fronds` 49× → **24×**; `composite`
@@ -40,6 +42,62 @@ hash unchanged.
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
 - **Last touched:** 2026-09-08 (§ V-e)
+
+## Where to resume
+
+Written 2026-09-08 after § V-e landed: HEAD `184b18ea` on `157-native-4x`,
+pushed, the full gate green (4725 tests, both backends).  Nothing is in
+flight; the working tree is clean apart from untracked local artefacts.
+
+**The next unit is § V-e's residual**, DESIGN.md § V-e *"Residual, in profile
+order"* — the `smooth` row is 8 % program and the rest runtime, so the queue is
+the runtime's own chokepoints, each behaviour-preserving (every hash exact):
+
+1. **The claims bookkeeping** (~16 % of the row): `Store::claims` is a
+   `HashSet<u32>` under `RandomState` (`insert` 5.5 %, `hash_one` 4.0 %,
+   `Sip13` 1.6 %; `Store::valid` 3.7 % and `remove_claims_mode` 3.2 % read
+   it).  Its precondition is ANSWERED: nothing iterates the set — the only
+   `claims.iter()` in `src/` is `stack_census.rs`'s unrelated tuple list — so
+   its order cannot matter, and a cheaper hasher or a denser structure (the
+   members are record positions within ONE store: a sorted `Vec<u32>` or a
+   bitset keyed by position are the alternatives) is a drop-in.  Verify:
+   the 14 consumer hashes, both guard files under `LOFT_STRICT_STORES=1`,
+   `LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1` on both backends, and
+   `tests/retbuf_reuse.rs`'s controls still firing.
+2. **The per-field recursion on all-scalar records** (~15 %): `copy_claims`
+   (8.3 %) and `set_default_value_nullable` (6.9 %) walk every field of a
+   record that owns no heap.  A per-type fact computed once at registration
+   ("no field owns a store / no field needs a non-zero absent value") would
+   skip the walk; the sites are the `field_at` loops in
+   `src/database/allocation.rs` and the `Shape::Record` arm in
+   `src/database/structures.rs`.
+3. **`keys::strict_stores()`** at 1.6 % per store access — a `OnceLock`
+   read that could be an `AtomicBool`.
+4. **The allocation COUNT**: the borrow-copies (`hc_a = ctrl(…)` — a copy of
+   a live element that is only ever read, the @PLN102 link-widen shape, ~24
+   stores per `smooth` call) and the tangent joins; then **P4c record
+   scalars** (`get_float`/`store`/`addr` head the profile after
+   `n_smooth_pts`).
+
+**How to measure** (all verified this session):
+
+- The engine profile: `make profile PROFILE_FLAGS=--engine ARGS="p.loft"` or
+  `scripts/profile.sh` — it runs at `perf_event_paranoid = 2` now
+  (`cpu-clock:u`, frame pointers); rebuild a standalone `smooth` row from the
+  consumer bench (61 points, 4 000 reps was the shape; medians of 3).
+- The consumer table: a SCRATCH clone of `loft-libs-graphics` branch
+  `drawing-lock`, its `bench/compare.py` pointed at THIS tree's binary and
+  `target/release/libloft.rlib` — never the consumer's own checkout.
+- The P0 gate: `scripts/native_ratio.sh --gate` against
+  `bench/ratio_oracle.tsv` (`lock` bar 8, `hash` bar 7); ratchet the bar
+  when a row settles below it.
+- Traps met this arc: `cargo build --bin loft` does not rebuild the rlib the
+  native lane links (`cargo build --release --lib` or `make check-rlib`
+  first); launch the gate with `scripts/ci-run.sh start` and poll `status`
+  in bounded foreground windows (a background waiter is killed under memory
+  pressure; stop your own gate by process group); a `src/` edit that moves
+  `scripts/wasm_bundle_stamp.sh` needs `make wasm` and the bundle committed,
+  or the browser-kernel test refuses the tree.
 
 ## Composition matrix — Stage A
 
@@ -134,10 +192,12 @@ remains, ranked by measured value:
    PR when the owner judges the branch done.
 
 Honest residual: `lock`'s last stretch (5.3× → 4×) is not yet
-probe-covered; the next decomposition (`make profile PROFILE_FLAGS=--engine`
-on the standalone) says whether P4c record scalars + the remaining per-pixel
-machinery close it, or whether the type-level buffer fact (§ V-b) is needed
-first.
+probe-covered; § V-e's perf decomposition was of `smooth`, not `lock`, and the
+same instrument on the `lock` standalone says whether P4c record scalars + the
+remaining per-pixel machinery close it, or whether the type-level buffer fact
+(§ V-b) is needed first.  `smooth` (44×) and `fronds` (24×) are the rows
+furthest from the bar, and their remaining cost is the runtime's per-allocation
+work plus the allocation count — the queue above.
 
 <details>Original ordering: P0 first; P1/P2/P3 independent by cost; P4 last;
 P5 closes.</details>
