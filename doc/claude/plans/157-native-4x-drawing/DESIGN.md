@@ -1211,6 +1211,83 @@ PERFORMANCE.md § Native vs Rust): a helper the emitted code calls per op is `#[
 and if its fast path is a test the body is a `#[cold]` sibling; the census is the check
 that a new helper obeyed it.
 
+## V-i — the element walk of a no-heap vector (2026-09-08)
+
+**Found by** re-profiling `fronds` on the § V-h runtime with callers (`profile.sh
+--engine --calls`): `copy_claims` 9.5 % with `copy_claims_seq_vector` 4 % inside it,
+`owned_walk` 6.2 %, the small `addr_mut` reads 12 % — a third of the row in the deep
+copy of each appended `Frond`, and inside that a walk that visits every `Pt` and every
+`float` of the two inner vectors to find nothing.
+
+**The invariant** (`allocation.rs` keystone, `owned_walk`'s `Vector`/`Sorted` arm): an
+INLINE element of a type that owns no heap has no owned edge to yield.  A `vector<float>`
+or a `vector<Pt>` of scalars is one block, and the block IS the container record the
+walk already names in `container_rec`.  Enumerating its elements built an `OwnedChild`
+per element — a `Vec` of `length` entries — for every consumer to visit and find nothing:
+the copy of a `vector<Pt>` walked every point AFTER the bulk `copy_block` had moved it
+(`copy_claims_seq_vector`'s second pass), and a free of one walked it to free nothing.
+The per-type fact is § V-f's `type_owns_heap`; the fix is the same early-out the
+`Struct` arm of `copy_claims` and `remove_claims_mode` already take, placed ONCE in the
+walk so every consumer (copy, free, spans, the watch) inherits it.  An `Array`/`Ordered`
+element is its own record and is never skipped — its walk is what frees it.  The
+`debug_assert` pinning the keystone's element count to the length header now admits the
+empty list.
+
+**Measured** (`vr_fronds.loft`, `--native-release`, 4 000 reps, three runs): 902–907k →
+**838–840k ns/op (−7 %)**, hash `ebcfd875` on both backends; `LOFT_STORES=warn` clean on
+`--interpret`, `LOFT_NATIVE_LEAK_CHECK=1` clean on `--native`; store and runtime subject
+suites green locally (the codegen suite was killed by memory pressure mid-run and is the
+GitHub gate's).  Consumer lane: `fronds` 18.1× → **15.5×** (933k → 844k), `smooth` 16.2×,
+14/14 hashes agree.  After it the row's copy class is allocation, not bookkeeping:
+`addr_mut::<i32>` (the free-list node writes under `claim`/`bump_tail`/`fl_insert`)
+9.7 %, `claim` 6.4 %, `vector_append` 6.3 %, `copy_claims` 5.9 % — the two inner vectors
+of every copied `Frond` are claimed again in the parent's store and freed in the child's.
+The last bookkeeping item in it is `set_default_value_nullable` + the memset on a record
+that `OpCopyRecord` overwrites whole (~7 %); it belongs to the move design below rather
+than to a runtime patch, because a moved element is neither defaulted nor deep-copied.
+
+**What the deep-copy class needs next — the design, cells before code.**  The child
+call's result vector lives in its own store, so its elements' inner vectors are records
+of THAT store and a cross-store move is impossible in the model; the copy is the model's
+answer, and what makes it expensive is the two claims + two frees per element.  The only
+route that removes them: the call whose result feeds ONLY an append loop into `V` is
+delivered into `V`'s store — the `__ref` retbuf argument the callee already receives
+(`n_fronds(…, var___ref_6)`) is allocated in `fd_out`'s store, so the callee's `fd_out =
+[]` and every inner vector it builds are claimed there — and the loop's `fd_out += [f]`
+becomes a MOVE: the 8-byte element copied shallowly, the source element marked moved so
+the temporary's free takes only its spine.  "Build into the caller's vector" is NOT
+sound for this function: `fronds` reads `len(fd_out)` and `fd_out[k]` over its own level,
+so sharing the vector would fold the caller's earlier levels into the recursion.  Cells
+to write before the code: the loop body appends and ALSO reads `f` after the append · two
+appends of the same `f` · an append into a vector the callee's result borrows from · a
+`break` out of the loop (the rest of the temporary must still be freed deep) · the
+interpreter's identical store placement (the IR is shared, so the op is shared) ·
+`LOFT_POISON=1` over the cell set, then `fronds` 1296 points on both backends.
+
+**The cells are written** (`bytecode-comparisons/V-j-move-append-cells.loft`, expected
+values hand-computed in the `.expected` beside it): c1 the base shape · c2 `f` read after
+the append · c3 the same `f` appended twice, then one copy written · c4 a NAMED source,
+written through the destination · c5 `break` out of the loop · c6 the source a VIEW of a
+named vector (`view(t)`) · c7 two destinations · c8 nested temporaries · c9 an inner
+record of the temporary appended · c10 a `vector<R?>` source with a null element · c11 an
+element carrying a `text` field (a heap string inside the moved bytes) · c12 the append
+under an `if` arm.  All twelve match on `--interpret` under `LOFT_STORES=warn` and on
+`--native` under `LOFT_NATIVE_LEAK_CHECK=1` on the copy semantics — they are the guard the
+move must keep.  `matrix_axes.py file` over them: container kind reaches vector and tuple
+(a keyed destination is out of the move's scope by `(Col-Insert)` — a keyed kind places by
+key, so the copy stays); provenance reaches callee-return, local-literal and parameter;
+statement context reaches loop-body, if-arm, discarded and interpolation; nullability
+reaches both; element type reaches struct, float, integer and text, NOT nested-container,
+narrow-int, boolean or enum — a `vector<vector<In>>` element and an enum payload are the two
+cells to add when the code starts.
+What `loft introspect` says about c1: the append of a loop variable lowers to
+`OpPreAllocVector · OpNewRecord · OpCopyRecord · OpFinishRecord` — a COPY even with no
+later use of `f`, because @F106's move applies to a local that OWNS its value (a minted
+literal), and a loop variable over a call's result is a view; the `avoidable-copy` advice
+is therefore silent on c1 and fires on c2/c3/c7/c8 for the wrong reason (a later use it
+could not have moved anyway).  The temporary itself (`__ref_1`) is freed at SCOPE EXIT,
+not after the loop, so a move-append does not shorten any lifetime the rules name.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
@@ -1253,11 +1330,13 @@ allocator per claim.  Two probes on the second half:
   layout goldens, and the `fronds`/`smooth` hashes.  `fronds` 0.97–1.06M → **0.92–0.93M**
   (−7 %); `smooth` and the gate rows inside noise.
 
-**What is left for `fronds`, in order:** the deep-copy class (a quarter of the row) — the
-sub-call's result is a temporary whose elements die after the loop, so appending them
-should MOVE the records and adopt their inner vectors rather than re-claim and copy them;
-or the callee builds into the caller's vector (an accumulator shape at the language level,
-a Route-R-for-vectors question at the compiler level); then the allocation class (the
+**What is left for `fronds`, in order:** the deep-copy class (a third of the row before
+§ V-i, its allocation half after) — the sub-call's result is a temporary whose elements
+die after the loop, so appending them should MOVE the records and adopt their inner
+vectors rather than re-claim and copy them: the child's result delivered into the
+parent's store through the retbuf it already receives, then a move-append (§ V-i names
+the cells; building into the caller's vector is unsound here because the callee indexes
+its own level); then the allocation class (the
 9 % variant A measured) as a set of small emitter items (a constant vector literal hoisted,
 struct-field collections built in the element, a loop-scoped record literal reusing its
 store).

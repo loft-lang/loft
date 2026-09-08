@@ -1,0 +1,132 @@
+// @PLN157 V-j cells — append from a DYING TEMPORARY (`for f in mk() { out += [f] }`).
+// Under today's copy semantics every cell passes; the move-append must keep every line.
+// Expected values are hand-computed in vj_cells.expected (value AND length AND leak).
+struct In { a: integer, b: float }
+struct R { id: integer, ins: vector<In>, ws: vector<float> }
+
+fn mk(n: integer, seed: integer) -> vector<R> {
+  out: vector<R> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    ws: vector<float> = [];
+    for j in 0..(i + 1) {
+      ins += [In { a: seed * 10 + i * 3 + j, b: (j as float) * 0.5 }];
+      ws += [(seed + i + j) as float];
+    }
+    out += [R { id: seed * 100 + i, ins: ins, ws: ws }];
+  }
+  out
+}
+
+fn view(v: const vector<R>) -> vector<R> { v }
+
+fn sum_r(v: const vector<R>) -> integer {
+  s = 0;
+  for r in v {
+    s += r.id;
+    for x in r.ins { s += x.a; }
+    for w in r.ws { s += w as integer; }
+  }
+  s
+}
+
+fn c1() { out: vector<R> = []; for f in mk(3, 1) { out += [f]; } println("c1 {len(out)} {sum_r(out)}"); }
+fn c2() {
+  out: vector<R> = []; s = 0;
+  for f in mk(3, 1) { out += [f]; x = f.ins[0]?; s += len(f.ins) + x.a; }
+  println("c2 {len(out)} {sum_r(out)} {s}");
+}
+fn c3() {
+  out: vector<R> = [];
+  for f in mk(3, 1) { out += [f]; out += [f]; }
+  out[0].ins[0].a = 999;
+  r1 = out[1]?; i1 = r1.ins[0]?;
+  println("c3 {len(out)} {sum_r(out)} {i1.a}");
+}
+fn c4() {
+  out: vector<R> = []; t = mk(2, 2);
+  for f in t { out += [f]; }
+  out[0].ins[0].a = 777;
+  t0 = t[0]?; ti = t0.ins[0]?;
+  println("c4 {len(out)} {sum_r(t)} {ti.a}");
+}
+fn c5() {
+  out: vector<R> = [];
+  for f in mk(4, 3) { if f.id == 301 { break; } out += [f]; }
+  println("c5 {len(out)} {sum_r(out)}");
+}
+fn c6() {
+  out: vector<R> = []; t = mk(2, 4);
+  for f in view(t) { out += [f]; }
+  out[1].ws[0] = 99.0;
+  println("c6 {len(out)} {sum_r(out)} {sum_r(t)}");
+}
+fn c7() {
+  a: vector<R> = []; b: vector<R> = [];
+  for f in mk(2, 5) { a += [f]; b += [f]; }
+  a[0].ins[0].a = 1;
+  println("c7 {sum_r(a)} {sum_r(b)}");
+}
+fn c8() {
+  out: vector<R> = [];
+  for f in mk(1, 6) { for g in mk(1, 7) { out += [f]; out += [g]; } }
+  println("c8 {len(out)} {sum_r(out)}");
+}
+fn c9() {
+  ins_out: vector<In> = []; s = 0;
+  for f in mk(2, 9) { x = f.ins[0]?; ins_out += [x]; }
+  for y in ins_out { s += y.a; }
+  println("c9 {len(ins_out)} {s}");
+}
+
+struct T { name: text, ins: vector<In> }
+
+fn mkn(seed: integer) -> vector<R?> {
+  out: vector<R?> = [];
+  for r in mk(1, seed) { out += [r]; }
+  out += [null];
+  for r in mk(1, seed + 1) { out += [r]; }
+  out
+}
+
+fn mkt(n: integer, seed: integer) -> vector<T> {
+  out: vector<T> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
+    out += [T { name: "n{seed}-{i}", ins: ins }];
+  }
+  out
+}
+
+fn sum_rn(v: const vector<R?>) -> integer {
+  s = 0;
+  for f in v {
+    g = f ?? R { id: 0, ins: [], ws: [] };
+    s += g.id;
+    for x in g.ins { s += x.a; }
+    for w in g.ws { s += w as integer; }
+  }
+  s
+}
+
+fn c10() {
+  outn: vector<R?> = []; nulls = 0;
+  for f in mkn(1) { outn += [f]; }
+  for f in outn { if f == null { nulls += 1; } }
+  println("c10 {len(outn)} {nulls} {sum_rn(outn)}");
+}
+fn c11() {
+  out: vector<T> = []; s = 0;
+  for f in mkt(2, 3) { out += [f]; }
+  for t in out { s += len(t.name); for x in t.ins { s += x.a; } }
+  t1 = out[1]?;
+  println("c11 {len(out)} {s} {t1.name}");
+}
+fn c12() {
+  out: vector<R> = [];
+  for f in mk(3, 1) { if f.id != 101 { out += [f]; } }
+  println("c12 {len(out)} {sum_r(out)}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); }

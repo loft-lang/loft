@@ -407,17 +407,28 @@ impl Stores {
                             zero_field: true,
                         };
                     }
-                    for i in 0..length {
-                        children.push(OwnedChild {
-                            child: DbRef {
-                                store_nr: rec.store_nr,
-                                rec: cur,
-                                pos: 8 + size * i,
-                            },
-                            child_tp: v,
-                            owning_elem: None,
-                            borrowed: false,
-                        });
+                    // An INLINE element of a type that owns no heap has no owned edge to
+                    // yield: a `vector<float>` or a `vector<Pt>` of scalars is one block,
+                    // and the block IS the container record below.  Enumerating its
+                    // elements built a child per element for every consumer to visit and
+                    // find nothing — the copy of a `vector<Pt>` walked every point after
+                    // the bulk copy had already moved it, a free of one walked it to free
+                    // nothing (@PLN157 § V-i; the per-type fact is § V-f's).  A record
+                    // element that owns heap keeps its walk; an Array/Ordered element is
+                    // its own record and is never skipped (its walk is what frees it).
+                    if self.type_owns_heap(v) {
+                        for i in 0..length {
+                            children.push(OwnedChild {
+                                child: DbRef {
+                                    store_nr: rec.store_nr,
+                                    rec: cur,
+                                    pos: 8 + size * i,
+                                },
+                                child_tp: v,
+                                owning_elem: None,
+                                borrowed: false,
+                            });
+                        }
                     }
                     container_rec = Some(cur);
                 }
@@ -2648,9 +2659,8 @@ impl Stores {
         // byte-identically, so each element sits at the SAME offset in `into`; reuse
         // `child.pos` for the destination instead of recomputing `8 + size*i`.
         let children = self.for_each_owned_child(rec, tp).children;
-        debug_assert_eq!(
-            u32::try_from(children.len()).unwrap_or(u32::MAX),
-            length,
+        debug_assert!(
+            children.is_empty() || u32::try_from(children.len()).unwrap_or(u32::MAX) == length,
             "keystone element count disagrees with the vector length header (tp={tp})"
         );
         for child in children {
