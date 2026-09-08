@@ -908,15 +908,36 @@ pub(crate) fn tuple_elem_type(
     var: u16,
     idx: u32,
 ) -> Option<Type> {
-    let elems = match vars.tp(var).base() {
-        Type::Tuple(elems) => elems.clone(),
+    var_tuple_elems(vars, var)?.get(idx as usize).cloned()
+}
+
+/// The tuple element types a variable's DECLARED slot holds, or `None` when it holds no tuple.
+///
+/// The peel is the point.  A slot's type reaches this question wrapped in two ways — an
+/// `Optional` from `@FR-N-Domain` (a `vector<(…)>` element read by a plain variable index types
+/// `(…)?`) and a `RefVar` from a `&`-link — and the RUST slot is the bare tuple either way,
+/// because `tuples.md (T-Absent)` gives a tuple no wrapped representation.  So a test written
+/// bare disagrees with the declaration it is supposed to fit.
+///
+/// ⚠ **Measured 2026-09-09: `generation::dispatch`'s assignment arm asked this question NINE
+/// times and five of them were bare.**  A `vector<(integer, text)>` element read by a variable
+/// index therefore missed the `.to_string()` coercion (rustc E0308, `&str` into a `String`
+/// slot) and then, once that was fixed, missed the nested-tuple `.clone()` as well (E0382, use
+/// of a moved value) — two different refusals from one omitted peel, and neither reachable by a
+/// CONSTANT index, which `(N-Index)` trusts so no wrapper is ever built.  loft#1478.
+///
+/// So call this rather than restating it: it is the `is_dbref` failure mode with a tuple in it,
+/// and a tenth site spelled by hand is a tenth chance to forget the wrapper.
+#[must_use]
+pub(crate) fn var_tuple_elems(vars: &crate::variables::Function, var: u16) -> Option<Vec<Type>> {
+    match vars.tp(var).base() {
+        Type::Tuple(elems) => Some(elems.clone()),
         Type::RefVar(inner) => match inner.base() {
-            Type::Tuple(elems) => elems.clone(),
-            _ => return None,
+            Type::Tuple(elems) => Some(elems.clone()),
+            _ => None,
         },
-        _ => return None,
-    };
-    elems.get(idx as usize).cloned()
+        _ => None,
+    }
 }
 
 /// Render the base a tuple element access hangs off, and say whether reaching it is

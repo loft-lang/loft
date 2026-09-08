@@ -1466,13 +1466,22 @@ impl Output<'_> {
                 // member written as a bare name is built as the `(u32, DbRef)` pair its
                 // slot is rather than emitted as the lone d_nr it infers to.
                 let prev_tuple_slots = std::mem::take(&mut self.tuple_slot_types);
-                if let Type::Tuple(elems) = variables.tp(var)
+                // `.base()`, and it is the fifth site this same list has drifted short by the
+                // wrapper (`is_dbref` and D-own-13, `deps_mut`, `is_keyed`, `depend` —
+                // loft#1150 counts the others).  A `vector<(integer, text)>` element read by a
+                // plain VARIABLE index types `(integer, text)?` under `(N-Domain)`, and the
+                // SLOT renders as the bare `(i64, String)` — `(T-Absent)` says a tuple has no
+                // wrapped form — so a bare match here disagreed with the declaration it is
+                // supposed to fit.  The text member emitted `&str` into a `String` slot and
+                // rustc refused the program (E0308).  A CONSTANT index compiles, because
+                // `(N-Index)` trusts it and no wrapper is ever built; loft#1478.
+                if let Some(elems) = crate::generation::var_tuple_elems(variables, var)
                     && elems.iter().any(crate::data::tuple_carries_fn_ref)
                 {
-                    self.tuple_slot_types = elems.clone();
+                    self.tuple_slot_types = elems;
                 }
-                if let Type::Tuple(elems) = variables.tp(var)
-                    && tuple_has_text_leaf(elems)
+                if let Some(elems) = crate::generation::var_tuple_elems(variables, var)
+                    && tuple_has_text_leaf(&elems)
                 {
                     // Recurse through nested tuples so `((i64, String),
                     // (i64, String))` triggers the flag too — without
@@ -1551,11 +1560,12 @@ impl Output<'_> {
                 // `var_t.0.X` in the same expression.  Emit
                 // `var_t.0.clone()` instead so each chained access
                 // gets its own owned copy.
-                let nested_tuple_clone = matches!(variables.tp(var), Type::Tuple(elems)
-                    if tuple_has_non_copy_leaf(elems))
+                let nested_tuple_clone = crate::generation::var_tuple_elems(variables, var)
+                    .is_some_and(|elems| tuple_has_non_copy_leaf(&elems))
                     && matches!(to_inner, Value::TupleGet(v, _) if {
                         let vars = self.data.def(self.def_nr).variables();
-                        !vars.is_argument(*v) && matches!(vars.tp(*v), Type::Tuple(_))
+                        !vars.is_argument(*v)
+                            && crate::generation::var_tuple_elems(vars, *v).is_some()
                     });
                 // loft#1325 — the WHOLE tuple, one level out from the arm above.  `u = a` over
                 // a local `(text, text)` emitted `let mut var_u: (String, String) = var_a;`,
@@ -1569,11 +1579,12 @@ impl Output<'_> {
                 // Only a non-Copy leaf needs it — an all-scalar tuple is `Copy` and the move is
                 // a copy already — and only a LOCAL source: a tuple PARAMETER arrives borrowed
                 // and is re-spelled by `tuple_arg_owned_elems` below, which owns that pair.
-                let whole_tuple_clone = matches!(variables.tp(var), Type::Tuple(elems)
-                    if tuple_has_non_copy_leaf(elems))
+                let whole_tuple_clone = crate::generation::var_tuple_elems(variables, var)
+                    .is_some_and(|elems| tuple_has_non_copy_leaf(&elems))
                     && matches!(to_inner, Value::Var(v) if {
                         let vars = self.data.def(self.def_nr).variables();
-                        !vars.is_argument(*v) && matches!(vars.tp(*v), Type::Tuple(_))
+                        !vars.is_argument(*v)
+                            && crate::generation::var_tuple_elems(vars, *v).is_some()
                     });
                 // loft#840 — the destination is an owned tuple slot holding text
                 // (`(i64, String, u8)`) and the source is a tuple PARAMETER, which
@@ -1592,8 +1603,9 @@ impl Output<'_> {
                 // Both are one fact — a tuple crossing from a BORROWED parameter into an
                 // OWNED slot — so they share the re-spelling and differ only in the place
                 // they name.
-                let tuple_arg_owned_elems = match variables.tp(var) {
-                    Type::Tuple(elems) if tuple_has_text_leaf(elems) => {
+                let tuple_arg_owned_elems = match crate::generation::var_tuple_elems(variables, var)
+                {
+                    Some(elems) if tuple_has_text_leaf(&elems) => {
                         let from_param = match to_inner {
                             Value::Var(v) => {
                                 let vars = self.data.def(self.def_nr).variables();
@@ -1605,7 +1617,7 @@ impl Output<'_> {
                             }
                             _ => false,
                         };
-                        from_param.then(|| elems.clone())
+                        from_param.then_some(elems)
                     }
                     _ => None,
                 };

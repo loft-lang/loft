@@ -186,16 +186,24 @@ or take the tuple by value and return a new one. The refusal message says both.
   closed deliberately, which is exactly why a deviation's measured cells are a claim to
   re-measure and not a record to cite.
 
-  ⚠ **A `text` MEMBER does not compile at all on `--native`, and no all-`integer` cell can see
-  it.**  `t: vector<(integer, text)>; i = 0; b = t[i]; b.1` is rustc **E0308** — `expected
-  `String`, found `&str`` — where `--interpret` answers `seven`.  A CONSTANT index compiles
-  (`(N-Index)` trusts it, so the element types plain `(integer, text)` and never takes this
-  path), and an all-`integer` tuple compiles by either index.  `OpGetText`'s `#rust` body wraps
-  its result in `Str::new(…)`, which `generation/calls.rs` strips for native, and this consumer
-  does not coerce what is left.  Pre-existing at `9720dfd06`; filed as loft#1478.  It is the
-  shape a tuple ORACLE keeps missing — this doc's counts have been read over a corpus of
-  `(integer, integer)` cells, which cannot reach it — so any cell added for this entry should
-  carry a non-scalar member.
+  ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
+  MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`
+  into a `String` slot), and under that a nested tuple member emitted a move where a clone was
+  owed (E0382).  Both from ONE omission: `generation::dispatch`'s assignment arm asks *"is this
+  slot a tuple?"* NINE times to pick a member's coercion, and five of them asked it BARE — so
+  the `Optional` this rule's own `(N-Domain)` wrapper puts on the slot hid the slot from its own
+  coercions, while the Rust type rendered is the bare tuple either way.  `generation::
+  var_tuple_elems` is the one home now.
+
+  **A CONSTANT index could not reach either refusal** (`(N-Index)` trusts it, so no wrapper is
+  built), and **an all-`integer` tuple could not reach them at all**, because the coercions
+  missed are the ones only a non-`Copy` member needs.  That is the blind population: this
+  entry's cells, and this doc's counts, have been read over `(integer, integer)` shapes.  **Any
+  cell added here should carry a `text` member.**
+
+  A third defect came out from under it — the same read through a struct FIELD's vector leaks
+  its work-ref record on `--native` (loft#1479) — which is newly REACHABLE rather than newly
+  broken, since that cell did not compile before.
 
   ⚠ **And a cure that suggests itself is measured WRONG.**  `(N-Opt)`'s side condition got its
   home in `data::has_null` on 2026-09-09 (loft#1478), and the obvious next step — have the `τ?`

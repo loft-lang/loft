@@ -39,14 +39,9 @@
 //                        what decided whether the forbidden type reached codegen at all · and
 //                        the function's own arity.
 // Axes it HOLDS FIXED:   one element type per collection, and the vector is DENSE.  The tuple
-//                        cell is all-`integer` on purpose and NOT because that is the
-//                        interesting case: a `text` MEMBER read out of a `vector<(integer,
-//                        text)>` by a variable index does not COMPILE on `--native` (rustc
-//                        E0308, `&str` where `String` is expected), pre-existing at the
-//                        merge-base and filed separately.  That is `D-tup-10`'s migration and
-//                        importing it here would leave this file red for a reason none of its
-//                        own axes name.  Worth the sentence because it is the shape a tuple
-//                        oracle keeps missing — all-`integer` cells cannot see it.
+//                        cell carries a `text` member deliberately: an all-`integer` tuple
+//                        cannot reach the wrapper-peel defect loft#1478 turned out to be, and
+//                        this doc's own counts had been read over exactly such a corpus.
 //
 // ⚠ There is deliberately NO out-of-range fn-ref cell, and the absence is the rule restated:
 // `has_null(fn) = false` means there is no absent fn-ref to answer with, so such a read has
@@ -108,11 +103,11 @@ fn main() {
   //      a PRESENT tuple of null members, so the out-of-range read answers members and not an
   //      absence.  The VALUES are asserted because the type was the wrong half, and a cell that
   //      only compiles would not have seen it ----
-  ts: vector<(integer, integer)> = [(7, 8)];
+  ts: vector<(integer, text)> = [(7, "seven")];
   j = 9;
   tin = ts[0];
   tout = ts[j];
-  assert(tin.0 == 7 && tin.1 == 8, "an in-range tuple element is its own value");
+  assert(tin.0 == 7 && tin.1 == "seven", "an in-range tuple element is its own value");
   assert(tout.0 == null, "an out-of-range tuple has a null FIRST member");
   assert(tout.1 == null, "…and a null second member — absent members, not an absent tuple");
 

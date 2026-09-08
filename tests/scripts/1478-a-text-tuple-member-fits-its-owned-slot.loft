@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1478 — a `text` MEMBER of a tuple element read by a variable index, on `--native`.
+//
+// `@FR-N-Domain` types a `vector<(…)>` element read by a plain variable index `(…)?`, and
+// `tuples.md (T-Absent)` gives a tuple no wrapped REPRESENTATION — so the Rust slot the emitter
+// declares is the bare `(i64, String)` either way.  Nine sites in `generation::dispatch`'s
+// assignment arm ask *"is this variable's slot a tuple?"* to decide what a member value must be
+// coerced to, and FIVE of them asked it BARE.  The wrapper hid the slot from its own coercions.
+//
+// Two different rustc refusals came out of that one omission, and the second was underneath the
+// first:
+//
+//   * the text member emitted `&str` into a `String` slot — E0308, *expected `String`, found
+//     `&str`* — because `tuple_text_to_string` was never set;
+//   * with that fixed, a NESTED tuple member emitted a move where a clone was owed — E0382,
+//     *use of moved value: `var_b.0`* — because `nested_tuple_clone` asked the same question
+//     the same way.
+//
+// ⚠ **A CONSTANT index cannot reach either.**  `(N-Index)` trusts a constant, an active `for`
+// variable, an `i < len(v)` guard and arithmetic over those BY CONTRACT, so the element types
+// plain `(integer, text)`, no wrapper is built, and every bare test is right by accident.  Four
+// of this file's cells are those spellings and they passed on the pre-fix build — they are the
+// controls that say the axis is the INDEX and not the tuple.
+//
+// ⚠ **And an all-`integer` tuple cannot reach it either**, because the coercions it misses are
+// the ones only a non-`Copy` member needs.  That is the blind spot worth naming: `tuples.md`'s
+// counts have been read over a corpus of `(integer, integer)` cells, which cannot see this at
+// all.  `m12` below is that corpus in one cell, green on both sides of the fix.
+//
+// Axes this file MOVES:  the member's TYPE (`text` · two texts · a `boolean` beside a text · a
+//                        NESTED tuple carrying text · all-integer, the control) · the index's
+//                        trust under `(N-Index)` (plain variable · constant · `for` variable ·
+//                        `i < len(v)` guard) · whether the read is BOUND to a local or the
+//                        member is read straight off it · where the vector lives (a local · a
+//                        PARAMETER) · and in-range versus out-of-range.
+// Axes it HOLDS FIXED:   the vector is DENSE, and every tuple is a pair or a pair of pairs.
+//
+// ⚠ **A struct-FIELD vector is deliberately absent, and the absence is a finding.**  The same
+// read through `g.ts[i]` answers correctly on both backends and LEAKS one
+// `__tuple<integer,text>` record on `--native` — the work-ref is hoisted to function scope with
+// no container dep (`ref(__tuple<…>)` bare, `= null` at the top) where the LOCAL-vector form
+// keeps it inside the unbox block with a `["t"]` dep and owes no free.  It could not run at all
+// before this fix, so it is newly REACHABLE rather than newly broken: lifting a refusal runs
+// code nobody has scored.  Filed separately; importing it here would leave this file red under
+// `LOFT_STRICT_STORES=1` for a reason none of its own axes name — and `make falsify` refuses to
+// score a tree the guard does not pass, which is how it was caught.
+//
+// @falsified-at: 9720dfd06 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).  MEASURED: on a 12-cell scratch matrix
+//   over the same axes, seven cells fail to COMPILE on the control (`help: try using a
+//   conversion method` under E0308) and the five that pass are exactly the trusted-index and
+//   all-integer ones.  `--interpret` answers every cell correctly on BOTH builds, which is the
+//   ticket's point and the reason the interpret row reads INERT rather than red.
+
+fn pick78(t: vector<(integer, text)>, i: integer) -> text { b = t[i]; b.1 }
+
+fn main() {
+  t: vector<(integer, text)> = [(7, "seven"), (8, "eight")];
+  i = 0;
+
+  // ---- e1: the filed cell — a plain VARIABLE index, bound, then the text member read ----
+  b = t[i];
+  assert(b.1 == "seven", "a text member of a variable-indexed element: {b.1}");
+  assert(b.0 == 7, "…and its integer neighbour: {b.0}");
+
+  // ---- e2: BOTH members text, so the coercion is owed twice in one literal ----
+  tt: vector<(text, text)> = [("aa", "bb")];
+  bb = tt[i];
+  assert(bb.0 == "aa" && bb.1 == "bb", "two text members: {bb.0} {bb.1}");
+
+  // ---- e3: a NESTED tuple carrying text.  This is the E0382 half — the outer member is moved
+  //      into a temp and read again, where a `.clone()` is owed ----
+  nt: vector<((integer, text), integer)> = [((1, "in"), 2)];
+  nb = nt[i];
+  assert(nb.0.0 == 1, "a nested tuple's first member: {nb.0.0}");
+  assert(nb.0.1 == "in", "…its text member, read after the outer was taken: {nb.0.1}");
+  assert(nb.1 == 2, "…and the member beside the nest: {nb.1}");
+
+  // ---- e4: a BOOLEAN beside the text, because the boolean member has a slot cast of its own
+  //      and the two coercions meet in one literal ----
+  bt: vector<(boolean, text)> = [(true, "seven")];
+  bv = bt[i];
+  assert(bv.0, "a boolean member reads true");
+  assert(bv.1 == "seven", "…beside its text member: {bv.1}");
+
+  // ---- e6: through a PARAMETER, where the vector is the caller's ----
+  assert(pick78(t, i) == "seven", "a text member read inside a callee: {pick78(t, i)}");
+
+  // ---- e7: OUT OF RANGE.  `(T-Absent)` — an absent tuple is a PRESENT tuple of null members,
+  //      so both members answer null rather than the read failing ----
+  j = 9;
+  ob = t[j];
+  assert(ob.0 == null, "an out-of-range tuple has a null integer member");
+  assert(ob.1 == null, "…and a null text member");
+
+  // ---- c1 CONTROL: a CONSTANT index.  `(N-Index)` trusts it, so no wrapper is built and every
+  //      bare test was right by accident — this compiled before the fix ----
+  cb = t[0];
+  assert(cb.1 == "seven", "c1 a constant index: trusted by contract");
+
+  // ---- c2 CONTROL: an active `for` variable, the second trusted spelling ----
+  joined: text = "";
+  for k in 0..2 { fb = t[k]; joined = joined + fb.1; }
+  assert(joined == "seveneight", "c2 a `for` variable is trusted too: {joined}");
+
+  // ---- c3 CONTROL: a guard-proved index, the third ----
+  if i < len(t) { hb = t[i]; assert(hb.1 == "seven", "c3 a guard-proved index"); }
+
+  // ---- c4 CONTROL: the member read STRAIGHT off the element, never bound.  It took a
+  //      different path and compiled before the fix, which is what says the defect was the
+  //      BIND's slot type and not the read ----
+  assert(t[i].1 == "seven", "c4 read straight off the element, no bind");
+
+  // ---- c5 CONTROL: an all-`integer` tuple — the corpus shape that cannot see this defect,
+  //      because the coercions it misses are the ones only a non-`Copy` member needs ----
+  it: vector<(integer, integer)> = [(7, 8)];
+  ib = it[i];
+  assert(ib.0 == 7 && ib.1 == 8, "c5 an all-integer tuple: green on both sides of the fix");
+
+  println("1478-a-text-tuple-member-fits-its-owned-slot ok");
+}
