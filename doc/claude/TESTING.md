@@ -733,6 +733,49 @@ used to keep seven days); `make sweep-scratch` runs it on the checkout's scratch
 only dead pids or aged entries, and never a sibling checkout's gate scratch.  A run of `df -h /`
 before a gate is cheaper than reading a `FAIL unknown-mode` as a code fault.
 
+### A cancelled run measures its FIRST failure and nothing else
+
+A gate that stops at the first red is a measurement of one defect. That is fine when a
+change has one; it is actively misleading when a change WIDENS something, because a
+widening's casualties are not co-located and each one hides the ones behind it.
+
+Measured 2026-09-08, giving `@FR-Col-Lookup` its `τ?` on keyed point lookups — three
+defects, three separate subsystems, and it took three gates to see them:
+
+| gate | reported | not run |
+|---|---|---|
+| 1 | `b_ref_reshape_rekey_through_amp_link` — the `&` marker lost | 1338 |
+| 2 | `rpc_eval_in_a_keyed_collection_frame` — the debugger could not read a keyed element | 50 |
+| 3 | `wrap::loft_suite` — a partial-key `= null` lost its refusal | 0 |
+
+Each was real, each was caused by the same one-line widening, and **none was reachable
+while the one ahead of it stood**. Reading gate 1 as "one test to fix" would have been
+wrong twice, and a targeted suite would not have helped: the three live in
+`parse_errors`, `rpc` and `wrap` respectively, so no `--subject` covers them together.
+
+So for a change that widens a TYPE, a predicate, or a rule's reach, run the suite
+`--no-fail-fast` — `./scripts/find_problems.sh --bg` already does, and it is the run
+nobody reaches for when the change "should be small". The cost is one full suite; the
+alternative is learning the casualty count one gate at a time.
+
+### When two trees disagree about the wreckage, guard the REFUSAL
+
+A defect that should be refused and is not usually leaves damage behind, and the damage
+is the tempting thing to assert. It is also the thing that varies. The same missing
+refusal (a `text` key re-keyed through a `&` view) left a record reachable by **no** key
+on one tree and reachable by its **new** key on a sibling branch — same defect, two
+downstream behaviours, because the branches differ in whether a write through a `&`
+re-indexes.
+
+A cell asserting the wreckage passes on one tree and fails on the other **for a reason
+that has nothing to do with the defect**. A cell asserting the refusal — a
+`tests/parse_errors.rs` entry whose whole expectation is the compile error — is true on
+both, because the refusal is what the trees agree should exist and the wreckage is what
+they do not.
+
+The corollary is that such a cell pins no runtime values at all, and that is correct
+rather than lazy: a refusal fires before any of them can happen.
+
 ### The set a suite RUNS is not the set it CONTAINS (`LOFT_TRACE_ASSERTS`)
 
 The third shape of self-satisfaction, and the quietest: an `assert` that is written,

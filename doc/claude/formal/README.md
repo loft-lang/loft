@@ -297,3 +297,20 @@ system grows, anchor the question on the RULE, not on the code*.
 A CLOSED deviation leaves the rules doc; its entry — dates, measurements, what closed it —
 is kept in `<area>-history.md`. The count of OPEN deviations per doc is the area's distance
 from formal.
+
+⚠ **A deviation NUMBER is a property of the repository, not of your checkout.** Several
+agents hold sibling checkouts of this repo at once, each with a different subset of the
+others' branches, and a register is cherry-picked in pieces like anything else — so the
+next free `D-<area>-N` has to be grepped across **every** checkout, not across the file
+you are editing. Measured 2026-09-08: `D-bind-28` was taken on a sibling branch and
+reused here, because `grep '^> \*\*D-bind-'` over the local `binding-history.md` said it
+was free — and it was free *in that file*, while `binding.md` in the same working tree
+carried its header. Renumbered to `D-bind-29`.
+
+The same partial-pick shape explains a count that looks wrong rather than old: a rules
+doc can carry a deviation's HEADER from before the commit that closed it while the same
+tree already contains the fix, so `binding.md` reads `OPEN: 1` beside a working
+behaviour. **Do not reconcile a disagreement like that by editing a number** — establish
+which side is older, and note it. `scripts/rule_tags.py` cannot help here either: it
+takes a tag's status from the first 120 characters after its FIRST definition, so a
+deviation written in parts reports one status for all of them (loft#1452).
