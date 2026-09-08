@@ -9873,7 +9873,24 @@ impl Scopes<'_> {
                 let in_ret = ret_borrows_v
                     || backs_return_source
                     || link_delivered.contains(&v)
-                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v);
+                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
+                    // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
+                    // declared return's `CalleeFrame` note, and that note is published once per
+                    // lambda and OVERWRITTEN — so where a function builds more than one it names
+                    // the last one BUILT rather than the ones the return can hand out.  A `match`
+                    // whose arms each build a closure has one record per arm; the note named one
+                    // and the frame freed the rest, cascading into everything they captured, so
+                    // the caller called a live lambda over a released capture (loft#1474).
+                    //
+                    // [`record_leaves_frame`] is the same question asked of the VALUES in return
+                    // position, which is where loft#1444 already moved this for the fn-ref
+                    // variable's own free; the record local's free was left reading the note.
+                    // Gated on the local actually being a closure record so this stays a
+                    // statement about `@FR-L-CapOwn` and not a new suppression for every
+                    // reference local.
+                    || (matches!(function.tp(v), Type::Reference(r, _)
+                            if data.def(*r).name.starts_with("__closure_"))
+                        && record_leaves_frame(data, function, self.d_nr, v));
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
