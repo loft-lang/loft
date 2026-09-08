@@ -1282,6 +1282,11 @@ if mode == "spellings":
 # Falling is not a failure: it prints the command and exits 0, so a PR that fixes
 # sites is never blocked by its own improvement.  Re-pin in the same commit, so the
 # baseline in the diff is the receipt for the walk that earned it.
+#
+# ⚠ The baseline is a DERIVED row, so it must never be CARRIED across a join or a
+# rebase — re-run this and re-pin on the joined tree.  Two branches that each lowered
+# the count hold two true numbers and neither is the merged tree's, and the same trap
+# has cost QUALITY.md's audit row a false figure on eight consecutive joins.
 RATCHET = os.path.join(ROOT, "index", "optional_ratchet.json")
 
 

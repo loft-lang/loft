@@ -2550,7 +2550,8 @@ on their OWN scrutinee, and the function row moves three to five per batch.  So 
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
 for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Shape`
-([formal/types.md](formal/types.md)).
+([formal/types.md](formal/types.md)).  That baseline is a DERIVED row exactly as these four
+are — re-measure it on the joined tree rather than carrying either branch's number.
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
