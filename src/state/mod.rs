@@ -4947,25 +4947,6 @@ impl State {
         // Each scalar read takes a fresh `store` borrow (released at the end of the
         // arm) so the heap arms can re-borrow `self.database` for `show_loft`.
         match tp {
-            // @FR-L-Null — layout(τ) = layout(τ?), so a nullable local reads out of the same
-            // slot as its dense twin and renders the same way; all this arm owes is the
-            // ABSENT case, and then it defers to the arm the base type already has.
-            //
-            // loft#1459 — without it every `τ?` local fell to the `other` catch-all below and
-            // the panel printed the TYPE where every other local prints a value
-            // (`n = <integer?>`).  One notion, two spellings: every arm here matches the
-            // DENSE form, so the nullable one matched none of them.  Peeling once at the top
-            // covers every type at once, which is the point — an arm per type would have left
-            // the next one out, the way the four keyed kinds keep being left out of lists.
-            Type::Optional(inner) => {
-                if let Type::Integer(spec) = &**inner {
-                    let raw = *self.database.store(&self.stack_cur).addr::<i64>(rec, at);
-                    if raw < i64::from(spec.min) {
-                        return "null".to_string();
-                    }
-                }
-                self.render_frame_local(frame_base, off, inner, is_arg, data)
-            }
             Type::Integer(_) => self
                 .database
                 .store(&self.stack_cur)
