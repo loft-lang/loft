@@ -5504,8 +5504,18 @@ fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut
     }
     match function.tp(v) {
         // A fn-ref LOCAL: its own type names the record it holds.
+        //
+        // Read space-agnostically, which is what this position needs.  A fn-ref VARIABLE
+        // holds a FRAME-space list when its value is a lambda built here, and it holds the
+        // callee's DEF-space list verbatim when the value came from a call — a returned
+        // fn-ref publishes its closure work var as a tagged `CalleeFrame` note, and
+        // `call_dependencies` hands a `Type::Function` return back unchanged.  Asking
+        // `frame_vars()` therefore trips the space assert on a list that is simply INERT
+        // here: every entry of a def-space list names the CALLEE's attributes or the
+        // CALLEE's frame, never a record of this function, so nothing it carries can pass
+        // the caller's membership test (`85-closure-factory-discarded-free`).
         Type::Function(_, _, deps) => {
-            for w in deps.frame_vars() {
+            for w in deps.iter() {
                 if !out.contains(w) {
                     out.push(*w);
                 }
@@ -10048,11 +10058,15 @@ impl Scopes<'_> {
                 // cascade, so emitting it for a fn-ref whose record the caller now holds
                 // destroys the closure the caller was just handed — `h = fn() { d.a };
                 // out = h;` kept the record (the heap sweep's own link term) and then had
-                // it taken by this one. Asked through `frame_vars()`, the same tagged
-                // decode `closure_records_of_source` uses, so the two cannot disagree
-                // about which record a fn-ref holds.
-                let link_carries = matches!(function.tp(v), Type::Function(_, _, deps)
-                    if deps.frame_vars().iter().any(|w| link_delivered.contains(w)));
+                // it taken by this one.  Asked THROUGH `closure_records_of_source`, the one
+                // home `link_written_closure_records` itself reads, so the two cannot
+                // disagree about which record a fn-ref holds — restating it here as a dep
+                // walk of its own is what let this side read the list in a space the other
+                // side never does.
+                let mut carried: Vec<u16> = Vec::new();
+                closure_records_of_source(data, function, v, &mut carried);
+                let link_carries = matches!(function.tp(v), Type::Function(_, _, _))
+                    && carried.iter().any(|w| link_delivered.contains(w));
                 let in_ret = tp.depend().contains(&v)
                     || ret_carries
                     || link_carries
@@ -14105,6 +14119,32 @@ fn collect_all_return_vars(expr: &Value, data: &Data, out: &mut Vec<u16>) {
             collect_return_sources(inner, data, out);
         }
     });
+    // …and through the value STAGED into a returned variable.  `free_vars` reads its
+    // suppression set off the return EXPRESSION (`collect_return_sources` there), and the
+    // B5-L3 hoist then rewrites that expression to `Set(__ret_N, <expr>); …;
+    // Return(Var(__ret_N))` — so by the time this mirror runs, the IR names only the temp
+    // and every source the emitter suppressed sits one assignment away.  Closing the set
+    // under "assigned into a transferred var" is what keeps the two readings the same
+    // question; without it a work-ref the emitter deliberately left unfreed reads here as a
+    // leak (`match p { [a, ..] => a, _ => null }` over a `vector<S?>`, whose payload copy
+    // lands in a `__ref_N` the hoist hides).
+    //
+    // The closure is the emitter's own rule, not a wider one: `collect_return_sources`
+    // unions an `If`'s arms exactly as `free_vars` does, so a source live on one path only
+    // is credited on that path and its sibling orphan is still released by the
+    // `OpFreeRefIfDistinct` the hoist emits beside the `Set`.
+    let mut i = 0;
+    while i < out.len() {
+        let staged = out[i];
+        i += 1;
+        expr.walk(&mut |v| {
+            if let Value::Set(target, rhs) = v
+                && *target == staged
+            {
+                collect_return_sources(rhs, data, out);
+            }
+        });
+    }
 }
 
 fn collect_return_sources(expr: &Value, data: &Data, out: &mut Vec<u16>) {
@@ -14747,6 +14787,7 @@ fn check_ref_leaks(
     }
 
     let built_with = capture_build_backings(data, function, ir);
+    let link_delivered = link_written_closure_records(data, function, fn_def_nr);
     for (&v, &scope) in var_scope {
         if scope == 0 {
             continue; // function parameter — caller frees
@@ -14767,6 +14808,25 @@ fn check_ref_leaks(
         // that knows only the `is_captured` half calls the BACKING local of a collection
         // capture a leak — which no closure captured by name.
         if capture_adoption_owns_free(data, function, &built_with, v) {
+            continue;
+        }
+        // …and the BUFFER that minted such a store, which the emitter releases through the
+        // same cascade by a predicate of its own (loft#1446's leg in `get_free_vars`).  Asked
+        // of the buffer rather than of the capture's name, because a buffer names ONE store
+        // for its whole life while a capture local reassigned after the build names two — and
+        // asked here because a mirror that knows only `capture_adoption_owns_free` reports the
+        // literal buffer behind an escaping nullable capture as a leak (`n: C39? = C39 { … };
+        // fn() -> integer { … n.a … }`, whose `__ref_p2_N` the record's cascade frees).
+        if escaping_record_holds_buffer(data, function, fn_def_nr, &built_with, v) {
+            continue;
+        }
+        // …and a closure record this frame WRITES OUT through a `&fn(…)` link, which the
+        // emitter suppresses on the same reading (`link_delivered` in `get_free_vars`): a
+        // write through a link delivers exactly as a `return` does, so the caller holds the
+        // record and the frame owes no free.  The third suppression leg this mirror has had
+        // to learn, and the reason each is a CALL to the emitter's own predicate rather than
+        // a restatement of it.
+        if link_delivered.contains(&v) {
             continue;
         }
         if v == direct_ret_var {
