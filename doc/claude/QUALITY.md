@@ -2522,7 +2522,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 743 | 396 | 5 | **342** |
+| 743 | 397 | 5 | **341** |
 
 *loft#1456 moved one out of the opaque column by peeling: `@FR-O-Proxy`'s materialise gate now
 reads the element view through `base()`, because the `?` on a nullable element view says nothing
