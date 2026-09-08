@@ -23,7 +23,7 @@
 use crate::compile;
 use crate::data::{DefType, Type};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::database::{Parts, Stores};
+use crate::database::Parts;
 use crate::diagnostics::{DiagEntry, Level};
 use crate::introspect::{Options, Section};
 use crate::parser::Parser;
@@ -4122,7 +4122,7 @@ impl ReplSession {
             }
             SessionShape::Scalar(ScalarKind::SimpleEnum) => {
                 let disc = u8::try_from(store.get_int(db.rec, 8)).unwrap_or(0);
-                if Stores::enum_is_null(disc) {
+                if crate::database::Stores::enum_is_null(disc) {
                     Some("null".to_string())
                 } else if tp == u16::MAX {
                     None
@@ -4452,7 +4452,7 @@ impl ReplSession {
             // Display is the variant alone, without the enum's name.
             SessionShape::Scalar(ScalarKind::SimpleEnum) => {
                 let disc = u8::try_from(store.get_int(db.rec, 8)).unwrap_or(0);
-                if Stores::enum_is_null(disc) {
+                if crate::database::Stores::enum_is_null(disc) {
                     Some("null".to_string())
                 } else if tp == u16::MAX {
                     None
