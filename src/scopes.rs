@@ -9625,10 +9625,21 @@ impl Scopes<'_> {
                     // widening names the branch and stops there, and an `iterator`
                     // return stays excluded outright for the same reason: a coroutine
                     // does not return its body's value.
-                    && matches!(
+                    && (matches!(
                         expr.unspan(),
                         Value::Call(_, _) | Value::CallRef(_, _) | Value::If(_, _, _)
                     )
+                    // …or the return type is a fn-ref, whatever the tail's shape.  This one
+                    // is keyed on the TYPE and not on the node because it CANNOT be keyed on
+                    // the node: a non-capturing lambda lowers to a bare `Value::Int` holding
+                    // its def-number, indistinguishable from the integer 733.  loft#1470 is
+                    // that cell — `return fn() -> integer { 5 };` with a free in the frame
+                    // emitted the def-number as a DISCARDED statement and fabricated
+                    // `return null`, so `--native` returned the typed null sentinel and the
+                    // caller read `internal error: invalid fn-ref`.  The interpreter answered
+                    // correctly by accident, off eval-stack top, which is the same accident
+                    // loft#957 names one carve-out earlier in this list.
+                    || matches!(tp.base(), Type::Function(_, _, _)))
                     && !matches!(tp.base(), Type::Iterator(_, _))
                 {
                     // loft#957 — the same eval-stack reliance P236 names above, for
@@ -14048,12 +14059,23 @@ impl Scopes<'_> {
                         block.result.base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
                     );
+                    // loft#1469 — the fn-ref block result, the fourth member of the same
+                    // list.  A `match` in tail position lowers to a `scalar_match` BLOCK
+                    // whose last op is a `Return`, so it reaches this leg rather than
+                    // `free_vars`'s; without the type here the tail stayed un-hoisted, the
+                    // two arms of one choice pushed different WIDTHS — 20 bytes for the
+                    // capturing arm, 8 for the bare def-number — and the return read twelve
+                    // bytes of uninitialised stack as the closure half.  The `if` spelling of
+                    // the identical choice is correct precisely because it IS hoisted, which
+                    // gives both arms a `fn`-typed destination to be padded against.
+                    let is_fnref_result = matches!(block.result.base(), Type::Function(_, _, _));
                     let mut hoist_tmp: Option<u16> = None;
                     if is_return
                         && (!free.is_empty() || !trailing_frees.is_empty())
                         && (is_value_return_type(&block.result)
                             || is_text_result
-                            || is_heap_ref_result)
+                            || is_heap_ref_result
+                            || is_fnref_result)
                         && tail_needs_eval
                         && !expr_ends_in_return(o)
                     {

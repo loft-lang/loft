@@ -506,8 +506,14 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
 }
 
 fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type) -> Value {
+    // The fn-ref widening `build_scalar_chain` does for a scalar subject, for the
+    // pattern subject: an enum arm yielding a non-capturing lambda is the same bare
+    // eight-byte d_nr meeting the same twenty-byte join (loft#1469).  The fallback is
+    // widened too — it is the value every un-matched subject delivers.
     let mut chain = fallback;
-    for arm in arms.into_iter().rev() {
+    crate::parser::widen_bare_fn_ref(&mut chain, result_type);
+    for mut arm in arms.into_iter().rev() {
+        crate::parser::widen_bare_fn_ref(&mut arm.code, result_type);
         let Some(guard) = arm.guard else {
             chain = match arm.cond {
                 Some(cond) => v_if(cond, arm.code, chain),
@@ -10219,6 +10225,18 @@ impl Parser {
             for arm in arms.iter_mut().filter(|a| arm_body_is_null(&a.1)) {
                 set_arm_null_typed(&mut arm.1, &typed_null, result_type);
             }
+        }
+        // The same repair one width up, for the fn-ref result type.  A non-capturing
+        // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
+        // the full twenty-byte fn-ref, so the arms of one choice leave different depths
+        // and the read straddles.  The `if` spelling of the identical choice is correct
+        // because its arm is a BLOCK typed `function(…)` whose result path completes the
+        // pair; this chain puts the arm body in raw, so the widening happens here instead
+        // (loft#1469).  Both the bare and the `{ … ; <lambda> }` block spelling, and the
+        // wildcard arm too — it is still in `arms` at this point and becomes the fallback
+        // just below.
+        for arm in &mut arms {
+            crate::parser::widen_bare_fn_ref(&mut arm.1, result_type);
         }
         let fallback = if has_wildcard {
             let (_, arm_code, _, _) = arms.pop().unwrap();

@@ -16815,6 +16815,17 @@ impl Parser {
             Type::Text(_) => self.cl("OpConvTextFromNull", &[]),
             Type::RefVar(tp) if matches!(**tp, Type::Text(_)) => self.cl("OpConvTextFromNull", &[]),
             Type::Reference(_, _) => self.cl("OpNullRefSentinel", &[]),
+            // loft#1469 — a fn-ref's null is the full twenty-byte shape with d_nr 0, the
+            // same value [`crate::data::to_default`] already builds for a default-initialised
+            // fn-ref field, and `set_field_check`'s `Type::Function` arm reduces both to the
+            // 4-byte `d_nr = 0` storage write.  Untreated it fell to the catch-all below and
+            // pushed NOTHING, which is the failure this function's sibling `null_value`
+            // documents one paragraph down: the consumer read an uninitialised 12-byte
+            // closure half, judged it non-null and freed it ("refused free of out-of-range
+            // store", then SIGSEGV).  It reached a value position through the fallback of a
+            // non-total `match` over an enum whose arms yield lambdas, where nothing else
+            // names the width.
+            Type::Function(_, _, _) => Value::FnRef(0, u16::MAX, Box::new(tp.base().clone())),
             _ => Value::Null,
         }
     }
@@ -16886,6 +16897,59 @@ fn tests_base_dir(cur_dir: &str) -> &str {
 /// `None` when no capturing FnRef is present.  Walks Block / Set /
 /// Span wrappers built by `parser/vectors.rs` around the `OpDatabase`
 /// allocation steps.
+/// Widen a NON-CAPTURING lambda to the full fn-ref shape, in place, when `tp` is a
+/// function type.  Answers whether the value was widened.
+///
+/// A fn-ref value is twenty bytes — an 8-byte `d_nr` then a 12-byte closure `DbRef`
+/// (`ValueType::FnRef` in `state/codegen.rs`).  A CAPTURING lambda arrives as
+/// `Value::FnRef(d_nr, closure_var, _)` and carries both halves.  A non-capturing one
+/// is left by the expression parser as a bare `Value::Int(d_nr)` — the d_nr alone,
+/// because its closure half would be the null sentinel anyway.  So one notion reaches
+/// the IR in two spellings, and a consumer that writes the value at the width it finds
+/// is right about the capturing one and twelve bytes short on the other.
+///
+/// Use this wherever a lambda's value flows into a `Function`-typed slot that something
+/// else will read back at the full width: a branch join, a generator's yield channel.
+/// It puts both spellings into the one shape, so the emitters read a single fact rather
+/// than each re-deriving the padding.
+///
+/// A block keeps its block — only its last operator is widened, and its result type is
+/// restated — so the arm still delivers through the slot the merge reads.
+///
+/// The fallback answers `false` for every other shape, and that is safe BECAUSE of the
+/// `tp` gate: a `Function`-typed slot cannot hold an integer that is not a d_nr, so a
+/// value that is neither bare spelling is one that already carries its own closure half
+/// (a complete `FnRef`) or is not a literal at all (a `Var`, a `Call`, a nested branch
+/// its own join already widened). Widening any of those would overwrite a live value.
+pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
+    if !matches!(tp.base(), Type::Function(_, _, _)) {
+        return false;
+    }
+    let fn_tp = tp.base().clone();
+    match v.unspan_mut() {
+        Value::Block(bl) => {
+            let Some(last) = bl.operators.last_mut() else {
+                return false;
+            };
+            if widen_bare_fn_ref(last, tp) {
+                bl.result = fn_tp;
+                true
+            } else {
+                false
+            }
+        }
+        other => {
+            let d_nr = match other {
+                Value::Int(d) => *d,
+                Value::Long(d) => *d as i32,
+                _ => return false,
+            };
+            *other = Value::FnRef(d_nr, u16::MAX, Box::new(fn_tp));
+            true
+        }
+    }
+}
+
 fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
     match v.unspan() {
         // `w != MAX` only appears in the second pass (`emit_lambda_code`
