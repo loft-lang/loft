@@ -35,7 +35,19 @@
 // Axes it HOLDS FIXED:   the leaf field is a scalar, and every collection is a dense vector
 //                        except the keyed cell, which is the one that varies the kind.
 //
-// @falsified-at: PENDING
+// @falsified-at: 9720dfd06 — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED on both
+//   backends against the commit this file's fix landed on top of.
+//
+//   The channel that moved is EXIT, not asserts, and that is worth naming because it reads like
+//   a weaker result than it is: on the control the file does not run at all.  Its place cells
+//   are a compile ERROR there — `w.rooms[0].items.remove(0)` was refused as a call on a
+//   NULLABLE receiver — so no assertion in it ever gets its chance.  The refusal IS the defect
+//   `(N-Chain-Place)` closes, so a control that cannot reach the assertions is the right red.
+//
+//   ⚠ The read cells alone would NOT have falsified anything, and that is the honest limit of
+//   this file: `(N-Chain)` changes a TYPE, so on the control every value below is already
+//   correct and only the promise is missing.  The `(N-Store)` warnings that carry that half are
+//   pinned by `1450`'s own `@EXPECT_WARNING` cells, not here.
 
 struct Leaf1450d { v: integer }
 struct Mid1450d  { leaf: Leaf1450d?, items: vector<Leaf1450d>, tag: integer }
