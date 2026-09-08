@@ -430,6 +430,19 @@ control cell.  With `--baseline`, failing cells are labelled
 `cargo build --release --bin loft` inside it).  Leak detection: interp
 reads the exit warning; native runs under `LOFT_NATIVE_LEAK_CHECK=1`.
 
+**The REPORT's axes are the reporter's, and the ones it holds fixed are where the rest of the
+defect lives.**  A matrix grown outward from the filed reproducer inherits its choices, and
+those choices are not a sample — they are whatever the reporter happened to run into first.
+Measured on loft#1443 (a closure written into a `&fn(…)` parameter, an ICE on both backends):
+the reproducer CAPTURES, and a capturing lambda already emits the fn-ref pair, so the first of
+three fixes made the filed program pass while a NON-capturing lambda, a bare fn name and a
+second write through the same link stayed broken on `--native` — one of them a silent prune
+that panicked `invalid fn-ref` at the call.  The issue even said which axes it was holding
+fixed (*"a capturing closure is not required either"*), and that sentence names the cells that
+had to be built.  So read the report for what it VARIES, then build the cells it does not: the
+fix is finished when those pass, not when the reproducer does.  The corollary for a large leg
+is that sampling should cross the held-fixed axes rather than the moving ones.
+
 **A missing WARNING is not a passing cell.**  The vacuous-cell rule above is about
 empty stdout, but the same trap has a second door: reading a cell through a
 *diagnostic channel* — no leak warning, no error, exit 0 — while never checking the
