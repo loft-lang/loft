@@ -894,6 +894,37 @@ promise in the sentence right after it; that wording is how the loss
 happened.  `scripts/registry_retention_check.py` now fails the nightly
 if any version leaves the index or stops downloading.
 
+**Signing a yank — `--expect-yank`.**  A yank adds no version, so the
+`--expect <pkg>@<ver>` that binds an ordinary publish cannot describe
+one: it refuses for *"asked for but ABSENT from the diff"* while the
+`yanked` edit itself reads as untouchable package-metadata drift.  That
+left `--yes` as the only route, and `--yes` asserts nothing about what
+is signed — the exact gap the bound form exists to close.  So the
+signer takes a second bound form:
+
+```bash
+scripts/registry-sign.sh --registry-dir <checkout> --expect-yank imaging@0.1.0 \
+  --message 'yank imaging 0.1.0 — <why>'
+```
+
+It refuses unless the diff adds exactly the named versions to those
+packages' `yanked` arrays: no version added or changed, nothing
+un-yanked, no other field of any package touched, and every named
+version still present in `versions` (a yank of an unlisted version
+would sign a marker pointing at nothing — the `web 0.2.2` shape above).
+The two forms combine for a publish that also yanks.
+
+**What a yank does and does not change.**  Measured on `imaging` 0.1.0
+(loft#1448): a range or `*` skips it (`>=0.1` resolves 0.3.2, as it did
+before), an **exact** pin still resolves it — that is the retention
+promise `find_best_version` keeps for a `loft.lock` — and a constraint
+whose only matches are yanked now FAILS where it used to install an
+unbuildable release.  That last case is the one the yank exists for, and
+its message names the yank (`available: 0.1.0 (yanked), …  — every
+version that matches is yanked`): listing the keys bare said "0.1.0 is
+available" in the same breath as refusing a constraint 0.1.0 satisfies,
+which reads as a resolver bug rather than as a maintainer's decision.
+
 ---
 
 ## Index signing — `index.json.sig`

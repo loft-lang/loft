@@ -29,6 +29,13 @@ exactly where a hand publish goes wrong. Use the routines:
     missing/newer than the index, then signs (it signs **through** `registry-sign.sh`).
   - one registry PR: `scripts/registry-sign.sh --pr N` — shows the diff, re-checks every
     tarball `sha256`, then signs.
+  - **yank a broken release**: edit the package's `yanked` array by hand (never touch its
+    `versions` entry), then `scripts/registry-sign.sh --expect-yank <pkg>@<ver>`. A yank
+    adds no version, so plain `--expect` cannot name one and would refuse; `--expect-yank`
+    is its bound counterpart — see PKG_REGISTRY.md § Yanking. **A yank, not a republish, is
+    usually the right answer for a broken OLD version**: a published tarball is immutable,
+    so the bad artefact cannot be fixed in place, and cutting a back-port only helps a
+    consumer who actually pins that line. Check who pins it before assuming anyone does.
 
 **The signing gate (why the key never enters CI).** A fully-automatic "push → signed release" is
 impossible: the trust-root key must never leave the maintainer's machine (a wrong/stale signature
