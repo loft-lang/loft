@@ -241,6 +241,20 @@ What that buys, and none of it is available from a rule NAME alone:
    exists for them. A citation naming one is an error, which is exactly what the resolve check
    catches.
 
+**The measurement that argues for the mechanism rather than for the register.** A deviation
+entry can name its own generator, in as many words, and still not prevent the next instance —
+because the entry is reachable from the RULES doc and the defect is met in the CODE.
+`D-bind-17` closed on 2026-09-06 saying what had been missing was *"one spelling of the SLOT
+behind a link, at the nine sites that each asked the link's inner type bare"*. On 2026-09-07,
+loft#1443 and loft#1454 found **six more sites doing exactly that**, for a different τ — a
+fn-typed link — across the parser, both backends' emitters and the native reachability marker.
+The entry did not fail to describe the class. It failed to be reachable from the sites that
+needed it: a reader at `variables.tp(var)` has nothing to grep, because the thing they are
+about to get wrong is an absence. That is the case for the citation direction — **a site
+enforcing a rule names it, so "which sites ask this?" is a grep instead of a memory** — and it
+is why 179 of 257 rules having no code representation is the backlog rather than a statistic.
+Better prose in the register could not have closed any of the six.
+
 **Why this is the quality lever, and not just tidiness.** Fixing a bug has no intrinsic test
 for *did we now cover every similar case?* — a fix is shaped by the subset of the language
 that happened to get stressed, and nothing in it asks about the rest. A citation converts that
