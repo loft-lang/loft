@@ -5916,7 +5916,7 @@ impl Parser {
 
 pub(crate) fn is_keyed(tp: &Type) -> bool {
     matches!(
-        tp.peel_link(),
+        tp.base(),
         Type::Hash(_, _, _)
             | Type::Sorted(_, _, _)
             | Type::Index(_, _, _)
