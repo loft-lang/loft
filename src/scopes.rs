@@ -5515,7 +5515,7 @@ fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut
         // CALLEE's frame, never a record of this function, so nothing it carries can pass
         // the caller's membership test (`85-closure-factory-discarded-free`).
         Type::Function(_, _, deps) => {
-            for w in deps.iter() {
+            for w in deps.as_slice() {
                 if !out.contains(w) {
                     out.push(*w);
                 }
