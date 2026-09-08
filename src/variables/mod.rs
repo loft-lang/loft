@@ -3712,8 +3712,7 @@ impl Function {
         ) || crate::parser::vectors::is_keyed(self.tp(v).base()))
             // @FR-O-Proxy asks free — the displacement free follows on this answer, so the
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
-            && (self.tp(v).depend().is_empty() || self.borrows_one_argument(v))
-            && !self.is_skip_free(v)
+            && self.proxy_says_owned_or_arg(v)
             && !self.is_captured(v)
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
     }
@@ -3803,6 +3802,45 @@ impl Function {
     /// `!depend().is_empty()` as *"is there a dep list to strip"* rather than as an
     /// ownership answer; only their veto is this rule's obligation. Merging those onto this
     /// predicate would couple three questions that must stay free to differ.
+    /// Is `v` a VECTOR the parser marked never-free that still carries deps — a borrowed view
+    /// it holds rather than a store it owns?
+    ///
+    /// The complement of [`Self::proxy_says_owned`], and a notion in its own right: the veto
+    /// says nobody frees this binding on an ownership derivation, and the non-empty dep list
+    /// says there is something it still views.  A `_mv_` match-field binding is the shape.
+    ///
+    /// One home because two sites asked it independently — `Parser::ref_return`, deciding
+    /// which arms need their borrow copied before the return, and
+    /// `Parser::jo_copy_borrowed_arm_yield`, deciding whether to build the owned `mvcopy` —
+    /// and both had to name three conditions to say one thing.
+    #[must_use]
+    pub fn is_marked_vector_borrow(&self, v: u16) -> bool {
+        self.is_skip_free(v)
+            // @FR-N-Shape — a SHAPE question answers alike for `τ` and `τ?`, and "is this a
+            // vector" is one.  Both folded sites matched bare; peeling is measured
+            // byte-identical over the corpus, so the fold keeps its meaning and the rule gets
+            // its answer in the same step.
+            && matches!(self.tp(v).base(), Type::Vector(_, _))
+            && !self.tp(v).depend().is_empty()
+    }
+
+    /// [`Self::proxy_says_owned`] WIDENED: a binding whose dep list names exactly one
+    /// ARGUMENT still counts as owning what it displaces.
+    ///
+    /// The displacement question is not the sweep's.  A local that borrows one argument still
+    /// has a store of its own to release when a reassignment displaces it, and the dep naming
+    /// that argument is what makes the release decidable at runtime — so the proxy is read
+    /// wider here on purpose.  Routed through the pair rather than respelling it, because the
+    /// VETO is the same obligation either way: @FR-O-Override does not soften because the
+    /// proxy did.
+    #[must_use]
+    pub fn proxy_says_owned_or_arg(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — the displacement release follows on this answer, and the
+        // @FR-O-Override veto rides on both halves: through the pair on the left, spelled on
+        // the right because the widening does not exempt it.
+        self.proxy_says_owned(v) || (self.borrows_one_argument(v) && !self.is_skip_free(v))
+    }
+
     #[must_use]
     pub fn proxy_says_owned(&self, v: u16) -> bool {
         // @FR-O-Proxy asks free — this IS the free question, and @FR-O-Override is the

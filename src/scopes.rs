@@ -10395,7 +10395,7 @@ impl Scopes<'_> {
                 // the hard way: the ladder was attached to that predicate and its gate NEVER
                 // FIRED, because the sweep does not go through it.  That predicate is the
                 // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
-                let owns = (dep.is_empty()
+                let owns = (function.proxy_says_owned(v)
                     || self.lift_join_witness.contains_key(&v)
                     || borrow_witness.is_some()
                     || (dep.len() == 1
@@ -13667,8 +13667,9 @@ fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data)
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
-            && function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+            // @FR-O-Proxy asks free — the pair, asked once ([`Function::proxy_says_owned`]),
+            // plus the parameter carve-out this site shares with the scope-exit sweep.
+            && function.proxy_says_owned(v)
             && !function.is_argument(v)
     });
     out

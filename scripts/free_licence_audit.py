@@ -79,6 +79,21 @@ FACT_RE = [(re.compile(k), v) for k, v in FACTS.items()]
 FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn\s+([a-z_][a-z0-9_]*)")
 # Functions that BUILD a free node and decide nothing — their licence is at every caller.
 HELPERS = {"release_witness", "call", "cl"}
+# The named homes for a free-licence notion.  Each spells the facts because it IS the home.
+HOMES = {"proxy_says_owned", "proxy_says_owned_or_arg", "is_marked_vector_borrow"}
+# Functions that spell the pair and have a REASON to, read one at a time.  The point of naming
+# them is that the residue becomes actionable: a copy with no entry here is debt, and a NEW one
+# stands out instead of joining a list of seven that everyone has stopped reading.
+EXEMPT = {
+    "run_leak_scan": "audit — checks the licence, so it must not ask the predicate under test",
+    "run_over_free_check": "audit — same",
+    "check_ref_leaks": "audit — asserts a free is MISSING; reads the raw facts to do it",
+    "tuple_owned_elem_frees": "two subjects — proxy off the ELEMENT, veto off the CONTAINER",
+    "build_null_coalesce_default_inner": "different question — `is_skip_free` is read as an ARM"
+    " marker here, and the dep tests are on a TYPE, not on one binding",
+    "gen_set_first_ref_null": "alloc, not free — decides null-init, the opposite direction",
+    "gen_set_first_vector_null": "alloc, not free — same",
+}
 STRING_SPAN = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
 
 
@@ -269,8 +284,47 @@ def main():
             for site, name, op in members:
                 print(f"         {site:<28} {name:<38} {op}")
 
+    # --- table C: the number the owner's concern names directly.
+    #
+    # A function that reads the PROXY and the VETO and does not go through the fold is a
+    # hand-written copy of `Function::proxy_says_owned` — one more implementation of "is a free
+    # needed", whatever else it also asks.  This is what a fold removes, and counting it is how
+    # "reduce the number of implementations" becomes a number rather than an impression.
+    #
+    # Both halves must be in the SAME function: the sweep reads its proxy at one line and its
+    # veto forty lines below, and that is still one implementation spread out, not two.
+    print("\n\n=== C. hand-written copies of the proxy+veto PAIR ===\n")
+    hand = []
+    for path in rust_files():
+        lines = code_lines(path)
+        rel = os.path.relpath(path, ROOT)
+        starts = [i for i, l in enumerate(lines) if FN.match(l)]
+        for k, i in enumerate(starts):
+            end = starts[k + 1] if k + 1 < len(starts) else len(lines)
+            body = "\n".join(lines[i:end])
+            f = set(facts_in(body))
+            # A named HOME for a notion is not a copy of it: `is_marked_vector_borrow` is the
+            # complement of the pair and has to spell both halves to BE that home.  Counting a
+            # home as debt would make every fold look like it added one.
+            if FN.match(lines[i]).group(1) in HOMES:
+                continue
+            if {"proxy", "veto"} <= f and "proxy+veto" not in f:
+                hand.append((f"{rel}:{i + 1}", FN.match(lines[i]).group(1), sorted(f)))
+    debt = [h for h in hand if h[1] not in EXEMPT]
+    print(f"  {len(hand)} function(s) spell the pair themselves, {len(debt)} of them"
+          f" with no stated reason\n")
+    for site, name, f in sorted(hand):
+        why = EXEMPT.get(name)
+        print(f"  {site:<28} {name:<40} {' + '.join(f)}")
+        if why:
+            print(f"  {'':<28} └─ {why}")
+        else:
+            print(f"  {'':<28} └─ DEBT: no reason recorded — fold it or record why not")
+
     print("\n\n=== the number to drive down ===\n")
     shared = {f: m for f, m in groups.items() if len(m) > 1 and f}
+    print(f"  hand-written proxy+veto pairs                     : {len(hand)}"
+          f"  ({len(debt)} unexplained)")
     print(f"  named predicates                                  : {len(predicates)}")
     print(f"  distinct fact-sets across free sites              : {len(groups)}")
     print(f"  fact-sets used at MORE THAN ONE site (fold candidates): {len(shared)}"

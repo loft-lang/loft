@@ -4598,11 +4598,9 @@ impl Parser {
         // @FR-O-Proxy asks copy — a non-empty dep list is what marks the arm's yield as a
         // BORROW, and the answer chooses whether to build the owned `mvcopy`.  It authorises
         // no free: the copy is a fresh binding, and the borrow keeps its own owner.
-        if v >= self.vars.count()
-            || !self.vars.is_skip_free(v)
-            || !matches!(self.vars.tp(v), Type::Vector(_, _))
-            || self.vars.tp(v).depend().is_empty()
-        {
+        // The same notion `ref_return` asks, asked once
+        // ([`Function::is_marked_vector_borrow`]) — read negated here, guarding the early exit.
+        if v >= self.vars.count() || !self.vars.is_marked_vector_borrow(v) {
             return None;
         }
         let v_type = self.vars.tp(v).clone();
@@ -14792,9 +14790,8 @@ impl Parser {
                 .filter(|&v| {
                     v < self.vars.count()
                         && v != buf_var
-                        && self.vars.is_skip_free(v)
-                        && matches!(self.vars.tp(v), Type::Vector(_, _))
-                        && !self.vars.tp(v).depend().is_empty()
+                        // One notion, one home ([`Function::is_marked_vector_borrow`]).
+                        && self.vars.is_marked_vector_borrow(v)
                 })
                 .collect();
             if !borrowed.is_empty()

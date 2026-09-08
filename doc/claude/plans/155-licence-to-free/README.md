@@ -526,6 +526,36 @@ faults, each found by reading the residue rather than believing it:
 4. an EARLY-EXIT guard licenses what it falls THROUGH to — `o_proxy_check.py`'s discrimination
    1 and 4, needed again here.
 
+## The reduction — 12 hand-written pairs to 7, all seven with a reason (2026-09-08)
+
+`make free-licences` gives the number the owner's concern names: **how many functions spell the
+@FR-O-Proxy / @FR-O-Override pair themselves instead of asking for it.**  It read **12**.  Four
+folds took it to **7**, every one byte-identical over the corpus, and all seven remaining have a
+stated reason — so the residue is principle, not debt, and a NEW copy stands out instead of
+joining a list nobody reads.
+
+| fold | what it removed |
+|---|---|
+| `Function::proxy_says_owned_or_arg` | `owns_displaced_store` wrote the pair by hand 99 lines above the home.  Its proxy is WIDENED (`\|\| borrows_one_argument`) so it cannot call the pair directly — the widening is now a named notion routed THROUGH the pair, because @FR-O-Override does not soften because the proxy did |
+| `Scopes::get_free_vars`'s sweep | the biggest free site in the compiler read `dep.is_empty()` off a destructured type and applied the veto forty lines below.  It asks `proxy_says_owned(v)` now — safe because `Type::depend()` is dep-transparent for `Optional`/`RefVar`, so the destructured read and the pair agree on every type the sweep's pattern admits |
+| `scopes::walk` | wrote `owns_freeable_store`'s exact shape — pair plus `!is_argument` — by hand |
+| `Function::is_marked_vector_borrow` | the COMPLEMENT of the pair, spelled at two sites: `Parser::ref_return` and `Parser::jo_copy_borrowed_arm_yield` each named three conditions to say *a vector the parser marked never-free that still carries deps* |
+
+**The seven that stay, and why** — three are AUDITS (`run_leak_scan`, `run_over_free_check`,
+`check_ref_leaks`): they check the licence, so they must not ask the predicate under test, and
+folding them would make the checker depend on the thing it is checking.  Two decide ALLOCATION
+rather than freeing (`gen_set_first_ref_null`, `gen_set_first_vector_null` — null-init, the
+opposite direction).  Two ask a different question off the same two facts:
+`tuple_owned_elem_frees` reads the proxy off a tuple ELEMENT and the veto off the CONTAINER (two
+subjects, already registered in `formal/IMPLEMENTATIONS.md`), and
+`build_null_coalesce_default_inner` reads `is_skip_free` as an ARM marker with its dep tests on a
+TYPE rather than on one binding.
+
+⚠ **A named HOME is not a copy**, and the audit had to learn that: adding
+`is_marked_vector_borrow` made the count go UP, because a home has to spell both halves to BE
+the home.  An instrument that penalises the fold it exists to encourage argues against itself —
+the same shape as `optional`'s peel list penalising the stronger peel (loft#1445).
+
 ## Phase ordering
 
 A first: it is independent, it is what phase 5 re-runs, and it is the cheapest thing here.
