@@ -486,6 +486,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 
 
+
+
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
 shadow) and loft#1397's lint on top: **410 · 386 · 24**, both additions on the peeling side;
@@ -2645,6 +2647,12 @@ than by the audit.
 
 
 
+
+*loft#1460 added `scopes.rs`'s keyed-removal reader and moved all three rows by one: a new
+function that discriminates on `Value` variants (`get_record_literal_keys`), one that resolves an
+op argument to a place (`named_place`), and a `peel_link` at the message split.  All three rows
+counting the same commit is the normal shape for a walker added whole — it is one site in three
+censuses, not three sites.*
 
 *loft#1459 moved one out of the opaque column, and it is the cheapest kind of move: the
 debugger's `render_frame_local` matched bare `Type` variants and let every `Optional` fall to
