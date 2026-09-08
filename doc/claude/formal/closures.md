@@ -87,6 +87,14 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+  (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
+                 one that leaves the frame, or the first where none does — and the rest borrow.
+                 Records that cannot coexist, each built in a different arm of one branch, EACH
+                 own: at most one of them is ever built, so each is the sole owner on its own
+                 run and a borrow there would leave that run's store with no release.  Being
+                 CONDITIONAL is not being exclusive — two sequential `if`s over one store can
+                 both run — so the condition is mutual exclusion, not "the build might not
+                 happen".
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -187,6 +195,17 @@ with the closure's environment in scope.
 
 **OPEN: 1.**
 
+- **D-clo-30** *(closed 2026-09-08, loft#1473)* — `(L-CapOwn)`'s single owner was picked for
+  every group, including records that CANNOT COEXIST.  Arms of one branch each build a record
+  over the same store; the marking demoted all but one to a borrow, and on the run that built a
+  demoted one the frame had already given its free away to a record that run never made — a
+  use-after-free the plain run cannot see, because the released store still holds its bytes and
+  the answer comes out right.  Closed by giving the rule its coexistence condition,
+  `(L-CapOne)`: an exclusive group owns entirely and the frame's conditional release stands down
+  for ANY member being present.  The marking and the release read one predicate, since a record
+  left owning by one and unnamed by the other frees the store out from under that run's cascade.
+  Guard `1473-mutually-exclusive-closure-builds-each-own-their-store.loft`, whose control is the
+  two-sequential-`if`s shape that must stay single-owner.
 - **D-clo-24** *(closed 2026-09-07, loft#1440)* — two closures over ONE store both adopted it,
   and their deaths are independent: the record left behind released what the escaped one still
   held.  Closed the way `(L-CapOwn)` says — among the records that adopted a store exactly one

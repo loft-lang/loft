@@ -5347,7 +5347,8 @@ fn mark_borrowed_captures(data: &mut Data) {
             if group.len() < 2 {
                 continue;
             }
-            // …unless the records CANNOT COEXIST.  "One store, one owner" answers loft#1440,
+            // …unless the records CANNOT COEXIST (`@FR-L-CapOne`).  "One store, one owner"
+            // answers loft#1440,
             // where two records are built in a straight line and both exist; records in opposite
             // arms of one branch are the other case, and there at most one is ever built, so each
             // is the sole owner on its own run.  Demoting either leaves the run that builds it
@@ -5386,7 +5387,8 @@ fn subtree_builds_record(n: &Value, r: u16) -> bool {
 
 /// Can closure records `a` and `b` ever exist on the SAME run?
 ///
-/// `@FR-L-CapOwn`'s "one store, one owner" is a statement about records that COEXIST: loft#1440
+/// `@FR-L-CapOne` — the coexistence condition on `@FR-L-CapOwn`'s single owner.  "One store,
+/// one owner" is a statement about records that COEXIST: loft#1440
 /// is two records built in a straight line, one escaping and one left behind, where the one left
 /// behind released the store the escaped one still held.  Records in OPPOSITE arms of one branch
 /// are the other case — at most one of them is ever built — so each is the sole owner on its own
@@ -5419,7 +5421,7 @@ fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
 
 /// Are the records adopting one store pairwise unable to coexist?
 ///
-/// The condition under which every member of the group OWNS: on any given run at most one of
+/// `@FR-L-CapOne` — the condition under which every member of the group OWNS: on any given run at most one of
 /// them is built, so each one's cascade is that run's only release.  Pairwise and not merely
 /// "every build is conditional", because conditional is not exclusive — see
 /// [`builds_are_mutually_exclusive`].
@@ -5524,7 +5526,7 @@ fn owning_record_locals(
     let name = function.name(v).to_string();
     let (adopters, _) = capture_store_adopters(data, function, builds);
     for group in adopters.values() {
-        // Every member owns where the records CANNOT COEXIST, which is the same condition
+        // `@FR-L-CapOne` — every member owns where the records CANNOT COEXIST, the same condition
         // `mark_borrowed_captures` uses to leave them all owning.  The two must agree by
         // construction: a record the marking left owning while this side declined to name it
         // would have the frame free the store out from under that run's cascade, which is
