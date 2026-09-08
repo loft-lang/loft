@@ -54,21 +54,19 @@ dying under memory pressure — CI_BUDGET.md § When the local gate is
 unreliable).  Nothing is in flight; the working tree is clean apart from
 untracked local artefacts.
 
-**The next unit is `fronds`' allocation class.**  § V-g removed `smooth`'s
-borrow-copies (38 → 14 stores per call) and `fronds` (19×, 1.0 ms) did not move
-a point, so its stores are not read-only views of a const argument.  Start
-from the instrument, not a guess: `LOFT_STORES=log` on a standalone `fronds`
-row (rebuild it from the consumer bench as `vr_smooth.loft` was), one call,
-labels counted per variable — the labelled log names the class (a per-element
-construction into a vector that § V-d's adopt route declines? a struct-field
-twin `Box { s: mk(i) }`? a nullable join?).  Then the widenings § V-g listed
-as its residual, each a cell of its own before any code: a LOCAL base bound
-once and outliving the view (the collection twin's snapshot-witness route —
-guard cell c14), a non-const source proven undisturbed between the bind and the
-last read, a `CallRef` callee.  After that, in profile order: the vector append
-path (~12 %: `vector_append`, `length_vector`, `get_vector`, `vector_finish`);
-the default fill of a literal that writes every field (an emitter fact); the
-unattributed `Parts::clone`; **P4c record scalars**.
+**The next unit is the loop's own overhead — queue items 1–3** (§ Phase
+ordering): the loop bound read through the runtime per iteration, the range
+check on a constant shift, and the sentinel checks on a non-nullable
+parameter's arithmetic.  The evidence is one emitted function, `n_fnv` in the
+standalone `smooth` row (`loft --native-emit --lean`), and the instrument is
+the same: emit, read the loop, count the calls per iteration, then the P0
+`hash` row and the consumer table.  Item 1 is S and touches
+`src/generation/hoist.rs`'s bound emission; item 3 is P3's open half
+(`generation::non_sentinel`, the leaf-trust set: a parameter declared
+non-nullable IS non-null, and that fact has to reach the callee's body).  Then
+`fronds`' class (item 4) from its labelled census — the census is done
+(DESIGN.md § V-g residual), the design is not — and the frame-local record
+temporaries (item 5), whose ceiling § V-g's scalar probe measured.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -172,56 +170,34 @@ frame name with `--lean` never passed.  Fixed by giving frame naming its own
 field (`Output::lean`).  The bench is native-only, so the ratios above are
 unaffected — but the phase had shipped without `make ci` green over it.
 
-## Phase ordering
+## Phase ordering — the remaining queue (re-ranked 2026-09-08, all probe-measured)
 
-P0–P4d shipped; the original ordering below it stands as history.  What
-remains, ranked by measured value:
+P0–P4d, § V–V-g and the shipped tier are in; the original ordering stands as history at
+the bottom.  Nothing measured puts loft at a floor: in `smooth`'s profile the program's
+own arithmetic is 28 % of the row, and the simplest row, `hash` (a byte loop, 9× on the
+shipped tier), shows three closable costs in its emitted Rust — DESIGN.md § The floor.
+What remains, ranked by measured value per unit of work:
 
-1. ~~**Value-struct returns**~~ — **SHIPPED 2026-09-08 as Route R** (DESIGN.md
-   § V): `lock` −30 %, 6.2× on the P0 instrument.  ~~**The hoist unblock**~~ —
-   **SHIPPED the same day as § V-c**: the retbuf-only-writer verdict plus the
-   record-free admission, `lock` −16 % more, 5.3×.  What Route R still leaves
-   on the table: the gate's declined sites (7 pts) are NOT a widening of the
-   guards — § V-b built that and the matrix falsified it (three parser-level
-   release sites read the dep-free return as a fresh store) — so they wait on
-   the type-level fact (a buffer dep the adopt lowering accepts), M–L; and
-   Route T's record round-trip (−13 pts) stays a separate item.
-2. ~~**Consumer re-run**~~ — done twice (DESIGN.md § Consumer 14-row re-run,
-   2026-09-07 and 2026-09-08).  The second one CORRECTS the first: `lock`
-   17.2× → 9.2× in the consumer lane, but `smooth` (200×) and `fronds` (53×)
-   did not move a point — they are NOT Route R's class.  Their allocation is
-   per-element RECORD CONSTRUCTION into a vector (`pts += [Pt{…}]`: an
-   `OpNewRecord` + writes + `OpFinishRecord` per element) — **SHIPPED the same
-   day as § V-d** (`smooth` −48 %, `fronds` −31 %).  What it leaves: NRVO-shaped
-   constructors keep the copy (the same missing type-level fact as § V-b), the
-   struct-field twin (`Box { s: mk(i) }`) is untouched.  `smooth`'s other half
-   turned out to be the RUNTIME's per-allocation overhead, not arithmetic —
-   **§ V-e shipped the same day** (perf, five chokepoint fixes, `smooth` 104× →
-   44×).  The head now is what the profile leaves: the claims bookkeeping
-   (~16 %, a hasher and an iteration-order check), the per-field walks on
-   all-scalar records (~15 %), and the allocation COUNT (borrow-copies of live
-   elements, the tangent joins) — DESIGN.md § V-e's residual list, in order.
-   **The first two shipped the same day as § V-f, with `Store::valid`
-   inlined** (`smooth` 44× → 25×, `fronds` 24× → 19×, `composite` 19× →
-   12×).  **The allocation COUNT's first class — the read-only borrow-copies
-   — shipped as § V-g** (`smooth` 25× → 21×, 38 → 14 stores per call);
-   `fronds` did not move, so its allocations are a different class and the
-   next unit starts from its own labelled census — § Where to resume.
-3. **P4c record scalars** (S–M, ~5–10 % pixel rows) · **bound-via-header**
-   (`h.len` is the bound where P4 fired; S) · **P2 thin-LTO probe** (the
-   lean tier's 8.5→6.4 ns gap — the `hash`/`smooth` gate rows carry it).
-4. **Closing:** the owner call on `--native-release` implying `--lean`
-   (flag semantics are clean post the html lesson); P5's checklist row; the
-   PR when the owner judges the branch done.
+| # | item | evidence | expected | size |
+|---|---|---|---|---|
+| 1 | **bound-via-header** — the loop bound re-reads the vector length through the runtime on every iteration even where the header was hoisted (`length_vector` beside `get_elem_hoisted` in `n_fnv`) | every `for` over a vector | `hash` and every element loop | S |
+| 2 | **constant shift amounts need no range check** — `x >> 8` emits a `(0..64).contains` test on a literal | `n_fnv` | XS, folds into 1 | XS |
+| 3 | **interprocedural non-null facts** — every integer op over a non-nullable parameter is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`) because `h0`'s non-nullness does not cross the call; P3's open half | `n_fnv`, and every leaf that takes scalars | `hash` 9× → a few ×; every scalar-heavy leaf | M |
+| 4 | **`fronds`' allocation class** — per-side vector literals and builders freed as hidden `__vdb_*` buffers, 736 of the run's 2080 stores, plus a `FrondSpec` record per sub-array; build them in the record's field, hoist the constant literal | the labelled census (DESIGN.md § V-g residual) | `fronds` 18× → ~9× | M |
+| 5 | **frame-local record temporaries** — 12 of `smooth`'s 14 remaining stores are `pt(…)` results bound to locals; the scalar-tangent probe gained 11 % while DOUBLING the helper calls, so a temporary that lives in the frame takes at least that | § V-g's ceiling probe | `smooth` 19× → ~14×; the same class in every routine that names a struct temporary | M–L |
+| 6 | **runtime ownership at calls** — the protect/unprotect bracket (3.3 %), the free path (`free_named` + `close_file_handle`, 5 %), the join guards; each is a decision § V-g showed can move to compile time | the post-V-g profile | per call, every row | M each |
+| 7 | **the vector append path** — `vector_add`, `vector_append`, `vector_finish`, `get_vector`, `length_vector` ≈ 19 % of `smooth` | the post-V-g profile | the store's general allocator vs `Vec::push` | M |
+| 8 | **LTO into the rlib** — only `#[inline]` functions cross the program/runtime boundary | P2's open probe | non-inline runtime calls per element | probe first |
+| 9 | **profile the pixel rows** — `lock` 7.8×, `composite` 11×, `wide_line` 8.9× were never profiled; only `smooth` was | — | unknown until measured; do before any pixel-side unit | S |
+| 10 | **P4c record scalars** — both the gate bench and the consumer's raster loop already hoist by hand | `raster_segment`'s `rs_ly0 = lay.y0` | small for this consumer; real for the next | S–M |
 
-Honest residual: `lock`'s last stretch (5.3× → 4×) is not yet
-probe-covered; § V-e's perf decomposition was of `smooth`, not `lock`, and the
-same instrument on the `lock` standalone says whether P4c record scalars + the
-remaining per-pixel machinery close it, or whether the type-level buffer fact
-(§ V-b) is needed first.  `smooth` (25×) and `fronds` (19×) are the rows
-furthest from the bar; after § V-f their remaining cost is the NUMBER of stores
-a call makes (the borrow-copies, the tangent joins) more than what each costs —
-the queue above.
+The § V-g widenings (a local base, a non-const source, a `CallRef` callee) sit beside 5:
+each is a cell before any code.  Closing: the PR when the owner judges the branch done;
+P5's checklist row.
+
+Honest residual: `hair` (2.6×) is at the floor the design predicts (DESIGN.md § The
+floor); every other row is above it for a reason in the table, not for a reason in the
+design.  `lock`'s last stretch is 9 and 10 first — measure, then choose.
 
 <details>Original ordering: P0 first; P1/P2/P3 independent by cost; P4 last;
 P5 closes.</details>

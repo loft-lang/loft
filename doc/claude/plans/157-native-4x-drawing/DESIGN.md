@@ -1078,6 +1078,45 @@ fills 4.5× / 5.0×, `wide_line` 8.9× (9.4×).  The P0 gate's loft lanes: `hash
 instrument note in § V-f).  A number in this document taken before this date is on the
 old tier and is not comparable to one taken after.
 
+## The floor — what is design and what is closable (2026-09-08)
+
+The owner's question after the shipped tier: *can we still increase performance, and what
+are the fundamental reasons to be slower than rustc?*  Answered from two instruments: the
+post-§ V-g profile of `smooth` (the program's arithmetic is 28 % of the row; the runtime is
+the rest) and the emitted Rust of the simplest row, `n_fnv` — a byte loop at 9× on the
+shipped tier.  Per iteration that loop does, beside Rust's four ALU ops:
+
+1. `vector::length_vector(&var__vector_1, &stores.allocations)` for the loop bound — a
+   runtime call through the store table, on every iteration, in a loop whose HEADER was
+   hoisted one line above (`__vh_1 = vec_header(…)`, `get_elem_hoisted` for the read).
+2. `ops::op_logical_and_int`, `op_mul_int`, `op_exclusive_or_int` — each tests both
+   operands for `i64::MIN`, because `h0: integer`'s non-nullness does not cross the call
+   into the callee's body (P3's open half, interprocedural param facts).
+3. A `(0..64).contains(&_v_v2)` range test on `x >> 8`, whose amount is a literal.
+
+None of the three is the store model.  What IS the design, and stays:
+
+- **Records and vectors live in a store, not on the stack.**  A field read is one
+  indirection through a store base plus a bounds test; Rust reads a stack offset.  With
+  headers hoisted the per-access cost is one load, one add, one compare — the price of
+  serialisation, live editing, shared stores and the never-crash goal (GOALS.md).
+- **A nullable scalar carries a sentinel**, and a check per op is the semantics where the
+  source IS nullable (`?`, `??`, a `float?` field).  Where the value is provably non-null
+  the check is a missing fact, which is finding 2 above.
+
+What is NOT the design, each with its queue item (README § Phase ordering):
+
+- ownership decided at run time (copy-or-adopt, identity frees, the call bracket) — each
+  decision § V-g showed can move to compile time;
+- a struct temporary is a store creation and a vector growth is a claim in a general
+  arena — frame-local records and a vector-specific growth path;
+- the program and the runtime are two crates, so only `#[inline]` crosses — LTO.
+
+**The floor this predicts:** a record-heavy loop with hoisted headers, known non-null
+facts and frame-resident temporaries sits near 1.5–2× of Rust.  `hair` at 2.6× is at
+that floor already; every row at 8–19× is there for a reason in the closable list, and
+`hash`'s three are the cheapest of them.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can
