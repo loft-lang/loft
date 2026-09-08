@@ -12443,6 +12443,19 @@ fn nullable_view_locals(code: &Value, function: &Function, data: &Data) -> Vec<u
             && !function.is_argument(v)
             && !function.is_captured(v)
             && !function.is_compiler_generated(v)
+            // A local whose DEP LIST is empty is not a view, whatever its defining statement
+            // looks like — something detached it deliberately, and the only honest reading of
+            // an owner-with-no-dep is that it owns.  `make_independent` is that something: a
+            // write to a KEY field through a keyed element view materialises the local
+            // (@PLN130 F4), and from there it owns the copy and must free it.
+            //
+            // Classifying on the defining SHAPE alone saw the projection and marked it
+            // never-free, so no copy was made, the key write reached the collection, and the
+            // element was left reachable by NO key — the exact defect F4 exists to prevent.
+            // It stayed invisible while these locals were non-null; `@FR-Col-Lookup` giving a
+            // keyed lookup its `?` (loft#1450) brought them into this classifier for the first
+            // time and the shape test could not tell an owner from a view.
+            && !function.tp(v).depend().is_empty()
     });
     out
 }

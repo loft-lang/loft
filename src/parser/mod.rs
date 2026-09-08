@@ -10447,7 +10447,15 @@ impl Parser {
     }
 
     pub(crate) fn note_key_field_write(&mut self, base: u16, offset: i64) {
-        if !matches!(self.vars.tp(base), Type::Reference(_, _)) {
+        // Through `base()`: a keyed element view is `Reference(E)` when the lookup types
+        // non-null and `Optional(Reference(E))` once `@FR-Col-Lookup` gives the lookup its `?`
+        // (loft#1450) — one notion, two spellings, and reading only the first skipped this
+        // whole analysis for every keyed binding.  Measured: `c = s[30]; c.key = 5` then left
+        // `s[30]` reachable by NO key and said nothing, which is the exact @PLN130 F4 defect
+        // this function exists to prevent, silently reintroduced by a nullability marker.
+        // `depend()` below is already `Optional`-transparent, so the deps arrive either way —
+        // it was only the SHAPE test that could not see through the `?`.
+        if !matches!(self.vars.tp(base).base(), Type::Reference(_, _)) {
             return;
         }
         let deps: Vec<u16> = self.vars.tp(base).depend().clone();
@@ -10455,7 +10463,14 @@ impl Parser {
             if dep == u16::MAX || dep == base {
                 continue;
             }
-            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep) {
+            // Through `base()`: the container a view depends on may itself be `τ?` — a
+            // `sorted<E[k]>?` field or local is `Optional(Sorted(…))`, and reading only the
+            // bare spelling dropped every such container to `_ => continue`.  A key write
+            // through a view of a NULLABLE keyed collection was then allowed in silence: the
+            // record was re-keyed, the collection never re-indexed, the element left reachable
+            // by no key, and the author told nothing — @PLN130 F4's defect, alive again behind
+            // one nullability marker.
+            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep).base() {
                 Type::Sorted(c, keys, _) | Type::Index(c, keys, _) => {
                     (*c, keys.iter().map(|(k, _)| k.clone()).collect())
                 }

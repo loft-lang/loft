@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A key-field write through an element view materialises the view — and the container's own
+// `?` does not change that.
+//
+// @PLN130 F4 made this a RESHAPE: the view materialises, the author is told, and the
+// collection keeps a consistent reachable entry.  `146-keyed-rekey-through-view` guards it on
+// a DENSE container.  One `?` on the container defeated all of it: no advice, the record
+// re-keyed in place, and the element left reachable by NEITHER key while iteration still
+// yielded it — which is F4's own description of the defect it was written to remove, alive
+// again behind a nullability marker (loft#1456).
+//
+// FIVE sites read the non-null spelling only, and all five are needed — the first two decide
+// whether the materialise is ASKED FOR, the last three whether it HAPPENS:
+//
+//   * `note_key_field_write`'s shape test — a `ref(E)?` view failed `Type::Reference(_, _)`
+//     and the function returned before doing anything;
+//   * its container match — `Optional(Sorted(..))` fell past every keyed arm to `_ => continue`;
+//   * `scopes::nullable_view_locals` — classifies by the defining STATEMENT's shape and not by
+//     the deps, so a local `make_independent` had already detached was still marked never-free;
+//   * `@FR-O-Proxy`'s materialise gate in the interpreter's generator, and
+//   * its NATIVE twin, which asks `heap_def_nr` twice — once to select the arm and once to
+//     emit it, so peeling only one leaves the arm chosen and unreachable.
+//
+// The last two are why this is a both-backends cell rather than an interpreter one: with only
+// the interpreter peeled, `--interpret` was correct and `--native` still lost the element, and
+// nothing in the corpus would have said so.
+//
+// The DENSE twin of every cell is here and must stay correct: it is what says the fix is about
+// the `?` and not about keyed writes in general, and it is the control that was already
+// passing when the nullable one was not.
+//
+// @falsified-at: 49bd8c4f2 — MEASURED, both backends.  On that build the `nullable_*` cells
+//   read `s[30]` and `s[5]` as absent while iteration yields the record, and no advice is
+//   emitted; the dense cells pass there unchanged, which is what makes this a guard for the
+//   nullability axis rather than for @PLN130 F4 as a whole.
+//
+// The advice itself is not pinned here, matching `146`'s convention for this family: the
+// ASSERTS are what carry the contract, and the advice is the same sentence `146` already
+// scores on the dense side.  Pinning it twice would make this file fail on a rewording that
+// `146` would also catch.
+
+struct Elm1456 { key: integer, tag: integer }
+
+fn dense_keeps_the_element() {
+  s: sorted<Elm1456[key]> = [Elm1456 { key: 10, tag: 111 }, Elm1456 { key: 30, tag: 333 }];
+  c = s[30];
+  c.key = 5;
+  assert(c.key == 5, "the view's own copy takes the write: {c.key}");
+  assert(c.tag == 333, "and keeps the rest of the record: {c.tag}");
+  assert((s[30].tag ?? -1) == 333, "the element stays reachable at its ORIGINAL key: {s[30].tag ?? -1}");
+  assert((s[5].tag ?? -1) == -1, "and is NOT reachable at the written one: {s[5].tag ?? -1}");
+  n = 0;
+  for e in s { n = n + e.key; }
+  assert(n == 40, "iteration still yields both records, unrenamed: {n}");
+}
+
+fn nullable_keeps_the_element() {
+  s: sorted<Elm1456[key]>? = [Elm1456 { key: 10, tag: 111 }, Elm1456 { key: 30, tag: 333 }];
+  c = s[30];
+  c.key = 5;
+  assert(c.key == 5, "the view's own copy takes the write: {c.key}");
+  assert(c.tag == 333, "and keeps the rest of the record: {c.tag}");
+  assert((s[30].tag ?? -1) == 333, "the element stays reachable at its ORIGINAL key: {s[30].tag ?? -1}");
+  assert((s[5].tag ?? -1) == -1, "and is NOT reachable at the written one: {s[5].tag ?? -1}");
+  n = 0;
+  for e in s? { n = n + e.key; }
+  assert(n == 40, "iteration still yields both records, unrenamed: {n}");
+}
+
+fn main() {
+  dense_keeps_the_element();
+  nullable_keeps_the_element();
+}

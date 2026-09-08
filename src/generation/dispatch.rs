@@ -150,7 +150,13 @@ impl Output<'_> {
     /// tracker that disagreed with the emitter is exactly how the store leaked (loft#823).
     fn materialises_element(&self, var: u16, to: &Value) -> bool {
         let variables = self.data.def(self.def_nr).variables();
-        variables.tp(var).heap_def_nr().is_some()
+        // Through `base()`: `heap_def_nr` names the variant and not the marker, so a nullable
+        // heap local answered `None` and this arm declined — the element stayed an ALIAS and a
+        // write through it reached the container.  `@FR-L-Null` makes `E?` the same record
+        // behind a nullability bit, so the copy question cannot turn on the `?`.  The
+        // interpreter twin peels for the same reason; asked bare, the two backends disagreed
+        // and only `--native` kept the defect (loft#1456).
+        variables.tp(var).base().heap_def_nr().is_some()
             // @FR-O-Proxy asks copy — the arm this selects ALLOCATES a record and deep-copies
             // into it, so a proxy that answered "owner" for a borrow costs a materialisation
             // and never a release.
@@ -992,7 +998,10 @@ impl Output<'_> {
         // not for an element read, so the F2 strip alone left `--native` still reading the
         // wrong element (probe 05: `c.n 44 want 33`) while the interpreter was already
         // correct.  One fact, and until this both backends did not act on it.
-        if let Some(d_nr) = variables.tp(var).heap_def_nr()
+        // `base()` for the same reason the predicate above peels: the marker does not change
+        // which record this is (@FR-L-Null).  The GATE and the EMIT both ask, so peeling only
+        // one leaves the arm selected and unreachable.
+        if let Some(d_nr) = variables.tp(var).base().heap_def_nr()
             && self.materialises_element(var, to)
         {
             let tp_nr = self.data.def(d_nr).known_type();

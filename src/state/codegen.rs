@@ -2935,10 +2935,18 @@ impl State {
             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
             // through `c2`, loft#1319).
             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
+        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
             // the container-wide free described below; it emits no free of its own.
+            //
+            // Through `base()`: an element view is `Reference(E)` when the read types non-null
+            // and `Optional(Reference(E))` when it does not, and the `?` says nothing about
+            // whether `v` owns a store — @FR-L-Null makes `E?` the same record behind a
+            // nullability bit.  Read bare, a nullable-typed local never materialised: it kept
+            // the interior pointer, so a write through it reached the CONTAINER.  Measured on a
+            // keyed element view whose KEY field is written — @PLN130 F4's materialise silently
+            // stopped happening and the element was left reachable by no key (loft#1456).
             && stack.function.tp(v).depend().is_empty()
             // Not for a WITNESSED local (loft#1336, @FR-O-Witness): its deps are empty
             // here only because a later whole-value copy stripped them, and the
