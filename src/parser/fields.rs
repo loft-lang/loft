@@ -26,8 +26,17 @@ impl Parser {
         // (`@FR-F-Recv`, below), so reading only the marker would send the tagged spelling to
         // the dense overload — the same disagreement between two spellings of one notion that
         // loft#1432 is about between two spellings of one call.
-        let receiver_optional =
-            matches!(tp, Type::Optional(_)) || self.data.is_nullable_wrapper(&tp);
+        // …and a flow proof over the RECEIVER EXPRESSION clears it, the way a proof over a
+        // NAME does one door over.  `if !db.map[k] { … } else { db.map[k].val }` proves the
+        // lookup non-null in the else arm and there is no variable to record it against; the
+        // proof is compared by IR shape, which is what makes the two spellings of the same
+        // lookup one fact.
+        let receiver_optional = (matches!(tp, Type::Optional(_))
+            || self.data.is_nullable_wrapper(&tp))
+            && !self
+                .narrowed_non_null_exprs
+                .iter()
+                .any(|e| Self::same_projection(e, code));
         let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction

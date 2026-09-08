@@ -917,6 +917,15 @@ impl Parser {
                 Value::Continue(_) => terminated = Some("continue"),
                 _ => {}
             }
+            // A PROJECTION proof holds for the first statement of the block and no further.
+            // Unlike a name's, its lifetime cannot be tracked — anything reaching any part of
+            // the path invalidates it, including a call the parser cannot see through — so it
+            // is dropped after one statement rather than reasoned about.  That is exactly what
+            // keeps `if !db.map[k] { … } else { db.map[k].val }` narrowed while
+            // `else { f(); db.map[k].val }` is not, and it errs toward WARNING, which is the
+            // safe direction: a missed narrowing costs a diagnostic on correct code, a wrong
+            // one costs silence on a null read.
+            self.narrowed_non_null_exprs.clear();
             // @PLN25/#585 guard-clause flow-narrowing: after `if <null-test> { <unconditional
             // exit> }` WITHOUT an else, the null case has already left the block, so the
             // fall-through proves the tested var non-null for the rest of THIS block — the same
@@ -3766,6 +3775,89 @@ impl Parser {
     }
 
     // @F27 — if / else as an expression
+    /// Are these the same projection, ignoring SOURCE POSITIONS?
+    ///
+    /// The proof is pushed from the CONDITION's parse and read at the field-read site, which
+    /// are different source positions, so the `Span` wrappers differ all the way down and a
+    /// plain `==` answers no for two spellings of one lookup.  Measured: the extractor fired
+    /// and the comparison never matched.
+    ///
+    /// Only `Call` is descended, which is all a projection chain is (`OpGetField` /
+    /// `OpGetRecord` / `OpGetVector` over a `Var`); everything else falls back to `==`.  That
+    /// makes the answer CONSERVATIVE by construction — a shape this cannot see through
+    /// compares unequal, and unequal means *do not narrow*, which costs a diagnostic on
+    /// correct code rather than silence on a null read.
+    pub(crate) fn same_projection(a: &Value, b: &Value) -> bool {
+        match (a.unspan(), b.unspan()) {
+            (Value::Call(da, aa), Value::Call(db, ba)) => {
+                da == db
+                    && aa.len() == ba.len()
+                    && aa.iter().zip(ba).all(|(x, y)| Self::same_projection(x, y))
+            }
+            (x, y) => x == y,
+        }
+    }
+
+    /// The PROJECTION a condition proves non-null, and on which side — the expression twin of
+    /// [`Self::narrowing_from_condition`], which answers for a NAME.
+    ///
+    /// `if !db.map[k] { … } else { … }` proves `db.map[k]` non-null in the ELSE arm, and there
+    /// is no variable to record it against.  That shape is why `(N-Prop)` could not land:
+    /// `@FR-Col-Lookup` makes the lookup `τ?`, `(N-Prop)` makes `.val` on it `τ?`, and the
+    /// guard cleared nothing because it cleared names.  Measured over the whole suite, it was
+    /// the ONLY shape that broke — the `?`, `??` and `if x != null` cures were all already
+    /// clean, so this is the last one.
+    ///
+    /// Deliberately narrow: the operand must be a CALL (a lookup or a field read), never a
+    /// bare `Var` — a name is [`Self::narrowing_from_condition`]'s to answer, and answering it
+    /// here as well would put one fact in two lists with two lifetimes.
+    fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        let name = self.data.def(*op).name();
+        let is_projection = |v: &Value| matches!(v.unspan(), Value::Call(_, _));
+        // `if !<proj>` — the negated truthy test, so the projection is non-null on the ELSE
+        // side.  This is the corpus idiom (`if !db.map[k] { -1 } else { db.map[k].val }`).
+        if name == "OpNot"
+            && args.len() == 1
+            && let Value::Call(inner_op, inner_args) = args[0].unspan()
+            && self
+                .data
+                .def(*inner_op)
+                .name()
+                .starts_with("OpConvBoolFrom")
+            && inner_args.len() == 1
+            && is_projection(&inner_args[0])
+        {
+            return Some((inner_args[0].unspan().clone(), false));
+        }
+        // `if <proj>` — the plain truthy test, non-null on the THEN side.
+        if name.starts_with("OpConvBoolFrom") && args.len() == 1 && is_projection(&args[0]) {
+            return Some((args[0].unspan().clone(), true));
+        }
+        // A heap projection tests through its own op, like the name case one door over.
+        if name == "OpNot"
+            && args.len() == 1
+            && let Value::Call(inner_op, inner_args) = args[0].unspan()
+            && matches!(
+                self.data.def(*inner_op).name(),
+                "OpRefIsNull" | "OpVectorIsNull"
+            )
+            && inner_args.len() == 1
+            && is_projection(&inner_args[0])
+        {
+            return Some((inner_args[0].unspan().clone(), true));
+        }
+        if matches!(name, "OpRefIsNull" | "OpVectorIsNull")
+            && args.len() == 1
+            && is_projection(&args[0])
+        {
+            return Some((args[0].unspan().clone(), false));
+        }
+        None
+    }
+
     /// @PLN25 DN3 flow-narrowing — read a non-null proof out of a parsed `if` condition.
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
@@ -3962,6 +4054,12 @@ impl Parser {
         if let Some((v, true)) = narrow {
             self.narrowed_non_null.push(v);
         }
+        // …and the PROJECTION twin, pushed and truncated on the same discipline.
+        let proj_narrow = self.projection_narrowing_from_condition(&test);
+        let proj_base = self.narrowed_non_null_exprs.len();
+        if let Some((ref e, true)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
+        }
         // @PLN25 DN3 fault-op: `if v != 0` proves the divisor `v` non-zero in the THEN branch
         // (and `if v == 0 … else` in the ELSE branch), so `a / v` / `a % v` there is provably fit
         // (types non-null). The THEN proof is pushed now; the ELSE proof is pushed below.
@@ -4002,6 +4100,7 @@ impl Parser {
         // @PLN25 DN3: leave the then-branch — drop its narrowing; the ELSE gets the `== null`
         // proof (the var is non-null on the else side of `if v == null { … } else { … }`).
         self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         // Leaving the THEN branch, drop its `!= 0` divisor proof; an `== 0` condition instead
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
@@ -4009,6 +4108,9 @@ impl Parser {
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {
             self.narrowed_non_null.push(v);
+        }
+        if let Some((ref e, false)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
         }
         if let Some((v, false)) = divisor {
             self.divisor_nonzero.push(v);
@@ -4150,6 +4252,7 @@ impl Parser {
         // @PLN25 DN3: both branches parsed — drop any narrowing back to the enclosing level
         // (the proof holds only inside the if/else, not after it).
         self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         self.divisor_nonzero.truncate(divisor_base);
         // Belt-and-suspenders: `index_bounded` was already restored after the THEN block (it is
         // THEN-only, no else-push), so this is a no-op today — kept for parity with the two

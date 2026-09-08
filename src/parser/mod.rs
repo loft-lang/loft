@@ -1085,6 +1085,15 @@ pub struct Parser {
     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
     pub(crate) narrowed_non_null: Vec<u16>,
+    /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
+    /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
+    ///
+    /// A separate list because the fact has a different LIFETIME: a name's proof dies at the
+    /// next write to that name, which the parser can see; a projection's dies at anything that
+    /// could touch any part of it, which it cannot.  So this one is cleared at every statement
+    /// boundary rather than tracked — the proof holds inside ONE expression, which is exactly
+    /// the shape the idiom needs (`else { db.map[k].val }`) and nothing wider.
+    pub(crate) narrowed_non_null_exprs: Vec<Value>,
     /// @PLN25 DN3 fault-op narrowing — local-var slots PROVEN non-zero by an enclosing
     /// `if v != 0 { … }` guard. A division/mod whose divisor is in this set (or a constant
     /// non-zero literal) is provably fit and types NON-null; otherwise it types `τ?`. Same
@@ -1477,6 +1486,7 @@ impl Parser {
             field_read_counts: std::collections::HashMap::new(),
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
+            narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,

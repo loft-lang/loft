@@ -4063,3 +4063,43 @@ fn b_ref_reshape_a_computed_removal_key_is_still_refused() {
          b_ref_reshape_a_computed_removal_key_is_still_refused:1:1",
     );
 }
+
+/// @PLN25 DN3 — a null guard over a PROJECTION narrows it, the way one over a NAME does.
+///
+/// `narrowing_from_condition` answers for a variable, and `if !db.map[k] { … } else { … }` has
+/// no variable to answer about: `@FR-Col-Lookup` makes the lookup `τ?` and the guard cleared
+/// nothing, so the else arm still saw a nullable receiver.  The proof is now recorded over the
+/// projection's IR and compared shape-wise, because the two spellings of one lookup sit at
+/// different source positions and a plain `==` sees `Span`s, not shapes.
+///
+/// What it is observable through TODAY is the redundant-coalesce lint: a field read through a
+/// nullable receiver clears `expr_not_null` (a field of a nullable receiver can itself be
+/// null), so `?? 0` on it is never called redundant.  Under the guard the receiver is proven
+/// non-null, the clear does not fire, and the `??` is correctly named as dead.
+///
+/// ⚠ The UNGUARDED twin in the same file is the load-bearing half: it must stay quiet, because
+/// there the `??` really can be used.  A narrowing that fired unconditionally would pass a cell
+/// that only checked the guarded line, and would be a silent wrong answer rather than a noisy
+/// one — the direction that matters for a proof.
+///
+/// This is also the prerequisite for `(N-Prop)` (loft#1450): with the widening on, this idiom
+/// is the shape that warns on correct code, and every documented cure (`?`, `??`,
+/// `if x != null`) was already clean.
+#[test]
+fn a_null_guard_over_a_projection_narrows_it() {
+    code!(
+        "struct Elm { key: integer, val: integer } \
+         struct Db { map: sorted<Elm[key]> } \
+         fn guarded(db: Db, k: integer) -> integer { \
+           if !db.map[k] { -1 } else { db.map[k].val ?? 0 } } \
+         fn unguarded(db: Db, k: integer) -> integer { db.map[k].val ?? 0 } \
+         fn check() -> integer { d = Db { map: [Elm { key: 1, val: 10 }] }; \
+           guarded(d, 1) + unguarded(d, 1) }"
+    )
+    .warning(
+        "Redundant null coalescing — 'val' is 'not null', default is never used at \
+         a_null_guard_over_a_projection_narrows_it:1:169",
+    )
+    .expr("check()")
+    .result(Value::Int(20));
+}
