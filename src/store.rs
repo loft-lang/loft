@@ -3134,6 +3134,7 @@ impl Store {
 
     /// Try to validate a record reference as much as possible.
     /// Complete validations are only done in 'test' mode.
+    #[inline]
     pub fn valid(&self, rec: u32, fld: u32) -> bool {
         // S29/P1-R3: locked (worker) stores have empty claims by design — skip the
         // claims check.  Records in worker stores are valid copies of the originals.

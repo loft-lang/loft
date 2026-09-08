@@ -856,19 +856,35 @@ through the name map on every free (`hash_one::<&str>`, 1.8–3.7 %) to close a
 file handle — both backends now call one `Stores::close_file_handle`, which
 tests the stored type's NAME instead.  16.1–17.9k → **12.2–13.8k ns/op**.
 
-**Measured.**  Standalone 18.3–20.7k → 12.2–13.8k ns/op (−35 %); after it the
-program (`n_smooth_pts` 15.8 %) is the largest line again.  Consumer table
-(best of 3, every hash agreeing):
+**3. `Store::valid` inlined** (the probe the residual list named).  Every raw
+accessor (`set_u32_raw`, `get_float`, …) calls `valid(rec, fld)` first; in a
+release build its body is the debug asserts' operand — a bounds test and a
+header load whose result nothing reads — and, not inlined across the rlib, the
+call, the test and the load were all paid: 4.8 % self time.  With `#[inline]`
+the dead read and the duplicated bound fall out of every accessor, and the
+effect is far larger than the self time said: 12.2–13.8k → **9.7–10.7k ns/op**
+(−20 %) on `smooth`, and every consumer row moved — `composite` 17.8× → 12.1×
+is the pixel loops' accessor count showing.  P2 had declined two `#[inline]`
+candidates for a +1.5 % `lock` regression (duplicated cold raise paths); this
+one was A/B'd the same way and `lock` did not move on the P0 instrument
+(13.7–14.3M vs 14.0–15.2M ns/op) while it gained 8 % in the consumer lane.
+The lesson is the one PERFORMANCE.md § Design already carries for the guard
+helpers: a guard's cost is the work it keeps alive in its callers, not its own
+body, so an accessor guard is measured inlined and out, never assumed.
 
-| routine | after § V-e | after § V-f |
-|---|---:|---:|
-| smooth | 44× (16.8 µs) | **29×** (11.0 µs) |
-| fronds | 24× (1.23 ms) | **19×** (1.00 ms) |
-| composite | 19.3× | 17.8× |
-| fill_circle / fill_star | 6.0× / 6.9× | 5.2× / 6.0× |
-| wide_line | 12.1× | 11.1× |
-| lock / lock_curved | 9.0× / 11.6× | 8.7× / 11.2× |
-| hair | 3.3× | 3.3× |
+**Measured.**  Standalone 18.3–20.7k → 12.2–13.8k (1+2, −35 %) → 9.7–10.7k
+ns/op (3, −48 % over the unit); after it the program (`n_smooth_pts`) is the
+largest line again.  Consumer table (best of 3, every hash agreeing):
+
+| routine | after § V-e | after 1+2 | after 3 (`valid` inlined) |
+|---|---:|---:|---:|
+| smooth | 44× (16.8 µs) | 29× (11.0 µs) | **25×** (10.2 µs) |
+| fronds | 24× (1.23 ms) | 19× (1.00 ms) | **19×** (0.99 ms) |
+| composite | 19.3× | 17.8× | **12.1×** |
+| fill_circle / fill_star | 6.0× / 6.9× | 5.2× / 6.0× | **4.5× / 5.2×** |
+| wide_line | 12.1× | 11.1× | 9.5× |
+| lock / lock_curved | 9.0× / 11.6× | 8.7× / 11.2× | **8.0× / 10.8×** |
+| hair | 3.3× | 3.3× | 3.2× |
 
 **An instrument note.**  The P0 gate read `lock` at 4.4×–7.8× across four
 back-to-back runs while loft's own number held at 14.0–15.2M ns/op (the
@@ -885,9 +901,6 @@ are; a ratchet reads several runs.
   them the borrow-copies (`hc_a = ctrl(…)`, the @PLN102 link-widen shape) and
   the tangent joins.  A copy of a live element that is only ever read needs no
   store at all; that is a compiler fact, not a runtime one.
-- `Store::valid` 4.8 % — in release a bounds test plus a header read per raw
-  accessor, not inlined across the rlib; P2 declined two `#[inline]` candidates
-  for duplicating cold raise paths, so this is a measured probe, not a default.
 - The vector path: `vector_append` 4.2 %, `length_vector` 3.2 %, `get_vector`
   2.7 %, `vector_finish` 1.8 % — the per-element append machinery § V-d left.
 - `set_default_value_nullable` 3.9 % — now the `zero_range` and its call; a

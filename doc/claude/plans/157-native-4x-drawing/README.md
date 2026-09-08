@@ -12,9 +12,9 @@ place), § V-e (the runtime's per-allocation overhead) and § V-f (the runtime's
 per-record bookkeeping) SHIPPED (see Sub-arcs); the queue is re-ranked below,
 and **§ Where to resume** is the hand-off for the next session.
 Scoreboard vs the issue baseline: `hash` 10.9× → 3.6–4.3× gate-row / 2.3× at
-the leaf; `hair` 4.3× → 3.3× (under the bar); `lock` 30× → **5.3×** shipped
-(8.7× in the consumer lane); `smooth` 262× → **29×**; `fronds` 49× → **19×**;
-`composite` 26× → 18×; the fills 17× → 5–6×.
+the leaf; `hair` 4.3× → 3.2× (under the bar); `lock` 30× → **5.3×** shipped
+(8.0× in the consumer lane); `smooth` 262× → **25×**; `fronds` 49× → **19×**;
+`composite` 26× → 12×; the fills 17× → 4.5–5×.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -45,9 +45,11 @@ hash unchanged.
 
 ## Where to resume
 
-Written 2026-09-08 after § V-f landed: HEAD on `157-native-4x`, pushed, the
-full gate green (both backends).  Nothing is in flight; the working tree is
-clean apart from untracked local artefacts.
+Written 2026-09-08 after § V-f landed: HEAD on `157-native-4x`, pushed; the
+gate is the GitHub `ci.yml` dispatch on that commit (the local `make ci` was
+dying under memory pressure — CI_BUDGET.md § When the local gate is
+unreliable).  Nothing is in flight; the working tree is clean apart from
+untracked local artefacts.
 
 **The next unit is the allocation COUNT** — DESIGN.md § V-f *"Residual, in
 profile order"*.  § V-e and § V-f took the runtime's per-record cost down to
@@ -62,18 +64,23 @@ making fewer of them, which is a COMPILER fact, in two shapes:
    live element needs no store: the question is whether the callee's result
    can be a VIEW into the argument when the parser can prove the source
    outlives every read (the same fact § V-b wanted at the return type — a
-   buffer dep the adopt lowering accepts, M–L).  Count the stores first:
-   `LOFT_STORES=log` on the standalone, one `smooth` call, names every
-   allocation by variable.
+   buffer dep the adopt lowering accepts, M–L).  **Counted** (`LOFT_STORES=log`
+   on the standalone, `--n 1`, labels per `smooth` call): `hc_a` 12 + `hc_b`
+   12 borrow-copies, `sp_ta` 6 + `sp_tb` 6 tangent-join buffers (empty stores,
+   `size == u32::MAX`, the Route R retbuf per `pt(…)` call, freed at the
+   segment's end), `__vdb` 2 vector-literal buffers — 38 stores, of which the
+   borrow-copies are 24.
 2. **The tangent joins** (`pt(a.ptx + b.ptx, …)` results appended): already
    Route R / § V-d shaped where the callee adopts; the ones left are the
    NRVO-shaped constructors (§ V-d A2/A4) and the struct-field twin.
 
-Then, in profile order: `Store::valid` (4.8 %, a measured `#[inline]` probe —
-P2 declined two such for duplicated raise paths, so A/B it, don't assume); the
-vector append path (~12 %: `vector_append`, `length_vector`, `get_vector`,
-`vector_finish`); the default fill of a literal that writes every field
-(emitter); the unattributed `Parts::clone` (1.7 %); **P4c record scalars**.
+Then, in profile order: the vector append path (~12 %: `vector_append`,
+`length_vector`, `get_vector`, `vector_finish`); the default fill of a literal
+that writes every field (emitter); the unattributed `Parts::clone` (1.7 %);
+**P4c record scalars**.  (`Store::valid` was the probe here and SHIPPED in
+§ V-f: −20 % on `smooth`, every consumer row moved — an accessor guard's cost
+is what it keeps alive in its callers, so A/B the next such inline the same
+way rather than reading its self time.)
 
 **How to measure** (all verified this session):
 
@@ -131,7 +138,7 @@ unless said otherwise.
 | **V-c** — the hoist unblock: a callee whose only store writes are scalars into its own retbuf, and a record's guarded free, no longer decline a header hoist (loft#1426 M2's last per-pixel piece) | [DESIGN.md § V-c](DESIGN.md) | `LOFT_HOIST_VERIFY=1` panics; a hash moves; the resolve loop's hoist count drops below 9 | **Shipped 2026-09-08** — `lock` 18.6M → 15.7M (−16 %, on the prediction), P0 `lock` 5.3× (bar 10 → 8), `hash` 4.5×; pinned both directions in `tests/hoist_gate.rs` |
 | **V-d** — append in place: a vector-literal element that is a buffer-returning call is built IN the element's record (the twin of Route R for `v += [pt(…)]`, the two worst rows' allocation class) | [DESIGN.md § V-d](DESIGN.md) | a c1–c10 cell moves; `tests/append_in_place.rs` no longer sees the in-place shape; a consumer hash disagrees | **Shipped 2026-09-08** — `smooth` 200× → 104×, `fronds` 53× → 37× (consumer lane, hashes agree); standalone 15.2M → 3.2M ns/op; scoped to adopting callees (A2/A4 named why); the free bit follows `returns_borrowed_view` (A3) |
 | **V-e** — the runtime's per-allocation overhead, found by `perf` once it could run: three uncached env reads per allocation/free, a scan of every type per allocation, field-list clones per copy, a formatted `String` per protected call | [DESIGN.md § V-e](DESIGN.md) | any consumer hash disagrees; `LOFT_STORES=log` stops reporting; the profile's `getenv` line returns | **Shipped 2026-09-08** — standalone `smooth` −50 %; consumer `smooth` 104× → 44×, `fronds` 37× → 24×, every allocation-heavy row moved; behaviour-preserving (hashes exact, both backends) |
-| **V-f** — the runtime's per-record bookkeeping: the claims set as a bitset, per-type heap facts (`owns_heap`, `zero_default`) that skip the scalar walks, `strict_stores` as one atomic load, the live-store count and the `"File"` lookup off the hot path | [DESIGN.md § V-f](DESIGN.md) | any consumer hash disagrees; `fl_validate` / the "Unknown record" assert stop firing in the armed build; a struct-enum's collection payload leaks | **Shipped 2026-09-08** — standalone `smooth` −35 %; consumer `smooth` 44× → 29×, `fronds` 24× → 19×, fills 6–7× → 5–6×; behaviour-preserving (hashes exact, both backends) |
+| **V-f** — the runtime's per-record bookkeeping: the claims set as a bitset, per-type heap facts (`owns_heap`, `zero_default`) that skip the scalar walks, `strict_stores` as one atomic load, the live-store count and the `"File"` lookup off the hot path, `Store::valid` inlined | [DESIGN.md § V-f](DESIGN.md) | any consumer hash disagrees; `fl_validate` / the "Unknown record" assert stop firing in the armed build; a struct-enum's collection payload leaks; `lock` regresses on the P0 instrument | **Shipped 2026-09-08** — standalone `smooth` −48 %; consumer `smooth` 44× → 25×, `fronds` 24× → 19×, `composite` 19× → 12×, fills 6–7× → 4.5–5×, `lock` 9.0× → 8.0×; behaviour-preserving (hashes exact, both backends) |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)
@@ -189,9 +196,10 @@ remains, ranked by measured value:
    (~16 %, a hasher and an iteration-order check), the per-field walks on
    all-scalar records (~15 %), and the allocation COUNT (borrow-copies of live
    elements, the tangent joins) — DESIGN.md § V-e's residual list, in order.
-   **The first two shipped the same day as § V-f** (`smooth` 44× → 29×,
-   `fronds` 24× → 19×); the head now is the allocation COUNT, a compiler
-   fact — DESIGN.md § V-f's residual, and § Where to resume.
+   **The first two shipped the same day as § V-f, with `Store::valid`
+   inlined** (`smooth` 44× → 25×, `fronds` 24× → 19×, `composite` 19× →
+   12×); the head now is the allocation COUNT, a compiler fact — DESIGN.md
+   § V-f's residual, and § Where to resume.
 3. **P4c record scalars** (S–M, ~5–10 % pixel rows) · **bound-via-header**
    (`h.len` is the bound where P4 fired; S) · **P2 thin-LTO probe** (the
    lean tier's 8.5→6.4 ns gap — the `hash`/`smooth` gate rows carry it).
@@ -203,7 +211,7 @@ Honest residual: `lock`'s last stretch (5.3× → 4×) is not yet
 probe-covered; § V-e's perf decomposition was of `smooth`, not `lock`, and the
 same instrument on the `lock` standalone says whether P4c record scalars + the
 remaining per-pixel machinery close it, or whether the type-level buffer fact
-(§ V-b) is needed first.  `smooth` (29×) and `fronds` (19×) are the rows
+(§ V-b) is needed first.  `smooth` (25×) and `fronds` (19×) are the rows
 furthest from the bar; after § V-f their remaining cost is the NUMBER of stores
 a call makes (the borrow-copies, the tangent joins) more than what each costs —
 the queue above.
