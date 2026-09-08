@@ -185,7 +185,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 
 - **D-clo-24** *(closed 2026-09-07, loft#1440)* — two closures over ONE store both adopted it,
   and their deaths are independent: the record left behind released what the escaped one still
@@ -228,14 +228,32 @@ with the closure's environment in scope.
   `1443-a-closure-written-through-a-fn-parameter-link.loft` pass on the broken build, because a
   freed arena slot still reads back the bytes it held; `LOFT_POISON=1` fails 8 of them, which is
   the nightly gate that caught it.
-- **D-clo-29** *(open, loft#1464)* — `(L-CapOwn)` says a captured heap store is freed ONCE, and
-  where the closure BUILD sits inside a conditional block it is freed ZERO times on the path that
-  skips the build.  The frame gives up its own release in favour of the record's cascade
-  (`capture_adoption_owns_free`), but the suppression is decided from the CAPTURE relation — a
-  static fact about the function — while the cascade that replaces it happens only if the build
-  EXECUTES.  Struct and vector captures leak, text does not (its own free path is separate); a
-  zero-iteration loop body is the same shape.  Not a link question: it reproduces with no `&fn`
-  anywhere.
+- **D-clo-29** *(closed 2026-09-08, loft#1464)* — `(L-CapOwn)` says a captured heap store is
+  freed ONCE, and where the closure BUILD sits inside a conditional block it was freed ZERO times
+  on the path that skips the build.  The frame gives up its own release in favour of the record's
+  cascade (`capture_adoption_owns_free`), but the suppression is decided from the CAPTURE
+  relation — a static fact about the function — while the cascade that replaces it happens only
+  if the build EXECUTES.  Struct and vector captures leaked, text did not (its own free path is
+  separate); a zero-iteration loop body is the same shape.  Not a link question: it reproduced
+  with no `&fn` anywhere.
+  **The filed scope was the narrow half.** Measured, the same sentence also covered a `match`
+  arm, a conditional nested two deep, a record that ESCAPES the frame, a capture REASSIGNED after
+  a conditional build (whose suppression runs through the owner witness instead), two captures in
+  one build, and — the cell that says the fix cannot be keyed on "some record was built" — one
+  record PER ARM, where `(L-CapOwn)`'s single owner is picked statically and the arm that builds
+  only the BORROWING record still owes the store.
+  Closed by keeping the frame's release there and making it conditional on the OWNING record
+  existing.  The record local is the witness: `emit_lambda_code` inits it to the empty slot and
+  the build is the only thing that mints into it, so *"a record is there"* and *"the cascade that
+  replaces this free will run"* are the same fact — `@FR-O-Witness`'s currency, a fact only the
+  run knows, read off a slot at the moment the answer is needed.  Which record that is comes from
+  the same grouping the borrow-marking reads (`capture_store_adopters` + `adoption_owner_index`,
+  one home), because naming an adopter the marking made BORROW would decline the frame's free in
+  favour of a cascade that stops at that attribute.  The guard runs BEFORE the record's own free:
+  the two backends do not agree on what a freed slot reads back as — the interpreter leaves it
+  standing, `--native` nulls `store_nr` — so a test placed after it declines on one and
+  double-frees on the other.  Guard
+  `1464-a-capture-built-in-a-branch-is-released-on-the-path-that-skips-it.loft`.
 - **D-clo-27** *(open, loft#1447)* — `(L-CapHeap)` says a rebind is not a mutation-through for a
   captured **struct** as much as for a vector, and the DENSE spelling breaks it: `d: C = C{a:5};
   out = fn() { d.a }; d = C{a:9}` answers 9 on both backends where its nullable twin answers 5.

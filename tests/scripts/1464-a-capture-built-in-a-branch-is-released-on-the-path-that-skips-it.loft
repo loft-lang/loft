@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1464 — a closure BUILD that sits inside a branch, on the run that does not take it.
+//
+// `(L-CapOwn)` says a captured heap store is freed ONCE, by whichever of the record and the
+// frame outlives the other.  The frame gives its own release up to the record's cascade, and
+// that suppression is a STATIC fact about the function while the cascade is a per-RUN one: it
+// happens only if the build EXECUTES.  Where the build sits in an `if` arm, a `match` arm or a
+// loop body the two disagree on every run that skips it, and the store is then freed by
+// nobody — one leak per call, unbounded.
+//
+// The frame keeps a release there now, conditional on the record existing.  The closure-record
+// local is the witness for that: `emit_lambda_code` inits it to the empty slot and the build is
+// the only thing that mints into it, so "a record is there" and "the cascade that replaces this
+// free will run" are the same fact.  Same currency as `@FR-O-Witness` — a fact only the run
+// knows, read off a slot at the moment the answer is needed.
+//
+// Axes this file MOVES:  the capture's KIND (struct · vector · text, which has its own free
+//                        path and never leaked) · the branch's SPELLING (`if` · `match` · a
+//                        loop body · nesting depth two) · whether the record ESCAPES the frame
+//                        · how many records adopt the one store (one · one per arm) · how many
+//                        captures one build takes · whether the capture is REASSIGNED after the
+//                        build, which routes the suppression through the owner witness instead
+//                        · and the path actually TAKEN, since the taken half is what a fix that
+//                        simply stopped suppressing would double-free.
+// Axes it HOLDS FIXED:   one frame per cell and one store per capture — a capture whose record
+//                        does not REACH it (a record `Enum`) is `1439`'s cell, and a store two
+//                        records hold across a straight-line body is `1440`'s.  The conditional
+//                        is always on a PARAMETER, so nothing is constant-folded away.
+//
+// @falsified-at: 92e872c7, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  Plain mode reads INERT, and that is the whole
+//   point of the ticket: nothing is ever read back, so no value is wrong and no fault fires —
+//   the store is simply never returned.  Every skip-path cell here reports
+//   `[strict-store] NEVER FREED: 1 stores not freed at program exit` on the pre-fix build.
+
+struct E64 { a: integer }
+enum W64 { One, Two }
+
+// e1 — the filed shape: a struct capture whose build is in the `if` arm.
+fn if_struct(pick: boolean) -> integer {
+  d: E64 = E64 { a: 33 };
+  if pick { h = fn() -> integer { d.a }; h() } else { 7 }
+}
+
+// e2 — a COLLECTION capture, which names a view whose backing local no closure captured by
+// name.  It leaked the backing store the same way, so the fix reaches through `backing`.
+fn if_vector(pick: boolean) -> integer {
+  v: vector<integer> = [4, 5, 6];
+  if pick { h = fn() -> integer { v[1] }; h() } else { 7 }
+}
+
+// e3 — TEXT, the control among the kinds: text carries its own free path and never leaked.
+// A fix that reached it would double-free.
+fn if_text(pick: boolean) -> integer {
+  t: text = "hello";
+  if pick { h = fn() -> integer { size(t) }; h() } else { 7 }
+}
+
+// e4 — a loop BODY is the same shape as an `if` arm: zero iterations is the skip path.
+fn loop_body(n: integer) -> integer {
+  d: E64 = E64 { a: 33 };
+  s = 0;
+  for i in 0..n { h = fn() -> integer { d.a }; s += h() + i; }
+  s
+}
+
+// e5 — a `match` arm.  It lowers to the same `If`, and pinning it is what says the walk reads
+// the LOWERED shape rather than recognising a spelling.
+fn match_arm(w: W64) -> integer {
+  d: E64 = E64 { a: 33 };
+  match w { One => { h = fn() -> integer { d.a }; h() }, Two => 7 }
+}
+
+// e6 — nesting depth two: the build is conditional through TWO branches, and the skip path
+// here does not even reach the inner one.
+fn nested(p: boolean, q: boolean = false) -> integer {
+  d: E64 = E64 { a: 33 };
+  if p { if q { h = fn() -> integer { d.a }; h() } else { 8 } } else { 7 }
+}
+
+// e7 — the record ESCAPES.  This is why the release is conditional rather than simply kept: on
+// the taken path the caller owns the record and freeing here would pull the store out from
+// under a closure it is about to call.
+fn escaping(pick: boolean) -> fn() -> integer {
+  d: E64 = E64 { a: 33 };
+  if pick { fn() -> integer { d.a } } else { fn() -> integer { 7 } }
+}
+
+// e8 — one store, one record PER ARM.  `(L-CapOwn)` makes exactly one of the adopters keep it
+// and the rest borrow, so the frame's release has to be conditional on THAT record and not on
+// "some record was built": the arm that builds only the borrowing one still owes the store.
+fn arm_each(pick: boolean) -> integer {
+  d: E64 = E64 { a: 33 };
+  if pick { h = fn() -> integer { d.a }; h() } else { k = fn() -> integer { d.a + 1 }; k() }
+}
+
+// e9 — TWO captures in one conditional build: both stores are owed on the skip path.
+fn two_captures(pick: boolean) -> integer {
+  d: E64 = E64 { a: 33 };
+  e: E64 = E64 { a: 44 };
+  if pick { h = fn() -> integer { d.a + e.a }; h() } else { 7 }
+}
+
+// e10 — the capture is REASSIGNED after a conditional build.  `@FR-O-Latest` gives such a local
+// an owner witness and the sweep releases through THAT, so this cell reaches the second
+// suppression site; the witness names nothing on the skip path, because the assignment that
+// would have filled it is inside the arm.
+fn rebound(pick: boolean) -> integer {
+  d: E64 = E64 { a: 33 };
+  if pick { h = fn() -> integer { d.a }; d = E64 { a: 9 }; h() + d.a } else { 7 }
+}
+
+// c1 — CONTROL: a capture with NO conditional.  The suppression is right here and must stand;
+// a fix that stopped suppressing would free the store the record's cascade also frees.
+fn no_branch() -> integer { d: E64 = E64 { a: 33 }; h = fn() -> integer { d.a }; h() }
+
+// c2 — CONTROL: a conditional with NO closure.  The frame's ordinary release is unchanged.
+fn no_closure(pick: boolean) -> integer { d: E64 = E64 { a: 33 }; if pick { d.a } else { 7 } }
+
+fn main() {
+  assert(if_struct(false) == 7, "e1 skip path: {if_struct(false)}");
+  assert(if_struct(true) == 33, "e1t taken path is not double-freed: {if_struct(true)}");
+  assert(if_vector(false) == 7, "e2 collection capture, skip path: {if_vector(false)}");
+  assert(if_vector(true) == 5, "e2t collection capture, taken path: {if_vector(true)}");
+  assert(if_text(false) == 7, "e3 text capture, skip path: {if_text(false)}");
+  assert(if_text(true) == 5, "e3t text capture, taken path: {if_text(true)}");
+  assert(loop_body(0) == 0, "e4 zero iterations is the skip path: {loop_body(0)}");
+  assert(loop_body(3) == 102, "e4t three iterations rebuild the record: {loop_body(3)}");
+  assert(match_arm(W64.Two) == 7, "e5 match arm not taken: {match_arm(W64.Two)}");
+  assert(match_arm(W64.One) == 33, "e5t match arm taken: {match_arm(W64.One)}");
+  assert(nested(true, false) == 8, "e6 nested, inner arm skipped: {nested(true, false)}");
+  assert(nested(false, false) == 7, "e6b nested, outer arm skipped: {nested(false, false)}");
+  assert(nested(true, true) == 33, "e6t nested, both taken: {nested(true, true)}");
+
+  kept = escaping(false);
+  gone = escaping(true);
+  assert(kept() == 7, "e7 escaping, skip path: {kept()}");
+  assert(gone() == 33, "e7t the escaped record still holds its capture: {gone()}");
+
+  assert(arm_each(false) == 34, "e8 the borrowing arm still owes the store: {arm_each(false)}");
+  assert(arm_each(true) == 33, "e8t the owning arm: {arm_each(true)}");
+  assert(two_captures(false) == 7, "e9 two captures, skip path: {two_captures(false)}");
+  assert(two_captures(true) == 77, "e9t two captures, taken path: {two_captures(true)}");
+  assert(rebound(false) == 7, "e10 witnessed local, skip path: {rebound(false)}");
+  assert(rebound(true) == 42, "e10t witnessed local, taken path: {rebound(true)}");
+
+  assert(no_branch() == 33, "c1 an unconditional capture is unchanged: {no_branch()}");
+  assert(no_closure(false) == 7, "c2 a conditional with no closure is unchanged: {no_closure(false)}");
+}

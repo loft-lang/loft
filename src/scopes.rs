@@ -5291,46 +5291,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
 /// lives in exactly the frame whose variables decide the verdict.
 fn mark_borrowed_captures(data: &mut Data) {
     let mut borrowed: Vec<(u32, usize)> = Vec::new();
-    // Per function: the capture NAME -> every (closure local, record, attribute) that adopted
-    // its store.  More than one entry is loft#1440's shape.
-    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
     for d_nr in 0..data.definitions() {
-        adopters.clear();
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
         let function = &data.def(d_nr).variables;
         let builds = capture_build_backings(data, function, data.def(d_nr).code());
-        for v in 0..function.next_var() {
-            // The DEFINING frame holds the record in the `___clos_N` local
-            // `emit_lambda_code` mints for it.  A frame that receives the record as
-            // an ARGUMENT is the closure BODY (its hidden `__closure` parameter),
-            // whose own variable table knows nothing about who owns the captures —
-            // reading it flipped the verdict depending on definition order.
-            if function.is_argument(v) {
-                continue;
-            }
-            let Type::Reference(record, _) = function.tp(v) else {
-                continue;
-            };
-            let record = *record;
-            if !data.def(record).name.starts_with("__closure_") {
-                continue;
-            }
-            for a in 0..data.attributes(record) {
-                if !capture_attr_is_cascade_relevant(data, record, a) {
-                    continue;
-                }
-                if record_adopts_capture(data, function, record, a) {
-                    adopters
-                        .entry(adopted_store_key(data, function, &builds, v, record, a))
-                        .or_default()
-                        .push((v, record, a));
-                } else {
-                    borrowed.push((record, a));
-                }
-            }
-        }
+        let (adopters, mut never_adopted) = capture_store_adopters(data, function, &builds);
+        borrowed.append(&mut never_adopted);
         // @FR-L-CapOwn — one STORE, one owner.  Two closures over one store both adopted it,
         // and their deaths are independent: where one record escapes and the other is left
         // behind, the one left behind released the store the escaped record still holds and the
@@ -5345,14 +5313,11 @@ fn mark_borrowed_captures(data: &mut Data) {
         // stores, and grouping by name made the second borrow one the first never held —
         // measured as a leaked `S` in
         // `a-captured-local-reassigned-after-the-build-frees-its-own-store.loft`.
-        for (_, mut group) in std::mem::take(&mut adopters) {
+        for (_, mut group) in adopters {
             if group.len() < 2 {
                 continue;
             }
-            let owner = group
-                .iter()
-                .position(|(v, _, _)| record_leaves_frame(data, function, d_nr, *v))
-                .unwrap_or(0);
+            let owner = adoption_owner_index(data, function, d_nr, &group);
             group.remove(owner);
             for (_, record, a) in group {
                 borrowed.push((record, a));
@@ -5362,6 +5327,109 @@ fn mark_borrowed_captures(data: &mut Data) {
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
     }
+}
+
+/// This function's closure records, grouped by the STORE each adopted.
+///
+/// One home for `@FR-L-CapOwn`'s "which records are in the running for this store", read by
+/// [`mark_borrowed_captures`] (which makes the losers borrow) and by [`owning_record_local`]
+/// (which asks the winner whether it exists at run time).  The two have to agree by
+/// construction: a record the marking makes borrow while the free-suppression still credits it
+/// leaves the store with no release at all, which is the shape loft#1464 is.
+///
+/// Returns the groups keyed by [`adopted_store_key`], plus the `(record, attribute)` pairs that
+/// adopt NOTHING — those borrow outright and never enter a group.
+fn capture_store_adopters(
+    data: &Data,
+    function: &Function,
+    builds: &CaptureBuilds,
+) -> (
+    HashMap<(u16, u32), Vec<(u16, u32, usize)>>,
+    Vec<(u32, usize)>,
+) {
+    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
+    let mut never_adopted = Vec::new();
+    for v in 0..function.next_var() {
+        // The DEFINING frame holds the record in the `___clos_N` local `emit_lambda_code`
+        // mints for it.  A frame that receives the record as an ARGUMENT is the closure BODY
+        // (its hidden `__closure` parameter), whose own variable table knows nothing about who
+        // owns the captures — reading it flipped the verdict depending on definition order.
+        if function.is_argument(v) {
+            continue;
+        }
+        let Type::Reference(record, _) = function.tp(v) else {
+            continue;
+        };
+        let record = *record;
+        if !data.def(record).name.starts_with("__closure_") {
+            continue;
+        }
+        for a in 0..data.attributes(record) {
+            if !capture_attr_is_cascade_relevant(data, record, a) {
+                continue;
+            }
+            if record_adopts_capture(data, function, record, a) {
+                adopters
+                    .entry(adopted_store_key(data, function, builds, v, record, a))
+                    .or_default()
+                    .push((v, record, a));
+            } else {
+                never_adopted.push((record, a));
+            }
+        }
+    }
+    (adopters, never_adopted)
+}
+
+/// Which of one store's adopters KEEPS it — `@FR-L-CapOwn`'s "exactly one".
+///
+/// The record that LEAVES the frame, because the frame is gone by the time the question is
+/// asked; where none leaves, the first, which is the single-record case unchanged.
+fn adoption_owner_index(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    group: &[(u16, u32, usize)],
+) -> usize {
+    group
+        .iter()
+        .position(|(v, _, _)| record_leaves_frame(data, function, d_nr, *v))
+        .unwrap_or(0)
+}
+
+/// The closure-record local whose cascade releases the store capture `v` names, if any.
+///
+/// `@FR-L-CapOwn` — the frame gives up its own release only because some record's cascade takes
+/// it over, and this names that record.  [`capture_adoption_owns_free`] answers *whether* the
+/// handover happened; this answers *to whom*, which is the fact a build that may not RUN needs:
+/// the record local is null until its build executes, so it is the runtime witness for
+/// "the cascade that replaces the frame's free will actually happen" (loft#1464).
+///
+/// Reads the same grouping the borrow-marking reads, so the record named here is the record
+/// whose cascade still follows the capture.  Asking it any other way is how the two drift:
+/// naming an adopter the marking made BORROW would decline the frame's free in favour of a
+/// cascade that stops at that attribute.
+fn owning_record_local(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    builds: &CaptureBuilds,
+    v: u16,
+) -> Option<u16> {
+    // Both spellings of "the record took this local's store", the pair `CaptureBuilds` carries:
+    // a STRUCT capture names the local outright, a COLLECTION capture names a view whose
+    // backing local is this one.
+    let name = function.name(v).to_string();
+    let (adopters, _) = capture_store_adopters(data, function, builds);
+    for group in adopters.values() {
+        let owner = adoption_owner_index(data, function, d_nr, group);
+        let (local, record, a) = group[owner];
+        let attr = data.attr_name(record, a).clone();
+        if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
+            return Some(local);
+        }
+    }
+    None
 }
 
 /// The STORE a record adopted for capture attribute `a`, as a grouping key.
@@ -5873,6 +5941,7 @@ pub(crate) fn capture_build_backings(
     let mut generation: HashMap<u16, u32> = HashMap::new();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
+    captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
     let mut built: HashSet<u16> = HashSet::new();
     // Capture vars already resolved at their enclosing statement, waiting for the walk to
     // reach the build node itself.  See the `Value::Set` arm.
@@ -6016,6 +6085,14 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: HashSet<u16>,
+    /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
+    /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
+    ///
+    /// `(L-CapOwn)` hands the release to the record's cascade, and the cascade only happens if
+    /// the build EXECUTES.  The suppression is a static fact about the function and the thing
+    /// it trades away is a per-RUN one, so where the two can disagree the frame's free is kept
+    /// and made conditional on the record existing (loft#1464).
+    pub(crate) built_conditionally: HashSet<u16>,
     /// Per closure-record local: the `(capture local, generation)` pairs it adopted at ITS
     /// build, where the generation counts assignments to that local before the build.
     ///
@@ -9466,19 +9543,25 @@ impl Scopes<'_> {
                 } else if frees_follow
                     && *tp != Type::Void
                     && !expr_is_terminal
-                    // A CALL, and only a call.  That is the producer the diagnosis
-                    // names — the one whose result no binding holds — and it is the
-                    // same shape `chain_site_set_shape` promotes into `__retbuf`
-                    // when promotion does run.  A wider test is not a safer one: an
-                    // earlier cut allowed any non-null tail and so fired on a
-                    // COROUTINE's body, whose tail is the `while` loop itself.  That
-                    // wrapped the loop into `__ret_tail_1 = loop { … }`, and the
-                    // state-machine lowering then could not see the captured
-                    // parameters — four `coroutine_matrix` cells failed to compile
-                    // with `cannot find value var_n`.  An `iterator` return is
-                    // excluded outright for the same reason: a coroutine does not
-                    // return its body's value.
-                    && matches!(expr.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
+                    // A CALL or a value BRANCH — the two producers whose result no
+                    // binding holds.  A call is the shape `chain_site_set_shape`
+                    // promotes into `__retbuf` when promotion does run; a branch is
+                    // the shape whose arms `returned_var` could not unify onto one
+                    // var, which for a `-> fn(…)` return is every branch, because the
+                    // arms yield fn-ref CONSTANTS and there is no work-ref to unify.
+                    // A wider test is not a safer one: an earlier cut allowed any
+                    // non-null tail and so fired on a COROUTINE's body, whose tail is
+                    // the `while` loop itself.  That wrapped the loop into
+                    // `__ret_tail_1 = loop { … }`, and the state-machine lowering then
+                    // could not see the captured parameters — four `coroutine_matrix`
+                    // cells failed to compile with `cannot find value var_n`.  So the
+                    // widening names the branch and stops there, and an `iterator`
+                    // return stays excluded outright for the same reason: a coroutine
+                    // does not return its body's value.
+                    && matches!(
+                        expr.unspan(),
+                        Value::Call(_, _) | Value::CallRef(_, _) | Value::If(_, _, _)
+                    )
                     && !matches!(tp.base(), Type::Iterator(_, _))
                 {
                     // loft#957 — the same eval-stack reliance P236 names above, for
@@ -9544,6 +9627,13 @@ impl Scopes<'_> {
     ) -> Vec<Value> {
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
+        // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
+        // closure-record local to decide whether that record's cascade already owes this store,
+        // and the sweep's own `OpFreeRef` of that record would destroy the answer: the two
+        // backends do not even agree on what a freed slot reads back as (the interpreter leaves
+        // it standing, `--native` nulls `store_nr`), so a guard placed after it would decline on
+        // one and double-free on the other.
+        let mut guarded: Vec<Value> = Vec::new();
         let vars = self.variables(to_scope);
         if scope_debug {
             eprintln!(
@@ -9596,6 +9686,24 @@ impl Scopes<'_> {
             // is never-free.  A returned local is skipped above like any other: the store is
             // handed up, and the witness is not released for it.
             if let Some(&w) = self.owner_witness.get(&v) {
+                // @FR-L-CapOwn, loft#1464 — the second route to the same missing release.  A
+                // witnessed local that a closure record ADOPTED gives its store up at the
+                // build (`built_here` resets the witness to the sentinel there), so on a run
+                // that skips a CONDITIONAL build neither party holds it: the witness names
+                // nothing and the cascade never ran.  Same conditional release as the
+                // suppression site below, declining by store identity where the witness is
+                // about to release the store itself.
+                if adoption_build_is_conditional(&self.capture_build_backing, v)
+                    && let Some(record) = owning_record_local(
+                        data,
+                        function,
+                        self.d_nr,
+                        &self.capture_build_backing,
+                        v,
+                    )
+                {
+                    guarded.push(free_unless_record_built(v, record, Some(w), data));
+                }
                 ls.push(release_witness(w, data));
                 continue;
             }
@@ -9812,6 +9920,27 @@ impl Scopes<'_> {
                     && !function.is_skip_free(v)
                     && !self.free_transferred.contains(&v)
                     && !captured_ref;
+                // @FR-L-CapOwn, loft#1464 — the release the frame just gave up is taken over by
+                // a cascade that runs only if the closure BUILD executes.  The suppression is a
+                // static fact about the function; the cascade is a per-RUN one, and where the
+                // build sits in a branch the two disagree on every run that skips it — the
+                // store is then freed by nobody.  Keep the frame's release there and make it
+                // conditional on the record existing, which is the same currency @FR-O-Witness
+                // uses for a local whose assignments mix ownership: a fact only the run knows,
+                // read off a slot at the moment the answer is needed.
+                if !emit
+                    && captured_ref
+                    && adoption_build_is_conditional(&self.capture_build_backing, v)
+                    && let Some(record) = owning_record_local(
+                        data,
+                        function,
+                        self.d_nr,
+                        &self.capture_build_backing,
+                        v,
+                    )
+                {
+                    guarded.push(free_unless_record_built(v, record, None, data));
+                }
                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
                     ls.push(Value::Call(
                         data.def_nr("OpFreeRefIfDistinct"),
@@ -10182,6 +10311,10 @@ impl Scopes<'_> {
                     vec![Value::Var(param), Value::Var(orig)],
                 ));
             }
+        }
+        if !guarded.is_empty() {
+            guarded.append(&mut ls);
+            ls = guarded;
         }
         ls
     }
@@ -13201,6 +13334,45 @@ fn witness_set_kind(
 /// A build that runs once adopts one store and keeps it; a build in a loop rewrites its
 /// record's capture slot on every pass, so only the LAST adoption is the one the record still
 /// holds and every earlier backing is the frame's to free again.
+/// The capture variables whose closure BUILD may not run — it sits under an `if`, a `match` or
+/// a loop body rather than on the straight line from the function's entry to its exit.
+///
+/// `@FR-L-CapOwn` — the frame gives its release up to the record's cascade, and a cascade that
+/// never happens is not a release.  Over-approximating costs a runtime test where a static
+/// suppression would have done; under-approximating strands the store, so a construct this walk
+/// does not recognise must read as CONDITIONAL rather than as straight-line.
+fn captures_built_conditionally(
+    node: &Value,
+    set_dbref: u32,
+    branched: bool,
+    out: &mut HashSet<u16>,
+) {
+    if branched
+        && let Value::Call(d, args) = node.unspan()
+        && *d == set_dbref
+        && let Some(Value::Var(c)) = args.get(2).map(Value::unspan)
+    {
+        out.insert(*c);
+    }
+    match node.unspan() {
+        // An `if`'s CONDITION is on the straight line; only the two arms are conditional.
+        // `match` lowers to nested `If`, so it needs no arm of its own here.
+        Value::If(cond, then, alt) => {
+            captures_built_conditionally(cond, set_dbref, branched, out);
+            captures_built_conditionally(then, set_dbref, true, out);
+            captures_built_conditionally(alt, set_dbref, true, out);
+        }
+        other => other.for_each_child(&mut |ch| {
+            captures_built_conditionally(
+                ch,
+                set_dbref,
+                branched || matches!(other, Value::Loop(_)),
+                out,
+            );
+        }),
+    }
+}
+
 fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &mut HashSet<u16>) {
     let inner = in_loop || matches!(node.unspan(), Value::Loop(_));
     if in_loop
@@ -13355,6 +13527,50 @@ fn displaces_owned_through_fresh_callee(value: &Value, v: u16, ov: u16, data: &D
     args.iter()
         .enumerate()
         .all(|(i, a)| i == buf_idx || (!a.reads_var(v) && !a.reads_var(ov)))
+}
+
+/// Does the build that adopted `v`'s store sit in a branch?
+///
+/// Both spellings of "the record took this local's store", the pair [`CaptureBuilds`] carries:
+/// a STRUCT capture names the local outright, a COLLECTION capture names a view whose backing
+/// local is this one and which no closure captured by name.
+fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
+    builds.built_conditionally.contains(&v)
+        || builds
+            .backing
+            .iter()
+            .any(|(c, b)| *b == v && builds.built_conditionally.contains(c))
+}
+
+/// Release `v`'s store unless the closure record in `record` was built.
+///
+/// `@FR-L-CapOwn` — the store is freed ONCE, and where the build is conditional only the run
+/// knows by whom.  The record local is the witness: `emit_lambda_code` inits it to the empty
+/// slot and the build is the only thing that mints into it, so "a record is there" and "the
+/// cascade that replaces this free will run" are the same fact.
+///
+/// "A record is there" refuses BOTH spellings of absent, the pair `build_into_return_buffer`
+/// names for the same reason: the never-built slot (`rec == 0`, `OpConvBoolFromRef`) and the
+/// freed one (`store_nr == u16::MAX`, `OpRefIsNull`).  `if is_null { false } else { has_rec }`
+/// is how `&&` lowers.
+///
+/// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
+/// releases that separately, so the release here declines by store identity where the two
+/// would name one store.  Without the witness the free is plain.
+fn free_unless_record_built(v: u16, record: u16, witness: Option<u16>, data: &Data) -> Value {
+    let present = v_if(
+        call("OpRefIsNull", record, data),
+        Value::Boolean(false),
+        call("OpConvBoolFromRef", record, data),
+    );
+    let release = match witness {
+        Some(w) => Value::Call(
+            data.def_nr("OpFreeRefIfDistinct"),
+            vec![Value::Var(v), Value::Var(w)],
+        ),
+        None => call("OpFreeRef", v, data),
+    };
+    v_if(present, Value::Null, release)
 }
 
 fn call(to: &'static str, v: u16, data: &Data) -> Value {
