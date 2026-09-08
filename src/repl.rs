@@ -23,7 +23,7 @@
 use crate::compile;
 use crate::data::{DefType, Type};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::database::Parts;
+use crate::database::{Parts, Stores};
 use crate::diagnostics::{DiagEntry, Level};
 use crate::introspect::{Options, Section};
 use crate::parser::Parser;
@@ -1102,11 +1102,23 @@ fn is_scalar_type_name(t: &str) -> bool {
     ) || t.starts_with("integer(")
 }
 
-fn base_type_name(show: &str) -> &str {
-    let base = show.split('[').next().unwrap_or(show);
-    base.strip_prefix("ref(")
+fn base_type_name(show: &str) -> String {
+    // A trailing `?` is part of the SOURCE name, and `Type::show` puts both of its debug
+    // decorations INSIDE it — the dep list (`text["at"]?`) and the `ref(…)` wrapper
+    // (`ref(P)?`).  So the `?` has to come off first and go back on afterwards, rather
+    // than be reduced in place: splitting at `[` silently DROPPED it (a `text?` then took
+    // the non-null capture wrapper, reaching the raw `Str`-off-the-stack read @P293
+    // forbids), and the `ref(…)` unwrap failed outright against it (`ref(P)?` went to the
+    // parser as a type it cannot spell, so a nullable struct never captured at all).
+    // Both read as "the debugger declines a nullable"; only `integer?`, which carries
+    // neither decoration, came through — loft#1459.
+    let (body, opt) = show.strip_suffix('?').map_or((show, ""), |b| (b, "?"));
+    let base = body.split('[').next().unwrap_or(body);
+    let base = base
+        .strip_prefix("ref(")
         .and_then(|s| s.strip_suffix(')'))
-        .unwrap_or(base)
+        .unwrap_or(base);
+    format!("{base}{opt}")
 }
 
 /// Render an `f64` as a loft `float` literal — always with a decimal point so a
@@ -1154,45 +1166,90 @@ fn render_capture(
     captured: &mut Option<Captured>,
 ) -> Option<String> {
     match ret_ty {
+        // @FR-L-Null — absence is a SENTINEL inside the value's own bytes, so each arm
+        // below reads its type exactly as it always did and only the ANSWER differs.
+        // `formatting.md` (F-Render) is the contract: **a null of any type renders as
+        // the literal word `null`** — so a renderer that prints the sentinel's numeric
+        // form (`-9223372036854775808` for a null `integer`, `true` for the 0xFF
+        // boolean) is claiming a value the language says is absent.  The panel's twin,
+        // `State::render_frame_local`, has answered this way since loft#1459 site 1.
         Type::Integer(_) => {
             let n = *state.get_stack::<i64>();
             *captured = Some(Captured::Scalar(ScalarValue::Integer(n)));
-            Some(n.to_string())
+            Some(if n == i64::MIN {
+                "null".to_string()
+            } else {
+                n.to_string()
+            })
         }
         Type::Float => {
             let v = *state.get_stack::<f64>();
             *captured = Some(Captured::Scalar(ScalarValue::Float(v)));
-            Some(float_literal(v))
+            Some(if v.is_nan() {
+                "null".to_string()
+            } else {
+                float_literal(v)
+            })
         }
         // own-format `2f` isn't valid JSON; drop the suffix for `json`.
         Type::Single if json => {
             let v = *state.get_stack::<f32>();
             *captured = Some(Captured::Scalar(ScalarValue::Single(v)));
-            Some(v.to_string())
+            Some(if v.is_nan() {
+                "null".to_string()
+            } else {
+                v.to_string()
+            })
         }
         Type::Single => {
             let v = *state.get_stack::<f32>();
             *captured = Some(Captured::Scalar(ScalarValue::Single(v)));
-            Some(format!("{v}f"))
+            Some(if v.is_nan() {
+                "null".to_string()
+            } else {
+                format!("{v}f")
+            })
         }
+        // @PLN17 C73's three-state boolean: 0 and 1 are the values and every other
+        // byte is the absence, which is the same split `Stores::is_null` makes (`> 1`)
+        // rather than the narrower `== 255` — one home for the two to agree on.
         Type::Boolean => {
-            let v = *state.get_stack::<u8>() != 0;
-            *captured = Some(Captured::Scalar(ScalarValue::Boolean(v)));
-            Some(if v { "true" } else { "false" }.to_string())
+            let raw = *state.get_stack::<u8>();
+            *captured = Some(Captured::Scalar(ScalarValue::Boolean(raw == 1)));
+            Some(
+                match raw {
+                    0 => "false",
+                    1 => "true",
+                    _ => "null",
+                }
+                .to_string(),
+            )
         }
         // own-format `'c'` isn't valid JSON; emit a JSON string for `json`.
+        // Codepoint 0 is `character`'s reserved absence (`formal/types.md`, loft#1014),
+        // not a renderable character — `char::from_u32` would happily answer `'\0'`.
         Type::Character => {
             let raw = *state.get_stack::<u32>();
-            let c = char::from_u32(raw)?;
             *captured = Some(Captured::Scalar(ScalarValue::Character(raw)));
+            if raw == 0 {
+                return Some("null".to_string());
+            }
+            let c = char::from_u32(raw)?;
             Some(if json {
                 format!("\"{c}\"")
             } else {
                 format!("'{c}'")
             })
         }
+        // Text nullity is CONTENT-based (`Store::text_is_null`): the `STRING_NULL` NUL
+        // byte IS the absence, and quoting it renders a literal that looks like a
+        // one-character string — worse than declining, because it claims a value.
         Type::Text(_) => {
             let s = state.get_stack::<crate::keys::Str>().str().to_string();
+            if s == crate::state::STRING_NULL {
+                *captured = Some(Captured::Scalar(ScalarValue::Text(s)));
+                return Some("null".to_string());
+            }
             let lit = escape_loft_text(&s);
             *captured = Some(Captured::Scalar(ScalarValue::Text(s)));
             Some(lit)
@@ -1227,7 +1284,7 @@ fn render_capture(
             }
             let disc = *state.get_stack::<u8>();
             *captured = Some(Captured::Scalar(ScalarValue::SimpleEnum(disc)));
-            if disc == 0 {
+            if crate::database::Stores::enum_is_null(disc) {
                 Some("null".to_string())
             } else if json {
                 Some(format!("\"{name}.{}\"", state.database.enum_val(tp, disc)))
@@ -1235,6 +1292,26 @@ fn render_capture(
                 Some(format!("{name}.{}", state.database.enum_val(tp, disc)))
             }
         }
+        // A `τ?` shares `τ`'s runtime layout — no wrapper, no moved offset (`Type::Optional`
+        // in data.rs) — so the value on the stack is READ by the base arm above and only
+        // needs its sentinel recognised, which every arm now does.  Without this arm the
+        // catch-all below claimed the whole nullable family and answered `None`, which is
+        // indistinguishable from "this expression does not evaluate": `eval` printed
+        // "couldn't evaluate `ni`" for a local the variables panel one site over printed as
+        // `null` (loft#1459).  `Optional(Vector)` never got here — its `?` peels for
+        // delivery — which is why the hole read as an `integer?` edge rather than as the
+        // whole family.
+        //
+        // `name` is the loft SOURCE type name, and it is the base type's schema that the
+        // heap arms look up: `Stores::name("P?")` is `u16::MAX`, so the `?` has to come off
+        // the name as well as off the type.
+        Type::Optional(inner) => render_capture(
+            state,
+            inner,
+            name.strip_suffix('?').unwrap_or(name),
+            json,
+            captured,
+        ),
         _ => None,
     }
 }
@@ -3050,7 +3127,7 @@ impl ReplSession {
         // the base name — two facts, two reads.
         let shown = self.infer_frame_type(&sig, &seed, expr)?;
         let nullable = shown.ends_with('?');
-        let ret = base_type_name(&shown).to_string();
+        let ret = base_type_name(&shown);
         // A **scalar** result rides the frame base and is read straight back.
         if is_scalar_type_name(&ret) && !nullable {
             return self.eval_frame_build_run(&sig, &seed, expr, &ret, &arg_names, json);
@@ -3694,7 +3771,7 @@ impl ReplSession {
         let Some(ty_show) = self.infer_type(rhs) else {
             return Capture::Skip;
         };
-        let ty = base_type_name(&ty_show).to_string();
+        let ty = base_type_name(&ty_show);
         // @P293 — a **text** value can't be captured by returning it from a synthetic
         // entry fn and reading the `Str` off the stack: if the value borrows a local
         // `String` the fn frees on teardown (a bare var read, a `+` concat, an
@@ -3706,8 +3783,29 @@ impl ReplSession {
         // working heap path), then unwrap the `["…"]` back to the bare text literal.
         // The explicit `vector<text>` element type coerces a borrowed/work text
         // (`text["__work_N"]`, e.g. a concat) to a plain owned element.
-        if ty == "text" {
-            let out = match self.capture_typed(&format!("[({rhs})]"), "vector<text>", json) {
+        // The hazard @P293 names is the raw TEXT read, and a `text?` is read exactly like
+        // a `text` (`Optional(τ)` shares τ's layout) — so the wrapper has to cover both
+        // spellings or the nullable one reaches the very `Str`-off-the-stack read the
+        // wrapper exists to prevent.  It was unreachable only while `render_capture`
+        // declined every nullable outright (loft#1459).  The wrapper keeps the `?` on the
+        // ELEMENT type: `vector<text>` would take the null through (N-Store)'s warning and
+        // emit a diagnostic into the session for a value the user only asked to look at.
+        if ty.strip_suffix('?').unwrap_or(&ty) == "text" {
+            // A `text?` needs the same wrapper and a nullable ELEMENT, so the absence
+            // survives the round trip (`vector<text>` would take it through (N-Store) and
+            // emit a warning into the session for a value the user only asked to look at).
+            // The vector is bound to a local first and the local returned: a `vector<τ?>`
+            // LITERAL in return position is refused, while the same literal checked against
+            // a declared local type is accepted (loft#1476).
+            let (ret, body) = if ty.ends_with('?') {
+                (
+                    "vector<text?>",
+                    format!("__cap_text: vector<text?> = [({rhs})];\n__cap_text"),
+                )
+            } else {
+                ("vector<text>", format!("[({rhs})]"))
+            };
+            let out = match self.capture_typed(&body, ret, json) {
                 Capture::Done(lit) => lit
                     .strip_prefix('[')
                     .and_then(|s| s.strip_suffix(']'))
@@ -3755,6 +3853,14 @@ impl ReplSession {
         // *string* above is only for the fn signature + the schema lookup).
         let cap_d = self.parser.data.def_nr(&format!("n_{name}"));
         let ret_ty = self.parser.data.def(cap_d).returned.clone();
+        // `ty` is the SOURCE spelling and it wrote the fn signature; the schema lookup
+        // downstream asks a different question and must not be handed the same string.
+        // `Type::name` is the schema spelling of the type the parser actually RESOLVED
+        // (loft#1449's `name`-vs-`source_name` split), so a `?` the source wrote — or one
+        // resolution dropped — cannot reach `Stores::name` as part of a key: `vector<text?>`
+        // is not a registered type and the capture answered `None`, which the debugger
+        // cannot tell from "this does not evaluate" (loft#1459).
+        let schema_name = ret_ty.name(&self.parser.data);
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
         let mut state = State::new(self.parser.database.clone());
         compile::byte_code(&mut state, &mut self.parser.data);
@@ -3768,7 +3874,7 @@ impl ReplSession {
             return Capture::Failed(vec![err.to_diag_entry()]);
         }
         let mut captured = None;
-        let lit = render_capture(&mut state, &ret_ty, ty, json, &mut captured);
+        let lit = render_capture(&mut state, &ret_ty, &schema_name, json, &mut captured);
         // @PLN14 arcs B + C — SHADOW WRITE: give the value its own home in the
         // session store, whatever its shape.  Nothing reads it yet (the replay
         // literal below is still the source of truth), so this cannot change
@@ -4016,7 +4122,7 @@ impl ReplSession {
             }
             SessionShape::Scalar(ScalarKind::SimpleEnum) => {
                 let disc = u8::try_from(store.get_int(db.rec, 8)).unwrap_or(0);
-                if disc == 0 {
+                if Stores::enum_is_null(disc) {
                     Some("null".to_string())
                 } else if tp == u16::MAX {
                     None
@@ -4346,7 +4452,7 @@ impl ReplSession {
             // Display is the variant alone, without the enum's name.
             SessionShape::Scalar(ScalarKind::SimpleEnum) => {
                 let disc = u8::try_from(store.get_int(db.rec, 8)).unwrap_or(0);
-                if disc == 0 {
+                if Stores::enum_is_null(disc) {
                     Some("null".to_string())
                 } else if tp == u16::MAX {
                     None

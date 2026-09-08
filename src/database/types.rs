@@ -2465,6 +2465,23 @@ impl Stores {
         }
     }
 
+    /// Does this enum discriminant name a VARIANT, or is it an ABSENCE?
+    ///
+    /// One home for a predicate that has **two** null bytes, which is why restating it
+    /// keeps going wrong.  Both reach a program: an explicit null writes `255`
+    /// (`OpConvEnumFromNull`), while zero-init storage and `OpGetEnum` on an absent
+    /// record produce `0` — `default/01_code.loft` spells the pair as
+    /// `OpConvBoolFromEnum`'s `@v1 != 255 && @v1 != 0`, and [`enum_val`](Self::enum_val)
+    /// already answers `"null"` for both.  A reader that restates it as `disc == 0`
+    /// therefore renders 255 through `enum_val`'s own fallback and prints `Col.null`
+    /// — a variant path taken for a value that has no variant (loft#1459).  `255` is
+    /// safe to reject because it is not a variant of any enum, and neither is `0`
+    /// (variants are numbered from 1).
+    #[must_use]
+    pub const fn enum_is_null(disc: u8) -> bool {
+        disc == 0 || disc == u8::MAX
+    }
+
     #[must_use]
     pub fn enum_val(&self, known_type: u16, value: u8) -> &str {
         if known_type == u16::MAX {

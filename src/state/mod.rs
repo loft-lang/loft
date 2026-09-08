@@ -3524,7 +3524,7 @@ impl State {
                     None
                 } else {
                     let disc = self.reenter_ret::<u8>(eval_dnr, pos, push);
-                    if disc == 0 {
+                    if Stores::enum_is_null(disc) {
                         Some("null".to_string())
                     } else {
                         let name = ret.name(data);
@@ -5015,7 +5015,7 @@ impl State {
                 let tname = tp.name(data);
                 let tp_known = self.database.name(&tname);
                 if tp_known == u16::MAX {
-                    return format!("<{tname}>");
+                    return format!("<{}>", tp.source_name(data));
                 }
                 let db = *self
                     .database
@@ -5034,7 +5034,7 @@ impl State {
                 let tname = tp.name(data);
                 let tp_known = self.database.name(&tname);
                 let disc = *self.database.store(&self.stack_cur).addr::<u8>(rec, at);
-                if tp_known == u16::MAX || disc == 0 {
+                if tp_known == u16::MAX || Stores::enum_is_null(disc) {
                     "null".to_string()
                 } else {
                     format!("{tname}.{}", self.database.enum_val(tp_known, disc))
@@ -5070,6 +5070,21 @@ impl State {
                         Type::Float => store.addr::<f64>(rec, at).is_nan(),
                         Type::Single => store.addr::<f32>(rec, at).is_nan(),
                         Type::Character => *store.addr::<u32>(rec, at) == 0,
+                        // A handle-carried kind the recursion below cannot render — a keyed
+                        // collection — still has an absence, and `DbRef::is_null` is its one
+                        // home.  Without this the delegate fell to the catch-all and the
+                        // panel printed the TYPE for an ABSENT keyed local, which is
+                        // loft#1459's own symptom wearing a different type name.  The
+                        // POPULATED case still prints the type: rendering a keyed
+                        // collection's contents needs a schema lookup that does not resolve
+                        // here, and that is a separate question from whether it is null.
+                        Type::Hash(_, _, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _) => {
+                            store.addr::<crate::keys::DbRef>(rec, at).is_null()
+                        }
                         _ => false,
                     }
                 };
@@ -5089,7 +5104,14 @@ impl State {
                 }
                 rendered
             }
-            other => format!("<{}>", other.name(data)),
+            // Nothing above renders this kind — a keyed collection, an iterator, a fn-ref.
+            // Name it the way the AUTHOR wrote it (`hash<P[a]>`), not by the schema key
+            // (`hash<P,["a"]>`), which is `Type::name`'s job and not a spelling to hand a
+            // reader (loft#1434 settled that split for diagnostics; a debugger panel asks
+            // the same question).  A keyed local has no renderer here because its schema
+            // type is minted under two different names by two paths, so `Stores::name`
+            // resolves it only from one of them — a design question, not this arm's.
+            other => format!("<{}>", other.source_name(data)),
         }
     }
 

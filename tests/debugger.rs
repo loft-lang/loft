@@ -1592,6 +1592,83 @@ fn a_nullable_local_renders_its_value_not_its_type() {
     );
 }
 
+/// loft#1459 — the two panel kinds whose absence had its own spelling: a value ENUM and a
+/// KEYED collection.
+///
+/// Both fell short in a way an `integer?` cell could not see.  A null value enum reached the
+/// panel as discriminant **255** (`OpConvEnumFromNull`), while the renderer tested only
+/// `disc == 0`, so it took the VARIANT path and `enum_val`'s own out-of-range fallback
+/// supplied the name — the panel printed `Col.null`, a variant spelling for a value that has
+/// no variant.  `default/01_code.loft` already names the predicate that has BOTH bytes
+/// (`OpConvBoolFromEnum`: `@v1 != 255 && @v1 != 0`); restating it as `disc == 0` at four
+/// render sites is what drifted, so `Stores::enum_is_null` is now its one home.
+///
+/// A keyed local had no arm at all and fell to the catch-all, which prints the TYPE — the
+/// loft#1459 headline symptom wearing a different type name, and for a POPULATED hash as
+/// readily as for an absent one.  `@FR-L-Null` gives the absent case a `DbRef` sentinel, so
+/// that half is answered here.  The populated case still prints its type on purpose: a keyed
+/// collection's schema type is minted under two spellings by two paths, so `Stores::name`
+/// resolves it from only one of them, and rendering its CONTENTS waits on that.  What it must
+/// not do is print the schema key at a reader — the catch-all names the type the way the
+/// AUTHOR wrote it (`hash<P[a]>`, not `hash<P,["a"]>`), which is loft#1434's rule.
+///
+/// Falsified by restoring `disc == 0` in `render_frame_local`: the `ne` cell fails with
+/// `left: "Col.null"  right: "null"` and every other cell stays green — including `ve`,
+/// which is what says the predicate widened rather than the variant path being lost.
+/// Falsified again by dropping the keyed arm from the `Optional` sentinel test: `nh` fails
+/// with `left: "<hash<P[a]>>"  right: "null"`, `vh` unmoved.
+#[test]
+fn a_null_enum_and_an_absent_keyed_local_read_as_null() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &[
+            "struct P { a: integer, b: text }",
+            "enum Col { Red, Green }",
+            // Every local is READ on the breakpoint line, so no slot is recycled.
+            "fn probe() -> integer {\n  \
+               ne: Col? = null;      ve: Col? = Col.Green;\n  \
+               nh: hash<P[a]>? = null; vh: hash<P[a]>? = [P { a: 1, b: \"q\" }];\n  \
+               (if ne == null { 0 } else { 1 }) + (if ve == null { 0 } else { 1 })\n    \
+                 + (if nh == null { 0 } else { 1 }) + (if vh == null { 0 } else { 1 })\n}",
+        ],
+        "probe()",
+        "probe",
+        4,
+    );
+    assert_eq!(hits.len(), 1, "breakpoint fired once: {hits:?}");
+    let got = |name: &str| {
+        hits[0]
+            .locals
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{name} absent>"))
+    };
+    assert_eq!(
+        got("ne"),
+        "null",
+        "an absent value enum is `null`, not `Col.null`: {hits:?}"
+    );
+    assert_eq!(
+        got("ve"),
+        "Col.Green",
+        "CONTROL: a present variant still names itself: {hits:?}"
+    );
+    assert_eq!(
+        got("nh"),
+        "null",
+        "an absent keyed local is `null`, not its type: {hits:?}"
+    );
+    assert_eq!(
+        got("vh"),
+        "<hash<P[a]>>",
+        "a POPULATED keyed local names the type the AUTHOR wrote — the contents wait on \
+         the schema-key question, but the schema KEY spelling never reaches a reader: \
+         {hits:?}"
+    );
+}
+
 /// loft#1459, the seed half — and this one is a REGRESSION guard on the fix above rather
 /// than a guard on the defect.
 ///

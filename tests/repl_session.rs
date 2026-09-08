@@ -1912,3 +1912,125 @@ fn repl_keeps_its_resolution_context_across_a_reset() {
          otherwise pass the checks above: {text}"
     );
 }
+
+/// loft#1459 site 2 — `eval` at a paused frame answers an ABSENT nullable local, for
+/// every base type, instead of declining it.
+///
+/// The panel (`State::render_frame_local`) and `eval` are two renderers of one value, and
+/// only the panel had learned `Optional`.  `render_capture` matched bare `Type` variants, so
+/// every `Optional` fell to its `_ => None` — and a `None` there is the SAME answer as "this
+/// expression does not evaluate", so `ni` reported *"couldn't evaluate `ni` at the frame"*
+/// for a local the panel one site over printed as `null`.  Two independent paths had to be
+/// opened for it to show at all: `base_type_name` dropped the `?` from `text["x"]?` and could
+/// not reduce `ref(P)?`, and the capture fn's SOURCE spelling was also being used as the
+/// SCHEMA key, where `vector<text?>` and `P?` name nothing.
+///
+/// `formatting.md` `(F-Render)` is the contract this pins: **a null of any type renders as
+/// the literal word `null`.**  So the cells are one per base type, and the PRESENT twin of
+/// each is what says a cure answered the value rather than answering `null` to everything —
+/// the failure mode a one-line `Some("null")` would sail through.
+///
+/// Falsified by removing the `Type::Optional` arm from `render_capture`: **7 of 18** cells
+/// fail, every one of them an ABSENT read answering `None`, with all 8 present cells and
+/// both sentinel neighbours green.  Seven and not eight is the informative part — absent
+/// `text` stays green there, because a `text?` reaches its answer through @P293's
+/// single-element vector wrapper and never asks the `Optional` arm at all.  Falsified again
+/// by reverting `base_type_name` alone: **2 of 18**, `nt` and `np` — the two cells whose
+/// type spelling carries a decoration (`text["x"]?`, `ref(P)?`).  So the two halves of the
+/// fix are load-bearing for disjoint cells, and neither subsumes the other.
+#[test]
+fn a_nullable_local_evaluates_at_a_paused_frame() {
+    let mut s = session();
+    for d in [
+        "struct P { a: integer, b: text }",
+        "enum Col { Red, Green }",
+        // Every local is READ on the breakpoint line, so no slot is dead and none is
+        // recycled — a reused slot is reported as `<reused by …>`, a frame fact that would
+        // make these cells vacuous instead of failing.
+        "fn probe(k: integer) -> integer {\n  \
+           ni: integer? = null;  vi: integer? = 42;\n  \
+           nf: float? = null;    vf: float? = 1.5;\n  \
+           ns: single? = null;   vs: single? = 2.5f;\n  \
+           nb: boolean? = null;  vb: boolean? = true;\n  \
+           nc: character? = null; vc: character? = 'z';\n  \
+           nt: text? = null;     vt: text? = \"hi\";  et: text? = \"\";\n  \
+           np: P? = null;        vp: P? = P { a: 1, b: \"x\" };\n  \
+           ne: Col? = null;      ve: Col? = Col.Green;\n  \
+           fi: integer? = -9223372036854775807;\n  \
+           all = \"{ni ?? 0}{vi ?? 0}{nf ?? 0.0}{vf ?? 0.0}{ns ?? 0.0f}{vs ?? 0.0f}\"\n    \
+             + \"{nb ?? false}{vb ?? false}{nc ?? '?'}{vc ?? '?'}{nt ?? \"\"}{vt ?? \"\"}{et ?? \"z\"}\"\n    \
+             + \"{(np ?? P {}).a}{(vp ?? P {}).a}{ne ?? Col.Red}{ve ?? Col.Red}{fi ?? 0}\";\n  \
+           k + size(all)\n}",
+    ] {
+        assert!(matches!(s.eval(d), Eval::Ran), "def {d:?}");
+    }
+    s.debug_stepping(true);
+    // Line 11 of `probe` — the `all = …` statement: every local is ASSIGNED by then and
+    // lines 11-13 READ each one, so no slot is dead and none has been recycled.  Breaking
+    // at the body START instead would leave every local unset and pass this test on the
+    // broken build, which is the vacuity trap site 1's guard also had to dodge.
+    s.add_breakpoint("probe:11");
+    assert!(matches!(s.eval("probe(1)"), Eval::Paused), "paused");
+
+    // Every cell is collected before anything is asserted, so ONE run names every broken
+    // one.  A per-cell `assert_eq!` stops at the first, which cannot tell "the nullable
+    // family is declined" from "one base type is" — and it is the ratio between the two
+    // halves below that says a cure read the value rather than answering `null` to
+    // everything.
+    //
+    // ABSENT — `(F-Render)`: a null of any type is the word `null`, never the sentinel's
+    // own numeric form and never a declined evaluation.  PRESENT — the same locals with a
+    // value.  The last two are a sentinel's NEIGHBOURS: a guessed sentinel would report a
+    // real value as null, which is the one lie a debugger must not tell.
+    let cells: &[(&str, &str, &str)] = &[
+        ("ni", "null", "absent integer"),
+        ("nf", "null", "absent float"),
+        ("ns", "null", "absent single"),
+        ("nb", "null", "absent boolean"),
+        ("nc", "null", "absent character"),
+        ("nt", "null", "absent text"),
+        ("np", "null", "absent struct"),
+        ("ne", "null", "absent value enum"),
+        ("vi", "42", "present integer"),
+        ("vf", "1.5", "present float"),
+        ("vs", "2.5f", "present single"),
+        ("vb", "true", "present boolean"),
+        ("vc", "'z'", "present character"),
+        ("vt", "\"hi\"", "present text"),
+        ("vp", "P{a:1,b:\"x\"}", "present struct"),
+        ("ve", "Col.Green", "present value enum"),
+        (
+            "et",
+            "\"\"",
+            "an EMPTY text is a value, not the STRING_NULL handle",
+        ),
+        (
+            "fi",
+            "-9223372036854775807",
+            "i64::MIN + 1 is a value, not the integer sentinel",
+        ),
+    ];
+    let broken: Vec<String> = cells
+        .iter()
+        .filter_map(|(name, want, what)| {
+            let got = s.debug_eval(name);
+            (got.as_deref() != Some(*want))
+                .then(|| format!("{what} (`{name}`): want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        broken.is_empty(),
+        "{} of {} cells wrong:\n  {}",
+        broken.len(),
+        cells.len(),
+        broken.join("\n  ")
+    );
+    // CONTROL: a nonsense expression is still declined, so `None` has not been
+    // repurposed into "null" for everything.
+    assert_eq!(
+        s.debug_eval("no_such + 1"),
+        None,
+        "an unknown name declines"
+    );
+    assert!(!s.debug_continue());
+}
