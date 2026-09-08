@@ -37,7 +37,7 @@ hash unchanged.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-08 (§ V-c)
+- **Last touched:** 2026-09-08 (§ V-c + the second consumer re-run)
 
 ## Composition matrix — Stage A
 
@@ -107,10 +107,15 @@ remains, ranked by measured value:
    release sites read the dep-free return as a fresh store) — so they wait on
    the type-level fact (a buffer dep the adopt lowering accepts), M–L; and
    Route T's record round-trip (−13 pts) stays a separate item.
-2. ~~**Consumer re-run**~~ — done 2026-09-07 (DESIGN.md § Consumer 14-row
-   re-run); it sharpened the target rather than shrinking it, and Route R
-   is the lever `smooth`/`fronds` route to as well — re-run after the hoist
-   unblock lands.
+2. ~~**Consumer re-run**~~ — done twice (DESIGN.md § Consumer 14-row re-run,
+   2026-09-07 and 2026-09-08).  The second one CORRECTS the first: `lock`
+   17.2× → 9.2× in the consumer lane, but `smooth` (200×) and `fronds` (53×)
+   did not move a point — they are NOT Route R's class.  Their allocation is
+   per-element RECORD CONSTRUCTION into a vector (`pts += [Pt{…}]`: an
+   `OpNewRecord` + writes + `OpFinishRecord` per element), so **the lever for
+   the two worst rows is the append-in-place twin of Route R** — build the
+   element in the vector's own store instead of a temp record copied in.
+   Design-protocol treatment first (M); it is now the head of the queue.
 3. **P4c record scalars** (S–M, ~5–10 % pixel rows) · **bound-via-header**
    (`h.len` is the bound where P4 fired; S) · **P2 thin-LTO probe** (the
    lean tier's 8.5→6.4 ns gap — the `hash`/`smooth` gate rows carry it).

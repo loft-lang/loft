@@ -561,6 +561,40 @@ not anything P1-P4 shaped.  So the two worst rows and lock's bulk all route
 to the same next lever (below): the re-run SHARPENED the target rather than
 shrinking it.
 
+## Consumer 14-row re-run (2026-09-08, after § V + § V-c)
+
+Same recipe as the 2026-09-07 run (`compare.py --skip-interp`, this tree's
+binary, auto-built `--native-release` cdylibs from a scratch clone of
+`drawing-lock` — so these carry the NAMED prelude and the cdylib boundary; the
+standalone gate row reads `lock` 5.3× where this lane reads 9.2×).  Every row's
+hash agrees.  The box had just finished a gate (load ~12 falling), so the
+absolute numbers are noisier than the 09-07 column; the ratios are the claim.
+
+| routine | baseline | after P4d | after § V + V-c | note |
+|---|---:|---:|---:|---|
+| hash | 10.9 | 15.8* | 10.6* | cdylib prelude; the lean gate row is 4.5× |
+| hair | 4.3 | ~3.6 | 3.3 | under the bar |
+| smooth | 262 | 202 | **200** | UNMOVED — not this lever (below) |
+| fronds | 49 | 53 | **53** | UNMOVED — not this lever (below) |
+| lock | 30 | 17.2 | **9.2** | Route R + the hoist unblock |
+| lock_curved | 34 | 18.0 | **11.9** | same |
+| composite | 26 | 21.8 | 22.1 | |
+| fill_circle | 17 | 7.1 | 7.5 | |
+| fill_star | 17 | 7.5 | 7.9 | |
+| wide_line | 17 | 14.0 | 14.4 | |
+
+**The finding corrects § V's own hypothesis.**  The 09-07 re-run read
+`smooth`/`fronds` as *"call-and-alloc bound — the VALUE-RETURN and
+vector-append classes"* and routed them to the same lever as `lock`.  They did
+not move by a point, so their allocation class is NOT a struct-literal return:
+it is per-element RECORD CONSTRUCTION into a vector — `pts += [Pt{…}]`,
+`fronds += [Frond{…}]`, each element an `OpNewRecord` + field writes +
+`OpFinishRecord` in the loop (the ops the § V-c probe showed declining the
+ribbon-building loops).  That is a different mechanism with its own design
+surface (element construction that neither allocates a temp record nor
+copies it into the vector — the append-in-place twin of Route R), and it is
+now the lever for the two worst rows.  Re-ranked in the README.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can
