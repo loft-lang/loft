@@ -2822,6 +2822,41 @@ use a separate collection or add after the loop"
         // as that route's target-shape test and every shape it declines falls through
         // unchecked.  Two did.
         self.guard_const_write(var_nr, op);
+        // @PLN130 F4 — and ask the KEY-WRITE question here too, for exactly the reason the
+        // const guard above gives.  Whether `c.k = …` re-keys a record a keyed collection
+        // indexes is a property of the PLACE, not of the route that lowers the store, and
+        // this guard used to live inside ONE route: the `OpGet<T>` -> `OpSet<T>` seam in
+        // `call_to_set_op`.  Its own comment said "on a scalar field", which was honest and
+        // was the whole hole — `assign_text` builds `OpSetText` directly and never reaches
+        // that seam, so a `text` KEY was never asked about.
+        //
+        // Measured, silently, on both backends: `c = &h["aa"]; c.name = "zz"` on a
+        // `hash<Nm[name]>` left the record reachable by NO key (`h["aa"]` and `h["zz"]` both
+        // miss) while `len` still said 1; on a `sorted` the record moved but the tree order
+        // it is searched by did not.  `trie` is the kind that can only ever be hit, since a
+        // trie keys on exactly one `text` field.
+        //
+        // The extraction is the same `(base, offset)` the seam read, taken from `to` before
+        // any route claims it — so a route added later inherits the guard instead of having
+        // to remember it.
+        let key_field_write = if let Value::Call(d, args) = to.unspan() {
+            let is_getter = self.data.def(*d).name().starts_with("OpGet");
+            match (
+                is_getter,
+                args.first().map(Value::unspan),
+                args.get(1).map(Value::unspan),
+            ) {
+                (true, Some(Value::Var(base)), Some(Value::Int(off))) => {
+                    Some((*base, i64::from(*off)))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some((base, off)) = key_field_write {
+            self.note_key_field_write(base, off);
+        }
         // …and note a whole-value rebind of a CAPTURE here for the same reason: this is the
         // point that still knows the assignment replaces the whole binding.  By the time the
         // lambda closes, a vector rebind is a clear plus appends and the `Value::Set` that

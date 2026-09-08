@@ -3043,10 +3043,46 @@ impl ReplSession {
             .collect::<Vec<_>>()
             .join(", ");
         // Pass 1 — infer the result type with the keyed args + seed in scope.
-        let ret = base_type_name(&self.infer_frame_type(&sig, &seed, expr)?).to_string();
-        // A **scalar** result rides the frame base and is read straight back.
+        // The raw shown type, because the `?` cannot survive `base_type_name`: that helper
+        // drops the DEP LIST by splitting on `[`, and a `τ?` prints its `?` AFTER the list
+        // (`ref(HRec)["h"]?`), so everything past the bracket goes with it and a nullable
+        // reads as its NON-NULL twin.  Ask the raw form for nullability and the helper for
+        // the base name — two facts, two reads.
+        let shown = self.infer_frame_type(&sig, &seed, expr)?;
+        let nullable = shown.ends_with('?');
+        let ret = base_type_name(&shown).to_string();
+        // A **scalar** result rides the frame base and is read straight back.  A NULLABLE
+        // scalar reaches here too and keeps its existing behaviour deliberately: it has no
+        // `.to_json()` to route through (that method is heap-only), and the interpolation
+        // that would replace it renders a `character` and a `text` as bare unquoted tokens
+        // — invalid JSON on the one path whose caller reads the result AS JSON.  A nullable
+        // scalar at a paused frame is unevaluable today, and the frame RENDERER shows it as
+        // `<integer?>` rather than its value, so that gap is two sites wide and predates
+        // this rule; it is reported rather than half-closed here.
         if is_scalar_type_name(&ret) {
             return self.eval_frame_build_run(&sig, &seed, expr, &ret, &arg_names, json);
+        }
+        // A **NULLABLE** result binds first and branches.  `@FR-Col-Lookup` gives every
+        // keyed point lookup a `?` (loft#1450), so `h["a"]` at a paused frame — the exact
+        // expression this whole path was built for — is now `HRec?`, and `.to_json()` is
+        // not a method on a `τ?`.  The wrapper stopped compiling, fell to `None`, and the
+        // text-seed path rendered its graceful `null` for a key that is PRESENT: a
+        // debugger answering "absent" about a record it can see.
+        //
+        // Discharging with `?` alone would compile and be WORSE — a miss would render as
+        // the element type's zero record, which is a wrong answer wearing the right shape,
+        // and a debugger is the one place that must not invent a value.  So bind once and
+        // ask: absent reads `null`, present reads its record.  Binding also keeps `expr`
+        // evaluated exactly once, which matters when it is a call.
+        if nullable {
+            return self.eval_frame_build_run(
+                &sig,
+                &format!("{seed}__ev = ({expr});\n"),
+                "if __ev == null { \"null\" } else { __ev?.to_json() }",
+                "text",
+                &arg_names,
+                json,
+            );
         }
         // A **heap** result (struct / vector / struct-enum) can't be returned via
         // `reenter_ret` — it is destination-passed, so the frame base still holds

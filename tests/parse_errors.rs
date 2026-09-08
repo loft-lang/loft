@@ -3090,7 +3090,7 @@ fn b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error() {
         "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error:1:153",
+         b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error:1:152",
     );
 }
 
@@ -3106,7 +3106,7 @@ fn b_ref_reshape_rekey_through_amp_link_on_an_index_is_error() {
         "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_through_amp_link_on_an_index_is_error:1:154",
+         b_ref_reshape_rekey_through_amp_link_on_an_index_is_error:1:153",
     );
 }
 
@@ -3126,7 +3126,7 @@ fn b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error() {
         "cannot write the key field `x` through `c` — `x` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error:1:134",
+         b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error:1:133",
     );
 }
 
@@ -3154,7 +3154,7 @@ fn b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error() {
         "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error:1:156",
+         b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error:1:155",
     );
 }
 
@@ -3205,7 +3205,7 @@ fn b_ref_reshape_rekey_through_amp_link_is_error() {
         "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_through_amp_link_is_error:1:155",
+         b_ref_reshape_rekey_through_amp_link_is_error:1:154",
     );
 }
 
@@ -3909,4 +3909,57 @@ fn a_closure_cannot_replace_a_captured_heap_parameter() {
          fn f(p: S) { g = fn() { p = S { n: 9 }; }; g(); }\nfn run() -> integer { 1 }"
     )
     .error(&msg("2:13"));
+}
+
+/// B-Ref-Reshape (g6) — a TEXT key, which never reached the guard at all.
+///
+/// The key-write question used to be asked inside ONE lowering route: the `OpGet<T>` ->
+/// `OpSet<T>` seam in `call_to_set_op`, whose own comment said *"every `c.field = …` on a
+/// SCALAR field arrives here"*.  That word was the hole.  `assign_text` builds `OpSetText`
+/// directly and never arrives, so a `text` KEY was never asked about — and `trie` keys on
+/// exactly one `text` field, so it was the kind that could only ever be hit.
+///
+/// What it cost, silently, on both backends: `c = &h["aa"]; c.name = "zz"` on a
+/// `hash<Nm[name]>` left the record reachable by NO key (`h["aa"]` and `h["zz"]` both miss)
+/// while `len(h)` still answered 1.  On a `sorted` the record was still findable but the
+/// tree order it is searched by was not re-established.  Two kinds, two different wrong
+/// answers, no diagnostic either way.
+///
+/// The question now lives once in `parse_assign_op_inner`, beside the const guard, which
+/// that function already documents as the reason: *"a guard held inside a route is only as
+/// complete as that route's target-shape test and every shape it declines falls through
+/// unchecked.  Two did."*  A third did.
+#[test]
+fn b_ref_reshape_rekey_a_text_key_through_amp_link_is_error() {
+    code!(
+        "struct Nm { name: text, v: integer } \
+         fn test() { h: hash<Nm[name]> = [Nm { name: \"aa\", v: 1 }]; \
+           c = &h[\"aa\"]; c.name = \"zz\"; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `name` through `c` — `name` is one of `h`'s keys, and \
+         changing it would leave the element reachable by no key, so the write cannot reach \
+         `h`. Re-insert with `h[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_text_key_through_amp_link_is_error:1:124",
+    );
+}
+
+/// B-Ref-Reshape (g7) — the same text key on a `trie`, the kind that has no other sort.
+///
+/// Load-bearing rather than repetition: a `trie` keys on ONE `text` field by definition, so
+/// before the guard moved there was no spelling of a trie rekey that could be caught.  This
+/// is the cell that says the rule reaches the kind it could never reach.
+#[test]
+fn b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error() {
+    code!(
+        "struct Nm { name: text, v: integer } \
+         fn test() { h: trie<Nm[name]> = [Nm { name: \"aa\", v: 1 }]; \
+           c = &h[\"aa\"]; c.name = \"zz\"; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `name` through `c` — `name` is one of `h`'s keys, and \
+         changing it would leave the element reachable by no key, so the write cannot reach \
+         `h`. Re-insert with `h[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error:1:124",
+    );
 }

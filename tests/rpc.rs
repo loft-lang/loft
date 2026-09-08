@@ -170,6 +170,12 @@ fn rpc_eval_in_a_keyed_collection_frame() {
         "{\"id\":7,\"req\":\"eval\",\"expr\":\"len(h)\"}".to_string(),
         // The whole element struct → JSON object via the live DbRef → to_json.
         "{\"id\":8,\"req\":\"eval\",\"expr\":\"h[\\\"a\\\"]\"}".to_string(),
+        // …and the MISS, which is the half a discharge would get wrong.  `@FR-Col-Lookup`
+        // makes a keyed point lookup `τ?`, so the whole-element eval has to distinguish
+        // "absent" from "present": discharging with `?` compiles and renders the element
+        // type's ZERO RECORD for a key that is not there — a debugger inventing a value,
+        // which is worse than the refusal it replaces.  Without this cell that cure passes.
+        "{\"id\":11,\"req\":\"eval\",\"expr\":\"h[\\\"zz\\\"]\"}".to_string(),
         "{\"id\":9,\"req\":\"continue\"}".to_string(),
         "{\"id\":10,\"req\":\"disconnect\"}".to_string(),
     ]);
@@ -192,6 +198,10 @@ fn rpc_eval_in_a_keyed_collection_frame() {
     assert!(
         out.contains("\"id\":8,\"ok\":true,\"value\":{\"name\":\"a\",\"v\":7}"),
         "eval h[\"a\"] == the element struct: {out}"
+    );
+    assert!(
+        out.contains("\"id\":11,\"ok\":true,\"value\":null"),
+        "eval h[\"zz\"] == null (an ABSENT key is absent, not a zero record): {out}"
     );
     assert!(
         out.contains("\"category\":\"stdout\",\"text\":\"r=7 x=5\""),
