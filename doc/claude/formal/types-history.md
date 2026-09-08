@@ -63,6 +63,51 @@ the set.  `is_mutating_op` in `parser/control.rs` is the SAME question asked a s
 `OpRemoveVector` — and that omission is a live both-backend crash, filed separately.  Two lists
 answering one question is the shape `one-question-many-decoders` warns about; the derived home is
 the work this entry leaves open.
+### `(N-Shape)` — ADDED 2026-09-08 (@PLN153 phase 4 batch 11): the rule the peels were re-deriving one site at a time
+
+Nine of phase 4's batches cured the same mechanism — a `matches!` / `if let` / catch-all `match`
+over a `Type` that answers "no" for `Optional(τ)` — and each cured it at the CALLERS it had
+reached.  `Type::peel_optional`'s doc block had stated the governing fact since @PLN25
+(*"the nullability-agnostic majority of `match Type` sites peel through this; only the discharge
+/ store / cast checks read the bool"*), with no rule, no citation and no gate, so every batch
+re-derived it.  Written down as `(N-Shape)` in [types.md](types.md), cited at its home
+(`peel_optional`) and at the verbs below.
+
+**Why the design's own guarantee does not fire.**  `Optional` is a `Type` VARIANT rather than a
+`nullable: bool` precisely so that *"every exhaustive `match Type` is a COMPILE ERROR until it
+handles nullability (loud omission)"* — and `matches!`, `if let` and a catch-all arm are not
+exhaustive matches.  Measured by `scripts/ir_walker_audit.py optional`: **2268** shape tests,
+**1520** opaque on their own scrutinee.  A population that size is not a walk, so the enforcement
+is a RATCHET on the count (`make optional-ratchet`, baseline `index/optional_ratchet.json`) —
+the same argument `asan_leak_ratchet.sh` makes for a count over an allowlist: the opaque tests are
+indistinguishable from each other by any pattern a suppression could name.
+
+**Three verbs fixed at the verb, not at their callers**, so ~48 bare call sites are answered at
+one home: `is_scalar`, `Type::heap_def_nr` and `Type::heap_dep`.  Corpus-measured with
+`scripts/introspect_diff.sh`: **9 of 1411 files move**, all nine null guards, every one identical
+in VALUE on both backends and under `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` / `LOFT_STORES=warn`.
+Eight take the copy-or-adopt lowering their dense twin already took (`heap_def_nr` is `(B-Copy)`'s
+home, and loft#1319 had cured only the local-to-local site); the ninth moves a hoisted nullable
+scalar's declaration into the native prologue, which is where batch 3's own cell said it belonged.
+`heap_dep` alone reads IDENTICAL 1411/1411 — insurance, exactly as batch 2 argued when it peeled
+that verb's four `scopes.rs` callers by hand.
+
+**⚠ `is_dbref` is the one OPEN exception, and it is measured rather than assumed.**  Peeling it
+moves **102** files and breaks **12** guards, because at least thirteen callers read its blindness
+as a NULLABILITY test — they ask *"is this a non-null heap slot?"* and take the answer from a
+SHAPE predicate's missing arm.  One of them is named and cured here without peeling the verb:
+`nstore_null_report_as`'s `heap_target` tests the synthetic `__nullable<S>` spelling of `τ?`
+explicitly and left the `Type::Optional` spelling to `is_dbref` answering false — one notion, two
+spellings, one of them looked for.  Spelling the second is byte-identical today and makes the
+gate's reason local.  Splitting the rest is a walk of its own; until it lands,
+`data::tests::is_dbref_is_the_documented_exception_to_shape_agreement` holds the exception open
+and FLIPS when it closes.
+
+**And two of the audit's rows are FALSE POSITIVES**, recorded so the baseline is honest rather
+than merely frozen: `borrow_deps` and `rewrap_deps` name `Rewritten` with no `Optional` arm but
+delegate to `deps_ref` / `with_deps`, which are dep-transparent by construction.  `is_unknown`
+(106 bare callers) and `find_fn` are DELIBERATE — phase 0 F1 settled that a wrapper over a stub
+IS a written type at the settledness guards, and `(F-Recv)` keys two overloads apart BY the `?`.
 
 ### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
 

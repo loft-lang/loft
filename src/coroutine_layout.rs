@@ -218,8 +218,12 @@ pub const CHANNEL_NONE: i32 = 6;
 /// `(i64, &String) as i64`, and the author gets a rustc dump against generated source they
 /// cannot read for a program `--interpret` runs correctly (loft#1132).
 fn channel_0_carries(tp: &Type) -> bool {
+    // `@FR-N-Shape` — all three tests ask the same question of the same value, so all three
+    // peel.  The middle one did not: `Text` and the scalar list read `base()` while the handle
+    // test read the wrapper, so one expression answered two ways about `τ?` depending on which
+    // arm reached it.
     matches!(tp.base(), Type::Text(_))
-        || crate::data::is_dbref(tp)
+        || crate::data::is_dbref(tp.base())
         || crate::data::is_scalar(tp.base())
 }
 

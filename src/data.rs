@@ -1891,6 +1891,12 @@ impl Type {
     /// @PLN25 — split a type into its base and whether it was `Optional`. The
     /// nullability-agnostic majority of `match Type` sites peel through this; only the
     /// discharge / store / cast checks (N-Store/N-Decl/N-Coal/N-Match) read the bool.
+    ///
+    /// `@FR-N-Shape` — this is that rule's HOME, and the sentence above is the rule: a SHAPE
+    /// question answers alike for `τ` and `τ?`, a NULLABILITY question reads the bool.  The
+    /// `Optional` VARIANT exists so an omission is a compile error, but that covers an
+    /// EXHAUSTIVE `match Type` only — `matches!`, `if let` and a catch-all arm are where the
+    /// guarantee does not fire, and `scripts/ir_walker_audit.py optional` counts them.
     pub fn peel_optional(&self) -> (&Type, bool) {
         match self {
             Type::Optional(inner) => (inner, true),
@@ -2238,9 +2244,14 @@ impl Type {
     /// allocates a fresh store via `OpDatabase` that needs scope-exit
     /// `OpFreeRef` cleanup).
     /// Use this instead of manual pattern matches to avoid forgetting an arm.
+    ///
+    /// `@FR-N-Shape` — through `base()`, because a `τ?` has `τ`'s storage and therefore
+    /// `τ`'s store-lifetime question.  Four callers in `scopes.rs` peel by hand for exactly
+    /// this reason (loft#1442's batch); asking here is what makes a lowering that mints into
+    /// a nullable local directly covered by existing rather than by the next walk.
     #[must_use]
     pub fn heap_dep(&self) -> Option<&Vec<u16>> {
-        match self {
+        match self.base() {
             Type::Reference(_, dep)
             | Type::Vector(_, dep)
             | Type::Enum(_, true, dep)
@@ -2306,9 +2317,15 @@ impl Type {
     /// The one home for *"is this a heap RECORD?"* — the shape a plain whole-value bind
     /// copies (`@FR-B-Copy`), on both backends.  A site that spells `Type::Reference` bare
     /// instead answers "no" for a struct-enum and lets its bind alias.
+    ///
+    /// `@FR-N-Shape` — and through `base()` for the same reason one step further out: `S?` is
+    /// `Optional(Reference(S))`, the same record behind a nullability marker, so a bind off a
+    /// nullable local aliased where its dense twin copied.  loft#1319 cured that at the
+    /// local-to-local site by peeling AT the caller; the call-result and fn-ref-result sites
+    /// were left bare, which is the drift this answers once.
     #[must_use]
     pub fn heap_def_nr(&self) -> Option<u32> {
-        match self {
+        match self.base() {
             Type::Reference(d, _) | Type::Enum(d, true, _) => Some(*d),
             _ => None,
         }
@@ -5300,6 +5317,16 @@ pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
 /// scalar path — so call this function rather than restating it.
 ///
 /// `Parser::is_heap_handle` is the same question with a `.base()` peel, and delegates here.
+///
+/// ⚠ **This one does NOT peel, and that is measured rather than chosen.**  `@FR-N-Shape` says a
+/// shape question answers alike for `τ` and `τ?`, so peeling here is what the rule asks for — and
+/// it is not landable at the verb: measured over the corpus, the peel moves 102 files and breaks
+/// **12** guards, because at least thirteen callers use the bare answer as a NULLABILITY test.
+/// They ask *"is this a non-null heap slot?"* and get it from this predicate's blindness instead
+/// of from a `?` test of their own, so peeling silently re-points store-lifetime and null-gate
+/// decisions.  Splitting those callers is a walk of its own; until then, a site that wants the
+/// SHAPE writes `is_dbref(tp.base())` (or `Parser::is_heap_handle`) and a site that wants
+/// non-nullness spells that test beside it.
 #[must_use]
 pub fn is_dbref(tp: &Type) -> bool {
     matches!(
@@ -5358,7 +5385,9 @@ pub fn holds_dbref(tp: &Type) -> bool {
 #[must_use]
 pub fn is_scalar(tp: &Type) -> bool {
     matches!(
-        tp,
+        // `@FR-N-Shape` — a `τ?` scalar is stored in `τ`'s own width with an in-band sentinel
+        // (C90), so every question this answers is the same question for both.
+        tp.base(),
         Type::Integer(_)
             | Type::Float
             | Type::Single
@@ -10212,6 +10241,100 @@ mod type_name_user_facing_tests {
         let d = Data::new();
         let r = Type::RefVar(Box::new(Type::Text(Deps::none())));
         assert_eq!(r.name(&d), "&text");
+    }
+
+    // `@FR-N-Shape` — the rule as an executable property: every SHAPE verb answers the same
+    // for `τ` and for `τ?`.  It goes red if a peel is reverted, which is what a `.base()` in a
+    // verb body cannot say for itself, and it is the cell that lets the verbs be fixed once
+    // instead of one caller at a time.
+    //
+    // The spread is one τ per storage class the model has, because the rule is about STORAGE:
+    // the in-band scalars, the out-of-band handles, a value enum beside a record enum (they
+    // differ in `is_ref`, which is exactly what these verbs read), and a tuple.
+    fn shape_spread() -> Vec<(&'static str, Type)> {
+        use crate::data::I64;
+        let d = Deps::none();
+        vec![
+            ("integer", I64.clone()),
+            ("float", Type::Float),
+            ("boolean", Type::Boolean),
+            ("character", Type::Character),
+            ("text", Type::Text(d.clone())),
+            ("reference", Type::Reference(7, d.clone())),
+            ("vector", Type::Vector(Box::new(I64.clone()), d.clone())),
+            ("hash", Type::Hash(7, vec!["k".to_string()], d.clone())),
+            (
+                "sorted",
+                Type::Sorted(7, vec![("k".to_string(), true)], d.clone()),
+            ),
+            (
+                "index",
+                Type::Index(7, vec![("k".to_string(), true)], d.clone()),
+            ),
+            ("record enum", Type::Enum(7, true, d.clone())),
+            ("value enum", Type::Enum(7, false, d.clone())),
+            (
+                "tuple",
+                Type::Tuple(vec![I64.clone(), Type::Text(d.clone())]),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_shape_verb_answers_alike_for_a_nullable_type() {
+        use crate::data::is_scalar;
+        for (name, bare) in shape_spread() {
+            let opt = Type::optional(bare.clone());
+            assert_eq!(
+                is_scalar(&bare),
+                is_scalar(&opt),
+                "is_scalar disagrees about {name} and {name}?"
+            );
+            assert_eq!(
+                bare.heap_def_nr(),
+                opt.heap_def_nr(),
+                "heap_def_nr disagrees about {name} and {name}?"
+            );
+            assert_eq!(
+                bare.heap_dep(),
+                opt.heap_dep(),
+                "heap_dep disagrees about {name} and {name}?"
+            );
+            // The dep family was already transparent (`@PLN25 — Optional is dep-transparent`);
+            // these are the controls that keep it that way, and they are why the audit listing
+            // `borrow_deps` as opaque is a FALSE POSITIVE — its own match names `Rewritten`
+            // with no `Optional` arm and delegates to a body that peels.
+            assert_eq!(
+                bare.depend(),
+                opt.depend(),
+                "depend disagrees about {name}?"
+            );
+            assert_eq!(
+                bare.borrow_deps(),
+                opt.borrow_deps(),
+                "borrow_deps disagrees about {name}?"
+            );
+        }
+    }
+
+    // `is_dbref` is `@FR-N-Shape`'s ONE open exception, and this test is what keeps it from
+    // being forgotten rather than what excuses it: peeling the verb moves 102 corpus files and
+    // breaks 12 guards, because at least thirteen callers read its blindness as a NULLABILITY
+    // test.  When those callers are split, this test FLIPS — which is the signal to close the
+    // exception in the verb's doc block and in types-history.md, not to delete the assertion.
+    #[test]
+    fn is_dbref_is_the_documented_exception_to_shape_agreement() {
+        use crate::data::is_dbref;
+        let opt_ref = Type::optional(Type::Reference(7, Deps::none()));
+        assert!(
+            !is_dbref(&opt_ref),
+            "is_dbref still answers about the WRAPPER — if this now peels, the caller split \
+             landed and the exception in its doc block and in types-history.md must close"
+        );
+        assert!(
+            is_dbref(opt_ref.base()),
+            "…and the shape answer a caller wanting it must spell for itself"
+        );
     }
 
     // @PLN25 — the `τ?` former's invariants: idempotent (N-Idem), normalising over

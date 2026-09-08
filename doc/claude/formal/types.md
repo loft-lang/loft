@@ -443,6 +443,15 @@ old auto-`τ?` reading. Design record:
             forms already peel it (loft#1205 `peel_place_discharge`, loft#1214 for a keyed
             receiver) so the write lands in the real place, and `??` on a place is refused
             outright — it names two values and no place.
+(N-Shape)   a question about a type's SHAPE — which storage it uses, which definition it names,
+            whether it reaches a store, what it borrows, which channel carries it — answers
+            IDENTICALLY for τ and for τ?.  Only a NULLABILITY question may tell them apart, and
+            it is spelled by READING the marker, never by the absence of a match arm.  Follows
+            from C90: `Optional(τ)` shares τ's storage and the `?` is a compile-time marker.
+            Home: `Type::peel_optional` / `Type::base` (and `Type::data_shape`, which peels a
+            `&` as well).  The compile-error guarantee the `Optional` VARIANT was added for
+            covers an EXHAUSTIVE `match Type` and nothing else, so `matches!`, `if let` and a
+            catch-all arm are where this rule is broken silently.
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys

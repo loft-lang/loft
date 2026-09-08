@@ -4374,6 +4374,12 @@ impl Parser {
         let heap_target = crate::keys::heap_nstore_enabled()
             && crate::keys::nstore_softens(false)
             && crate::data::is_dbref(target_tp)
+            // Both spellings of `τ?`, asked HERE.  `is_nullable_wrapper` covers the synthetic
+            // `__nullable<S>`; the `Type::Optional` marker was covered only by `is_dbref`
+            // answering `false` for a wrapper — a nullability question answered by a shape
+            // predicate's blindness (`@FR-N-Shape`).  Spelling it makes the outcome identical
+            // and the reason local, so peeling `is_dbref` later cannot silently open this gate.
+            && !matches!(target_tp, Type::Optional(_))
             && !self.data.is_nullable_wrapper(target_tp);
         if crate::keys::pln25_dn1_enabled() && (Self::is_non_null_scalar(target_tp) || heap_target)
         {

@@ -2542,7 +2542,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 751 | 404 | 6 | **341** |
+| 751 | 407 | 6 | **338** |
+
+⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
+carries the defect is the TEST: the same run reports **2268** shape tests, **1520** of them opaque
+on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
+progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
+`index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
+for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Shape`
+([formal/types.md](formal/types.md)).
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read

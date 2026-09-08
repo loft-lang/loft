@@ -77,6 +77,9 @@
 #         `reach`, `spellings` and `optional` need no binary; `dead` needs a built binary (target/debug/loft, or $LOFT_BIN) and takes ~1 min.
 
 import glob
+import contextlib
+import io
+import json
 import os
 import re
 import sys
@@ -1159,7 +1162,8 @@ def audit_optional():
     print(f"functions discriminating on a `Type` variant : {seen}")
     print(f"  see through the wrapper (peel or arm)      : {sees}")
     print(f"  descend via the `Type` keystone            : {desc}")
-    print(f"  opaque to a wrapped shape                  : {seen - sees - desc}")
+    opaque_functions = seen - sees - desc
+    print(f"  opaque to a wrapped shape                  : {opaque_functions}")
     print()
     print("  callers of an OPAQUE `data.rs` verb — does the receiver peel first?")
     print(f"  {'verb':<22}{'peeled':>7}{'bare':>6}   bare call sites")
@@ -1209,6 +1213,10 @@ def audit_optional():
     print(f"    the test itself sees through the wrapper        : {sum(1 for t in tests if t[3])}")
     print(f"    opaque on its OWN scrutinee                     : {sum(1 for t in tests if not t[3])}")
     print(f"    ← of those, inside a body the function unit clears: {len(blind)}")
+    counts = {
+        "opaque_functions": opaque_functions,
+        "opaque_tests": sum(1 for t in tests if not t[3]),
+    }
     print()
     print("  the queue the FUNCTION unit cannot produce — an opaque test in a body that")
     print("  peels somewhere else.  A hit is a site to READ: ask whether a `τ?` can arrive")
@@ -1216,6 +1224,7 @@ def audit_optional():
     for site, name, kind, _s, _v, _sp in sorted(blind):
         print(f"  {site:<44} {name:<40} {kind}")
     print()
+    return counts
     print(f"  hand-spelled LISTS (3+ variants) whose homes DISAGREE : {len(dis)}")
     print(f"    bare tests inside them                             : {sum(len(v[False]) for v in dis.values())}")
     print("  Read a disagreement as a claim that two homes answer one question differently.")
@@ -1258,6 +1267,70 @@ if mode == "dead":
 if mode == "spellings":
     print("== spellings (who sees only the CALL half of a projection?) ==")
     audit_spellings()
+# ── the @FR-N-Shape ratchet ───────────────────────────────────────────────────
+# The rule says a SHAPE question answers alike for `τ` and `τ?`, and the `Optional`
+# VARIANT was chosen so an omission is a COMPILE ERROR — but that fires for an
+# exhaustive `match Type` only, and 1520 of the 2268 shape tests are a `matches!`,
+# an `if let` or a catch-all arm, where it does not.  The population is far too
+# large to walk, so this gates the DERIVATIVE: the count may fall and may not rise.
+#
+# A COUNT rather than a site allowlist, for `asan_leak_ratchet.sh`'s reason: the
+# opaque tests are indistinguishable from one another by any pattern a suppression
+# could name — they are ordinary `matches!` on a `Type` — so only the aggregate can
+# tell a known one from a new one.
+#
+# Falling is not a failure: it prints the command and exits 0, so a PR that fixes
+# sites is never blocked by its own improvement.  Re-pin in the same commit, so the
+# baseline in the diff is the receipt for the walk that earned it.
+RATCHET = os.path.join(ROOT, "index", "optional_ratchet.json")
+
+
+def ratchet(counts, write):
+    import json
+
+    if write:
+        with open(RATCHET, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print(f"optional ratchet: pinned {counts} into {rel(RATCHET)}")
+        return 0
+    try:
+        with open(RATCHET, encoding="utf-8") as fh:
+            base = json.load(fh)
+    except FileNotFoundError:
+        print(f"optional ratchet: no baseline at {rel(RATCHET)} — run with --write")
+        return 2
+    grew = {k: (base.get(k), v) for k, v in counts.items() if v > base.get(k, v)}
+    fell = {k: (base.get(k), v) for k, v in counts.items() if v < base.get(k, v)}
+    for k, (was, now) in sorted(grew.items()):
+        print(f"  GREW  {k}: {was} -> {now}")
+    for k, (was, now) in sorted(fell.items()):
+        print(f"  fell  {k}: {was} -> {now}")
+    if grew:
+        print(
+            "\nERROR: a new shape test cannot see through `τ?` (@FR-N-Shape).\n"
+            "  Peel the scrutinee — `.base()`, or `.data_shape()` where a `&` may also\n"
+            "  reach it — or, if the site really is asking a NULLABILITY question, spell\n"
+            "  that test rather than leaving it to a missing match arm.\n"
+            "  The rule and its one open exception (`is_dbref`) are in formal/types.md."
+        )
+        return 1
+    if fell:
+        print("\nThe count fell — re-pin it in this commit:")
+        print("  python3 scripts/ir_walker_audit.py optional --write-ratchet")
+    else:
+        print(f"optional ratchet: at baseline {base}.")
+    return 0
+
+
 if mode == "optional":
+    check = "--check-ratchet" in sys.argv
+    write = "--write-ratchet" in sys.argv
+    if check or write:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            counts = audit_optional()
+        print("== @FR-N-Shape ratchet (opaque shape tests must not GROW) ==")
+        sys.exit(ratchet(counts, write))
     print("== optional (who can see through the `τ?` wrapper?) ==")
     audit_optional()
