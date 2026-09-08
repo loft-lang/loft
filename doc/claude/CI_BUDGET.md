@@ -532,7 +532,8 @@ does not belong on a PR, however cheap it is.**
 | **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored ownership fuzz replay + SI-2 check), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
-| **nightly 04:30** | `registry-validation` — every published package installed + tested on both backends | `schedule` |
+| **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
+| **Sundays 05:30** | `registry-validation` (scope `full`) — EVERY non-yanked published version, 164 legs.  The nightly only ever validated the tip, so 121 of 164 versions were checked by nothing (loft#1462, the gate hole behind #1448).  Weekly rather than nightly because a rotted OLD release breaks nobody until somebody pins it | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — every published lib against this loft, plus the warning dashboard | `schedule`, `push`, `pull_request` |
 | **nightly 07:00** | `lib-branch-report` — unmerged branches across the library repos | `schedule` |
 | **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check) | `schedule` |

@@ -2098,6 +2098,7 @@ ci: ci-guard
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
+	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
 	cargo build --all-targets >> result.txt 2>&1 && \
 	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
@@ -2430,6 +2431,13 @@ contract-labels-test:  ## the `Contract:` trailer parse behind the push workflow
 .PHONY: revalidate-matrix-test
 revalidate-matrix-test:  ## the revalidate-libs matrix policy shared by the workflow and the local gate
 	@python3 scripts/revalidate_matrix.py --self-test
+
+# The registry sweep's POPULATION — which versions a scope validates.  Local, because the
+# thing it decides (does any published version go unchecked?) is a policy question, and a
+# policy only the nightly can answer is one nobody reads until it is wrong (loft#1462).
+.PHONY: registry-matrix-test
+registry-matrix-test:  ## the registry-validation population policy, shared by the workflow
+	@python3 scripts/registry_matrix_versions.py --self-test
 
 .PHONY: linkcheck linkcheck-external
 linkcheck:

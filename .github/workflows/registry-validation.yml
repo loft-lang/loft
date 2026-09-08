@@ -9,20 +9,52 @@
 # (tarball + sha256 + dep resolution), build its native crate on current
 # stable rustc, and run its shipped test suite on BOTH backends.
 #
-# One matrix leg per package (fail-fast off) → a red night names the exact
-# packages that rotted.  Runs at 04:30 UTC, after the 03:00 full-matrix CI,
+# One matrix leg per package@VERSION (fail-fast off) → a red night names the
+# exact release that rotted.  Runs at 04:30 UTC, after the 03:00 full-matrix CI,
 # so a red here with a green CI points at package rot, not a loft break.
+#
+# TWO SCOPES, because the two questions have different urgencies (loft#1462).
+# The nightly validates each package's TIP — what `loft install` gets today, so a
+# rot there is somebody's build breaking tonight.  That was the whole sweep, and
+# it left every older published version validated by NOTHING: 121 of 164 when
+# this was written, which is the gate hole behind loft#1448 (imaging 0.1.0
+# required `loft-ffi-build = "0.1"` for a build.rs calling the 0.2 API, and by
+# the time anyone looked the tip was 0.3.2 and 0.3.2 builds fine).
+#
+# So Sundays 05:30 run scope=full — every non-yanked, non-prerelease version.  A
+# rotted OLD release breaks nobody until somebody pins it, so a week's latency is
+# proportionate, and `full` is the only scope under which "checked by nothing" is
+# false for every published version.  `repro-build` (Mondays) is the existing
+# precedent for a weekly gate here.  Cheaper middles were considered and rejected
+# in `scripts/registry_matrix_versions.py`, which is where the population lives.
 name: registry-validation
 
 on:
   schedule:
+    # Nightly: the tip of every package.
     - cron: '30 4 * * *'
+    # Weekly: every published version, so none is validated by nothing (loft#1462).
+    - cron: '30 5 * * 0'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'tip = newest stable per package; full = every published version'
+        type: choice
+        options: [tip, full]
+        default: tip
   # Called by `release-gate.yml`: one deliberate run of every nightly against ONE
   # commit, ending in one verdict (the release evidence — RELEASE.md § The nightlies).
   # A called workflow sees its CALLER's event, which is a dispatch or a probe push and
   # never `pull_request`, so it takes the same full path the schedule takes.
+  #
+  # The release gate takes `tip` by default, deliberately: the evidence it collects is about
+  # the release a user is about to install, and 164 legs would make the gate's wall-clock a
+  # different decision from this one.  Pass `scope: full` to ask for the whole tail.
   workflow_call:
+    inputs:
+      scope:
+        type: string
+        default: tip
 
 permissions:
   contents: read
@@ -79,6 +111,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: List registry packages
         id: list
+        env:
+          # The weekly cron asks for the whole tail; everything else takes the tip, including a
+          # `workflow_call` that names no scope.  A scheduled run carries no inputs, which is
+          # why the cron string is what selects here.
+          SCOPE: ${{ github.event.schedule == '30 5 * * 0' && 'full' || inputs.scope || 'tip' }}
         run: |
           set -uo pipefail
           curl -sSfL https://raw.githubusercontent.com/loft-lang/registry/main/index.json -o index.json
@@ -109,8 +146,22 @@ jobs:
            green sweep that validated nothing."
             exit 1
           fi
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
-          echo "validating: $packages"
+          # …then expand each package to the VERSIONS this scope validates (loft#1462).  The
+          # population lives in one script rather than in more `jq` here, because it is the
+          # part with a decision in it and it is worth being able to run locally:
+          #   python3 scripts/registry_matrix_versions.py index.json full | jq length
+          # `registry_validate.sh` already takes `pkg@version`, so the leg below is unchanged
+          # and the matrix leg NAME now says which release rotted.
+          printf '%s' "$packages" > packages.json
+          entries=$(python3 scripts/registry_matrix_versions.py index.json "$SCOPE" packages.json)
+          if [ -z "$entries" ] || [ "$entries" = "[]" ]; then
+            echo "::error::the ${SCOPE} scope expanded to NO versions — refusing to report a green\
+           sweep that validated nothing."
+            exit 1
+          fi
+          echo "packages=$entries" >> "$GITHUB_OUTPUT"
+          echo "scope=$SCOPE, $(printf '%s' "$entries" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') legs"
+          echo "validating: $entries"
 
           # Coercing the type keeps the sweep RUNNING, but on its own it would also
           # make the defect invisible — the failure mode we just spent six nights
