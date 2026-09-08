@@ -709,23 +709,12 @@ impl Parser {
         if receiver_optional
             && !t.is_unknown()
             && !matches!(t, Type::Optional(_))
-            // `@FR-N-Opt` — `τ?` is a type only for a τ that HAS a value to spend on absence.
-            //
-            // ⚠ This list is INCOMPLETE against the declaration's, and deliberately so for now:
-            // `parser/definitions.rs` refuses `<value struct>?` and `(τ, τ)?` where this
-            // excludes `Function | Tuple`, so a `value struct` field read through a nullable
-            // receiver still mints a `Pt?` the declaration would reject.  Widening it here
-            // alone would give the predicate a THIRD answer rather than one; the shared
-            // question is loft#1471, which carries the design call (which of `(N-Domain)` and
-            // `(N-Opt)` gives for a type former with no absence value).  `has_null` wants a
-            // home, and that home is what closes all three.
-            // A function type has none: `(fn() -> integer)?` is refused at the declaration, and
-            // a yielded fn-ref has no null sentinel to test.  A TUPLE is the rule's own named
-            // case (`(T-Absent)`: an absent tuple is a present tuple of null members, so no
-            // `(τ, τ)?` exists even in flight).  Wrapping either mints a type the language
-            // cannot spell, and every bare `Type::Function` match downstream then misses it —
-            // measured: `e.f(3)` on an `e: E?` stopped parsing its own arguments.
-            && !matches!(t.base(), Type::Function(_, _, _) | Type::Tuple(_))
+            // `@FR-N-Opt`'s side condition, from its ONE home.  This list used to be spelled
+            // out here and was the only construction site that asked at all; the comment beside
+            // it said so and named what that costs — *"every bare `Type::Function` match
+            // downstream then misses it"*.  Both other constructors have it now, and the
+            // predicate is `crate::data::has_null`.
+            && crate::data::has_null(t)
             && crate::keys::pln25_dn1_enabled()
             && self.tagged_pointer_type(t).is_none()
         {
@@ -763,6 +752,13 @@ impl Parser {
         // element type is known and this wraps it then.
         if point_lookup
             && !elm_type.is_unknown()
+            // `@FR-N-Opt`'s side condition — a keyed miss answers `τ?`, so `(Col-Lookup)` owes
+            // it exactly as `(N-Domain)` and `(N-Chain)` do.  It asked nothing until now, which
+            // is latent rather than harmless: it needs only a keyed collection whose ELEMENT is
+            // a fn-ref to mint a type nothing downstream expects.  `constructs_optional` and not
+            // `has_null`, because the TUPLE's cure is to build `(T-Absent)`'s member-nullable
+            // form and not to stop marking absence — `D-tup-10`, and its doc has the reading.
+            && crate::data::constructs_optional(elm_type)
             && crate::keys::pln25_dn1_enabled()
             && self.tagged_pointer_type(elm_type).is_none()
         {
@@ -1219,8 +1215,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
             // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
             // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
+            // `@FR-N-Opt`'s side condition — the third constructor, and the one where the
+            // missing question was not latent.  A `vector<fn() -> integer>` read by a plain
+            // variable index minted `fn?`; `gen_set_first_at_tos` tests `Type::Function` BARE,
+            // so the wrapper hid the fn-ref branch from it and the fall-through panicked — an
+            // internal compiler error on both backends, for a type the rules never permitted.
+            //
+            // The same index also mints `(integer, text)?`, which `(T-Absent)` equally forbids,
+            // and that one is NOT fixed here: `constructs_optional` keeps it deliberately.
+            // Measured — stopping the wrap alone types the read `(integer, text)`, non-null
+            // members holding nulls with no diagnostic, which trades a type the language cannot
+            // spell for one that lies.  The tuple's cure is `(T-Absent)`'s member-nullable form,
+            // and that is `D-tup-10`.
             if crate::keys::pln25_dn1_enabled()
                 && (!self.last_index_fit || receiver_optional)
+                && crate::data::constructs_optional(&elm_type)
                 && self.tagged_pointer_type(&elm_type).is_none()
             {
                 elm_type = Type::optional(elm_type);

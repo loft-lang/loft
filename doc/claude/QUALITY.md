@@ -2576,6 +2576,19 @@ so a predicate written from the SOURCE spelling rather than the emitted IR was d
 That is `spellings` (B6g) one level down: not two spellings of a notion, but the source's
 spelling and the IR's, and only the second is what a walker sees.
 
+**2026-09-09, `has_null` gets a home: `751 · 404 · 6 · 341` → `753 · 406 · 6 · 341`.**  TWO
+functions joined the classifier and both SEE THROUGH — `data::has_null`, `@FR-N-Opt`'s side
+condition, and `data::constructs_optional`, the one former where the code's answer differs from
+the rule's.  Both ask `.base()` because the question is about the type FORMER and a `τ??` cannot
+arise (`(N-Idem)`).
+
+Two rather than one is the shape of the change and worth the line: the predicate was spelled
+inline at ONE construction site and absent at two others, so giving it a home replaced a
+discriminating site rather than adding three — and the second function exists because the tuple's
+answer is not the rule's yet.  `constructs_optional` is written to be DELETED: the gap between it
+and `has_null` is `tuples.md D-tup-10`, so this row goes back down by one when that closes.  The
+opaque column did not move.
+
 **2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
 function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which
 resolves the subject of `x is Variant { … }` by naming `Type` variants.  It gained a `base()`

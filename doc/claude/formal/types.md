@@ -118,7 +118,15 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                ⚠ `has_null(τ)` is a SIDE CONDITION on this rule, so every rule that CONSTRUCTS a
                `τ?` owes it — (N-Domain), (N-Chain), (Col-Lookup), (N-Join) — and enforcing it
                only where a type is DECLARED is what let a `τ?` be minted for a τ that had none
-               (loft#1471).  It has no single implementation; see types-history D-Opt-NoNull.
+               (loft#1471).  It has ONE implementation since 2026-09-09: `data::has_null`
+               (loft#1478).  Two of the four constructors asked nothing at all before that, and
+               the index's silence was not latent — `v[i]` on a `vector<fn() -> integer>` by a
+               plain variable index minted `fn?`, which no consumer expects, and an internal
+               compiler error followed on both backends.  The FUNCTION former is closed by the
+               predicate; the TUPLE is not, because its absence HAS a form — (T-Absent)'s
+               member-nullable tuple — so the cure there is to build that form, not to stop
+               marking absence.  `data::constructs_optional` carries that one carve-out and
+               names tuples.md D-tup-10, which is what closes it.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 

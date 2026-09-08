@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Opt`'s side condition is owed by every rule that CONSTRUCTS a `τ?`, not only by the
+// declaration that spells one.
+//
+// `(N-Opt)` licenses `τ?` for a τ with a value to spend on absence — a reserved sentinel
+// `(L-Null)` or a discriminant `(L-Null-Tag)`.  Two type formers have neither.  A TUPLE is its
+// members' bytes: `tuples.md (T-Absent)` rules that an absent tuple is a PRESENT tuple of null
+// members, so no `(τ, τ)?` exists even in flight.  A FUNCTION type is the second — a fn-ref is a
+// `(d_nr, closure)` pair with no spare encoding, and the language has no spelling for one.
+//
+// `has_null` had no implementation.  It was re-derived inline wherever something happened to
+// ask, and of the four sites that construct a `τ?`, TWO asked nothing: `(N-Domain)`'s index and
+// `(Col-Lookup)`'s keyed miss.  The declaration refused what the constructors then minted.
+//
+// ⚠ **The index site's gap was not latent, and what it produced was an ICE.**  `v[i]` on a
+// `vector<fn() -> integer>`, by a plain variable index, typed the local `fn?`.  Nothing
+// downstream expects that type, and `gen_set_first_at_tos` tests `Type::Function` BARE — so the
+// wrapper hid the fn-ref branch from it, the value fell through to a match that peels `.base()`
+// and has no `Function` arm, and the compiler panicked: `gen_set_first_at_tos fallthrough:
+// unsupported var type Function(…)`.  Both backends, for a program the rules never permitted to
+// have that type in the first place.  TWO independent defects had to meet — a forbidden type
+// minted, and a bare test that the wrapper hides — which is why the fix is at the FORMATION
+// side: teaching codegen to carry `fn?` would make a type the rules forbid survive silently.
+//
+// The index is the axis, and it is `(N-Index)`'s own list.  An index trusted BY CONTRACT — a
+// constant, an active `for` variable, a read guarded by `i < len(v)`, arithmetic over those —
+// reads τ NON-NULL and never reached the wrap, so every one of those spellings worked.  Only the
+// plain variable failed.  A matrix that indexes by a constant measures nothing here.
+//
+// Axes this file MOVES:  the element's type former (a function · a TUPLE · a value struct · a
+//                        reference struct · a plain integer, the last three being the formers
+//                        that DO have a null and must be untouched) · the index's trust
+//                        (constant · `for` variable · guard-proved · plain variable ·
+//                        out of range) · where the collection lives (a local · a struct FIELD) ·
+//                        the constructing RULE (`(N-Domain)`'s index · `(Col-Lookup)`'s keyed
+//                        miss) · whether the destination local is INFERRED or DECLARED, which is
+//                        what decided whether the forbidden type reached codegen at all · and
+//                        the function's own arity.
+// Axes it HOLDS FIXED:   one element type per collection, and the vector is DENSE.  The tuple
+//                        cell is all-`integer` on purpose and NOT because that is the
+//                        interesting case: a `text` MEMBER read out of a `vector<(integer,
+//                        text)>` by a variable index does not COMPILE on `--native` (rustc
+//                        E0308, `&str` where `String` is expected), pre-existing at the
+//                        merge-base and filed separately.  That is `D-tup-10`'s migration and
+//                        importing it here would leave this file red for a reason none of its
+//                        own axes name.  Worth the sentence because it is the shape a tuple
+//                        oracle keeps missing — all-`integer` cells cannot see it.
+//
+// ⚠ There is deliberately NO out-of-range fn-ref cell, and the absence is the rule restated:
+// `has_null(fn) = false` means there is no absent fn-ref to answer with, so such a read has
+// nothing an assertion could name.  Every way of writing one is a lint about itself — bind it
+// and `never-read` fires, overwrite it and `dead-assignment` does — because the compiler is
+// saying the same thing this rule says.  The TUPLE half is where an out-of-range read of a
+// null-less former IS assertable (`e5`), because `(T-Absent)` gives it members to read.
+//
+// @falsified-at: 5d7a00efd — interpret exit 101 -> 0, interpret panicked -> clean, native
+//   exit 101 -> 0, native panicked -> clean.  MEASURED both
+//   backends.  The control PANICS rather than failing an assert, which is the right channel for
+//   an ICE: `gen_set_first_at_tos fallthrough: unsupported var type Function([], Integer(…))
+//   for first-Set of g`.  The tuple half of the same rule is a silent type-level wrong on that
+//   build and does not move the exit code by itself — `e5` is the cell that names it, and it is
+//   why this file asserts the VALUES a tuple read answers rather than only that it compiles.
+
+fn one78() -> integer { 1 }
+fn two78() -> integer { 2 }
+fn inc78(a: integer) -> integer { a + 1 }
+fn dec78(a: integer) -> integer { a - 1 }
+
+value struct VP78 { x: integer, y: integer }
+struct RS78 { x: integer }
+struct Row78 { id: integer, n: integer }
+struct Bag78 { fs: vector<fn() -> integer> }
+
+fn main() {
+  fs: vector<fn() -> integer> = [one78, two78];
+
+  // ---- e1: the ICE cell.  A plain variable index, and an INFERRED local — the two together
+  //      are what let the forbidden `fn?` reach codegen ----
+  i = 1;
+  g = fs[i];
+  assert(g() == 2, "a fn-ref element read by a variable index is callable: {g()}");
+
+  // ---- e2: the same read into a DECLARED local.  It always worked, because the declared type
+  //      wins and the forbidden one never lands in the variable table.  It is the control that
+  //      says the defect was the minted TYPE and not the read ----
+  gd: fn() -> integer = fs[i];
+  assert(gd() == 2, "…and into a declared local, as it always did: {gd()}");
+
+  // ---- e3: every index `(N-Index)` trusts BY CONTRACT.  None of these reached the wrap, so all
+  //      four worked before the fix — they are the neighbours that say which axis moved ----
+  gc = fs[0];
+  assert(gc() == 1, "a CONSTANT index: trusted by contract");
+  total = 0;
+  for k in 0..2 { gk = fs[k]; total = total + gk(); }
+  assert(total == 3, "an active `for` variable: trusted: {total}");
+  if i < len(fs) { gg = fs[i]; assert(gg() == 2, "a guard-proved index: trusted"); }
+  ga = fs[0 + 1];
+  assert(ga() == 2, "arithmetic over a constant: trusted");
+
+  // ---- e4: the function's own arity is an axis, because the fn-ref's width is ----
+  ps: vector<fn(integer) -> integer> = [inc78, dec78];
+  gp = ps[i];
+  assert(gp(10) == 9, "a fn-ref taking a parameter: {gp(10)}");
+
+  // ---- e5: a TUPLE element, the other former with no null.  `(T-Absent)` — an absent tuple is
+  //      a PRESENT tuple of null members, so the out-of-range read answers members and not an
+  //      absence.  The VALUES are asserted because the type was the wrong half, and a cell that
+  //      only compiles would not have seen it ----
+  ts: vector<(integer, integer)> = [(7, 8)];
+  j = 9;
+  tin = ts[0];
+  tout = ts[j];
+  assert(tin.0 == 7 && tin.1 == 8, "an in-range tuple element is its own value");
+  assert(tout.0 == null, "an out-of-range tuple has a null FIRST member");
+  assert(tout.1 == null, "…and a null second member — absent members, not an absent tuple");
+
+  // ---- e6: the collection as a struct FIELD, reached through a projection ----
+  b = Bag78 { fs: [one78, two78] };
+  gb = b.fs[i];
+  assert(gb() == 2, "a fn-ref element of a vector FIELD: {gb()}");
+
+  // ---- c1 CONTROL: `(Col-Lookup)` over an element that DOES have a null.  The keyed miss must
+  //      still answer `τ?`; the site asked nothing before and asks now, so this is what says the
+  //      new question did not take the answer away from the formers that have one ----
+  m: hash<Row78[id]> = [Row78 { id: 3, n: 5 }];
+  k1 = 3;
+  k2 = 99;
+  assert(m[k1] != null, "c1 a keyed HIT is present");
+  assert(m[k2] == null, "c1b a keyed MISS is still absent");
+  assert((m[k1] ?? Row78 { id: 0, n: 0 }).n == 5, "c1c …and the hit carries its payload");
+
+  // ---- c2 CONTROL: a VALUE STRUCT still has a null, through its tag.  loft#1471's answer must
+  //      survive a change that takes the wrapper away from two OTHER formers ----
+  vs: vector<VP78> = [VP78 { x: 7, y: 8 }];
+  assert(vs[0] != null, "c2 an in-range value-struct element is present");
+  assert(vs[j] == null, "c2b …and an out-of-range one is absent");
+  assert((vs[j] ?? VP78 { x: -1, y: -1 }).x == -1, "c2c …with its discharge running");
+
+  // ---- c3 CONTROL: a reference struct and a plain integer, the ordinary cases ----
+  rs: vector<RS78> = [RS78 { x: 7 }];
+  assert(rs[j] == null, "c3 a reference-struct element is absent out of range");
+  ints: vector<integer> = [7];
+  assert(ints[j] == null, "c3b an integer element is absent out of range");
+  assert(ints[0] == 7, "c3c …and exact in range");
+
+  println("has-null-is-owed-by-every-rule-that-constructs-an-optional ok");
+}

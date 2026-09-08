@@ -172,12 +172,41 @@ or take the tuple by value and return a new one. The refusal message says both.
 
 - **D-tup-10** *(open, loft#1423 / loft#1451)* — `(T-Absent)` says no `Optional(Tuple)` exists,
   and the code still mints one wherever absence is synthesised: `Type::optional` wraps a
-  `Tuple` like any other type.  Measured (both backends unless said): `v[i].0` on a
-  `vector<(integer, integer)>` by a variable index is REFUSED by name where the rule types it
-  `integer?`; `w: (integer?, integer?) = v[i]` is refused as a type change from
-  `(integer, integer)?`, which is the landing type the rule names; `t == null` is refused
-  (*"No matching operator '=='"*) on BOTH spellings, `(integer?, integer?)` and the in-flight
-  one.  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the identity lives in
+  `Tuple` like any other type.
+
+  ⚠ **RE-MEASURED 2026-09-09, both backends: three of the four cells this entry called REFUSED
+  now work, and only one still does.**  The entry read as a four-cell refusal and is a one-cell
+  one.  What still fails is the LANDING type: `w: (integer?, integer?) = v[i]` is refused as
+  *"cannot change type from `(integer?, integer?)` to `(integer, integer)?`"* — the two spellings
+  of one notion meeting, which is the deviation itself.  What now WORKS: `v[i].0` by a variable
+  index answers `null(oob)` where the entry says it is refused by name; `t == null` answers
+  `true` on BOTH spellings, the member-nullable and the in-flight one, where the entry says
+  *"No matching operator '=='"*.  `v[i] ?? d` and `v[i]?` still answer right (`1`, `0`).  The
+  three were carried along by loft#1450's `(N-Chain)` work and @PLN25's null model rather than
+  closed deliberately, which is exactly why a deviation's measured cells are a claim to
+  re-measure and not a record to cite.
+
+  ⚠ **A `text` MEMBER does not compile at all on `--native`, and no all-`integer` cell can see
+  it.**  `t: vector<(integer, text)>; i = 0; b = t[i]; b.1` is rustc **E0308** — `expected
+  `String`, found `&str`` — where `--interpret` answers `seven`.  A CONSTANT index compiles
+  (`(N-Index)` trusts it, so the element types plain `(integer, text)` and never takes this
+  path), and an all-`integer` tuple compiles by either index.  `OpGetText`'s `#rust` body wraps
+  its result in `Str::new(…)`, which `generation/calls.rs` strips for native, and this consumer
+  does not coerce what is left.  Pre-existing at `9720dfd06`; filed as loft#1478.  It is the
+  shape a tuple ORACLE keeps missing — this doc's counts have been read over a corpus of
+  `(integer, integer)` cells, which cannot reach it — so any cell added for this entry should
+  carry a non-scalar member.
+
+  ⚠ **And a cure that suggests itself is measured WRONG.**  `(N-Opt)`'s side condition got its
+  home in `data::has_null` on 2026-09-09 (loft#1478), and the obvious next step — have the `τ?`
+  constructors ask it, so the index stops minting `(integer, text)?` — makes this worse, not
+  better: the read then types `(integer, text)`, non-null members holding nulls, with no
+  diagnostic.  It trades a type the language cannot spell for one that LIES about what it holds.
+  "No `Optional(Tuple)`" is not "no absence"; the tuple's absence has a form and the cure is to
+  BUILD it.  `data::constructs_optional` is that carve-out, and it exists to be deleted when this
+  entry closes — the gap between the two predicates IS this deviation, in code.
+
+  **Removal:** the identity lives in
   `Type::optional` (one home — a `Tuple` maps to its member-nullable form); the null question
   then needs its one tuple home (`== null` / `??` agreeing on "every member null", as `1120-…`
   made them agree for a collection), and the typed decoder's tuple arm, when it grows one,

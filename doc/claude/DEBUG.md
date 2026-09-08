@@ -1726,6 +1726,39 @@ runner will pick it up automatically.
 
 ---
 
+## The axis your cells hold FIXED is where the defect is
+
+A matrix that reads green on a build which HAS the defect is the expensive failure, because it
+retires the question. Both instances measured in one session moved the same axis by accident and
+then held it fixed on purpose.
+
+**Reproduce the filed spelling before generalising it.** loft#1471 reports that an out-of-range
+read of a `vector<value struct>` fabricates a zero record. A thirteen-cell matrix built from that
+sentence read **11/13 green on the merge-base**, and the two reds were unrelated — so the issue
+looked already fixed. It was not: every cell asked `v[9] == null` INLINE, and the filed
+reproducer BINDS first (`a = v[9]; a == null`). Inline, the read is never materialised; bound, the
+materialised copy of an absent value was allocated and zeroed and the absence was gone. The bind
+was in the report and out of the matrix, which is the specific way a paraphrase loses a defect.
+
+**A guard's own header is the place to name the axis, because the next reader will paraphrase
+too.** The cure is one line in the file — keep the inline read as a CONTROL beside the bound one,
+so the pair says *these differ* rather than leaving the reader to rediscover it.
+
+**Then ask the tool, because counting axes by hand is what keeps failing.**
+`python3 scripts/matrix_axes.py file <guard.loft>` reads the axes a finished guard actually
+reaches. On that same file it named three it did not — a PARAMETER-provenance read, evaluation in
+a LOOP, and `(Col-Lookup)`'s keyed miss — and all three were on the ISSUE'S OWN list of rules that
+construct a `τ?`. None was broken, which is the ordinary outcome and still worth the minute: an
+unreached axis with a bug history is a probe to build, and the ones that pass become cells rather
+than neighbours.
+
+**A deviation's measured cells are a claim to re-measure, not a record to cite.** `D-tup-10`
+listed four cells as REFUSED; three of them answer correctly today, carried along by unrelated
+work on the null model. An entry that overstates what is broken sends the next reader to fix
+something that already works.
+
+---
+
 ## Two false failures that look exactly like real ones
 
 Both waste a bisect if you take them at face value.  The rule underneath is the same:

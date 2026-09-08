@@ -5302,6 +5302,60 @@ pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
     )
 }
 
+/// `@FR-N-Opt`'s side condition: does τ have a value to spend on ABSENCE?
+///
+/// `τ?` is well-formed only for a τ that can REPRESENT absence — a reserved sentinel
+/// (`@FR-L-Null`) or a discriminant (`@FR-L-Null-Tag`).  Either suffices, and which one a τ gets
+/// is layout's question: a `value struct` is stored inline and carries the tag, so it HAS a null
+/// (owner ruling 2026-09-08).  Two type formers have neither.  A TUPLE is its members' bytes,
+/// with no reserved value and no room for a discriminant — `tuples.md (T-Absent)` rules that an
+/// absent tuple is a PRESENT tuple of null members, so no `(τ, τ)?` exists even in flight.  A
+/// FUNCTION type is the second: a fn-ref is a `(d_nr, closure)` pair with no spare encoding, and
+/// the language has no spelling for one anyway.
+///
+/// ⚠ **This is a side condition on a FORMATION rule, so every rule that CONSTRUCTS a `τ?` owes
+/// it** — `(N-Domain)`'s index, `(N-Chain)`'s projection, `(Col-Lookup)`'s keyed miss — and not
+/// only the declaration that spells one.  It had no implementation at all until now: it was
+/// re-derived inline at the sites that happened to ask, with a DIFFERENT list each time, and two
+/// of the four asked nothing.  Measured on that state: `v[i]` on a `vector<fn() -> integer>` by a
+/// plain variable index minted `fn?`, and because `gen_set_first_at_tos` tests `Type::Function`
+/// BARE the wrapper hid the fn-ref branch from it — an internal compiler error on both backends
+/// for a program the rules never permitted to have that type.  The same index minted
+/// `(integer, text)?`, which `(T-Absent)` says cannot exist.
+///
+/// So call this rather than restating it.  A restated list is the `is_dbref` failure mode below
+/// with a rule attached: short by one former is not a compile error anywhere, it just mints a
+/// type nothing downstream expects.
+#[must_use]
+pub fn has_null(tp: &Type) -> bool {
+    !matches!(tp.base(), Type::Function(_, _, _) | Type::Tuple(_))
+}
+
+/// Should a rule that CONSTRUCTS a `τ?` actually wrap this τ — the CODE's answer, which differs
+/// from the rule's at exactly one former.
+///
+/// [`has_null`] is `(N-Opt)`'s answer and says a TUPLE has no `τ?`.  That is not the same as
+/// "a tuple has no absence": `tuples.md (T-Absent)` gives it one, the member-nullable tuple
+/// `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  So the cure for a tuple is to build THAT form, not
+/// to stop marking absence — and building it is `tuples.md D-tup-10`, six or seven pieces
+/// (`Type::optional`'s own arm, the `== null` home, `??`, `?`, the typed decoder) whose entry
+/// says outright that the one-arm change must not be landed alone.
+///
+/// ⚠ **Measured 2026-09-09, which is why this predicate exists rather than one.**  Making the
+/// constructors ask `has_null` alone types an out-of-range `vector<(integer, text)>` read
+/// `(integer, text)` — non-null members, holding nulls, with no diagnostic.  That is WORSE than
+/// the `Optional(Tuple)` the rule forbids, because the forbidden type at least says *absent*:
+/// it trades a type the language cannot spell for a type that lies about what it holds.  A
+/// FUNCTION has no such second form — there is no member to make nullable and no spelling for a
+/// nullable fn-ref — so `has_null` is complete for it, and the two answers coincide everywhere
+/// except the tuple.
+///
+/// The gap between the two IS `D-tup-10`, and it closes by deleting this function.
+#[must_use]
+pub fn constructs_optional(tp: &Type) -> bool {
+    has_null(tp) || matches!(tp.base(), Type::Tuple(_))
+}
+
 /// Is `tp` carried as a `DbRef` — a handle into a store rather than an inline value?
 ///
 /// The authority is the layout: [`element_stack_size`] gives exactly these eight
