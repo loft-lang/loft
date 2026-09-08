@@ -262,6 +262,36 @@ fn base_container_place(value: &Value, data: &Data) -> Option<(u16, u32)> {
 /// wildcard on both sides of a match, since disturbing a variable ends every place in it.
 use crate::use_analysis::ANY_FIELD;
 
+/// The LITERAL key arguments of an `OpGetRecord`, or `None` when any of them is computed.
+///
+/// `OpGetRecord(coll, type, nkeys, k1, …)` is the one lowering a keyed POINT lookup takes, on
+/// every keyed kind, so both sides of the question below read their key through this: the VIEW
+/// (`c = &h[30]` binds one) and the REMOVAL (`h[10] = null` carries one inside the
+/// `OpHashRemove`'s own argument).  One reader, so the two cannot disagree about what a key is.
+///
+/// `None` is the CONSERVATIVE answer and is returned for anything that is not a bare literal —
+/// a variable, an expression, a call.  Nothing downstream may read `None` as "different keys".
+fn get_record_literal_keys(value: &Value, data: &Data) -> Option<Vec<Value>> {
+    let Value::Call(d, args) = value.unspan() else {
+        return None;
+    };
+    if data.def(*d).name() != "OpGetRecord" {
+        return None;
+    }
+    let n = match args.get(2).map(Value::unspan) {
+        Some(Value::Int(n)) if *n >= 0 => *n as usize,
+        _ => return None,
+    };
+    let mut keys = Vec::with_capacity(n);
+    for k in args.iter().skip(3).take(n) {
+        match k.unspan() {
+            v @ (Value::Int(_) | Value::Text(_)) => keys.push(v.clone()),
+            _ => return None,
+        }
+    }
+    (keys.len() == n && n > 0).then_some(keys)
+}
+
 /// Do a view's place and a disturbance's place name the same storage?  Equal offsets, or
 /// either side naming the whole variable.
 fn same_place(view: (u16, u32), disturbed: (u16, u32)) -> bool {
@@ -572,10 +602,81 @@ fn reshaped_containers(code: &Value, data: &Data, function: &Function) -> HashSe
         "OpHashRemove" => Some(0),
         _ => None,
     }) {
-        if place.1 == ANY_FIELD && matches!(function.tp(place.0).base(), Type::Sorted(_, _, _)) {
+        if place.1 != ANY_FIELD {
+            continue;
+        }
+        // `sorted` is collected WHOLE, for the reason above: it is the inline kind, so a
+        // removal shifts every later position and ends every place the container holds.
+        //
+        // The record-per-element kinds are collected too, and that is loft#1460 — leaving
+        // them out entirely meant a `&` view of the record a removal FREES was never
+        // refused, and a later insert reusing that record read the stale write (measured on
+        // both backends: `c = &h[30]; h[30] = null; h[70] = …; c.tag = 999` put 999 into
+        // k70).  What keeps this from becoming the over-approximation the comment above
+        // rejects is `shake_places`, which drops a view whose OWN key is a literal differing
+        // from the removal's: `c = h[2]; h[1] = null` keeps aliasing, `c = &h[30];
+        // h[30] = null` does not.  Collecting without that filter was measured and is
+        // strictly wrong — it materialises the corpus's four `…_is_not_a_reshape` controls
+        // and turns a plain view's write into a lost one, which trades one silent-wrong for
+        // another.
+        if matches!(
+            function.tp(place.0).base(),
+            Type::Sorted(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+        ) {
             out.insert(place);
         }
     }
+    out
+}
+
+/// The literal key each keyed REMOVAL in `code` names, per container place.
+///
+/// Only for the record-per-element kinds: a `sorted` removal ends every place the container
+/// holds whatever key it named, so recording its key would invite a caller to spare a view
+/// the rule does not spare.  Absent from the map means "no literal key here", which every
+/// reader must treat as *disturbs everything* — the conservative direction.
+///
+/// `h[k] = null` lowers to `OpHashRemove(coll, OpGetRecord(coll, tp, n, k…), tp)`, so the key
+/// is read out of the removal's own argument through [`get_record_literal_keys`] — the same
+/// reader the view side uses, so the two cannot disagree about what a key is.
+fn keyed_removal_keys(
+    code: &Value,
+    data: &Data,
+    function: &Function,
+) -> HashMap<(u16, u32), Vec<Value>> {
+    let mut out: HashMap<(u16, u32), Vec<Value>> = HashMap::new();
+    let mut ambiguous: HashSet<(u16, u32)> = HashSet::new();
+    code.walk(&mut |v| {
+        let Value::Call(d, args) = v else { return };
+        if data.def(*d).name() != "OpHashRemove" {
+            return;
+        }
+        let Some(place) = args.first().and_then(|a| named_place(a, data)) else {
+            return;
+        };
+        if place.1 != ANY_FIELD
+            || matches!(function.tp(place.0).base(), Type::Sorted(_, _, _))
+            || ambiguous.contains(&place)
+        {
+            return;
+        }
+        // TWO removals from one container in one statement, or one whose key is computed:
+        // either way this statement does not name a single sparable key, so drop the entry
+        // and leave the place conservative.
+        match args.get(1).and_then(|a| get_record_literal_keys(a, data)) {
+            Some(keys) if !out.contains_key(&place) => {
+                out.insert(place, keys);
+            }
+            _ => {
+                out.remove(&place);
+                ambiguous.insert(place);
+            }
+        }
+    });
     out
 }
 
@@ -693,18 +794,26 @@ fn places_named_by(
             return;
         };
         let Some(arg) = args.get(at) else { return };
-        match arg.unspan() {
-            Value::Var(c) => {
-                out.insert((*c, ANY_FIELD));
-            }
-            other => {
-                if let Some(place) = base_container_place(other, data) {
-                    out.insert(place);
-                }
-            }
+        if let Some(place) = named_place(arg, data) {
+            out.insert(place);
         }
     });
     out
+}
+
+/// The PLACE an op argument names — a bare variable is the WHOLE variable, anything else is
+/// asked of [`base_container_place`].
+///
+/// One home because two readers need the same answer and the bare-`Var` case is the one a
+/// second reader forgets: `OpHashRemove(h, …)` passes its container as a plain `Value::Var`,
+/// and `base_container_place` alone answers `None` for that (it resolves PROJECTIONS), so a
+/// reader built on it silently sees no removals at all.  Measured — loft#1460's key filter
+/// spared nothing until both sides asked this.
+fn named_place(arg: &Value, data: &Data) -> Option<(u16, u32)> {
+    match arg.unspan() {
+        Value::Var(c) => Some((*c, ANY_FIELD)),
+        other => base_container_place(other, data),
+    }
 }
 
 /// @PLN130 F8 — which `&` parameters of `d_nr` are REASSIGNED wholesale by its body.
@@ -1041,6 +1150,11 @@ struct ViewWalk<'a> {
     /// is skipped: it is emitted at function scope for every ref- and text-typed local, so
     /// counting it would put EVERY view at function scope and undo the frame model.
     bound_at: HashMap<u16, usize>,
+    /// The literal key a view was bound at, when it was bound at one — `c = &h[30]` records
+    /// `[30]`.  Absent means the key was computed (or the bind was not a keyed point lookup),
+    /// which every reader must treat as *could be any key*: loft#1460's filter may only ever
+    /// SPARE a view it can prove names a different record.
+    view_keys: HashMap<u16, Vec<Value>>,
     /// Views whose container has been disturbed since the bind, and by what. Being shaken is
     /// not yet a verdict — it becomes one at the next use.
     shaken: HashMap<u16, Disturbance>,
@@ -1093,6 +1207,7 @@ impl ViewWalk<'_> {
             data,
             open: vec![Vec::new()],
             bound_at: HashMap::new(),
+            view_keys: HashMap::new(),
             shaken: HashMap::new(),
             out: HashMap::new(),
             cross_frame,
@@ -1195,10 +1310,11 @@ impl ViewWalk<'_> {
 
     /// Shake for everything `stmt` disturbs, at any depth inside it.
     fn disturb(&mut self, stmt: &Value) {
-        self.shake_places(
+        self.shake_places_keyed(
             &reshaped_containers(stmt, self.data, self.function),
             ViewCause::Reshaped,
             None,
+            &keyed_removal_keys(stmt, self.data, self.function),
         );
         stmt.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
@@ -1335,6 +1451,18 @@ impl ViewWalk<'_> {
                 // `(view, container, field)` triple per pair, so a binding that views two
                 // containers is two entries and `shake_places` matches either — no new shape,
                 // and `record_target`'s own `retain` clears them all when the slot is rebound.
+                // loft#1460 — the key this view names, when it names a literal one.  Read
+                // from the SAME `OpGetRecord` reader the removal side uses, and re-read on
+                // every rebind (the `retain` above already dropped the old entry), so a slot
+                // rebound from a computed key cannot keep an earlier bind's literal.
+                match get_record_literal_keys(rhs, self.data) {
+                    Some(keys) => {
+                        self.view_keys.insert(*v, keys);
+                    }
+                    None => {
+                        self.view_keys.remove(v);
+                    }
+                }
                 for (container, field) in value_view_places(rhs, self.data, self.function) {
                     let (container, field) = self.resolve_view_root(container, field);
                     if !self.open[idx].contains(&(*v, container, field)) {
@@ -1408,15 +1536,42 @@ impl ViewWalk<'_> {
     /// growth of one FIELD does not end the places inside its siblings.  A view and a
     /// disturbance match when [`same_place`] says they name the same storage.
     fn shake_places(&mut self, places: &HashSet<(u16, u32)>, cause: ViewCause, via: Option<u32>) {
+        self.shake_places_keyed(places, cause, via, &HashMap::new());
+    }
+
+    /// [`Self::shake_places`] with the keys a keyed REMOVAL named, so a view of a DIFFERENT
+    /// record is spared (loft#1460).
+    ///
+    /// ⚠ The filter may only ever SPARE, and only on proof.  Both sides must be literal and
+    /// they must differ; an absent key on either side means *could be the same record* and
+    /// shakes, which is what keeps `sorted`, every computed key, and every spelling this
+    /// cannot read exactly where they were.  Getting that direction backwards turns a
+    /// conservative rule into a silent one, which is the defect this closes.
+    fn shake_places_keyed(
+        &mut self,
+        places: &HashSet<(u16, u32)>,
+        cause: ViewCause,
+        via: Option<u32>,
+        removal_keys: &HashMap<(u16, u32), Vec<Value>>,
+    ) {
         if places.is_empty() {
             return;
         }
+        let spared = |view: u16, place: (u16, u32)| -> bool {
+            let (Some(removed), Some(held)) = (removal_keys.get(&place), self.view_keys.get(&view))
+            else {
+                return false;
+            };
+            removed.len() == held.len() && removed != held
+        };
         let hit: Vec<(u16, u16, u32)> = self
             .open
             .iter()
             .flatten()
-            .filter(|(_, container, field)| {
-                places.iter().any(|&p| same_place((*container, *field), p))
+            .filter(|(view, container, field)| {
+                places
+                    .iter()
+                    .any(|&p| same_place((*container, *field), p) && !spared(*view, p))
             })
             .copied()
             .collect();
@@ -1621,9 +1776,36 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
         }
         let view_name = function.name(view);
         let container = function.name(d.container);
+        // A removal destroys the place for a DIFFERENT reason depending on the kind, and
+        // this split only became necessary WITH loft#1460 — before it, only a `sorted`
+        // reached this refusal and "renumbers" was right for the one kind that could see
+        // it.  Now the record-per-element kinds reach it too, and for them nothing
+        // renumbers: `(Col-RemoveKeyed)` says so, and a reader handed the vector reason
+        // could check it and find it false.  What ends their place is that the removal
+        // FREES a record, which a later insert may reuse.
+        //
+        // ⚠ loft#1458 was filed on the wording BEFORE the set widened and closed as
+        // invalid, correctly — the same wording is wrong in the other direction now.  Which
+        // way it is wrong depends on which kinds reach the site, so the two must move
+        // together.
+        //
+        // `peel_link`, because the container may be a `&` one or a `τ?` one: the question is
+        // what it IS, not how it is spelled or reached.
+        let record_per_element = matches!(
+            crate::data::Type::peel_link(function.tp(d.container)),
+            Type::Hash(_, _, _) | Type::Index(_, _, _) | Type::Radix(_, _, _) | Type::Trie(_, _, _)
+        );
         // The two causes destroy the place differently, so they read differently and have
         // different ways out — but the verdict is the same.
         let (what, why) = match d.cause {
+            ViewCause::Reshaped if record_per_element => (
+                format!("remove from `{container}`"),
+                format!(
+                    "a removal frees the record its key names, and a later insert can reuse \
+                     it, so a write through `{view_name}` may land on a different element \
+                     than the one it names"
+                ),
+            ),
             ViewCause::Reshaped => (
                 format!("remove from `{container}`"),
                 format!(

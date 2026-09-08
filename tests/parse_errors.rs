@@ -3969,3 +3969,74 @@ fn b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error() {
          b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error:1:124",
     );
 }
+
+/// B-Ref-Reshape (h) — a `&` view of the key a removal REMOVES, on a record-per-element kind.
+///
+/// `scopes.rs::reshaped_containers` collected a keyed removal only for `Type::Sorted`, and the
+/// exclusion of the other four was deliberate with a measurement beside it: *"`hash`, `index`,
+/// `spatial` and `trie` give each element a record of its own, so removing one leaves every
+/// other key reachable AT THE SAME ADDRESS"*.  That is true, reproduces, and is not what the
+/// exclusion was used for — it was measured on a view of ANOTHER element and applied to a view
+/// of the REMOVED one (loft#1460).  The cost was silent on both backends:
+///
+/// ```text
+/// c = &h[30];  h[30] = null;  h[70] = Elm{key:70, tag:7};  c.tag = 999;
+///   → k70 reads 999, because the insert reused the freed record
+/// ```
+///
+/// ⚠ The fix is NOT "collect the other four as well".  That was built and measured, and it
+/// materialises four deliberate corpus controls whose names state the proposition
+/// (`test_a_hash_removal_is_not_a_reshape`) — a PLAIN view stops aliasing and its write lands
+/// on a copy, trading one silent-wrong for another.  What ends a place on these kinds is not
+/// the container but ONE record, so the removal's key and the view's key are compared and a
+/// view of a different literal key is spared.  The twin below is that half.
+#[test]
+fn b_ref_reshape_removing_the_very_key_a_view_names_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; h[30] = null; c.tag = 9; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `h` while `c` references a place inside it — a removal frees the \
+         record its key names, and a later insert can reuse it, so a write through `c` may \
+         land on a different element than the one it names. Move it after the last use of \
+         `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_removing_the_very_key_a_view_names_is_error:1:1",
+    );
+}
+
+/// The other half of loft#1460, and the one that says the fix is not the strict version:
+/// removing a DIFFERENT literal key leaves the view alone, on the same kind and the same
+/// spelling.  Without this cell, collecting the whole container passes the cell above.
+#[test]
+fn b_ref_reshape_removing_another_key_leaves_a_view_alone() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn check() -> integer { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, \
+           Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; h[10] = null; c.tag = 9; (h[30] ?? Elm { key: 0, tag: 0 }).tag }"
+    )
+    .expr("check()")
+    .result(Value::Int(9));
+}
+
+/// …and the CONSERVATIVE fallback, in both directions.  A key the compiler cannot read is
+/// "could be the same record", never "is a different one" — getting that backwards is how a
+/// conservative rule becomes a silent one.  Here the REMOVAL's key is computed.
+#[test]
+fn b_ref_reshape_a_computed_removal_key_is_still_refused() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn pick() -> integer { 30 } \
+         fn test() { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; k = pick(); h[k] = null; c.tag = 9; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `h` while `c` references a place inside it — a removal frees the \
+         record its key names, and a later insert can reuse it, so a write through `c` may \
+         land on a different element than the one it names. Move it after the last use of \
+         `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_a_computed_removal_key_is_still_refused:1:1",
+    );
+}

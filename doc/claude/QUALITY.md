@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 418 | 394 | **24** |
+| 414 | 390 | **24** |
 
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
@@ -1512,7 +1512,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 47 | **12** | 35 |
+| 48 | **12** | 36 |
 
 Re-measured on the tree that holds both streams: **45 · 12 · 33**, and **46 · 12 · 34** once
 loft#1396's `value_view_container` joins it — another function resolving a projection by op
@@ -2522,7 +2522,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 735 | 379 | 5 | **351** |
+| 736 | 380 | 5 | **351** |
+
+*loft#1460 added `scopes.rs`'s keyed-removal reader and moved all three rows by one: a new
+function that discriminates on `Value` variants (`get_record_literal_keys`), one that resolves an
+op argument to a place (`named_place`), and a `peel_link` at the message split.  All three rows
+counting the same commit is the normal shape for a walker added whole — it is one site in three
+censuses, not three sites.*
 
 *loft#1459 moved one out of the opaque column, and it is the cheapest kind of move: the
 debugger's `render_frame_local` matched bare `Type` variants and let every `Optional` fall to

@@ -6,7 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-bind-29 OPENED AND CLOSED 2026-09-08: `B-Ref-Reshape`'s re-key arm was
+OPEN: **0 here** — D-bind-30 OPENED AND CLOSED 2026-09-08: `(B-Ref-Reshape)` reached only the
+INLINE keyed kind, so a `&` view of the record a removal FREES was never refused and a later
+insert reusing it read the stale write (below); D-bind-29 OPENED AND CLOSED 2026-09-08: `B-Ref-Reshape`'s re-key arm was
 enforced for ONE key type and ONE source spelling — a `text` key never reached the guard at
 all, and a keyed lookup's `?` hid the `&` marker from all four refusals (below).
 D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) CLOSED 2026-09-07: three
@@ -32,20 +34,64 @@ B-Ref-Reshape is enforced for all three of B-Disturb's events (D-bind-9,
 opened and closed 2026-08-05); B-Ref-AnnotationOnly is enforced in every position, not
 only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 
-> **D-bind-28, part two — CLOSED (2026-09-07, loft#1433) — a `&` bind to a keyed
-> collection is a LINK, not a copy.**  `(B-Ref-Alias)` says the `&` annotation makes **ANY**
-> binding a live link to the source instead of a copy, and names `d += …` as writing through.
-> The `&`-bind's source set was `matches!(amp_vector_source, Type::Vector(_, _))` — a set of
-> ONE — so all five keyed kinds fell to the deep-copy path instead: `a = &h` gave `a` its own
-> store (`OpDatabase`) and `OpReplaceKeyed`-copied `h` into it, and from the bind onward the
-> two were independent.  Measured: after one write through each, `h` held `{1,3}` and `a` held
-> `{1,2}`, *both with `len` 2* — so a length check on either name alone looked healthy.
+> **D-bind-30 — OPENED AND CLOSED (2026-09-08) — `(B-Ref-Reshape)` was enforced for the
+> INLINE keyed kind only, and the exclusion of the other four was measured on a case it was
+> not then used for.**
 >
-> It was filed as *"a `&` alias to a keyed collection silently drops every append"*, which is
-> what the defect looks like from an EMPTY source: `len(h)` stays 0.  The append is not
-> dropped — it lands in the alias's own store, and `len(a)` says so.  That distinction decides
-> what a guard must assert: reading only the source would pass a cure that made the alias
-> unwritable rather than one that made it a link, so every cell reads BOTH names.
+> `reshaped_containers` collected a keyed removal only when the container is `Type::Sorted`,
+> with a reasoned comment beside it: *"`hash`, `index`, `spatial` and `trie` give each element
+> a record of its own, so removing one leaves every other key reachable AT THE SAME ADDRESS —
+> measured, a view of another element reads correctly after the removal and a write through it
+> still lands."*
+>
+> That measurement is **correct and reproduces**. The case it did not cover is a view of the
+> REMOVED record:
+>
+> ```loft
+> c = &h[30];  h[30] = null;  h[70] = Elm{key:70, tag:7};  c.tag = 999;
+> //  → k70 reads 999 on BOTH backends, silently: the insert reused the freed record
+> ```
+>
+> **The defect is not which KINDS are collected — it is what a removal DISTURBS.** For a
+> `sorted` it is the whole container, because every later position shifts. For the
+> record-per-element kinds it is exactly ONE place, and the comment is right about every
+> other key. The comment was true at the granularity it was measured at and wrong at the
+> granularity it was used at.
+>
+> ⚠ **The obvious fix is wrong and was built before being rejected.** Collecting the other
+> four wholesale closes this and materialises four deliberate corpus controls whose NAMES
+> state the proposition — `test_a_hash_removal_is_not_a_reshape`,
+> `test_an_index_removal_is_not_a_reshape`, `test_the_other_keyed_kinds_are_not_reshaped`.
+> A PLAIN view (no `&`, so `(B-Ref-Reshape)` exempts it and `(H-Materialise)` copies it)
+> stops aliasing and its write lands on a copy: one silent-wrong traded for another.
+> Measured independently on two trees before being dropped.
+>
+> Closed by comparing KEYS. Both sides read their key through one `OpGetRecord` reader — the
+> view records the key it was bound at, the removal carries its own inside the
+> `OpHashRemove`'s argument — and a view is spared only when both keys are literal and
+> DIFFER. `sorted` is untouched, and so is every computed key on either side.
+>
+> **The filter may only ever SPARE, and only on proof.** An absent key means *could be the
+> same record* and shakes. Getting that direction backwards turns a conservative rule into a
+> silent one, which is the defect being closed, so both fallback directions have a cell.
+>
+> Whole-population cost: **zero**. Every `.loft` file in the tree carrying a keyed removal
+> (54 of 2957) was compiled and none is newly refused — the fix refuses strictly fewer
+> programs than the wholesale variant, which cost 6.
+>
+> Lock-ins: `b_ref_reshape_removing_the_very_key_a_view_names_is_error`,
+> `…_removing_another_key_leaves_a_view_alone` (the control that says this is not the
+> wholesale version — without it, collecting the container passes the first cell), and
+> `…_a_computed_removal_key_is_still_refused`. Falsified: the two defect cells fail on the
+> unfixed build and the control passes on both, which is the shape a spare-on-proof filter
+> should have.
+>
+> And the MESSAGE moved with the set. *"A removal renumbers the remaining elements"* is right
+> for `sorted` and wrong for the four that just joined, so the reason is split by kind.
+> [loft#1458](https://github.com/loft-lang/loft/issues/1458) was filed on that wording BEFORE
+> the set widened and closed as invalid — correctly, and the same wording is wrong in the
+> other direction now. Which way it is wrong depends on which kinds reach the site, so the
+> two have to move together.
 
 > **D-bind-29 — OPENED AND CLOSED (2026-09-08) — `B-Ref-Reshape`'s re-key arm was enforced
 > for ONE key type and ONE source spelling, and D-bind-9's own closing sentence says why.**
