@@ -423,7 +423,23 @@ impl Parser {
                     let has_free_hint = free_nr != u32::MAX
                         && !self.data.def(free_nr).attributes().is_empty()
                         && self.data.attr_type(free_nr, 0).is_equal(&t);
-                    if has_free_hint {
+                    // A NULLABLE COLLECTION receiver reaches here because the method
+                    // dispatch matched no `τ?` arm, and the struct-field fallback then names
+                    // the CONTENT def — *"Unknown field vector.remove"*, about a method that
+                    // plainly exists, on a receiver whose real problem is the `?`.  The
+                    // refusal itself is right (`@FR-N-Coal`: no implicit unwrap), so this is
+                    // the wording, and it is loft#1453's class one spelling further out —
+                    // `for` / `map` / `filter` were fixed there, a METHOD CALL was not.  One
+                    // home answers all of them.
+                    let recv = t.clone();
+                    if self.nullable_collection_refusal(
+                        &recv,
+                        &format!("call `.{field}` on"),
+                        "has that method",
+                        "the method's own answer for an empty one",
+                    ) {
+                        // reported; fall through to the recovery below
+                    } else if has_free_hint {
                         // loft#850 — only the stdlib can be blamed for the stdlib's
                         // choices; a `use`d package that declares `{field}` free-only
                         // is a different file to go and read.
@@ -633,9 +649,7 @@ impl Parser {
         }
         // A field of a NULLABLE receiver can itself be null (C80), regardless of the
         // field's declared non-nullness — so it is not "not null" for the redundant-
-        // check / redundant-coalesce lints.  (Only the lint signal is cleared; the
-        // returned type `t` is unchanged — widening it to `Optional` would force
-        // `?? d` on every nullable-receiver field read, a far broader change.)
+        // check / redundant-coalesce lints.
         if receiver_nullable && self.expr_not_null {
             self.expr_not_null = false;
             self.expr_not_null_name.clear();

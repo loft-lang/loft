@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `rev()` on a nullable collection names the `?`, not the shape of a receiver that is fine.
+//
+// `(N-Coal)` gives a `τ?` no implicit unwrap, so the refusal is right; the WORDING named
+// something true of the receiver and not its problem — *"rev() on a non-range expression must
+// wrap a sorted, index, or vector collection"*, about a `sorted` that IS one.  A reader is
+// sent to check the collection kind, which is correct, while the fault is one character wide.
+//
+// `(I-NullSrc)` is what makes the refusal right rather than a gap: a `nullref` — a runtime
+// null of a NON-nullable type — iterates zero times, while *"a source whose TYPE is `τ?` is a
+// different question and is REFUSED"*.  So this is loft#1453's cure (`for` / `map` / `filter`)
+// carried to a site it did not reach, out of the one home it already had.
+//
+// Its own file because a firing `@EXPECT_ERROR` stops the run, which is why the sibling
+// spelling — a METHOD CALL on the same receiver — is `1450c`.
+//
+// Axes it HOLDS FIXED:  the receiver is DECLARED `sorted<…>?`.  A receiver that becomes `τ?`
+//                       only because `(N-Prop)` widens a projection is loft#1450's leg, which
+//                       is not in the tree — this refusal is reachable today.
+//
+// @falsified-at: 8ba3e755 — reports *"rev() on a non-range expression must wrap a sorted,
+//   index, or vector collection"* there, so the `@EXPECT_ERROR` misses and the file fails.
+
+struct Row1450b { k: integer }
+struct Bag1450b { ks: sorted<Row1450b[k]>? }
+
+// @EXPECT_ERROR: cannot reverse sorted<Row1450b[k]>? because it is NULLABLE
+fn reverse_it(b: Bag1450b) -> integer {
+  n = 0;
+  for r in rev(b.ks) { n += r.k; }
+  return n;
+}

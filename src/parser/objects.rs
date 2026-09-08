@@ -3344,11 +3344,26 @@ impl Parser {
                     // reverse_iterator stays set; consumed and reset by iterator()
                 } else if !matches!(in_type, Type::Null) {
                     self.reverse_iterator = false;
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "rev() on a non-range expression must wrap a sorted, index, or vector collection"
-                    );
+                    // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
+                    // explicitly: a `nullref` (a runtime null of a NON-nullable type) iterates
+                    // zero times, while *"a source whose TYPE is `τ?` is a different question
+                    // and is REFUSED"*.  So the refusal is right and only its WORDING was
+                    // wrong: `rev()` on a `sorted<…>?` reported *"must wrap a sorted, index, or
+                    // vector collection"* about a receiver that IS one, and said nothing about
+                    // the `?` that is the actual problem.  Same shape as loft#1453 for `for` /
+                    // `map` / `filter`, and the same one home answers it.
+                    if !self.nullable_collection_refusal(
+                        &in_type,
+                        "reverse",
+                        "can be reversed",
+                        "zero iterations",
+                    ) {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "rev() on a non-range expression must wrap a sorted, index, or vector collection"
+                        );
+                    }
                 }
                 self.lexer.token(")");
             }

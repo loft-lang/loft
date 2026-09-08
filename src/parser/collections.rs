@@ -423,7 +423,7 @@ impl Parser {
     ///
     /// Answers whether it fired, so a caller can fall through to its own generic message only
     /// when the receiver was not a nullable collection at all.
-    fn nullable_collection_refusal(
+    pub(crate) fn nullable_collection_refusal(
         &mut self,
         is_type: &Type,
         verb: &str,
