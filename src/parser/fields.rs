@@ -1132,7 +1132,17 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // lookup is `τ?` whatever the key.  (The lookup's OWN nullability for a present
             // collection with a missing key is `(Col-Lookup)`, still carried by the
             // `expr_not_null` clear above rather than by the type.)
-            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() {
+            //
+            // DERIVED, not assumed: `parse_key` answers an ITERATOR for a PARTIAL key
+            // (`m[1]` on a two-key kind is `m[1..=1]`) and for the `..` range form, and an
+            // iterator is not a value `(Col-Lookup)` types `τ?`.  Wrapping one lost the
+            // *"Cannot assign null to a partial-key lookup"* refusal, because the assignment
+            // router does not expect an iterator carrying a `?` — while the partial-key READ
+            // stayed diagnosed, so the shape looked covered (loft2-27, on the sibling leg).
+            if receiver_optional
+                && self.tagged_pointer_type(&elm_type).is_none()
+                && !matches!(code.unspan(), Value::Iter(..))
+            {
                 elm_type = Type::optional(elm_type);
             }
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
@@ -1149,9 +1159,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // @P285 — see the Hash/Radix arm above; the lookup result is nullable.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
-            // `@FR-N-Domain` — see the Hash/Radix arm above; an absent collection has no
-            // entry to answer with whatever the key.
-            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() {
+            // `@FR-N-Domain` — see the Hash/Radix arm above, including the iterator exclusion:
+            // this is the arm a PARTIAL key actually reaches, since `sorted`/`index` admit one
+            // as an interval.
+            if receiver_optional
+                && self.tagged_pointer_type(&elm_type).is_none()
+                && !matches!(code.unspan(), Value::Iter(..))
+            {
                 elm_type = Type::optional(elm_type);
             }
         } else if self.user_index_op(&t) != u32::MAX {

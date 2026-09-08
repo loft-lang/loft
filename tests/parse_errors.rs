@@ -2608,6 +2608,21 @@ fn keyed_partial_key_in_value_position_is_error() {
         .warning("Variable x is never read at keyed_partial_key_in_value_position_is_error:1:163");
 }
 
+// loft#1450 `(N-Domain)` — a NULLABLE keyed collection still refuses a partial-key removal.
+//
+// `parse_key` answers an ITERATOR for a partial key (`m[1]` on a two-key kind is `m[1..=1]`),
+// and the `(N-Domain)` widening must not wrap one: an iterator is not a value `(Col-Lookup)`
+// types `τ?`, and a `?` on it reaches an assignment router that does not expect one — which
+// silently dropped this refusal while the partial-key READ above stayed diagnosed, so the shape
+// looked covered.  The dense twin is `keyed_partial_key_in_value_position_is_error`; this cell
+// is the NULLABLE column, which nothing had.
+#[test]
+fn keyed_partial_key_removal_through_a_nullable_collection_is_error() {
+    code!("struct Kk { a: integer, b: integer, v: integer } struct D { m: index<Kk[a, b]>? } fn test() { d = D { m: [ Kk{a:1,b:2,v:7} ] }; d.m[1] = null; }")
+        .error("a keyed partial-key match is a `for`-loop iterator, not a value — iterate it directly (`for x in coll[key] { … }`) or give every key field for a single-record lookup at keyed_partial_key_removal_through_a_nullable_collection_is_error:1:135")
+        .error("Cannot assign null to a partial-key lookup — provide all key fields to remove a single entry at keyed_partial_key_removal_through_a_nullable_collection_is_error:1:143");
+}
+
 // @PLN35 Phase 2 (F6 / M-Total): a slice pattern is length-constrained, hence non-total.
 // A vector match is exhaustive only if its final arm is total (a `_` or a bare binding);
 // a slice-only match with no such arm must be a static error, not a silent typed-null.
