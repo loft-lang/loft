@@ -1051,6 +1051,19 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// @PLN157 § V-l: a loop that calls an IN-PLACE-ONLY writer keeps its hoisted vector
+/// headers — **DEFAULT ON**.  Opt OUT with `LOFT_NO_INPLACE_CALLEE_HOIST` (read at
+/// GENERATION time: the before-half of the A/B on one binary, and the first bisect step
+/// for a native-only wrong element in a loop that calls a setter).  A callee whose store
+/// writes are all `IN_PLACE_SET_OPS` moves no record and changes no length, so no header
+/// the caller derived can go stale across the call (`generation::hoist::in_place_only_writer`
+/// carries the argument; `LOFT_HOIST_VERIFY=1` is the falsifier).
+#[must_use]
+pub fn inplace_callee_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INPLACE_CALLEE_HOIST"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

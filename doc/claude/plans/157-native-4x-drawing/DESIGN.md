@@ -1428,6 +1428,50 @@ false>` at 21 % as its OWN symbol — `#[inline]`, yet compiled out of line in
 (`scripts/native_call_census.py` on the emitted bench names it) worth one A/B with
 `#[inline(always)]` on that reader alone.
 
+## V-l — a loop that calls an in-place-only writer keeps its hoisted headers (2026-09-09)
+
+**The shape** (§ V-k's last paragraphs): `composite_layer`'s pixel loop calls
+`cv.set_pixel(…)`, and `blocks_header_hoist` keeps a writing user call blocking by decision
+— *"interprocedural in-place classification is not worth its soundness surface here"* —
+so the loop read `lay.px[…]` through the runtime and resolved `lay.lw` / `lay.x0` per pixel.
+`set_pixel`'s body is three scalar field reads, one element address and one `set_int`
+through it: the exact shape `IN_PLACE_SET_OPS` admits one call deep.
+
+**Invariant.**  *A scalar set through an address moves no record and changes no length, so
+no header a caller derived can go stale across a callee whose store writes are all such
+sets* — the P4a argument, applied to the callee's whole body.  `in_place_only_writer(d)`
+(hoist.rs, beside § V-c's `retbuf_only_writer`, memoised in the same cache under
+`IN_PLACE_KEY`) walks the def: a native callee must be store-free or in `IN_PLACE_SET_OPS`
+(any address — element of a parameter's vector, a record field, a local); a user callee
+must be store-free or in-place-only itself; `CallRef` / `Parallel` / `Yield` and recursion
+keep the writer verdict.  `blocks_header_hoist` admits such a callee under the same tier
+as a direct in-place setter (`allow_in_place`), the arguments still walking below the call
+node so a growing op inside one blocks on its own.  Switch `LOFT_NO_INPLACE_CALLEE_HOIST`
+(generation time); falsifier `LOFT_HOIST_VERIFY=1`.
+
+**Cells before the code** (`bytecode-comparisons/V-l-in-place-callee-cells.loft`, the
+interpreter — no hoist — the oracle, native under the verifier): c1 the composite shape ·
+c2 a callee that APPENDS to the vector the loop reads · c3 a callee writing a scalar
+record field · c4 a callee setting a TEXT field · c5 a callee calling an in-place-only
+callee · c6 a recursive setter · c7 the loop reads the vector the callee writes in place,
+one index ahead · c8 an early-return path that writes nothing · c9 a callee that calls a
+native remover.  Predicted and measured emission: **c1, c3, c5, c7, c8 hoist (one header
+each); c2, c4, c6, c9 do not**; every loop unhoisted with the switch off; all nine match
+the oracle on native under `LOFT_HOIST_VERIFY=1` with the leak check.
+
+**Measured.**  The A/B on one binary pair (a 200 000-element loop calling `setp`, the
+switch off vs on): **3850–4000 → 3050–3075 per rep (−21 %)**, same result.  `composite`:
+the loop now hoists (one header, zero runtime element reads) and the row does NOT move
+(756k → 769k, noise) — its cost is inside the two pixel methods it calls per pixel
+(`get_pixel` 11.7 %, `set_pixel` 8.9 %, and their own single unhoisted reads:
+`length_vector` + `get_vector` + `t_6vector_len` + `vec_get_or_raise_runtime` 29 %) and
+in the caller's per-pixel scalar field reads (`lay.lw` / `lay.x0` / `lay.y0`: `store`
+resolutions inlined into `n_composite_layer`, 8 %), plus a division (6 %).  So § V-l is
+the enabler and not the win for that row; what the row needs next is **the pixel methods'
+own reads** — `if idx < len(d) { d[idx] }` resolves the store three times and reads the
+length twice per call — and **loop-invariant scalar field reads hoisted as locals** (P4's
+third item, still open): together the two are the 45 % above.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
