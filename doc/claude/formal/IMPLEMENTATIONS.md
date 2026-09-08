@@ -841,6 +841,31 @@ noise.  The
 fourth row above was found by hand, from inside one of the lists the screen could not see; a
 mode that asks "who is blind to spelling B" is worth asking of the mode itself.
 
+## A traverser's audit is blind to a classifier's omission (2026-09-08)
+
+Three defects this cycle — loft#1444, loft#1474, loft#1477 — are one shape: **one question,
+several decoders, and the defect is in whichever decoder the failing route consults.**  All
+three sit in the return/closure neighbourhood, and the instrument that should have found them
+could not, for a reason worth writing down.
+
+`ir_walker_audit.py`'s `walkers` and `reach` measure DESCENT: does this walker enter every
+child-bearing shape.  `Value::FnRef` is a LEAF in `Value::for_each_child` — correctly, it
+carries no child expression — so a walker with no `FnRef` arm is invisible to both modes.
+loft#1477 is exactly that: `scopes::collect_return_sources` classifies which VALUES a return
+delivers, and a capturing lambda is not a `Var`, so `return fn() { … }` contributed nothing to
+the delivered set and the frame freed what it had just handed to the caller.  `reach` listed
+the function and named nine missing variants; `FnRef` was not among them and could not be.
+
+**The distinction:** a TRAVERSER must descend into every child-bearing shape, and the audit
+checks that.  A value CLASSIFIER must recognise every value-bearing LEAF — the complement —
+and nothing checks it.
+
+⚠ **The obvious screen for the complement is not an instrument yet.**  "Walkers that name `Var`
+but omit `FnRef`/`FnRefDnr`/`TupleGet`/`Enum`" returns **238 functions**, because most of them
+ask a question those leaves cannot answer.  Recorded so the next person does not build on the
+number: sharpening it needs a way to say which walkers ask *which values does this deliver or
+own*, and that is not written down anywhere.
+
 ## The three corners, and why all three feel like a condition bug (2026-09-08)
 
 The two sections above ask questions that sound alike and are not, and a third case turned up the

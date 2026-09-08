@@ -16,6 +16,24 @@
 #             silently blind, and no test can see the difference because the arm it is
 #             missing is the one nothing constructs yet.
 #
+#             ⚠ **`walkers` and `reach` measure DESCENT, so they are structurally blind to a
+#             walker that omits a LEAF** — and that blindness has a name now.  `Value::FnRef`
+#             is a leaf in `for_each_child` (it carries no child expression, correctly), so a
+#             walker missing an `FnRef` arm is invisible to both modes.  loft#1477 was exactly
+#             that: `scopes::collect_return_sources` classifies which VALUES a return
+#             delivers, and a capturing lambda is not a `Var`, so `return fn() { … }`
+#             contributed nothing to the delivered set and the frame freed what it had just
+#             handed up.  `reach` listed the function and named nine missing variants; `FnRef`
+#             was not among them and could not be.
+#
+#             The distinction to hold: a TRAVERSER must descend into every child-bearing
+#             shape, and these modes check that.  A value CLASSIFIER must recognise every
+#             value-bearing LEAF, which is the complement, and nothing checks it.  A naive
+#             screen for it (walkers naming `Var` but not `FnRef`/`TupleGet`/`Enum`) returns
+#             238 functions and is therefore not an instrument — most of them ask a question
+#             those leaves cannot answer.  Sharpening it needs a way to say which walkers ask
+#             *which values does this deliver or own*, which is not written down anywhere yet.
+#
 #   producers Which variants can never come into existence?  A variant whose every
 #             construction is a REBUILD (inside its own match arm), a DESERIALIZER, or a
 #             test is a closed cycle with no source: nothing creates the first instance,
