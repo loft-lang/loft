@@ -48,6 +48,21 @@ fn write_through(out: &fn() -> integer) {
 
 fn two_frames(out: &fn() -> integer) { write_through(out); }
 
+// ⚠ WHY reading the slot is sound, not merely fresher — the question a peer session raised
+// against this fix while isolating a capture defect of its own (loft#1474).
+//
+// The slot is a `(u32 tag, DbRef env)` PAIR, and every write sets BOTH halves as one literal:
+// `(733, var____clos_1)` for a capturing mint, `(736, DbRef::NULL)` for a non-capturing one.
+// So `.0` and `.1` are written as a unit and cannot disagree about which lambda's environment
+// they hold.
+//
+// The form this replaced read a LOCAL chosen by `closure_var_of(v_nr)` — a STATIC, per-variable
+// choice.  Where several arms mint several `___clos_N` into ONE slot, that choice can disagree
+// with the runtime tag: the lambda the tag selects runs with whichever environment the static
+// pick named.  So reading `.1` does not make the one-slot assumption, it REMOVES one; the
+// rebind cells below are what say so, because they are the shapes where a stale or mismatched
+// environment would show.
+
 fn main() {
   // ---- the CELL: the caller's slot starts out CAPTURING ----
   c: E1463 = E1463 { a: 99 };
@@ -81,6 +96,30 @@ fn main() {
   assert(f() == 7, "an unwritten capturing slot keeps its own environment: {f()}");
   k.a = 11;
   assert(f() == 11, "…and sees a write to what it captured: {f()}");
+
+  // ---- REBIND: one slot, three different environments in turn.  A `.1` that were stale, or a
+  //      statically-picked local, would answer an earlier arm's capture here ----
+  re1: E1463 = E1463 { a: 11 };
+  re2: E1463 = E1463 { a: 22 };
+  r: fn() -> integer = fn() -> integer { 100 + re1.a };
+  assert(r() == 111, "the first environment: {r()}");
+  r = fn() -> integer { 200 + re2.a };
+  assert(r() == 222, "rebound to a DIFFERENT environment: {r()}");
+  r = fn() -> integer { 999 };
+  assert(r() == 999, "rebound to a NON-capturing closure: {r()}");
+  r = fn() -> integer { 300 + re1.a };
+  assert(r() == 311, "…and back to a capturing one: {r()}");
+
+  // ⚠ The SIBLING-ARMS cell — two arms each capturing a DIFFERENT local, the fn-ref bound to a
+  //   local rather than called inline — is deliberately NOT here, and its absence is a finding
+  //   rather than an omission: that shape LEAKS one capture record, byte-identical on a pristine
+  //   9720dfd06 build, so it is older than this fix and is not what this file is about.  Putting
+  //   it here would make a leak gate red for an unrelated reason and teach the next reader that
+  //   `1463` is flaky.  It is reported against the `(L-CapOwn)` neighbourhood instead (a fn-ref
+  //   whose branch arms BOTH build a capturing closure), where the free question belongs.
+  //
+  //   The rebind cells above already carry this file's own claim — one slot, several
+  //   environments in turn — and they are leak-clean.
 
   println("1463 ok");
 }
