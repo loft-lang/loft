@@ -355,17 +355,27 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-* **D-bind-29** *(open, loft#1463)* — the FUNCTION half of `(B-Ref-Uniform)`, on `--native`
-  only.  A write through a `&fn(…) -> τ` link does not land when the caller's slot already
-  holds a CAPTURING closure: the interpreter writes it, native leaves the old value in place
-  and says nothing.  A capturing closure occupies the 20-byte stack form (8 B `d_nr` + a 12 B
-  closure `DbRef`) where an empty-environment one carries only the `d_nr`, and the native
-  write-back is right for the second and not the first.  loft#1443's guard pins the caller's
-  slot to a non-capturing initial value in every one of its cells, which is why the axis was
-  never moved; measured on both sides of that issue's own lifetime fix, so it is independent
-  of it.  `silent-wrong`: the caller keeps calling its own closure and gets a plausible answer.
+* **D-bind-29** *(opened 2026-09-08, CLOSED 2026-09-08, loft#1463)* — the FUNCTION half of
+  `(B-Ref-Uniform)`, on `--native` only.  A write through a `&fn(…) -> τ` link did not land when
+  the caller's slot already held a CAPTURING closure: the interpreter wrote it, native left the
+  old value in place and said nothing.
+  **The special case was in the DISPATCH, not in the write.**  A fn-ref call passes the closure
+  environment beside the tag, and the emitter took it from the caller's own `___clos_N` local
+  whenever one existed — re-deriving *which environment does this slot hold* from the MINT SITE,
+  which is right only while nothing else can write the slot.  A `&fn(…)` link is what can.  The
+  environment now always comes from the slot's own `.1`: where the mint put it, and where a
+  rebind puts the next one.
+  The entry as opened guessed the 20-byte stack form was the axis — 8 B `d_nr` plus a 12 B
+  closure `DbRef` against a `d_nr` alone — and the LAYOUT was a symptom rather than the cause.
+  Capturing is what makes a `___clos_N` local EXIST for the emitter to prefer; the widths never
+  entered the decision.  Worth keeping, because the layout reading is the one a reader arrives
+  at from the report and it costs a session: the two `loft introspect` dumps differ in the
+  dispatch line, not in any width.
+  Guarded by `1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.loft`, whose
+  CONTROLS are loft#1443's non-capturing cells — the shape that always worked — so the file says
+  both are closed rather than one traded for the other.
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
