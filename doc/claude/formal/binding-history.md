@@ -87,7 +87,11 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > should have.
 >
 > And the MESSAGE moved with the set. *"A removal renumbers the remaining elements"* is right
-> for `sorted` and wrong for the four that just joined, so the reason is split by kind.
+> for `sorted` and wrong for the four that just joined, so the reason is split by kind.  Worth
+> naming WHY that was easy to miss: the wording was CORRECT for the one kind that reached the
+> site, so it read as settled prose rather than as an assumption with a scope — which is the
+> exclusion comment's own shape one layer out.  A sentence that is true of everything it can
+> currently be said about carries no marker saying how far it reaches.
 > [loft#1458](https://github.com/loft-lang/loft/issues/1458) was filed on that wording BEFORE
 > the set widened and closed as invalid — correctly, and the same wording is wrong in the
 > other direction now. Which way it is wrong depends on which kinds reach the site, so the
