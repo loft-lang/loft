@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 425 | 401 | **24** |
+| 426 | 402 | **24** |
 
 
 
@@ -2561,6 +2561,14 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-08, the debug-assertions gate's last hard failure: the unspan row `425 · 401 · 24`
+→ `426 · 402 · 24`.**  One function joined the classifier and it peels —
+`state::codegen::ir_reads_var`, the first-assignment self-reference guard, which now asks
+whether a `Var(v)` mention is a READ or the place a free RELEASES.  Its predecessor was
+`Value::any_node`, which peels `Span` for it; asking the question about a specific argument
+position needs a walk of its own, so the `Span` arm had to be written out — and this row is
+the reason it was written rather than remembered.
 
 loft#1423's tuple walk moves ONE function out of the opaque column (`341 → 340`, and
 `399 → 400` on the seeing-through side): `parser::operators::coalesce_not_null` reads each tuple
