@@ -1104,6 +1104,34 @@ impl Output<'_> {
                 )?;
                 writeln!(w, "            self.__idx += {eager_stride};")?;
                 writeln!(w, "            return true;")?;
+            } else if uses_next_into {
+                // A REFUSED unified channel.  Inside `has_for_body`, `uses_next_into` with no
+                // eager stride is exactly `eager_kinds.is_none()` — the condition that set
+                // `refusal` above — so there is no value to carry and none to return.
+                //
+                // The refusal is PLANTED here rather than through `wrap_open`/`wrap_close`,
+                // which this channel leaves empty because the Simple yield arm writes its own
+                // per-shape stores.  Computed-and-dropped is what left the generic advance
+                // below to run: it emits `return v;` for a value typed `i64`, and `next_into`
+                // answers `bool`, so the author got the correct refusal AND a rustc E0308
+                // against generated source they cannot read — the exact outcome loft#1132's
+                // write-up says a refusal exists to prevent (loft#1467).
+                //
+                // The `compile_error!` is NOT repeated here.  The eager COLLECTOR for this
+                // same generator already plants it — every shape reaching this branch satisfies
+                // its condition too, since `uses_next_into` means the yield is a tuple or a
+                // fn-ref and this branch means `eager_kinds.is_none()` — and a second copy
+                // makes rustc print the refusal twice, which is a different way of failing the
+                // same "one message" rule.  What was missing was never the message; it was a
+                // body that type-checks so the message is not accompanied.
+                debug_assert!(
+                    refusal.is_some(),
+                    "a next_into advance with no eager stride is a refused channel"
+                );
+                writeln!(w, "        let _ = &dest;")?;
+                writeln!(w, "        if self.__idx < self.__values.len() {{")?;
+                writeln!(w, "            self.__idx += 1;")?;
+                writeln!(w, "            return false;")?;
             } else {
                 writeln!(w, "        if self.__idx < self.__values.len() {{")?;
                 if is_text {

@@ -3991,7 +3991,10 @@ impl Parser {
     /// Deliberately narrow: the operand must be a CALL (a lookup or a field read), never a
     /// bare `Var` — a name is [`Self::narrowing_from_condition`]'s to answer, and answering it
     /// here as well would put one fact in two lists with two lifetimes.
-    pub(crate) fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
+    pub(crate) fn projection_narrowing_from_condition(
+        &self,
+        test: &Value,
+    ) -> Option<(Value, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };

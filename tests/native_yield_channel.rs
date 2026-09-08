@@ -173,3 +173,99 @@ fn a_by_value_tuple_from_a_loop_body_is_not_refused() {
         "…and it packs through the eager collector, which is what the stride pop reads back"
     );
 }
+
+/// loft#1467 — a refused generator emits its refusal AND NOTHING ELSE.
+///
+/// The two tests above pin the message at the EMIT level, which is where the first attempt at
+/// loft#1132 was measured and found wanting.  This one runs rustc, because the defect it
+/// guards is invisible until rustc reads the file: the refusal was correct and complete, and
+/// the generator's `next_into` was still emitted for a channel it had just refused, ending in
+/// `return v;` with `v: i64` inside a method answering `bool`.  So the author got the right
+/// message with a codegen dump attached — the outcome loft#1132's write-up says must not
+/// happen, reintroduced one channel over.
+///
+/// The refusal is planted by the eager COLLECTOR; what was missing here was never the message
+/// but a BODY THAT TYPE-CHECKS beside it, so the message is not accompanied.  That is why this
+/// asserts on rustc's output and not on the emitted source: an emit-level check cannot see a
+/// type error, which is exactly how this shape passed the tests above.
+#[test]
+fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
+    let dir = std::env::temp_dir();
+    let lf = dir.join(format!("loft_1467_{}.loft", std::process::id()));
+    std::fs::write(
+        &lf,
+        "struct Ck1467 { k: integer, v: integer }\n\
+         fn g(n: integer) -> iterator<(Ck1467, integer)> {\n\
+         \x20 for i in 0..n { yield (Ck1467 { k: i, v: i * 11 }, i); }\n\
+         }\n\
+         fn main() { s = 0; for t in g(3) { s += t.1 + t.0.v; } print(\"{s}\\n\"); }\n",
+    )
+    .expect("write probe");
+    let out = Command::new(loft_bin())
+        .arg(&lf)
+        .env("LOFT_TIMEOUT", "300")
+        .output()
+        .expect("spawn loft");
+    let _ = std::fs::remove_file(&lf);
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        err.contains("cannot be collected from a generator's LOOP body"),
+        "the refusal itself must still be delivered — without it this test would pass on a \
+         build that simply stopped refusing:\n{err}"
+    );
+    assert!(
+        !err.contains("error[E"),
+        "the refusal must be the ONLY error: a rustc code beside it is generated source the \
+         author cannot read, for a program `--interpret` runs correctly:\n{err}"
+    );
+    // ONE refusal, not two.  Planting a second `compile_error!` in the advance would also
+    // remove the rustc code, and would fail the same "one message" rule a different way.
+    assert_eq!(
+        err.matches("cannot be collected from a generator's LOOP body")
+            .count(),
+        1,
+        "the refusal must be delivered exactly once:\n{err}"
+    );
+}
+
+/// The CONTROL for the cell above: a by-value tuple from the same loop shape is carried, not
+/// refused, and still answers correctly on `--native`.
+///
+/// This is the half that says the fix did not close the hole by refusing more.  The branch it
+/// touches is reached only when the eager stride is ZERO, and a scalar tuple has a stride — so
+/// if this cell ever starts refusing, the guard above is passing for the wrong reason.
+///
+/// `a_by_value_tuple_from_a_loop_body_is_not_refused` asks the same shape one level shallower —
+/// that the EMIT carries no `compile_error!` and packs through the collector.  This one runs
+/// rustc and checks the VALUE, which is the half an emit-level read cannot reach: the defect
+/// this file gained a cell for was a type error in source that emitted perfectly well.
+#[test]
+fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
+    let dir = std::env::temp_dir();
+    let lf = dir.join(format!("loft_1467_ok_{}.loft", std::process::id()));
+    std::fs::write(
+        &lf,
+        "fn g(n: integer) -> iterator<(integer, integer)> {\n\
+         \x20 for i in 0..n { yield (i, i * 11); }\n\
+         }\n\
+         fn main() { s = 0; for t in g(3) { s += t.0 + t.1; } print(\"{s}\\n\"); }\n",
+    )
+    .expect("write probe");
+    let out = Command::new(loft_bin())
+        .arg(&lf)
+        .env("LOFT_TIMEOUT", "300")
+        .output()
+        .expect("spawn loft");
+    let _ = std::fs::remove_file(&lf);
+    assert!(
+        out.status.success(),
+        "a by-value tuple yield from a loop body must still COMPILE on --native:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "36",
+        "…and answer what the interpreter answers"
+    );
+}
