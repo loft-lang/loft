@@ -459,7 +459,11 @@ enum OFact {
 impl OFact {
     fn from_own(o: Own) -> OFact {
         match o {
-            Own::Owned => OFact::Owned,
+            // @PLN155 phase 2 — the shadow lattice has no "no answer" element, and giving it
+            // one is a change to the fixpoint rather than a transcription.  `Owned` keeps the
+            // answer this shadow read before `Unknown` existed, so the two derivations still
+            // disagree in exactly the places Check A already measures.
+            Own::Owned | Own::Unknown => OFact::Owned,
             Own::Borrowed { base } => OFact::Borrowed(base),
             Own::Join { base } => OFact::Join(base),
         }
@@ -519,7 +523,10 @@ fn inject_fact_owned() -> Option<&'static str> {
 /// Mirrors `use_analysis::call_ownership` so it agrees where the shipped fact is right.
 fn call_own(data: &Data, d_nr: u32, callee_d: u32, args: &[Value]) -> OFact {
     match return_ownership(data, callee_d) {
-        Own::Owned => OFact::Owned,
+        // @PLN155 phase 2 — as in `from_own`: the shadow keeps its pre-`Unknown` answer, so a
+        // disagreement it reports stays a disagreement about the FACT and not about this
+        // refactor.
+        Own::Owned | Own::Unknown => OFact::Owned,
         Own::Borrowed { base } => {
             OFact::Borrowed(caller_arg_base(data, d_nr, callee_d, base, args))
         }
@@ -539,7 +546,10 @@ fn caller_arg_base(data: &Data, d_nr: u32, callee_d: u32, callee_base: u16, args
         Ok(base) => base,
         Err(arg) => match ownership_of(data, d_nr, arg) {
             Own::Borrowed { base } | Own::Join { base } => base,
-            Own::Owned => u16::MAX,
+            // @PLN155 phase 2 — `u16::MAX` is already this function's "no nameable base", and
+            // that is precisely what `Unknown` means, so the two share the arm honestly rather
+            // than by omission.
+            Own::Owned | Own::Unknown => u16::MAX,
         },
     }
 }
@@ -1081,6 +1091,10 @@ pub fn oracle_free_checks(data: &Data) {
 ///  * `oracle-disagrees` — the oracle answers `Borrowed`/`Join` and a free was emitted anyway.
 ///    Not necessarily wrong (a transition free reads the `owned_refs` memo, which this cannot
 ///    see), but it is the population where the two derivations differ.
+///  * `no-answer` — the oracle answers `Own::Unknown`: a `CallRef` whose target it cannot
+///    resolve, or a callee returning a borrow whose base the caller cannot name (@PLN155
+///    phase 2).  Sharper than `proxy-alone`, which it is carved out of: there the oracle had
+///    nothing to READ about the binding, here it read and could not conclude.
 ///  * `veto` — the binding is `skip_free`, whose contract is *no ownership-derived free in any
 ///    spelling*.  Check D's population; it should be empty of live spellings.
 ///
@@ -1124,6 +1138,12 @@ fn run_licence_census(
         let (own, evidence) = crate::use_analysis::ownership_evidence_with(data, d_nr, v, &defs);
         let bucket = if func.is_skip_free(v) {
             "veto"
+        } else if matches!(own, Own::Unknown) {
+            // @PLN155 phase 2 — kept OUT of `oracle-disagrees`, whose documented meaning is
+            // "the oracle answers Borrowed/Join".  `Unknown` is not a disagreement, it is the
+            // absence of an answer, and folding it in would make this census say something
+            // false about its own largest categories.
+            "no-answer"
         } else if !matches!(own, Own::Owned) {
             "oracle-disagrees"
         } else {

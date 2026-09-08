@@ -11,9 +11,8 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 **Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
 phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: phase 2** — fail closed on
-`Own::Unknown`, which phase 0 sized (2478 proxy-alone sites, two-thirds of them `__ref_N`
-return buffers) and phase 1 gave a single home to ask from.  The ownership MODEL is not reopened
+same day, so the sequencing hold is lifted.  **Next: phase 2b** — a reader
+DECLINES on `Unknown`, from the four-candidate queue phase 2a left at the sites.  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -79,7 +78,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A, phase 0, phase 1 landed).
+- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a landed).
 
 ## Why this family, measured
 
@@ -116,7 +115,8 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **A** — the reassessment instrument: the four campaign gates as a command | § Arc A | reproduces the 2026-09-07 ranking from measurements alone; fed the pre-2026-08 bands it must NOT name generic/monomorph (whose keystone paid off) | ✅ **done** — `scripts/campaign_review.py`, `make campaign-review`.  Control: `--control` PASSES (no class is named a PLAN on the pre-2026-08 population), and it FAILS when a gate is mis-wired — proved by making gates 3 and 4 pass on an unmeasured reading, which named generic/monomorph and tuple |
 | **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | ✅ **done — 8.0 %, the plan is NOT killed.**  `LOFT_OWN_ORACLE=census` + `make licence-census`.  Both controls PASS, in the two directions a bucket can move; no category reads 0, so nothing had to be shown reachable |
 | **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | ✅ **done — the narrow-widths outcome: one PAIR, four questions.**  `Function::proxy_says_owned` folds six sites; three are shown to ask a different question and stay apart.  `introspect_diff.sh` **IDENTICAL 1412/1412**; the control went 9 of 29 → 9 of 30 after the check was taught the folded spelling — it read 3 of 23 first, which is the collapse the verify exists to catch |
-| **2** — fail closed: `Own::Unknown` | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | Open |
+| **2a** — the verdict exists and every reader disposes of it | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | ✅ **done** — `Own::Unknown`, 20 readers disposed.  Prediction (EMPTY diff) written first and **falsified twice**, each falsification naming a reader that silently inherited the permissive answer; **IDENTICAL 1412/1412** once both were fixed |
+| **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | Open — the queue is written at the sites, four candidates |
 | **3** — the refusal at the free, on a `report → deny` ladder | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
 | **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
@@ -240,6 +240,73 @@ is still such a site — one the check had simply stopped seeing.  Teaching it t
 `proxy_says_owned(v)` IS a proxy read (and discharges the veto) restores the population to
 **9 of 30**, one more than before, which is the predicate itself.  A fold that shrinks its own
 instrument's population has not been verified; it has removed the verifier.
+
+## Phase 2a — the verdict exists, and the prediction that failed twice found what it was for (2026-09-08)
+
+`Own` had three verdicts and a permissive default: `classify`'s `CallRef` arm answered `Owned`
+— the one verdict that licenses a free — both for a fn-ref whose target it cannot resolve and
+for a callee returning a borrow whose base the caller cannot NAME.  The arm's own comment names
+the cure: *"`Own::Unknown` — forcing each caller to decide rather than defaulting to the
+permissive value — is what would make that attempt safe."*
+
+**2a is the variant and the disposals, and nothing else.**  Every reader disposes of `Unknown`
+explicitly, and every one disposes of it exactly as it disposed of `Owned` — so the emitted
+program is unchanged.  That is the point rather than a limitation: phase 2's product is that a
+reader must now SAY what it does with an underivable verdict, and that a new reader cannot
+inherit the permissive answer by writing `_ =>`.  What a reader SHOULD do is a separate
+decision each, and folding those in would spend the byte-identical gate exactly where it is
+most needed.
+
+**The prediction was written first, and it failed twice.**  Both failures are the whole value
+of the phase, because each named a reader that had been silently inheriting the fail-open:
+
+1. **`use_analysis::text_return_risk`** — `Own::Owned => Some("owned-by-value")` with a
+   `_ => None` beneath it.  `Unknown` fell to `None`, meaning *no risky delivery site*, and a
+   `text` return lost its caller buffer for a frame-local `__ret_N` — a promotion decision
+   flipping on a verdict nobody chose.  9 corpus files.
+2. **`use_analysis::callref_collection_join_base`** — and its own comment is the finding:
+   *"`Own::Owned` is also this arm's FALLBACK for a base the summary could not name."*  That
+   sentence describes `Unknown`; letting it fall to `_ => None` dropped the witness and with it
+   an `OpFreeRefIfDistinct`, one leak per evaluation.  3 more files.
+
+Neither is reachable by the compiler's exhaustiveness check — both are `_ =>` arms — which is
+exactly why the corpus prediction had to exist.  **A behaviour-preserving refactor whose
+prediction cannot fail is not verified.**  Both are now spelled `Own::Owned | Own::Unknown`,
+and `introspect_diff.sh` reads **IDENTICAL 1412/1412**.
+
+**Five more readers absorbed it silently and were caught by transcription**, not by the gate:
+`matches!(own, Own::Owned)` in three `mints` tests, the displaced-slot filter's `s.prior`, and
+the shadow lattice.  Same defect, found by reading rather than by measuring — which is why the
+measurement is what the phase is graded on.
+
+**The census sharpened, and phase 0's headline was 133 frees too optimistic.**  A `no-answer`
+bucket, kept OUT of `oracle-disagrees` (whose documented meaning is *the oracle answers
+Borrowed/Join*, which `Unknown` is not).  Predicted before the run: the total unchanged,
+`oracle-disagrees` not growing, `minted`/`veto` untouched, and the new bucket carved out of
+`proxy-alone` and/or `oracle-derived`.  All four hold, and the last is sharper than predicted —
+**133 frees, carved entirely out of `oracle-derived`**: they had been counted as positively
+derived owner facts while the oracle had no answer at all.
+
+⚠ **`no-answer` reads 0 on the 40-file sample** the baseline was taken from, which is the
+alphabetically-first corpus files and stdlib-dominated.  By this plan's own rule a category
+reading 0 is a claim to check, and it was: the bucket fires on every fn-ref-heavy guard
+(1335 → 4, 1323 → 4, 1245b → 4, 387 → 1).  The zero was the sample, not the category.
+
+### Phase 2b — the queue, written at the sites
+
+Four readers are marked in the source as candidates for DECLINING on `Unknown`, each with the
+trade named where a reader lands:
+
+- `Scopes::scan_set`'s owned-slot insert — membership licenses a free downstream, so declining
+  is the conservative direction; the trade is a leak.
+- `scopes`' witness reader (`ownership_of` at the `__ret` witness) — the site whose comment
+  already hand-compensates by asking the callee; `Unknown` makes that inference unnecessary.
+- `callref_collection_join_base` — `Unknown` is the SHARPER trigger for consulting the declared
+  dep, and the question behind separating them is how often a plain `Owned` there is a
+  derivation rather than the fallback.
+- `Own::join` — making `Unknown` ABSORBING is defensible (a `Join` is a witness, and an arm
+  with no answer can neither supply nor refute one) and measured NOT to move the corpus today,
+  which is precisely why it needs its own gate rather than a free ride here.
 
 ## Phase ordering
 

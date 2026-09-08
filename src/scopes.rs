@@ -8508,7 +8508,10 @@ impl Scopes<'_> {
             .fn_defs
             .get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
         match crate::use_analysis::ownership_of_with(data, d_nr, value, defs) {
-            crate::use_analysis::Own::Owned => RefRhs::Owned,
+            // `Unknown` keeps `Owned`'s answer here (@PLN155 phase 2): to DECLINE instead,
+            // this site would need a third `RefRhs` — "do not decide" — and every consumer of
+            // `RefRhs` an arm for it.  That is phase 2b's question, not a transcription.
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => RefRhs::Owned,
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. } => {
                 RefRhs::View
             }
@@ -12093,7 +12096,11 @@ impl Scopes<'_> {
                     _ => return None,
                 };
                 match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
-                    crate::use_analysis::Own::Owned => None,
+                    // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail
+                    // that owns.  Declining on `Unknown` would BIND a temp on a shape the
+                    // oracle cannot read, which adds a store rather than withholding a free;
+                    // the safe direction here is not obviously the conservative one.
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
                     crate::use_analysis::Own::Borrowed { .. }
                     | crate::use_analysis::Own::Join { .. } => {
                         Some(ArmBind::Bind(Self::reopt(opt, tp)))
@@ -12232,7 +12239,13 @@ impl Scopes<'_> {
                     Deps::frame1(base)
                 }
             }
-            crate::use_analysis::Own::Owned => {
+            // @PLN155 phase 2 — **this is the site the split was built for.**  The comment
+            // below describes hand-compensating for a fallback that is now its own verdict:
+            // `Unknown` IS "the `CallRef` arm could not name a base", so this arm no longer
+            // has to infer that from `Owned` and ask the callee to find out.  Kept joined for
+            // now because separating them CHANGES what is emitted, and that is phase 2b with
+            // its own measurement — but this is the first reader to separate.
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                 // ⚠ `Own::Owned` is ALSO the `CallRef` arm's fallback for a base it cannot
                 // name — its own doc says so — so at a site that frees it is not a verdict.
                 // A second hop reaches it: `fwd = fn(q) { inner(q) }` resolves (loft#1329
@@ -13021,7 +13034,10 @@ impl Scopes<'_> {
                 // leak instead.  `Borrowed` never lifts.
                 let own = crate::use_analysis::ownership_of(data, self.d_nr, val);
                 let lift_by_oracle = match own {
-                    crate::use_analysis::Own::Owned => true,
+                    // @PLN155 phase 2 — lifting gives an unbound result a NAME so the sweep
+                    // can free it; declining on `Unknown` would leave it unnamed and leak,
+                    // which is why this arm keeps `Owned`'s answer.  `Borrowed` never lifts.
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => true,
                     crate::use_analysis::Own::Join { base } => {
                         outer_call != u32::MAX && base != u16::MAX
                     }
@@ -13401,7 +13417,10 @@ fn mixed_ownership_locals(code: &Value, function: &Function, data: &Data, d_nr: 
     ) {
         if let Value::Set(t, val) = node.unspan() {
             match crate::use_analysis::ownership_of(data, d_nr, val) {
-                crate::use_analysis::Own::Owned => {
+                // @PLN155 phase 2 — membership of `owned` licenses a free downstream, so this
+                // IS a reader where declining on `Unknown` is the conservative direction.
+                // Kept joined for 2a; a candidate for 2b, with the leak it would trade for.
+                crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                     owned.insert(*t);
                 }
                 crate::use_analysis::Own::Borrowed { base }
@@ -13784,7 +13803,15 @@ fn witness_set_kind(
                     data.def(fn_nr).is_loft_defined()
                         && !data.def(fn_nr).return_adopts_fresh_store()
                 });
-            copied_by_both || matches!(own(value), crate::use_analysis::Own::Owned)
+            // @PLN155 phase 2 — `Unknown` keeps `Owned`'s answer at all three `mints` tests
+            // below, and it must be SPELLED: a bare `Own::Owned` silently answers "does not
+            // mint" for a value the oracle could not read, which is a different decision from
+            // the one this site has been making.
+            copied_by_both
+                || matches!(
+                    own(value),
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+                )
         }
         Value::Block(b) => {
             let into_work_ref = b.operators.last().is_some_and(|last| {
@@ -13793,9 +13820,16 @@ fn witness_set_kind(
                         && (function.name(*r).starts_with("__ref_")
                             || function.name(*r).starts_with("__rref_")))
             });
-            !into_work_ref && matches!(own(value), crate::use_analysis::Own::Owned)
+            !into_work_ref
+                && matches!(
+                    own(value),
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+                )
         }
-        Value::Insert(_) => matches!(own(value), crate::use_analysis::Own::Owned),
+        Value::Insert(_) => matches!(
+            own(value),
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+        ),
         _ => false,
     };
     if !mints {
