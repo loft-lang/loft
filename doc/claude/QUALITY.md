@@ -2480,7 +2480,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 736 | 382 | 5 | **349** |
+| 737 | 383 | 5 | **349** |
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record
@@ -2493,6 +2493,12 @@ loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the 
 for the same reason: it names `Type::Reference` to reach the closure record behind a record
 LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
 the answer, not the omission — 734 -> 735 discriminating, 348 -> 349 opaque.
+
+loft#1455's `control::fn_slot_type` adds one more on the seeing-through side — 736 -> 737
+discriminating, 382 -> 383 seeing through, opaque unmoved.  It is the `&`-link twin of the
+wrapper question: it asks whether a variable's type is a `RefVar` and answers with the pointee's
+base, so both indirect-call sites read one home rather than each peeling for itself.  The
+accessor exists because three sites answered that question three ways.
 
 loft#1450 adds one to the SEEING-THROUGH side, and it is the first addition there whose whole
 job is the wrapper: `parse_assign_op` now asks whether an assignment's target is declared
