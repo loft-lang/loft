@@ -1251,6 +1251,13 @@ impl Store {
         self.generation = self.generation.wrapping_add(1);
         #[cfg(debug_assertions)]
         self.fl_validate();
+        // Faster path: the store has freed nothing yet, so its one free block is the
+        // tail and the claim is two header writes (`bump_tail`).
+        if let Some(pos) = self.bump_tail(size) {
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return self.finish_claim(pos);
+        }
         // Fast path: find the smallest tracked free block that fits.
         if let Some(pos) = self.fl_take_ge(size as i32) {
             let result = self.claim_block(pos, size);
@@ -1280,6 +1287,49 @@ impl Store {
         #[cfg(debug_assertions)]
         self.fl_validate();
         self.finish_claim(result)
+    }
+
+    /// The common claim, done without the free tree: a store that has freed nothing yet
+    /// has ONE free block, its tail, and every claim takes the front of it.  Through the
+    /// tree that is a delete of the root, a split and an insert of the remainder — three
+    /// LLRB walks to move one number.  Here the remainder simply stays the root: its
+    /// header shrinks, its links were already empty, and the layout is byte-for-byte the
+    /// one `claim_block` would have produced, because the split rule is the same and the
+    /// remainder is the only node either way.  Declines (answering `None`) for anything
+    /// that is not exactly that shape — a tree with two nodes, a single free block that is
+    /// not the tail, a tail the split rule would claim whole, or a remainder too small for
+    /// the tree (`MIN_FREE_TREE`, which `fl_insert` would leave out) — so every other claim
+    /// takes the path it always took.  Measured on the drawing pass: the free-tree walks
+    /// were 9 % of the `fronds` row (@PLN157).
+    fn bump_tail(&mut self, size: u32) -> Option<u32> {
+        let root = self.free_root;
+        if root == 0 || self.fl_left(root) != 0 || self.fl_right(root) != 0 {
+            return None;
+        }
+        let block_size = -(*self.addr::<i32>(root, 0));
+        let req_size = size as i32;
+        if block_size <= req_size * 4 / 3
+            || block_size - req_size < MIN_FREE_TREE
+            || root + block_size as u32 != self.size
+        {
+            return None;
+        }
+        let pos = root;
+        let new_free = pos + size;
+        *self.addr_mut(pos, 0) = req_size;
+        *self.addr_mut(new_free, 0) = req_size - block_size; // negative = free
+        // The remainder becomes the root in place: no links, black — what a fresh
+        // single-node insert leaves.
+        *self.addr_mut::<u32>(new_free, FL_LEFT) = 0;
+        *self.addr_mut::<u32>(new_free, FL_RIGHT) = 0;
+        self.fl_set_red(new_free, false);
+        self.free_root = new_free;
+        self.claims.insert(pos);
+        self.claimed_end = self.claimed_end.max(new_free);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos, size });
+        }
+        Some(pos)
     }
 
     /// Mark `pos` as claimed (splitting if the block is much larger than `size`).
@@ -4761,6 +4811,57 @@ mod tests {
     /// (smaller) store, and the free tree no longer indexes the words that were
     /// cut.  Shrinking to the mark EXACTLY is the boundary case — no free block
     /// is left at all.
+    /// `bump_tail` is a layout twin of the tree path: a fresh store claims from its tail,
+    /// each record's header is its size, the remainder is the one free block and the root,
+    /// and the moment the tail is too small to split by `claim_block`'s rule the claim
+    /// takes the tree path and the whole block — the same store the tree path alone builds.
+    #[test]
+    fn bump_tail_claims_are_the_tree_paths_layout() {
+        let mut store = Store::new(64);
+        store.init();
+        let a = store.claim(3);
+        let b = store.claim(5);
+        let c = store.claim(7);
+        assert_eq!(
+            (a, b, c),
+            (1, 4, 9),
+            "claims take the front of the tail in order"
+        );
+        for (pos, size) in [(a, 3), (b, 5), (c, 7)] {
+            assert_eq!(
+                *store.addr::<i32>(pos, 0),
+                size,
+                "record {pos} keeps its size header"
+            );
+            assert!(store.claims.contains(pos), "record {pos} is claimed");
+        }
+        let tail = c + 7;
+        assert_eq!(
+            store.free_root, tail,
+            "the remainder is the free tree's only node"
+        );
+        assert_eq!(store.fl_left(tail), 0);
+        assert_eq!(store.fl_right(tail), 0);
+        assert_eq!(
+            -(*store.addr::<i32>(tail, 0)) as u32,
+            store.size - tail,
+            "the remainder's header spans exactly the rest of the store"
+        );
+        #[cfg(debug_assertions)]
+        store.fl_validate();
+        // A remainder the tree would not track declines the bump: the claim takes the
+        // tree path and the block whole, leaving no free root — as it always did.
+        let left = store.size - tail;
+        let d = store.claim(left - 1);
+        assert_eq!(d, tail);
+        assert_eq!(
+            *store.addr::<i32>(d, 0) as u32,
+            left,
+            "a block not much larger than the request is claimed whole"
+        );
+        assert_eq!(store.free_root, 0, "nothing is left to track");
+    }
+
     #[test]
     fn shrink_to_the_mark_keeps_every_record() {
         let mut store = Store::new(64);

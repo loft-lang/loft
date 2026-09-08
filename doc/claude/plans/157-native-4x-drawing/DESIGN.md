@@ -1117,6 +1117,57 @@ facts and frame-resident temporaries sits near 1.5–2× of Rust.  `hair` at 2.6
 that floor already; every row at 8–19× is there for a reason in the closable list, and
 `hash`'s three are the cheapest of them.
 
+## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
+
+**The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
+`fronds` + helpers, noise's `seed_wave`, raster's `Pt`, the bench's four-byte FNV), hash
+`ebcfd875` and 1296 points exactly as the consumer bench prints them, on both backends —
+`vr_fronds.loft` in this session's scratchpad, rebuilt from the consumer's sources by the
+same recipe as `vr_smooth.loft`.  Baseline 0.97–1.06M ns/op at `--native-release`.
+
+**The census** (labelled `LOFT_STORES=log`, per call): a `fd_sides` literal per frond, a
+`fd_pts` and a `fd_wid` builder per side, a `FrondSpec` record per sub-array, the
+recursive call's return buffer and its result vector — ~150 stores per call.
+
+**The ceiling, measured before any compiler work.**  Variant A rewrites the source the
+way a compiler could: the sides literal becomes an index loop, the two builders append
+straight into the appended element (`fd_out += [Frond { fpts: [], fwid: [] }]` then
+`fd_out[fk].fpts += […]`), the sub-array spec is made once with its seed re-assigned.
+Hash exact on both backends, stores per run 305 → 109 (−64 %) — and only **−9 %** in time
+(0.89–0.93M).  After § V-e/V-f a store is cheap enough that `fronds`' allocation class is
+worth a tenth of the row, not the half the census suggested.  The lesson for the queue:
+count stores to find a class, but time a ceiling before ranking it.
+
+**The profile says where the row is.**  The program (`n_fronds`) is 6 % of its own row.
+Two runtime halves carry the rest: DEEP RECORD COPIES — `copy_claims` 8.6 %, `owned_walk`
+7.2 %, `remove_claims_mode` 2.8 %, `copy_block` + `memmove` 3.6 % — the sub-call's result
+Fronds copied one by one into the parent (`for f in fronds(…) { fd_out += [f] }`, each
+with its two inner vectors, then the source freed); and the STORE ARENA — `addr_mut` 13 %,
+`claim_block` 5.1 %, `claim` 2 %, `fl_find_ge` 2 %, `fl_delete_node` 1.7 % — the free-list
+allocator per claim.  Two probes on the second half:
+
+- `#[inline(always)]` on `addr`/`addr_mut`/`offset_in_bounds` (they were `#[inline]` and
+  still showed as symbols inside the runtime): within noise on `fronds`, `smooth`, `lock`
+  and `hash` — reverted; not worth a lint allowance.
+- **The bump claim** (`Store::bump_tail`, shipped): a store that has freed nothing has
+  ONE free block, its tail, and every claim takes its front — through the tree that was a
+  delete of the root, a split and an insert of the remainder, three LLRB walks to move one
+  number.  The remainder now stays the root in place; it declines for any other shape
+  (two nodes, a non-tail block, a tail the split rule claims whole, a remainder below
+  `MIN_FREE_TREE`), so the layout is byte-identical to the tree path's — pinned by
+  `store::tests::bump_tail_claims_are_the_tree_paths_layout`, the store subject suite's
+  layout goldens, and the `fronds`/`smooth` hashes.  `fronds` 0.97–1.06M → **0.92–0.93M**
+  (−7 %); `smooth` and the gate rows inside noise.
+
+**What is left for `fronds`, in order:** the deep-copy class (a quarter of the row) — the
+sub-call's result is a temporary whose elements die after the loop, so appending them
+should MOVE the records and adopt their inner vectors rather than re-claim and copy them;
+or the callee builds into the caller's vector (an accumulator shape at the language level,
+a Route-R-for-vectors question at the compiler level); then the allocation class (the
+9 % variant A measured) as a set of small emitter items (a constant vector literal hoisted,
+struct-field collections built in the element, a loop-scoped record literal reusing its
+store).
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can
