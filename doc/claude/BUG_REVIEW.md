@@ -55,6 +55,24 @@ Four sections come back: the population, each mechanism class's share over time,
 the payoff check on keystones already landed, and enumeration exposure. None of them
 is a verdict.
 
+**When the question is not *what shall I fix* but *does this class deserve a whole
+campaign*, run the other report as well:**
+
+```bash
+make campaign-review                  # the four gates that pick a campaign, joined
+make campaign-review ARGS=--verbose   # + the evidence behind each gate
+make campaign-review ARGS=--control   # the negative control — run it after editing a gate
+```
+
+It joins this report's class trend with three more measurements — one fact spelled in two
+or more representations (`rule_predicate_audit.py`, `rule_tags.py dups`), no chokepoint by
+construction (`ir_walker_audit.py former <F>`, one type former at a time), and whether a
+rule-led walk has already been tried on the class and measured. **Four passes earn a plan,
+one to three earn a rule-led walk, gate 2 alone earns a queue entry.** A class whose
+keystone has landed but whose payoff row cannot be judged yet reads `MEASURING` and is held
+back whatever the other gates say — that is an unfinished measurement, not a candidate, and
+ranking it would be reading three gates out of four. @PLN155 arc A.
+
 ### 1. Pick ONE rising class
 
 Read section 2 of the report. A class marked `RISING` is still producing bugs; a

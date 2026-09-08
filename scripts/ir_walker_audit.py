@@ -51,7 +51,13 @@
 #             op by `def_nr` (or via `is_projection_op`) and whether they also carry a
 #             `TupleGet` arm.
 #
-#   optional  The same question one TYPE FORMER over: `Optional(τ)` is `τ` with a
+#   former    The same question one TYPE FORMER over, asked of ONE former at a time
+#             (`former RefVar`, `former Tuple`, …); `optional` is the founding former's
+#             own mode name, and the one the @FR-N-Shape ratchet gates.  Below is that
+#             former's statement of the question; every row of `FORMERS` asks it about
+#             its own wrapper.
+#
+#   optional  `Optional(τ)` is `τ` with a
 #             nullability bit and the same storage (@FR-L-Null), so a site that resolves a
 #             shape by naming `Type` variants answers for `τ` and not for `τ?` — the value
 #             takes the catch-all and nothing says so (loft#1106).  Classifies every body
@@ -73,8 +79,8 @@
 # doc/claude/formal/IMPLEMENTATIONS.md.
 #
 # Usage:  python3 scripts/ir_walker_audit.py [walkers|producers|unspan|reach|dead|both]
-#         [spellings|optional]
-#         `reach`, `spellings` and `optional` need no binary; `dead` needs a built binary (target/debug/loft, or $LOFT_BIN) and takes ~1 min.
+#         [spellings|optional|former <Name>]
+#         `reach`, `spellings`, `optional` and `former` need no binary; `dead` needs a built binary (target/debug/loft, or $LOFT_BIN) and takes ~1 min.
 
 import glob
 import contextlib
@@ -833,12 +839,16 @@ def audit_spellings():
         print(f"  {'TupleGet' if ok else '  --    '}  {site:<40} {name}")
 
 
-# ── optional ──────────────────────────────────────────────────────────────────
+# ── the opacity screen, one type FORMER at a time ────────────────────
 # `Optional(τ)` is `τ` with a nullability BIT — compile-time only, same runtime layout
 # (`Type::Optional`'s own doc).  So a site that resolves a shape by naming its variant
 # (`Type::Vector(..) => …`) does not see the wrapped spelling of the same shape, and the
 # value falls to whatever the catch-all does.  Same question as `spellings`, one type
 # former over: one notion, two spellings, and only one of them matched.
+#
+# The question is asked of ONE former at a time — see `FORMERS` below.  `optional` is the
+# founding former's mode name and the one the @FR-N-Shape ratchet gates; `former <Name>`
+# points the same screen at the other wrappers.
 TYPE_ARM = re.compile(
     r"(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^)]*\)|\{[^}]*\})?"
     r"\s*(?:if\b[^\n]*)?(?:=>|\|)"
@@ -847,21 +857,101 @@ TYPE_LET = re.compile(
     r"(?:^|\W)(?:if\s+let|while\s+let|let)\s+(?:Some\()?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)"
 )
 TYPE_MATCHES = re.compile(r"matches!\s*\([^;]{0,600}?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)", re.S)
-# The spellings of the agnostic peel, plus the two return-side peels that answer
-# "which shapes peel" for their own callers.
-#
-# `peel_link` belongs here because it IS `base()` and then some: its first line is
-# `let mut tp = self.base()`, and it goes on to strip every `&` link as well.  A site that
-# upgrades from `base()` to `peel_link()` therefore sees through the `τ?` wrapper at least as
-# well as it did before — but while this list named only `base`, that upgrade read as a
-# REGRESSION and moved the site from peeling to opaque.  Measured on loft#1445, which moved
-# three: `is_keyed`, `is_collection` and `keyed_known_type` all peel MORE than they used to and
-# all three scored worse for it.  An instrument that penalises the stronger peel argues against
-# the fix it exists to find.
-PEEL_CALL = re.compile(
-    r"\.(?:base|peel_link|peel_optional|ret_dep_shape|ret_promo_base|ret_promo_peels)\s*\("
-)
 TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def)\s*\(")
+
+# ── the type FORMERS this screen can be pointed at ────────────────────────────
+# `Optional` is the founding case, not the only one.  The blindness it names — a site
+# resolves a shape by listing `Type` variants, the WRAPPED spelling of that shape is not in
+# the list, and the value takes the catch-all with nothing said — is a property of the
+# WRAPPER, and the type language has four.  Two of the other three carry the same finding in
+# their own doc: `Type::unrewritten` says "leaving it on makes every `matches!` over the type
+# constructor miss (loft#943)", and `Type::peel_link` says a bare `matches!` "silently answers
+# no for every `&` spelling", which cost the whole `File` surface through a `&File`
+# (loft#753).  Asking one former at a time is what turns "does this class have a chokepoint?"
+# from an opinion into a number — @PLN155 arc A.
+#
+# A row is (the peel VERBS that strip this former, the verbs that only prove AWARENESS of
+# it, prose).  The split matters at one place: a verb that hands back a PEELED TYPE can be
+# bound to a local and that local is then a peeled scrutinee, while a verb that answers
+# *does this peel?* returns a `bool` and binding it proves nothing about the value under
+# test.  `ret_promo_peels` is the one such verb today; keeping it out of the peel list is
+# what stops `let peels = t.ret_promo_peels()` from clearing a bare test on `t`.  `Tuple` has no peel because it is
+# not a wrapper: a tuple is its own shape, so the only way to see the tuple spelling of a
+# question is to carry an arm for it — which is exactly what the screen then counts.  The
+# peel lists are deliberately NOT shared: `base()` strips an `Optional` and leaves a `&`
+# exactly where it was, so crediting it to `RefVar` would clear 700 sites that cannot see a
+# `&τ` at all.
+#
+# `Optional`'s row carries the agnostic peel plus the two return-side peels that answer
+# "which shapes peel" for their own callers.  `peel_link` belongs in it because it IS
+# `base()` and then some: its first line is `let mut tp = self.base()`, and it goes on to
+# strip every `&` link as well.  A site that upgrades from `base()` to `peel_link()`
+# therefore sees through the `τ?` wrapper at least as well as it did before — but while
+# that list named only `base`, the upgrade read as a REGRESSION and moved the site from
+# peeling to opaque.  Measured on loft#1445, which moved three: `is_keyed`, `is_collection`
+# and `keyed_known_type` all peel MORE than they used to and all three scored worse for it.
+# An instrument that penalises the stronger peel argues against the fix it exists to find.
+FORMERS = {
+    "Optional": (
+        ("base", "peel_optional", "peel_link", "ret_dep_shape", "ret_promo_base"),
+        ("ret_promo_peels",),
+        "`\u03c4?` \u2014 a nullability bit over \u03c4's own layout, same runtime shape (@FR-N-Shape)",
+    ),
+    "RefVar": (
+        ("peel_link",),
+        (),
+        "`&\u03c4` \u2014 a link to a variable, which reads THROUGH to its referent (@FR-C-Ref)",
+    ),
+    "Rewritten": (
+        ("unrewritten",),
+        (),
+        "`Rewritten(\u03c4)` \u2014 a built-in-place marker no slot can hold (loft#943)",
+    ),
+    "Tuple": (
+        (),
+        (),
+        "`(\u03c4, \u2026)` \u2014 a compound whose MEMBERS are shapes the site never reaches",
+    ),
+}
+
+
+class Former:
+    """One type former, with the three regexes the screen asks about it.
+
+    Built per former rather than written out per former, so a peel added to one row
+    reaches the arm test, the scrutinee test and the bound-local test together.  Two
+    homes for "what strips this wrapper" is the exact defect this instrument looks for.
+    """
+
+    def __init__(self, name):
+        peels, aware, self.prose = FORMERS[name]
+        self.name = name
+        self.arm = f"Type::{name}"
+        alt = "|".join(peels)
+        # The FUNCTION unit's question is the weaker one — does this body know the wrapper
+        # exists at all — so it reads the peels and the awareness verbs together.
+        body_alt = "|".join(peels + aware)
+        self.aware_call = re.compile(rf"\.(?:{body_alt})\s*\(" if body_alt else r"(?!)")
+        # No peel verb: a regex that cannot match, rather than `(?:)` — which matches
+        # the empty string and would score every site as seeing through.
+        self.peel_call = re.compile(rf"\.(?:{alt})\s*\(" if peels else r"(?!)")
+        # A local bound FROM a peel: the scrutinee is then a peeled value under another
+        # name.  Both spellings occur — `let base = t.base()` and the same-name rebinding
+        # `let tp = tp.base().clone()`.
+        self.peel_bind = re.compile(
+            r"(?<![A-Za-z0-9_])let\s+(?:mut\s+)?(?:\(([^)]{0,120})\)|([A-Za-z_][A-Za-z0-9_]*))"
+            rf"\s*(?::[^=;]{{0,80}})?=\s*[^;]{{0,240}}?\.(?:{alt})\s*\(\s*\)"
+            if peels
+            else r"(?!)"
+        )
+        # The caller table's prefix: a receiver already peeled at the CALL site.
+        self.peel_prefix = (
+            "|".join(rf"\.{v}\(\)" for v in peels) if peels else r"(?!)"
+        )
+
+
+# The founding former, and the default every entry point falls back to.
+OPTIONAL = Former("Optional")
 
 
 def type_discriminated(code):
@@ -873,9 +963,10 @@ def type_discriminated(code):
     )
 
 
-def classify_optional(code):
-    """`sees` / `descends` / `opaque` for one function body."""
-    if "Type::Optional" in code or PEEL_CALL.search(code):
+def classify_optional(code, former=None):
+    """`sees` / `descends` / `opaque` for one function body, against one former."""
+    former = former or OPTIONAL
+    if former.arm in code or former.aware_call.search(code):
         return "sees"
     if TYPE_DESCEND.search(code):
         return "descends"
@@ -928,13 +1019,6 @@ def type_verbs():
 LET_START = re.compile(r"(?<![A-Za-z0-9_])(?:if\s+let|while\s+let|let)(?![A-Za-z0-9_])")
 MATCH_START = re.compile(r"(?<![A-Za-z0-9_])match(?![A-Za-z0-9_])")
 MATCHES_START = re.compile(r"(?<![A-Za-z0-9_])matches!\s*\(")
-# A local bound FROM a peel: the scrutinee is then a peeled value under another name.
-# Both spellings occur and both are common — `let base = t.base()` and the same-name
-# rebinding `let tp = tp.base().clone()`.
-PEEL_BIND = re.compile(
-    r"(?<![A-Za-z0-9_])let\s+(?:mut\s+)?(?:\(([^)]{0,120})\)|([A-Za-z_][A-Za-z0-9_]*))"
-    r"\s*(?::[^=;]{0,80})?=\s*[^;]{0,240}?\.(?:base|peel_link|peel_optional)\s*\(\s*\)"
-)
 IDENT_ONLY = re.compile(r"^[&*\s(]*([A-Za-z_][A-Za-z0-9_]*)(?:\.clone\(\))?[\s)]*$")
 
 
@@ -1084,10 +1168,11 @@ def shape_tests(code):
             yield off, kind, scrut, pats
 
 
-def peel_bound(code, upto):
+def peel_bound(code, upto, former=None):
     """Locals bound from a peel before `upto` — `let base = t.base()`, `let tp = tp.base()`."""
+    former = former or OPTIONAL
     names = set()
-    for m in PEEL_BIND.finditer(code, 0, upto):
+    for m in former.peel_bind.finditer(code, 0, upto):
         if m.group(2):
             names.add(m.group(2))
         else:
@@ -1095,18 +1180,23 @@ def peel_bound(code, upto):
     return names
 
 
-def test_sees(scrut, pats, peeled):
-    """Does THIS test see a `τ?`, on its own scrutinee and its own patterns?"""
-    if "Type::Optional" in pats:
+def test_sees(scrut, pats, peeled, former=None):
+    """Does THIS test see the wrapped spelling, on its own scrutinee and its own patterns?"""
+    former = former or OPTIONAL
+    if former.arm in pats:
         return True
-    if PEEL_CALL.search(scrut):
+    if former.peel_call.search(scrut):
         return True
     m = IDENT_ONLY.match(scrut)
     return bool(m) and m.group(1) in peeled
 
 
-def audit_optional():
-    """Who can see through the `τ?` wrapper, and who resolves a shape without it?
+def audit_optional(former=None):
+    """Who can see through one type former's wrapper, and who resolves a shape without it?
+
+    Written for `Optional` and parameterised by @PLN155 arc A; the prose below is the
+    founding former's, and every other row of `FORMERS` asks the identical question about
+    its own wrapper.
 
     `Optional(τ)` shares `τ`'s runtime layout and adds a compile-time bit, so the wrapper
     is a SPELLING of the same shape rather than a shape of its own.  A function that
@@ -1134,12 +1224,13 @@ def audit_optional():
     from here.  That is why the ranking exists: a bare test is weak evidence on its own, and a
     LIST spelled bare in one home and peeled in another is a claim about two homes.
     """
+    former = former or OPTIONAL
     rows, verbs, on_type, tests = [], {}, type_verbs(), []
     for path in rust_files():
         for name, start, body in functions(path):
             code = code_only(body)
             variants = type_discriminated(code)
-            verdict = classify_optional(code)
+            verdict = classify_optional(code, former)
             if variants:
                 rows.append((f"{rel(path)}:{start}", name, verdict, len(variants)))
                 if verdict == "opaque" and os.path.basename(path) == "data.rs" and name in on_type:
@@ -1151,7 +1242,7 @@ def audit_optional():
             # is invisible to the function unit for exactly that reason, so gating the
             # sharper pass on the blunter one would inherit its blind spot.
             for off, kind, scrut, pats in shape_tests(code):
-                sees = test_sees(scrut, pats, peel_bound(code, off))
+                sees = test_sees(scrut, pats, peel_bound(code, off, former), former)
                 line = start + code[:off].count("\n") + 1
                 spelled = tuple(sorted(pattern_variants(pats)))
                 tests.append((f"{rel(path)}:{line}", name, kind, sees, verdict, spelled))
@@ -1159,6 +1250,7 @@ def audit_optional():
     seen = len(rows)
     sees = sum(1 for r in rows if r[2] == "sees")
     desc = sum(1 for r in rows if r[2] == "descends")
+    print(f"former: Type::{former.name} — {former.prose}")
     print(f"functions discriminating on a `Type` variant : {seen}")
     print(f"  see through the wrapper (peel or arm)      : {sees}")
     print(f"  descend via the `Type` keystone            : {desc}")
@@ -1170,9 +1262,7 @@ def audit_optional():
     src = {p: code_only_positioned(open(p, encoding="utf-8").read()) for p in rust_files()}
     for verb, where in sorted(verbs.items()):
         peeled, bare = 0, []
-        call = re.compile(
-            r"(?:(\.base\(\)|\.peel_link\(\)|\.peel_optional\(\)\.0)\s*)?\.%s\s*\(" % verb
-        )
+        call = re.compile(r"(?:(%s)(?:\.0)?\s*)?\.%s\s*\(" % (former.peel_prefix, verb))
         own = re.compile(r"fn\s+%s\s*\(" % verb)
         free = re.compile(r"(?<!fn )(?<![A-Za-z0-9_.])%s\s*\(([^()]{0,80})\)" % verb)
         for p, code in src.items():
@@ -1184,11 +1274,7 @@ def audit_optional():
             for m in free.finditer(code):
                 if own.search(code, max(0, m.start() - 4), m.end()):
                     continue  # the definition, not a call
-                if (
-                    ".base()" in m.group(1)
-                    or ".peel_link()" in m.group(1)
-                    or "peel_optional" in m.group(1)
-                ):
+                if re.search(former.peel_prefix, m.group(1)):
                     peeled += 1
                 else:
                     bare.append(f"{rel(p)}:{code[:m.start()].count(chr(10)) + 1}")
@@ -1246,27 +1332,6 @@ def audit_optional():
         print(f"  {site:<44} {name:<40} {n:>2} variants")
 
 
-mode = sys.argv[1] if len(sys.argv) > 1 else "both"
-if mode in ("walkers", "both"):
-    print("== walkers ==")
-    audit_walkers()
-    print()
-if mode in ("producers", "both"):
-    print("== producers ==")
-    audit_producers()
-if mode in ("unspan", "both"):
-    print("== unspan ==")
-    audit_unspan()
-    print()
-if mode == "reach":
-    print("== reach (which catch-all walkers does production actually run?) ==")
-    audit_reach()
-if mode == "dead":
-    print("== dead variants (no producer AND absent from the corpus) ==")
-    audit_dead()
-if mode == "spellings":
-    print("== spellings (who sees only the CALL half of a projection?) ==")
-    audit_spellings()
 # ── the @FR-N-Shape ratchet ───────────────────────────────────────────────────
 # The rule says a SHAPE question answers alike for `τ` and `τ?`, and the `Optional`
 # VARIANT was chosen so an omission is a COMPILE ERROR — but that fires for an
@@ -1328,14 +1393,53 @@ def ratchet(counts, write):
     return 0
 
 
-if mode == "optional":
-    check = "--check-ratchet" in sys.argv
-    write = "--write-ratchet" in sys.argv
-    if check or write:
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            counts = audit_optional()
-        print("== @FR-N-Shape ratchet (opaque shape tests must not GROW) ==")
-        sys.exit(ratchet(counts, write))
-    print("== optional (who can see through the `τ?` wrapper?) ==")
-    audit_optional()
+def main():
+    """Dispatch one audit MODE.  A `main` rather than a module-level run so the audit's
+    definitions can be imported — `optional_rank.py` and `campaign_review.py` both read
+    them, and loading a module should not run a minute of analysis."""
+    mode = sys.argv[1] if len(sys.argv) > 1 else "both"
+    if mode in ("walkers", "both"):
+        print("== walkers ==")
+        audit_walkers()
+        print()
+    if mode in ("producers", "both"):
+        print("== producers ==")
+        audit_producers()
+    if mode in ("unspan", "both"):
+        print("== unspan ==")
+        audit_unspan()
+        print()
+    if mode == "reach":
+        print("== reach (which catch-all walkers does production actually run?) ==")
+        audit_reach()
+    if mode == "dead":
+        print("== dead variants (no producer AND absent from the corpus) ==")
+        audit_dead()
+    if mode == "spellings":
+        print("== spellings (who sees only the CALL half of a projection?) ==")
+        audit_spellings()
+    if mode == "optional":
+        check = "--check-ratchet" in sys.argv
+        write = "--write-ratchet" in sys.argv
+        if check or write:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                counts = audit_optional()
+            print("== @FR-N-Shape ratchet (opaque shape tests must not GROW) ==")
+            sys.exit(ratchet(counts, write))
+        print("== optional (who can see through the `τ?` wrapper?) ==")
+        audit_optional()
+    if mode == "former":
+        # The same screen, pointed at another wrapper.  Reported only — the ratchet gates
+        # `Optional` alone, because that is the former whose count a walk has been driven down
+        # and whose baseline therefore means something; a fresh former's first number is a
+        # measurement, not a bar to hold.
+        name = sys.argv[2] if len(sys.argv) > 2 else ""
+        if name not in FORMERS:
+            sys.exit(f"former: name one of {', '.join(FORMERS)} (got {name!r})")
+        print(f"== former {name} (who can see through a `Type::{name}` wrapper?) ==")
+        audit_optional(Former(name))
+
+
+if __name__ == "__main__":
+    main()

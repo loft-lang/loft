@@ -9,14 +9,37 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 ## Status
 
-**Queued (`status:next`) — nothing built.  Arc A and phase 0 are independent of every
-other phase and are what decide whether the rest is worth doing.**  Sequenced behind
-[@PLN153](../153-null-rules-one-home/README.md): both campaigns rewrite `scopes.rs`, and the
-bug review's payoff check can attribute a fall only when one campaign moves at a time.  The
-ownership MODEL is not reopened here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands,
-and so does `deps` as the carried fact.  What this plan changes is **who is allowed to free**:
-today that is derived four different ways, concluded in one function and emitted in another,
-and the derivation that decides it fails toward *permitted*.
+**Active — arc A landed 2026-09-08, and it does not confirm the plan's premise.**  @PLN153
+closed the same day, so the sequencing hold is lifted.  The ownership MODEL is not reopened
+here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
+carried fact.  What this plan changes is **who is allowed to free**: today that is derived
+four different ways, concluded in one function and emitted in another, and the derivation
+that decides it fails toward *permitted*.
+
+**What arc A measured, and what it means for the rest of this plan.**  `make campaign-review`
+on the 2026-09-08 population (642 bugs, #246-#1467) ranks ownership/free as a **walk, not a
+campaign** — it fails two of the four gates:
+
+| gate | ownership/free reads | the plan's premise said |
+|---|---|---|
+| 1 trend | **falling -3.0pp vs peak 19.3 %** (16.3 % in the last band; -3.1pp with @PLN153's own finds screened out) | "flat at its own peak", measured 2026-09-07 with 5 bands |
+| 2 spellings | **`Enum+Reference+Vector` hand-spelled at 26 sites**, one `@FR-O` rule cited from 12 files — the widest of any class | one fact in four representations ✓ |
+| 3 chokepoint | **`Type::RefVar` 78 % opaque** (584 of 751 shape-resolving functions cannot see a `&τ`) — the number the plan said did not exist | "no chokepoint for the LICENCE" ✓ |
+| 4 walk tried | **unjudged — the fall is 2.8 bugs in a 109-bug window** | "the walk was tried and measured no effect" |
+
+Gates 2 and 3 hold and are the strongest readings in the table.  Gates 1 and 4 do not, and
+both for the same reason: **the seven ownership walks landed 2026-09-04/05 and their payoff
+window has not passed.**  Four days is not a measurement — a 2.8-bug difference in a
+109-bug window separates nothing — so "the walk measured no effect" is not yet a fact, it is
+an unfinished measurement of exactly the kind gate 4 exists to refuse.  The report says so
+rather than ranking the class.
+
+That does not close the plan.  Phase 0 is the probe that can, it is independent of every
+gate above, and it asks the question no bug-share can: **how many emitted frees are licensed
+by the PROXY alone?**  A handful means this collapses to a walk whatever the trend does; a
+large number means the class is worth a campaign whether or not the share has started to
+fall.  Phase 0 is therefore next, and phases 1-4 wait on its count rather than on the
+bug-review window.
 
 ## Goal
 
@@ -32,7 +55,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-07.
+- **Last touched:** 2026-09-08 (arc A landed).
 
 ## Why this family, measured
 
@@ -66,7 +89,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **A** — the reassessment instrument: the four campaign gates as a command | § Arc A | reproduces the 2026-09-07 ranking from measurements alone; fed the pre-2026-08 bands it must NOT name generic/monomorph (whose keystone paid off) | Open |
+| **A** — the reassessment instrument: the four campaign gates as a command | § Arc A | reproduces the 2026-09-07 ranking from measurements alone; fed the pre-2026-08 bands it must NOT name generic/monomorph (whose keystone paid off) | ✅ **done** — `scripts/campaign_review.py`, `make campaign-review`.  Control: `--control` PASSES (no class is named a PLAN on the pre-2026-08 population), and it FAILS when a gate is mis-wired — proved by making gates 3 and 4 pass on an unmeasured reading, which named generic/monomorph and tuple |
 | **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | Open |
 | **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | Open |
 | **2** — fail closed: `Own::Unknown` | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | Open |
@@ -86,7 +109,22 @@ class, one column per gate:
 3. **no chokepoint by construction** — `ir_walker_audit.py`'s opacity screen, which today
    answers only for `Optional` (728 functions discriminate on a `Type` variant, 359 opaque).
    Parameterising it by type former is the arc's one code change: `RefVar` (234 sites) and
-   `Tuple` are the formers with no number today, and without one, condition 3 is an opinion;
+   `Tuple` are the formers with no number today, and without one, condition 3 is an opinion.
+   **Landed** — `ir_walker_audit.py former <Name>`, over the 751 functions that resolve a
+   shape by naming a `Type` variant:
+
+   | former | sees (peel or arm) | descends | opaque | opaque share |
+   |---|---|---|---|---|
+   | `Optional` (`τ?`) | 407 | 6 | 338 | 45 % |
+   | `RefVar` (`&τ`) | 156 | 11 | **584** | **78 %** |
+   | `Tuple` (`(τ, …)`) | 135 | 12 | 604 | 80 % |
+   | `Rewritten` | 37 | 15 | 699 | 93 % |
+
+   `Optional` is the one former with a chokepoint, and it is the one a campaign has already
+   been run on — which is the reading that makes the screen worth generalising.  The peel
+   verbs are per former and deliberately not shared: `base()` strips an `Optional` and leaves
+   a `&` exactly where it was.  Two of the other three carry the same finding in their own
+   doc — `Type::unrewritten` names loft#943, `Type::peel_link` names loft#753;
 4. **a walk already tried and measured no effect** — from the QUALITY.md walk records and the
    review's payoff column.
 
@@ -160,7 +198,8 @@ feeds it changes).  2 before 3 (a refusal over a fail-open verdict refuses the w
 - [BUG_REVIEW.md](../../BUG_REVIEW.md) — the ownership/free rows this plan is measured by;
   [STABILITY_METHOD.md](../../STABILITY_METHOD.md) § The rule-led walk — the cheaper tier, and
   when arc A should route a class there instead.
-- `make bug-review`, `scripts/rule_predicate_audit.py`, `scripts/ir_walker_audit.py`,
+- `make campaign-review` (arc A's own report, `--control` for its negative control),
+  `make bug-review`, `scripts/rule_predicate_audit.py`, `scripts/ir_walker_audit.py`,
   `scripts/o_proxy_check.py`, `scripts/introspect_diff.sh`, `make falsify`,
   `LOFT_OWN_ORACLE=check` — the instruments.
 - [@PLN155](https://github.com/loft-lang/plans/issues/155) — this plan's issue.

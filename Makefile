@@ -902,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -938,6 +938,13 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
 	@python3 scripts/bug-review.py $(ARGS)
+
+# @PLN155 arc A — the four gates that pick a campaign, joined into one report:
+#   make campaign-review                       # which class earns a campaign next
+#   make campaign-review ARGS=--verbose        # + the evidence behind each gate
+#   make campaign-review ARGS=--control        # the negative control (run after a gate edit)
+campaign-review:  ## Which mechanism class earns a CAMPAIGN next, on four measured gates
+	@python3 scripts/campaign_review.py $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this

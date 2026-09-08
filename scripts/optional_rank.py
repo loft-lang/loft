@@ -30,20 +30,8 @@ root = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.pat
 os.chdir(root)
 
 
-class _Audit:
-    """The audit script's helper definitions, loaded WITHOUT its main body: importing the
-    module would run the whole audit (its mode is read at module level), so the source is
-    executed only up to the line that picks the mode."""
-
-    def __init__(self):
-        src = open(os.path.join(root, "scripts", "ir_walker_audit.py")).read()
-        cut = src.index("\nmode = sys.argv[1]")
-        ns = {"__name__": "ir_walker_audit_defs", "__file__": os.path.join(root, "scripts", "ir_walker_audit.py")}
-        exec(compile(src[:cut], "ir_walker_audit.py", "exec"), ns)  # noqa: S102
-        self.__dict__.update(ns)
-
-
-A = _Audit()
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import ir_walker_audit as A  # noqa: E402 — after the chdir + path insert above
 
 DECL = re.compile(r"attr_type\(|\.typedef\b|\.returned\(|vars\.tp\(|function\.tp\(|func\.tp\(|\.type_def\b")
 LVALUE = re.compile(r"Value::Set\(|towards_set|set_type\(|change_var|assign|OpSet[A-Z]|lvalue|place\b")

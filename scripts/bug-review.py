@@ -58,6 +58,11 @@ KEYSTONES = [
     # `τ? ⤳ τ` arm — the generics-precedent shape, a refusal at the point every
     # escape ends up.  Landed 2026-09-05 with the #1366 guards.
     ("Parser::nstore_unwrap_report", "null/sentinel",    1366, "PLN153"),
+    # The 2026-09 cycle's keystone, landed at the end of the #1124-#1259 window it was
+    # picked from (BUG_REVIEW.md).  Listed with its row still unjudgeable on purpose: a
+    # keystone the review cannot see is a keystone whose class reads as a fresh candidate,
+    # which is the reading @PLN155 arc A exists to refuse.
+    ("Scopes::owns_freeable_store",   "keyed collections", 1260),
 ]
 
 # ⚠ **The fourth trap, and it is the one that reads as a verdict.**  A keystone whose plan
@@ -138,6 +143,89 @@ def walker_omissions():
                 if v in arms:
                     present[v] += 1
     return present, total
+
+
+def band_edges(bugs, nbands):
+    """Equal-WIDTH slices of the issue-number range — the population's own time axis.
+
+    Bucketed by issue NUMBER, not close date: a release-month close-out lands hundreds of
+    old issues at once, which makes any calendar window read as "everything is recent".
+    """
+    nums = sorted(i["number"] for i in bugs)
+    lo, hi = nums[0], nums[-1]
+    step = max(1, (hi - lo) // nbands)
+    return [(lo + k * step, lo + (k + 1) * step if k < nbands - 1 else hi + 1)
+            for k in range(nbands)]
+
+
+def class_trends(bugs, bands):
+    """One row per mechanism class: `(delta_vs_peak, name, shares, counts, peak)`.
+
+    Measured against the PEAK, not band 0.  A class that did not exist in the first band,
+    rose, and has since fallen is FALLING; comparing it to zero would call it rising and
+    point the cycle at work already done.
+
+    One home because two readers ask it — section 2 below, and `campaign_review.py`'s
+    first gate (@PLN155 arc A).  A second spelling of this arithmetic is how a campaign
+    comes to be picked off a trend the review itself never printed.
+    """
+    hits = classify(bugs)
+    counts = {n: {b: 0 for b in bands} for n in CLASSES}
+    tot = {b: 0 for b in bands}
+    for i in bugs:
+        for b in bands:
+            if b[0] <= i["number"] < b[1]:
+                tot[b] += 1
+    for name, lst in hits.items():
+        for i in lst:
+            for b in bands:
+                if b[0] <= i["number"] < b[1]:
+                    counts[name][b] += 1
+    rows = []
+    for name in CLASSES:
+        sh = [100 * counts[name][b] / tot[b] if tot[b] else 0.0 for b in bands]
+        peak = max(sh[:-1]) if len(sh) > 1 else sh[0]
+        rows.append((sh[-1] - peak, name, sh, [counts[name][b] for b in bands], peak))
+    return rows, counts, tot, hits
+
+
+def trend_mark(delta):
+    """The three-way verdict on one class's share — one home, two readers."""
+    return "RISING" if delta > 2 else ("falling" if delta < -2 else "flat")
+
+
+# A fall has to be bigger than the noise of the window it is read in.  One percentage
+# point of a 90-bug window is under one bug, so a 2pp "fall" there can be two issues that
+# happened not to be filed — which is how a three-day window came to read PAID OFF for a
+# class its own campaign was being written about.  A verdict therefore needs BOTH: a share
+# that fell by more than a point, and a fall worth at least this many bugs against what the
+# before-share predicted.
+PAYOFF_MIN_BUGS = 3
+
+
+def payoff_verdict(before_share, before_n, after_share, after_pop):
+    """Did a landed keystone move its class's share?  One home, two readers.
+
+    A class with (almost) no bugs BEFORE the keystone cannot show a fall after it — there
+    was nothing to remove.  Abstain rather than print a verdict the data does not carry: a
+    false "NO EFFECT" would send the cycle to re-open a premise that was never tested, and
+    a false "PAID OFF" would close one that was never confirmed.
+
+    The SPLIT is the caller's: section 3 below compares whole bands (a keystone landing
+    inside the last band has no band above it and is not judged at all), while
+    `campaign_review.py` splits at a watermark issue number, because a walk lands on a day
+    and not on a band edge.  Those are two questions.  The VERDICT rule over a split is
+    one, and it is here.
+    """
+    if before_n < 3:
+        return f"cannot judge — only {before_n} bug(s) in this class before it landed"
+    if after_share >= before_share - 1:
+        return "NO EFFECT — re-open the premise"
+    missing = (before_share - after_share) * after_pop / 100
+    if missing < PAYOFF_MIN_BUGS:
+        return (f"cannot judge — the fall is {missing:.1f} bug(s) "
+                f"in a {after_pop}-bug window")
+    return "PAID OFF"
 
 
 def stated_fixed(issue):
@@ -254,45 +342,23 @@ def main():
     bugs = [i for i in issues if any(l["name"] == "bug" for l in i["labels"])]
     if not bugs:
         sys.exit("no `bug`-labelled issues found")
-    nums = sorted(i["number"] for i in bugs)
-    lo, hi = nums[0], nums[-1]
-    step = max(1, (hi - lo) // a.bands)
-    bands = [(lo + k * step, lo + (k + 1) * step if k < a.bands - 1 else hi + 1)
-             for k in range(a.bands)]
+    bands = band_edges(bugs, a.bands)
+    lo, hi = bands[0][0], bands[-1][1] - 1
 
     print(f"\n=== 1. Population ===")
     print(f"  {len(bugs)} bug issues, #{lo}-#{hi}   "
           f"({sum(1 for i in issues if i['state'] == 'OPEN')} open overall)")
-    print(f"  bucketed by issue number into {a.bands} bands of ~{step}")
+    print(f"  bucketed by issue number into {a.bands} bands of "
+          f"~{bands[0][1] - bands[0][0]}")
 
-    hits = classify(bugs)
-    counts = {n: {b: 0 for b in bands} for n in CLASSES}
-    tot = {b: 0 for b in bands}
-    for i in bugs:
-        for b in bands:
-            if b[0] <= i["number"] < b[1]:
-                tot[b] += 1
-    for name, lst in hits.items():
-        for i in lst:
-            for b in bands:
-                if b[0] <= i["number"] < b[1]:
-                    counts[name][b] += 1
+    rows, counts, tot, hits = class_trends(bugs, bands)
 
     print(f"\n=== 2. Mechanism class share by band (RISING = still firing) ===")
     hdr = "  " + "class".ljust(20) + "".join(f"#{b[0]}-{b[1]}".rjust(13) for b in bands) + "   trend"
     print(hdr + "\n  " + "-" * (len(hdr) - 2))
-    rows = []
-    for name in CLASSES:
-        sh = [100 * counts[name][b] / tot[b] if tot[b] else 0.0 for b in bands]
-        peak = max(sh[:-1]) if len(sh) > 1 else sh[0]
-        # Measured against the PEAK, not band 0.  A class that did not exist in the
-        # first band, rose, and has since fallen is FALLING; comparing it to zero
-        # would call it rising and point the cycle at work already done.
-        rows.append((sh[-1] - peak, name, sh, [counts[name][b] for b in bands], peak))
     for delta, name, sh, c, peak in sorted(rows, reverse=True):
         cells = "".join(f"{c[j]:3d} ({sh[j]:4.1f}%)".rjust(13) for j in range(len(bands)))
-        mark = "RISING" if delta > 2 else ("falling" if delta < -2 else "flat")
-        print(f"  {name:<20}{cells}   {mark} {delta:+.1f}pp vs peak {peak:.1f}%")
+        print(f"  {name:<20}{cells}   {trend_mark(delta)} {delta:+.1f}pp vs peak {peak:.1f}%")
 
     print(f"\n=== 3. Payoff check — did each landed keystone move its class? ===")
     for keystone, cls, landed, *plan in KEYSTONES:
@@ -313,16 +379,7 @@ def main():
         nb = sum(counts[cls][b] for b in before)
         sb = 100 * nb / max(1, sum(tot[b] for b in before))
         sa = 100 * sum(counts[cls][b] for b in after) / max(1, sum(tot[b] for b in after))
-        # A class with (almost) no bugs BEFORE the keystone cannot show a fall after
-        # it — there was nothing to remove.  Abstain rather than print a verdict the
-        # data does not carry: a false "NO EFFECT" would send the cycle to re-open a
-        # premise that was never tested.
-        if nb < 3:
-            verdict = f"cannot judge — only {nb} bug(s) in this class before it landed"
-        elif sa < sb - 1:
-            verdict = "PAID OFF"
-        else:
-            verdict = "NO EFFECT — re-open the premise"
+        verdict = payoff_verdict(sb, nb, sa, sum(tot[b] for b in after))
         print(f"  {keystone:<32} {cls:<18} {sb:5.1f}% -> {sa:5.1f}%   {verdict}")
         if plan and plan[0]:
             tag = plan[0]
