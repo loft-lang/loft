@@ -96,7 +96,34 @@ died in the same second; a per-process kill takes one process, not two unrelated
 **1** when the count is ZERO, so a clean gate is reported as a failed command.  Three
 passing runs were misread that way in one session.  Use `|| true`, or put the count first.
 
-### Preferred shape — background + peek + wait
+### ⚠ If you are an AGENT: run the BLOCKING form and let the harness background it
+
+There are **two** backgrounding mechanisms and using both cancels the notification.  The
+script's `--bg` detaches a subshell and returns in seconds; a harness that watches the
+*command* then sees a fast exit and has nothing left to report, so the agent is left polling.
+The harness's own background mode watches the PID it started and fires a completion event.
+
+So an agent wants the **blocking** command, backgrounded by the harness:
+
+```
+Bash(command="./scripts/find_problems.sh", run_in_background=true)   # curated, ~70 s
+Bash(command="make ci",                    run_in_background=true)   # full gate, ~10 min
+```
+
+One process, one notification, and the summary still lands in `/tmp/loft_problems.<id>.txt`.
+`--bg` remains right for a HUMAN at a terminal, which is what the rule below was written for:
+there the cost is a blocked prompt, and nobody is waiting on an event.
+
+⚠ **Never wait with a `pgrep` loop.**  `until ! pgrep -f "cargo nextest"; do sleep 5; done`
+never terminates: the loop runs inside a shell whose own command line CONTAINS that string, so
+`pgrep` matches itself.  Measured 2026-09-08 — a waiter spun for 55 minutes, and because the
+real command was chained after it (`… ; ./scripts/find_problems.sh --bg`) **the gate never
+started at all** while three status reports said it was running.  A self-matching predicate
+does not fail loudly; it reports the opposite of the truth.  If you must poll, use the script's
+own `--peek` (which reads state, not process tables), or `--wait`, which watches a recorded PID
+rather than a pattern.
+
+### Preferred shape (human, at a terminal) — background + peek + wait
 
 ```bash
 ./scripts/find_problems.sh --bg        # kick it off, returns immediately

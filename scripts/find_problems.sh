@@ -55,6 +55,17 @@
 # foreground.  Always go through `--bg` so the blocking run does
 # not occupy the terminal for 60-90 s.  `cargo clippy` and single-
 # file tests stay foreground.
+#
+# ⚠ That rule is for a HUMAN at a terminal, where the cost is a blocked prompt.
+# An AGENT wants the opposite: run the BLOCKING form and let its harness put the
+# command in the background, because the harness notifies when the process it
+# started exits.  `--bg` returns in seconds, so a harness watching the command
+# sees a fast exit and has nothing left to report — and the agent falls back to
+# polling.  Two backgrounding mechanisms; using both cancels the notification.
+#
+# ⚠ And never wait on this with a `pgrep` loop: `until ! pgrep -f "cargo nextest"`
+# matches the waiting shell's OWN command line and never terminates.  Use `--peek`
+# (reads state, not process tables) or `--wait` (watches the recorded pid).
 set -euo pipefail
 
 # Cache clean/release rebuilds with sccache when present (no-op otherwise).
@@ -507,14 +518,24 @@ fi
 if [[ "${1:-}" == "--wait" ]]; then
   LOG="${2:-$LOG_DEFAULT}"
   OUT="${3:-$OUT_DEFAULT}"
+  # A run that has ALREADY finished is a success, not an error.  The pid file is
+  # removed by the background subshell the moment it is done, so a `--wait` that
+  # starts a second late used to exit 1 with "no background run found" and lose a
+  # completed result — the failure mode is worst exactly when the run was fastest.
+  # Summarise whatever the log holds instead, and say which case this was.
   if [[ ! -f "$PID_FILE" ]]; then
-    echo "no background run found (expected $PID_FILE)" >&2
-    exit 1
+    if [[ -f "$LOG" ]]; then
+      echo "no run in flight — summarising the completed log at $LOG"
+    else
+      echo "no background run found (expected $PID_FILE) and no log at $LOG" >&2
+      exit 1
+    fi
+  else
+    pid=$(cat "$PID_FILE")
+    echo "waiting for cargo test pid $pid..."
+    while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+    rm -f "$PID_FILE"
   fi
-  pid=$(cat "$PID_FILE")
-  echo "waiting for cargo test pid $pid..."
-  while kill -0 "$pid" 2>/dev/null; do sleep 2; done
-  rm -f "$PID_FILE"
   summarise "$LOG" "$OUT"
   echo
   echo "=== Wall-clock timing summary ==="
