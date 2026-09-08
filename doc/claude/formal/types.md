@@ -103,12 +103,22 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   formation
   (N-Opt)      τ wf,  has_null(τ)  ⟹  τ? wf     τ? is a TYPE for every τ that has a value to
                spend on absence — a reserved sentinel (layout.md L-Null) or a discriminant
-               (L-Null-Tag).  A type that is only its parts' bytes has neither: a TUPLE and a
-               `value struct` (@PLN101) are refused BY NAME at the declaration, each naming its
-               cures.  A FUNCTION type is the third: `(fn() -> integer)?` is refused at the
-               declaration and a yielded fn-ref has no sentinel to test, so `(N-Chain)` does not
-               wrap one either — a fn-ref field read through an absent receiver stays a fn-ref.  A tuple that ARRIVES absent is a present tuple of null members —
-               tuples.md (T-Absent) — so no `(τ, τ)?` exists even in flight.
+               (L-Null-Tag).  EITHER suffices, and which one a τ gets is layout's question, not
+               this rule's: a `value struct` (@PLN101) has no sentinel and IS nullable, because
+               stored inline is exactly the case (L-Null-Tag) governs — `Pt?` is the tagged
+               `__nullable<Pt>` (owner ruling 2026-09-08: *a `Pt?` implementation is an enum
+               variant of the record so it can be null*).
+               What has NEITHER is a TUPLE: it is its members' bytes, with no reserved value and
+               no room for a discriminant, and it is refused BY NAME at the declaration.  A tuple
+               that ARRIVES absent is a present tuple of null members — tuples.md (T-Absent) — so
+               no `(τ, τ)?` exists even in flight.  A FUNCTION type is the second:
+               `(fn() -> integer)?` does not resolve and a yielded fn-ref has no sentinel to
+               test, so (N-Chain) does not wrap one either — a fn-ref field read through an
+               absent receiver stays a fn-ref.
+               ⚠ `has_null(τ)` is a SIDE CONDITION on this rule, so every rule that CONSTRUCTS a
+               `τ?` owes it — (N-Domain), (N-Chain), (Col-Lookup), (N-Join) — and enforcing it
+               only where a type is DECLARED is what let a `τ?` be minted for a τ that had none
+               (loft#1471).  It has no single implementation; see types-history D-Opt-NoNull.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 

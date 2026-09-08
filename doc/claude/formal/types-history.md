@@ -6,7 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — `D-Domain-Guard` (opened 2026-09-08, below): `(N-Domain)`'s GUARD licence is not
+OPEN: **1** — `D-Opt-Value` was opened and CLOSED 2026-09-08 by owner ruling (loft#1471, below):
+a `value struct` is nullable through `(L-Null-Tag)`'s discriminant, and nothing had to be built.
+`D-Domain-Guard` (opened 2026-09-08, below): `(N-Domain)`'s GUARD licence is not
 uniform across its three families — the index and divisor rows are closed, and whether the
 domain-partial MATH row is a code gap or a rule that over-promises is an owner call.
 `D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
@@ -22,6 +24,36 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Opt-Value — OPENED AND CLOSED (2026-09-08, loft#1471, owner ruling): a `value struct` was refused a `τ?` it could represent
+
+`(N-Opt)` licenses `τ?` for a τ with a value to spend on absence, and names TWO representations:
+a reserved sentinel `(L-Null)` or a discriminant `(L-Null-Tag)`.  **Either suffices.**  A `value
+struct` is stored INLINE, which is precisely the case `(L-Null-Tag)` governs — and it was refused
+at the declaration anyway, on the reasoning that an inline value has no `store_nr` sentinel.  That
+is true of the OTHER representation, and `(L-Null)` is not the rule for an inline slot.
+
+Owner ruling 2026-09-08: *"a `Pt?` implementation is an enum variant of the record so it can be
+null"* — which is `(L-Null-Tag)` verbatim.  **Nothing had to be built.**  `synth_nullable_target`
+already admits a `value struct` (it is a `DefType::Struct`), so lifting the refusal turned on the
+declaration, the local, the struct FIELD, the tagged vector ELEMENT and the `??` discharge at
+once, on both backends, with one test failing in the whole suite set — the one that pinned the
+refusal.
+
+**The half that outlives this entry: a side condition enforced at ONE site is not enforced.**
+`has_null(τ)` gated only the DECLARATION, while `(N-Domain)` and `(N-Chain)` construct a `τ?`
+without asking.  So `v[i]` on a `vector<Pt>` and a `Pt` field read through a nullable receiver
+minted `Pt?` regardless, the diagnostic NAMED a type the declaration forbade the author to write,
+and its advertised `?? d` cure was dead code — the value could not be null, so the default never
+ran.  The predicate still has no implementation in `src/`; it is re-derived inline at each site
+that happens to ask, and the three lists still differ.
+
+⚠ **What this does NOT close.**  loft#1471's original cell — an out-of-range read on a DENSE
+`vector<Pt>` — still fabricates `Pt{0,0}` and reports `== null` false, because `(N-Dense)` says a
+dense element pays no discriminant and the ruling does not change that.  What the ruling unblocks
+is the honest fix: `(N-Domain)` can now type that read `Pt?` and MEAN it, because the tagged
+absent value finally exists to hand back.  That was impossible while `Pt?` was unrepresentable,
+and it is a change to the READ rather than a deletion.
 
 ### D-Domain-Guard — OPENED 2026-09-08 (loft#1450's walk): `(N-Domain)`'s GUARD licence is not uniform across its families
 

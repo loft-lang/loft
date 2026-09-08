@@ -56,10 +56,28 @@ fn default_arg_type_mismatch() {
 
 // @PLN101 — a `value struct` is stored inline (no `store_nr` null sentinel), so `<value struct>?`
 // has no representation and is rejected.
+/// A `value struct` IS nullable, and the way it is nullable is the TAG.
+///
+/// This asserted the opposite until 2026-09-08.  The refusal reasoned that an inline value has
+/// no `store_nr` sentinel — true, and beside the point: that is `@FR-L-Null`'s representation,
+/// and an inline slot is governed by `@FR-L-Null-Tag`, whose `__nullable<S>` spends a
+/// DISCRIMINANT on absence instead.  Owner ruling: *a `Pt?` implementation is an enum variant of
+/// the record so it can be null.*
+///
+/// The refusal was also enforced at the DECLARATION only, so `(N-Domain)` and `(N-Chain)` minted
+/// `P?` anyway and the diagnostic named a type this test forbade the author to write (loft#1471).
 #[test]
-fn value_struct_no_nullable() {
-    code!("value struct P { x: integer }\nfn test() { q: P? = P { x: 1 }; }")
-        .error("`P?` is not allowed — a `value struct` is stored inline and has no null; use a plain `P`, or a reference `struct` for nullability at value_struct_no_nullable:2:20");
+fn value_struct_is_nullable_through_the_tag() {
+    code!(
+        "value struct P { x: integer }\n\
+         fn probe() -> integer {\n\
+         \x20 a: P? = null;\n\
+         \x20 b: P? = P { x: 7 };\n\
+         \x20 if a == null and b != null { (b ?? P { x: 0 }).x } else { -1 }\n\
+         }"
+    )
+    .expr("probe()")
+    .result(Value::Int(7));
 }
 
 #[test]

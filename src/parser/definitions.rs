@@ -2775,17 +2775,26 @@ impl Parser {
             // @PLN101 — a `value struct` is stored INLINE (bytes, no `DbRef`), so it has no
             // `store_nr` null sentinel: `<value struct>?` cannot be represented. Reject it with
             // a clear diagnostic; fall through as the plain (non-null) type to avoid a cascade.
-            if let Type::Reference(p, _) = &t
-                && self.data.is_value_struct(*p)
-            {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "`{type_name}?` is not allowed — a `value struct` is stored inline and has \
-                     no null; use a plain `{type_name}`, or a reference `struct` for nullability"
-                );
-                return Some(t);
-            }
+            // @PLN101 / `@FR-L-Null-Tag` — a `value struct` IS nullable, and the way it is
+            // nullable is the tag.  It is stored INLINE, which is precisely the case
+            // `(L-Null-Tag)` governs: `S?` is the synthetic `__nullable<S>`, layout(S?) =
+            // discriminant ++ layout(S), absence is discriminant 0.  `synth_nullable_target`
+            // already admits it (a `value struct` is a `DefType::Struct`), so the whole tagged
+            // path — declaration, local, field, vector element, `??` discharge — carries it
+            // with no new machinery.
+            //
+            // This used to be REFUSED here, on the reasoning that an inline value "has no
+            // `store_nr` null sentinel".  True, and beside the point: that is `(L-Null)`'s
+            // representation, and `(L-Null)` is not the rule for an inline slot.  The refusal
+            // reasoned about the pointer form only, so it turned a representable type away and
+            // sent the author to "a reference `struct` for nullability" — a heap allocation to
+            // buy back something the tag already provides.
+            //
+            // Worse, the refusal was only ever enforced HERE.  `(N-Domain)` and `(N-Chain)`
+            // construct a `τ?` without asking, so `v[i]` on a `vector<Pt>` and a `Pt` field read
+            // through a nullable receiver both minted a `Pt?` — and the diagnostic then NAMED a
+            // type this site forbade the author to write (loft#1471).  Owner ruling 2026-09-08:
+            // *a `Pt?` implementation is an enum variant of the record so it can be null*.
             // @PLN25 slice (a): the postfix `?` constructs the real `Optional` former
             // (idempotent + normalising via `Type::optional`). GATED on `LOFT_PLN25_OPT`
             // while the slice-(b) peel audit is incomplete — OFF keeps the Phase-0 no-op
