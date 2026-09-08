@@ -98,6 +98,28 @@ success while measuring nothing. It cost nothing on the day it was noticed becau
 were cosmetic — but nothing about the mechanism was limited to cosmetic lints, and for as long as
 it stood, a green `make ci` was evidence about the test suite and about nothing else.
 
+## The gate builds the test binaries TWICE — and the other structural minutes (@PLN159, 2026-09-08)
+
+Measured on the PR run `34055973906` (2026-09-06) and a local `make ci` of 2026-09-07, and
+recorded in full in [plans/159-gate-efficiency.md](plans/159-gate-efficiency.md).  The suite's
+isolated cost is seconds — `loft_suite` 5.8 s, `native_scripts` 6.1 s warm, one corpus program
+through `rustc` 0.20 s — and the gate's minutes were structural:
+
+| where | what | cost |
+|---|---|---|
+| every CI shard, every local gate | `[profile.test] debug = 1` differed from dev's default 2, so `cargo build --all-targets` and nextest built all 267 test binaries TWICE (cargo shares artifacts between profiles with equal VALUES, never by name) | 4m05s per shard, 1m13s locally |
+| the local loop | `find_problems.sh` ran `--release` while `make ci` and CI run the dev/test profile — a third build of the same binaries per source edit | one release test build per edit |
+| the heavy shard | `native_scripts` (219.6 s) in a single-slot group, plus the 3.7-min cache save, on the critical path | 29.3 min shard |
+| every commit | `native_artifact_cache_key` folded the git HEAD, so every commit rebuilt every hand-written package cdylib (`cdylibstale`) although none depends on the loft crate | one cold `cache warm` per commit |
+| two gates on one box | each at half the threads, both ~2×, plus the OOM and load-flake reruns | 10 → 19 min |
+
+What changed: `[profile.dev] debug = 1` (one build); `find_problems.sh` without `--release` (one
+profile); a `corpus` PR shard and per-shard cache saves; the package-cdylib key without the git
+HEAD; `make ci` takes `/tmp/loft-gate.lock` (one gate at a time, `LOFT_GATE_PARALLEL=1` opts out)
+and runs the diff's subjects first (`scripts/nextest_priority.sh`, an order, never a selection);
+`find_problems.sh --changed`; and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
+phase's proof — and the numbers the next PR run must confirm — are in the plan file.
+
 ## A LOCAL `make ci` is ~10 min, and it is two tests (2026-08-21)
 
 This document is about the CI runner. A developer's complaint is different — *a local

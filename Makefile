@@ -2004,12 +2004,12 @@ ci: ci-guard
 	#                       surfaced as downstream test failures)
 	#   3b. cache warm     → loft#1238: build the native artifacts this run is
 	#                       about to need, ONCE, before the parallel section.
-	#                       `native_artifact_cache_key` folds in a content hash
-	#                       of the loft build, so the rebuild above invalidates
-	#                       every cached cdylib and loft's own wasm runtime
-	#                       rlib — and the FIRST test to want each pays the
-	#                       full rebuild while the rest queue on the global
-	#                       build lock.  Measured: 25.6s for the wasm rlib,
+	#                       loft's own wasm runtime rlib is keyed on the rlib's
+	#                       content hash, so the rebuild above invalidates it
+	#                       (package cdylibs are keyed on the loft-ffi ABI +
+	#                       RUSTFLAGS and survive, @PLN159 C) — and the FIRST
+	#                       test to want a stale one pays the full rebuild
+	#                       while the rest queue on the global build lock.  Measured: 25.6s for the wasm rlib,
 	#                       63s for the `random` cdylib on a loaded box,
 	#                       against a 60s per-test budget that blew twice.
 	#                       Run with the RELEASE binary on purpose: the cdylib
@@ -2036,6 +2036,20 @@ ci: ci-guard
 	#
 	# Drift from what GH runs is the most common cause of "passed local,
 	# failed remote" — keep this list short and IDENTICAL to ci.yml.
+	#
+	# Two local-only additions, neither of which changes WHAT runs (@PLN159):
+	#   G. ONE gate at a time on this box.  Two `make ci` on sibling checkouts each
+	#      ran at half the threads and both took ~2x (CI_BUDGET.md: 10 -> 19 min),
+	#      and the load is what produced the OOM kills and the load flakes that cost a
+	#      whole rerun.  The chain below takes /tmp/loft-gate.lock before it computes
+	#      its thread count; a second gate QUEUES (result.txt says since when) and the
+	#      first runs at full width.  `LOFT_GATE_PARALLEL=1` opts back into running
+	#      beside another gate, throttled by CI_LIVE_GATES as before.
+	#   D. The diff's own subjects run FIRST.  The gate is fail-fast, so the order
+	#      decides when a red gate says so: scripts/nextest_priority.sh maps the
+	#      uncommitted diff to subjects (test_subjects.sh) and hands nextest a
+	#      `priority` override in a tool config file that layers under
+	#      .config/nextest.toml.  Coverage is untouched — it is an order.
 	# The `Browser build + probe` (gallery) job is intentionally not
 	# mirrored here: it requires wasm-pack + node + a clean network and
 	# is heavy enough that local devs run `make gallery` separately when
@@ -2044,6 +2058,13 @@ ci: ci-guard
 	mkdir -p $(TEST_SCRATCH) && \
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
+	{ if [ -n "$${LOFT_GATE_PARALLEL:-}" ]; then :; else \
+	    exec 9>/tmp/loft-gate.lock; \
+	    if ! flock -n 9; then \
+	      echo "make ci: QUEUED behind another gate on this box since $$(date -u +%TZ) — one gate at a time (LOFT_GATE_PARALLEL=1 to run beside it, throttled)" | tee -a result.txt; \
+	      flock 9; echo "make ci: gate lock acquired at $$(date -u +%TZ)" | tee -a result.txt; \
+	    fi; \
+	  fi; } && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
@@ -2064,8 +2085,8 @@ ci: ci-guard
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
-	echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live" >> result.txt && \
-	cargo nextest run --profile ci >> result.txt 2>&1 && \
+	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the diff's subjects run first}" >> result.txt; } && \
+	cargo nextest run --profile ci $$first >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	{ echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; }
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,

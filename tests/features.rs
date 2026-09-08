@@ -39,8 +39,9 @@ fn features_examples_interpret() {
     // loft#1238 — establish the precondition instead of assuming it.
     //
     // Each example runs under a 60s budget. An example that `use`s a library needs that
-    // library's cdylib BUILT, and a loft commit moves the artifact cache key (deliberately —
-    // #433), so the first run after any commit finds it stale. Under a parallel runner every
+    // library's cdylib BUILT, and the first run on a checkout, or after a loft-ffi or flag
+    // change, finds it missing or stale (@PLN159 phase C keyed the cdylib on those alone,
+    // so a plain loft commit no longer moves it). Under a parallel runner every
     // process that wants it arrives at once, they queue on the one global native-build lock,
     // and whoever is at the back is killed by its own budget having built nothing — so the next
     // attempt starts from the same stale state and repeats it. That is this test's flake, and

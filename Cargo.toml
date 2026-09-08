@@ -150,9 +150,15 @@ stdext = "0.3"
 png    = "0.17"
 
 [profile.test]
-# Reduce DWARF to line-tables only; keeps file:line in backtraces and
-# preserves debug_assertions, but skips per-variable debug info.
-# Cuts test-binary compile and link time significantly.
+# Line tables only (`debug = 1`), the SAME value `[profile.dev]` sets below — and it
+# must stay the same.  Cargo hashes a profile's VALUES, not its name, so `dev` and
+# `test` share every artifact only while their settings are equal.  When this was 1
+# and dev kept the default 2, every gate built all 267 test binaries TWICE: once for
+# `cargo build --all-targets` (dev) and again for nextest (test) — 4m05s per CI
+# shard, 1m13s per local `make ci`, and two copies of each binary on disk (197 MB
+# and 93 MB for `wrap`).  Verified 2026-09-08 with `CARGO_PROFILE_DEV_DEBUG=1 cargo
+# build --test wrap`, which wrote the test-profile artifact rather than a third one.
+# @PLN159 phase A.
 debug = 1
 
 # Optimise the loft library and its dependencies even under
@@ -172,6 +178,11 @@ debug = 1
 # unaffected (the test binaries themselves use [profile.test] above).
 [profile.dev]
 opt-level = 1
+# Line tables only — equal to `[profile.test]` above so the two profiles share
+# artifacts (see the note there).  Backtraces keep file:line; `profile.profiling`
+# below is untouched.  For a one-off full-DWARF dev binary (variable inspection in
+# gdb) use `CARGO_PROFILE_DEV_DEBUG=2 cargo build`, which does not change this file.
+debug = 1
 
 # Strip debug_assertions specifically inside the loft library when
 # tests are being built.  The hot-path `Store::addr` / `Store::valid`

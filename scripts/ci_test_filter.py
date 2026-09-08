@@ -6,7 +6,7 @@ unsharded push/nightly matrix, and the two-way sharded PR path.  A filter
 duplicated across workflow steps drifts silently — a test excluded on one leg
 and not the other reads as a flake — so it is built here, once.
 
-Usage:  ci_test_filter.py <event_name> [heavy|rest|rest-a|rest-b]
+Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b]
 
 The optional shard restricts the leg to the `heavy-serial` test group, or to
 its complement.  The group's membership is NOT repeated here: it is read out of
@@ -90,6 +90,23 @@ PR_ONLY = [
 SERIAL_GROUPS = ["heavy-serial", "html-wasm-serial"]
 
 
+# The native script corpus — ONE test, `native::native_scripts`, that compiles every
+# `tests/scripts/*.loft` through `--native` — gets a shard of its own (@PLN159 phase E1).
+#
+# It lives in the `native` binary, which is in `heavy-serial`, so before this cut it ran
+# inside the heavy shard's single slot: 219.6 s of a 764.8 s nextest phase on the PR run
+# that measured it (job 101548309931, 2026-09-06), and the corpus doubled in the month
+# before (613 → 1206 files), so it is the one heavy-shard item that grows with every
+# guard.  On its own runner it overlaps everything instead of nothing.  The rest of the
+# `native` binary stays in `heavy`, where its rustc storms still cannot starve a server
+# test — the shard boundary is a JOB question; the group stays as it is in nextest.toml.
+#
+# `test(=name)` is nextest's EXACT matcher; the substring form would also take any
+# later test whose name merely contains `native_scripts`, and a test in two shards is
+# the failure mode the partition proof below exists to catch.
+CORPUS = "binary(native) & test(=native_scripts)"
+
+
 # The heavier half of `rest`, BY DURATION.  ci.yml records that a duration-balanced split
 # was tried and reverted — but for a reason that no longer applies: it scattered the
 # single-slot `heavy-serial` group across shards, and every such group now lives whole in
@@ -157,13 +174,16 @@ def main() -> None:
         clauses += PR_ONLY
     if shard == "heavy":
         clauses.append(f"({serial_boundary()})")
+        clauses.append(f"not ({CORPUS})")
+    elif shard == "corpus":
+        clauses.append(f"({CORPUS})")
     elif shard in ("rest", "rest-a", "rest-b"):
         clauses.append(f"not ({serial_boundary()})")
         if shard != "rest":
             clauses.append(rest_half(shard == "rest-a"))
     elif shard is not None:
         raise SystemExit(
-            f"unknown shard '{shard}' (expected 'heavy', 'rest', 'rest-a' or 'rest-b')"
+            f"unknown shard '{shard}' (expected 'heavy', 'corpus', 'rest', 'rest-a' or 'rest-b')"
         )
 
     print(" and ".join(clauses))

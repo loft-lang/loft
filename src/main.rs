@@ -4245,11 +4245,13 @@ fn handle_cache(argv: &[String], i: &mut usize) {
 
 /// loft#1238 — build the native artifacts a run is about to need, once, up front.
 ///
-/// `native_artifact_cache_key()` folds in a content hash of the loft build, so rebuilding loft
-/// invalidates every cached artifact keyed on it. That is deliberate — it is what makes a codegen
-/// fix reach an already-built dependency (#433) — but it means the FIRST user of each artifact
-/// pays a full rebuild, and under a parallel test runner every user arrives at once and
-/// serialises on the global build lock. Measured on this box: loft's wasm runtime rlib is 25.6 s
+/// Loft's own wasm runtime rlib is keyed on `loft_build_fingerprint` (the rlib's content hash),
+/// so rebuilding loft invalidates it — deliberately: that is what makes a codegen fix reach the
+/// browser build.  A package's hand-written `native/` cdylib is keyed on the loft-ffi ABI,
+/// RUSTFLAGS and the version only (`native_artifact_cache_key`, @PLN159 phase C), so it survives
+/// a loft rebuild; the generated `loft_auto_*` cdylib carries the rlib hash in its NAME.  Where
+/// an artifact IS stale, the FIRST user pays a full rebuild, and under a parallel test runner
+/// every user arrives at once and serialises on the global build lock. Measured on this box: loft's wasm runtime rlib is 25.6 s
 /// and the `random` cdylib 1.8 s idle, against a 60 s per-test budget that a loaded CI box blew
 /// twice.
 ///

@@ -1298,6 +1298,7 @@ flag to ask for rather than a flag to avoid.
 | `find_problems.sh` | curated — ~70s, 97.4% of the tests |
 | `find_problems.sh --full` | every test — ~370s |
 | `find_problems.sh --subject <name>` | one area — seconds |
+| `find_problems.sh --changed [ref]` | the subjects the DIFF touches (uncommitted edits, or against `ref`) — seconds; falls back to curated, saying why, when the diff touches something every binary depends on |
 | `find_problems.sh --list-subjects` | the subjects, and what the default excludes |
 
 Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`.
@@ -1342,6 +1343,20 @@ error, and because an expanded selection can be read back and checked.
 Subjects are a convenience for tight loops, **not** the safety mechanism. The
 default being subtractive is what makes it safe to leave them approximate: a gap
 in a subject costs seconds, never coverage.
+
+**Every binary matches at least one subject** — `doc_hygiene::every_test_binary_matches_a_subject`
+asks the map's own `unmatched_binaries` and goes red on a name it reports (@PLN159 H).
+Measured before the guard: 80 of 261 binaries matched nothing, so a source-side edit under
+`--subject` never ran `hoist_gate`, `differential_oracle` or `variant_field`.  A new
+`tests/<name>.rs` either carries a name an existing pattern picks up or extends the map in the
+same commit; the failure message names the binary.
+
+`--changed` is the same map read from the other side: `scripts/test_subjects.sh`'s
+`SUBJECT_PATHS` maps a source PATH to a subject, so the diff picks the subjects, an edited
+`tests/<name>.rs` picks its own binary, and an edited corpus file picks the three corpus runners.
+`make ci` uses the same mapping for ORDER only — `scripts/nextest_priority.sh` hands nextest a
+`priority` override so the diff's binaries run first and a red gate says so in its first minute
+(the gate is fail-fast); what runs is unchanged.
 
 ## Test speed — a report, never a gate (`make speed`)
 
@@ -2217,6 +2232,15 @@ dual-mode coverage.
 
 **When a `.rs` test and a script test cover the same behaviour**, the `.rs` test should be removed
 — the script is the authoritative version.
+
+**What grows the gate is binaries and compile-spawning tests, not tests** (@PLN159).  A corpus
+file costs ~5 ms to run and nothing to build; a new `tests/*.rs` binary is a compile plus a link in
+every build (dev/test, release, clippy `--all-targets`) — 68 binaries in June 2026, 261 in
+September; and a test that spawns `rustc`, a cargo build or a wasm build is 10–60 s of CPU that
+does not parallelise and starves every test beside it.  So a new Rust test joins an existing
+binary of its subject unless it needs its own process-level fixture, and a test that needs a
+compiled artifact shares ONE fixture per binary (build once behind a `OnceLock`, or through the
+content-keyed cache the corpus runner uses — `native_cache_key`) rather than compiling per test.
 
 **Naming a bug regression: use the GitHub issue number.**  A regression for a fixed bug is
 `tests/scripts/<issue>-<slug>.loft` — e.g. `366-native-abib-scalar-literal-arg.loft` guards #366,

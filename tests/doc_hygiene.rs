@@ -2712,3 +2712,47 @@ fn every_ignore_reason_says_how_it_runs() {
         silent.join("\n")
     );
 }
+
+/// @PLN159 phase H — every test binary belongs to a subject.
+///
+/// `scripts/find_problems.sh --subject <name>` and `--changed` select binaries through
+/// the `SUBJECT_PATTERNS` map in `scripts/test_subjects.sh`; a binary no pattern matches
+/// is invisible to both — it still runs in the curated and full sets, but never in the
+/// iteration loop that is supposed to catch a regression in seconds.  The map's own
+/// `unmatched_binaries` report existed (printed by `--list-subjects`) and was checked by
+/// nobody, so the guard asks it here: a new `tests/<name>.rs` either matches a subject
+/// or extends the map in the same commit.  Goes red for exactly one reason — a name in
+/// that report — which the message prints verbatim.
+#[test]
+fn every_test_binary_matches_a_subject() {
+    let out = std::process::Command::new("bash")
+        .args([
+            "-c",
+            "source scripts/test_subjects.sh && unmatched_binaries",
+        ])
+        .output()
+        .expect("bash + scripts/test_subjects.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let unmatched: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert!(
+        out.status.success(),
+        "scripts/test_subjects.sh failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        unmatched.is_empty(),
+        "{} test binar{} matched by no subject in scripts/test_subjects.sh — add a pattern to \
+         SUBJECT_PATTERNS (or join an existing binary; TESTING.md § Subjects): {}",
+        unmatched.len(),
+        if unmatched.len() == 1 {
+            "y is"
+        } else {
+            "ies are"
+        },
+        unmatched.join(", ")
+    );
+}

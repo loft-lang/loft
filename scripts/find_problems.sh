@@ -32,6 +32,8 @@
 #   ./scripts/find_problems.sh                         # CURATED run+wait (~70s)
 #   ./scripts/find_problems.sh --full                  # every test (~370s)
 #   ./scripts/find_problems.sh --subject store         # one subject (seconds)
+#   ./scripts/find_problems.sh --changed [ref]         # the subjects the diff touches
+#                                                      #   (uncommitted edits; or vs ref)
 #   ./scripts/find_problems.sh --list-subjects         # subjects + what is excluded
 #   ./scripts/find_problems.sh --bg                    # run in background
 #   ./scripts/find_problems.sh /tmp/log /tmp/problems  # custom paths
@@ -185,7 +187,14 @@ TIMINGS_FILE=/tmp/loft_timings.$REPO_TAG.txt
 # settings.
 test_runner_cmd() {
   if cargo nextest --version >/dev/null 2>&1; then
-    local base="cargo nextest run --release --no-fail-fast --status-level fail"
+    # No `--release`: the test binaries are built in the dev/test profile, the SAME
+    # profile `make ci` and CI's Test job use (@PLN159 phase B).  With `--release` here
+    # a source edit cost THREE builds of the 267 test binaries — release for this loop,
+    # dev for `cargo build --all-targets`, test for nextest — and none of the three was
+    # reused by the next.  Now one build serves the loop and the gate.  The release
+    # `loft` binary + `libloft.rlib` are still built by rebuild_native_cdylibs, because
+    # the native harness links the release rlib and some tests spawn target/release/loft.
+    local base="cargo nextest run --no-fail-fast --status-level fail"
     if [[ -n "${TEST_SELECT:-}" ]]; then
       echo "$base -E '$TEST_SELECT'"
     else
@@ -194,7 +203,7 @@ test_runner_cmd() {
   else
     # No filterset support in plain `cargo test` — it runs everything, which is
     # the safe direction to fall back in.
-    echo "cargo test --release --no-fail-fast"
+    echo "cargo test --no-fail-fast"
   fi
 }
 
@@ -396,7 +405,7 @@ do_summarise() {
       echo
       echo "=== wrap-suite SIGSEGV rerun with --nocapture ==="
       echo "(to recover the crashing script name)"
-      cargo test --release --test wrap loft_suite -- --nocapture --test-threads=1 2>&1 \
+      cargo test --test wrap loft_suite -- --nocapture --test-threads=1 2>&1 \
         | grep -E '^(run |thread |test |error:|Caused|  process|Warning: [0-9]+ stores)' \
         | tail -50 || echo "(rerun failed)"
     fi
@@ -427,6 +436,19 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       SELECT_LABEL="subject:$1"; shift ;;
+    --changed)
+      # @PLN159 phase D — the subjects the diff touches (see changed_filter in
+      # test_subjects.sh).  An optional ref widens the diff to a whole branch:
+      # `--changed origin/main`.  Falls back to the curated set, saying why, when the
+      # diff touches something every binary depends on.
+      shift
+      _ref="HEAD"
+      if [[ $# -gt 0 && "$1" != --* && "$1" != /* ]]; then _ref="$1"; shift; fi
+      if TEST_SELECT="$(changed_filter "$_ref")"; then
+        SELECT_LABEL="changed:$_ref"
+      else
+        SELECT_LABEL="curated"; TEST_SELECT="$(curated_filter)"
+      fi ;;
     --list-subjects)
       echo "subjects (use: --subject <name>):"
       for s in $(subject_names); do

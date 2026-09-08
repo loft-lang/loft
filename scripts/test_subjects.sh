@@ -53,21 +53,34 @@ HEAVY_BINARIES=(
 # /bin/sh and /bin/bash, which has no associative arrays — the array form made
 # every `--subject` run on a Mac die with `parser: unbound variable` while the
 # same script worked on every Linux box.  Same data, portable spelling.
+#
+# Every test binary must match at least one pattern — `tests/doc_hygiene.rs::
+# every_test_binary_matches_a_subject` asks `unmatched_binaries` below and goes red on
+# a name it reports (@PLN159 phase H).  A binary no subject reaches never runs in the
+# seconds-long loop (`--subject`, `--changed`) that exists to catch a regression while
+# the edit is warm; it still runs in the curated and full sets, so this is a guard on
+# the LOOP's reach, never on coverage.  Adding a binary: name it so an existing pattern
+# picks it up, or add the pattern here in the same commit.
+#
+# ⚠ That guard cannot see a WRONG match, only a missing one — a binary pulled into the
+# wrong subject still matches something.  Reading each subject's selected list once is
+# the only check for that, which is how `~par` was found taking `group_apart_lint` and
+# `~import` taking a browser test.
 SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host'
 
 subject_patterns() {
   case "$1" in
-    (parser)   echo '~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint' ;;
-    (scopes)   echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias' ;;
-    (codegen)  echo '~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature' ;;
-    (runtime)  echo '~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash' ;;
-    (store)    echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io' ;;
-    (wasm)     echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages) echo '~registry ~package ~import ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update' ;;
-    (lsp)      echo '~lsp ~dap ~debugger ~repl' ;;
-    (sql)      echo '~lazy_sql ~sql' ;;
-    (docs)     echo '~doc ~features ~index_hygiene ~comment ~viewer' ;;
-    (host)     echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock' ;;
+    (parser)    echo '~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14' ;;
+    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
+    (codegen)   echo '~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows' ;;
+    (runtime)   echo '~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
+    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io' ;;
+    (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
+    (packages)  echo '~registry ~package ~import ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
+    (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
+    (sql)       echo '~lazy_sql ~sql' ;;
+    (docs)      echo '~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
+    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal' ;;
     (*)        return 1 ;;
   esac
 }
@@ -151,4 +164,59 @@ unmatched_binaries() {
     done
     [[ -n "$hit" ]] || echo "$b"
   done
+}
+
+# @PLN159 phase D — the subjects a DIFF touches, read off the SUBJECT_PATHS map above.
+#
+# `changed_paths [ref]` lists what differs from `ref` (default HEAD: the uncommitted
+# edits, untracked files included).  `changed_filter [ref]` maps them to a nextest
+# filterset: a path under a subject's pattern selects that subject's binaries, an edited
+# `tests/<name>.rs` selects its own binary, an edited corpus file selects the three corpus
+# runners.  It REFUSES (exit 1, reason on stderr) when the diff touches something every
+# binary depends on — the shared test harness, Cargo.toml, build.rs, loft-ffi — because
+# the honest selection is then the curated run, not a guess.  This is the ITERATION
+# loop's selection; `make ci` still runs everything, it only runs these first.
+changed_paths() {
+  local ref="${1:-HEAD}"
+  { git diff --name-only "$ref" -- ; git ls-files --others --exclude-standard; } | sort -u
+}
+
+changed_filter() {
+  local ref="${1:-HEAD}" paths p n b
+  paths=$(changed_paths "$ref")
+  [[ -n "$paths" ]] || { echo "changed: nothing differs from $ref" >&2; return 1; }
+  local -A seen=() subs=()
+  local -a parts=()
+  local wide=""
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    case "$p" in
+      tests/common/*|Cargo.toml|Cargo.lock|build.rs|.config/nextest.toml|loft-ffi/*|loft-ffi-*/*)
+        wide="$p" ;;
+      tests/scripts/*.loft|tests/docs/*.loft)
+        for b in wrap native ir_schema_roundtrip; do
+          [[ -z "${seen[$b]:-}" ]] && { seen[$b]=1; parts+=("binary($b)"); }
+        done ;;
+      tests/*.rs)
+        b=$(basename "$p" .rs)
+        [[ -f "tests/$b.rs" && -z "${seen[$b]:-}" ]] && { seen[$b]=1; parts+=("binary($b)"); } ;;
+    esac
+    for n in "${!SUBJECT_PATHS[@]}"; do
+      [[ "$p" =~ ${SUBJECT_PATHS[$n]} ]] && subs[$n]=1
+    done
+  done <<<"$paths"
+  if [[ -n "$wide" ]]; then
+    echo "changed: the diff touches $wide, which every binary depends on — running the curated set" >&2
+    return 1
+  fi
+  local f
+  for n in "${!subs[@]}"; do
+    f=$(subject_filter "$n") || continue
+    parts+=("$f")
+  done
+  [[ ${#parts[@]} -gt 0 ]] || { echo "changed: nothing in the diff maps to a subject — running the curated set" >&2; return 1; }
+  [[ ${#subs[@]} -gt 0 ]] && echo "changed: subjects ${!subs[*]}" >&2
+  local joined
+  joined=$(IFS='+'; echo "${parts[*]}")
+  echo "${joined//+/ + }"
 }

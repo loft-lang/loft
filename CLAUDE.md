@@ -45,12 +45,22 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   native tests link, and a bare `cargo test`
                                          #   builds no rlib either (`make ci` builds all
                                          #   three itself, so it needs no pre-flight)
-./scripts/find_problems.sh --subject <name>     # SECONDS — the tight loop; use this while
+./scripts/find_problems.sh --changed [ref]      # SECONDS — the tight loop: the subjects YOUR
+                                         #   DIFF touches (uncommitted edits, or vs `ref`),
+                                         #   an edited tests/<x>.rs picks its own binary, an
+                                         #   edited corpus file picks the corpus runners.
+                                         #   Falls back to the curated set, saying why, when
+                                         #   the diff touches what every binary depends on.
+./scripts/find_problems.sh --subject <name>     # one area by name; use this or --changed while
                                          #   iterating, not `make ci`.  Subjects: parser scopes
                                          #   codegen runtime store wasm packages lsp sql docs
                                          #   host (`--list-subjects` to see them + exclusions).
-                                         #   Shape: --subject while iterating → the two clippy
-                                         #   variants + fmt → ONE `make ci` before committing.
+                                         #   Shape: --changed/--subject while iterating → the
+                                         #   two clippy variants + fmt → ONE `make ci` before
+                                         #   committing (it runs your diff's subjects FIRST, so
+                                         #   a red shows in its first minute; and it QUEUES
+                                         #   behind another checkout's gate — one at a time on
+                                         #   this box, LOFT_GATE_PARALLEL=1 to run beside it).
                                          #   `make ci` is ~10 min and only that if the box is
                                          #   idle — two checkouts running gates at once doubles
                                          #   it (CI_BUDGET.md § A LOCAL `make ci`).
