@@ -290,6 +290,24 @@ Filing is half the loop; closing is the other half.
   `deferred` idea** (close-reason *not planned*, keep the `status:deferred` label, point
   at its design doc + un-defer trigger; reopenable, not terminal — see
   [§ Parking a deferred idea](#parking-a-deferred-idea--close-it-into-its-design-doc-dont-hoard-it-open)).
+- ⚠ **An issue fixed as a SIDE EFFECT of another issue's commit will never auto-close.**
+  `fixed-pending-merge` is right for it — the fix really is on the branch — but the close is
+  driven off the `Fixes #NNN` trailer, and no commit names it. So the label is a claim the
+  automation cannot honour, and the issue sits open through the merge that fixed it. Give it a
+  trailer on a real commit (the doc or register entry that records the cross-issue closure is a
+  fine home) rather than hand-closing, which the rule below reserves for non-fix outcomes.
+  The audit is one line and worth running before a PR — it reads the whole board against the
+  whole history, so a hand-applied label with no trailer shows up as the only row:
+
+  ```bash
+  gh issue list --state open --limit 80 --json number,labels \
+    --jq '.[] | select([.labels[].name] | index("fixed-pending-merge")) | .number' | sort > /tmp/fpm
+  git log --all --format=%B | grep -oE 'Fixes #[0-9]+' | grep -oE '[0-9]+' | sort -u > /tmp/fixed
+  comm -23 /tmp/fpm /tmp/fixed      # labelled, but nothing closes it
+  ```
+
+  Sort BOTH lexically (plain `sort`, not `sort -n`) — `comm` compares byte-wise and silently
+  reports garbage on a numerically-sorted input.
 - **Correct the labels the fix invalidated**, not just add `fixed-pending-merge`.
   A label is a claim about the issue's CURRENT state, and fixing it settles several
   of them at once: `needs-design` comes off the moment the design question is

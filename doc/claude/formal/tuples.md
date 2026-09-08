@@ -217,6 +217,16 @@ same site: the null TEST asked the nullable→non-null STORE face, so `??` repor
 wrote, at the site of their own discharge — and a tuple made the count its ARITY.  @FR-N-Store
 admits a test, which `null_test` already knew and the coalesce did not; they now admit alike.
 
+⚠ A fourth surfaced only once the walk reached every member, and it is the one worth carrying
+forward: `coalesce_not_null`'s arms match some types in their **BARE spelling only**
+(`matches!(tp, Type::Boolean)`), because every previous caller peeled `Optional` before reaching
+them.  A member type arrives UNPEELED, so a `boolean?` member missed its arm, fell to the generic
+truthiness convert, and `false` read as ABSENT: `(integer?, boolean?) = (null, false)` took the
+default while the same tuple with a bare `boolean` member kept its value, and a direct
+`b: boolean? = false; b ?? true` was right all along.  Peeled at the recursion.  The reason this
+needed its own guard cell is that its three neighbours — `0`, `""`, `0.0` — were right without
+it, so a zero-valued-member family that omitted the boolean would have read as covered.
+
 D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
 variable is copied for every binding — a record or a scalar by @PLN153 phase 1, a vector or a
 keyed collection by the @FR-F-Ret walk's boxed monomorph return (loft#1365).  The non-generic

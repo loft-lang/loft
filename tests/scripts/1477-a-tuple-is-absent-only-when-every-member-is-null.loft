@@ -12,9 +12,12 @@
 // lookup key beside its payload — loses the payload silently.
 //
 // Axes this file MOVES:  which member is absent (first · last · middle · none · all), the
-//                        arity (2 · 3), the member kinds (integer · text · nested tuple), and
-//                        how the tuple ARRIVES (a written literal, and an index that MISSES,
-//                        which is where the old convention was accidentally right).
+//                        arity (2 · 3), the member kinds (integer · text · float · boolean ·
+//                        vector · nested tuple), whether a present member holds its type's ZERO
+//                        (`false` · `0` · `""` · `0.0` — a value, not an absence), the member's
+//                        SPELLING (`τ?` vs bare `τ`, which is a different arm in the lowering),
+//                        and how the tuple ARRIVES (a written literal, and an index that
+//                        MISSES, which is where the old convention was accidentally right).
 // Axes it HOLDS FIXED:   the spelling of the question is `??` — `== null` is the same question
 //                        under `(T-Absent)` and is `1477b`'s, held apart because it does not
 //                        COMPILE on the build this file is falsified against, so a single file
@@ -36,7 +39,15 @@
 //   member 0 was present and wrong exactly when it was not, which is what says the walk and not
 //   one shape was the defect.  That build also emits **9** spurious *"a nullable `integer?` is
 //   stored into a slot of the non-null type `boolean`"* warnings here, against 0 now — a second
-//   channel, and the one that says the null test stopped asking the STORE face
+//   channel, and the one that says the null test stopped asking the STORE face.
+//
+//   A SECOND reference, because one of these cells needed it: on the intermediate build that
+//   had the member walk but not the PEEL, `test_a_zero_valued_member_is_still_a_value` still
+//   failed on its `boolean?` assertion alone — measured directly, a tuple with a `boolean?`
+//   member holding `false` took the default (`which=9`) while the same tuple with a BARE
+//   `boolean` member kept its value (`which=-1`).  So the walk and the peel are two cures and
+//   the cell distinguishes them; its `0`, `""` and `0.0` neighbours passed on that build, which
+//   is what would have made the family look covered without the boolean in it
 
 // Each cell is its own test function, so a `--tests` run names EVERY broken one.  A single
 // `main` halts at the first failing `assert`, which cannot tell "the member walk is wrong" from
@@ -101,6 +112,40 @@ fn test_a_nested_all_null_tuple_is_absent() {
   i: ((integer?, integer?), integer?) = ((null, null), null);
   wi = i ?? ((9, 9), 9);
   assert((wi.1 ?? -1) == 9, "nested all-null takes the default, got {wi.1 ?? -1}");
+}
+
+// A member holding its type's ZERO is a VALUE, not an absence — and this is the family that
+// says the walk asks "does this member have a value", not "is this member truthy".  The
+// `boolean?` cell is the one that was wrong: `coalesce_not_null`'s arms match some types in
+// their BARE spelling only, because the top-level caller peels `Optional` before reaching them,
+// so an UNPEELED member type missed its arm and fell to the generic truthiness convert.  `0`,
+// `""` and `0.0` were right there anyway, which is exactly why the boolean needs its own cell —
+// three green neighbours are what would have made this look covered.
+fn test_a_zero_valued_member_is_still_a_value() {
+  tb: (integer?, boolean?) = (null, false);
+  wb = tb ?? (9, true);
+  assert((wb.0 ?? -1) == -1, "a `false` member keeps the tuple, got default {wb.0 ?? -1}");
+  ti: (integer?, integer?) = (null, 0);
+  wi = ti ?? (9, 9);
+  assert((wi.0 ?? -1) == -1, "a `0` member keeps the tuple, got default {wi.0 ?? -1}");
+  tt: (integer?, text?) = (null, "");
+  wt = tt ?? (9, "zz");
+  assert((wt.0 ?? -1) == -1, "an empty-text member keeps the tuple, got default {wt.0 ?? -1}");
+  tf: (integer?, float?) = (null, 0.0);
+  wf = tf ?? (9, 9.0);
+  assert((wf.0 ?? -1) == -1, "a `0.0` member keeps the tuple, got default {wf.0 ?? -1}");
+}
+
+// The member kinds the walk now reaches that a first-member test never did: a heap COLLECTION,
+// a struct REFERENCE and a value ENUM, each with its own not-null lowering.
+fn test_heap_and_enum_members_are_reached() {
+  tv: (integer?, vector<integer>) = (null, [1, 2, 3]);
+  wv = tv ?? (9, [7]);
+  xv = wv.1;
+  assert(len(xv) == 3, "a vector member keeps the tuple, got len {len(xv)}");
+  te: (integer?, boolean) = (null, false);
+  we = te ?? (9, true);
+  assert((we.0 ?? -1) == -1, "a BARE boolean member keeps the tuple, got {we.0 ?? -1}");
 }
 
 // CONTROL — an index MISS nulls every member at once, so the answer is absent, and an in-range

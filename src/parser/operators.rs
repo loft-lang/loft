@@ -2470,6 +2470,16 @@ impl Parser {
                 // with a TUPLE where a boolean belongs, which native refuses (E0308) and the
                 // interpreter reads as raw bytes (loft#1425).  Bind the inner tuple and ask
                 // the same question of THAT, so the sentinel is found however deep it is.
+                //
+                // PEELED, and that is load-bearing: the arms below match some types in their
+                // BARE spelling only (`matches!(tp, Type::Boolean)`), because the top-level
+                // caller peels `Optional` before it ever gets here.  A member type arrives
+                // UNPEELED, so a `boolean?` member missed its arm and fell to the generic
+                // truthiness convert — where `false` reads as absent.  Measured: a tuple
+                // `(integer?, boolean?) = (null, false)` took the DEFAULT while the same tuple
+                // with a bare `boolean` member kept its value, and a direct `b: boolean? =
+                // false; b ?? true` was right all along, because that path peels.
+                let elem_tp = elem_tp.base();
                 let member = if matches!(elem_tp, Type::Tuple(_)) {
                     let inner = self.create_unique("ncc_inner", elem_tp);
                     self.vars.defined(inner);
