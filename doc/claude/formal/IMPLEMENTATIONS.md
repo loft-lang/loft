@@ -704,7 +704,7 @@ occurrences now state the current register and say to re-read it rather than the
 **a claim about another document's register goes stale silently**, which is the same failure
 as `L-Tuple` naming a renamed function, one document further out.
 
-## One notion, how many SPELLINGS? — the dual question, and its eight instances (2026-08-26, extended 2026-09-08)
+## One notion, how many SPELLINGS? — the dual question, and its nine instances (2026-08-26, extended 2026-09-08)
 
 Everything above asks *"is this the same question asked twice?"*.  This asks the dual, and it
 turned up five times in one week in five different subsystems — the last of them not in the IR
@@ -728,6 +728,7 @@ search for.
 | a **heap SHAPE**, as a TYPE | the variant itself — `Reference`, `Vector`, a keyed collection, `Enum(_, true, _)` — which is what `is_dbref` / `heap_dep` / `heap_def_nr` / `is_scalar` spell | the same variant under `Optional` — `S?` is `S` behind a nullability bit and holds the SAME record (@FR-L-Null) | three sites, each reached by a `τ?` on the corpus and each answering as if the shape were not heap at all: the ownership ORACLE had no reassignment row for a nullable local (the class loft#1106 was), an `OpReturn` of a nullable heap value recorded no schema type, and a nullable branch tail kept a work-ref per arm where its non-null twin shares one (QUALITY.md § B6p) |
 | a **tuple RETURN**, as a TYPE | `Type::Tuple(elems)` — what `tuple_return_rewrite` boxes into the synthetic `__tuple<…>` record | `Optional(Tuple(elems))` — what a generic `-> T?` instantiated at a tuple IS | the monomorph declared `(integer, integer)?`, a type the language refuses at every declaration and which has no layout, while its body still handed up the DbRef the template compiled `T` as: `--interpret` read the pointer's bits as member 0 and printed `34359738371` with no diagnostic, `--native` would not compile the function (E0308).  The TWIN sat one line away — `from_tv` asks whether the template's return IS the type variable and matched `Reference(tv)`, so every `-> T?` answered "does not mention `T`" ([calls-history.md](calls-history.md) D-call-16, loft#1451) |
 | a **type RENDERED for a human** | the four keyed collections, which `Type::source_name` spells as the author wrote them | every other CONSTRUCTOR — `Function`, `Rewritten`, `Vector`, `Iterator`, `Tuple` — whose inner the catch-all `_ => self.name(data)` rendered through the SCHEMA KEY | `hash<Ent[k]>?` read correctly while `fn(&hash<Ent[k]>)` rendered its parameters as `fn(&hash<Ent,["k"]>)`, in the same build.  Three passes (loft#956, loft#1434, loft#1445) each added the wrapper someone had a symptom for and each left a residue for the next one; the drift was never at a keyed arm ([DIAGNOSTICS.md § How a diagnostic spells a type](../DIAGNOSTICS.md), loft#1449) |
+| a **stored tuple**, as a DEFAULT's subject | `Type::Tuple(elems)`, which `build_default` recurses per element | `Reference(__tuple<…>)` — the BOXED form a generic `-> T?` at a tuple returns, and so what `?` discharges | `first(v)?` reported *"`?` cannot build a default for `__tuple<integer,integer>`"* for a tuple that plainly has one.  `(N-Default)` is stated on the TYPE, not on where the value lives, so the boxed form owes the same default; closed by unboxing through `record_tuple_def`, which is `nullable_tuple_elems`'s existing unbox rather than a new predicate (loft#1451 with loft#1424, on the JOINED tree — see below) |
 
 **The instrument is per-notion and cheap, and there are two of them now.**
 `scripts/ir_walker_audit.py optional` asks the sixth row's question over the TYPE former — who
@@ -788,6 +789,33 @@ recurses — carrying the flag with it — or it is a leaf, and a leaf reads the
 jobs.  There is then no catch-all left to swallow a constructor, and no second body to keep in
 step.  The three cures rank: naming both spellings in one predicate beats two matchers, and ONE
 BODY beats one predicate, because it removes the possibility rather than the instance.
+
+⚠ **The ninth says "make the two spellings agree" is not yet a cure — the answer they agree ON
+has to be right.**  loft#1451's first fix gave the boxed spelling an arm answering "no default",
+and wrote the reason into the comment: *answering `None` for both spellings is what makes
+`first(v)?` and `v[i]?` agree*.  On that tree they did agree, measured on both backends.  But
+`None` was the wrong answer for BOTH — `(N-Default)` is stated on the type, and a tuple of
+integers has a default — so the agreement was anchored on a sibling that was itself about to
+move.  Hours later loft#1424 gave `Type::Tuple` a real default arm, "agree" meant something
+else, and the arm that had been the fix became the disagreement.
+
+So the question is not *does this match what the other spelling does* but *does this match what
+the RULE says*.  Matching the sibling anchors on a value that can move; matching the rule
+anchors on one that cannot.  Where two spellings can only be reconciled by choosing a behaviour,
+NAME the rule that chooses it — otherwise the next change to either side silently re-opens the
+defect, which here took hours.
+
+⚠ **And the ninth is the one no single tree could see.**  The spelling gap lived on one branch
+and the diagnostic that reveals it on another: one tree answered silently, so its guard passed
+and was honest about the tree it ran on; the other carried the report but not the shape to
+trigger it.  It took the JOIN to make the defect observable.
+
+That is worth recording as a property of the class rather than as an accident of this week.
+Where two streams each hold one half, **every local suite is green and every local suite is
+correct** — there is no measurement either side could have taken.  So a join is an INSTRUMENT as
+well as a merge risk: the first moment two half-pictures sit in one place is the first moment
+this class can fail out loud.  Of the four instances found in one day, this is the only one that
+no single checkout could have produced.
 
 **As a rule for writing one:** before you write *"is this an X?"* over the IR, ask whether X has
 a second spelling — a `Value` VARIANT beside an op call, a TYPE beside a lowered TYPE, a TYPE
