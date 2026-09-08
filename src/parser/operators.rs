@@ -3477,11 +3477,21 @@ impl Parser {
             // — but `__tuple<integer,integer>` is not a name any loft source can spell, so the
             // `S {}` sub-parse could not build it and handed back a value whose type was
             // neither: the coalesce then reported a default *"of type `boolean`"* for a
-            // program containing no boolean (loft#1451).  The bare `Type::Tuple` spelling has
-            // no arm here at all and answers `None`, which is what routes `v[i]?` to the
-            // recover-as-base path; answering `None` for both spellings is what makes the
-            // generic `first(v)?` and the non-generic `v[i]?` agree, and that agreement is
-            // the whole property this fix is for.
+            // program containing no boolean (loft#1451).
+            //
+            // ⚠ This arm keeps the two spellings AGREEING, and agreement is not the same as
+            // being right.  `@FR-N-Default` is stated on the TYPE, not on where the value
+            // lives, so a tuple of integers HAS a default under both spellings and the honest
+            // answer is to build it member-wise — which is what the boxed form does once
+            // `Type::Tuple` has a default arm of its own (loft#1424).  Here neither spelling
+            // has one, so both answer `None` and `v[i]?` routes to the recover-as-base path;
+            // the moment the stack form learns to build one, THIS arm becomes the
+            // disagreement.  Closed that way on the joined tree (loft#1451 + loft#1424).
+            //
+            // The general form, because it cost hours: reconciling two spellings by matching
+            // what the SIBLING answers anchors on a value that can move, and this one moved
+            // the same day.  Match the RULE instead — and where reconciling requires PICKING
+            // a behaviour, name the rule that picks it, here, at the site.
             Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => None,
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field
