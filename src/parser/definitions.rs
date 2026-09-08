@@ -2758,6 +2758,20 @@ impl Parser {
             return Some(assoc);
         }
         if self.lexer.has_token("?") {
+            // ⚠ **`has_null(τ)` has no home, and these are its decoders.**  `@FR-N-Opt` states it as a
+            // PREDICATE — `τ? wf` only when τ has a value to spend on absence — and there is no `fn
+            // has_null` in `src/`: it is re-derived inline wherever something happens to ask, with a
+            // different type list each time.  The sites: this one (`value struct`), the tuple arm below in
+            // `parse_type_inner`, and `Parser::wrap_projection_nullable` in `parser/fields.rs` (which
+            // excludes `Function | Tuple` and NOT this one).
+            //
+            // Enforcing the precondition at the DECLARATION only means every rule that CONSTRUCTS a `τ?` —
+            // `(N-Domain)`'s index, `(N-Chain)`'s projection — can still mint one for a type with no null,
+            // and the diagnostic then names a type this site forbids the author to write.  That is loft#1471
+            // (an out-of-range read on a `vector<value struct>` fabricates a zero record, `== null` is
+            // false, and the advertised `?? d` discharge is dead code), and it carries the design question:
+            // which of `(N-Domain)` and `(N-Opt)` gives.  Do NOT widen one of these lists alone — that adds
+            // a fourth answer rather than removing the third.
             // @PLN101 — a `value struct` is stored INLINE (bytes, no `DbRef`), so it has no
             // `store_nr` null sentinel: `<value struct>?` cannot be represented. Reject it with
             // a clear diagnostic; fall through as the plain (non-null) type to avoid a cascade.

@@ -6495,6 +6495,18 @@ impl Parser {
     /// a sum of non-negatives is ≥ 0, `abs`/`sqrt` are ≥ 0, `max` takes the stronger bound).
     /// Node kinds are matched by their EXACT stdlib def name (`OpMulFloat`, `t_5float_max`, …),
     /// never a suffix, so a user method can't be mistaken for one. Anything unrecognised → Unknown.
+    /// ⚠ **One question, three decoders.**  `@FR-N-Domain` promises a SINGLE elision —
+    /// "provably in-domain (constant / range / guard)" — over three families of partial
+    /// operation, and it is answered here for the domain-partial math functions, in
+    /// `Parser::index_provably_fit` for `v[i]`, and in `Parser::divisor_provably_nonzero` /
+    /// `divisor_proof_from_condition` for `÷0`.  Each carries its own set of admissible
+    /// spellings, and none reads the others.
+    ///
+    /// This family is the one with NO flow-guard licence: `if a >= 0.0 { sqrt(a) }` still types
+    /// `τ?` where the index and divisor families both take their guard.  That is recorded as a
+    /// rules-vs-history question rather than a plain gap — the sign lattice below does what
+    /// `DN3-Float` promised, and it is `types.md`'s own sentence that names "guard" for all
+    /// three families.  `formal/types-history.md` § D-Domain-Guard.
     fn domain_sign(&self, v: &Value) -> Sign {
         fn of_const(x: f64) -> Sign {
             if x > 0.0 {

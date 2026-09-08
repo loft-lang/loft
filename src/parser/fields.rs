@@ -710,6 +710,15 @@ impl Parser {
             && !t.is_unknown()
             && !matches!(t, Type::Optional(_))
             // `@FR-N-Opt` — `τ?` is a type only for a τ that HAS a value to spend on absence.
+            //
+            // ⚠ This list is INCOMPLETE against the declaration's, and deliberately so for now:
+            // `parser/definitions.rs` refuses `<value struct>?` and `(τ, τ)?` where this
+            // excludes `Function | Tuple`, so a `value struct` field read through a nullable
+            // receiver still mints a `Pt?` the declaration would reject.  Widening it here
+            // alone would give the predicate a THIRD answer rather than one; the shared
+            // question is loft#1471, which carries the design call (which of `(N-Domain)` and
+            // `(N-Opt)` gives for a type former with no absence value).  `has_null` wants a
+            // home, and that home is what closes all three.
             // A function type has none: `(fn() -> integer)?` is refused at the declaration, and
             // a yielded fn-ref has no null sentinel to test.  A TUPLE is the rule's own named
             // case (`(T-Absent)`: an absent tuple is a present tuple of null members, so no
@@ -1481,6 +1490,18 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
     }
 
+    /// ⚠ **One question, three decoders.**  `@FR-N-Domain` promises a SINGLE elision —
+    /// "provably in-domain (constant / range / guard)" — over three families of partial
+    /// operation, and it is answered here, in `Parser::divisor_provably_nonzero` /
+    /// `divisor_proof_from_condition` for `÷0`, and in `Parser::math_arg_provably_in_domain`
+    /// for the domain-partial float functions.  Each carries its own set of admissible
+    /// spellings, and none reads the others.
+    ///
+    /// That is why the same gap has to be fixed three times: the guard-clause spelling
+    /// (`if bad { return } …`) was added to the index and the divisor on 2026-09-08 and is
+    /// still absent from the math family.  Before widening what THIS site accepts, check
+    /// whether the other two accept it — a licence added here alone is the fourth family's
+    /// bug waiting to be filed.  `formal/types-history.md` § D-Domain-Guard.
     fn index_provably_fit(&self, index: &Value, vec: &Value) -> bool {
         // A compile-time-constant index — positive OR negative (`v[-1]` is the Python-style
         // last-element idiom; `-1` lowers to a negation, so use `const_int`, not a literal match)
