@@ -59,6 +59,13 @@ BUILDS = re.compile(r"Value::Call|\bcall\s*\(|\bcl\s*\(|\badd_op\s*\(")
 # What a licence can rest on.  Keyed by the token that appears in the source; valued by the
 # short name printed, so several spellings of one fact collapse to one column.
 FACTS = {
+    # ⚠ Every NEW home has to be added here in the same commit, or the fold makes its own
+    # caller invisible to this audit: `owns_displaced_store` dropped out of table A entirely
+    # the moment it started calling `proxy_says_owned_or_arg`, because no fact matched it any
+    # more.  Third time today an instrument went quiet on a fold — the rule is in
+    # IMPLEMENTATIONS.md and it applies to this script as much as to `o_proxy_check.py`.
+    r"\bproxy_says_owned_or_arg\b": "proxy+veto",  # the pair, widened by a single-arg borrow
+    r"\bis_marked_vector_borrow\b": "proxy+veto",  # the pair's complement
     r"\bproxy_says_owned\b": "proxy+veto",         # @FR-O-Proxy + @FR-O-Override, folded
     r"\bowns_freeable_store\b": "sweep-licence",   # the pair + the parameter carve-out
     r"\bowns_displaced_store\b": "displaced",      # the pair, widened by borrows_one_argument
@@ -95,6 +102,9 @@ EXEMPT = {
     "gen_set_first_vector_null": "alloc, not free — same",
 }
 STRING_SPAN = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+# The declaration `o_proxy_check.py` already requires of every proxy site.  One home for the
+# question a site asks, rather than a second guess at it here.
+ASKS = re.compile(r"@FR-O-Proxy\s+asks\s+(free|copy|alloc|oracle)\b")
 
 
 def strip_prose(text):
@@ -205,6 +215,7 @@ def main():
 
     for path in rust_files():
         lines = code_lines(path)
+        raw = open(path, encoding="utf-8").read().split("\n")
         rel = os.path.relpath(path, ROOT)
         starts = [i for i, l in enumerate(lines) if FN.match(l)]
 
@@ -224,11 +235,18 @@ def main():
                 continue
             # WHICH of the four questions the proxy answers (o_proxy_check.py's taxonomy): a
             # predicate deciding whether to ALLOCATE reads the same facts as one deciding
-            # whether to FREE and is not the same question.  Taken from the name and the body,
-            # so an `alloc` decider is not offered as a fold candidate for a `free` one.
-            asks = "free" if re.search(r"free|Free", body) else (
-                "alloc" if re.search(r"needs_db|_db\b|alloc", head + body) else "?")
-            predicates[f"{rel}:{i + 1} {FN.match(head).group(1)}"] = (f, asks)
+            # whether to FREE and is not the same question.
+            #
+            # Read from the site's own DECLARATION — `@FR-O-Proxy asks free` — which is the
+            # convention `o_proxy_check.py` already enforces, so there is one home for "which
+            # question does this site ask" rather than a keyword guess here.  Guessing was
+            # measured wrong twice: on the body (a predicate that delegates its veto stops
+            # containing the word `free`) and on the name (`owns_displaced_store` does not
+            # contain it either).  The declaration is in a COMMENT, so it is read from the
+            # raw source rather than the stripped lines.
+            asks = ASKS.search("\n".join(raw[i:end]))
+            asks = asks.group(1) if asks else ("alloc" if "needs_db" in head else "?")
+            predicates[f"{rel}:{i + 1} {FN.match(head).group(1)}"] = (f, asks, body)
 
         # --- table B: every free construction, with the facts guarding it
         for n, l in enumerate(lines):
@@ -249,12 +267,31 @@ def main():
     print("\n=== A. named predicates that answer *is a free needed* ===\n")
     print(f"  {len(predicates)} predicate(s)\n")
     print(f"  {'site':<62} {'asks':<6} facts read")
-    for site, (f, asks) in sorted(predicates.items(), key=lambda kv: (kv[1][1], kv[0])):
+    for site, (f, asks, _b) in sorted(predicates.items(), key=lambda kv: (kv[1][1], kv[0])):
         print(f"  {site:<62} {asks:<6} {' + '.join(f)}")
     same = collections.defaultdict(list)
-    for site, (f, asks) in predicates.items():
+    for site, (f, asks, _b) in predicates.items():
         same[(asks, tuple(f))].append(site)
-    dup = {k: v for k, v in same.items() if len(v) > 1}
+    # ⚠ A predicate that CALLS another is not its duplicate — it is that one plus a widening,
+    # which is the composed shape a fold produces.  `vec_copy_needs_db` calls
+    # `vector_needs_db` and adds the argument case; offering them as a fold candidate would
+    # argue for undoing a fold already done.  Same family as "a named HOME is not a copy".
+    def composed(members):
+        names = {m.rsplit(" ", 1)[-1] for m in members}
+        return {
+            m for m in members
+            if any(n != m.rsplit(" ", 1)[-1]
+                   and re.search(r"\b%s\s*\(" % re.escape(n), predicates[m][2])
+                   for n in names)
+        }
+
+    dup = {}
+    for k, v in same.items():
+        if len(v) < 2:
+            continue
+        rest = [m for m in v if m not in composed(v)]
+        if len(rest) > 1:
+            dup[k] = rest
     if dup:
         print("\n  predicates asking ONE question off ONE fact-set — the fold candidates:")
         for (asks, f), members in sorted(dup.items()):

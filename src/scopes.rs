@@ -6609,6 +6609,9 @@ fn record_adopts_capture(data: &Data, function: &Function, record: u32, a: usize
 /// projects into a parameter stays the BORROW that #682 made it. The bound is a guard
 /// against a cyclic dep chain, not a depth the language imposes.
 fn frame_owns_capture_store(function: &Function, start: u16) -> bool {
+    // @FR-O-Proxy asks free — the answer decides whether the frame's scope-exit free stands
+    // or the capture record's cascade takes it over, so a free follows either way and this is
+    // the free question asked about the BACKING local rather than the binding.
     let mut v = start;
     for _ in 0..8 {
         let tp = function.tp(v);
@@ -8801,18 +8804,15 @@ impl Scopes<'_> {
                     continue;
                 }
                 if let Value::If(cond, then, els) = &inner {
-                    let mut cond_ncc = Vec::new();
-                    collect_consumed_ncc_text(cond, function, &mut cond_ncc);
-                    if !cond_ncc.is_empty() {
+                    let cond_frees = ncc_text_frees(cond, function, data);
+                    if !cond_frees.is_empty() {
                         self.ret_temp_counter += 1;
                         let name = format!("__cond_{}", self.ret_temp_counter);
                         let tmp = function.add_temp_var(&name, &Type::Boolean);
                         self.var_scope.insert(tmp, self.scope);
                         self.var_order.push(tmp);
                         with_frees.push(v_set(tmp, (**cond).clone()));
-                        for v in cond_ncc {
-                            with_frees.push(call("OpFreeText", v, data));
-                        }
+                        with_frees.extend(cond_frees);
                         let branch =
                             Value::If(Box::new(Value::Var(tmp)), then.clone(), els.clone());
                         with_frees.push(match pos {
@@ -8826,12 +8826,9 @@ impl Scopes<'_> {
                     Some(p) => Value::Span(Box::new((p, inner))),
                     None => inner,
                 };
-                let mut ncc = Vec::new();
-                collect_consumed_ncc_text(&stmt, function, &mut ncc);
+                let frees = ncc_text_frees(&stmt, function, data);
                 with_frees.push(stmt);
-                for v in ncc {
-                    with_frees.push(call("OpFreeText", v, data));
-                }
+                with_frees.extend(frees);
             }
             ls = with_frees;
         }
@@ -8852,9 +8849,8 @@ impl Scopes<'_> {
                     | Type::Enum(_, false, _)
             )
         {
-            let mut ncc = Vec::new();
-            collect_consumed_ncc_text(&expr, function, &mut ncc);
-            if !ncc.is_empty() {
+            let ncc_frees = ncc_text_frees(&expr, function, data);
+            if !ncc_frees.is_empty() {
                 // An explicit `return <e>` hoists `<e>` and keeps the `return`.
                 let (inner, was_return) = match expr.unspan() {
                     Value::Return(i) => ((**i).clone(), true),
@@ -8866,9 +8862,7 @@ impl Scopes<'_> {
                 self.var_scope.insert(tmp, self.scope);
                 self.var_order.push(tmp);
                 ls.push(v_set(tmp, inner));
-                for v in ncc {
-                    ls.push(call("OpFreeText", v, data));
-                }
+                ls.extend(ncc_frees);
                 expr = if was_return {
                     Value::Return(Box::new(Value::Var(tmp)))
                 } else {
@@ -8986,6 +8980,8 @@ impl Scopes<'_> {
         data: &Data,
         v: u16,
     ) -> bool {
+        // @FR-O-Proxy asks free — this IS the scope-exit sweep's licence.
+        //
         // The proxy and its veto are ONE question and are asked as one
         // ([`crate::variables::Function::proxy_says_owned`], @PLN155 phase 1); what this
         // adds is the third obligation, which is this site's alone — the sweep frees a
@@ -14287,6 +14283,22 @@ fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
 /// ncc block) is deliberately NOT matched — only the value-block's presence counts,
 /// which is why the ncc block's own `convert` attributes no free (its statement is
 /// the declaration, not a nested ncc consumer).
+/// The `OpFreeText` releases a node's CONSUMED `__ncc_` text temps need, ready to splice in.
+///
+/// One home for `collect_consumed_ncc_text` plus the loop that turns its answer into frees —
+/// `Scopes::convert` wrote that pair out three times, once per statement shape it hoists (an
+/// `if` condition, a plain statement, a block tail), and each copy had to be found and taught
+/// anything the others learned.  The list is a `Vec<Value>` rather than a push-into-a-buffer,
+/// because two of the three callers test whether there is anything to free BEFORE deciding to
+/// build a temp at all, and emptiness of the frees is that test.
+fn ncc_text_frees(node: &Value, function: &Function, data: &Data) -> Vec<Value> {
+    let mut out = Vec::new();
+    collect_consumed_ncc_text(node, function, &mut out);
+    out.into_iter()
+        .map(|v| call("OpFreeText", v, data))
+        .collect()
+}
+
 fn collect_consumed_ncc_text(node: &Value, function: &Function, out: &mut Vec<u16>) {
     match node {
         Value::Span(b) => collect_consumed_ncc_text(&b.1, function, out),

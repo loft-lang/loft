@@ -3815,6 +3815,8 @@ impl Function {
     /// and both had to name three conditions to say one thing.
     #[must_use]
     pub fn is_marked_vector_borrow(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — read as the COMPLEMENT: a true answer says this binding is
+        // a marked borrow, so no ownership-derived free is emitted for it.
         self.is_skip_free(v)
             // @FR-N-Shape — a SHAPE question answers alike for `τ` and `τ?`, and "is this a
             // vector" is one.  Both folded sites matched bare; peeling is measured

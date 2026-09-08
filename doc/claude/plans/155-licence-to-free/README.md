@@ -82,7 +82,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b, 3a landed; re-aimed onto the derivation count).
+- **Last touched:** 2026-09-09 (re-aimed onto the derivation count; two reduction rounds).
 
 ## Why this family, measured
 
@@ -555,6 +555,42 @@ TYPE rather than on one binding.
 `is_marked_vector_borrow` made the count go UP, because a home has to spell both halves to BE
 the home.  An instrument that penalises the fold it exists to encourage argues against itself —
 the same shape as `optional`'s peel list penalising the stronger peel (loft#1445).
+
+## The second reduction — the text-free shape, and three ways the audit was wrong (2026-09-09)
+
+Table C's seven all carry a reason, so the next reduction had to come from an axis it cannot
+see: **the text frees, which never touch the proxy at all.**
+
+`Scopes::convert` wrote the same five lines three times — collect a node's consumed `__ncc_`
+text temps, then emit an `OpFreeText` for each — once per statement shape it hoists (an `if`
+condition, a plain statement, a block tail).  One home now, `ncc_text_frees`, returning the
+frees as a `Vec<Value>` because two of the three callers test whether there is anything to free
+BEFORE deciding to build a temp at all.  Each collection point is kept exactly where it was, so
+the fold is byte-identical (**IDENTICAL 1412/1412**).
+
+⚠ **Table C cannot see that reduction**, and that is worth stating rather than papering over:
+it counts functions spelling the @FR-O-Proxy / @FR-O-Override pair, and the text-free shape
+spells neither.  The count stays at 7 while two implementations disappeared.  A complementary
+count — *repeated collect-then-emit shapes* — would show it, and does not exist.
+
+### And the audit was wrong three ways, each found by using it
+
+1. **A predicate that CALLS another is not its duplicate.**  `vec_copy_needs_db` calls
+   `vector_needs_db` and adds the argument case; the audit offered them as a fold candidate,
+   which would have argued for undoing a fold already done.  Same family as *a named HOME is
+   not a copy*.
+2. **A fold made its own caller invisible.**  `owns_displaced_store` dropped out of table A
+   entirely the moment it started calling `proxy_says_owned_or_arg`, because no fact in the
+   vocabulary matched the new name.  **Third time in two days that an instrument went quiet on
+   a fold** — after `o_proxy_check.py`'s population and the `optional` peel list.  Every new
+   home now has to be added to the vocabulary in the same commit.
+3. **Guessing which question a predicate asks does not work.**  The heuristic read the body
+   for the word `free` — and a predicate that delegates its veto to a home stops containing it.
+   Reading the NAME instead failed too (`owns_displaced_store` has neither).  It now reads the
+   site's own `@FR-O-Proxy asks free` DECLARATION, which `o_proxy_check.py` already enforces —
+   one home for *which question does this site ask*, rather than a second guess at it.  Every
+   one of the ten predicates is classified now; three were `?` before, including the licence
+   home itself.
 
 ## Phase ordering
 
