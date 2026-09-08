@@ -13,7 +13,12 @@
 // different question and is REFUSED"*.  So this is loft#1453's cure (`for` / `map` / `filter`)
 // carried to a site it did not reach, out of the one home it already had.
 //
-// Its own file because a firing `@EXPECT_ERROR` stops the run, which is why the sibling
+// Its own file, and the reason is a PARSER property rather than a harness one: this refusal is
+// emitted during the parse and leaves the parser desynchronised (an `Expect token ;` cascade
+// follows it), so the run never reaches the phase that would emit another file-level
+// expectation.  The harness itself checks EVERY `@EXPECT_ERROR` and fails on each unmatched
+// one — measured: two refusals of this kind coexist in one file and both report, while this one
+// beside a return-type error reports only itself, whichever is written first.  So the sibling
 // spelling — a METHOD CALL on the same receiver — is `1450c`.
 //
 // Axes it HOLDS FIXED:  the receiver is DECLARED `sorted<…>?`.  A receiver that becomes `τ?`

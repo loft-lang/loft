@@ -25,9 +25,11 @@
 //                        peel, and through a STRUCT FIELD's vector), the member's type
 //                        (integer · float · text), and whether the index HITS or MISSES.
 // Axes it HOLDS FIXED:   the access is a member READ.  The DESTRUCTURE spelling of the same
-//                        value is still refused, and cannot share this file — a firing
-//                        `@EXPECT_ERROR` stops the run, so a refusal cell and a value cell do
-//                        not co-exist.  Its refusal is deliberate rather than forgotten: the
+//                        value is still refused, and cannot share this file: a refusal cell and
+//                        a value cell do not co-exist, because the refusal ends the run before
+//                        the value cells execute.  (The harness itself checks every
+//                        `@EXPECT_ERROR` and fails on each unmatched one — it is the COMPILER
+//                        that stops, not the annotation.)  Its refusal is deliberate rather than forgotten: the
 //                        rest of D-tup-10 is the representation, where `Type::optional` still
 //                        mints an `Optional(Tuple)` the rule says cannot exist.  The written
 //                        `(τ, τ)?` type also stays refused by name and is `1423`'s.

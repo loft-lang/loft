@@ -3098,6 +3098,45 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
+and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each
+unmatched one (`unmatched_expect` over the whole list, loft#929's own fix), so a file CAN hold
+four expected errors and `1423b` does.  What stops is the COMPILER: a refusal emitted during the
+parse that leaves the parser desynchronised — the nullable-collection refusals are the measured
+case — ends the run before the phase that would emit the others.  Measured order-independently:
+two `rev` refusals in one file report 2, a `.remove` refusal beside a return-type error reports
+2, and a `rev` refusal beside that same return-type error reports **1**.
+
+⚠ This has been written into corpus files as *"a firing `@EXPECT_ERROR` stops the run"*, which
+is false and sends the next reader to the harness.  The residue is tracked on loft#1453; the
+recovery fix is a parser change with its own matrix, because several guards pin the cascade
+text by hand.
+
+**A guard over the newly-ACCEPTED shape does not reach the sites that CONSUME it — and knowing
+the class does not save you.**  Measured twice on 2026-09-08, in both checkouts, four hours
+apart.  Peeling a type at a PARSER site makes a spelling parse that used to be refused; every
+site downstream that matched the un-peeled spelling now receives it, and one of them panics.
+`e = v[i]; e.0` binds an `Optional(Tuple)`, the parser emits `TupleGet`, and
+`state::codegen` matched `Type::Tuple` bare — *"TupleGet on non-tuple variable"*, an internal
+compiler error where a clean refusal stood, on both backends.  **A clean refusal traded for an
+ICE is the one direction a fix must not move.**
+
+The sibling checkout had diagnosed exactly this shape for another issue that morning and
+written it up — and then shipped it, because **its guard carried only the INLINE spelling**
+(`v[i].0`), which never binds a local and so never reaches the panicking arm.  The cell
+exercised the shape the parser now accepts; it did not exercise a consumer of that shape.  So
+the rule is not *"remember the class"* — it is:
+
+> When a fix makes a shape ACCEPTED, the guard's cells are chosen from the sites that will now
+> RECEIVE it — a local bound from it, a write through it, a call taking it — and not from the
+> spelling that used to be refused.
+
+What caught it was an accident worth copying deliberately: the cell with the local bind lived in
+a file written to assert the old REFUSAL, so its shapes had been chosen for coverage of the
+refusal rather than of the happy path.  **When a refusal goes, rewrite its guard rather than
+deleting it** — its cells are a survey of the shapes that reach the site, taken by someone who
+was trying to hit all of them.
+
 **A probe whose TEST is looser than its question, which is a different failure from the one
 below and fails the other way.**  Setup contamination puts the answer into the channel; this
 one accepts the wrong answer out of it — and it almost always fails toward "nothing found",
