@@ -181,10 +181,28 @@ fn is_orphan(pid: i32) -> bool {
         return false;
     };
     // rest = " S <ppid> ..." — state, then parent pid.
-    rest.split_whitespace()
+    let Some(ppid) = rest
+        .split_whitespace()
         .nth(1)
         .and_then(|p| p.parse::<i32>().ok())
-        == Some(1)
+    else {
+        return false;
+    };
+    if ppid == 1 {
+        return true;
+    }
+    // An orphan is not always init's: a session under `systemd --user` reparents to
+    // that subreaper (pid ≠ 1), and every leaked engine host on such a box read as
+    // "still parented" here, so the reaper never fired and each run pivoted past the
+    // previous run's orphan and left one more.  The question is whether the PARENT is
+    // one of this checkout's processes — a live sibling test's server has a test binary
+    // under this tree as its parent; a leaked one has init or a subreaper.  Unreadable
+    // is not an orphan: the conservative direction is to decline the kill.
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    match std::fs::read_link(format!("/proc/{ppid}/exe")) {
+        Ok(parent_exe) => !parent_exe.starts_with(&root),
+        Err(_) => false,
+    }
 }
 
 /// Can this process bind the port right now?  Binding and dropping is the only honest

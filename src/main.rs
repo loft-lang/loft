@@ -11489,6 +11489,32 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // explicit user-set values win.
         let mut cmd = std::process::Command::new(&binary);
         cmd.args(&user_args);
+        // The compiled program dies with this driver.  A `loft prog.loft` run IS its
+        // program: when the driver is killed outright — a test harness reaping its
+        // `loft` child, a terminal closing, an OOM kill — the program must not
+        // outlive it holding a port or a terminal, which is exactly what left a
+        // listening engine host behind per test run (they were reparented to the
+        // session's `systemd --user` and so read as live to a `ppid == 1` orphan
+        // test).  The same backstop a placed library's worker arms for itself
+        // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
+        // with a handler (the profiler's report) gets to run it.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt as _;
+            // SAFETY: the closure runs in the forked child before `exec` and calls
+            // only async-signal-safe `prctl`/`getppid`; it touches no allocator or lock.
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    // The driver may have died in the window before `prctl` armed; a
+                    // child whose parent is already gone must not start.
+                    if libc::getppid() == 1 {
+                        libc::_exit(0);
+                    }
+                    Ok(())
+                });
+            }
+        }
         // @PLN26 follow-up — run the native binary with cwd = source_dir so its
         // raw `std::fs` anchors where its loft `file()` does (the binary bakes
         // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
