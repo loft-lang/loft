@@ -529,7 +529,7 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL, feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored ownership fuzz replay + SI-2 check), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` — every published package installed + tested on both backends | `schedule` |

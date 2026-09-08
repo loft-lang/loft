@@ -1,0 +1,79 @@
+name: CodeQL
+
+# Code scanning, as a workflow this repository owns rather than GitHub's default setup.
+#
+# The reason is scope: default setup cannot read a configuration file, so there was no
+# checked-in way to say which trees are the product.  Analysing all of them produced 23
+# alerts and every one was its own fixture — a drawing benchmark's PRNG reported as a
+# CRITICAL cryptographic finding eleven times, the crash-report tests' deliberate null
+# writes, the loopback servers a test starts.  `.github/codeql/codeql-config.yml` carries
+# the deny-list and the evidence for each entry.
+#
+# The trade this makes, stated so the next reader can undo it: default setup follows
+# GitHub's own updates and this file does not.  A language added to the repository is
+# analysed only once it is added to the matrix below, and nothing fails when it is
+# missing — the coverage is simply absent.  So the matrix is the thing to check when a
+# new language arrives.
+#
+# Cadence matches what default setup ran: every push to `main`, every PR into it, and a
+# weekly sweep.  The PR leg is what CI_BUDGET.md's per-PR row already counts.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Thursday 05:00 UTC — clear of the 03:00 daily and the 04:00 nightly sanitisers.
+    - cron: '0 5 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # `security-events: write` is what uploads the SARIF; the other two are what the
+      # action reads to attach a result to its commit.
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every language default setup had enabled, minus the aliases: `javascript` and
+        # `typescript` are both `javascript-typescript` here.  `actions` analyses the
+        # workflow files themselves, which is the one leg whose subject is this directory.
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: java-kotlin
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
