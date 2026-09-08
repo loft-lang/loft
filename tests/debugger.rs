@@ -776,6 +776,74 @@ fn breakpoint_at_fn_body_start_by_name() {
     );
 }
 
+/// loft#1459 — a `τ?` local reads at a paused frame like its dense twin.
+///
+/// `render_frame_local` matched every type in its DENSE spelling, so a nullable local
+/// matched no arm and fell to the `other` catch-all, which prints the TYPE: the panel showed
+/// `n = <integer?>` where every other local shows a value.  `@FR-L-Null` says
+/// layout(τ) = layout(τ?), so the slot reads the same way and all the nullable case owes is
+/// the ABSENT value.
+///
+/// The two cells are the two answers a nullable can give, and both are needed: an ABSENT one
+/// proves the sentinel is recognised rather than printed raw (`i32::MIN` would render as a
+/// large negative number, which looks like a value), and a PRESENT one proves the peel did
+/// not swallow the number with it.  The dense `x` is the control — it never moved, and if a
+/// cure broke it the peel would be doing something other than peeling.
+/// Falsified by removing the `Type::Optional` arm from `State::render_frame_local`:
+/// `left: "<integer?>"  right: "null"`, one assertion failure, 38 other debugger tests
+/// unmoved.  The `m` and `x` cells stay green there, which is what says the peel answers the
+/// ABSENT case and does not merely make the panel print something.
+#[test]
+fn a_nullable_local_reads_like_its_dense_twin_at_a_paused_frame() {
+    let mut p = repl();
+    match p.parse_statement(
+        "fn probe(x: integer) -> integer {\n  n: integer? = null;\n  m: integer? = 42;\n  y = x + 1;\n  y + (n ?? 0) + (m ?? 0)\n}",
+    ) {
+        ParseResult::Ready { .. } => {}
+        other => panic!("def failed: {other:?}"),
+    }
+    let entry = match p.parse_statement("probe(5)") {
+        ParseResult::Ready { entry_def_nr } => entry_def_nr,
+        other => panic!("call failed: {other:?}"),
+    };
+    // Line 4 (`y = x + 1`), so both nullable locals are ASSIGNED by the time the frame is
+    // read, and line 5 READS them so neither slot is dead.  Two vacuity traps avoided, both
+    // met while writing this: breaking at the body START leaves `n` and `m` nonexistent, so
+    // the test passes on the broken build by asserting only the control; and leaving them
+    // unread lets the slot allocator reuse one, which the panel honestly reports as
+    // `n = <reused by m>` — a frame fact, not a nullability one.
+    let d = p.data.def_nr("n_probe");
+    let mut state = State::new(p.database.clone());
+    loft::scopes::check(&mut p.data, &mut p.database);
+    compile::byte_code(&mut state, &mut p.data);
+    assert!(
+        state.set_breakpoint_fn_line(d, 4, &p.data).is_some(),
+        "line 4 breakable; breakable = {:?}",
+        state.breakable_lines()
+    );
+    let name = p
+        .data
+        .def(entry)
+        .name()
+        .strip_prefix("n_")
+        .unwrap()
+        .to_string();
+    state.execute_argv(&name, &p.data, &[]);
+    let hits = state.debug_hits();
+    assert!(!hits.is_empty(), "the breakpoint fired: {hits:?}");
+    let f = &hits[hits.len() - 1];
+    let show = |want: &str| {
+        f.locals
+            .iter()
+            .find(|(n, _)| n == want)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{want} absent>"))
+    };
+    assert_eq!(show("n"), "null", "an ABSENT nullable reads `null`: {f:?}");
+    assert_eq!(show("m"), "42", "a PRESENT nullable reads its value: {f:?}");
+    assert_eq!(show("x"), "5", "CONTROL: the dense local is unmoved: {f:?}");
+}
+
 /// Negative control: debugging on but no breakpoint registered → zero hits, and
 /// the program still runs (the `assert` inside proves execution completed).
 #[test]
