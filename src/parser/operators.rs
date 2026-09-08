@@ -3286,6 +3286,14 @@ impl Parser {
             // *"`?` cannot build a default for `__tuple<integer,integer>`"* — correct as far as
             // it went, since loft#1424 replaced a SILENT recovery there with a report, but the
             // answer is that this tuple has a default rather than that it has none.
+            //
+            // It cannot reach the record arm below instead: `def_type` sees a struct, but
+            // `__tuple<integer,integer>` is not a name any loft source can spell, so the
+            // `S {}` sub-parse builds nothing and hands back a value typed as neither — which
+            // surfaced as a default *"of type `boolean`"* for a program containing no boolean.
+            // Member-wise here is the answer `(N-Default)` gives, and it is the RULE that
+            // picks it, not agreement with the sibling spelling: an arm anchored on what the
+            // other spelling happens to answer moves when that one does.
             Type::Reference(_, _) if Self::record_tuple_def(&self.data, tp).is_some() => {
                 let elems: Vec<Type> = self
                     .data
@@ -3350,17 +3358,6 @@ impl Parser {
                 self.cur_type_var_name = saved.1;
                 Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
-            // A tuple's TWO SPELLINGS must default alike.  `Reference(__tuple<…>)` is a
-            // struct as far as `def_type` is concerned, so it fell into the record arm below
-            // — but `__tuple<integer,integer>` is not a name any loft source can spell, so the
-            // `S {}` sub-parse could not build it and handed back a value whose type was
-            // neither: the coalesce then reported a default *"of type `boolean`"* for a
-            // program containing no boolean (loft#1451).  The bare `Type::Tuple` spelling has
-            // no arm here at all and answers `None`, which is what routes `v[i]?` to the
-            // recover-as-base path; answering `None` for both spellings is what makes the
-            // generic `first(v)?` and the non-generic `v[i]?` agree, and that agreement is
-            // the whole property this fix is for.
-            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => None,
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field
             // has a default).  Parsed from the synthetic `S {}` source so it reuses
