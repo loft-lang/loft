@@ -30,9 +30,13 @@
 //                        record leaves the frame AT ALL, which is the control · and how many
 //                        records ADOPT one store (one · two · three), which is what decides
 //                        whether the capture slots must be nulled before the release.
-// Axes it HOLDS FIXED:   one capture per record.  A build sitting inside a branch ARM is
-//                        loft#1464's question, answered by the conditional release rather than
-//                        by this one.
+// Axes it HOLDS FIXED:   one capture per record, and the RETURN as the only route out.  A record
+//                        handed over through a `&fn(…)` LINK never appears in the tail, so no arm
+//                        can witness that it was delivered and the release must not reach it —
+//                        `1443-a-closure-written-through-a-fn-parameter-link.loft` is that cell
+//                        and it is where this file's bound is measured.  A build sitting inside
+//                        a branch ARM is loft#1464's question, answered by the conditional
+//                        release rather than by this one.
 //
 // @falsified-at: e5f44328f, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
 //   interpret exit 101 -> 0 and panicked -> clean; native exit 1 -> 0 and

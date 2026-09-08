@@ -9008,6 +9008,15 @@ impl Scopes<'_> {
                 let set_dbref = data.def_nr("OpSetDbRef");
                 let null_ref = data.def_nr("OpNullRefSentinel");
                 let body = data.def(self.d_nr).code();
+                // A record handed out through a `&fn(…)` LINK never appears in the tail, so the
+                // tail cannot witness that it was delivered.  `arm_value_delivers_record` reads
+                // the RETURN route only and would answer "this arm omits it" for every arm —
+                // and the release would then destroy what the link just gave the caller.
+                // `record_leaves_frame` unions both routes for exactly this reason; here the
+                // link half has to be subtracted rather than asked, because no arm can speak
+                // for it.  Measured: `give_both_ways` (a frame delivering by BOTH routes at
+                // once) read 0xBEEF under `LOFT_POISON=1`.
+                let link_delivered = link_written_closure_records(data, function, self.d_nr);
                 for group in adopters.values() {
                     // A record that ALONE adopts its store may be released on a path that does
                     // not deliver it: its cascade takes the capture with it, and on that path
@@ -9023,7 +9032,9 @@ impl Scopes<'_> {
                     // slots the emitted code wrote.
                     let shared = group.len() > 1;
                     for (r, _, _) in group {
-                        if !record_leaves_frame(data, function, self.d_nr, *r) {
+                        if !record_leaves_frame(data, function, self.d_nr, *r)
+                            || link_delivered.contains(r)
+                        {
                             continue;
                         }
                         let mut release: Vec<Value> = Vec::new();
