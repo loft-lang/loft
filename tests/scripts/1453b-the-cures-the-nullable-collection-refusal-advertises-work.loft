@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The runnable half of `1453-a-nullable-collection-is-refused-by-name-in-the-collection-builtins`,
+// which stops at its expected errors and so can assert nothing.  This half is where the claims
+// are checked, and it is the half that keeps that refusal honest.
+//
+// Two things are proven here and nowhere else:
+//
+//   * the DENSE spelling of every refused cell is correct AND silent, which is what says the
+//     refusal is about the `?` and not about the lambda or the builtin;
+//   * BOTH cures the message advertises — `?` and `?? []` — compile and answer the RIGHT
+//     VALUES.  A message whose cure is itself diagnosed advertises a dead end, and one whose
+//     cure compiles but answers wrongly is worse.
+//
+// The absent receiver is the cell that makes "an empty result" a value rather than a phrase:
+// `map(absent?, …)` is zero elements, not one and not a fault.
+
+struct It1453b { k: integer, v: integer }
+
+fn main() {
+  present: vector<It1453b>? = [It1453b { k: 1, v: 7 }, It1453b { k: 2, v: 9 }];
+  absent: vector<It1453b>? = null;
+  dense: vector<It1453b> = [It1453b { k: 1, v: 7 }, It1453b { k: 2, v: 9 }];
+
+  // ---- control: the DENSE spelling of each refused cell, correct and silent ----
+  d_map = map(dense, |e| { e.v });
+  assert(len(d_map) == 2, "the dense receiver maps every element: {len(d_map)}");
+  assert(d_map[0] == 7, "and keeps its order: {d_map[0]}");
+  d_filter = filter(dense, |e| { e.v > 5 });
+  assert(len(d_filter) == 2, "the dense receiver filters: {len(d_filter)}");
+  assert(any(dense, |e| { e.v > 8 }), "and answers a predicate");
+
+  // ---- cure 1, `?`, on a PRESENT receiver ----
+  cure_default = map(present?, |e| { e.v });
+  assert(len(cure_default) == 2, "`?` discharges and maps every element: {len(cure_default)}");
+  assert(cure_default[1] == 9, "with the right values: {cure_default[1]}");
+  assert(len(filter(present?, |e| { e.v > 8 })) == 1, "and it works for filter too");
+
+  // ---- cure 2, `?? []`, answering the same ----
+  cure_coalesce = map(present ?? [], |e| { e.v });
+  assert(len(cure_coalesce) == 2, "`?? []` maps the same elements: {len(cure_coalesce)}");
+  assert(cure_coalesce[0] == 7, "with the same values: {cure_coalesce[0]}");
+
+  // ---- the cure on an ACTUALLY-absent receiver: "an empty result" is a value ----
+  cure_absent = map(absent?, |e| { e.v });
+  assert(len(cure_absent) == 0, "an absent receiver discharged gives an EMPTY result: {len(cure_absent)}");
+  assert(len(map(absent ?? [], |e| { e.v })) == 0, "and `?? []` agrees");
+  assert(!any(absent?, |e| { e.v > 0 }), "a predicate over an absent one answers for an empty one");
+}

@@ -15407,7 +15407,7 @@ impl Parser {
     ) -> Type {
         let call_pos = self.lexer.pos().clone();
         let mut list = Vec::new();
-        let mut types = Vec::new();
+        let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
         if self.lexer.has_token(")") {
             // Check for zero-argument fn-ref call
@@ -15589,9 +15589,18 @@ impl Parser {
             }
             // for map/filter/reduce, infer lambda hint from the vector
             // element type so that short-form |x| lambdas can infer types.
+            // Hint from the receiver's BASE, so a `vector<T>?` seeds the lambda exactly as its
+            // dense twin does.  The call is still REFUSED below — `map` does not unwrap a
+            // nullable receiver any more than `for` iterates one — but the refusal is the only
+            // thing the author should hear.  Read through the `?`, `map(v, |e| e.x)` on a
+            // `vector<It>?` had nothing to seed `e` with and reported three errors about the
+            // LAMBDA before the one about the receiver: *"Cannot infer type for lambda
+            // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
+            // then *"map: first argument must be a vector"*.  The author was sent to annotate a
+            // parameter the dense spelling infers fine (loft#1453).
             if fn_def_nr.is_none()
                 && !types.is_empty()
-                && let Type::Vector(elm, _) = &types[0]
+                && let Type::Vector(elm, _) = types[0].base()
             {
                 let elem = *elm.clone();
                 let hint = match (name, arg_idx) {

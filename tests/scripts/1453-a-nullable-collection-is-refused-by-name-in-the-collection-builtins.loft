@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `map`, `filter` and the predicate builtins refuse a NULLABLE collection by name, and say the
+// same thing `for` says: the `?` is what is in the way, and here are the two spellings that
+// discharge it.
+//
+// The author's program had ONE fault — the receiver's `?` — and heard four errors, three of
+// them about the lambda:
+//
+//     Cannot infer type for lambda parameter 'e'; pass the lambda where the expected type is …
+//     Unknown variable 'e'
+//     Field of unknown variable
+//     map: first argument must be a vector          <-- the only true one, reported LAST
+//
+// So the receiver check was never missing. It exists and it fires; it just ran AFTER the lambda
+// had been parsed against a receiver already known to be unusable, and the three lambda errors
+// are the wreckage of that ordering. That makes this an ORDERING defect before it is a message
+// defect — which is why the fix seeds the lambda hint through the receiver's `?` (the dense
+// spelling infers `e` fine, and reading the base makes the nullable one infer it too) and then
+// refuses, rather than improving the message in place.
+//
+// ⚠ It REFUSES; it does not peel. `map` unwrapping a nullable receiver that `for` explicitly
+// refuses would be one rule disagreeing with itself across two spellings of the same idea.
+// The refusal message is `for`'s, from one home — `nullable_collection_refusal` — with only the
+// three words that genuinely differ passed in (the verb, what the dense type can do, and what a
+// discharged absent value yields). Two agreeing copies of that sentence is what this file would
+// otherwise be pinning.
+//
+// Controls, each load-bearing:
+//   * the DENSE spelling of every cell, which must stay correct AND silent — a cell where the
+//     dense twin errors means the refusal widened past nullability, and it is also the control
+//     that says the probe measures the `?` rather than the lambda;
+//   * BOTH advertised cures, `v?` and `v ?? []`, because a message whose cure is itself
+//     diagnosed advertises a dead end.  They must also answer the right VALUES, not merely
+//     compile;
+//   * an ACTUALLY-absent receiver under the cure, which is what makes "an empty result"
+//     true rather than plausible: `map(z?, …)` on a null `z` is zero elements, not one.
+//
+// The error COUNT is the assertion this file exists for: ONE per refused call. The old
+// behaviour was four for one fault, and a fix that left two would still be the defect.
+//
+// @falsified-at: 98cacb724 — MEASURED. On that build `nullable_map` reports four errors
+//   (the three lambda ones plus the receiver), so the file does not run at all and the channel
+//   is the process exit; the cure and dense cells below cannot be reached to fail on value.
+//   The count is what moved: 4 -> 1.
+//
+//
+// ⚠ This file asserts a REFUSAL, so it stops before running and carries NO assertions — the
+// corpus convention (`102`/`102b`, `1067`/`1067b`, `1210`/`1210b`).  The runnable half is
+// `1453b-…`, and it is not optional: the controls and both advertised cures live there, and a
+// message whose cure is never executed advertises a dead end.  Written as ONE file first, the
+// harness caught eleven assertions that could never run — which is the vacuous-cell defect this
+// guard is otherwise about, aimed at itself.
+// @EXPECT_ERROR: cannot map over vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be mapped, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection an empty result
+// @EXPECT_ERROR: cannot filter vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be filtered, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection an empty result
+// @EXPECT_ERROR: cannot use any on vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be used, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection the answer for an empty one
+// @EXPECT_WARNING: Variable refused_filter is never read
+// @EXPECT_WARNING: Variable refused_any is never read
+
+struct It1453 { k: integer, v: integer }
+
+fn main() {
+  present: vector<It1453>? = [It1453 { k: 1, v: 7 }, It1453 { k: 2, v: 9 }];
+
+  // THE CELLS: one error each, naming the `?`, and nothing about the lambda.  Their results are
+  // deliberately unread — the cell IS the refusal — and the two `never-read` warnings that
+  // follow are pinned rather than worked around, so the file scores every line it emits.
+  // Only two of the three warn: `refused_map` recovers with the type pass 1 gave the call
+  // (`vector<integer>`, the callback's return), so it is a normally-typed local, while `filter`
+  // and `any` recover through their own placeholders.
+  refused_map = map(present, |e| { e.v });
+  refused_filter = filter(present, |e| { e.v > 5 });
+  refused_any = any(present, |e| { e.v > 5 });
+}

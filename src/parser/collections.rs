@@ -410,6 +410,68 @@ impl Parser {
         }
     }
 
+    /// The refusal a NULLABLE collection earns where a dense one is required — ONE home, so
+    /// the `for` dispatch and the collection builtins cannot drift in what they tell an author.
+    ///
+    /// Only three things differ between the sites: `verb` is the operation as the reader wrote
+    /// it ("iterate over", "map over"), `capability` what the dense type can do ("is iterable",
+    /// "can be mapped"), and `outcome` what a discharged absent value yields ("zero iterations",
+    /// "an empty result").  Everything else is the same wherever the value is used — that the
+    /// cure is `?` or `?? <default>`, and that a `text?` must be told `""` rather than a
+    /// collection literal, which would be a second wrong cure in the same message.  Those are
+    /// the parts that must not be written twice.
+    ///
+    /// Answers whether it fired, so a caller can fall through to its own generic message only
+    /// when the receiver was not a nullable collection at all.
+    fn nullable_collection_refusal(
+        &mut self,
+        is_type: &Type,
+        verb: &str,
+        capability: &str,
+        outcome: &str,
+    ) -> bool {
+        let Type::Optional(inner) = is_type else {
+            return false;
+        };
+        if !matches!(
+            **inner,
+            Type::Vector(_, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+                | Type::Text(_)
+        ) {
+            return false;
+        }
+        // The `??` spelling has to name the DEFAULT of the inner type, not a collection
+        // literal: `text?`'s is the empty text, and telling its author to write `?? []` would
+        // be a second wrong cure in the same message.  `?` is the type's own default either way.
+        let (empty, thing) = if matches!(**inner, Type::Text(_)) {
+            ("\"\"", "text")
+        } else {
+            ("[]", "collection")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "cannot {} {} because it is NULLABLE — a `{}` {}, \
+             but there is no implicit unwrap.  Discharge it first: add `?` (the \
+             type's default, an empty {}) or `?? {}`; either spelling gives an \
+             absent {} {}",
+            verb,
+            is_type.source_name(&self.data),
+            inner.source_name(&self.data),
+            capability,
+            thing,
+            empty,
+            thing,
+            outcome
+        );
+        true
+    }
+
     pub(crate) fn iterator(
         &mut self,
         code: &mut Value,
@@ -748,23 +810,11 @@ impl Parser {
                         // collection literal: `text?`'s is the empty text, and telling its
                         // author to write `?? []` would be a second wrong cure in the same
                         // message.  `?` is the type's own default either way.
-                        let (empty, thing) = if matches!(**inner, Type::Text(_)) {
-                            ("\"\"", "text")
-                        } else {
-                            ("[]", "collection")
-                        };
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "cannot iterate over {} because it is NULLABLE — a `{}` is iterable, \
-                             but there is no implicit unwrap.  Discharge it first: add `?` (the \
-                             type's default, an empty {}) or `?? {}`; either spelling gives an \
-                             absent {} zero iterations",
-                            is_type.source_name(&self.data),
-                            inner.source_name(&self.data),
-                            thing,
-                            empty,
-                            thing
+                        self.nullable_collection_refusal(
+                            is_type,
+                            "iterate over",
+                            "is iterable",
+                            "zero iterations",
                         );
                     } else {
                         diagnostic!(
@@ -5504,6 +5554,32 @@ use #count instead"
         let _in_elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
+            // A NULLABLE vector is not "not a vector" — the author picked the right kind and
+            // only the `?` is in the way, so it earns the discharge message `for` gives rather
+            // than a kind list (loft#1453).  `map` REFUSES it, exactly as `for` does: there is
+            // no implicit unwrap here either.
+            if self.nullable_collection_refusal(
+                &types[0],
+                "map over",
+                "can be mapped",
+                "an empty result",
+            ) {
+                // Recover with the type PASS 1 already gave this call, which is
+                // `vector<callback return>` (loft#945).  The call is refused and the program
+                // will not run; what is left to decide is what the rest of the parse reads, and
+                // both other answers produce a second error about a line whose only fault is
+                // upstream — `vector<unknown>` makes `len(w)` report *"Unknown function len"*,
+                // and the dense receiver type makes pass 2 disagree with pass 1 (*"Variable 'w'
+                // cannot change type"*).  loft#1453's other half is the same complaint about
+                // `for`, so answering it here with a fresh recovery error would be the defect it
+                // fixes.  The lambda types cleanly now, so its return is available.
+                if let Type::Function(_, ret, _) = &types[1]
+                    && !matches!(**ret, Type::Void)
+                {
+                    return Type::Vector(ret.clone(), crate::data::Deps::none());
+                }
+                return placeholder;
+            }
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -5662,11 +5738,18 @@ use #count instead"
         let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "filter: first argument must be a vector"
-            );
+            if !self.nullable_collection_refusal(
+                &types[0],
+                "filter",
+                "can be filtered",
+                "an empty result",
+            ) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "filter: first argument must be a vector"
+                );
+            }
             return Err(placeholder);
         };
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
@@ -6423,7 +6506,14 @@ use #count instead"
         let elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
-            if !self.first_pass {
+            if !self.first_pass
+                && !self.nullable_collection_refusal(
+                    &types[0],
+                    &format!("use {name} on"),
+                    "can be used",
+                    "the answer for an empty one",
+                )
+            {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
