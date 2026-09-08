@@ -42,7 +42,6 @@
 use mmap_storage::file::Storage as MmapStorage;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
 
 #[allow(dead_code)]
@@ -196,6 +195,75 @@ pub enum StoreChange {
     Free { pos: u32, before: Box<[u8]> },
 }
 
+/// The live-record set of one store: which word positions START a claimed
+/// record.  It is what [`Store::valid`] asks ("is this a record, not a
+/// position inside one?") and what [`Store::claims_count`] counts.
+///
+/// One bit per word of the arena, so membership is a shift and a mask and the
+/// set costs at most 1/64 of the arena it describes.  It grows on demand to the
+/// highest position claimed: a mapped image this process never allocates into
+/// keeps no bits at all, and a fresh 100-word store keeps two words.  The live
+/// count is kept beside the bits, because a count is the one thing a release
+/// build reads from the set and a walk to answer it would scale with the
+/// arena, not with the records in it.  Nothing iterates the set, so the
+/// representation owes no order.
+#[derive(Clone, Default)]
+struct Claims {
+    bits: Vec<u64>,
+    live: u32,
+}
+
+impl Claims {
+    #[inline]
+    fn contains(&self, pos: u32) -> bool {
+        self.bits
+            .get((pos >> 6) as usize)
+            .is_some_and(|w| (w >> (pos & 63)) & 1 == 1)
+    }
+
+    /// Mark `pos` claimed; `true` when it was not already.
+    #[inline]
+    fn insert(&mut self, pos: u32) -> bool {
+        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
+        if word >= self.bits.len() {
+            self.bits.resize(word + 1, 0);
+        }
+        let w = &mut self.bits[word];
+        let new = *w & mask == 0;
+        *w |= mask;
+        self.live += u32::from(new);
+        new
+    }
+
+    /// Unmark `pos`; `true` when it was claimed.
+    #[inline]
+    fn remove(&mut self, pos: u32) -> bool {
+        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
+        match self.bits.get_mut(word) {
+            Some(w) if *w & mask != 0 => {
+                *w &= !mask;
+                self.live -= 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Forget every claim, keeping the allocation for the store's next layout.
+    fn clear(&mut self) {
+        self.bits.fill(0);
+        self.live = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.live as usize
+    }
+
+    fn is_empty(&self) -> bool {
+        self.live == 0
+    }
+}
+
 // A low-level heap store: the several flags (free / read_only /
 // free_protected / borrowed) are independent state bits on the same
 // allocation, not a bundle that should become an enum.
@@ -203,7 +271,7 @@ pub enum StoreChange {
 pub struct Store {
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
-    claims: HashSet<u32>,
+    claims: Claims,
     size: u32,
     #[cfg(feature = "mmap")]
     file: Option<MmapStorage>,
@@ -773,7 +841,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: true,
@@ -891,7 +959,7 @@ impl Store {
             // Recorded so the store can answer "is a `.dmeta` sidecar recording
             // MY bytes" — see `has_durable_sidecar`.
             ptr,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             size,
             // An opened FILE-BACKED store is in use by definition (it
             // carries real data and `open` itself validates it below,
@@ -973,7 +1041,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size: words,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
@@ -1073,7 +1141,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size: words,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: false,
@@ -1441,7 +1509,7 @@ impl Store {
             claim -= next_header;
         }
         *self.addr_mut(rec, 0) = -claim;
-        self.claims.remove(&rec);
+        self.claims.remove(rec);
         // Register the (possibly coalesced) free block in the tree.
         self.fl_insert(rec);
         // P6: a free block now exists.  `delete` only merged FORWARD, so an
@@ -2131,7 +2199,7 @@ impl Store {
     pub unsafe fn borrow_locked_for_light_worker(&self) -> Store {
         Store {
             ptr: self.ptr,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             size: self.size,
             #[cfg(feature = "mmap")]
             file: None,
@@ -2781,7 +2849,7 @@ impl Store {
             "fl_validate: node at {h} has positive header {header} (should be free)"
         );
         debug_assert!(
-            !self.claims.contains(&h),
+            !self.claims.contains(h),
             "fl_validate: node at {h} is both in the free tree and in claims"
         );
         self.fl_validate_node(self.fl_left(h));
@@ -3055,8 +3123,8 @@ impl Store {
 
     /// Fast check whether a value looks like a valid live record.
     /// Used by `get_ref()` to detect inline data that was misinterpreted
-    /// as a record pointer.  Cheaper than `HashSet` lookup — just a range
-    /// check and one memory read (the record header).
+    /// as a record pointer.  A range check and one memory read (the record
+    /// header) — it does not consult the claims set.
     #[must_use]
     pub fn is_valid_record(&self, rec: u32) -> bool {
         // Record must be within the store's allocated space and have a
@@ -3074,7 +3142,7 @@ impl Store {
         // existing image has an empty set while its records are live (the same
         // reason poison skips file-backed stores).
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(&rec),
+            self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         // Read size before any multiplication to avoid overflow when fld 0 is negative
@@ -3303,7 +3371,7 @@ impl Store {
         // header read asserts "Unknown record" for every bound store — which is
         // precisely the store `store_verify` is most often asked about.
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(&rec),
+            self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         let size: i32 = *self.addr(rec, 0);
