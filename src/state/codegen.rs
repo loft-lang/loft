@@ -818,7 +818,16 @@ impl State {
                     return self.insert_types(elem_tp, code_pos, stack);
                 }
                 // T1.4: read element elem_idx from tuple variable var_nr.
-                let Type::Tuple(ref elems) = tuple_tp else {
+                //
+                // Through `base()`, for the same reason the parser's member read is
+                // (loft#1461): a local bound from a nullable read — `e = v[i]` — is typed
+                // `Optional(Tuple)`, and `@FR-T-Absent` says an absent tuple IS a present
+                // tuple of null members, so the member is there to read.  `Optional(τ)` shares
+                // τ's layout, so the offsets are the same and only the SPELLING differed.
+                // Matching bare here while the parser peels is worse than either alone: the
+                // parser accepts the read, emits `TupleGet`, and this panics — a clean refusal
+                // traded for an ICE.
+                let Type::Tuple(ref elems) = *tuple_tp.base() else {
                     panic!("TupleGet on non-tuple variable");
                 };
                 let idx = elem_idx as usize;
@@ -929,7 +938,10 @@ impl State {
                     return Type::Void;
                 }
                 // T1.4: write to element elem_idx of tuple variable var_nr.
-                let Type::Tuple(ref elems) = tuple_tp else {
+                // Peeled like its READ twin above — the two address the same slot and a
+                // spelling one accepts and the other panics on is the drift they exist as a
+                // pair to avoid.
+                let Type::Tuple(ref elems) = *tuple_tp.base() else {
                     panic!("TuplePut on non-tuple variable");
                 };
                 let idx = elem_idx as usize;

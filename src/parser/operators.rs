@@ -1543,33 +1543,24 @@ impl Parser {
             if self.lexer.has_token(".") {
                 wrap_chain = true;
                 *parent_tp = t.clone();
-                // A NULLABLE tuple receiver — `(N-Index)` types `v[i]` as `τ?`, and the null
-                // model has no representation for an absent tuple (`formal/types-history.md`
-                // D-Opt-NoNull), so a member read has nothing to answer with where the index
-                // misses.  Say that, and name the discharges that DO work.  Left to the
-                // branches below the receiver matched none of them, the member NUMBER reached
-                // the field parser, and the report was *"Expect a field name"* — a message
-                // about a name, for a program that wrote a number, on a receiver whose real
-                // problem is the `?`.  A nullable STRUCT receiver reads correctly through its
-                // absence (`@FR-L-Null-Which`), which is what makes the tuple's silence on the
-                // same shape read as a bug rather than a rule.  loft#1423.
-                if self.nullable_tuple_elems(&t).is_some()
-                    && matches!(self.lexer.peek().has, crate::lexer::LexItem::Integer(_, _))
-                {
-                    let spelled = t.source_name(&self.data);
-                    let idx = self.lexer.has_integer().unwrap_or(0);
-                    if !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`.{idx}` on `{spelled}` — the tuple may be absent, and an absent \
-                             tuple has no members; discharge it first: `t?.{idx}` reads the \
-                             members' defaults, `(t ?? (…)).{idx}` takes a default tuple of \
-                             your own"
-                        );
-                    }
-                    t = Type::Unknown(0);
-                } else if let Type::Tuple(ref elems) = t {
+                // Through `base()`: a tuple reached with its `?` on — `v[i]` by a VARIABLE
+                // index, or `h[k].t` once `@FR-Col-Lookup` and `(N-Prop)` are both in — is
+                // `Optional(Tuple)`, and the bare spelling declined it.  `.0` then fell to the
+                // FIELD path, where `0` is not an identifier, and the author was told *"Expect
+                // a field name"* about a tuple index that is spelled correctly (loft#1461).
+                //
+                // The read WORKS rather than being refused, and that is `@FR-T-Absent`'s call,
+                // not a convenience: an absent tuple IS a present tuple of null members, so
+                // `t.i` has something to answer with.  A refusal here — even a well-worded one
+                // naming the discharges — was D-tup-10's own listed deviation, *"`v[i].0` is
+                // REFUSED by name where the rule types it `integer?`"*.
+                //
+                // ⚠ Half closed: the member comes back as `τ`, where the rule says `τᵢ?`.  The
+                // remaining half is the representation — `Type::optional` still mints an
+                // `Optional(Tuple)` the rule says cannot exist, so the members are bare inside
+                // it.  That is the rest of D-tup-10 and it is plan-sized (the flip removes the
+                // `Optional` that `?` and `??` syntactically trigger on).
+                if let Type::Tuple(ref elems) = *t.base() {
                     let elems = elems.clone();
                     if let Some(idx) = self.lexer.has_integer() {
                         let idx = idx as usize;

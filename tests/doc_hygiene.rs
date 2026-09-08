@@ -2746,7 +2746,7 @@ fn every_test_binary_matches_a_subject() {
     assert!(
         unmatched.is_empty(),
         "{} test binar{} matched by no subject in scripts/test_subjects.sh — add a pattern to \
-         SUBJECT_PATTERNS (or join an existing binary; TESTING.md § Subjects): {}",
+         `subject_patterns` (or join an existing binary; TESTING.md § Subjects): {}",
         unmatched.len(),
         if unmatched.len() == 1 {
             "y is"
@@ -2755,6 +2755,7 @@ fn every_test_binary_matches_a_subject() {
         },
         unmatched.join(", ")
     );
+}
 
 /// The nightly workflow's gate CLASS lives on the job, and every list that reads it agrees.
 ///

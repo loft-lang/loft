@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 422 | 398 | **24** |
+| 424 | 400 | **24** |
 
 
 
@@ -2542,7 +2542,14 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 745 | 400 | 5 | **340** |
+| 749 | 403 | 6 | **340** |
+
+⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
+neither branch's numbers survived it, as at every join so far.**  This checkout read
+`745 · 400 · 5 · 340` and the sibling `741 · 384 · 6 · 351`; the join is `749 · 403 · 6 · 340`.
+The KEYSTONE column moved `5 → 6` from the sibling's side (@PLN157 adds a walker that descends
+via the `Type` keystone rather than naming variants), and the opaque column is the one that did
+NOT move — three functions joined the classifier and every one of them peels.
 
 loft#1423's tuple walk moves ONE function out of the opaque column (`341 → 340`, and
 `399 → 400` on the seeing-through side): `parser::operators::coalesce_not_null` reads each tuple

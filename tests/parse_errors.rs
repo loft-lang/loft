@@ -3505,29 +3505,6 @@ fn a_keyed_collection_inside_a_function_type_keeps_the_source_spelling() {
     );
 }
 
-/// loft#1449 — a keyed collection nested inside a FUNCTION type is spelled as its author
-/// wrote it too.
-///
-/// This is the cell the wrapper fix above could not reach.  `source_name` grew an arm per
-/// wrapper someone had a symptom for — `Optional` and `&` — while every other CONSTRUCTOR
-/// still fell to a catch-all that rendered its inner through `name`, the schema key.  So a
-/// `hash<Ent[k]>?` read correctly and a `fn(&hash<Ent[k]>)` did not, in the same build.
-///
-/// The two spellings are one body now, and its recursion carries which job it is doing, so
-/// what this pins is not the function arm in particular: it is that a type is spelled ONE
-/// way all the way down.  A rendering added for a new constructor is covered by construction.
-#[test]
-fn a_keyed_collection_inside_a_function_type_keeps_the_source_spelling() {
-    code!(
-        "struct Ent { k: integer, v: integer }\nfn keyed(x: &hash<Ent[k]>) -> integer { 1 }\nfn test() { b: integer = keyed; }"
-    )
-    .error(
-        "Variable 'b' cannot change type from integer to fn(&hash<Ent[k]>) -> integer; \
-         use a new variable name or cast with 'as' at \
-         a_keyed_collection_inside_a_function_type_keeps_the_source_spelling:3:32",
-    );
-}
-
 #[test]
 fn one_bound_set_cannot_require_two_signatures_of_one_method() {
     code!(
