@@ -5015,6 +5015,43 @@ extern crate loft;"
                     self.predeclared.insert(v);
                 }
             }
+            // loft#1475 — the same sentence for a FN-REF local both arms of a branch assign.
+            // `pre_declare_branch_vars` hoists such a local's `let` to just before the `if`,
+            // which is right while the `if` is a statement and wrong the moment it is an
+            // EXPRESSION: the return-hoist puts a value `if` in the initialiser of
+            // `__ret_N`, and the declaration then lands inside it — rustc reads
+            // `let mut var___ret_1: i64 = let mut var_h: (u32, DbRef) = …` and reports
+            // "expected expression, found `let` statement", then loses `var_h` for the
+            // function-level frees that name it.  Binding it up front is the cure this
+            // prologue already applies twice above, for the same reason each time.
+            //
+            // Wrapping the `if` in a block instead does NOT work, and the measurement is the
+            // argument: it makes the declaration block-scoped, and the frame's scope-exit
+            // free of the closure half (`if var_h.1.store_nr != u16::MAX`) sits outside it,
+            // so E0425 comes back one line later.
+            //
+            // #354's boundary is respected: the pre-binding is the empty fn-ref, which owns
+            // nothing and allocates nothing, so it can orphan nothing.  The arms' own
+            // assignments still run at their IR positions and are what mint the record.
+            let mut branch_locals: Vec<u16> = Vec::new();
+            collect_branch_shared_assigned(def.code(), &mut branch_locals);
+            for v in branch_locals {
+                if vars.is_argument(v) || self.declared.contains(&v) {
+                    continue;
+                }
+                if !matches!(vars.tp(v).base(), Type::Function(_, _, _)) {
+                    continue;
+                }
+                use std::fmt::Write as _;
+                let _ = write!(
+                    vdb_prologue,
+                    "\n  let mut var_{}: {} = {};",
+                    sanitize(vars.name(v)),
+                    rust_type(vars.tp(v), &Context::Variable),
+                    default_native_value_in(vars.tp(v), &Context::Variable)
+                );
+                self.declared.insert(v);
+            }
             // Entry-buffer witness for each hidden return buffer (retbuf): stash
             // the caller's buffer at function entry as `_rb_w_<name>`.  A
             // CONDITIONAL reassignment of the return-local (`chosen = m_none();
@@ -6477,4 +6514,38 @@ mod p98_p34_tests {
             "the flippable fn table is emitted: {dbg}"
         );
     }
+}
+
+/// Every variable assigned in BOTH arms of some branch inside `code`.
+///
+/// The set [`Emitter::pre_declare_branch_vars`] would hoist a `let` for, computed once over a
+/// whole function so the declaration can go in the prologue instead — where its scope does not
+/// depend on whether the branch happened to be emitted as a statement or as an expression.
+///
+/// Answers the arms of every `If`, at any depth, since a `match` lowers to nested ones.
+fn collect_branch_shared_assigned(code: &Value, out: &mut Vec<u16>) {
+    code.walk(&mut |n| {
+        let Value::If(_, t, f) = n.unspan() else {
+            return;
+        };
+        let (mut tv, mut fv) = (Vec::new(), Vec::new());
+        collect_assigned_anywhere(t, &mut tv);
+        collect_assigned_anywhere(f, &mut fv);
+        for v in tv {
+            if fv.contains(&v) && !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    });
+}
+
+/// Every variable `code` assigns, at any depth.
+fn collect_assigned_anywhere(code: &Value, out: &mut Vec<u16>) {
+    code.walk(&mut |n| {
+        if let Value::Set(v, _) = n.unspan()
+            && !out.contains(v)
+        {
+            out.push(*v);
+        }
+    });
 }

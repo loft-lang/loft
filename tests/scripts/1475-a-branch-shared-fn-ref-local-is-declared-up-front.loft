@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1475 — a fn-ref local that BOTH arms of a branch assign, in a frame whose tail is hoisted.
+//
+// A Rust `let` lives where the emission first reaches it, so a local both arms assign has its
+// declaration hoisted to just before the `if`.  That is right while the `if` is a STATEMENT and
+// wrong the moment it is an EXPRESSION: the return-hoist puts a value `if` in the initialiser of
+// `__ret_N`, and the declaration then lands inside it —
+// `let mut var___ret_1: i64 = let mut var_h: (u32, DbRef) = …; if …` — which rustc rejects with
+// "expected expression, found `let` statement" and then loses `var_h` for every function-level
+// free that names it.
+//
+// The cure is the one this function's prologue already applies twice, to `__vdb` store locals
+// (#260) and to the views a `return` names (loft#1178): bind it up front so the `let` POSITION
+// stops deciding the scope.  #354's boundary holds — the pre-binding is the empty fn-ref, which
+// owns nothing and allocates nothing, and the arms' own assignments still mint at their IR
+// positions.
+//
+// Wrapping the `if` in a block instead does not work, and that is worth recording because it is
+// the obvious move: it makes the declaration block-scoped, and the frame's scope-exit free of the
+// closure half sits outside that block, so E0425 returns one line later.
+//
+// `--interpret` is correct throughout — every local is a frame slot there, so this is a property
+// of the EMISSION and not of the program, and only `--native` can see it.  `--native` is also the
+// DEFAULT backend, so the program does not run at all unless the author knows to ask for the
+// other one.
+//
+// Axes this file MOVES:  whether the shared local CAPTURES (a capturing closure carries a record;
+//                        a bare one is a def-number) · the branch's SPELLING (`if` · `match`) ·
+//                        the number of arms · whether the frame owns a heap local at all, which
+//                        is what puts a free after the tail and so forces the hoist · and the
+//                        RETURN type (a value type, and a fn-ref, which take different hoist legs).
+// Axes it HOLDS FIXED:   the local is assigned in EVERY arm — that is what makes the emitter hoist
+//                        its declaration.  A local assigned in one arm only is declared inside
+//                        that arm and never reaches this question.
+//
+// @falsified-at: e4963053b — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).  The control reports
+//   `loft: native compilation failed (codegen bug)` with `error: expected expression, found let
+//   statement` plus a cascade of `error[E0425]: cannot find value var_h in this scope`.
+
+struct E75 { a: integer }
+enum W75 { One, Two }
+
+// e1 — the filed shape: both `if` arms bind a CAPTURING closure to the same name, and the frame
+// owns a heap local so the tail is hoisted.
+fn if_capturing(p: boolean) -> integer {
+  e: E75 = E75 { a: 2 };
+  if p { h = fn() -> integer { 3 + e.a }; h() } else { h = fn() -> integer { 5 + e.a }; h() }
+}
+
+// e2 — the same with NON-capturing closures.  A bare lambda is a def-number rather than a record,
+// so it takes the other fn-ref spelling into the same shared slot.
+fn if_bare(p: boolean) -> integer {
+  e: E75 = E75 { a: 2 };
+  if p { h = fn() -> integer { 5 }; h() + e.a - 2 } else { h = fn() -> integer { 7 }; h() + e.a - 2 }
+}
+
+// e3 — the `match` spelling of the same choice.
+fn match_arms(p: boolean) -> integer {
+  e: E75 = E75 { a: 2 };
+  match p { true => { h = fn() -> integer { 3 + e.a }; h() }, false => { h = fn() -> integer { 5 + e.a }; h() } }
+}
+
+// e4 — THREE arms over an enum, so the shared local is assigned in a NESTED branch too.
+fn three_arms(p: W75, q: boolean = true) -> integer {
+  e: E75 = E75 { a: 2 };
+  match p {
+    One => { h = fn() -> integer { 3 + e.a }; h() },
+    Two => if q { h = fn() -> integer { 5 + e.a }; h() } else { h = fn() -> integer { 7 + e.a }; h() },
+  }
+}
+
+// e5 — the function RETURNS the fn-ref rather than an integer, so the other hoist leg carries it.
+fn returns_fnref(p: boolean) -> fn() -> integer {
+  e: E75 = E75 { a: 2 };
+  if p { h = fn() -> integer { 3 + e.a }; h } else { h = fn() -> integer { 5 + e.a }; h }
+}
+
+// c1 — CONTROL: no heap local, so nothing frees after the tail and the tail is not hoisted.  The
+// shared declaration then sits before a STATEMENT `if`, which was always correct.
+fn ctl_no_free(p: boolean) -> integer {
+  if p { h = fn() -> integer { 5 }; h() } else { h = fn() -> integer { 7 }; h() }
+}
+
+// c2 — CONTROL: only ONE arm binds the local, so its `let` stays inside that arm and the hoist
+// never runs.  A cure that pre-declared every local would change this cell.
+fn ctl_one_arm(p: boolean) -> integer {
+  e: E75 = E75 { a: 2 };
+  if p { h = fn() -> integer { 3 + e.a }; h() } else { 7 }
+}
+
+fn main() {
+  assert(if_capturing(true) == 5, "e1 capturing, first arm: {if_capturing(true)}");
+  assert(if_capturing(false) == 7, "e1b capturing, second arm: {if_capturing(false)}");
+  assert(if_bare(true) == 5, "e2 bare lambda, first arm: {if_bare(true)}");
+  assert(if_bare(false) == 7, "e2b bare lambda, second arm: {if_bare(false)}");
+  assert(match_arms(true) == 5, "e3 `match`, first arm: {match_arms(true)}");
+  assert(match_arms(false) == 7, "e3b `match`, second arm: {match_arms(false)}");
+  assert(three_arms(W75.One) == 5, "e4 three arms, first: {three_arms(W75.One)}");
+  assert(three_arms(W75.Two, true) == 7, "e4b three arms, nested then: {three_arms(W75.Two, true)}");
+  assert(three_arms(W75.Two, false) == 9, "e4c three arms, nested else: {three_arms(W75.Two, false)}");
+
+  g = returns_fnref(true); h2 = returns_fnref(false);
+  assert(g() == 5, "e5 fn-ref return, first arm: {g()}");
+  assert(h2() == 7, "e5b fn-ref return, second arm: {h2()}");
+
+  assert(ctl_no_free(true) == 5, "c1 no frame free, first arm: {ctl_no_free(true)}");
+  assert(ctl_no_free(false) == 7, "c1b no frame free, second arm: {ctl_no_free(false)}");
+  assert(ctl_one_arm(true) == 5, "c2 one binding arm, taken: {ctl_one_arm(true)}");
+  assert(ctl_one_arm(false) == 7, "c2b one binding arm, skipped: {ctl_one_arm(false)}");
+
+  println("1475-a-branch-shared-fn-ref-local-is-declared-up-front ok");
+}
