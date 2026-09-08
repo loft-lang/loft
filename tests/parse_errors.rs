@@ -3065,6 +3065,129 @@ fn b_ref_reshape_callee_removal_under_local_amp_link_is_error() {
     );
 }
 
+/// B-Ref-Reshape (g2) — the SAME refusal on every keyed kind, because the `&` marker that
+/// gates it is set from the SOURCE type and a keyed lookup now has two spellings.
+///
+/// `@FR-Col-Lookup` gives a keyed point lookup its `?` (loft#1450), so `c = &s[30]` sources
+/// `Optional(Reference(Elm))` where it used to source `Reference(Elm)`.  `set_amp_link` tested
+/// the bare spelling, answered no, and never set the marker — and the marker is what all FOUR
+/// reshape refusals read (`scopes.rs` for removal / reassign / callee-removal, and the rekey
+/// arm of `note_key_field_write`).  One unpeeled `matches!` therefore silenced the whole rule
+/// for keyed views while every existing cell — all written against a VECTOR view, which no
+/// widening touches — kept passing.  That is @PLN130 F9's own warning made real: *"the
+/// alternative is not a lesser `&`, it is a SILENT one"*.
+///
+/// So the axis these cells add is the RECEIVER KIND, not the message: the message is identical
+/// and deliberately so.  A widening that reaches only one kind would leave the others green.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: hash<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error:1:153",
+    );
+}
+
+/// B-Ref-Reshape (g3) — `index`, the kind that is BOTH a tree and a hash table.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_an_index_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: index<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_an_index_is_error:1:154",
+    );
+}
+
+/// B-Ref-Reshape (g4) — `spatial`, where the key is a COORDINATE AXIS and there are two of them.
+///
+/// Load-bearing beyond repetition: the message names the single axis written (`x`), so this cell
+/// says the refusal is per-key-field rather than per-collection, and it is the only cell whose
+/// receiver reaches the lookup through the `Radix` arm.
+#[test]
+fn b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error() {
+    code!(
+        "struct Pt { x: integer, y: integer, v: integer } \
+         fn test() { s: spatial<Pt[x, y]> = [Pt { x: 1, y: 2, v: 7 }]; \
+           c = &s[1, 2]; c.x = 9; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `x` through `c` — `x` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error:1:134",
+    );
+}
+
+/// B-Ref-Reshape (g4b) — the receiver's OWN `?`, which is a second column and not the same one.
+///
+/// `s: sorted<Elm[key]>?` reaches the marker through `@FR-N-Domain` rather than
+/// `@FR-Col-Lookup`: an ABSENT collection has no entry to answer with, so the lookup is `τ?`
+/// whatever the key.  Two different rules, the same `Optional(Reference(Elm))` source type, and
+/// so the same unpeeled `matches!` swallowed both — but this column was ALREADY silent before
+/// the `(Col-Lookup)` widening existed, because a nullable receiver has always produced the
+/// wrapped spelling.  Measured on a sibling tree with both keyed `receiver_optional` wraps
+/// disabled: still silent, so the widening did not cause it and could not have.
+///
+/// Kept as its own cell for that reason: the dense column and the nullable column broke at
+/// different times for different reasons and are only closed by the same line.  Sharing one
+/// cell would let a future narrowing of the peel close one and reopen the other in silence.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: sorted<Elm[key]>? = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s?)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error:1:156",
+    );
+}
+
+/// B-Ref-Reshape (g5) — the REMOVAL leg through a keyed `&` view, which the same marker gates.
+///
+/// `s[30] = null` is `(Col-RemoveKeyed)`.  The cell is here because the rekey arm and the
+/// removal arm read the marker from two different files, so a fix that restores one need not
+/// restore the other — and every removal cell in this file uses a vector.
+///
+/// ⚠ The refusal is deliberately COARSER than `(Col-RemoveKeyed)` needs.  That rule promises
+/// every other key stays reachable and unchanged, so removing key 10 cannot disturb a view of
+/// key 30 — yet this refuses on ANY removal from the container, because which key a removal
+/// names is a runtime value and the compiler cannot tell 10 from 30.  Refusing the safe case
+/// is sound; missing the unsafe one is not, and COMPATIBILITY.md's pre-freeze rule is to be
+/// strict now.  This is also the behaviour that shipped before the widening, not a new
+/// tightening.  (The message it prints is a vector's reason — "a removal renumbers the
+/// remaining elements" — given to someone holding a keyed collection, which is wrong wording
+/// for a right verdict and is tracked apart from this cell.)
+#[test]
+fn b_ref_reshape_keyed_removal_under_amp_link_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: sorted<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; s[30] = null; c.tag = 9; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `s` while `c` references a place inside it — a removal renumbers \
+         the remaining elements, so a write through `c` would no longer reach the element it \
+         names. Move it after the last use of `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_keyed_removal_under_amp_link_is_error:1:1",
+    );
+}
+
 /// B-Ref-Reshape (g) — writing a KEY field through a `&` reference into a keyed collection.
 ///
 /// The third disturbance, and the odd one out: there is no liveness question (the key write IS

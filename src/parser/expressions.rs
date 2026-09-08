@@ -3425,9 +3425,20 @@ use a separate collection or add after the loop"
         // indirection parameters use, paying on every access to carry a compile-time
         // fact, which is exactly what loft's own advice warns about for a redundant `&`
         // param.  INERT: nothing reads it yet (step 3, the refusal, is what will).
+        //
+        // Through `base()`: a `&` onto a KEYED point lookup (`c = &s[30]`) sources an
+        // `Optional(Reference(E))` once `@FR-Col-Lookup` gives the lookup its `?`
+        // (loft#1450), and the bare spelling answered no — so the marker was never set and
+        // every `is_amp_link` reader downgraded the link to a copy in silence.  Measured:
+        // `c = &s[30]; c.key = 5` fell from `B-Ref-Reshape`'s REFUSAL to the copy-out
+        // advice, which is @PLN130 F9's explicit "the alternative is not a lesser `&`, it
+        // is a SILENT one" — the write stopped reaching `s` and the `&` said nothing.  The
+        // marker is what the four reshape refusals gate on (`scopes.rs::is_amp_link`, the
+        // rekey arm in `note_key_field_write`), so ONE unpeeled test silenced all of them
+        // for keyed views while the vector views they are usually written against passed.
         if amp_unlowered
             && var_nr != u16::MAX
-            && matches!(s_type, Type::Reference(..) | Type::Enum(_, true, _))
+            && matches!(s_type.base(), Type::Reference(..) | Type::Enum(_, true, _))
         {
             self.vars.set_amp_link(var_nr);
         }

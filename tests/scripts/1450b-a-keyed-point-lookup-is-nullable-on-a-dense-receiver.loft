@@ -89,6 +89,40 @@ fn main() {
   for q in p.c[(0, 0)..(9, 9)] { box = box + q.v; }
   assert(box == 30, "a spatial RANGE slice iterates with no discharge: {box}");
 
+  // ---- the SPATIAL point lookup, which is the FULL key and nothing else ----
+  //
+  // `spatial` is the kind whose point lookup is easiest to get wrong, because the spelling
+  // that looks like one is not one: `p.c[(1, 1)]` is refused outright ("a spatial slice needs
+  // a range"), since a `(` after the subscript routes to `parse_spatial_slice` before the
+  // point path can be reached.  A spatial point lookup is written with the axes BARE and all
+  // of them present — `p.c[1, 1]` — which is the form guarded here.
+  //
+  // ⚠ Deliberately NOT guarded: the UNDER-keyed `p.c[5]`, one integer where two axes are
+  // declared.  It compiles, and with this leg it types `P1450?` and answers `null` for every
+  // key — a lookup that cannot hit.  Its three sibling kinds refuse the same shape (`hash`
+  // says "Too few key fields"; `sorted`/`index` make it a partial-key iterator), so spatial is
+  // the one kind in neither list — loft#1457.  Asserting what it answers today would freeze
+  // that gap into the suite as intent, so this cell asserts the WORKING spelling and leaves
+  // the broken one to its own issue.
+  assert((p.c[1, 1] ?? P1450 { x: 0, y: 0, v: -1 }).v == 10, "a spatial full-key hit reads its element");
+  assert((p.c[7, 7] ?? P1450 { x: 0, y: 0, v: -1 }).v == -1, "a spatial full-key miss takes the default");
+
+  // and the spatial WRITE target is unmoved by the `?`, like every other kind's
+  p.c[3, 4] = P1450 { x: 3, y: 4, v: 30 };
+  assert(len(p.c) == 3, "a spatial keyed write still inserts: {len(p.c)}");
+  assert((p.c[3, 4] ?? P1450 { x: 0, y: 0, v: -1 }).v == 30, "and the written element reads back");
+
+  // ---- and the `?` costs an `&` VIEW nothing: a NON-key field still writes THROUGH ----
+  //
+  // The receiving half of `@PLN130 F9`.  `c = &h.c[1]` sources `Optional(Reference(E1450))`
+  // once this leg lands, and the `&` marker is set from that source type — so this cell is
+  // the runnable twin of `parse_errors::b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error`:
+  // that one says the KEY write is refused, this one says the ordinary write still reaches the
+  // collection.  Without both, "refuse the key write" is satisfiable by refusing everything.
+  view = &h.c[1];
+  view.v = 99;
+  assert((h.c[1] ?? E1450 { k: 0, v: -1 }).v == 99, "a non-key write through a keyed `&` view reaches the collection: {(h.c[1] ?? E1450 { k: 0, v: -1 }).v}");
+
   // ---- control: a keyed WRITE is unmoved, on every kind ----
   h.c[2] = E1450 { k: 2, v: 40 };
   s.c[2] = E1450 { k: 2, v: 50 };
