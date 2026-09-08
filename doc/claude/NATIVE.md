@@ -51,6 +51,27 @@ cargo fmt -- --check                    # formatted
 
 ---
 
+## Optimisation tiers — semantics runs, performance lanes, shipped binaries
+
+Three tiers, and the split is deliberate (owner's rule, 2026-09-08):
+
+| tier | what runs it | prelude | rustc |
+|---|---|---|---|
+| **semantics** | `--native`, the test runner's native corpus and fixtures | named frames, live/debug channel | `-O` or none — the compile is the cost that matters |
+| **performance** | `scripts/native_ratio.sh`, `bench/run_bench.sh`, a consumer's `--native-release` bench | lean | `-C opt-level=3 -C codegen-units=1` |
+| **shipped** | `--native-release` programs, every library cdylib (`native_lib.rs`) | lean | `-C opt-level=3 -C codegen-units=1` |
+
+A performance lane measures exactly what a shipped binary gets, and never the semantics
+build.  The numbers behind the split, drawing pass consumer lane, 2026-09-08: the lean
+tier alone took `hash` 4.7M → 1.2M ns/op, `hair` −55 %, `wide_line` −32 %, `composite`
+−16 %, `lock` −13 %, `smooth` −19 %; `codegen-units=1` on top −3–5 % broadly and −15–20 %
+on `hash`; opt-level 3 alone and `-C target-cpu=native` moved nothing.  The runtime rlib
+itself stays on cargo's default release profile: rebuilt with one codegen unit it moved
+neither `lock` nor `hash` (its hot accessors are `#[inline]` already), so the cost to
+`make ci`'s build is not paid for a gain that did not appear.  `--lean` remains the way
+to strip the tier from a `--native` build; `--html` keeps its named frames (the browser
+panic hook's frame block is a pinned contract).
+
 ## Current State
 
 **Updated 2026-03-23 — Full native test parity achieved.**

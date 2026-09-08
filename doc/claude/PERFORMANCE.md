@@ -4177,7 +4177,10 @@ reference: the `drawing` library (loft-libs-graphics, branch `drawing-lock`)
 times 14 routines against a pure-Rust port of the same arithmetic in the same
 order, and every row's FNV-1a-32 output hash agrees across the interpreter,
 `--native-release` and `rustc -O` — so the ratios below are like for like.
-Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio):
+Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio).  ⚠ Since
+2026-09-08 the loft-native lane is the SHIPPED tier — `--native-release` is lean and
+fully optimised (NATIVE.md § Optimisation tiers) — so a row measured before that date
+carries the named prelude and `-O`, and is not comparable to one measured after:
 
 | routine | Rust | loft-native | native / Rust |
 |---|---:|---:|---:|

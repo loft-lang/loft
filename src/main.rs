@@ -181,8 +181,11 @@ fn print_help() {
         "  --dump                        compile to bytecode, dump to stderr, and exit (no execution)"
     );
     println!("  --native                      compile to native Rust via rustc and run (default)");
-    println!("  --native-release              like --native but emit only reachable functions and");
-    println!("                                compile with rustc -O (optimised build)");
+    println!("  --native-release              like --native but emit only reachable functions,");
+    println!("                                compile fully optimised (opt-level 3, one codegen");
+    println!("                                unit) and strip the live/debug tier as --lean does:");
+    println!("                                a SHIPPED binary.  --native keeps every tier — the");
+    println!("                                semantics run");
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
@@ -10787,8 +10790,17 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
-            out.lean = lean;
-            if lean {
+            // `--native-release` asks for both: a shipped binary is fully optimised,
+            // and the named per-call frame push was the largest single cost the tier
+            // carried (measured on the drawing pass, consumer lane: `hash` 4.7M → 1.2M
+            // ns/op, `hair` −55 %, `wide_line` −32 %, the pixel rows −13–19 %).
+            // `--native` keeps every tier — that is the semantics run, where frames and
+            // the live channel are worth their cost.  The browser (`--html`) path is
+            // separate and keeps its named frames: its panic hook's frame block is a
+            // pinned contract.
+            let shipped = lean || native_release;
+            out.lean = shipped;
+            if shipped {
                 out.emit_live = false;
                 out.lean_tier = true;
             }
@@ -11058,7 +11070,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             cmd.arg(&emit_path);
             if native_release {
-                cmd.arg("-O");
+                // A shipped binary: full optimisation.  Measured on the drawing pass
+                // over `-O`: `hash` −15–20 %, the pixel rows −3–5 %; opt-level 3 alone
+                // and `-C target-cpu=native` moved nothing, so neither is asked for on
+                // its own.  Semantics runs (`--native`, the test runner) keep the
+                // faster compile.
+                cmd.args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
             }
             // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is
             // debug info from libloft.rlib + std).  Skipped when the user

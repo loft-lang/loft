@@ -12,10 +12,12 @@ place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
 SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
-Scoreboard vs the issue baseline: `hash` 10.9× → 3.6–4.3× gate-row / 2.3× at
-the leaf; `hair` 4.3× → 3.2× (under the bar); `lock` 30× → **5.3×** shipped
-(8.0× in the consumer lane); `smooth` 262× → **21×**; `fronds` 49× → **19×**;
-`composite` 26× → 12×; the fills 17× → 4.5–5×.
+Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
+optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
+`hash` 10.9× → **9.1×** consumer / 2.7–5.4× gate row; `hair` 4.3× → **2.6×**
+(under the bar); `lock` 30× → **7.8×** (6.5–7.4× gate row); `smooth` 262× →
+**19×**; `fronds` 49× → **18×**; `composite` 26× → **11×**; the fills 17× →
+4.5–5×; `wide_line` 17× → 8.9×.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a

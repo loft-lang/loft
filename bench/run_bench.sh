@@ -178,9 +178,9 @@ run_bench() {
   if [[ $HAS_LOFT -eq 1 && $HAS_RUST -eq 1 && -n "$LOFT_LIB" && $NO_BUILD -eq 0 && -f "$dir/bench.loft" ]]; then
     mkdir -p "$build_dir"
     native_rs="$build_dir/bench.rs"
-    "$LOFT" --native-emit "$native_rs" "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
+    "$LOFT" --native-emit "$native_rs" --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
     if [[ -f "$native_rs" ]]; then
-      rustc -O --edition=2024 \
+      rustc -C opt-level=3 -C codegen-units=1 --edition=2024 \
         --extern "loft=$LOFT_LIB/libloft.rlib" \
         -L "$LOFT_LIB/deps" \
         -o "$build_dir/bench_bin" \

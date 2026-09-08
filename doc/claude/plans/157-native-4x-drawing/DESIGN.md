@@ -1046,6 +1046,38 @@ the callee's `__retbuf` for a projection-returning callee, which is threaded but
 adopted (not a store today — the labelled log showed none per `ctrl` call — so a
 signature question, not an allocation one).
 
+## The shipped tier — `--native-release` is lean and fully optimised (owner's rule, 2026-09-08)
+
+Not a compiler unit: a flags decision, asked for by the owner as a clear divergence —
+*semantics tests may run unoptimised, performance tests and every built binary run fully
+optimised* — and measured before it was made (NATIVE.md § Optimisation tiers).  The
+consumer lane had been paying the named per-call frame push and `-O` in every row, which
+the gate row (lean, hand-compiled) never did; that was the 4× between the two `hash`
+numbers.  Measured on the consumer bench at `--n 50`, two runs each:
+
+| row | `-O`, named prelude | `--lean` | lean + opt3 + `codegen-units=1` |
+|---|---:|---:|---:|
+| hash | 4.7–4.8M | 1.1–1.3M | 0.9–1.1M |
+| hair | 84k | 38k | 37k |
+| wide_line | 77k | 52k | 51k |
+| composite | 1.34M | 1.12M | 1.08M |
+| lock | 13.9M | 12.1M | 11.9M |
+| smooth | 8.9k | 7.2k | 7.3k |
+| fronds | 1.03M | 0.95M | 0.98M |
+
+Opt-level 3 alone and `-C target-cpu=native` moved nothing; the runtime rlib rebuilt with
+one codegen unit moved neither `lock` nor `hash` (its hot accessors are `#[inline]`
+already), so the rlib stays on cargo's default profile.  Now the default for
+`--native-release` programs and for every library cdylib (`native_lib.rs`, whose recorded
+rustc arguments had been `-C opt-level=2` with the named prelude); `native_ratio.sh` and
+`run_bench.sh` measure the same tier.  Consumer table after (best of 3, every hash
+agreeing): `hash` **9.1×** (16×), `hair` **2.6×** (3.3×), `smooth` 18.9× (20.8×),
+`fronds` 18.4×, `lock` 7.8× (8.0×), `lock_curved` 10.7×, `composite` **10.9×** (12.9×),
+fills 4.5× / 5.0×, `wide_line` 8.9× (9.4×).  The P0 gate's loft lanes: `hash`
+0.72–0.83M, `lock` 12.6–13.3M ns/op (bars kept; the reference lane's swing is the
+instrument note in § V-f).  A number in this document taken before this date is on the
+old tier and is not comparable to one taken after.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can

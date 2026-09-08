@@ -74,9 +74,12 @@ build_and_run() {
   local dir="$ROOT/bench/$1" build
   build="$dir/.loft"
   mkdir -p "$build"
-  # loft-native lane — the exact shape run_bench.sh and loft#1426 build.
-  "$LOFT" --native-emit "$build/ratio_native.rs" --path "$ROOT/" "$dir/bench.loft" > /dev/null
-  rustc -O --edition=2024 --extern "loft=$LOFT_LIB/libloft.rlib" -L "$LOFT_LIB/deps" \
+  # loft-native lane — what a SHIPPED binary gets (`--native-release`): the lean tier
+  # and full optimisation.  A performance lane measures the optimised build; the
+  # semantics runs are the test runner's.
+  "$LOFT" --native-emit "$build/ratio_native.rs" --lean --path "$ROOT/" "$dir/bench.loft" > /dev/null
+  rustc -C opt-level=3 -C codegen-units=1 --edition=2024 \
+    --extern "loft=$LOFT_LIB/libloft.rlib" -L "$LOFT_LIB/deps" \
     -o "$build/ratio_native" "$build/ratio_native.rs"
   rm -f "$build/ratio_native.rs"
   # Rust reference lane.
