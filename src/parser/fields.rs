@@ -637,6 +637,41 @@ impl Parser {
 
     /// Consume remaining function call arguments after `(` has already been consumed.
     /// Handle `v.map(fn)` / `v.filter(fn)` / `v.reduce(fn)` method syntax.
+    /// `@FR-Col-Lookup` — a keyed POINT lookup answers `τ?`, because an absent key yields the
+    /// null record.  ONE home for the two arms that perform one (`hash`/`spatial`/`trie`, and
+    /// `sorted`/`index`), so a kind added to either cannot end up with the other's answer.
+    ///
+    /// The rule has said this since it was written; what it lacked was a TYPE.  Its own cited
+    /// anchor is the `expr_not_null` LINT clear beside each call site — a citation that
+    /// RESOLVES and does not ENFORCE, which is how `collections.md` could read `OPEN: 0` over a
+    /// live gap.  A lookup that missed in a PRESENT collection bound into a non-null slot in
+    /// silence, on all four keyed kinds, so the receiver's `?` was never the axis
+    /// (`D-col-lookup`; the receiver-absent half is `D-Null-Recv`, closed separately).
+    ///
+    /// `point_lookup` is false for a spatial or trie RANGE slice, which answers the COLLECTION
+    /// for an enclosing `for` to iterate — iterating one is total, and there is no absence
+    /// there to discharge.
+    ///
+    /// Both guards are the vector arm's and both are load-bearing: `pln25_dn1_enabled` is the
+    /// null model's switch, and `tagged_pointer_type` keeps a `__nullable<S>` element — already
+    /// the slot's own spelling of `S?` (`@FR-L-Null-Tag`) — from becoming the `τ??` that
+    /// `@FR-N-Idem` forbids, which `Type::optional` cannot see because the synthetic is an
+    /// `Enum` to it.
+    fn wrap_keyed_lookup_nullable(&mut self, elm_type: &mut Type, point_lookup: bool) {
+        // An UNRESOLVED element type takes no marker.  `Optional(Unknown)` is not a type the
+        // rest of the compiler can name — it surfaces as *"Unknown type unknown(730)?"* — and a
+        // first-pass lookup whose element has not been resolved yet is exactly that.  The
+        // nullability is a property of the LOOKUP and survives to the second pass, where the
+        // element type is known and this wraps it then.
+        if point_lookup
+            && !elm_type.is_unknown()
+            && crate::keys::pln25_dn1_enabled()
+            && self.tagged_pointer_type(elm_type).is_none()
+        {
+            *elm_type = Type::optional(elm_type.clone());
+        }
+    }
+
     fn parse_vector_method(&mut self, code: &mut Value, t: &Type, method: &str) -> Type {
         let mut list = vec![code.clone()];
         let mut types = vec![t.clone()];
@@ -1124,8 +1159,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // ty, limit)` — the same scratch path as iteration — and returns the Radix
             // type so `parse_for` iterates the already-built scratch.  A `(` opens the
             // coordinate tuple.
+            // Only a POINT lookup answers an element, and only a point lookup is nullable.  A
+            // spatial or trie RANGE slice answers the COLLECTION type for the enclosing `for`
+            // to iterate, and iterating one is total — wrapping that in `Optional` would make
+            // every slice loop demand a discharge it has no absence to discharge.
+            let mut point_lookup = true;
             if matches!(t, Type::Radix(_, _, _)) && self.lexer.peek_token("(") {
                 elm_type = self.parse_spatial_slice(code, &t, &key_types);
+                point_lookup = false;
             } else if matches!(t, Type::Trie(_, _, _)) {
                 // A trie subscript is `t[k]` (exact) or `t[pre..]` (prefix) — which one
                 // is only known after the key expression is parsed, so both live in one
@@ -1134,6 +1175,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 let dep = self.container_dep(code, &t);
                 if let Some(slice) = self.parse_trie_slice(code, &t, &key_types) {
                     elm_type = slice;
+                    point_lookup = false;
                 } else if let Some(cv) = dep {
                     elm_type = elm_type.depending(cv);
                 }
@@ -1152,6 +1194,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // the key.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            self.wrap_keyed_lookup_nullable(&mut elm_type, point_lookup);
             // `@FR-N-Domain` — an ABSENT keyed collection has no entry to answer with, so the
             // lookup is `τ?` whatever the key.  (The lookup's OWN nullability for a present
             // collection with a missing key is `(Col-Lookup)`, still carried by the
@@ -1183,12 +1226,20 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // @P285 — see the Hash/Radix arm above; the lookup result is nullable.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
-            // `@FR-N-Domain` — see the Hash/Radix arm above, including the iterator exclusion:
-            // this is the arm a PARTIAL key actually reaches, since `sorted`/`index` admit one
-            // as an interval.
-            if receiver_optional
-                && self.tagged_pointer_type(&elm_type).is_none()
-                && !matches!(code.unspan(), Value::Iter(..))
+            // `(Col-Lookup)` types the point lookup `τ?` here too (loft2-27's leg).  ⚠ Its
+            // own comment read *"`sorted` / `index` subscripting has no RANGE form here, so
+            // every arrival is a point lookup"* — which is the assumption loft3-19's
+            // `5bb081e2` had just corrected on the other arm: `parse_key` answers an ITERATOR
+            // for a PARTIAL key (`m[1]` on a two-key kind is `m[1..=1]`), and this is the arm
+            // a partial key actually reaches, since `sorted`/`index` admit one as an interval.
+            // Wrapping an iterator in `?` is what lost the *"Cannot assign null to a
+            // partial-key lookup"* refusal.  Derived, not assumed, at BOTH the wrap and the
+            // `(N-Domain)` test.
+            let point_lookup = !matches!(code.unspan(), Value::Iter(..));
+            self.wrap_keyed_lookup_nullable(&mut elm_type, point_lookup);
+            // `@FR-N-Domain` — see the Hash/Radix arm above; an absent collection has no
+            // entry to answer with whatever the key.
+            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() && point_lookup
             {
                 elm_type = Type::optional(elm_type);
             }

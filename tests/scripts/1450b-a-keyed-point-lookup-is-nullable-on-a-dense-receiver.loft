@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-Col-Lookup` — a keyed POINT lookup answers `τ?`, because an absent key yields the null
+// record.  The rule has said so since it was written; what it lacked was a TYPE.
+//
+// Its own cited anchor was the `expr_not_null` LINT clear beside each lookup site — a citation
+// that RESOLVES and does not ENFORCE, which is how `collections.md` could read `OPEN: 0` over a
+// live gap.  A lookup that MISSED in a PRESENT collection bound into a non-null slot in silence,
+// on every keyed kind (`D-col-lookup`).
+//
+// ⚠ THE RECEIVER'S `?` IS NOT THE AXIS, and that is the half most likely to be re-derived
+// wrongly.  The filed issue reads as "the receiver's `?` is dropped", and the receiver-absent
+// half is a DIFFERENT deviation, closed separately as `D-Null-Recv`.  This one fires on a
+// plainly DENSE collection: `h: hash<E[k]> = []` and `h[i]` binds null into an `E` slot.  The
+// cells below are therefore all dense receivers — a nullable one would prove the other rule.
+//
+// Controls, each load-bearing:
+//   * a RANGE SLICE is NOT a point lookup and takes no `?`.  A spatial box and a trie prefix
+//     answer the COLLECTION for an enclosing `for`, and iterating one is total — there is no
+//     absence there to discharge, so wrapping them would demand a cure for a fault that cannot
+//     happen.  This is the cell that says the widening did not over-reach.
+//   * both DISCHARGES answer, and answer the right VALUES: a hit reads its element, a miss
+//     takes the default.  A message whose cure is untested advertises a dead end.
+//   * a keyed WRITE is unmoved.  `h[k] = v` parses its target through the same `parse_index`, so
+//     the receiver's `?` can land on an assignment TARGET and stop the write being recognised as
+//     one — it would then lower to a READ and lose the write in silence.  `(Col-Insert-Absent)`
+//     makes the write total; the peel that keeps it so is keyed on `OpGetRecord`.
+//
+// @falsified-at: 96b2d840f — MEASURED, both backends.  On that build every `miss_*` cell binds
+//   the null record into a non-null local with NO diagnostic, so the channel is the warning
+//   count rather than an assert: the VALUES below are what loft answers either way (C80 gives
+//   the null record), and what moves is whether anything says so.  The slice and write cells
+//   pass there unchanged, which is what makes them controls rather than cells.
+
+struct E1450 { k: integer, v: integer }
+struct W1450 { s: text, v: integer }
+struct P1450 { x: integer, y: integer, v: integer }
+
+struct Hh1450 { c: hash<E1450[k]> }
+struct Ss1450 { c: sorted<E1450[k]> }
+struct Xx1450 { c: index<E1450[k]> }
+struct Tt1450 { c: trie<W1450[s]> }
+struct Sp1450 { c: spatial<P1450[x, y]> }
+
+fn key1450() -> integer { 99 }
+
+fn main() {
+  h = Hh1450 { c: [] };
+  s = Ss1450 { c: [] };
+  x = Xx1450 { c: [] };
+  h.c += [E1450 { k: 1, v: 10 }];
+  s.c += [E1450 { k: 1, v: 20 }];
+  x.c += [E1450 { k: 1, v: 30 }];
+  miss = key1450();
+
+  // ---- the CELLS: a miss on a DENSE receiver is nullable and discharges ----
+  assert((h.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "a hash miss takes the default");
+  assert((s.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "a sorted miss takes the default");
+  assert((x.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "an index miss takes the default");
+  // a CONSTANT key misses the same way — the fit elision is about a dense vector's index
+  assert((h.c[77] ?? E1450 { k: 0, v: -1 }).v == -1, "a constant-key miss takes the default too");
+
+  // ---- and a HIT still reads its element, which is what says the `?` cost nothing ----
+  assert((h.c[1] ?? E1450 { k: 0, v: -1 }).v == 10, "a hash hit reads its element");
+  assert((s.c[1] ?? E1450 { k: 0, v: -1 }).v == 20, "a sorted hit reads its element");
+  assert((x.c[1] ?? E1450 { k: 0, v: -1 }).v == 30, "an index hit reads its element");
+
+  // ---- the other discharge spelling ----
+  hit = h.c[1]?;
+  assert(hit.v == 10, "`?` discharges a hit to its element: {hit.v}");
+
+  // ---- control: a trie POINT lookup is a cell, its PREFIX slice is not ----
+  t = Tt1450 { c: [] };
+  t.c += [W1450 { s: "aa", v: 1 }];
+  t.c += [W1450 { s: "ab", v: 2 }];
+  t.c += [W1450 { s: "bb", v: 3 }];
+  assert((t.c["zz"] ?? W1450 { s: "", v: -1 }).v == -1, "a trie miss takes the default");
+  assert((t.c["aa"] ?? W1450 { s: "", v: -1 }).v == 1, "a trie hit reads its element");
+  pre = 0;
+  for w in t.c["a"..] { pre = pre + w.v; }
+  assert(pre == 3, "a trie PREFIX slice iterates with no discharge: {pre}");
+
+  // ---- control: a spatial RANGE slice iterates with no discharge ----
+  p = Sp1450 { c: [] };
+  p.c += [P1450 { x: 1, y: 1, v: 10 }];
+  p.c += [P1450 { x: 5, y: 5, v: 20 }];
+  box = 0;
+  for q in p.c[(0, 0)..(9, 9)] { box = box + q.v; }
+  assert(box == 30, "a spatial RANGE slice iterates with no discharge: {box}");
+
+  // ---- control: a keyed WRITE is unmoved, on every kind ----
+  h.c[2] = E1450 { k: 2, v: 40 };
+  s.c[2] = E1450 { k: 2, v: 50 };
+  x.c[2] = E1450 { k: 2, v: 60 };
+  assert(len(h.c) == 2 && len(s.c) == 2 && len(x.c) == 2, "a keyed write still inserts");
+  assert((h.c[2] ?? E1450 { k: 0, v: -1 }).v == 40, "and the written element reads back: {(h.c[2] ?? E1450 { k: 0, v: -1 }).v}");
+  h.c[2] = E1450 { k: 2, v: 41 };
+  assert(len(h.c) == 2, "an existing key OVERWRITES rather than appends: {len(h.c)}");
+}

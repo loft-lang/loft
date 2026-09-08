@@ -52,11 +52,10 @@
 - **Candidate OPEN (verify):** the per-query scratch-vector allocation for spatial slices (CAVEATS.md notes
   it as the next efficiency lever) — a performance note, likely NOT a formal deviation.
 
-OPEN: **1** — `D-col-lookup` OPENED 2026-09-07 (loft#1450, below): `(Col-Lookup)`'s `τ?` is
-recorded by a LINT FLAG and never reaches a type.  `D-col-null` was opened and CLOSED the same
-day (2026-08-28, below).
+OPEN: **0** — `D-col-lookup` opened 2026-09-07 and CLOSED 2026-09-08 (loft#1450, below);
+`D-col-null` was opened and CLOSED the same day (2026-08-28, below).
 
-### `D-col-lookup` — OPEN (2026-09-07, loft#1450): the rule's cited anchor is a lint switch, not a type
+### `D-col-lookup` — OPENED 2026-09-07, CLOSED 2026-09-08 (loft#1450): the rule's cited anchor was a lint switch, not a type
 
 `(Col-Lookup)` states `Γ ⊢ c[key] ⇒ τ?` — *"a keyed point lookup is NULLABLE — an absent key
 yields the null record, discharged by `?? d` / `match` like any τ?"* — and cites
@@ -72,6 +71,28 @@ take(h[1]);          // and the same at the call-argument seam (loft#583's (N-St
 
 All four keyed kinds answer alike (`hash`, `sorted`, `index`, `trie`), and the two arms in
 `fields.rs` — `Hash|Radix|Trie` and `Sorted|Index` — each do only the clear.
+
+**Closed** by giving both arms one home — `wrap_keyed_lookup_nullable` — which wraps the element
+type for a POINT lookup only.  A spatial or trie RANGE slice answers the COLLECTION for an
+enclosing `for`, and iterating one is total, so wrapping it would demand a discharge for an
+absence that cannot occur; that control is the cell which says the widening did not over-reach.
+The vector arm's two guards come with it: `pln25_dn1_enabled`, and the `tagged_pointer_type`
+check that stops `@FR-N-Idem`'s `τ??` where the element is already a `__nullable<S>` slot.  An
+UNRESOLVED element takes no marker either — `Optional(Unknown)` is not a type the compiler can
+name, and a first-pass lookup is exactly that.
+
+⚠ **"Deferred on cost (351 corpus sites)" was the wrong reading of its own measurement, and the
+error is worth keeping visible.**  Swept file by file, the widening adds **zero** corpus
+failures: those sites emit WARNINGS, which no run fails on, and the single file that did break
+was this fix wrapping an unresolved element rather than a program needing migration.  What
+actually blocked the leg was never migration — it was that the materialise/copy for a nullable
+element view did not happen (loft#1456, five sites, both backends), which was invisible from
+here because it is not a collections question.  The cost estimate was honest and measured; it
+counted the wrong thing, and it read as a reason not to start.
+
+That is also why the two were one fix: with loft#1456 closed, enabling this widening leaves
+`146-keyed-rekey-through-view` green on both backends, every keyed write byte-identical, and the
+slice controls unmoved.
 
 ⚠ **This is why this register could read `OPEN: 0` over it**, and the reason is worth stating
 because it is not the usual one.  The rules were complete and the enforcement was not missing —

@@ -176,10 +176,13 @@ every read would then pay for the check.
   (Col-Lookup)  Γ ⊢ c[key] ⇒ τ?              a keyed point lookup is NULLABLE — an absent key yields the
                                               null record (P285), discharged by `?? d` / `match` like any τ?.
 ```
-*Anchor:* fields.rs:700-706 (P285, the `expr_not_null` clear) — ⚠ a LINT switch, not a type: the
-rule is not enforced for a miss in a PRESENT collection (`D-col-lookup`, OPEN).  The
-RECEIVER-absent case IS typed, at `parse_index` (`@FR-N-Domain`, loft#1450).  Mirrors types.md
-`(N-Index)` for `v[i]`.
+*Anchor:* `fields.rs::wrap_keyed_lookup_nullable` — the ONE home both keyed arms
+(`Hash|Radix|Trie`, `Sorted|Index`) call, which wraps the element type `Optional` for a POINT
+lookup.  A RANGE slice (spatial box, trie prefix) answers the collection for an enclosing `for`
+and takes no `?`: iterating one is total.  The `expr_not_null` clear beside it is the LINT half
+and enforces nothing — it was this rule's anchor until loft#1450, which is how `OPEN: 0` could
+read green over a live gap (`D-col-lookup`, closed).  The RECEIVER-absent case is a separate
+rule, typed at `parse_index` (`@FR-N-Domain`).  Mirrors types.md `(N-Index)` for `v[i]`.
 
 ### 1.3b One field, one decode — `Col-Axis`
 
