@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: Variable 'bare' cannot change type from integer to hash<Row58b[id]>; use a new variable name or cast with 'as'
+  --> <cases>/58b_a_bare_keyed_binding_is_spelled_as_written.loft:19:29
+   |
+19 |   bare: integer = one.by_id;
+   |                             ^
+
+error: aborting due to 1 previous error

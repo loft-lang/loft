@@ -1,0 +1,21 @@
+// The BARE keyed spelling, in its own case because it is a PASS-1 error.
+//
+// Split out of `58_keyed_collection_is_spelled_as_written`: `Parser::parse` runs pass 2 only
+// when pass 1 is clean (loft#1242), so this one line masked both of that case's `&`-wrapper
+// diagnostics — the very messages it was written to pin.  One cell per PHASE is what keeps a
+// golden honest here; a case mixing them captures whichever the masking leaves.
+//
+// What it pins is the same rule as its sibling's: the type reads `hash<Row58[id]>`, as the
+// author wrote it, and not the schema key `hash<Row58,["id"]>`.
+
+struct Row58b { id: integer, v: integer }
+
+struct Db58b {
+  by_id: hash<Row58b[id]>,
+}
+
+fn main() {
+  one = Db58b { by_id: [] };
+  bare: integer = one.by_id;
+  println("{bare}");
+}

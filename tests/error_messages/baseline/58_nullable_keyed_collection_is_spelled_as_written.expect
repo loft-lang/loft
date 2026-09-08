@@ -7,12 +7,6 @@ error: cannot iterate over hash<Row58[id]>? because it is NULLABLE — a `hash<R
 13 |   for row in absent {
    |                      ^
 
-error: Need an iterable expression in a for statement
-  --> <cases>/58_nullable_keyed_collection_is_spelled_as_written.loft:13:22
-   |
-13 |   for row in absent {
-   |                      ^
-
 error: Expect token ;
   --> <cases>/58_nullable_keyed_collection_is_spelled_as_written.loft:13:22
    |
