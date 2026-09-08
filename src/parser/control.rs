@@ -2762,7 +2762,19 @@ impl Parser {
         } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
             // #306: the tail borrows a LOCAL's store — copy it before it escapes.
             RefDelivery::MaterializeView
-        } else if self.return_buffer().is_none() && self.return_views_an_argument(ls) {
+        } else if !self.first_pass
+            && self.return_buffer().is_none()
+            && self.return_views_an_argument(ls)
+        {
+            // PASS 2 ONLY, and that is a soundness condition rather than an optimisation.
+            // The dep list this reads is not pass-stable for every shape: a `??`-JOIN local
+            // (`d = q ?? P { n: 0 }`, owned on the fallback arm and borrowing the argument on
+            // the other) reads as borrowing on pass 1 and not on pass 2, so a delivery keyed
+            // on it fired on ONE pass while the promotion ran on the other — the lambda then
+            // grew a pass-2-only attribute and tripped the H5 two-pass contract
+            // (`1179-a-fn-ref-return-buffer-has-an-owner`).  Deciding on pass 2 alone is
+            // decided ONCE, which is what that contract asks; loft#1468's own shape carries
+            // the same deps on both passes, so nothing it needs is lost.
             // loft#1468, `@FR-F-Ret` — the tail borrows an ARGUMENT's store, so handing it
             // back is a view where the rule promises a fresh, independent value.  The leg
             // above does not catch it because it does not DANGLE: the store is the caller's
@@ -13503,7 +13515,10 @@ impl Parser {
     /// The mirror of [`Self::return_views_local`], which asks the same question about a LOCAL
     /// root and copies for the other reason — that one dangles, this one aliases.
     fn return_views_an_argument(&self, ls: &[u16]) -> bool {
-        // `&T` is `(F-Ret)`'s own exception: it exists to hand out a view.
+        // `&T` is `(F-Ret)`'s own exception: it exists to hand out a view, so materialising one
+        // would BE the defect.  Through `base()`, which peels the `?` and not the `&` — the
+        // question is about the route, and `@FR-N-Shape` asks only that `τ` and `τ?` answer
+        // alike.
         if matches!(
             self.data.def(self.context).returned().base(),
             Type::RefVar(_)
