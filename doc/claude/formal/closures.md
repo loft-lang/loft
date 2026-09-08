@@ -113,8 +113,19 @@ collection: the keyed replace is selected on the destination being a struct FIEL
 is an `OpGetDbRef` rather than an `OpGetField`, so the branch was skipped — the fourth time that
 family of selector has been the narrow part while its lowering was already right.
 
-⚠ **What is still open is the rebind OUTSIDE the closure, and the rule does not yet say which is
-right.** `e =
+⚠ **CLOSED 2026-09-08 (loft#1447): the keyed kinds now mint, and the rule said so all along.**
+A rebind outside the closure reads the BUILD-time value at every kind, as the two paragraphs
+above already state for a vector and a struct — `hash`, `sorted` and `index` answered the
+reassigned value because `gen_keyed_null(first = false)` cleared the store in place and reused
+`store_nr`, so the record's own handle saw the rebind.  The licence is POSITIONAL, which is why
+the fix is in the PARSER: `is_captured` is a whole-FUNCTION fact, so minting on it alone orphans
+the store a declaration just allocated.  The parser emits the mint at loft#895's local-replace
+site, which only a NON-EMPTY keyed literal reaches, and keeps the `Set(v, Null)` after it so
+`@FR-O-Latest`'s scan still learns the local was reassigned and the frame still frees what it
+now names.  Guard `1447b-a-captured-keyed-local-rebinds-into-a-fresh-store.loft`;
+`1324-…`'s keyed cell asserts the answer it used to leave open on purpose.
+
+The paragraph it replaces, kept because the shape of the question is worth reading: `e =
 [Row { k: 1, v: 51 }]` over a captured `hash` / `sorted` / `index` REFILLS the existing store
 rather than minting one, so the closure reads the reassigned value where the vector and struct
 spellings read the build-time one. Both are "the closure kept its `DbRef`"; what differs is

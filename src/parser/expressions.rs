@@ -4970,8 +4970,49 @@ use a separate collection or add after the loop"
         //
         // The var-RHS branch below stays separate: `s = other` deep-copies via
         // `OpReplaceKeyed`, which clears as part of the copy.
-        if keyed_kt.is_some() && matches!(code, Value::Insert(ls) if !ls.is_empty()) {
-            let clear = v_set(var_nr, Value::Null);
+        if let Some(kt) = keyed_kt
+            && matches!(code, Value::Insert(ls) if !ls.is_empty())
+        {
+            // @FR-L-CapHeap (loft#1447) — a CAPTURED local's rebind MINTS a fresh store
+            // instead of clearing this one in place.  `(L-CapHeap)` says a reassignment is
+            // not a mutation-through: the closure keeps the `DbRef` it was built with and
+            // answers the BUILD-time value, which is what the vector and struct spellings
+            // already do.  `Set(v, Null)` reaches `gen_keyed_null(first = false)`, whose
+            // `OpDatabase` clears the store IN PLACE and reuses `store_nr` — so the record's
+            // own handle sees the rebind, and `h = [Row{k:1,v:9}]` after a build over `v: 5`
+            // answered 9 on `hash`, `sorted` and `index`, both backends.
+            //
+            // Emitted HERE rather than decided in codegen because the licence is POSITIONAL
+            // and only the parser knows the position: `is_captured` is a whole-FUNCTION fact
+            // (`set_captured` runs when the closure BODY is parsed), so it is true for
+            // assignments that PRECEDE the build as well.  This site is reached only by a
+            // NON-EMPTY keyed literal — `h = [Row{…}]`, loft#895's local replace — while a
+            // declaration's `= []` goes through `create_keyed`, so the two cannot be
+            // confused and the declaration keeps its in-place init.
+            let clear = if self.vars.rebind_must_mint(var_nr) {
+                // `OpInitRefSentinel` rather than `OpInitRef`: it nulls the slot to the
+                // sentinel, and `OpDatabase`'s `store_nr == u16::MAX` arm then allocates a
+                // FRESH store from it — the same pair `parse_object` emits for the dense
+                // param rebind.  `OpInitRef` has no native emitter (it is codegen-internal),
+                // so the generated Rust called a function that does not exist.
+                let init = self.cl("OpInitRefSentinel", &[Value::Var(var_nr)]);
+                let alloc = self.cl(
+                    "OpDatabase",
+                    &[Value::Var(var_nr), Value::Int(i32::from(kt))],
+                );
+                // The `Set(v, Null)` STAYS, after the mint rather than instead of it.
+                // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
+                // reassigned after its capture was built, and that fact is what turns OFF
+                // `capture_adoption_owns_free` so the frame frees the store the local now
+                // names.  Dropping the node minted a fresh store and then suppressed its
+                // free — the record kept the build-time store and the new one leaked
+                // (`1324-a-reassigned-capture-suppresses-the-store-the-record-holds`).
+                // Ordered mint-then-clear so the clear lands on the FRESH store: the other
+                // way round it would empty the store the record still holds.
+                Value::Insert(vec![init, alloc, v_set(var_nr, Value::Null)])
+            } else {
+                v_set(var_nr, Value::Null)
+            };
             if let Value::Insert(ls) = code {
                 ls.insert(0, clear);
             }
