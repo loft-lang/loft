@@ -254,6 +254,18 @@ pub struct Variable {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
+    ///
+    /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
+    /// so the list it publishes for one is a guess.  Pass 2 re-derives every assignment, so its
+    /// union is the whole answer: the binding's list is cleared at its FIRST pass-2 assignment
+    /// from a call and rebuilt from there.  This records which locals that has happened to, so
+    /// the clear happens once and the later assignments union onto it — clearing at every one
+    /// would keep only the last, and a dep list is flow-INsensitive.
+    ///
+    /// Lives on the `Function` rather than on the parser because a var number is unique per
+    /// FUNCTION, and the parser swaps this whole table for a lambda's.
+    pass2_rebuilt: std::collections::HashSet<u16>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -500,6 +512,7 @@ impl Display for Function {
 impl Function {
     pub fn new(name: &str, file: &str) -> Self {
         Function {
+            pass2_rebuilt: std::collections::HashSet::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -737,6 +750,7 @@ impl Function {
 
     pub fn copy(other: &Function) -> Self {
         Function {
+            pass2_rebuilt: std::collections::HashSet::new(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -3965,6 +3979,13 @@ impl Function {
         if std::env::var_os("LOFT_TIMELINE_BT").is_some() {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
+    }
+
+    /// Record that pass 2 has rebuilt `var_nr`'s borrow list — `true` the FIRST time only.
+    ///
+    /// loft#1466: see [`Self::pass2_rebuilt`].
+    pub(crate) fn mark_pass2_rebuilt(&mut self, var_nr: u16) -> bool {
+        self.pass2_rebuilt.insert(var_nr)
     }
 
     #[track_caller]

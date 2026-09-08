@@ -4448,6 +4448,63 @@ use a separate collection or add after the loop"
         } else {
             s_type
         };
+        // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
+        // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
+        // about the shape the body will take; where the body MATERIALISES its answer
+        // (`return_projects_into_local` picking `MaterializeView`, which a nullable element
+        // binding needs because the tagged-slot read is not emittable on pass 1) the guess is a
+        // borrow of a parameter where the truth is a store of the callee's own.  `is_equal`
+        // collapses deps, so `change_var_type`'s equality early-return keeps the guess: the
+        // caller's local reads `-> S?["q"]`, `owns_freeable_store` sees a non-empty list, no
+        // free is emitted, and the record the callee minted is orphaned once per call.
+        //
+        // Pass 2 re-derives every assignment, so its union is the whole answer and pass 1's is
+        // redundant — the binding's list is therefore CLEARED at its first pass-2 assignment
+        // and rebuilt from there.  First, and not last: a dep list is flow-INsensitive, one
+        // list per binding for every assignment to it, so replacing at the LAST assignment
+        // drops what the binding's other assignments contributed.  Measured rather than
+        // reasoned — the replace-at-every-assignment form freed the caller's vector out from
+        // under a sibling `t = head_dense(qd)` in the same function, and this file's own dense
+        // control read `USE AFTER FREE store #13 type=main_vector<S66>`.
+        //
+        // A CALL, and only a call, opens it: that is the producer whose deps are not the
+        // caller's to know, the same bound loft#957 drew for the same reason.  Every other
+        // right-hand side is made of things pass 1 can already see, and clearing on pass 1's
+        // behalf where it was right is how the stdlib stopped loading (`Unknown variable
+        // 'result'`) when this was first written as a pass-1 strip.
+        //
+        // "A call" means one to a function with a BODY.  An operator or a bodiless `#rust`
+        // native publishes fixed deps that pass 1 reads correctly — and `Value::Call` covers
+        // those too, `v[0]` among them — so the test is on the CALLEE, not on the node.
+        let call_has_body = match code.unspan() {
+            Value::Call(d, _) => !matches!(self.data.def(*d).code(), Value::Null),
+            Value::CallRef(_, _) => true,
+            _ => false,
+        };
+        let rebuild_call_deps = match to.unspan() {
+            Value::Var(v_nr)
+                if !self.first_pass
+                    && op == "="
+                    && call_has_body
+                    && self.vars.exists(*v_nr)
+                    && !self.vars.is_argument(*v_nr)
+                    && !s_type.is_unknown()
+                    // …and the SLOT must be resolved too.  `is_equal(Unknown, τ)` is TRUE, so
+                    // without this a generic's still-unknown local passes the equality test and
+                    // is rewritten to `Unknown` carrying an empty dep list.
+                    && !self.vars.tp(*v_nr).is_unknown()
+                    && self.vars.tp(*v_nr).is_equal(&s_type)
+                    && self.vars.tp(*v_nr).depend() != s_type.depend()
+                    && self.vars.mark_pass2_rebuilt(*v_nr) =>
+            {
+                Some(*v_nr)
+            }
+            _ => None,
+        };
+        if let Some(v_nr) = rebuild_call_deps {
+            let cleared = self.vars.tp(v_nr).with_deps(&crate::data::Deps::none());
+            self.vars.set_type(v_nr, cleared);
+        }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
