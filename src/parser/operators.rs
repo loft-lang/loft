@@ -2830,8 +2830,21 @@ impl Parser {
         // code below builds with the non-null base (the null sentinel is representable in the
         // base's storage: `i64::MIN`, a null DbRef, …); only the REPORTED `*ctp` is re-wrapped, so
         // the N-Store check at the consuming slot rejects. Gated `LOFT_NO_QQ_NULL` (default on).
+        // `@FR-N-Coal` is UNCONDITIONAL — `e ?? d ⇒ τ`, non-null — and the one shape that
+        // re-marks the result nullable is a fallback that can itself be null (@PLN102 gate-2,
+        // `?? null`).  That question is decided by the fallback's TYPE, not by its IR shape: a
+        // call to a function declared BELOW this line parses to `Value::Null` on pass 1, because
+        // its callee is not resolved yet, and reading the shape alone counted that as a null
+        // fallback.  `change_var_type` keeps the FIRST answer, so `sub = st ?? no_type()` was
+        // `TypeInfo?` for the rest of the function whenever `no_type` was written further down
+        // — invisible until something read the result's nullability, and then a `for` over
+        // `sub.fields` was refused in a program that had already discharged.
+        //
+        // A genuine `?? null` types `Null`; the unresolved call types `Unknown`.  Asking for
+        // `Type::Null` keeps gate-2 exactly and makes the answer pass-independent.
         let fallback_nullable = crate::keys::qq_null_typing_enabled()
-            && (matches!(rhs.unspan(), Value::Null) || matches!(rhs_type, Type::Optional(_)));
+            && ((matches!(rhs.unspan(), Value::Null) && matches!(rhs_type, Type::Null))
+                || matches!(rhs_type, Type::Optional(_)));
 
         // The default may be a vector literal (`?? []`, `?? [99]`) that builds into
         // its OWN work-ref `_vec_N` — the last operator of the emitted `"Vector"`
