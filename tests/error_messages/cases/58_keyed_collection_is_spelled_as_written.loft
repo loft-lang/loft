@@ -13,7 +13,7 @@
 // ⚠ The BARE spelling moved out to `58b`, and the reason is this case going quiet.  It carried
 // `bare: integer = one.by_id;` as a third cell — a PASS-1 error, and `Parser::parse` runs pass 2
 // only when pass 1 is clean (loft#1242), so that one line masked both `&`-wrapper diagnostics
-// this case exists to pin.  Measured: with it, the golden held one message; without it, six.  A
+// this case exists to pin.  Measured: with it, the golden held ONE message; without it, both.  A
 // baseline that captures the masked output freezes a case that has stopped testing its subject,
 // which is how the drift this case was written to catch stayed invisible in the first place.
 //

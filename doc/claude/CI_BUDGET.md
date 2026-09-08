@@ -35,6 +35,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## `CI-RESULT` measured only the TEST phase — cause found and FIXED (2026-09-01)
 
+**`CI_MAX_FAIL` — how many test failures a gate collects before it stops (default 5).**
+`make ci CI_MAX_FAIL=1` is the old fail-fast behaviour and `CI_MAX_FAIL=all` runs the whole
+suite whatever happens; the run's own header line in `result.txt` says which it used.
+
+The default moved off 1 because of what a stop-at-one gate costs when a tree has SEVERAL
+independent failures: each ~20-minute gate reports exactly one, and the count is learnable only
+by fixing and re-running. Measured 2026-09-08 across the two-checkout join — three consecutive
+gates, each cancelled at a different first failure: a stale `doc/pkg` browser bundle, then a
+golden mismatch, then a whole-corpus keyed-store regression that had been present the entire
+time and was the serious one. Two full gates bought no information about it.
+
+Not `all` by default either: a genuinely broken tree fails thousands of tests and then spends
+its full wall clock saying what the first screenful already said. Five answers the question the
+count is actually being asked — *is this red one defect or several?* — and a run that wants the
+complete list asks for it.
+
 **Measured, on two checkouts, after a full day of reading it as the verdict.** `result.txt`
 held all of these at once:
 

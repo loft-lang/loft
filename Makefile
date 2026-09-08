@@ -1969,6 +1969,22 @@ ci-guard:
 	    echo "  300s slow-timeout as 'the machine was busy' until it reproduces alone."; \
 	done
 
+# How many test failures a gate collects before it stops.  `make ci CI_MAX_FAIL=1` is the old
+# fail-fast behaviour; `all` runs the whole suite whatever happens.
+#
+# The default is 5 rather than 1 because of what a stop-at-one gate costs when a run has
+# SEVERAL independent failures: each ~20-minute gate reports exactly one, and you learn the
+# count only by fixing and re-running.  Measured 2026-09-08 on the two-checkout join — three
+# consecutive gates, each cancelled at a different first failure (a stale browser bundle, a
+# golden mismatch, then a whole-corpus keyed-store regression that had been there the entire
+# time).  The third was the serious one and it was invisible for two rounds.
+#
+# Not `all` by default either: a genuinely broken tree fails thousands of tests and the run
+# then takes its full wall clock to tell you what the first screenful already did.  Five is
+# enough to see whether a red is one defect or several, which is the question the count is
+# actually being asked.
+CI_MAX_FAIL ?= 5
+
 ci: ci-guard
 	@echo $$PPID > .ci-running
 	@# Fresh header FIRST so result.txt can never be mistaken for a stale
@@ -2085,8 +2101,8 @@ ci: ci-guard
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
-	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the diff's subjects run first}" >> result.txt; } && \
-	cargo nextest run --profile ci $$first >> result.txt 2>&1 && \
+	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the diff's subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
+	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	{ echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; }
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,

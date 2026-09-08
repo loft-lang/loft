@@ -1,40 +1,16 @@
 ==== exit: 1 ====
 ==== stdout ====
 ==== stderr ====
-error: cannot append `&hash<Row58[id]>` to `hash<Row58[id]>` — a `+=` source must be one `Row58` element written `[…]`, or a `vector<Row58>` of them
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:31:10
+error: No matching operator 'Add' on '&hash<Row58[id]>' and '&hash<Row58[id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:31:9
    |
 31 |   a += b;
-   |          ^
+   |         ^
 
-error: Parameter 'a' has & but is never modified; remove the &
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:30:18
-   |
-30 | fn add_hash58(a: &hash<Row58[id]>, b: &hash<Row58[id]>) {
-   |                  ^
-
-error: Parameter 'b' has & but is never modified; remove the &
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:30:39
-   |
-30 | fn add_hash58(a: &hash<Row58[id]>, b: &hash<Row58[id]>) {
-   |                                       ^
-
-error: cannot append `&sorted<Row58[-id]>` to `sorted<Row58[-id]>` — a `+=` source must be one `Row58` element written `[…]`, or a `vector<Row58>` of them
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:35:10
+error: No matching operator 'Add' on '&sorted<Row58[-id]>' and '&sorted<Row58[-id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:35:9
    |
 35 |   a += b;
-   |          ^
+   |         ^
 
-error: Parameter 'a' has & but is never modified; remove the &
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:34:20
-   |
-34 | fn add_sorted58(a: &sorted<Row58[-id]>, b: &sorted<Row58[-id]>) {
-   |                    ^
-
-error: Parameter 'b' has & but is never modified; remove the &
-  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:34:44
-   |
-34 | fn add_sorted58(a: &sorted<Row58[-id]>, b: &sorted<Row58[-id]>) {
-   |                                            ^
-
-error: aborting due to 6 previous errors
+error: aborting due to 2 previous errors
