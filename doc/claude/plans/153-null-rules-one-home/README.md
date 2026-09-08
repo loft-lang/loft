@@ -1212,6 +1212,69 @@ entry in BUG_REVIEW.md's list of traps that produced a wrong answer first.
 **So the Done criterion is met in its second form**, not its first: the class did not fall, and
 the residual names a mechanism this plan did not touch, with a follow-on plan filed for it.
 
+## Batch 11's regression, and what the emit diff could not see (2026-09-08)
+
+Batch 11 taught three verbs to peel — `is_scalar`, `heap_def_nr`, `heap_dep` — and gated the
+change on `scripts/introspect_diff.sh`: DIFFERENT 9 of 1411, every one a null guard, all
+identical in value on both backends.  That gate was not enough, and the reason generalises.
+
+**What it missed.**  `generation/dispatch.rs`'s `record_def` asks the BARE heap question on a
+FIRST bind and the peeled one on a reassignment, deliberately — its own comment says *"A FIRST
+bind keeps the bare question plus the join fallback loft#1106 gave it; widening that is a
+separate walk."*  It obtained the nullability half of that split from `heap_def_nr`'s
+**blindness**, so teaching the verb to peel turned the first-bind branch into the reassignment
+branch in silence: the separate walk, landed by accident.  On `t = head(q)` where
+`head(p: vector<S>) -> S?` returns a view of its argument, `--native` then took the
+copy-or-adopt split against an IR that says alias — a stale `q[0]` where `--interpret` read the
+written one, and a store with no owner, because the caller's type still names `q`'s dep so
+`owns_freeable_store` emits no free.  Reported by the sibling checkout against its loft#1466
+dense control; fixed in `4f3e03810` by spelling the marker (`peel_optional()`) instead of
+borrowing a shape verb's blindness, which is what `@FR-N-Shape` asks of a site that must tell
+`τ` from `τ?`.
+
+**The three lessons, in the order they cost something.**
+
+1. **A verb that peels overrides every caller that was asking the bare question.**  Batch 11
+   knew this — it is why `is_dbref` was left unpeeled, with the measurement (102 files, 12
+   guards) written into its doc block.  The check was run for `is_dbref` and not for the three
+   verbs that did land, and `heap_def_nr` had a caller in exactly that position.  The audit is
+   per VERB, not once per commit.
+2. **A byte-diff over the corpus answers "did anything change", never "is the change right".**
+   Eight of the nine files it named still passed on both backends before and after the repair,
+   so the diff was read as benign.  Three of them (1181, 1202, 1414) were leaking under
+   `LOFT_STRICT_STORES=1` the whole time and nothing gated that channel; the repair removes
+   those leaks too.  A moved file has to be re-run on the channel the change could break — here
+   the leak channel — not merely diffed.
+3. **A backend-divergence guard is INERT on one side by construction, and no single-backend
+   assertion can see it.**  `make falsify` against `62118945a` reads *native leak `kt=81
+   S1468×11` -> clean, interpret INERT* — the VALUE channel does not move at all.  It cannot:
+   the script's loft#1468 cell has to accept both 93 and 7 (today's answer and the one the fix
+   will give), so it passes on each backend separately whichever it gets.  The divergence lives
+   BETWEEN the two runs — the control prints `source=93` on `--interpret` beside `source=7` on
+   `--native` — so the script PRINTS the value and a Rust driver compares the two runs.  Two
+   channels, two homes, both falsified against the same control build.
+4. **An instrument that restates a predicate can under-report the class it exists to count, and
+   nothing gates a script.**  Found while building @PLN155 arc A, in this plan's own ratchet:
+   `ir_walker_audit.py` spelled *"what strips this wrapper"* twice, and the peel-CALL list
+   carried `ret_dep_shape` / `ret_promo_base` / `ret_promo_peels` while the peel-BIND list did
+   not — so a scrutinee bound from `let (dep_base, peel) = ret.ret_dep_shape()` read as
+   unpeeled at three sites.  The same defect as the one in `dispatch.rs` above, one level up:
+   one fact, two spellings, drifted.  Both are built from one list now, with `ret_promo_peels`
+   split off as an AWARENESS verb because it returns a `bool` and binding it proves nothing
+   about the value under test.  `opaque_tests` 1520 -> 1517 as a result — a derived row, so
+   re-measure it on a join rather than carrying either branch's number.
+5. **A corpus gate is only as wide as the corpus.**  The shape that broke does not appear in
+   any of the 1411 files, so no amount of diffing could have shown it.
+   `tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft` and
+   `tests/nullable_first_bind_copy.rs` add it, with the strict-store run as the channel that
+   fails against the defect.
+
+The residual is **loft#1468**, filed apart and pre-existing on `main`: the `match`/slice-binding
+spelling of a `-> S?` view return aliases the caller's argument on BOTH backends where its dense
+twin copies.  It is a third spelling of loft#1337 / loft#1368, and its cure is the callee-side
+materialisation loft#1368 already names — which is precisely why the caller-side copy batch 11
+produced by accident could not carry an owner.
+
 ## Phase ordering
 
 0 before 1 (a probe that kills the census cheaply).  1 before 2 and 3 (the homes have to be

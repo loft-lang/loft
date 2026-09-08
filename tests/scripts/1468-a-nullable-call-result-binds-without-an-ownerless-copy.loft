@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A nullable local bound from a call whose callee returns a VIEW of its argument gets ONE
+// lowering on both backends, and that lowering never mints a store nobody owns.
+//
+// `calls.md` `(F-Ret)` — a returned whole heap value is FRESH, never a view of a parameter.
+// loft#1368 settled that for `keep(s) -> S? { s }` and `first(v) -> S? { v[0] }`, which copy
+// at the caller's guarded first bind; this file is those two cells plus the boundary that
+// costs a leak when the copy is emitted where the TYPE still says borrow.
+//
+// The caller's type for such a bind names the argument's dep (`t: ref(S)["q"]?`), so
+// `owns_freeable_store` emits no free.  A copy at that site therefore hands the binding a
+// store with no owner AND disconnects it from the source the interpreter still aliases —
+// a wrong value on one backend and a leak on the other, both silent.  What produced it was
+// not a decision anyone took: `generation/dispatch.rs` asks the BARE heap question on a
+// first bind and the peeled one on a reassignment, and it got the nullability half from
+// `heap_def_nr`'s blindness rather than from the marker.  When that verb learned to peel
+// (@FR-N-Shape, @PLN153 batch 11) the first-bind branch became the reassignment branch in
+// silence.  The first bind now reads `peel_optional()`, which is what @FR-N-Shape asks of a
+// site that must tell `τ` from `τ?`.
+//
+// ⚠ **The corpus could not see this.**  The emit diff over all 1411 files moved eight of
+// them and every one still passed on both backends; three (1181, 1202, 1414) were leaking
+// under `LOFT_STRICT_STORES=1` and nothing gated that.  The shape below is the one the
+// corpus did not contain, which is why it is here.
+//
+// The REASSIGNMENT cells are the control from the other side: that branch keeps the peeled
+// question (loft#1319, loft#1336) and must go on copying, or the fix reverted too much.
+//
+// ⚠ The `match`/slice-binding spelling is **loft#1468, open**: it aliases on BOTH backends
+// where the dense twin copies, because the arm binding is already a local and a view, so
+// loft#1368's join-arm lift has nothing to copy.  It is exercised here for its LEAK and its
+// backend agreement only — its freshness is deliberately not asserted, because asserting
+// today's answer would freeze a known-wrong value into the contract.  When loft#1468 closes,
+// `head_alias_is_1468` becomes an equality against 7 in the same commit.
+//
+// @falsified-at: 62118945a — native leaked `kt=81 S1468×11` -> clean; interpret INERT, which
+//   is expected for a backend-divergence guard: only the side that diverged can move.
+//   The VALUE channel is falsified by `tests/nullable_first_bind_copy.rs` rather than here —
+//   the `{93, 7}` cell above passes on each backend separately by construction, and the
+//   control prints `source=93` on `--interpret` beside `source=7` on `--native`, which only a
+//   comparison BETWEEN the two runs can see.  Two channels, two homes, both measured against
+//   the same control build.
+
+struct S1468 { a: integer }
+
+// The two spellings loft#1368 settled: a parameter handed straight back, and a projection
+// off a vector parameter.  Both must be FRESH at the caller.
+fn keep_1468(s: S1468) -> S1468? { s }
+fn first_1468(p: vector<S1468>) -> S1468? { p[0] }
+
+// loft#1468's spelling: the arm binding is a local of the callee AND a view of `p`.
+fn head_1468(p: vector<S1468>) -> S1468? { match p { [a, ..] => a, _ => null } }
+
+// The dense twin, which is the oracle for all three: it materialises through its `__retbuf`.
+fn head_dense_1468(p: vector<S1468>) -> S1468 { match p { [a, ..] => a, _ => S1468 { a: 0 } } }
+
+fn main() {
+  // A parameter handed back — fresh (loft#1368's `keep` cell).
+  q1: vector<S1468> = [S1468 { a: 7 }];
+  e1 = q1[0];
+  t1 = keep_1468(e1);
+  if t1 != null { t1.a = 91; }
+  assert(q1[0].a == 7, "keep: the caller's element must not move, got {q1[0].a}");
+  assert(t1.a == 91, "keep: the result must carry the write, got {t1.a ?? -1}");
+
+  // A projection off a vector parameter — fresh (loft#1368's `first` cell).
+  q2: vector<S1468> = [S1468 { a: 7 }];
+  t2 = first_1468(q2);
+  if t2 != null { t2.a = 92; }
+  assert(q2[0].a == 7, "first: the caller's element must not move, got {q2[0].a}");
+  assert(t2.a == 92, "first: the result must carry the write, got {t2.a ?? -1}");
+
+  // The dense oracle both of those agree with.
+  q3: vector<S1468> = [S1468 { a: 7 }];
+  t3 = head_dense_1468(q3);
+  t3.a = 93;
+  assert(q3[0].a == 7, "the dense twin is fresh, got {q3[0].a}");
+
+  // loft#1468, open.  Asserted on the channels that are settled — the result is USABLE and
+  // the two backends agree on the source — and not on freshness.  `q4[0].a` reads 93 today
+  // and 7 once loft#1468 closes; both are recorded so the cell fails on neither.
+  q4: vector<S1468> = [S1468 { a: 7 }];
+  t4 = head_1468(q4);
+  if t4 != null { t4.a = 93; }
+  head_alias_is_1468 = q4[0].a;
+  assert(t4.a == 93, "the match arm's result must carry the write, got {t4.a ?? -1}");
+  assert(head_alias_is_1468 == 93 || head_alias_is_1468 == 7,
+         "loft#1468: aliased (93) or fresh (7), never a third answer — got {head_alias_is_1468}");
+
+  // The leak half.  Ten binds of loft#1468's shape: a copy emitted here has no owner, so
+  // `LOFT_STRICT_STORES=1` reports one store per iteration.  The driver arms that; this
+  // loop is what gives it something to count.
+  q5: vector<S1468> = [S1468 { a: 7 }];
+  i = 0;
+  while i < 10 {
+    t5 = head_1468(q5);
+    if t5 != null { t5.a = i; }
+    i = i + 1;
+  }
+  assert(q5[0].a == 9 || q5[0].a == 7,
+         "the loop's source is the last write (9) or untouched (7), got {q5[0].a}");
+
+  // The REASSIGNMENT branch, untouched by the first-bind fix: it keeps the peeled question
+  // and must go on copying (loft#1319, loft#1336).
+  z = S1468 { a: 1 };
+  y = S1468 { a: 2 };
+  c: S1468? = z;
+  assert(c.a == 1, "the reassignment control starts at its first bind, got {c.a ?? -1}");
+  c = keep_1468(y);
+  if c != null { c.a = 55; }
+  assert(y.a == 2, "a REASSIGNMENT from a view-returning call copies, got {y.a}");
+
+  v: vector<S1468> = [S1468 { a: 3 }];
+  w: vector<S1468> = [S1468 { a: 4 }];
+  d: S1468? = first_1468(v);
+  assert(d.a == 3, "the second reassignment control starts at its first bind, got {d.a ?? -1}");
+  d = first_1468(w);
+  if d != null { d.a = 66; }
+  assert(w[0].a == 4, "a REASSIGNMENT from a projection return copies, got {w[0].a}");
+
+  // The source's answer is PRINTED, not only asserted: each backend on its own cannot see
+  // the two of them landing on different members of `{93, 7}`, and that divergence is the
+  // defect this file was written against.  `tests/nullable_first_bind_copy.rs` compares the
+  // two runs on this line.
+  println("1468 OK source={head_alias_is_1468}");
+}
