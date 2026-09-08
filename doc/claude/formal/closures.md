@@ -196,8 +196,19 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 2.**
 
+- **D-clo-33** *(OPEN — the multi-adopter half; the sole-adopter half closed 2026-09-09, loft#1476)* — `record_leaves_frame` is one static
+  answer to a per-run question, so a closure record the return delivers on SOME path was exempt
+  from the frame's free on ALL of them and the runs that dropped it leaked the record and the
+  capture its cascade would have taken (the function emitted no frees at all).  Closed for a
+  record that ALONE adopts its store, by putting the release INSIDE the arms that do not hand it
+  out: the arm IS the path, so no runtime witness is needed and nothing escaped holding the
+  record there.  **STILL OPEN** where several records adopt ONE store: exactly one must CASCADE
+  and it must be the one that escapes, which is a per-run fact against a marker set at compile
+  time, so the run delivering a BORROWER still leaks the owner record and the shared capture.
+  Guard `1476-a-record-delivered-on-some-paths-is-freed-on-the-others.loft`, whose final comment
+  carries the open shape unrun.
 - **D-clo-32** *(closed 2026-09-09, found while taking loft#1474's matrix over)* — the walk that
   decides which captures are built CONDITIONALLY recognised `if`/`match` arms and loop bodies,
   and read a build standing after them as straight-line.  An early `return` takes everything

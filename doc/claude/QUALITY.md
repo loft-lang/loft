@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 432 | 408 | **24** |
+| 434 | 410 | **24** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 755 | 410 | 6 | **339** |
+| 756 | 411 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2268** shape tests, **1520** of them opaque
@@ -2603,6 +2603,16 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
+and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`
+discriminators, both peeling, and the OPAQUE column is UNCHANGED — which it was not at first.
+`arm_value_delivers_record` asked `function.tp(v)` bare and pushed opaque to 340; peeling it was
+the right answer on its own terms, because a `fn(…)?` local is the same twenty-byte fn-ref slot
+as a `fn(…)` and the wrapper is not a distinction "does this arm hand out record r" may make —
+read bare it would answer the conservative `true` for a nullable fn-ref and leave its record
+unfreed on every omitting path.  So `@FR-N-Shape` and the ratchet agreed here, and the count
+came back down in the same step rather than being absorbed.
 
 **2026-09-08, the closure-lifetime arc (loft#1469/#1473/#1474/#1475): the unspan row
 `431 · 407 · 24` → `432 · 408 · 24`, and the Optional row `754 · 409 · 6 · 339` →

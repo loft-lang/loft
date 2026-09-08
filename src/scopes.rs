@@ -5369,6 +5369,110 @@ fn mark_borrowed_captures(data: &mut Data) {
     }
 }
 
+/// Does this ARM VALUE hand out closure record `r`?
+///
+/// Answers `true` unless the shape is one this can read and that demonstrably names something
+/// else.  The fallback is the SAFE direction and that is the whole of its design: a `true` here
+/// costs a leak the caller already has, while a wrong `false` frees a record the run is handing
+/// out, which is a use-after-free.  So only three shapes answer no — a bare def-number (a
+/// non-capturing lambda), a `FnRef` naming a different record, and a fn-ref LOCAL whose own type
+/// deps do not mention `r`.
+fn arm_value_delivers_record(leaf: &Value, r: u16, function: &Function) -> bool {
+    match leaf.unspan() {
+        Value::Int(_) | Value::Long(_) => false,
+        Value::FnRef(_, w, _) => *w == r,
+        // Asked through `base()`: a `fn(…)?` local is the same twenty-byte fn-ref slot as a
+        // `fn(…)`, so the wrapper is not a distinction "does this hand out record r" may make.
+        // Read bare it would answer the conservative `true` for a nullable fn-ref and leave its
+        // record unfreed on every omitting path.
+        Value::Var(v) if (*v as usize) < function.count() as usize => {
+            match function.tp(*v).base() {
+                Type::Function(_, _, deps) => deps.as_slice().contains(&r),
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
+/// Free closure record `r` inside each arm of `op` that does NOT hand it out.
+///
+/// `@FR-L-CapOwn` — the frame gives its release up to the record's cascade, and that handover is
+/// only right on the runs where the record actually LEAVES.  Delivery through a branch is a
+/// per-run fact: `if p { g1 } else { |…| 7 }` hands the record out on one path and drops it on
+/// the other, while the suppression is one static decision for both, so the run that does not
+/// deliver leaks the record AND the capture its cascade would have taken (measured: `n_f` emits
+/// no frees at all).
+///
+/// Placing the free INSIDE the omitting arm is what makes it per-run without a runtime witness:
+/// the arm IS the path.  On that path nothing escaped holding the record, so the cascade into
+/// its capture is exactly right.
+///
+/// Sound only where `r` is the SOLE adopter of its store — see the caller.  Where several
+/// records adopt one store, the one left behind may be the static OWNER while the delivered one
+/// borrows, and freeing it would cascade into a capture the escaping record still holds.
+fn free_record_in_omitting_arms(
+    op: &mut Value,
+    r: u16,
+    function: &Function,
+    data: &Data,
+    tp: &Type,
+) {
+    match op {
+        Value::Span(b) => free_record_in_omitting_arms(&mut b.1, r, function, data, tp),
+        Value::Return(inner) | Value::Drop(inner) => {
+            free_record_in_omitting_arms(inner, r, function, data, tp);
+        }
+        Value::If(_, t, f) => {
+            free_record_in_omitting_arms(t, r, function, data, tp);
+            free_record_in_omitting_arms(f, r, function, data, tp);
+        }
+        // A BLOCK takes the free as a STATEMENT before its value, never as a wrapper around it.
+        // Wrapping produces an `Insert` standing in value position, and native then emitted the
+        // free itself as the block's result (`let __ret_1: (u32, DbRef) = OpFreeRef(…)`).  A
+        // preceding statement is the shape the emitters already handle everywhere.
+        Value::Block(bl) => {
+            let Some(last) = bl.operators.last() else {
+                return;
+            };
+            if arm_value_delivers_record(last, r, function) {
+                let idx = bl.operators.len() - 1;
+                free_record_in_omitting_arms(&mut bl.operators[idx], r, function, data, tp);
+            } else {
+                let idx = bl.operators.len() - 1;
+                bl.operators.insert(idx, call("OpFreeRef", r, data));
+            }
+        }
+        Value::Insert(ops) => {
+            let Some(last) = ops.last() else {
+                return;
+            };
+            if arm_value_delivers_record(last, r, function) {
+                let idx = ops.len() - 1;
+                free_record_in_omitting_arms(&mut ops[idx], r, function, data, tp);
+            } else {
+                let idx = ops.len() - 1;
+                ops.insert(idx, call("OpFreeRef", r, data));
+            }
+        }
+        leaf => {
+            if arm_value_delivers_record(leaf, r, function) {
+                return;
+            }
+            let mut held = std::mem::replace(leaf, Value::Null);
+            // WIDEN before wrapping.  The arm that omits the record is, in the common shape,
+            // the one holding a NON-capturing lambda — a bare `Value::Int` def-number.  Placing
+            // it inside an `Insert` makes the `Insert` the value the return hoist reads, and the
+            // block-result path that used to complete the fn-ref pair no longer sees the bare
+            // spelling underneath, so native emitted `let __ret_tail: (u32, DbRef) = 741_i64`.
+            // One notion, two spellings, and this rewrite must hand on the complete one
+            // (loft#1469's widening, applied here because this site creates the position).
+            crate::parser::widen_bare_fn_ref(&mut held, tp);
+            *leaf = Value::Insert(vec![call("OpFreeRef", r, data), held]);
+        }
+    }
+}
+
 /// Is closure record `r` built anywhere inside `n`?
 ///
 /// The build is the `FnRef(d_nr, r, _)` node `emit_lambda_code` leaves — the only thing that
@@ -8832,6 +8936,57 @@ impl Scopes<'_> {
         tp: &Type,
         to_scope: u16,
     ) -> Vec<Value> {
+        // loft#1476 — a closure record the return delivers on SOME path is exempt from the
+        // frame's free on ALL of them, because `record_leaves_frame` is one static answer to a
+        // per-run question.  The run that does not deliver it then leaks the record and the
+        // capture its cascade would have taken.  Put the release INSIDE the arms that do not
+        // hand it out: the arm IS the path, so no runtime witness is needed, and on that path
+        // nothing escaped holding the record.
+        //
+        // Restricted to a record that ALONE adopts its store.  Where several adopt one store the
+        // record left behind may be the static owner while the delivered one borrows, and
+        // freeing it would cascade into a capture the escaping record still holds — that half
+        // needs per-run OWNERSHIP, not just a per-run free, and stays open on loft#1476.
+        let rewritten;
+        let expr = {
+            let mut copy = expr.clone();
+            let mut touched = false;
+            if is_return && self.d_nr != u32::MAX {
+                let (adopters, _) =
+                    capture_store_adopters(data, function, &self.capture_build_backing);
+                for group in adopters.values() {
+                    // A record that ALONE adopts its store may be released on a path that does
+                    // not deliver it: its cascade takes the capture, and on that path nobody
+                    // escaped holding either.
+                    //
+                    // In a group of several, the same is true of every record the marking
+                    // DEMOTED to a borrow — its cascade stops at the attribute, so releasing it
+                    // frees its own record store and reaches no capture.  The one it does NOT
+                    // hold for is the group's OWNER: that one still cascades, and the run that
+                    // delivers a borrower instead would lose the capture out from under it.
+                    // Closing that needs the delivered record to own, which is a per-run fact
+                    // and a marker set at compile time — loft#1476's open half.
+                    let owner = if group.len() == 1 {
+                        usize::MAX
+                    } else {
+                        adoption_owner_index(data, function, self.d_nr, group)
+                    };
+                    for (i, (r, _, _)) in group.iter().enumerate() {
+                        if i == owner || !record_leaves_frame(data, function, self.d_nr, *r) {
+                            continue;
+                        }
+                        free_record_in_omitting_arms(&mut copy, *r, function, data, tp);
+                        touched = true;
+                    }
+                }
+            }
+            if touched {
+                rewritten = copy;
+                &rewritten
+            } else {
+                expr
+            }
+        };
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
