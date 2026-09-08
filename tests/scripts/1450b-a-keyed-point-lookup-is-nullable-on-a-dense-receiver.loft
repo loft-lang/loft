@@ -43,6 +43,9 @@ struct Xx1450 { c: index<E1450[k]> }
 struct Tt1450 { c: trie<W1450[s]> }
 struct Sp1450 { c: spatial<P1450[x, y]> }
 
+struct Kk1450 { a: integer, b: text, n: integer }
+struct Dd1450 { m: index<Kk1450[a, b]> }
+
 fn key1450() -> integer { 99 }
 
 fn main() {
@@ -111,6 +114,31 @@ fn main() {
   p.c[3, 4] = P1450 { x: 3, y: 4, v: 30 };
   assert(len(p.c) == 3, "a spatial keyed write still inserts: {len(p.c)}");
   assert((p.c[3, 4] ?? P1450 { x: 0, y: 0, v: -1 }).v == 30, "and the written element reads back");
+
+  // ---- control: a PARTIAL key on a two-key `index` is an ITERATOR, and takes no `?` ----
+  //
+  // The `sorted`/`index` arm used to ASSERT that every arrival there is a point lookup
+  // ("no RANGE form here"), and that was false twice: `parse_key` builds a `Value::Iter`
+  // for a partial key (`m[1]` on a two-key index, rewritten `m[1..=1]`) and for the `..`
+  // range form, both INSIDE the call the arm had already made.  So the `?` landed on an
+  // iterator, which `(Col-Lookup)` explicitly forbids — a slice answers the COLLECTION for
+  // an enclosing `for`, and iterating one is total.
+  //
+  // What it cost is not visible from the read at all: `d.m[1] = null` lost its refusal
+  // ("Cannot assign null to a partial-key lookup") because the iterator arrived carrying a
+  // `?` the assignment router does not expect.  The partial-key READ was still named, so
+  // the file read as diagnosed while the statement it refused went through — which is why
+  // this cell iterates rather than asserting a type: the type was never the symptom.
+  d = Dd1450 { m: [] };
+  d.m += [Kk1450 { a: 1, b: "x", n: 10 }];
+  d.m += [Kk1450 { a: 1, b: "y", n: 20 }];
+  d.m += [Kk1450 { a: 2, b: "z", n: 30 }];
+  part = 0;
+  for e in d.m[1] { part = part + e.n; }
+  assert(part == 30, "a PARTIAL key iterates its matches with no discharge: {part}");
+  // and the FULL key beside it is still a point lookup, so it still takes the `?`
+  assert((d.m[1, "x"] ?? Kk1450 { a: 0, b: "", n: -1 }).n == 10, "a full key is still a point lookup");
+  assert((d.m[9, "q"] ?? Kk1450 { a: 0, b: "", n: -1 }).n == -1, "and still nullable on a miss");
 
   // ---- and the `?` costs an `&` VIEW nothing: a NON-key field still writes THROUGH ----
   //

@@ -1194,6 +1194,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // the key.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            // …and the same `Value::Iter` check as the `Sorted`/`Index` arm below, so the two
+            // arms answer "was this a point lookup?" the same way.  `point_lookup` is set by
+            // the SHAPE tests above (a spatial `(`, a trie prefix); this adds what only
+            // `parse_key` knows, and neither arm can now wrap an iterator.
+            let point_lookup = point_lookup && !matches!(code.unspan(), Value::Iter(..));
             self.wrap_keyed_lookup_nullable(&mut elm_type, point_lookup);
             // `@FR-N-Domain` — an ABSENT keyed collection has no entry to answer with, so the
             // lookup is `τ?` whatever the key.  (The lookup's OWN nullability for a present
@@ -1226,20 +1231,32 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // @P285 — see the Hash/Radix arm above; the lookup result is nullable.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
-            // `(Col-Lookup)` types the point lookup `τ?` here too (loft2-27's leg).  ⚠ Its
-            // own comment read *"`sorted` / `index` subscripting has no RANGE form here, so
-            // every arrival is a point lookup"* — which is the assumption loft3-19's
-            // `5bb081e2` had just corrected on the other arm: `parse_key` answers an ITERATOR
-            // for a PARTIAL key (`m[1]` on a two-key kind is `m[1..=1]`), and this is the arm
-            // a partial key actually reaches, since `sorted`/`index` admit one as an interval.
-            // Wrapping an iterator in `?` is what lost the *"Cannot assign null to a
-            // partial-key lookup"* refusal.  Derived, not assumed, at BOTH the wrap and the
-            // `(N-Domain)` test.
-            let point_lookup = !matches!(code.unspan(), Value::Iter(..));
-            self.wrap_keyed_lookup_nullable(&mut elm_type, point_lookup);
+            // Whether this arrival is a POINT lookup is DERIVED, never asserted.  The claim
+            // here used to be "`sorted` / `index` subscripting has no RANGE form here, so
+            // every arrival is a point lookup", and it is false twice over: `parse_key`
+            // builds a `Value::Iter` for a PARTIAL key (`idx[k1]` on a two-key index,
+            // rewritten `idx[k1..=k1]`) and for the `..` RANGE form, both inside the call
+            // just made.  Wrapping either in `Optional` is exactly what `(Col-Lookup)`
+            // forbids — a slice answers the COLLECTION for an enclosing `for`, and
+            // iterating one is total.
+            //
+            // Measured cost of the assertion: `db.pe_map[1] = null` on a two-key `index`
+            // lost its refusal ("Cannot assign null to a partial-key lookup"), because the
+            // iterator arrived carrying a `?` the assignment router does not expect.  The
+            // partial-key READ was still named, so the file looked diagnosed while the
+            // statement it refused went through.
+            //
+            // `Value::Iter` is the one observable that answers for both spellings, so ask
+            // the CODE what `parse_key` produced rather than predicting it from the type.
+            let answered_an_iterator = matches!(code.unspan(), Value::Iter(..));
+            self.wrap_keyed_lookup_nullable(&mut elm_type, !answered_an_iterator);
             // `@FR-N-Domain` — see the Hash/Radix arm above; an absent collection has no
             // entry to answer with whatever the key.
-            if receiver_optional && self.tagged_pointer_type(&elm_type).is_none() && point_lookup
+            // The same derived fact gates `(N-Domain)`: an iterator is not a value that can
+            // be absent, so wrapping it here loses the refusal the same way the wrap above did.
+            if receiver_optional
+                && self.tagged_pointer_type(&elm_type).is_none()
+                && !answered_an_iterator
             {
                 elm_type = Type::optional(elm_type);
             }
