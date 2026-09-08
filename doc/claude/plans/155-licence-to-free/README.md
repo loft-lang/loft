@@ -11,8 +11,10 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 **Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
 phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: phase 2b** — a reader
-DECLINES on `Unknown`, from the four-candidate queue phase 2a left at the sites.  The ownership MODEL is not reopened
+same day, so the sequencing hold is lifted.  **Next: phase 3** — the refusal at the
+free, on a `report → deny` ladder.  Phase 2b's refutation is what points there: the fail-open
+cannot be closed at the VERDICT, because at three of four readers the permissive answer is
+load-bearing or unmeasurable.  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -78,7 +80,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a landed).
+- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b landed).
 
 ## Why this family, measured
 
@@ -116,7 +118,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | ✅ **done — 8.0 %, the plan is NOT killed.**  `LOFT_OWN_ORACLE=census` + `make licence-census`.  Both controls PASS, in the two directions a bucket can move; no category reads 0, so nothing had to be shown reachable |
 | **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | ✅ **done — the narrow-widths outcome: one PAIR, four questions.**  `Function::proxy_says_owned` folds six sites; three are shown to ask a different question and stay apart.  `introspect_diff.sh` **IDENTICAL 1412/1412**; the control went 9 of 29 → 9 of 30 after the check was taught the folded spelling — it read 3 of 23 first, which is the collapse the verify exists to catch |
 | **2a** — the verdict exists and every reader disposes of it | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | ✅ **done** — `Own::Unknown`, 20 readers disposed.  Prediction (EMPTY diff) written first and **falsified twice**, each falsification naming a reader that silently inherited the permissive answer; **IDENTICAL 1412/1412** once both were fixed |
-| **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | Open — the queue is written at the sites, four candidates |
+| **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | ✅ **done — all four candidates REFUTED, and none lands.**  `LOFT_OWN_DECLINE=<name>` is the instrument that says so: `witness` is a WRONG VALUE on both backends, `owned-slot` moves three files' emit with every channel unchanged (unverified, not safe), `collection` and `join` are inert |
 | **3** — the refusal at the free, on a `report → deny` ladder | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
 | **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
@@ -292,21 +294,53 @@ alphabetically-first corpus files and stdlib-dominated.  By this plan's own rule
 reading 0 is a claim to check, and it was: the bucket fires on every fn-ref-heavy guard
 (1335 → 4, 1323 → 4, 1245b → 4, 387 → 1).  The zero was the sample, not the category.
 
-### Phase 2b — the queue, written at the sites
+## Phase 2b — every candidate refuted, and the refutations disagree with each other (2026-09-08)
 
-Four readers are marked in the source as candidates for DECLINING on `Unknown`, each with the
-trade named where a reader lands:
+Phase 2a left four readers marked as candidates for DECLINING on `Unknown`.  `LOFT_OWN_DECLINE=<name>`
+flips one at a time, opt-in, default empty, and the A/B is one binary against itself over the
+1412-file corpus.  **None of the four lands, and the three reasons are different — which is the
+result, because a single reason would have been a property of `Unknown` rather than of the
+readers.**
 
-- `Scopes::scan_set`'s owned-slot insert — membership licenses a free downstream, so declining
-  is the conservative direction; the trade is a leak.
-- `scopes`' witness reader (`ownership_of` at the `__ret` witness) — the site whose comment
-  already hand-compensates by asking the callee; `Unknown` makes that inference unnecessary.
-- `callref_collection_join_base` — `Unknown` is the SHARPER trigger for consulting the declared
-  dep, and the question behind separating them is how often a plain `Owned` there is a
-  derivation rather than the fallback.
-- `Own::join` — making `Unknown` ABSORBING is defensible (a `Join` is a witness, and an arm
-  with no answer can neither supply nor refute one) and measured NOT to move the corpus today,
-  which is precisely why it needs its own gate rather than a free ride here.
+| candidate | emit | measured verdict |
+|---|---|---|
+| `witness` — `scopes`' `__ret` witness | 4 files | **WRONG VALUE, both backends.**  Guard 1335 reads `rr.x == 99` where the mapper must give 81; guard 1323 also fails on the interpreter |
+| `owned-slot` — `scan_set`'s owned set | 3 files | every channel UNCHANGED — value, exit and leak, both backends, under `LOFT_STRICT_STORES`.  **Unverified, not safe** |
+| `collection` — `callref_collection_join_base` | none | **inert** on this corpus |
+| `join` — `Own::join` absorbing | none | **inert** on this corpus |
+
+**The `witness` result overturns phase 2a's own note.**  That site's comment hand-compensates
+for the fail-open by asking the callee, and 2a called it *"the first reader to separate"* —
+the reasoning being that `Unknown` states outright what the arm was inferring.  It is wrong:
+the hand-compensation is not a workaround for the fail-open, it is the mechanism that makes the
+site correct, and declining removes it.  Only the measurement says so, and the note is left in
+place beside the refutation because a plan that quietly deletes its wrong predictions cannot be
+audited.
+
+**`owned-slot` is the interesting non-result.**  It moves three files' emitted code while every
+channel reads identically — which is not a pass.  It is the shape `introspect_diff.sh`'s own doc
+warns about (*"a changed emission that happens to compute the same values is still a change
+nobody asked for"*) and the shape that bit this branch earlier the same day: eight files' emit
+moved, all green, and three were leaking under a channel nothing gated.  Landing it needs the
+three files shown individually right.
+
+**`collection` and `join` are inert, so they cannot be scored at all**, and by
+`ownership-history.md`'s own doctrine — *"a guard that cannot fail proves nothing"* — an inert
+change is not landable however plausible.  Both stay behind the switch as the A/B for shapes
+this corpus does not reach; building those by hand is phase 3's matrix.
+
+⚠ **The A/B needs a WRAPPER per candidate, not `introspect_diff.sh --env`.**  That flag applies
+the environment to BOTH binaries — it exists for *same env, two builds* — so using it for *one
+build, two envs* makes both sides decline and reports IDENTICAL for every candidate.  All four
+read IDENTICAL that way, and the finding *"every candidate is inert"* was one step from being
+recorded.  The cure is the same positive control as everywhere else in this plan: before
+trusting an instrument, show the thing it measures actually moves it — one file, one command.
+
+**What phase 2 therefore concludes.**  `Own::Unknown` earns its place as a verdict a reader
+must dispose of (2a), and **no reader should decline on it today** (2b).  The fail-open is not
+a single mistake that can be closed at the verdict; at three of these four sites the permissive
+answer is either load-bearing or unmeasurable, and phase 3's refusal must therefore sit at the
+FREE rather than at the verdict — which is where the plan already puts it.
 
 ## Phase ordering
 

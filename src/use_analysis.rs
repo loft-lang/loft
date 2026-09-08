@@ -1766,6 +1766,16 @@ impl Own {
             // not move the corpus, yet it would silently widen with every new reader), so it
             // belongs to phase 2b with its own gate.
             (Own::Unknown, Own::Unknown) => Own::Unknown,
+            // @PLN155 phase 2b — ABSORBING: a `Join`'s whole content is the witness its
+            // readers compare against, and an arm the oracle could not derive can neither
+            // supply one nor refute one, so the join has no answer either.
+            // Measured INERT on the 1412-file corpus (2026-09-08) — no emit moves — so the
+            // absorbing lattice cannot be scored yet.  That is the argument for keeping it
+            // behind the switch rather than making it the default on its plausibility: it
+            // would widen silently with every new reader, and nothing today would notice.
+            (Own::Unknown, _) | (_, Own::Unknown) if crate::keys::own_declines("join") => {
+                Own::Unknown
+            }
             (Own::Unknown, o) | (o, Own::Unknown) => Own::Owned.join(o),
             (Own::Owned, Own::Owned) => Own::Owned,
             (Own::Borrowed { base: a }, Own::Borrowed { base: b }) if a == b => {
@@ -3751,6 +3761,15 @@ pub fn callref_collection_join_base(
         // here, and separating them (asking the declared dep only where the summary genuinely
         // had no answer) is a phase-2b candidate with a real question behind it: how often is
         // a plain `Owned` reaching this arm a derivation rather than the fallback?
+        // @PLN155 phase 2b — DECLINE means asking the declared dep ONLY where the summary
+        // genuinely had no answer, which is what the comment above describes; a plain `Owned`
+        // then stops reaching the dep, and the question that measures it is how often such an
+        // `Owned` is a real derivation rather than the fallback.
+        // Measured INERT on the 1412-file corpus (2026-09-08): no file's emit moves either
+        // way, so nothing here can fail and nothing is proved.  Kept as the A/B for the shape
+        // that does reach it — a `CallRef` whose summary answers a plain `Owned` at a site
+        // that also has a declared dep — which phase 3's matrix has to build by hand.
+        Own::Owned if crate::keys::own_declines("collection") => None,
         Own::Owned | Own::Unknown => callref_declared_borrow_base(data, d_nr, value),
         _ => None,
     }

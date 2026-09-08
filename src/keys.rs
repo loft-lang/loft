@@ -1395,6 +1395,56 @@ pub fn view_elision_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
 }
 
+/// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer
+/// they gave when the fail-open still spelled itself `Owned`?
+///
+/// `LOFT_OWN_DECLINE=<name>[,<name>…]`, opt-in and empty by default, so the shipped path is
+/// phase 2a's: every reader disposes of `Unknown` explicitly and disposes of it as `Owned`.
+/// Each name flips ONE reader, because each trades something different and the trades are not
+/// comparable — a decline is never free, it withholds a decision, and what that costs is the
+/// per-reader question phase 2b exists to answer:
+///
+///   `witness`     — `scopes`' `__ret` witness: `Unknown` is exactly the shape the arm's own
+///                   comment hand-compensates for by asking the callee, so declining lets the
+///                   inference go rather than adding one.
+///   `owned-slot`  — `scopes`' owned-slot set: membership licenses a free downstream, so a
+///                   decline WITHHOLDS a free.  The conservative direction, trading a leak.
+///   `collection`  — `callref_collection_join_base`: `Unknown` is the sharper trigger for
+///                   consulting the DECLARED dep, so declining here means asking the dep only
+///                   where the summary genuinely had no answer.
+///   `join`        — `Own::join` makes `Unknown` ABSORBING: a `Join` is a witness, and an arm
+///                   with no answer can neither supply nor refute one.
+///
+/// **All four are REFUTED as of 2026-09-08, for three different reasons, and the switch stays
+/// because it is what says so.**  Measured as an A/B on ONE binary over the 1412-file corpus:
+///
+/// | candidate | emit | verdict |
+/// |---|---|---|
+/// | `witness` | 4 files | **wrong VALUE** on both backends (guard 1335 reads 99 for 81) — the permissive answer is load-bearing for correctness, and the arm's hand-compensation is the mechanism that makes it right |
+/// | `owned-slot` | 3 files | every channel unchanged — value, exit and leak, both backends, under `LOFT_STRICT_STORES`.  An emit change with no demonstrated benefit and none demonstrated harm, which is UNVERIFIED rather than safe |
+/// | `collection` | none | inert on this corpus |
+/// | `join` | none | inert on this corpus |
+///
+/// ⚠ The A/B has to be run with a WRAPPER per candidate, not with
+/// `introspect_diff.sh --env`: that flag applies the environment to BOTH binaries, by design
+/// (it exists for "same env, two builds"), so using it for "one build, two envs" makes both
+/// sides decline and reports IDENTICAL for every candidate.  Measured — all four read
+/// IDENTICAL that way, and two of them move four and three files respectively.
+#[must_use]
+pub fn own_declines(name: &str) -> bool {
+    static SET: OnceLock<Vec<String>> = OnceLock::new();
+    SET.get_or_init(|| {
+        std::env::var("LOFT_OWN_DECLINE")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+    .iter()
+    .any(|s| s == name)
+}
+
 #[must_use]
 pub fn join_own_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

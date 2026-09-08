@@ -12245,6 +12245,18 @@ impl Scopes<'_> {
             // has to infer that from `Owned` and ask the callee to find out.  Kept joined for
             // now because separating them CHANGES what is emitted, and that is phase 2b with
             // its own measurement — but this is the first reader to separate.
+            crate::use_analysis::Own::Unknown if crate::keys::own_declines("witness") => {
+                // @PLN155 phase 2b — DECLINE, and **it is REFUTED.**  The reasoning was that
+                // the arm below infers "the summary could not name a base" from an `Owned` it
+                // does not trust and asks the callee to find out, so `Unknown` saying it
+                // outright makes the inference unnecessary.  Measured: it is a WRONG VALUE on
+                // both backends (guard 1335 — `rr.x` reads 99 where the mapper must give 81),
+                // plus guard 1323 on the interpreter.  The arm's hand-compensation is not a
+                // workaround for the fail-open, it is the mechanism that makes this site
+                // right, and declining removes it.  Phase 2a called this "the first reader to
+                // separate"; the measurement says otherwise, which is why it was measured.
+                return None;
+            }
             crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                 // ⚠ `Own::Owned` is ALSO the `CallRef` arm's fallback for a base it cannot
                 // name — its own doc says so — so at a site that frees it is not a verdict.
@@ -13420,6 +13432,19 @@ fn mixed_ownership_locals(code: &Value, function: &Function, data: &Data, d_nr: 
                 // @PLN155 phase 2 — membership of `owned` licenses a free downstream, so this
                 // IS a reader where declining on `Unknown` is the conservative direction.
                 // Kept joined for 2a; a candidate for 2b, with the leak it would trade for.
+                // @PLN155 phase 2b — DECLINE withholds membership, and membership licenses a
+                // free downstream, so this is the conservative direction and the trade is a
+                // leak.  `Owned` is unaffected: only the verdict with no derivation behind it
+                // stops licensing.
+                //
+                // Measured, and NOT landable on that measurement: it moves the emit of three
+                // corpus files (1183, 1332, 1333) while every channel — value, exit and leak,
+                // both backends, under `LOFT_STRICT_STORES` — reads identically.  That is
+                // unverified rather than safe, and it is the shape `introspect_diff.sh`'s own
+                // doc warns about: a changed emission that happens to compute the same values
+                // is still a change nobody asked for.  Landing it needs the three files shown
+                // individually right, not a green suite.
+                crate::use_analysis::Own::Unknown if crate::keys::own_declines("owned-slot") => {}
                 crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                     owned.insert(*t);
                 }
