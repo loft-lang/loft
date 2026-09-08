@@ -179,7 +179,17 @@ every read would then pay for the check.
 *Anchor:* `fields.rs::wrap_keyed_lookup_nullable` — the ONE home both keyed arms
 (`Hash|Radix|Trie`, `Sorted|Index`) call, which wraps the element type `Optional` for a POINT
 lookup.  A RANGE slice (spatial box, trie prefix) answers the collection for an enclosing `for`
-and takes no `?`: iterating one is total.  The `expr_not_null` clear beside it is the LINT half
+and takes no `?`: iterating one is total.  ⚠ **Point-ness is DERIVED, never asserted, and the
+third slice spelling is why.**  Beside the spatial `(` and the trie prefix — both decidable from
+the SHAPE before `parse_key` runs — a `sorted`/`index` subscript becomes an iterator INSIDE
+`parse_key`, for a PARTIAL key (`m[1]` on a two-key index, rewritten `m[1..=1]`) and for the
+`..` range form.  The `Sorted|Index` arm once asserted the opposite in a comment (*"no RANGE
+form here, so every arrival is a point lookup"*) and wrapped both; the cost was not a wrong type
+but a lost REFUSAL — `d.m[1] = null` stopped being *"Cannot assign null to a partial-key
+lookup"*, while the partial-key READ stayed diagnosed, so the file read as covered.  Both arms
+now ask `!matches!(code.unspan(), Value::Iter(..))`: the value `parse_key` produced answers for
+every slice spelling at once, where a type test answers for none of them.
+The `expr_not_null` clear beside it is the LINT half
 and enforces nothing — it was this rule's anchor until loft#1450, which is how `OPEN: 0` could
 read green over a live gap (`D-col-lookup`, closed).  The RECEIVER-absent case is a separate
 rule, typed at `parse_index` (`@FR-N-Domain`).  Mirrors types.md `(N-Index)` for `v[i]`.
