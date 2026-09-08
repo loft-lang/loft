@@ -8994,6 +8994,33 @@ impl Scopes<'_> {
             && (!function.is_argument(v) || self.is_promoted_ret_buffer(function, data, v))
     }
 
+    /// Has @FR-O-Oracle DERIVED an owner fact for `v`, rather than defaulted to one?
+    ///
+    /// The question `owns_freeable_store` cannot ask from `deps` alone, and the one phase 0
+    /// measured: `Own::Owned` with `OwnEvidence::Derived` or `Minted` is a positive answer,
+    /// while `Fallback` (nothing to read) and `Own::Unknown` (read, could not conclude) are
+    /// not.  A parameter answers `Borrowed` of itself and is excluded by the carve-out above
+    /// before this is reached.
+    fn oracle_derived_owner(
+        &self,
+        function: &crate::variables::Function,
+        data: &Data,
+        v: u16,
+    ) -> bool {
+        if usize::from(v) >= function.count() as usize {
+            return true; // not a binding this can ask about — keep the existing answer
+        }
+        let defs = crate::use_analysis::function_defs(data, self.d_nr);
+        let (own, evidence) =
+            crate::use_analysis::ownership_evidence_with(data, self.d_nr, v, &defs);
+        matches!(own, crate::use_analysis::Own::Owned)
+            && matches!(
+                evidence,
+                crate::use_analysis::OwnEvidence::Derived
+                    | crate::use_analysis::OwnEvidence::Minted
+            )
+    }
+
     fn free_vars(
         &mut self,
         is_return: bool,
@@ -10351,12 +10378,26 @@ impl Scopes<'_> {
                 } else {
                     None
                 };
-                let owns = dep.is_empty()
+                // @FR-O-Proxy asks free — this is the scope-exit sweep's own licence, and it
+                // frees more bindings than every other site in the compiler together.  The
+                // @FR-O-Override veto is consulted in `emit` below, which is the same
+                // conjunction spelled across two statements.
+                //
+                // ⚠ It is NOT `Scopes::owns_freeable_store`, and @PLN155 phase 3 measured that
+                // the hard way: the ladder was attached to that predicate and its gate NEVER
+                // FIRED, because the sweep does not go through it.  That predicate is the
+                // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
+                let owns = (dep.is_empty()
                     || self.lift_join_witness.contains_key(&v)
                     || borrow_witness.is_some()
                     || (dep.len() == 1
                         && dep[0] == v
-                        && crate::parser::vectors::is_keyed(function.tp(v)));
+                        && crate::parser::vectors::is_keyed(function.tp(v))))
+                    // @PLN155 phase 3, `LOFT_OWN_FREE=deny` — the rung: the proxy is not
+                    // enough, the ORACLE must also have derived an owner fact.  Off by
+                    // default; it exists to measure what refusing those frees costs.
+                    && (!crate::keys::own_free_deny()
+                        || self.oracle_derived_owner(function, data, v));
                 // Plan-57 Phase B (Mechanism B), widened by #323: a
                 // Reference-typed capture — a boxed `__cell_<T>` AND, per
                 // P260's storage rule, any plain struct capture — is OWNED
@@ -15657,6 +15698,11 @@ fn check_ref_leaks(
             // LOFT_REF_LEAK_WARN=1 downgrades the assert to a warning so a
             // debug build can still RUN a program with a known leak shape
             // (e.g. to chase a separate runtime corruption past compile).
+            //
+            // @FR-O-Proxy asks oracle — this CHECKS for a missing free, it never emits or
+            // suppresses one, so the empty dep list is read as evidence about a program the
+            // scope pass has already finished lowering.  A wrong answer here costs a
+            // diagnostic, never a release.
             let warn_only = std::env::var("LOFT_REF_LEAK_WARN").is_ok();
             if warn_only && !(!dep.is_empty() || ret_deps.contains(&v) || freed.contains(&v)) {
                 eprintln!(

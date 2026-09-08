@@ -11,10 +11,10 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 **Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
 phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: phase 3** — the refusal at the
-free, on a `report → deny` ladder.  Phase 2b's refutation is what points there: the fail-open
-cannot be closed at the VERDICT, because at three of four readers the permissive answer is
-load-bearing or unmeasurable.  The ownership MODEL is not reopened
+same day, so the sequencing hold is lifted.  **Next: give the oracle a positive
+answer for the `__ref_N` return buffers** — phase 0 says they are two-thirds of the
+proxy-alone sites and phase 3a says the refusal set has to shrink before a `deny` rung can
+exist at all.  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -80,7 +80,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b landed).
+- **Last touched:** 2026-09-08 (arc A, phases 0, 1, 2a, 2b, 3a landed).
 
 ## Why this family, measured
 
@@ -119,7 +119,8 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | ✅ **done — the narrow-widths outcome: one PAIR, four questions.**  `Function::proxy_says_owned` folds six sites; three are shown to ask a different question and stay apart.  `introspect_diff.sh` **IDENTICAL 1412/1412**; the control went 9 of 29 → 9 of 30 after the check was taught the folded spelling — it read 3 of 23 first, which is the collapse the verify exists to catch |
 | **2a** — the verdict exists and every reader disposes of it | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | ✅ **done** — `Own::Unknown`, 20 readers disposed.  Prediction (EMPTY diff) written first and **falsified twice**, each falsification naming a reader that silently inherited the permissive answer; **IDENTICAL 1412/1412** once both were fixed |
 | **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | ✅ **done — all four candidates REFUTED, and none lands.**  `LOFT_OWN_DECLINE=<name>` is the instrument that says so: `witness` is a WRONG VALUE on both backends, `owned-slot` moves three files' emit with every channel unchanged (unverified, not safe), `collection` and `join` are inert |
-| **3** — the refusal at the free, on a `report → deny` ladder | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open |
+| **3a** — where the refusal has to LIVE, and what `deny` costs | § Phase 3a | the ladder fires at all (a gate that never fires is not a gate); the default path byte-identical | ✅ **done — and it corrects the plan twice.**  `owns_freeable_store` is NOT the sweep's licence (the ladder attached there NEVER FIRED); and `deny` is not safe-by-direction — 31 of 140 files leak, and **one answers WRONG** |
+| **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open — and phase 3a says the refusal SET must shrink first |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
 | **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
 
@@ -342,6 +343,74 @@ a single mistake that can be closed at the verdict; at three of these four sites
 answer is either load-bearing or unmeasurable, and phase 3's refusal must therefore sit at the
 FREE rather than at the verdict — which is where the plan already puts it.
 
+## Phase 3a — the ladder found the chokepoint by not firing, and `deny` is not safe (2026-09-08)
+
+The plan puts phase 3's refusal at `Scopes::owns_freeable_store` — phase 1's one home.  So the
+rung was written there (`LOFT_OWN_FREE=deny`: the proxy and its veto are not enough, the ORACLE
+must also have derived an owner fact) and measured.  **It moved nothing, on any of sixty corpus
+files.**  An env-gated `eprintln` on the gate's own decision settled why in one run: the gate is
+never reached.
+
+**`owns_freeable_store` is not where the scope-exit sweep gets its licence.**  The sweep —
+which frees more bindings than every other site in the compiler together — computes its own
+`owns` in `get_free_vars`, and the plan's own words were already precise about this
+(*"`Scopes::owns_freeable_store` is that home for the keyed leg"*); it was read as the home for
+all of it.  Moved to the sweep's `owns`, the same rung moves **37 of 40 files**.
+
+### The auditor could not see the biggest free site in the compiler
+
+The sweep reads its proxy as `dep.is_empty()`, where `dep` is **destructured out of the type**:
+
+```rust
+if let Type::Reference(_, dep) | Type::Vector(_, dep) | … = function.tp(v).base() { … }
+…
+let owns = dep.is_empty() || …
+```
+
+`o_proxy_check.py` knew two spellings — `depend().is_empty()` and `let deps = ….depend();` —
+and neither is this one; there is no `.depend()` call anywhere in it.  So the check had been
+reporting `ok` over the single largest licence in the tree since it was written, which is its
+own doc's warning about itself: *"A gate that cannot see a spelling reports it as clean."*
+Teaching it the pattern spelling brings **nine more sites** into view.
+
+**And widening it surfaced the next false positive, which is the honest cost of widening.**
+`scopes::check_ref_leaks` asserts that a variable *"has no OpFreeRef"* — twice, in `\`-continued
+diagnostic strings — and the check read those as frees being emitted, accusing the one routine
+whose whole job is to notice a free is MISSING.  Discrimination 9 is the answer, and it has to
+be narrow in both directions: a free is EMITTED through a string too (`def_nr("OpFreeRef")`),
+so stripping every literal took `10 of 31 reach a free` down to `4 of 30` and blinded the check
+to the very spelling it exists to find.  An op name is one bare identifier; a diagnostic is a
+sentence, and the space between words is what separates them.  Scanned over the whole text,
+because the diagnostics that matter span four lines.
+
+### What `deny` costs, measured — and the design call it settles
+
+Open design question 3 proposed that `deny` **declines the free** — *"a reported leak rather
+than an abort — so the terminal failure is the safe direction"*.  Over 140 corpus files, on
+`--interpret` under `LOFT_STRICT_STORES=1`:
+
+| under `LOFT_OWN_FREE=deny` | files |
+|---|---|
+| verdict unchanged | 108 |
+| now LEAK | 31 |
+| **wrong ANSWER** | **1** |
+
+**The direction is mostly right and not entirely**, which is the finding.
+`1157-a-coalesce-default-that-mints-is-freed` answers `11 0 11` where it must answer
+`11 11 11`: withholding a free is not always merely a retention — where the free is part of a
+`??` coalesce's ownership hand-over, declining leaves the binding naming the wrong store.  So
+*"a leak and a UAF are both wrong; only one of them is recoverable"* does not license this
+terminal behaviour as written: **a decline can be a wrong answer too**, and `deny` needs either
+a compensating action at the site (null the binding it declines for) or a refusal set narrow
+enough to exclude the hand-over shapes.
+
+**And 22 % of files leaking is not a rung anyone ships.**  That number is the same one phase 0
+predicted from the other end — one free in twelve rests on the proxy alone — and phase 0 also
+says where it goes: **two-thirds of those sites are `__ref_N` return buffers the oracle
+deliberately cannot classify.**  Giving the oracle a positive answer for those is what shrinks
+the refusal set, and it is now evidence-backed rather than guessed: it is the work phase 3b
+depends on, not an optimisation of it.
+
 ## Phase ordering
 
 A first: it is independent, it is what phase 5 re-runs, and it is the cheapest thing here.
@@ -366,6 +435,12 @@ feeds it changes).  2 before 3 (a refusal over a fail-open verdict refuses the w
    **declines the free** — a reported leak rather than an abort — so the terminal failure is
    the safe direction, with an `abort` mode for the gate.  A leak and a UAF are both wrong; only
    one of them is recoverable, and the store ceiling already reports the leak.
+   **ANSWERED, and against the proposal as written (phase 3a).**  Measured over 140 files:
+   declining leaks in 31 and answers WRONG in 1 — a `??` coalesce whose hand-over the free was
+   part of.  A decline is therefore not safe by direction, and `deny` needs a compensating
+   action at the site or a refusal set that excludes the hand-over shapes.  The 22 % leak rate
+   also rules it out as a shipped default until the refusal set shrinks, which phase 0 already
+   named the way to do: teach the oracle the `__ref_N` return buffers.
 4. **Does `Own::Unknown` carry a base?**  `Join`'s readers need the witness; if `Unknown` needs
    one too it is a fourth verdict, and if it does not, `callref_join_first_bind`'s three readers
    each need an explicit arm for it.

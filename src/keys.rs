@@ -1445,6 +1445,22 @@ pub fn own_declines(name: &str) -> bool {
     .any(|s| s == name)
 }
 
+/// @PLN155 phase 3 — the ladder at the free: `LOFT_OWN_FREE=off|deny` (default `off`).
+///
+/// The plan's rung: *a free whose licence is proxy-only, with no oracle agreement, is refused
+/// and names the binding.*  `deny` adds that requirement to `Scopes::owns_freeable_store` —
+/// the proxy and its veto are no longer enough, the oracle must also have DERIVED an owner
+/// fact — so the frees phase 0 counted as `proxy-alone` and `no-answer` stop being emitted.
+///
+/// ⚠ **Slow by construction and gated for that reason.**  It asks the oracle per binding,
+/// which recomputes `function_defs` (loft#854's quadratic shape), so it is a measurement
+/// switch and not a shipping mode.
+#[must_use]
+pub fn own_free_deny() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_OWN_FREE").as_deref() == Ok("deny"))
+}
+
 #[must_use]
 pub fn join_own_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
