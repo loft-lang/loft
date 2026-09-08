@@ -1540,9 +1540,20 @@ pub fn trace_db() -> bool {
 /// probe programs that exercise one lifetime question each. Under it a probe that would
 /// otherwise print a plausible wrong number fails loudly instead.
 #[must_use]
+#[inline]
 pub fn strict_stores() -> bool {
-    static SS: OnceLock<bool> = OnceLock::new();
-    *SS.get_or_init(|| env_set("LOFT_STRICT_STORES"))
+    // Read on every store access (`Stores::store`), so the cached answer is one
+    // relaxed load: 0 = not read yet, 1 = off, 2 = on.
+    static SS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    let v = SS.load(std::sync::atomic::Ordering::Relaxed);
+    if v == 0 { strict_stores_init(&SS) } else { v == 2 }
+}
+
+#[cold]
+fn strict_stores_init(ss: &std::sync::atomic::AtomicU8) -> bool {
+    let on = env_set("LOFT_STRICT_STORES");
+    ss.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+    on
 }
 
 /// Violations recorded by [`strict_stores`] mode, so one run surfaces every site rather

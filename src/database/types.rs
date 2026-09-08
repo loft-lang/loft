@@ -2222,6 +2222,11 @@ impl Stores {
             }
         }
         self.types.truncate(keep as usize);
+        // A surviving row's facts were derived over rows that may now be gone
+        // (a forward reference into the batch being rolled back).
+        for t in &self.types {
+            t.facts.forget();
+        }
         self.names.retain(|_, &mut nr| nr < keep);
     }
 
@@ -3218,6 +3223,65 @@ impl Stores {
     }
 }
 
+/// A type's cached answers to the two questions every record allocation and
+/// free asks — does a value of it own a heap record, and is its default all
+/// zero bytes — derived from `parts` on the first ask
+/// ([`Stores::heap_facts`](super::Stores::heap_facts)).  Derived, so it takes
+/// no part in equality or in the stored form, and a table rollback forgets it
+/// ([`Stores::rollback_types_to`](super::Stores::rollback_types_to)).
+#[derive(Default)]
+pub struct TypeFacts(std::sync::atomic::AtomicU8);
+
+const FACTS_KNOWN: u8 = 1;
+const FACTS_OWNS_HEAP: u8 = 2;
+const FACTS_ZERO_DEFAULT: u8 = 4;
+
+impl TypeFacts {
+    /// `(owns_heap, zero_default)` when derived already.
+    #[inline]
+    pub(super) fn get(&self) -> Option<(bool, bool)> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & FACTS_KNOWN != 0)
+            .then_some((bits & FACTS_OWNS_HEAP != 0, bits & FACTS_ZERO_DEFAULT != 0))
+    }
+
+    pub(super) fn set(&self, owns_heap: bool, zero_default: bool) {
+        let bits = FACTS_KNOWN
+            | if owns_heap { FACTS_OWNS_HEAP } else { 0 }
+            | if zero_default { FACTS_ZERO_DEFAULT } else { 0 };
+        self.0.store(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(super) fn forget(&self) {
+        self.0.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clone for TypeFacts {
+    fn clone(&self) -> Self {
+        TypeFacts(std::sync::atomic::AtomicU8::new(
+            self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal facts whether
+/// or not either has derived them yet.
+impl PartialEq for TypeFacts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for TypeFacts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some((owns, zero)) => write!(f, "TypeFacts(owns_heap={owns}, zero_default={zero})"),
+            None => f.write_str("TypeFacts(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3235,6 +3299,7 @@ pub struct Type {
     /// Tuple element groups live on the parser-side
     /// `Definition::field_groups` instead.
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
+    pub(super) facts: TypeFacts,
 }
 
 impl Type {
@@ -3285,6 +3350,7 @@ impl Type {
             size,
             align,
             field_groups,
+            facts: TypeFacts::default(),
         }
     }
 
@@ -3305,6 +3371,7 @@ impl Type {
             size,
             align: size as u8,
             field_groups: Vec::new(),
+            facts: TypeFacts::default(),
         }
     }
 
@@ -3319,6 +3386,7 @@ impl Type {
             size: 4,
             align: 4,
             field_groups: Vec::new(),
+            facts: TypeFacts::default(),
         }
     }
 

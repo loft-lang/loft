@@ -482,6 +482,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         size: as_u16(field(p, "size")?)?,
         align: as_u8(field(p, "align")?)?,
         field_groups,
+        facts: super::types::TypeFacts::default(),
     })
 }
 

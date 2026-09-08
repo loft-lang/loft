@@ -1693,6 +1693,17 @@ impl Stores {
                     .set_u32_raw(rec.rec, rec.pos, if null { u32::MAX } else { 0 });
             }
             Shape::Record(n_fields) => {
+                // A record whose default is all zero bytes — no nullable field, no
+                // declared default, no text, no variant tag, recursively — is one
+                // `zero_range` rather than a walk writing each field's zero.
+                if self.heap_facts(tp).1 {
+                    let size = self.types[tp as usize].size;
+                    if size != u16::MAX {
+                        self.store_mut(rec)
+                            .zero_range(rec.rec, rec.pos, u32::from(size));
+                        return;
+                    }
+                }
                 for f_nr in 0..n_fields {
                     let (position, content, nullable, is_type_tag) = {
                         let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
