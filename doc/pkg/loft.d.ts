@@ -84,8 +84,6 @@ export interface InitOutput {
     readonly resume_frame: () => [number, number];
     readonly swap_export: () => [number, number];
     readonly swap_stage: (a: number, b: number) => void;
-    readonly debug_command: (a: number, b: number) => [number, number];
-    readonly debug_start: (a: number, b: number) => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

@@ -568,6 +568,10 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // call, and the named per-call frame push was that lane's largest cost.
         out.emit_live = false;
         out.lean_tier = true;
+        // The frame-naming question has its own home (`Output::lean`, kept apart from the
+        // tier so a browser client can be debug-off and still name its frames): a shipped
+        // library names none.
+        out.lean = true;
         // Only the exported functions + their transitive deps (header + init + the
         // reachable subset) — exactly what a `--native` binary emits from `n_main`,
         // so unreachable operator stubs never surface.

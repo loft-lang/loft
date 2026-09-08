@@ -7260,6 +7260,10 @@ uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs a
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
 
+@PLN157 § V-g adds one peeling site — **426 · 402 · 24** on the joined tree — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
+
+@PLN157 § V-g adds one more on the OPAQUE side, also on purpose — **751 · 403 · 6 · 342** on the joined tree — `use_analysis::view_elision_bind` matches the bound local's type BARE (`Type::Reference`), because a nullable local is excluded from the elision by design: its slot may hold the sentinel and it takes the nullable join's own copy (`nullable_join_first_bind`), so asking through `base()` would admit exactly the shape the rule keeps out (guard cell c13).
+
 ### The catch-all audit — every type-driven op choice, classified (2026-08-22)
 
 Two defects in one week had the same shape: a `match` on a TYPE that picks an **op**,
