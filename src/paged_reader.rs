@@ -1088,6 +1088,7 @@ fn key_compare_reader<P: PageProvider>(
         let c = match (val, k.type_nr.abs()) {
             (Content::Long(v), 1 | 2) => v.cmp(&reader.i64_at(rec, p)),
             (Content::Long(v), 8) => v.cmp(&i64::from(reader.i32_at(rec, p))),
+            (Content::Long(v), 12) => v.cmp(&i64::from(reader.u32_at(rec, p))),
             (Content::Long(v), 9) => {
                 let mut b = [0u8; 2];
                 reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
@@ -1471,22 +1472,30 @@ impl<'a, P: PageProvider> PagedSpatial<'a, P> {
     /// answers, which is what holds them in step.
     fn axis_value(&mut self, rec: u32, key: &crate::keys::Key) -> i64 {
         let p = ELEM_PAYLOAD + u32::from(key.position);
+        // Each arm is the paged spelling of the `Store` reader `radix_db::axis_i64` calls
+        // for the same `type_nr`, `key.start` included: the narrow widths store
+        // `value - start`, so a decode that assumed a zero bias would give this storage a
+        // different Morton code than the resident one for the same record.
+        let start = i64::from(key.start);
         match key.type_nr.unsigned_abs() {
             // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
             8 => i64::from(self.reader.i32_at(rec, p)),
-            // 2-byte, `1`-biased with `0` reserved for null (`Store::get_short`).
+            // 4-byte UNSIGNED (`int_raw<…>`, @FR-L-Narrow-Enc), as `Store::get_u32_raw`
+            // reads it.  Raw like the signed 4-byte arm above, so it takes no bias.
+            12 => i64::from(self.reader.u32_at(rec, p)),
+            // 2-byte, `start`-biased with `0` reserved for null (`Store::get_short`).
             9 => {
                 let raw = self.reader.u16_at(rec, p);
                 if raw == 0 {
                     i64::from(i32::MIN)
                 } else {
-                    i64::from(i32::from(raw) - 1)
+                    i64::from(raw) + start - 1
                 }
             }
-            // 1-byte, unbiased (`Store::get_byte` with `min` 0).
-            10 => i64::from(self.reader.u8_at(rec, p)),
-            // 2-byte signed.
-            11 => i64::from(self.reader.u16_at(rec, p) as i16),
+            // 1-byte, `start`-biased (`Store::get_byte`).
+            10 => i64::from(self.reader.u8_at(rec, p)) + start,
+            // 2-byte direct, `start`-biased (`Store::get_short_full`).
+            11 => i64::from(self.reader.u16_at(rec, p)) + start,
             // `integer` (1), `long` (2), and any other integer default.
             _ => self.reader.i64_at(rec, p),
         }

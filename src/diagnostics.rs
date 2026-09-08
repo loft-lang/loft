@@ -633,6 +633,23 @@ impl Diagnostics {
     /// reordering the diagnostic — `fix_last` cannot, because whatever the default's own
     /// parse reported would be the last entry by then.
     #[must_use]
+    /// How many ERRORS have been reported so far.
+    ///
+    /// The question a recovery diagnostic has to ask before it speaks: *did the thing I am
+    /// about to complain about already report for itself?*  A fallback that cannot ask it
+    /// describes the PARSER's state to someone reading about their program — loft#1453, where
+    /// `for e in v` over a nullable collection printed the right sentence and then two more
+    /// (*"Need an iterable expression in a for statement"*, *"Expect token ;"*).
+    ///
+    /// Errors only, deliberately: a WARNING raised while parsing the same expression is not a
+    /// reason to stay silent about a genuinely missing iterable.
+    pub fn error_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.level == Level::Error)
+            .count()
+    }
+
     pub fn last_index(&self) -> Option<usize> {
         self.entries.len().checked_sub(1)
     }

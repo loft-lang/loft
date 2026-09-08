@@ -101,7 +101,12 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
 
 ```
   formation
-  (N-Opt)      τ wf  ⟹  τ? wf          τ? is a type for any τ
+  (N-Opt)      τ wf,  has_null(τ)  ⟹  τ? wf     τ? is a TYPE for every τ that has a value to
+               spend on absence — a reserved sentinel (layout.md L-Null) or a discriminant
+               (L-Null-Tag).  A type that is only its parts' bytes has neither: a TUPLE and a
+               `value struct` (@PLN101) are refused BY NAME at the declaration, each naming its
+               cures.  A tuple that ARRIVES absent is a present tuple of null members —
+               tuples.md (T-Absent) — so no `(τ, τ)?` exists even in flight.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 
@@ -137,6 +142,9 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                `has_default(τ)` is a STATIC side-condition — where it fails, `e?` is a
                COMPILE error, never a runtime one (§ Defaults below).  The pairing is the
                mnemonic: `??` = the default YOU give, `?` = the default the TYPE gives.
+               ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
+               collection instantiates the empty collection first — collections.md
+               (Col-Insert-Absent).  Every other position keeps the explicit discharge.
   (N-Match)    match e { null ⇒ …,  x ⇒ …(x:τ)… }      eliminates τ?, binds the τ arm
   (N-Store)    storing  e:τ?  into a  τ  slot without discharge is REJECTED — a WARNING for
                most τ (the null is representable-and-distinct in τ's non-null form), a hard
@@ -257,6 +265,7 @@ the type:
 > collision this row names. QUALITY.md § `character` on the JSON surface.
 | `Float` / `Single` | in-band sentinel = a reserved `NaN` |
 | a reference | out-of-band `nullref` (a reserved `DbRef`; no collision) |
+| an `enum` (plain or struct-enum) | in-band **discriminant `0`** — variants are numbered from 1, so `0` is a variant of no enum; a plain enum reads `255` as absent too (the byte an explicit `null` writes), which is why it holds at most 254 variants. No collision, and `size(E?) = size(E)` |
 | a struct `S` as a `vector` element | the tagged **`__nullable<S>`** enum (discriminant + payload; no collision) |
 
 > The in-band scalar sentinels are **observable, reserved values** — the base type's null is
@@ -569,8 +578,11 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in the companion
-[types-history.md](types-history.md).
+**OPEN: 0.**  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
+(loft#1450): `(N-Domain)`'s in-domain elision was asked about the RECEIVER when it only ever
+proved the INDEX, so an element read through an absent collection typed non-null; the `!= null`
+guard that discharges it narrowed scalars only, which is `D-Null-Heap`'s class on the discharge
+side; and the narrowing described the assignment TARGET, against `(N-Decl)`.  `D-Opt-NoNull` closed 2026-09-07: `(N-Opt)` now carries the precondition it always implicitly had, and the tuple's absence is ruled and recorded as tuples.md `(T-Absent)` (its code half is `D-tup-10` there).  The register is [types-history.md](types-history.md).
 
 ## Conformance check (how we know a deviation is real)
 

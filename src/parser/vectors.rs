@@ -560,7 +560,7 @@ impl Parser {
                     code = "redundant-null-negation",
                     "'!' on a 'not null' {} is always false — '!x' tests whether x \
                      is null, and a 'not null' value is never null",
-                    t.name(&self.data)
+                    t.source_name(&self.data)
                 );
                 self.lexer.fix_last(crate::diagnostics::Fix {
                     kind: crate::diagnostics::FixKind::Conditional,
@@ -2053,11 +2053,10 @@ or build a local and use that."
     /// must be created in pass 1; pass 2 looks them up via
     /// `data.def_nr(name)` (no creation).
     ///
-    /// Cells whose `cell_struct_name` returns `None` (exotic
-    /// integer widths, Reference / Function / Vector / etc.) are
-    /// silently skipped — phase 02d-iii's outer-binding rewrite
-    /// detects the missing cell at the use site and falls back to
-    /// today's stack-slot codegen.
+    /// Cells whose `cell_struct_name` returns `None` (Reference / Function / Vector /
+    /// etc.) are skipped — phase 02d-iii's outer-binding rewrite detects the missing
+    /// cell at the use site and falls back to stack-slot codegen.  No SCALAR is
+    /// declined, so that fallback never carries one (`@FR-L-CapWrite`).
     fn synthesize_cell_structs(&mut self, lambda_d_nr: u32) {
         if !self.first_pass {
             return;
@@ -2079,8 +2078,20 @@ or build a local and use that."
                 .data
                 .add_def(&cell_name, self.lexer.pos(), DefType::Struct);
             let value_tp = cell_value_type(tp);
-            self.data
+            // The FLAG has to say what the TYPE says.  `add_attribute` marks every
+            // attribute nullable, and a dense cell's `value` is not: that is the whole
+            // reason a nullable capture takes a `__cell_opt_` of its own rather than
+            // widening this one (`@FR-N-Store` — a `τ` field may not hold the sentinel).
+            // Left disagreeing, the field's width is read two ways — the declared width
+            // from the type, a sentinel-reserving one from the flag — which agree at 8
+            // bytes and part company at every narrow width: a `u8` cell registered as
+            // `byte<0,true>` in the compiler and `short<0,true>` in generated `init()`,
+            // one byte against two, with the ids past it renamed (loft#739).
+            let nullable = matches!(value_tp, Type::Optional(_));
+            let a_nr = self
+                .data
                 .add_attribute(&mut self.lexer, cell_d_nr, "value", value_tp);
+            self.data.set_attr_nullable(cell_d_nr, a_nr, nullable);
         }
     }
 
@@ -2121,8 +2132,8 @@ or build a local and use that."
     ///   change its call-site signature.  Argument boxing is a
     ///   follow-up sub-step (matrix row M / Case-B-on-arg uses
     ///   the explicit `Mutable<T>` path in phase 05).
-    /// - Skips names whose `cell_struct_name` returns `None`
-    ///   (exotic integer widths) — phase 02d-ii's silent gap.
+    /// - Skips names whose `cell_struct_name` returns `None` — no
+    ///   scalar type is among them.
     /// - Skips names already flipped on a re-entry (defensive).
     #[allow(
         dead_code,
@@ -2738,6 +2749,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let mut fill = Value::Null;
         if matches!(in_type, Type::Vector(_, _)) {
             let vec_var = self.create_unique("vector", &in_type);
+            // The loop iterates THIS temp, so its identity is load-bearing: materialising it
+            // would walk a copy while the body's `#remove` empties the original.
+            self.vars.set_iteration_source(vec_var);
             in_type = in_type.depending(vec_var);
             fill = v_set(vec_var, expr);
             expr = Value::Var(vec_var);
@@ -3666,7 +3680,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // at compile time.  This eliminates resize calls in vector_append.  A keyed
         // local (loft#703) has no vector to size — its adds go through `hash::add` and
         // friends, which grow the keyed store themselves.
-        if !self.first_pass && !res.is_empty() && vec != u16::MAX && !self.keyed_local(vec) {
+        if !self.first_pass && !res.is_empty() && vec != u16::MAX && !self.keyed_local_kind(vec) {
             let ed_nr = self.data.type_def_nr(in_t);
             if ed_nr != u32::MAX {
                 let known = self.data.def(ed_nr).known_type();
@@ -3840,6 +3854,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         vec != u16::MAX && is_keyed(self.vars.tp(vec))
     }
 
+    /// Is this destination a keyed collection — the KIND question, with the `&` link peeled.
+    ///
+    /// [`Self::keyed_local`] answers the OWNERSHIP question beside it: does this local have a
+    /// keyed store of its OWN.  The two agree everywhere except a `&hash<E[k]>` parameter,
+    /// where the kind is a hash and the store belongs to the caller — so a site that needs
+    /// one and asks the other is wrong in exactly that spelling.  `OpPreAllocVector` is such
+    /// a site: it must not be emitted for ANY keyed destination (loft#703 — a keyed local has
+    /// no vector to size), while `keyed_local_materialise` next door must not fire for a `&`,
+    /// which has nothing of its own to mint.
+    ///
+    /// Two questions in one predicate is the defect this file keeps meeting; asked as one,
+    /// widening it for the kind silently changed every ownership answer with it (loft#1445).
+    pub(crate) fn keyed_local_kind(&self, vec: u16) -> bool {
+        vec != u16::MAX && keyed_kind(self.vars.tp(vec))
+    }
+
     /// The empty keyed collection a NULLABLE keyed LOCAL must be given before a write can
     /// land in it — `if h == null { OpDatabase(h, …) }` — or `None` when `vec` is not one.
     ///
@@ -3935,7 +3965,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// `hash<S[k]>`, and the collection reads back empty.  Measured on a nullable keyed
     /// LOCAL — a shape [`is_keyed`] still refuses, so nothing reaches it that way today.
     pub(crate) fn keyed_known_type(&mut self, tp: &Type) -> Option<u16> {
-        let tp = tp.base();
+        // @FR-B-Ref-Uniform — through `peel_link`, not `base`.  This asks WHICH KEYED KIND
+        // a type is, which is a question about the shape and never about how the value is
+        // reached, so a `&hash<τ[k]>` parameter has to answer the same as its `hash<τ[k]>`
+        // twin.  Asked through `base`, the link was not peeled, a `&` parameter answered
+        // `None`, and `new_record`'s fallback handed `OpNewRecord` the wrap-`vector<τ>` id
+        // — the exact miss P188 documents one function down, reached by a spelling it did
+        // not cover.  `record_finish` then dispatched through `Parts::Vector`, the keyed
+        // insert never ran, and `len` read 0 with no diagnostic (loft#1445).
+        let tp = tp.peel_link();
         let content = match tp {
             Type::Sorted(td, _, _)
             | Type::Hash(td, _, _)
@@ -4504,19 +4542,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone());
             p = Value::Insert(steps);
             t = in_t.clone();
-        } else if matches!(t, Type::Null) && matches!(in_t.base(), Type::Enum(_, false, _)) {
-            // @PLN102 — a `null` element in a value-enum vector (`vector<Color?>`) has
-            // no wired per-element null slot (elements pack the raw disc byte, no
-            // sentinel).  Reject it explicitly: the scalar `convert(Null, Enum)` →
-            // typed-null path (which null-check-fixes `n: Color? = null` VARIABLES) now
-            // SUCCEEDS, so the "cannot store" diagnostic below no longer fires here.
+        } else if matches!(t, Type::Null)
+            && matches!(in_t.base(), Type::Enum(_, false, _))
+            && !matches!(in_t, Type::Optional(_))
+        {
+            // A `null` into a DENSE value-enum element is a real precision loss: the slot
+            // packs the raw discriminant byte and the author asked for a vector that holds
+            // a `Color`, not the absence of one.  A NULLABLE element (`vector<Color?>`) is
+            // a different question and takes the scalar `convert(Null, Enum)` typed-null
+            // path below — `(L-Null)` covers every type that reserves a null VALUE, and a
+            // value enum reserves two codes (`0` undefined, `255` null), which is why its
+            // variants are numbered from 1.  Refusing there rejected the author's own
+            // declared type while naming a type they had not written (loft#1416).
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "cannot store null elements in a vector<{}> (would lose precision); \
-                 cast each element explicitly with 'as {}'",
-                in_t.name(&self.data),
-                in_t.name(&self.data)
+                 declare the element nullable (`vector<{}?>`), or cast each element \
+                 explicitly with 'as {}'",
+                in_t.source_name(&self.data),
+                in_t.source_name(&self.data),
+                in_t.source_name(&self.data)
             );
         } else if self.first_pass
             && (crate::data::Data::type_has_unresolved(&t)
@@ -4557,9 +4603,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         Level::Error,
                         "cannot store {} elements in a vector<{}> (would lose precision); \
                      cast each element explicitly with 'as {}'",
-                        t.name(&self.data),
-                        in_t.name(&self.data),
-                        in_t.name(&self.data)
+                        t.source_name(&self.data),
+                        in_t.source_name(&self.data),
+                        in_t.source_name(&self.data)
                     );
                 }
             } else if self.convert(&mut p, in_t, &t) {
@@ -4571,8 +4617,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     self.lexer,
                     Level::Error,
                     "No common type {} for vector {}",
-                    t.name(&self.data),
-                    in_t.name(&self.data)
+                    t.source_name(&self.data),
+                    in_t.source_name(&self.data)
                 );
             }
         }
@@ -4977,6 +5023,42 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     for l in steps {
                         ls.push(l.clone());
                     }
+                } else if !self.first_pass
+                    && crate::keys::append_in_place_enabled()
+                    && let Some((fn_nr, buf_idx, args)) = self.element_call_takes_record_buffer(p)
+                {
+                    // @PLN157 § V-d — the element's record exists before the call, so the
+                    // call builds INTO it: its hidden buffer argument becomes the element
+                    // itself, and the callee's reuse-or-allocate `OpDatabase` (the R1 guard)
+                    // writes the fields where they live.  The answer is bound to a
+                    // never-free temp and compared at run time: a callee that minted its
+                    // own store on some path, or returned a parameter's record, answers a
+                    // different store and takes today's copy — the free-source bit then
+                    // releases exactly what it releases today, a store nobody else names.
+                    // In place there is no copy and nothing to release.
+                    let mut args = args;
+                    args[buf_idx] = Value::Var(elm);
+                    let ret = self.data.def(fn_nr).returned().base().clone();
+                    let r = self.vars.work_refs_p2(&ret, &mut self.lexer);
+                    self.vars.set_skip_free(r);
+                    ls.push(v_set(r, Value::Call(fn_nr, args)));
+                    // A callee that hands back a VISIBLE argument's record (`fn id(p: S)
+                    // -> S { p }`) answers a store the caller still owns: the copy must not
+                    // release it.  Today's path is protected by the lift's private copy;
+                    // here the answer is read directly, so the callee's own fact decides.
+                    let free_source_bit: i32 = if self.is_struct_returning_call(p)
+                        && !self.data.def(fn_nr).returns_borrowed_view()
+                    {
+                        0x8000
+                    } else {
+                        0
+                    };
+                    let type_nr = Value::Int(
+                        i32::from(self.data.def(inner_nr).known_type()) | free_source_bit,
+                    );
+                    let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(elm)]);
+                    let copy = self.cl("OpCopyRecord", &[Value::Var(r), Value::Var(elm), type_nr]);
+                    ls.push(v_if(distinct, copy, Value::Null));
                 } else {
                     // Source is a variable, field access, or function call — the bytes
                     // must be explicitly copied into the new element slot.
@@ -5300,7 +5382,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Type::Tuple(elems) = tp
             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
         {
-            let h = self.create_unique("tuphold", &owned_create);
+            // The hold BORROWS its source; it is the one branch here that mints no store.
+            // The three above create a backing (`OpDatabase` + a copy) and so are created
+            // with `owned_create`, whose empty dep list is `@FR-O-Proxy`'s proxy for "this
+            // binding owns its store" — which is what places their free.  This hold only
+            // names the source tuple so each member can be read once, so `@FR-O-Borrow`
+            // applies instead: it is tracked and never frees, and `@FR-O-Derived` then
+            // derives no free for it.  Created with the SOURCE's dep, since `with_deps`
+            // carries a tuple's dep into every element and the free is decided per element.
+            let base = match &src {
+                Value::Var(v) => *v,
+                Value::TupleGet(b, _) => *b,
+                _ => return None,
+            };
+            let hold_tp = tp.depending(base);
+            let h = self.create_unique("tuphold", &hold_tp);
             if h == u16::MAX {
                 return None;
             }
@@ -5547,11 +5643,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `short<min,false>` (the `+1` sentinel encoding) where this arm
                 // registers `short_raw` (direct), so the two spellings of one range
                 // could not agree on a Part even when both found one.
+                // The width→Part decision has ONE home, shared with the struct-field and
+                // element mints and keyed on the same `NarrowIntKind` the ops come from
+                // (`NarrowIntKind::part`).  A width with no narrow Part keeps the wide
+                // 8-byte `integer`.
                 match spec.vector_narrow_width(false) {
-                    Some(1) => self.database.byte(spec.min, false),
-                    Some(2) => self.database.short_raw(spec.min, false),
-                    Some(4) => self.database.int(spec.min, false),
-                    _ => self.database.name("integer"),
+                    Some(n) => crate::data::NarrowIntKind::of(n, false, true, spec.unsigned_wide())
+                        .part(&mut self.database, spec.min, false)
+                        .unwrap_or_else(|| self.database.name("integer")),
+                    None => self.database.name("integer"),
                 }
             }
             Type::Character => self.database.name("integer"),
@@ -5825,6 +5925,34 @@ pub(crate) fn is_keyed(tp: &Type) -> bool {
     )
 }
 
+/// Is this a keyed collection, however it is REACHED — the SHAPE question, `&` link peeled.
+///
+/// Reach for this wherever the answer decides what the collection IS: which kind's insert to
+/// emit, which type id `OpNewRecord` is given, whether a `[…]` source is a bulk fill.
+/// `(B-Ref-Uniform)` says a `&τ` variable is used exactly like a `τ` variable, so every one of
+/// those has to answer the same for `&hash<E[k]>` as for `hash<E[k]>`.
+///
+/// The counterpart is [`owns_keyed_store`], and the two exist as NAMES rather than as a
+/// documented choice between `base()` and `peel_link()` at each site.  `is_keyed` was asked
+/// both questions across 76 call sites; widening it for the shape silently changed every
+/// ownership answer with it, and the cost was an ICE at one site and a silent wrong answer in
+/// a caller two frames down at another (loft#1445).  A new site now picks a name that says
+/// which question it is asking.
+pub(crate) fn keyed_kind(tp: &Type) -> bool {
+    is_keyed(tp.peel_link())
+}
+
+/// Is this a keyed collection whose store this VARIABLE ITSELF owns — the OWNERSHIP question.
+///
+/// Reach for this wherever the answer decides what may be ALLOCATED, MINTED or REPLACED in
+/// place.  `(B-Ref-Alias)` makes a `&hash<E[k]>` a live link to a collection the caller owns,
+/// so none of those are this frame's to do: `gen_keyed_null` would allocate a store the
+/// variable has no room for, and the `op == "="` keyed replace would write this frame's
+/// records into a collection two frames down.
+pub(crate) fn owns_keyed_store(tp: &Type) -> bool {
+    is_keyed(tp) && !matches!(tp.base(), Type::RefVar(_))
+}
+
 /// Does this type name any collection a `[…]` literal can build — keyed or vector?
 ///
 /// Enforces @FR-Col-Store, whose store-backed set is exactly
@@ -5840,7 +5968,7 @@ pub(crate) fn is_keyed(tp: &Type) -> bool {
 /// through to the generic operator lookup and be refused as *"No matching operator 'Add'"*
 /// (loft#1207).
 pub(crate) fn is_collection(tp: &Type) -> bool {
-    is_keyed(tp) || matches!(tp.base(), Type::Vector(_, _))
+    is_keyed(tp) || matches!(tp.peel_link(), Type::Vector(_, _))
 }
 
 /// What a `c += e` source IS, relative to the collection it is being appended to.
@@ -5894,55 +6022,98 @@ fn ensure_tuple_defs_for_capture(
 /// capture into a 1-field record so closure mutations propagate
 /// back through the auto-Reference path (phase 02b/02c encoding).
 ///
-/// Returns `None` for any type the cell-synthesis pass doesn't yet
-/// support (exotic integer widths — u8/i8/u16/i16 — and any non-
-/// scalar type).  Phase 02d-i may have queued such names in
-/// `scalars_to_box` (the accumulator is intentionally inclusive);
-/// 02d-iii will detect a missing cell at the rewrite site and
-/// fall back to today's stack-slot codegen for those captures.
-/// Phase 02d-iv extends the supported set as the need surfaces.
+/// Returns `None` for a type that takes no cell at all — a reference, a collection, a
+/// function.  Every SCALAR gets one, at every integer width: `@FR-L-CapWrite` shares a
+/// captured scalar in the write direction whatever its type, so a scalar the namer
+/// declined would keep an un-boxed stack slot and lose the closure's write on any call
+/// that is not direct.
 ///
-/// Naming table (one cell per canonical type, deduped across all
+/// Naming table (one cell per storage identity, deduped across all
 /// captures):
 ///
 /// | Loft type | Cell name |
 /// |---|---|
-/// | `integer` (4-byte signed) | `__cell_integer` |
+/// | `integer` (canonical 8-byte) | `__cell_integer` |
 /// | `long` / wide integer (8-byte) | `__cell_long` |
 /// | `float` | `__cell_float` |
 /// | `single` | `__cell_single` |
 /// | `boolean` | `__cell_boolean` |
 /// | `character` | `__cell_character` |
 /// | `text` | `__cell_text` |
+/// | a narrow width (`u8`, `i16`, `integer limit(0, 100)`) | `__cell_int<width>_<min>_<max>` |
 /// | plain enum `E` | `__cell_enum_<E>` |
+///
+/// A nullable capture takes `__cell_opt_<stem>` instead (see below).
 pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<String> {
-    match tp {
-        Type::Integer(spec) => {
-            // Default-nullable byte_width: matches the storage the
-            // cell's `value` field will take.  i32 → 8 today (the
-            // bounds-range heuristic returns 8 for the I32
-            // template; that's the canonical "integer" storage),
-            // i64 → 8.  For the foundation phase we only emit two
-            // canonical integer cells; exotic forced-size widths
-            // (u8/i8/u16/i16) defer to 02d-iv.
-            let bw = spec.byte_width(true);
-            match (bw, spec.forced_size.is_some()) {
-                (8, false) if spec.max == u32::MAX => Some("__cell_long".to_string()),
-                (8, false) => Some("__cell_integer".to_string()),
-                _ => None,
-            }
-        }
-        Type::Float => Some("__cell_float".to_string()),
-        Type::Single => Some("__cell_single".to_string()),
-        Type::Boolean => Some("__cell_boolean".to_string()),
-        Type::Character => Some("__cell_character".to_string()),
-        Type::Text(_) => Some("__cell_text".to_string()),
+    // A NULLABLE capture takes a cell of its own.  `Optional(Ï)` shares `Ï`'s storage
+    // in-band (C90), so the cell reads and writes with the same ops — but the `value`
+    // field has to DECLARE the nullability, because a `Ï` field may not hold the
+    // sentinel (`@FR-N-Store`).  One field cannot be spelled both ways, so the answer is
+    // a second cell rather than a widened one, and the dense path is left untouched.
+    let (base, nullable) = tp.peel_optional();
+    let stem = cell_stem(base, data)?;
+    Some(if nullable {
+        format!("__cell_opt_{stem}")
+    } else {
+        format!("__cell_{stem}")
+    })
+}
+
+/// The canonical cell name for a NON-nullable scalar, without the `__cell_` prefix —
+/// the naming table above, and the one place the boxable set is spelled.
+///
+/// `None` means "this type gets no cell": a reference, a collection, a function.  A
+/// capture the namer declines keeps an un-boxed stack slot, which only carries a
+/// closure's write on a DIRECT call — so declining a scalar breaks `@FR-L-CapWrite`.
+fn cell_stem(tp: &Type, data: &crate::data::Data) -> Option<String> {
+    // Name the STORAGE the cell takes, not the capture's spelling.  `cell_value_type`
+    // is the one decision about what the `value` field holds, so deriving the name from
+    // its answer keeps the two halves of a cell's identity — what it is called and what
+    // it stores — from drifting apart.  They are required to agree: the name is what
+    // dedupes cells, so two captures share storage exactly when they share a name.
+    match cell_value_type(tp) {
+        Type::Integer(spec) => Some(int_cell_stem(&spec)),
+        Type::Float => Some("float".to_string()),
+        Type::Single => Some("single".to_string()),
+        Type::Boolean => Some("boolean".to_string()),
+        Type::Character => Some("character".to_string()),
+        Type::Text(_) => Some("text".to_string()),
         Type::Enum(d_nr, false, _) => {
-            let enum_name = data.def(*d_nr).name();
-            Some(format!("__cell_enum_{enum_name}"))
+            let enum_name = data.def(d_nr).name();
+            Some(format!("enum_{enum_name}"))
         }
         _ => None,
     }
+}
+
+/// The stem naming an integer cell, carrying the spec's whole storage identity.
+///
+/// Two captures may share one cell only when their `value` field stores AND decodes
+/// identically, so the width, the bounds and the null-flag all reach the name.  Naming a
+/// narrow capture after its alias instead would give `integer limit(0, 100) size(1)` and
+/// `u8` a single cell, and the first one's declared range would silently widen to the
+/// second's — `@FR-L-CapBox`: boxing moves where a captured scalar lives and changes
+/// nothing its type promises.
+///
+/// The two canonical 8-byte templates keep the plain `integer` / `long` names every cell
+/// has always carried; only a narrow width needs the encoded form.
+fn int_cell_stem(spec: &crate::data::IntegerSpec) -> String {
+    if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+        return if spec.max == u32::MAX {
+            "long"
+        } else {
+            "integer"
+        }
+        .to_string();
+    }
+    // `m` for a negative bound: the stem is a definition NAME, so it may not carry `-`.
+    let lo = if spec.min < 0 {
+        format!("m{}", spec.min.unsigned_abs())
+    } else {
+        spec.min.to_string()
+    };
+    let nn = if spec.not_null { "_nn" } else { "" };
+    format!("int{}_{lo}_{}{nn}", spec.byte_width(true), spec.max)
 }
 
 /// The `__cell_<T>` definition a type points at, or `None` when the type is not a
@@ -5973,14 +6144,25 @@ pub(crate) fn boxed_cell_def(tp: &Type, data: &crate::data::Data) -> Option<u32>
 /// (e.g. `text` with different lifetime deps, or
 /// `integer not null` vs `integer`) share a single cell struct.
 fn cell_value_type(tp: &Type) -> Type {
+    // Through `Type::optional`, so the wrap stays idempotent (`@FR-N-Idem`, its one home).
+    if let (inner, true) = tp.peel_optional() {
+        return Type::optional(cell_value_type(inner));
+    }
     match tp {
         Type::Integer(spec) => {
-            // Canonical wide vs narrow templates; bounds + null-flag
-            // are dropped to match the cell-name canonicalisation.
-            if spec.max == u32::MAX {
-                crate::data::I64.clone()
+            // A canonical 8-byte template drops its bounds + null-flag, so `integer` and
+            // `integer not null` share one cell.  A NARROW width keeps its spec whole:
+            // the width, the bounds and the reserved null sentinel are what the declared
+            // type promises, and a box that widened any of them would answer a value the
+            // author's type excludes (`@FR-L-CapBox`).
+            if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+                if spec.max == u32::MAX {
+                    crate::data::I64.clone()
+                } else {
+                    crate::data::I32.clone()
+                }
             } else {
-                crate::data::I32.clone()
+                tp.clone()
             }
         }
         Type::Text(_) => Type::Text(Deps::none()),
@@ -6016,7 +6198,7 @@ fn cell_value_type(tp: &Type) -> Type {
 /// in a struct field default value), `parent_d_nr == u32::MAX`
 /// and the accumulator is a no-op (top-level binds aren't
 /// mutated-captured by their own scope).
-/// Plan-22 phase 02d-iii.e — replace `captured_names` entries
+/// Replaces `captured_names` entries
 /// for names in the parent function's `scalars_to_box` with
 /// their boxed `Reference(__cell_<T>, [])` form.
 ///
@@ -6098,8 +6280,13 @@ fn accumulate_scalars_to_box(
         let Some((_, tp)) = captured_names.iter().find(|(n, _)| n == name) else {
             continue;
         };
+        // `@FR-L-CapWrite` — the set of captures whose write reaches the outer variable.
+        // `.base()`, because nullability does not change whether a capture is a SCALAR one.
+        // This list drives the three refusals that read `scalars_to_box` — shared between two
+        // closures, written through a `const` parameter, written through a `&` one — so a
+        // capture that falls out of it is not merely un-boxed, it is unguarded (loft#1408).
         let is_scalar = matches!(
-            tp,
+            tp.base(),
             Type::Integer(_)
                 | Type::Float
                 | Type::Single
@@ -7789,5 +7976,60 @@ mod plan22_phase02d_iii_d_alloc_prepend_tests {
         } else {
             panic!("expected Insert with OpDatabase op[1]");
         }
+    }
+}
+
+/// @PLN157 § V-d — is this vector-literal element a call whose hidden RECORD buffer may be
+/// the element itself?  Answers the callee, the buffer's argument index and the call's
+/// arguments; `None` keeps today's copy.
+///
+/// The set is deliberately the one Route R proved: a loft-defined callee with a hidden
+/// buffer whose record is non-nullable and ALL-SCALAR (no collection, text or reference
+/// field — a reused record is not zeroed, and only a literal that writes every field is
+/// sound over one; the synthetic-nullable exclusion is
+/// `record_is_fully_written_by_a_literal`'s), and the argument in the buffer's position
+/// is the buffer the caller minted for this call (`caller_hidden_buf`), so substituting
+/// it changes only where the answer is built.  A projection of a call, a nullable
+/// return, a call through a fn-ref, and a record with a vector field all answer `None`.
+impl Parser {
+    pub(crate) fn element_call_takes_record_buffer(
+        &self,
+        p: &Value,
+    ) -> Option<(u32, usize, Vec<Value>)> {
+        let Value::Call(fn_nr, args) = p.unspan() else {
+            return None;
+        };
+        let def = self.data.def(*fn_nr);
+        if !def.name().starts_with("n_") || *def.code() == Value::Null {
+            return None;
+        }
+        let Type::Reference(td, _) = def.returned() else {
+            return None;
+        };
+        // The caller must ADOPT the answer raw: a return that names its hidden buffer
+        // (`S["t"]`, the NRVO shape) takes the copy dispatch at the temp's `Set`, which
+        // `OpDatabase`s into the temp's previous store — the one the copy's free bit
+        // released a turn earlier — and the recycled number corrupts the vector.  Only a
+        // dep-free return (Route R's own shape) reaches the element.
+        if !def.return_adopts_fresh_store() {
+            return None;
+        }
+        let buf_idx = def.hidden_return_buffer_attr()?;
+        if def.attributes()[buf_idx].typedef.heap_def_nr() != Some(*td) {
+            return None;
+        }
+        let Some(Value::Var(buf)) = args.get(buf_idx).map(Value::unspan) else {
+            return None;
+        };
+        if !self.vars.is_caller_hidden_buf(*buf) || !self.record_is_fully_written_by_a_literal(*buf)
+        {
+            return None;
+        }
+        let all_scalar = self.data.def(*td).attributes().iter().all(|a| {
+            a.constant
+                || matches!(a.typedef, Type::Routine(_))
+                || crate::data::is_scalar(&a.typedef)
+        });
+        all_scalar.then(|| (*fn_nr, buf_idx, args.clone()))
     }
 }

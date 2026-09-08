@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(F-FaultSafe)` — an uncomputable inside `{…}` renders `null` ANNOTATED WITH ITS CAUSE, and
+// the rule does not qualify that by what encloses the fault.
+//
+// The tag was armed only when the hole's OUTERMOST op was itself fault-prone
+// (`rewrite_subtree_to_nullable_kind` classified the top node and stopped), on the reasoning
+// that *"inner faults have no renderer to feed the tag to"*.  That conflates the outermost OP
+// with the HOLE: the hole always has a renderer, and an inner fault's null propagates to it.
+// So one overrun reported two different things depending on the arithmetic beside it:
+//
+//   "{v[9] / 2}"  →  null(oob)        "{v[9] + 1}"  →  null
+//
+// Same read, same null, and a cause only when the enclosing operator happened to be divisive.
+// `src/ops.rs`'s own comment cited `{v[9] / 2}` as proof that an inherited null keeps the cause
+// of wherever it was born — the passing member of the family, named as the family.
+//
+// Axes this file MOVES:  the enclosing operator (`+` · `-` · `*` · `/` · none), which SIDE of it
+//                        the fault sits on, how many faults are in one hole (1 · 2), and the
+//                        fault KIND (an index overrun, a division by zero).
+// Axes it HOLDS FIXED:   the fault is reachable from the hole's own expression — a fault inside
+//                        a CALLEE is out of format scope by design (arming is what confines
+//                        this, `ops::arm_format_fault`), and a null with no fault behind it
+//                        (`p.a` on a null `p`) has no cause KIND to report and is not this
+//                        file's; both are noted here so a later reader does not read their
+//                        absence as an oversight.
+//
+// The two CONTROLS are what stop a cure that just arms everything: a hole with no fault must
+// still render its value, and a SECOND hole must not inherit the first one's cause — arming
+// clears the previous tag, and a cure that armed once per statement rather than once per hole
+// would pass every cell above and fail that one.
+//
+// @falsified-at: d64d51f3 — `--tests`, interpret: **5 failed, 3 passed**, native the same.
+//   Every failure is a fault under a non-divisive operator reporting bare `null` where the cell
+//   wants its cause (`overrun under '+': got null`, and the same for `-`, `*`, the right-operand
+//   division and the two-fault hole).  The THREE that pass are the whole argument: the bare
+//   overrun, the overrun under a `/`, and the two controls all stay green — so the tagging
+//   mechanism worked end to end and only the condition that ARMED it was wrong.  That is also
+//   why `src/ops.rs`'s comment read as evidence: it cited `{v[9] / 2}`, one of the three.
+
+fn test_a_bare_overrun_reports_its_cause() {
+  v = [1, 2, 3];
+  i = 9;
+  assert("{v[i]}" == "null(oob)", "bare overrun: got {v[i]}");
+}
+
+fn test_an_overrun_under_a_division_reports_it() {
+  v = [1, 2, 3];
+  i = 9;
+  assert("{v[i] / 2}" == "null(oob)", "overrun under `/`: got {v[i] / 2}");
+}
+
+fn test_an_overrun_under_a_plus_reports_it() {
+  v = [1, 2, 3];
+  i = 9;
+  assert("{v[i] + 1}" == "null(oob)", "overrun under `+`: got {v[i] + 1}");
+}
+
+fn test_an_overrun_under_a_minus_and_a_times() {
+  v = [1, 2, 3];
+  i = 9;
+  assert("{v[i] - 1}" == "null(oob)", "overrun under `-`: got {v[i] - 1}");
+  assert("{v[i] * 2}" == "null(oob)", "overrun under `*`: got {v[i] * 2}");
+}
+
+fn test_a_division_by_zero_under_a_plus_reports_it() {
+  a = 5;
+  z = 0;
+  assert("{(a / z) + 1}" == "null(/0)", "div-by-zero under `+`: got {(a / z) + 1}");
+}
+
+// The fault on the RIGHT operand — a walk that only descended the first argument would pass
+// every cell above and fail this one.
+fn test_a_fault_on_the_right_operand_reports_it() {
+  a = 5;
+  z = 0;
+  assert("{2 + (a / z)}" == "null(/0)", "div-by-zero on the right: got {2 + (a / z)}");
+}
+
+// Two faults in one hole: the one that actually PRODUCED the null wins, because a peer that did
+// not fault leaves the tag alone rather than clearing it.
+fn test_two_faults_in_one_hole() {
+  v = [1, 2, 3];
+  i = 9;
+  j = 8;
+  assert("{v[i] + v[j]}" == "null(oob)", "two overruns: got {v[i] + v[j]}");
+  z = 0;
+  assert("{v[i] / z}" == "null(oob)", "overrun then div-by-zero: got {v[i] / z}");
+}
+
+// CONTROLS — a hole with no fault renders its value, and a second hole does not inherit the
+// first one's cause.
+fn test_a_clean_hole_and_no_cause_leak() {
+  a = 5;
+  b = 7;
+  z = 0;
+  assert("{a + 1}" == "6", "a clean hole: got {a + 1}");
+  assert("{a / z}{b}" == "null(/0)7", "the second hole is clean: got {a / z}{b}");
+}

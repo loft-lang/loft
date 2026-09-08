@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A METHOD CALL on a nullable collection names the `?`, not a method that plainly exists.
+//
+// This is the sharper of the two, because of WHERE it lands: the method dispatch matched no
+// `τ?` arm, so the STRUCT-FIELD fallback took over and named the CONTENT def — *"Unknown field
+// vector.remove"*.  The reader is told a method they can read in STDLIB.md does not exist, and
+// sent to look for a misspelling, while the fault is one character wide and on the receiver.
+//
+// The refusal itself is right — `(N-Coal)` gives a `τ?` no implicit unwrap — so this is
+// loft#1453's cure (`for` / `map` / `filter`) carried out of its one home to a site it did
+// not reach.  The sibling spelling `rev(c)` is `1450b`, and they are separate files because the
+// `rev` refusal leaves the PARSE desynchronised, so a later expectation never gets its chance —
+// not because the harness stops at one (it checks every annotation and fails on each miss).
+//
+// Axes it HOLDS FIXED:  the receiver is DECLARED `vector<…>?`, so the refusal is reachable
+//                       today without loft#1450's `(N-Prop)` leg.
+//
+// @falsified-at: 8ba3e755 — reports *"Unknown field vector.remove"* there, so the
+//   `@EXPECT_ERROR` misses and the file fails.
+
+struct Bag1450c { xs: vector<integer>? }
+
+// @EXPECT_ERROR: cannot call `.remove` on vector<integer>? because it is NULLABLE
+fn remove_from_it(b: Bag1450c) {
+  b.xs.remove(0);
+}

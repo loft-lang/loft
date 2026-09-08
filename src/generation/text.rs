@@ -123,8 +123,8 @@ impl Output<'_> {
     /// Use this to emit a single key value as a typed `Content::…` constructor.
     /// `type_nr` is from a `Key` struct; sign indicates sort direction (ignored here),
     /// absolute value indicates the data type: 1 = integer, 2 = long, 3 = f32, 4 = f64,
-    /// 5 = bool, 6 = text, 7 = byte, 8/9/10/11 = the narrow integer storage widths
-    /// (`Parts::Int` / `Short` / `Byte` / `ShortRaw`).
+    /// 5 = bool, 6 = text, 7 = byte, 8/9/10/11/12 = the narrow integer storage widths
+    /// (`Parts::Int` / `Short` / `Byte` / `ShortRaw` / `IntRaw`).
     ///
     /// Every integer width answers a `Content::Long(i64)`, which is what the runtime
     /// side reconstructs from the record (`keys::get_key`) and hashes (`keys::hash_ref`);
@@ -142,7 +142,7 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let expr = self.generate_expr_buf(v)?;
         match type_nr.unsigned_abs() {
-            1 | 5 | 7 | 8 | 9 | 10 | 11 => write!(w, "Content::Long({expr} as i64)"),
+            1 | 5 | 7 | 8 | 9 | 10 | 11 | 12 => write!(w, "Content::Long({expr} as i64)"),
             2 => write!(w, "Content::Long({expr})"),
             3 => write!(w, "Content::Single({expr})"),
             4 => write!(w, "Content::Float({expr})"),

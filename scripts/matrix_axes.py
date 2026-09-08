@@ -44,6 +44,31 @@ it is not a taxonomy invented up front.
                             put a CAPTURE there, so a regression that made a captured
                             scalar read 0 sat in the file the fix shipped with
 
+WHAT THE VOCABULARY DOES NOT CARRY, measured twice on 2026-09-07 by two walks that did
+not share a subject: the axis a defect turns on may not be a COMPOSITION axis at all,
+and then an all-green report says nothing about it.
+
+    ROUTE       @PLN153-adjacent, loft#1437: which decoder reads a narrow field --
+                a field op, a schema read, a keyed lookup, a binary file.  Three of
+                the five decoders were wrong and the tool named none of them; the
+                author found them by sweeping the routes by hand.
+    ESCAPE      @PLN153 batch 10, loft#1439: does the closure LEAVE the frame that
+                built it.  The report listed container kind, element type and
+                nullability for that guard and was silent on the one axis its two
+                halves differ by -- and the difference is a use-after-free.
+
+Neither is a value of a domain the language offers; each is a QUESTION about where a
+value goes.  So read an all-green axis report as "the compositions I can see are
+covered", never as "the guard sweeps".
+
+Neither is DERIVABLE from the guard either, and that is why they are documented here
+rather than implemented.  `{v[0]}` and `v[0].a` differ by one character and are two
+routes; `h[k]` and `for e in h` are two more.  Telling them apart needs the knowledge
+that an interpolation of a record goes through `Parts` while a field access goes through
+the op — a fact about the IMPLEMENTATION, not about the language surface this vocabulary
+is built from.  ESCAPE is the same shape one question over: whether a closure leaves the
+frame is a fact about the callee's storage, not about the call's spelling.
+
 THE RANKING CLAIM WAS FALSIFIED BY ITS OWN ORACLE, and that is worth knowing before
 reading any output.  The first design ranked files by how many values of an axis they
 reach -- the theory being that a file reaching several and stopping short is an author

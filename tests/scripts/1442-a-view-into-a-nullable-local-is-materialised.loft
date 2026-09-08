@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1442 — a view into a NULLABLE local, across a reassignment of that local.
+//
+// `established_stores` (`src/scopes.rs`) decides which locals a statement gives a NEW store to,
+// and the view-materialisation pass reads that to know a view has lost what it pointed at.  Its
+// three record tests named the kinds bare, so an `Optional(Reference)` local established nothing
+// however it was assigned: the view was neither COPIED OUT nor reported, and the read landed in
+// a released record — `-2401053088876216593` on both backends, where the dense twin answers 1.
+//
+// Both faces come from the one miss, and both are cells here: the value (the materialisation)
+// and the ADVICE, which is what makes the dense case survivable — it names the copy and says
+// writes through the view stop reaching the source.
+//
+// Axes this file MOVES:  the viewed place (a struct field · an element of a vector member), the
+//                        subject's spelling (nullable · dense), and what the reassignment gives
+//                        it (a fresh literal · another local's value).
+// Axes it HOLDS FIXED:   the view is READ after the reassignment — a view whose last use
+//                        precedes it is not at risk and must not be copied, which is the
+//                        `no_reassign` cell.
+//
+// @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  The control reports two
+//   `USE AFTER FREE (read) store #N type=Q42`.  That flag alone is the load-bearing half,
+//   measured; `LOFT_POISON` is not needed, because the question is WHEN the store was released.
+//
+//   Re-measured on a PRISTINE `git worktree add --detach e9f45817` with its own target dir:
+//   control-native exit 1 with 2 use-after-free reports and zero assertion failures,
+//   control-interpret exit 1 with 2.  Both legs carry the claim through the store channel
+//   rather than through an assertion.
+//
+//   ⚠ In PLAIN mode it reads INERT, and that is a fact about the defect: a released record
+//   keeps its bytes until something writes over them, so the same probe answered
+//   -2401053088876216593 in one program and 1 in another whose only difference was what ran
+//   before it.  The value channel cannot be relied on here; the store channel can.
+
+struct P42 { a: integer }
+struct Q42 { p: P42, v: vector<integer> }
+
+// n1 / d1 — a field view across a reassignment to a fresh literal.
+fn n1() -> integer { o: Q42? = Q42 { p: P42 { a: 1 }, v: [] }; w = o.p; o = Q42 { p: P42 { a: 2 }, v: [] }; w.a }
+fn d1() -> integer { o: Q42  = Q42 { p: P42 { a: 1 }, v: [] }; w = o.p; o = Q42 { p: P42 { a: 2 }, v: [] }; w.a }
+
+// n2 / d2 — the reassignment takes ANOTHER LOCAL's value rather than a literal.
+fn n2() -> integer {
+  o: Q42? = Q42 { p: P42 { a: 3 }, v: [] };
+  other: Q42 = Q42 { p: P42 { a: 4 }, v: [] };
+  w = o.p;
+  o = other;
+  w.a
+}
+fn d2() -> integer {
+  o: Q42 = Q42 { p: P42 { a: 3 }, v: [] };
+  other: Q42 = Q42 { p: P42 { a: 4 }, v: [] };
+  w = o.p;
+  o = other;
+  w.a
+}
+
+// n3 / d3 — an ELEMENT view of a vector MEMBER, the other spelling of "a place inside `o`".
+fn n3() -> integer {
+  o: Q42? = Q42 { p: P42 { a: 0 }, v: [5, 6, 7] };
+  e = o.v[1] ?? -1;
+  o = Q42 { p: P42 { a: 0 }, v: [8, 9] };
+  e
+}
+fn d3() -> integer {
+  o: Q42 = Q42 { p: P42 { a: 0 }, v: [5, 6, 7] };
+  e = o.v[1] ?? -1;
+  o = Q42 { p: P42 { a: 0 }, v: [8, 9] };
+  e
+}
+
+// n4 — the control that keeps the fix from over-reaching: no reassignment, so the view stays a
+// view and nothing is copied.  A write through it must still reach the subject.
+fn n4() -> integer {
+  o: Q42? = Q42 { p: P42 { a: 1 }, v: [] };
+  w = o.p;
+  w.a = 42;
+  if o == null { -1 } else { o.p.a }
+}
+
+fn main() {
+  assert(n1() == 1, "n1 a view into a nullable local survives its reassignment: {n1()}");
+  assert(d1() == 1, "d1 the dense twin: {d1()}");
+  assert(n2() == 3, "n2 reassigned from another local: {n2()}");
+  assert(d2() == 3, "d2 the dense twin: {d2()}");
+  assert(n3() == 6, "n3 an element view of a nullable subject's vector member: {n3()}");
+  assert(d3() == 6, "d3 the dense twin: {d3()}");
+  assert(n4() == 42, "n4 with no reassignment the view still writes through: {n4()}");
+}

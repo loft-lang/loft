@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1414 — what a slice-pattern element BINDING borrows.
+//
+// `@FR-O-Deps`: every store-lifetime decision reads the deps on a value's type, so a read that
+// borrows and says nothing is read as OWNED.  Three sites in `parser/control.rs` spelled "this
+// element read views its subject" by hand, each a three-arm `match` over
+// `Reference | Vector | Enum` — and an `Optional` fell past all three.  A NULLABLE element
+// binding therefore carried EMPTY deps: `ref_return` could not walk the borrow back to the
+// subject, so `match v { [a, ..] => a }` was classified as returning an OWNED value, the
+// subject's store was freed at the callee's exit, and the caller read whatever was allocated
+// next.  Measured: `101` — the first element of the vector allocated AFTER it — where the dense
+// twin answers `7`, on both backends, and `LOFT_POISON=1` did not see it because the store had
+// already been handed to a live allocation.
+//
+// Every cell is a nullable/dense PAIR asserted to the SAME value: the question is whether the
+// nullable spelling borrows what its dense twin borrows.
+//
+// Axes this file MOVES:  where the subject lives (a local of the callee — the cell that fails —
+//                        and a parameter, which was right because the caller's store outlives
+//                        the call), the element kind (struct-enum, tagged `S?`, `text`), and
+//                        whether the binding ESCAPES the function.
+// Axes it HOLDS FIXED:   the pattern is a bare head binding with `..`.  The variant spellings,
+//                        and the repetition whose per-element read carries the same missing dep,
+//                        live in loft#1410's file: they do not COMPILE on the build this one
+//                        falsifies against, and a file that cannot compile there would prove
+//                        itself through the exit channel rather than through its own assertion.
+//
+// @falsified-at: d6e665ae — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  The failing assertion is e1: the
+//   control answers 101 (the reused store) where this file asserts 7.
+
+enum Tok { Fn { x: integer }, Id { x: integer } }
+struct S { a: integer }
+
+// The element view ESCAPES: the subject is a local of this function, so the return can only be
+// right if the caller learns that the value views a store the callee minted.
+fn first_n() -> Tok? { n: vector<Tok?> = [Id { x: 7 }, Fn { x: 9 }]; match n { [a, ..] => a, _ => null } }
+fn first_d() -> Tok? { d: vector<Tok> = [Id { x: 7 }, Fn { x: 9 }]; match d { [a, ..] => a, _ => null } }
+
+fn first_tagged() -> S? { p: vector<S?> = [S { a: 7 }, S { a: 8 }]; match p { [a, ..] => a, _ => null } }
+fn first_struct() -> S? { p: vector<S> = [S { a: 7 }, S { a: 8 }]; match p { [a, ..] => a, _ => null } }
+
+// The subject is the CALLER's: right before the fix too, and kept so a later change to the deps
+// cannot trade one direction for the other.
+fn head_n(v: vector<Tok?>) -> Tok? { match v { [a, ..] => a, _ => null } }
+// The dense twin answers the PAYLOAD rather than the element: a dense `-> Tok?` head binding
+// over a PARAMETER does not compile on `--native` today (a scope-exit free for the binding is
+// emitted outside the block that declares it — loft#1415, pre-existing and unrelated to the
+// deps this file is about).  `first_d` above is the dense escape control instead.
+fn head_d(v: vector<Tok>) -> integer { match v { [a, ..] => tag_of_d(a), _ => -1 } }
+fn tag_of_d(t: Tok) -> integer { match t { Id { x } => x, Fn { x } => 100 + x } }
+
+// An absent `Tok?` matches no variant, so the match falls through to null and `??` names the
+// answer — the discharge `(N-Match)` asks for when there is no null arm.
+fn tag_of(t: Tok?) -> integer { m = match t { Id { x } => x, Fn { x } => 100 + x }; m ?? -1 }
+
+fn main() {
+  // e1 — the escaping element view.  The `junk` vector between the call and the read is what
+  // makes a freed store observable: it takes the store back and fills it with other values.
+  a = first_n();
+  junk: vector<Tok?> = [Fn { x: 1 }, Fn { x: 2 }, Fn { x: 3 }];
+  assert(tag_of(a) == 7, "e1 a nullable element view survives its return: {tag_of(a)}");
+  b = first_d();
+  junk2: vector<Tok> = [Fn { x: 4 }, Fn { x: 5 }];
+  assert(tag_of(b) == 7, "e1d dense twin: {tag_of(b)}");
+
+  // e2 — the same for a TAGGED element (`vector<S?>`, the synthetic `__nullable<S>`), which the
+  // hand-written match did admit; it is the control that says the fold moved nothing here.
+  t = first_tagged();
+  junk3: vector<S> = [S { a: 1 }, S { a: 2 }, S { a: 3 }];
+  assert(t != null && t.a == 7, "e2 tagged element view survives its return");
+  d = first_struct();
+  junk4: vector<S> = [S { a: 4 }, S { a: 5 }];
+  assert(d != null && d.a == 7, "e2d dense twin");
+
+  // e3 — the subject is the caller's store, so the view is right whatever the callee thinks it
+  // owns.  Both spellings, and the subject is read AFTER the call.
+  vn: vector<Tok?> = [Id { x: 7 }, Fn { x: 9 }];
+  vd: vector<Tok> = [Id { x: 7 }, Fn { x: 9 }];
+  hn = head_n(vn);
+  hd = head_d(vd);
+  assert(tag_of(hn) == 7 && len(vn) == 2, "e3 nullable head over a caller's vector: {tag_of(hn)}");
+  assert(hd == 7 && len(vd) == 2, "e3d dense twin: {hd}");
+}

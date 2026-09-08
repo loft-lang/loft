@@ -3641,3 +3641,72 @@ note recording that all four declaration orders were measured) and
 `1385b-a-group-agreeing-on-nullability-still-forms.loft` (the four shapes it must not cross —
 no keyed member, all-nullable, all-dense, and a member's own `?`).
 
+## C118 — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
+
+**Catalogue:** @F1 (null model), @F38.
+
+**Question.** `c += [x]` where `c` is a nullable collection holding null compiles silently and
+mints an empty collection before inserting.  loft#1434 asked whether it should instead be
+refused with the discharge message a `for` over the same value gets — since `formal/types.md`
+says there is no implicit `τ? ⤳ τ`, and this is the one write that performs a `(N-Default)`
+discharge nobody spelled — or at least warn.
+
+**Evaluation.** Where the absent collection comes from decides the weight of the question:
+nearly every path starts a collection empty, and the one producer of a null collection FIELD
+is decoding — a JSON document whose key is missing (owner, 2026-09-07).  The consumer of a
+decoder then appends to the field it just read, and the append is the whole of what it wants;
+a rule that made it write `s.items = s.items ?? []` first would bill every such program for a
+distinction the insert cannot observe.  Three positions were measured on one nullable
+collection (both backends):
+an EXPRESSION propagates the absence into its result's `?` (`(N-Prop)`), a CALL warns at the
+argument (`(N-Store)`), and a STATEMENT is refused because it has nothing to carry the null.
+The append is the odd statement: unlike `for`, it binds no dense element, so no unwrap ever
+happens — its only question is which store the record joins, and an absent collection has one
+sensible answer.  Refusing would be a new error on code that compiles today, for a semantic
+that is already the natural one; warning would bill the author for a default the language can
+state.  `COMPATIBILITY.md`'s rule for contract 0 — a would-be error is first REWRITTEN to a
+correct function, and erroring is reserved for what has no sane defined behaviour — points the
+same way.
+
+**Decision.** Accepted as the contract, 2026-09-07 (owner: *"a nulled field `+= [x]` is
+instantiated empty and filled with the value"*).  Recorded as `(Col-Insert-Absent)` in
+`formal/collections.md`, cross-referenced from `(N-Default)`.  No diagnostic.  The `for`
+refusal and the `remove` refusal (same home, loft#1434) are unchanged: they bind or address an
+element, and an absent collection has none.
+
+**Revisit when.** A consumer shows an append that reached an absent collection it believed
+present, and the silent instantiation is what hid the defect — that is the evidence a WARNING
+would need, and it would be `advice`-tier (the result is what the language documents).
+
+## C119 — a tuple type is never nullable; a tuple that arrives absent is a present tuple of null members
+
+**Catalogue:** @F1 (null model), @F (tuples).
+
+**Question.** `(N-Opt)` promised `τ?` for every τ and `(integer, integer)?` was refused at every
+declaration (loft#1423).  Should a tuple get a representation for absence?  Three routes were on
+the table: tag the STORED spelling only (`__nullable<__tuple<…>>`), which makes one written type
+nullable in one position and not in another; tag the STACK spelling too (members' words plus a
+tag word), a third tuple layout; or state the precondition and keep the refusal.
+
+**Evaluation.** The "no representation" claim is false as stated — a stack tuple can carry a
+tag — so the stack layout is declined on brittleness rather than impossibility: the seven tier-0
+tuple functions, the tuple set emitter, the codegen get/put arms with their `&` branches, the
+default builder (loft#1424) and the native emitter would each re-assert the layout, and
+omission at any one is a silent misread of the bytes beside the tag.  Against that, the owner's
+observation settles what absence should LOOK like: a tuple has no faithful document form (a
+JSON array or object is already a re-encoding), so a tuple read as null is best presented as
+the tuple that exists with nothing in it — every member null.  That is a type the language
+already has, `(τ₁?, …, τₙ?)`, with a layout both backends already lay out, and it makes the
+generic `-> T?` at a tuple — the one shape the wrap cure could not express, and which today
+answers garbage (loft#1451) — fall out of one identity instead of a third layout.
+
+**Decision.** Accepted 2026-09-07 (owner: *"the tuple type itself is not nullable but if we read
+it as null we present this in such a way"*).  `(N-Opt)` carries `has_null(τ)`; the written
+`(τ, τ)?` stays refused by name with its two cures; `tuples.md (T-Absent)` gives the identity
+`optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)` for every synthesised absence, with the null question
+answered by the members from one home.  Code half tracked as `D-tup-10`.
+
+**Revisit when.** A consumer needs to tell "absent tuple" from "present tuple whose members are
+all null" and can show the distinction carries information in their domain — the identity
+collapses those two, deliberately.
+

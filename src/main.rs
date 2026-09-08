@@ -4245,11 +4245,13 @@ fn handle_cache(argv: &[String], i: &mut usize) {
 
 /// loft#1238 — build the native artifacts a run is about to need, once, up front.
 ///
-/// `native_artifact_cache_key()` folds in a content hash of the loft build, so rebuilding loft
-/// invalidates every cached artifact keyed on it. That is deliberate — it is what makes a codegen
-/// fix reach an already-built dependency (#433) — but it means the FIRST user of each artifact
-/// pays a full rebuild, and under a parallel test runner every user arrives at once and
-/// serialises on the global build lock. Measured on this box: loft's wasm runtime rlib is 25.6 s
+/// Loft's own wasm runtime rlib is keyed on `loft_build_fingerprint` (the rlib's content hash),
+/// so rebuilding loft invalidates it — deliberately: that is what makes a codegen fix reach the
+/// browser build.  A package's hand-written `native/` cdylib is keyed on the loft-ffi ABI,
+/// RUSTFLAGS and the version only (`native_artifact_cache_key`, @PLN159 phase C), so it survives
+/// a loft rebuild; the generated `loft_auto_*` cdylib carries the rlib hash in its NAME.  Where
+/// an artifact IS stale, the FIRST user pays a full rebuild, and under a parallel test runner
+/// every user arrives at once and serialises on the global build lock. Measured on this box: loft's wasm runtime rlib is 25.6 s
 /// and the `random` cdylib 1.8 s idle, against a 60 s per-test budget that a loaded CI box blew
 /// twice.
 ///
@@ -9486,8 +9488,12 @@ fn main() {
             // `#[link_name]` decls resolve to the rlib's `#[no_mangle]` symbols.
             out.native_cabi = native_utils::native_cabi_enabled();
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let main_nr = p.data.def_nr("n_main");
             let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -9570,8 +9576,12 @@ fn main() {
             // generator refuses the call instead.
             out.wasm_wasi = true;
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let main_nr = p.data.def_nr("n_main");
             let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -9774,6 +9784,12 @@ fn main() {
             // The debug name is baked so the client can announce itself to the
             // server, which then addresses debug frames to it over the relay.
             out.emit_live = debug_name.is_some() && !lean;
+            // @PLN157 — frame NAMING is a separate question from the live tier, and
+            // on this path they diverge: a production client is debug-OFF by default,
+            // so `emit_live` is false without `--lean` ever being passed.  Keying the
+            // nameless push off `!emit_live` stripped loft frame names from every
+            // browser panic (`html_panic_names_itself_and_its_loft_frames`).
+            out.lean = lean;
             out.debug_name.clone_from(&debug_name);
             // loft#954 — `--names` promises that a trap's frames resolve to loft
             // function names, which needs BOTH halves: the wasm name section (kept by
@@ -10769,8 +10785,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
+            // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
+            // home for that second question (see `generation::Output::lean`).
+            out.lean = lean;
             if lean {
                 out.emit_live = false;
+                out.lean_tier = true;
             }
             let result = if native_release {
                 let main_nr = p.data.def_nr("n_main");

@@ -41,7 +41,7 @@ than two:
   directory exists.  Numbers are per-repo and never shared; a plan id is only
   meaningful next to its repo.
 - **The same value letters** (`S/R/G/F/U/C/Q/N`) and the same effort letters
-  (`XS…VH`), so "a `G` plan at `MH`" reads the same everywhere.  Only the *examples*
+  (`XS…VH (plus `L`, large multi-arc — ROADMAP's legend)`), so "a `G` plan at `MH`" reads the same everywhere.  Only the *examples*
   are repo-specific.
 - **The same closing procedure** — move reference content out, rewrite incoming
   links, leave the closure record, set the lifecycle label on the issue.

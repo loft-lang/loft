@@ -642,11 +642,13 @@ Because Step 3 desugars to vector iteration, the filter clause on
 
 *Test:* verify filtering skips records whose condition fails.
 
-**Step 9 — Reject `#remove` with a clear diagnostic.** Hash
-iteration uses a pre-sorted snapshot; `#remove` would not remove
-from the hash.  Emit a parse-time error:
-*"#remove is not supported on hash iteration — the iterated vector
-is a sorted snapshot; use `h[key] = null` to remove from the hash"*.
+**Step 9 — Reject `#remove` with a clear diagnostic.** A `hash`,
+`trie` or `spatial` loop walks a pre-sorted snapshot; `#remove`
+would not reach the collection.  Emit a parse-time error naming the
+kind the author wrote:
+*"#remove is not supported when iterating a `hash` — the loop walks
+a snapshot of the records, so the removal would not reach the
+collection; remove by key instead (`hash[key] = null`)"*.
 
 *Test:* parse-error test matching the diagnostic.
 

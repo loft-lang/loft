@@ -121,6 +121,84 @@ fn panic_halts_reports_and_exits_nonzero_on_both_backends() {
 /// `assert` was NOT part of the same defect — it is special-cased in the generator and
 /// always halted on native.  Pinned here so a future consolidation of the two builtins
 /// cannot quietly regress the one that worked while fixing the one that did not.
+/// loft#1405 — a write to a store the AUTHOR locked reaches them as a loft fault, not as
+/// an internal assert.
+///
+/// `Store::read_only` is one flag for three different things — the const store, a worker
+/// borrow, and the user's own `d#lock = true` — and only the last is a mistake an author
+/// can make and fix.  All three used to abort through the same `assert!` in
+/// `Store::addr_mut`, so a two-line loft program exited 101 with `panicked at
+/// src/store.rs:2893`, the store's internal `rec`/`fld` numbers, and an invitation to set
+/// `RUST_BACKTRACE` — an internal invariant reaching a user through a user-visible
+/// feature, the shape loft#760 and loft#1262 also were.
+///
+/// `(H-WriteLocked)` was never violated: it says a locked write is "never a silent
+/// successful write", and a panic is not silent.  What was missing is the fault CHANNEL,
+/// which is why this is a diagnostic guard and not a rule one.
+///
+/// The same three properties as the tests above, plus a fourth this fault owns: both
+/// backends must say it the SAME way.  The message deliberately carries no lock origin —
+/// that spells an internal store number which differs per backend (`store_nr=2`
+/// interpreted, `store_nr=0` native), and putting it in the text would make one event
+/// render two ways.
+#[test]
+fn a_write_to_a_user_locked_store_is_a_loft_fault_on_both_backends() {
+    let src = "struct C { val: integer }\n\
+               fn main() {\n  println(\"before\");\n  d = C { val: 5 };\n  \
+               d#lock = true;\n  d.val = 99;\n  println(\"AFTER-WRITE\");\n}\n";
+    let mut legs = vec![("--interpret", run("--interpret", src, "li"))];
+    if have_rustc() {
+        legs.push(("--native", run("--native", src, "ln")));
+    } else {
+        println!("a_write_to_a_user_locked_store...: --native leg skipped (no rustc)");
+    }
+
+    let mut rendered: Vec<String> = Vec::new();
+    for (backend, (code, stdout, stderr)) in &legs {
+        // 1. It STOPS, and the program actually ran — without the second half a build
+        //    that failed to start would pass every assertion below.
+        assert!(
+            !stdout.contains("AFTER-WRITE"),
+            "[{backend}] execution continued past a write to a locked store.\n\
+             stdout: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("before"),
+            "[{backend}] the program did not run at all; this test is not measuring what \
+             it thinks.\nstdout: {stdout:?}"
+        );
+        // 2. It exits NON-ZERO — and specifically NOT 101, which is what a Rust panic
+        //    exits with.  101 here means the assert is back.
+        assert_ne!(
+            *code, 0,
+            "[{backend}] a refused write exited 0.\nstderr: {stderr:?}"
+        );
+        assert_ne!(
+            *code, 101,
+            "[{backend}] exit 101 is a Rust panic, not a loft fault — the internal assert \
+             in `Store::addr_mut` is reaching the author again.\nstderr: {stderr:?}"
+        );
+        // 3. It SAYS why, in loft's own voice and never in Rust's.
+        assert!(
+            stderr.contains("locked store"),
+            "[{backend}] the fault does not name the locked store.\nstderr: {stderr:?}"
+        );
+        assert!(
+            !stderr.contains("src/store.rs") && !stderr.contains("RUST_BACKTRACE"),
+            "[{backend}] the author is being shown loft's internals.\nstderr: {stderr:?}"
+        );
+        rendered.push(stderr.clone());
+    }
+    // 4. Both backends say it the same way (loft#1058's property, and the reason the lock
+    //    origin is not in the message).
+    if rendered.len() == 2 {
+        assert_eq!(
+            rendered[0], rendered[1],
+            "the two backends render one event differently"
+        );
+    }
+}
+
 #[test]
 fn assert_still_halts_on_both_backends() {
     let src = "fn main() {\n  println(\"before\");\n  assert(1 == 2, \"assert-marker\");\n  \

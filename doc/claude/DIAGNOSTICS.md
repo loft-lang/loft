@@ -397,6 +397,63 @@ to make the library the ENTRY: `loft --interpret lib/parser.loft` prints its own
 the LSP does the same for the file being edited. The durable fix is for these to become
 packages with a manifest and their own CI, at which point their `loft test` sees everything.
 
+## How a diagnostic spells a type
+
+**A diagnostic spells a type the way its reader could have written it.** The section above
+decides WHO a message reaches; this decides what it says once it gets there, and the two fail
+the same way — a message addressed correctly but written in a notation the reader has never
+seen is a message they cannot act on.
+
+`Type` answers two different questions and has two functions for them:
+
+| | |
+|---|---|
+| `Type::name` | **the schema key** — *which type is this?* `typedef.rs` builds wrapper types from it (`main_vector<…>`) and `state` looks stores up by it, so re-spelling a keyed type here RE-IDENTIFIES it: generated `init()` replays a different type order and the emitted Rust references a temp no line binds (rustc E0425, `tests/lazy_sql_source.rs`). |
+| `Type::source_name` | **the source spelling** — *what did they write?* This is the one a message asks for. |
+
+They differ at the keyed collections and nowhere else. `name` renders the key list with
+`{:?}`, so `index<Rec[id]>` comes out `index<Rec,[("id", true)]>` — a Rust tuple and a boolean
+whose meaning (ascending) has no spelling in the language. That is not a rendering of what the
+author wrote; it is a notation they have never seen, and a refusal that names it sends its
+reader looking for a type that is not in their program.
+
+**Both are one body.** `render(data, source)` carries the flag through its own recursion, so a
+type is spelled one way all the way down. Holding them apart as two match statements is what
+drifted three times (loft#956, loft#1434, loft#1449) — and never at a keyed arm, always at a
+CONSTRUCTOR that had not learned to recurse. `source_name` had arms for `Optional` and `&`, so
+`hash<It[k]>?` read right while `fn(&hash<It[k]>)` rendered its parameters through the schema
+key. One body makes the arms exhaustive: an arm either recurses or it is a leaf, and a leaf
+reads the same under both.
+
+**`scripts/diagnostic_spelling.py check` is the gate** (`make ci`, via
+`tests/doc_hygiene.rs`). It fails on a `Type::name(data)` render inside a diagnostic emitter —
+`diagnostic!`, `diagnostic_at!`, `specific!`, or a direct `diagnostic_format(…)` — and on ANY
+such render in `src/parser/` or `src/variables/`, the layers that talk to the author. A render
+that genuinely means the schema key marks its line `// schema-key — <why>`; there are six, and
+they are type IDENTITY (a `__tuple<…>` comparison, a `t_<LEN><Type>_` method name) or a
+developer trace behind `LOFT_TRACE_UNWRAP`.
+
+⚠ **The marker goes on the RENDER'S OWN LINE**, not in a comment above it — the check reads the
+line the call sits on. That is the first mistake a reader makes, and it is the one an author
+writing a careful explanation makes by default, so the failure message says it too.
+
+The wider rule is why the gate is not span-only. A span cannot see `let nm = tp.name(data);`
+on the line above the `diagnostic!` that interpolates it, nor a helper called from inside one
+— and that is where the sites actually were: after every in-span render in those two layers
+had been converted, 20 of the 26 left were still user-facing, and one message carried both
+spellings three lines apart. **The gate exists because nothing else can fail here.** An
+unreadable message leaves the compiler right and the program wrong, so no test goes red and
+only the author pays; without a check, the next pass converts the sites someone happened to
+have a symptom for and leaves a fourth residue.
+
+**And the error-message BASELINES are not that check, which is measurable rather than
+argued.** The eight conversions found on the joined tree changed no golden output at all — so
+the locked-in baselines contain no case that renders a keyed collection, and every one of them
+would have stayed green through the whole drift. That is a gap in the golden set worth closing
+on its own; it is also the reason this gate is a source-side check rather than an output-side
+one. A baseline can only pin a message someone thought to write down, and the sites that get a
+type's spelling wrong are exactly the ones nobody had a symptom for.
+
 ## Adding a code
 
 1. Emit through `Diagnostics::add_at_coded` (or `diagnostic!(… code = "…", …)`), never the

@@ -287,7 +287,7 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
     }
 }
 use crate::vector;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 #[cfg(not(host_fs))]
 use std::fs::{File, OpenOptions};
 #[cfg(not(host_fs))]
@@ -829,14 +829,16 @@ fn get_record_lookup(
 ///   it points into the middle of a multi-byte sequence.
 /// - `till` is snapped *forward* past continuation bytes so it lands on the
 ///   next character boundary.
-/// - A negative `till` counts from the end of the string (`till += len`).
+/// - A negative bound counts from the end of the string (`bound += len`), floored at the
+///   start of the string — the rule `@FR-Slice-Value` gives every value slice.
 ///
 /// Bytecode equivalent: `State::get_text_sub` in `src/state/text.rs`.
 #[must_use]
 pub fn OpGetTextSub(text: &str, from: i64, till: i64) -> &str {
     let bytes = text.as_bytes();
     let len = bytes.len() as i64;
-    if from < 0 || from >= len {
+    let from = if from < 0 { (from + len).max(0) } else { from };
+    if from >= len {
         return "";
     }
     // Snap `from` backward to the start of the current character.
@@ -1903,6 +1905,15 @@ impl FileVal for i64 {
                     };
                     out.extend_from_slice(&b);
                 }
+                crate::database::Parts::IntRaw(_, _) => {
+                    let v = *self as u32;
+                    let b = if little_endian {
+                        v.to_le_bytes()
+                    } else {
+                        v.to_be_bytes()
+                    };
+                    out.extend_from_slice(&b);
+                }
                 _ => {
                     let b = if little_endian {
                         self.to_le_bytes()
@@ -1982,6 +1993,16 @@ impl FileVal for i64 {
                             i32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
                         } else {
                             i32::from_be_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
+                        });
+                    }
+                }
+                // Zero-extends, as its `u8` / `u16` siblings do.
+                crate::database::Parts::IntRaw(_, _) => {
+                    if bytes.len() >= 4 {
+                        *self = i64::from(if little_endian {
+                            u32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
+                        } else {
+                            u32::from_be_bytes(bytes[..4].try_into().unwrap_or([0; 4]))
                         });
                     }
                 }
@@ -5138,16 +5159,9 @@ pub fn install_browser_panic_hook() {
 }
 
 /// The loft frames a browser panic happened under, innermost first, as indented lines.
-///
-/// `try_borrow` rather than `borrow`: a panic can fire while the shadow stack is already
-/// borrowed, and a hook that panics in turn loses the message it exists to deliver.
-/// Missing frames are worth strictly less than the message, so they yield.
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
 fn browser_panic_frames() -> String {
-    CALL_STACK.with(|s| {
-        let Ok(b) = s.try_borrow() else {
-            return String::new();
-        };
+    with_call_frames(|b| {
         if b.is_empty() {
             return "  (no loft frame — the panic is outside any loft call)\n".to_string();
         }
@@ -5165,8 +5179,40 @@ fn browser_panic_frames() -> String {
 // Thread-local shadow call stack used by native-compiled loft code.
 // Each entry is (function_name, source_file, line_number).
 // Generated code calls `cr_call_push` / `cr_call_pop` around every function body.
+//
+// The live prefix is `CALL_FRAMES[..CALL_DEPTH]`: a pop only decrements the
+// depth, leaving its entry as garbage the next push at that depth overwrites.
+// Split this way (loft#1426 M1, @PLN157 P1) the per-call cost is a bounds test,
+// three word stores and two `Cell` updates — the `RefCell<Vec>` form's borrow
+// flag, length update and re-borrowing pop measured ~7 ns of the ~18 ns a
+// native call costs.  Every reader slices `[..depth]`; none can fail the way a
+// `try_borrow` could, because a read never observes a half-made entry — the
+// depth is bumped only after the entry is fully written, and the readers
+// (frame renderers, `stack_trace()`) run between pushes, not inside one.
 thread_local! {
-    static CALL_STACK: RefCell<Vec<(&'static str, &'static str, u32)>> = const { RefCell::new(Vec::new()) };
+    static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32)>> =
+        const { UnsafeCell::new(Vec::new()) };
+}
+
+/// Read the live frames — `CALL_FRAMES[..CALL_DEPTH]` — without copying.
+///
+/// The `min` clamp is load-bearing for the LEAN tier (@PLN157): a `--lean`
+/// binary advances the depth through [`cr_call_push_lean`] without writing
+/// frames, so the array can be shorter than the depth — its readers then see
+/// whatever named frames exist (none, usually) instead of panicking inside
+/// the diagnostic they serve.
+///
+/// SAFETY (of the internal `&*ptr`): the only `&mut` into `CALL_FRAMES` lives
+/// inside `cr_call_push`'s statement on this same thread and is gone by the
+/// time any reader runs; entries below `depth` are fully initialised because
+/// the depth is published after the write.
+fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32)]) -> R) -> R {
+    let depth = CALL_DEPTH.get();
+    CALL_FRAMES.with(|frames| {
+        let v = unsafe { &*frames.get() };
+        f(&v[..depth.min(v.len())])
+    })
 }
 
 /// The loft frames this native thread is inside, innermost first.
@@ -5175,18 +5221,9 @@ thread_local! {
 /// same shape (bare function names) so that one renderer serves both backends —
 /// `RuntimeError::report_and_exit` attaches these to a fault raised by `assert` or
 /// `panic`, neither of which can see a `State` to read frames from.
-///
-/// `try_borrow` rather than `borrow`, for the reason `browser_panic_frames` gives: a
-/// fault must not turn into a second fault over its own frame list.  Missing frames are
-/// worth strictly less than the message, so they yield.
 #[must_use]
 pub fn native_call_chain() -> Vec<String> {
-    CALL_STACK.with(|s| {
-        s.try_borrow().map_or_else(
-            |_| Vec::new(),
-            |b| b.iter().rev().map(|(nm, _, _)| (*nm).to_string()).collect(),
-        )
-    })
+    with_call_frames(|b| b.iter().rev().map(|(nm, _, _)| (*nm).to_string()).collect())
 }
 
 /// Push a frame onto the shadow call stack.  Called at the start of every
@@ -5209,17 +5246,23 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // chain and made it one frame longer than the interpreter's — the two backends
     // named different functions for one fault.  The position is read off the frame
     // BELOW for the same reason: it is the function that is running.
-    let overflow = CALL_STACK.with(|s| {
-        let mut b = s.borrow_mut();
-        if b.len() >= crate::state::State::MAX_CALL_DEPTH as usize {
-            return Some(b.last().map_or((file, line), |(_, f, ln)| (*f, *ln)));
-        }
-        b.push((name, file, line));
-        None
-    });
-    if let Some((running_file, running_line)) = overflow {
+    let depth = CALL_DEPTH.get();
+    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
+        let (running_file, running_line) =
+            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln)| (*f, *ln)));
         cr_stack_overflow(running_file, running_line);
     }
+    CALL_FRAMES.with(|frames| {
+        // SAFETY: the exclusive borrow lasts only this statement, on this
+        // thread, and nothing else can run inside it.
+        let v = unsafe { &mut *frames.get() };
+        if depth < v.len() {
+            v[depth] = (name, file, line);
+        } else {
+            v.push((name, file, line));
+        }
+    });
+    CALL_DEPTH.set(depth + 1);
     // @PLAN49 T1 — refresh the shared breadcrumb at every native fn
     // entry so a watchdog-fired hard-kill identifies the most recent
     // loft fn we entered.  Single combined call.  When the timeout
@@ -5256,11 +5299,36 @@ fn cr_stack_overflow(file: &str, line: u32) -> ! {
     crate::runtime_error::RuntimeError::stack_overflow(file.to_string(), line).report_and_exit()
 }
 
+/// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap
+/// without the frame record.  A `--lean` binary trades the shadow stack's
+/// diagnostics — `stack_trace()` answers no frames, a native `assert`/`panic`
+/// carries no loft frame block, the watchdog breadcrumb is not refreshed —
+/// for a per-call cost of one bounds test and two `Cell` updates (measured
+/// ~1.2 ns against ~6.7 ns for the named prelude).  What it KEEPS is the
+/// depth cap itself, at the same `MAX_CALL_DEPTH` both backends share; the
+/// overflow report names this call's own entry site rather than the frame
+/// below (there is no frame below to read — the one spelling difference from
+/// the named tier).  [`CallGuard`] balances it unchanged: the pop is a bare
+/// decrement either way.
+#[inline]
+pub fn cr_call_push_lean(file: &'static str, line: u32) {
+    let depth = CALL_DEPTH.get();
+    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
+        cr_stack_overflow(file, line);
+    }
+    CALL_DEPTH.set(depth + 1);
+}
+
 /// Pop a frame from the shadow call stack.  Called at the end of every
 /// generated function body (including early returns via a drop guard).
+/// One `Cell` decrement — the entry itself stays behind as garbage the next
+/// push at this depth overwrites.
 #[inline]
 pub fn cr_call_pop() {
-    CALL_STACK.with(|s| s.borrow_mut().pop());
+    let depth = CALL_DEPTH.get();
+    if depth > 0 {
+        CALL_DEPTH.set(depth - 1);
+    }
 }
 
 /// RAII guard that pops the shadow call stack on drop, ensuring the stack
@@ -5454,7 +5522,7 @@ impl Drop for FnRefBufGuard {
 /// using the same stores API as the interpreter implementation in `native.rs`.
 pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let snapshot: Vec<(&str, &str, u32)> = CALL_STACK.with(|s| s.borrow().clone());
+    let snapshot: Vec<(&str, &str, u32)> = with_call_frames(<[_]>::to_vec);
 
     let sf_elm = stores.name("StackFrame");
     let sf_size = u32::from(stores.size(sf_elm));

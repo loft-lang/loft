@@ -6,7 +6,21 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-bind-23 OPENED AND CLOSED 2026-09-06 (loft#1399: a branch arm projecting a COLLECTION got no copy, so `--interpret` read the reassigned container where `--native` was right; below); D-bind-22 OPENED AND CLOSED 2026-09-06 (loft#1396: a binding whose value is a
+OPEN: **0 here** — D-bind-30 OPENED AND CLOSED 2026-09-08: `(B-Ref-Reshape)` reached only the
+INLINE keyed kind, so a `&` view of the record a removal FREES was never refused and a later
+insert reusing it read the stale write (below); D-bind-29 OPENED AND CLOSED 2026-09-08: `B-Ref-Reshape`'s re-key arm was
+enforced for ONE key type and ONE source spelling — a `text` key never reached the guard at
+all, and a keyed lookup's `?` hid the `&` marker from all four refusals (below).
+D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) CLOSED 2026-09-07: three
+independent mechanisms broke it and all three are closed — the vector surface, the keyed BIND
+(loft#1433), and the keyed PARAMETER (loft#1445), whose first fix was reverted and whose
+rework closes it by SPLITTING the predicate rather than widening it (part four, below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
+DIFFERENT containers names EVERY place it can read, not none; D-bind-26 OPENED AND CLOSED
+2026-09-07: a removal reached through a FIELD is a disturbance of that field's place;
+D-bind-25 OPENED AND CLOSED 2026-09-07: a `sorted` removal renumbers, so it ends the
+places its container holds (below, all three).  D-bind-24 OPENED AND CLOSED 2026-09-06 (loft#1401: a projection discharged
+with `??` was not a view the materialise walk could see, so it kept aliasing an element
+position a `remove` had renumbered; below).  D-bind-23 OPENED AND CLOSED 2026-09-06 (loft#1399: a branch arm projecting a COLLECTION got no copy, so `--interpret` read the reassigned container where `--native` was right; below); D-bind-22 OPENED AND CLOSED 2026-09-06 (loft#1396: a binding whose value is a
 BRANCH with a projecting arm was named by nothing, so it never materialised — closed by naming
 it through the branch and giving the projecting ARM its own temp, below); D-bind-21 OPENED AND CLOSED 2026-09-06 (loft#1394: a view BOUND INSIDE a
 branch arm whose container is reassigned in the SAME arm was never materialised, because
@@ -19,6 +33,310 @@ reference review.
 B-Ref-Reshape is enforced for all three of B-Disturb's events (D-bind-9,
 opened and closed 2026-08-05); B-Ref-AnnotationOnly is enforced in every position, not
 only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
+
+> **D-bind-30 — OPENED AND CLOSED (2026-09-08) — `(B-Ref-Reshape)` was enforced for the
+> INLINE keyed kind only, and the exclusion of the other four was measured on a case it was
+> not then used for.**
+>
+> `reshaped_containers` collected a keyed removal only when the container is `Type::Sorted`,
+> with a reasoned comment beside it: *"`hash`, `index`, `spatial` and `trie` give each element
+> a record of its own, so removing one leaves every other key reachable AT THE SAME ADDRESS —
+> measured, a view of another element reads correctly after the removal and a write through it
+> still lands."*
+>
+> That measurement is **correct and reproduces**. The case it did not cover is a view of the
+> REMOVED record:
+>
+> ```loft
+> c = &h[30];  h[30] = null;  h[70] = Elm{key:70, tag:7};  c.tag = 999;
+> //  → k70 reads 999 on BOTH backends, silently: the insert reused the freed record
+> ```
+>
+> **The defect is not which KINDS are collected — it is what a removal DISTURBS.** For a
+> `sorted` it is the whole container, because every later position shifts. For the
+> record-per-element kinds it is exactly ONE place, and the comment is right about every
+> other key. The comment was true at the granularity it was measured at and wrong at the
+> granularity it was used at.
+>
+> ⚠ **The obvious fix is wrong and was built before being rejected.** Collecting the other
+> four wholesale closes this and materialises four deliberate corpus controls whose NAMES
+> state the proposition — `test_a_hash_removal_is_not_a_reshape`,
+> `test_an_index_removal_is_not_a_reshape`, `test_the_other_keyed_kinds_are_not_reshaped`.
+> A PLAIN view (no `&`, so `(B-Ref-Reshape)` exempts it and `(H-Materialise)` copies it)
+> stops aliasing and its write lands on a copy: one silent-wrong traded for another.
+> Measured independently on two trees before being dropped.
+>
+> Closed by comparing KEYS. Both sides read their key through one `OpGetRecord` reader — the
+> view records the key it was bound at, the removal carries its own inside the
+> `OpHashRemove`'s argument — and a view is spared only when both keys are literal and
+> DIFFER. `sorted` is untouched, and so is every computed key on either side.
+>
+> **The filter may only ever SPARE, and only on proof.** An absent key means *could be the
+> same record* and shakes. Getting that direction backwards turns a conservative rule into a
+> silent one, which is the defect being closed, so both fallback directions have a cell.
+>
+> Whole-population cost: **zero**. Every `.loft` file in the tree carrying a keyed removal
+> (54 of 2957) was compiled and none is newly refused — the fix refuses strictly fewer
+> programs than the wholesale variant, which cost 6.
+>
+> Lock-ins: `b_ref_reshape_removing_the_very_key_a_view_names_is_error`,
+> `…_removing_another_key_leaves_a_view_alone` (the control that says this is not the
+> wholesale version — without it, collecting the container passes the first cell), and
+> `…_a_computed_removal_key_is_still_refused`. Falsified: the two defect cells fail on the
+> unfixed build and the control passes on both, which is the shape a spare-on-proof filter
+> should have.
+>
+> And the MESSAGE moved with the set. *"A removal renumbers the remaining elements"* is right
+> for `sorted` and wrong for the four that just joined, so the reason is split by kind.  Worth
+> naming WHY that was easy to miss: the wording was CORRECT for the one kind that reached the
+> site, so it read as settled prose rather than as an assumption with a scope — which is the
+> exclusion comment's own shape one layer out.  A sentence that is true of everything it can
+> currently be said about carries no marker saying how far it reaches.
+> [loft#1458](https://github.com/loft-lang/loft/issues/1458) was filed on that wording BEFORE
+> the set widened and closed as invalid — correctly, and the same wording is wrong in the
+> other direction now. Which way it is wrong depends on which kinds reach the site, so the
+> two have to move together.
+
+> **D-bind-29 — OPENED AND CLOSED (2026-09-08) — `B-Ref-Reshape`'s re-key arm was enforced
+> for ONE key type and ONE source spelling, and D-bind-9's own closing sentence says why.**
+>
+> (Numbered 29, not 28: D-bind-28 is the `(B-Ref-Uniform)` collection deviation on the sibling
+> branch — four parts, loft#1433 / loft#1445 — and this register does not carry its entries even
+> though `binding.md` here carries its header.  A register whose numbers are handed out on two
+> trees needs the number checked against BOTH, which is a cheap grep and was not done.)
+>
+> D-bind-9 closed with *"a rule with more than one producer needs a sweep, not a cell"*, and
+> its sweep was 14 shapes of `&` — whole struct, whole vector, element, field, nested, keyed
+> non-key, keyed key, and so on. Every one of those axes is a shape of the REFERENCE. None is
+> a shape of the KEY, and none is a shape of the type the lookup ANSWERS. Two holes sat in the
+> axes the sweep did not have:
+>
+> The set now comes from `vectors::is_collection` — the `is_keyed` set plus `Vector`, which is
+> exactly `(Col-Store)`'s store-backed set — and the keyed deep-copy branch is skipped for a
+> `&` bind, leaving the plain handle share whose dep names the source (non-owning, as the
+> vector twin already was).  Fixed for the LOCAL and struct-FIELD provenances at every keyed
+> kind including `spatial`, which the keyed-field copy path treats apart and which is
+> therefore asserted on its own rather than assumed to follow the other four.
+>
+> ⚠ **This is the third instance of one class**: a type set written as a `matches!` LIST that
+> is missing a kind.  `Type::is_amp_rebindable_heap` sits next to the defective line carrying
+> the full heap set, and its own doc records being written *"one home rather than two
+> `matches!` arms, which is how the keyed kinds came to be missing from both (loft#1291)"*.
+> Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends, with
+> `a_plain_keyed_bind_still_copies` as the control a share-everything cure fails.
+
+> **D-bind-28, part three — REOPENED (2026-09-07, loft#1445) — the `&hash<τ[k]>`
+> PARAMETER spelling.**  Closed and reverted the same day: the fix peeled the link in the
+> SHARED `is_keyed` / `is_collection` predicates, which are asked at 78 sites and answer two
+> questions — *which collection kind* (peel) and *does this variable own a store* (do not
+> peel, a `&` parameter aliases the caller's).  `Set(v, Null)` on a `&hash` parameter then
+> routed into `gen_keyed_null`, which allocates a keyed LOCAL's own store and resolves with the
+> unpeeled `base()`: `unreachable!("gen_keyed_null on non-keyed type")`, and
+> `tests/scripts/1291-a-keyed-write-back-does-not-release-the-callers-store.loft` went 8/8 to
+> 8/8 ICE.  The narrow form — peel at the `+=` ROUTE, leave the shared predicates on `base()` —
+> is the one to land; two of the three original sites (`keyed_known_type`, the route's `dest`)
+> are already narrow and are expected to survive.  The account below of what the fault IS
+> remains correct and is what the rework implements.  `(B-Ref-Uniform)` says a `&τ`
+> variable is used exactly like a `τ` variable with no operation special-cased, and
+> `c += [rec]` on a `&hash<Row[id]>` parameter was refused instead — *"Variable 'c' cannot
+> change type from `&hash<Row,["id"]>` to `vector<Row>"*, because the append routes did not
+> claim the statement (`is_keyed` / `is_collection` read `tp.base()`, which peels `Optional`
+> and not the link) and it fell into the VECTOR route.
+>
+> ⚠ **This entry carried a WRONG reason while it was open, and the correction is the useful
+> part.**  It read: *"making those predicates peel the link WITHOUT the keyed emission path
+> resolving its store through the parameter's double indirection turns the refusal into a
+> SILENT DROP … a refusal is the better of the two states."*  The MEASUREMENT was right — the
+> surface peel alone does produce `len` 0 with no diagnostic.  The ATTRIBUTION was invented.
+> The emission path resolves a keyed store through a `&` parameter and always did: a keyed
+> INSERT one operator over (`c[7] = Row{…}`) reaches the caller's store on both backends,
+> with the pre-existing key still readable afterwards.
+>
+> The real cause was a THIRD site of the same miss: `keyed_known_type` also opens with
+> `base()`, so a `&`-wrapped keyed type answers `None`, `new_record`'s fallback hands
+> `OpNewRecord` the `vector<τ>` id, and `record_finish` dispatches through `Parts::Vector`.
+> It presents as a wrong type NUMBER (`parent_tp` reads the `&vector` twin's id), not as a
+> reachability failure — which is why a mechanism sentence could not tell the two apart and a
+> `parent_tp` comparison could.  The peel was never the wrong move; it was half a move.
+>
+> Closed by peeling all three sites with `peel_link` — `is_keyed`, `is_collection`,
+> `keyed_known_type` — plus the `+=` route's DESTINATION.  That fourth is not optional:
+> peeling the predicates without it hands `append_source` a `RefVar` that matches no arm and
+> breaks the `&vector<Row>` twin that always worked, so the failure lands in the CONTROL
+> rather than in the cell under test.  Guard:
+> `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`, all five keyed kinds
+> plus the vector control, both backends, every destination PRE-POPULATED and every cell
+> reading the old key as well as the new one — an empty destination cannot tell an append that
+> reached the caller from one that built a fresh collection and counted itself.
+
+> **D-bind-28, part four — CLOSED (2026-09-07, loft#1445 reworked) — one predicate, two
+> names.**  The reverted fix widened `is_keyed` / `is_collection`, which are asked at 78 sites
+> and answer two different questions.  The rework gives each its own name: `keyed_kind(tp)`
+> peels the link (which kind, which type id, which insert) and `owns_keyed_store(tp)` does not
+> (what may be allocated, minted or replaced in place), leaving `is_keyed` to the sites that
+> never had to tell them apart.  `1291` 8/8, `1445` 8/8, `1445b` 2/2 on this tree; two full
+> gates on the authoring tree (979s and 1097s).
+>
+> **What closes the entry is a control, not the appends.**  `(B-Ref-Uniform)` says a `&τ` is
+> used EXACTLY like a `τ`, so the question is agreement between the two spellings and not
+> whether any particular one is accepted.  `a += b` where both are `hash<Row[k]>` is REFUSED —
+> *"cannot append a whole `hash<Row[k]>` to another — a keyed collection's `+=` takes one `Row`
+> element written `[…]`, or a `vector<Row>` of them"* — and the `&` spelling is refused too.
+> Uniform, so the rule holds; the whole-collection append is a decided surface limit and not
+> this entry's business.
+>
+> ⚠ **The removal cell's receiver is a `sorted`, and only a `sorted` reaches that refusal at
+> all.** `reshaped_containers` collects a keyed removal ONLY when the container variable is
+> `Type::Sorted` — deliberately, with the reason written beside it: `sorted` is the INLINE keyed
+> kind, its elements sit in key order in one dense array, so a removal shifts every later
+> POSITION exactly as a vector's does, while `hash` / `index` / `spatial` / `trie` give each
+> element its own record and leave every other key at the same address.
+>
+> So the message ("a removal renumbers the remaining elements") is CORRECT there, and reading
+> `(Col-RemoveKeyed)` as contradicting it is a category error this register made and is
+> correcting: that rule is about which KEYS stay reachable, and a `&` view holds a POSITION.
+> Both are true at once. [loft#1458](https://github.com/loft-lang/loft/issues/1458) was filed on
+> that misreading and is closed as invalid.
+>
+> What the same reading DID turn up is real and is [loft#1460](https://github.com/loft-lang/loft/issues/1460):
+> the deliberate exclusion was measured on a view of ANOTHER element, which is safe, and not on a
+> view of the REMOVED one, which is not — `c = &h[30]; h[30] = null; h[70] = …; c.tag = 999`
+> corrupts the record that reused the freed slot, silently, on both backends.
+
+> **D-bind-25, D-bind-26, D-bind-27 — OPENED AND CLOSED (2026-09-07) — three places
+> `(B-Disturb)` names that the walk could not see.**  All three came out of loft#1401's
+> boundary matrix, and all three failed IDENTICALLY in the plain spelling and the `??` one —
+> which is what said they were not that issue's discharge defect but its neighbours.  Each is
+> a silent wrong answer on both backends, and each has its own root.
+>
+> **D-bind-25 — a `sorted` removal is a reshape.**  Measured, one shape per keyed kind:
+> `hash` and `index` answer the right element after another key is removed and a write through
+> the view still lands; `sorted` reads the element that shifted in.  `(Col-RemoveKeyed)` is why
+> — the four own-record kinds leave every other key reachable AT THE SAME ADDRESS, while a
+> `sorted` is the INLINE keyed kind whose elements sit in key order in one dense array, so
+> `(Col-RemoveDense)` covers it beside the vector.  `reshaped_containers` listed
+> `OpRemove`/`OpRemoveVector` and a keyed removal emits `OpHashRemove`, which serves all five
+> kinds — so the fix is keyed on the KIND, not on the op.  Adding the op flat would have
+> materialised the four that are correct today, which is the harmful direction.  **This is the
+> same boundary loft#1402 crossed from the other side**: there a `sorted` LEAKED through
+> `#remove` while `[key] = null` stayed flat, here it goes STALE through `[key] = null` while
+> `hash` does not.  One split, two symptoms, and `remove_vector_at`'s `is_linked` gate is the
+> third place it shows.
+>
+> **D-bind-26 — a removal reached through a FIELD is a disturbance.**  `p.va.remove(0)` emits
+> `OpRemoveVector(OpGetField(p, off_va, …), …)`, and the collector took the op's argument only
+> when it was a plain `Var`.  The VIEW side was already precise — `value_view_place` resolves a
+> projection chain to `(p, off_va)` — so only this half was short and the two never met, while
+> the same code with `va` in a LOCAL materialises and says so.  Closed by answering PLACES: a
+> whole variable ends everything inside it, a field ends that field only.
+>
+> ⚠ **And that precision is the fix, not a refinement of it.**  `grown_containers` carries the
+> measurement on its own half: collecting the PARENT for a field-qualified growth shook every
+> view rooted at the same variable, and `moros_editor`'s `undo_pop` read each entry out of a
+> copy — the undo stack silently stopped recording, `undo_depth` answering 0 where 3 was due.
+> A variable-granular version of this fix is that bug.  Two controls pin it: a sibling member
+> REMOVED and a sibling member GROWN must both leave the view aliasing.
+>
+> ⚠ **And it cost a third rule to land: a binding the loop ITERATES is not materialised.**
+> With a field-reached removal counting as a disturbance,
+> `for e in d.items { e#remove; }` shook the loop's OWN source temp — a view of
+> `(d, off_items)` by every test this walk applies — so the loop walked a COPY while the body
+> emptied the original, and never terminated.  `903-loop-remove` went from 0.06s to a 300s
+> corpus TIMEOUT, taking both corpus binaries with it.  The iteration depends on that temp's
+> IDENTITY, so giving it a store of its own is not a copy of a value but a different loop.
+>
+> ⚠⚠ **The obvious wider rule was measured WRONG, and that is the entry's second lesson.**
+> *"A view the AUTHOR cannot name is not a binding `(B-View)` is about"* reads well, matches
+> `resolve_view_root`'s stop at a compiler-generated CONTAINER, and is false: the parser renames
+> author bindings too, and a `match` PAYLOAD (`_mv_<field>_N`) is a view the author very much
+> wrote and must still materialise.  Shipped as a name test it made
+> `a-payload-binding-warns-when-its-subject-is-given-another-variant` read its subject's NEW
+> variant — trading a hang for a silent wrong answer.  So the fact is a MARKER on the variable
+> the lowering created (`Function::is_iteration_source`, set at the two sites that build the
+> temp), not a property of how its name is spelled.
+>
+> The bisect is worth the sentence too, because the symptom pointed away from the cause: the
+> hang was in `State::execute_argv` — the INTERPRETER — while the defect was a compile-time
+> analysis deciding to copy something the interpreter's loop depended on, with no compile-time
+> symptom at all.  `gdb -p` had nothing to attach to; `perf record -p <pid> -g` named the loop
+> in seconds, and three build-and-time steps named which of the three changes owned it.
+>
+> **D-bind-27 — a branch over two containers names both.**  `c = if k { w[0] } else { v[1] }`
+> is a view of `w` on one path and of `v` on the other, and the `If` arm answered `None`
+> whenever the arms disagreed — the documented rule, and the right answer for a walk that
+> records one container per view.  It is now recorded once per PLACE, which the open-view frame
+> already held as one `(view, container, field)` entry per pair, so nothing downstream learned
+> a new shape and `shake_places` matches either.  Two arms naming one container at DIFFERENT
+> fields stay two places rather than collapsing to `ANY_FIELD`: a disturbance of a third field
+> ends neither.
+>
+> With more than one place per view, the ADVICE could no longer re-derive its container from
+> the right-hand side — that names both and only one was disturbed.  `views_to_materialise` now
+> carries the whole `Disturbance`, which already held the container it was observed at, so the
+> sentence names what actually moved.  The re-derivation was a restatement before it was a
+> wrong answer; this is the same one-home correction QUALITY.md's register keeps recording.
+>
+> Guarded by `a-disturbance-ends-every-place-a-view-can-name` (11 cells, both backends,
+> falsified at f4403e62).  SIX of the eleven are controls — the four own-record keyed kinds, a
+> sibling member removed, a sibling member grown, and an undisturbed branch — because widening
+> a disturbance is the direction that silently loses a write.  Each control has a FIRING twin
+> in the same file, so none of them can read green by never being reached: `LOFT_DEBUG_F8=1`
+> names exactly the four positive cells and none of the controls.
+
+> **D-bind-24 — OPENED AND CLOSED (2026-09-06, loft#1401) — a projection discharged with
+> `??` was not a view the materialise walk could see.**  `(B-View)` and [heap.md](heap.md)
+> `(H-Materialise)` say a projection live across a disturbance of its container MATERIALISES —
+> a fresh store, the `(H-Copy)` step, "and the author is told".  The plain spelling did exactly
+> that; the `??` spelling did neither, so `c = v[1] ?? Box{n:0}; v.remove(0)` left `c` aliasing
+> POSITION 1, which `(Col-RemoveDense)` had just renumbered: it read the value that shifted in
+> (3 where its element held 2) and a write through it still reached the container.  Both
+> backends, in silence.  Not an exotic spelling — `(N-Index)` types `v[i]` as `τ?`, so `??` is
+> the discharge the language REQUIRES for a non-null binding.
+>
+> **Filed as one hole; it was four, and all four had to close together.**  That is the entry's
+> lesson: each one alone reads as the whole cause, and each one alone leaves the defect
+> standing.
+>
+>   1. NAMING.  A `??` lowers to a value block that hoists its subject into a temp and hands
+>      that temp back from the tail, so the walk saw a bare `Var` naming nothing.  It now
+>      resolves a tail through the block's OWN bindings — the notion (a name standing for a
+>      value computed here) rather than any one lowering's spelling of it, so `??`,
+>      `?? return` and a `match` subject are one step.
+>   2. COPY.  Supplied per ARM, as loft#1396/#1399 supply it for a branch-valued binding:
+>      `arm_bind` gives the discharge hoist its own `__lift_N`, gated on the walk having named
+>      the binding.  The issue recorded naming-without-copy as measured WORSE, and it is —
+>      the advice then asserts a guarantee the emitters do not deliver.
+>   3. `?? return`.  Its absent path leaves by an early return, so the block's tail is an
+>      unconditional `Var` and not an `if`.  `is_value_branch` read that as "not a branch" and
+>      the arm never reached the copy at all.  One arm is still a path.
+>   4. SPELLING.  A discharged `v[i]` arrives as `OpGetVectorNullable`, which is a projection
+>      by every structural test and is deliberately OFF `is_projection_op` because the deps
+>      PROXY strands a store on it (that function's own doc says so at length).  The hazard
+>      belongs to the proxy, not to the notion, so `view_source_place` is the reading for a
+>      walk that only NAMES a place; the strict list is unchanged for the readers that trigger
+>      the proxy.
+>
+> A binding assigned MORE THAN ONCE was the fifth cell and needed the `multi_assigned` bail
+> lifted for a NAMED binding only: `@FR-O-Latest` is about the type-level dep list, which
+> `lift_join_arm_tails` already declines to rewrite for such a binding, while the copy itself
+> is a fact about this assignment.  The PROJECTION arm never asked the question, so the two
+> arms disagreed about the same binding.
+>
+> ⚠ **The first cut regressed loft#1399, and the mechanism is worth keeping.**  Letting a block
+> tail resolve through its own bindings also let a `[]` MINT arm name the hidden `__vdb_N` it
+> reads its own store out of — a projection by every structural test — and two arms naming
+> DIFFERENT containers name none, so the whole binding stopped being a view.  A place inside a
+> compiler-generated container is not a place any disturbance can name; `resolve_view_root`
+> already stopped at one for that reason, and the namer now does too.  The guard caught it, no
+> targeted suite did.
+>
+> Guarded by `a-discharged-projection-materialises-like-its-plain-twin` (15 cells, falsified at
+> 2f471b15 on both backends).  Three of its cells are ALIAS controls — an undisturbed
+> discharge, a use before the disturbance, and a disturbance of another member — because
+> over-materialising is not the smaller error: it silently loses a write that lands today.
+> Unblocks [collections.md](collections.md) `D-col-3` (loft#1402), which could not release a
+> removed element's children while such a binding still viewed it.  Found in the
+> `@FR-Col-Remove` walk (QUALITY.md B8f).
 
 > **D-bind-23 — OPENED AND CLOSED (2026-09-06, loft#1399) — a branch arm projecting a
 > COLLECTION got no copy.**  loft#1396 gave a projecting arm its own temp and matched
@@ -632,6 +950,7 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > `pln87_amp_in_struct_literal_field_*`, `pln87_amp_in_return_statement_*` in
 > `tests/parse_errors.rs`, with the ACCEPT half — every legal `&` position, each asserting
 > the write reaches the source — in `tests/scripts/150-amp-head-position.loft`. The @PLN87 ladder (L1–L6), the model + doc reconciliation (PR#436), the residual
+
 D-bind-7 and D-bind-8 (closed below) are all verified; @PLN40's Const-Bind / Const-Value /
 Const-ScalarCollapse / Const-Compose are shipped and enforced for struct fields, parameters,
 and locals — and, since @PLN102 K1, for **enum-variant fields** too (their one former residual

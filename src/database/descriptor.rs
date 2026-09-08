@@ -174,7 +174,7 @@ pub enum LayoutNode {
     /// A value enum — `Parts::Enum(variants)`; one byte discriminant. Variants kept
     /// (id + name) for the render and for later name-mapping on the JS side.
     Choices(Vec<(u16, String)>),
-    /// Narrow scalars — `Parts::Byte/Short/Int/ShortRaw(start, nullable)`.
+    /// Narrow scalars — `Parts::Byte/Short/Int/ShortRaw/IntRaw(start, nullable)`.
     Byte {
         start: i32,
         nullable: bool,
@@ -188,6 +188,13 @@ pub enum LayoutNode {
         nullable: bool,
     },
     ShortRaw {
+        start: i32,
+        nullable: bool,
+    },
+    /// The 4-byte UNSIGNED encoding — `Parts::IntRaw`.  Distinct from `Int` because the
+    /// same four bytes decode differently: no sign extension, and `u32::MAX` rather than
+    /// `i32::MIN` is the reserved absence code.
+    IntRaw {
         start: i32,
         nullable: bool,
     },
@@ -277,6 +284,9 @@ impl LayoutDesc {
             LayoutNode::Int { start, nullable } => format!("int4(start={start},null={nullable})"),
             LayoutNode::ShortRaw { start, nullable } => {
                 format!("shortraw(start={start},null={nullable})")
+            }
+            LayoutNode::IntRaw { start, nullable } => {
+                format!("int4raw(start={start},null={nullable})")
             }
             LayoutNode::Vector(e) => {
                 format!("vector<{}>(elem_size={})", self.name(*e), self.size(*e))
@@ -527,6 +537,12 @@ fn node_json(node: &LayoutNode, s: &mut String) {
                 "{{\"kind\":\"shortraw\",\"start\":{start},\"nullable\":{nullable}}}"
             );
         }
+        LayoutNode::IntRaw { start, nullable } => {
+            let _ = write!(
+                s,
+                "{{\"kind\":\"int4raw\",\"start\":{start},\"nullable\":{nullable}}}"
+            );
+        }
         LayoutNode::Vector(e) => {
             let _ = write!(s, "{{\"kind\":\"vector\",\"elem\":{e}}}");
         }
@@ -642,6 +658,10 @@ impl Stores {
                 start: *start,
                 nullable: *nullable,
             },
+            Parts::IntRaw(start, nullable) => LayoutNode::IntRaw {
+                start: *start,
+                nullable: *nullable,
+            },
             Parts::Vector(e) => LayoutNode::Vector(*e),
             Parts::Array(e) => LayoutNode::Array(*e),
             Parts::Sorted(e, keys) => LayoutNode::Iterated(Iterated::Sorted {
@@ -742,6 +762,10 @@ impl Stores {
             }
             LayoutNode::Int { .. } => {
                 let v = store.get_i32_raw(r.rec, r.pos);
+                push(out, &if le { v.to_le_bytes() } else { v.to_be_bytes() });
+            }
+            LayoutNode::IntRaw { .. } => {
+                let v = store.get_u32_raw(r.rec, r.pos);
                 push(out, &if le { v.to_le_bytes() } else { v.to_be_bytes() });
             }
             LayoutNode::Choices(_) => out.push(store.get_byte(r.rec, r.pos, 0) as u8),

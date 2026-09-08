@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Regression (loft#1438): `field_value` reported a narrow field's RAW STORED BYTE rather
+// than its value, and read a legal byte as absent.
+//
+// The narrow widths store `value - start`.  `LayoutNode::Byte` and `LayoutNode::Short`
+// both carry that `start` and `reflect_field_at` destructured it away, passing a literal
+// `0` — while `LayoutNode::ShortRaw`, the arm BETWEEN them in the same `match`, used it.
+// So `i16` was right and `i8` was not.
+//
+// The second half is the sentinel: 255 is the null CODE only where the field reserves
+// one.  A not-null `u8` spends it on the value 255 and a not-null `i8` on 127, and both
+// were reported absent.
+//
+// `u8` and `u16` are the controls, and they are why this stood: their declared range
+// starts at zero, so their bias IS zero and dropping it changes nothing.  They are also
+// the two widths a reflection check reaches for first.
+//
+// @falsified-at: d9a3b97a9 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native
+// exit 1 -> 0, native 1 assertion failures -> 0
+//
+// Those 3 are the three non-control test functions, one failure each;
+// `test_a_nullable_narrow_field_still_reads_null` PASSES on the pre-fix build.  That split is the
+// measurement: the sentinel test gained a `nullable` condition, and the half that must NOT move is
+// a nullable field that really is null.
+
+struct N { p: i8, q: integer limit(100, 200), r: i16, s: u8 }
+struct M { a: i8, b: u8 }
+struct K { a: i16?, b: u16?, c: i8?, d: integer limit(100, 200)? }
+struct Z { a: i8?, b: u8? }
+
+// Every field's reflected reading is the value that was written — the same number the
+// direct field read answers.
+fn test_a_biased_field_reflects_its_value() {
+  n: N = N { p: -100, q: 150, r: -30000, s: 42 };
+  t = type_of(n);
+  for f in t.fields {
+    v = field_value(n, f.position);
+    assert(!v.is_null, "{f.name} reflected null; nothing here was written null");
+    if f.name == "p" { assert(v.i == -100, "i8 p reflected {v.i} want -100 (raw byte is 28)"); }
+    if f.name == "q" { assert(v.i == 150, "limit(100,200) q reflected {v.i} want 150 (raw byte is 50)"); }
+    if f.name == "r" { assert(v.i == -30000, "i16 r reflected {v.i} want -30000"); }
+    if f.name == "s" { assert(v.i == 42, "u8 s reflected {v.i} want 42"); }
+  }
+}
+
+// The top of a NOT-NULL byte is a value, not the null code.  Both cells sit on raw 255.
+fn test_the_top_of_a_not_null_byte_is_a_value() {
+  m: M = M { a: 127, b: 255 };
+  t = type_of(m);
+  for f in t.fields {
+    v = field_value(m, f.position);
+    assert(!v.is_null, "{f.name} reported ABSENT; the field is not nullable and holds a value");
+    if f.name == "a" { assert(v.i == 127, "i8 a reflected {v.i} want 127"); }
+    if f.name == "b" { assert(v.i == 255, "u8 b reflected {v.i} want 255"); }
+  }
+}
+
+// A NULLABLE narrow field holding a real value reflects that value.  The nullable
+// encodings shift the stored code again, so this is a separate cell from the dense one.
+fn test_a_nullable_biased_field_reflects_its_value() {
+  k: K = K { a: -30000, b: 60000, c: -100, d: 150 };
+  t = type_of(k);
+  for f in t.fields {
+    v = field_value(k, f.position);
+    assert(!v.is_null, "{f.name} reflected null; a value was written");
+    if f.name == "a" { assert(v.i == -30000, "i16? a reflected {v.i} want -30000"); }
+    if f.name == "b" { assert(v.i == 60000, "u16? b reflected {v.i} want 60000"); }
+    if f.name == "c" { assert(v.i == -100, "i8? c reflected {v.i} want -100"); }
+    if f.name == "d" { assert(v.i == 150, "limit(100,200)? d reflected {v.i} want 150"); }
+  }
+}
+
+// CONTROL — a nullable narrow field that IS null still reports absent.  The sentinel test
+// gained a `nullable` condition; this is the half that must not move.
+fn test_a_nullable_narrow_field_still_reads_null() {
+  z: Z = Z { a: null, b: null };
+  t = type_of(z);
+  for f in t.fields {
+    v = field_value(z, f.position);
+    assert(v.is_null, "{f.name} written null reflected i={v.i}, is_null false");
+  }
+}

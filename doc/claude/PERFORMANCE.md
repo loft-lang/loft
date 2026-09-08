@@ -5,6 +5,18 @@ This document records current benchmark results, a root-cause analysis of every
 performance gap relative to CPython and hand-written Rust, and a detailed implementation
 design for each planned improvement.
 
+**The speed contract itself is formal:** [formal/performance.md](formal/performance.md) —
+`(Perf-Like)` a comparison is admissible only between lanes proven output-hash-equal;
+`(Perf-Weight)` every shipped routine (stdlib + libraries) is measured per release against
+an industry-language reference twin, because drift against a previous loft release compares
+to nothing outside the project; `(Perf-Twin)` where no natural counterpart exists a twin is
+WRITTEN the moment a hit is expected, never waived; `(Perf-Cure)` the twin MEASURES and
+never ships — a failed bar is closed in the engine (or the loft algorithm), because the
+libraries stay readable loft (the teaching corpus), and a native rewrite is a recorded
+per-routine edge case, not a habit.  The model harness is the drawing
+library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard read
+by the release checklist's `M-perf-pass`.
+
 ---
 
 ## Contents
@@ -38,6 +50,7 @@ design for each planned improvement.
 - [Design: BUILD2 — Persist the native-test binary cache across CI runs](#design-build2--persist-the-native-test-binary-cache-across-ci-runs)
 - [See also — bytecode and store internals](#see-also--bytecode-and-store-internals)
 - [Startup cache (shipped, default-on)](#startup-cache-shipped-default-on) — **what a rerun actually costs, and which binary you measured**
+- [The drawing-pass baseline (loft#1426, @PLN157)](#the-drawing-pass-baseline-loft1426-pln157) — **the N-class gap measured by a consumer, and the `make native-ratio` gate**
 - [Open work](#open-work)
 
 ---
@@ -1718,11 +1731,18 @@ scan.loft hot loop that's a meaningful share of the ~165 ms
 **Cost:** Small — localised change in `src/generation/mod.rs` +
 purity-classifier extension.
 
-> **Status (audited 2026-06-25): OPEN.** `is_leaf_pure` is absent and `cr_call_push` is
-> still emitted unconditionally for every `n_` function. But the "purity-classifier
-> extension" the cost cites is mostly free: `def.purity` already exists (see N2 status),
-> so `is_leaf_pure` = `def.purity == Purity::Pure` AND the body has no `Call`/`Method` —
-> only the leaf check is new. Stays Small.
+> **Status: SHIPPED 2026-09-07 (@PLN157), with one deviation from the design below.**
+> The gate is STRUCTURAL, not annotation-driven: `Purity::Pure` exists only on `#pure`-
+> annotated fns, and the drawing pass's hot leaves carry no annotation — so
+> `Output::is_elidable_leaf` instead asks "does the body call any user fn (`n_*`, or a
+> loft-bodied `t_*`), fn-ref, `parallel` or `yield`?"  A no makes the fn a leaf: nothing
+> it calls can re-enter it (the depth cap needs no entry), and `stack_trace()`/`assert`/
+> `panic` are themselves calls, so a leaf can never ask for the frame it lacks.  The
+> live-flip check stays (editing a leaf live is the live tier's contract); a runtime
+> fault inside a leaf keeps its exact position and loses only the innermost frame NAME.
+> `LOFT_NO_LEAF_PRELUDE=1` restores the push (the bisect switch).  Measured on the
+> drawing pass (probed by hand-editing the emitted Rust first, then reproduced by the
+> emitter): `hash` −36 % (0.81M ns/op named tier, ~2.3× Rust), `lock` −7 %.
 
 ### Background
 
@@ -4149,6 +4169,41 @@ Full design, E1/E2/E3 arc, and the zero-copy follow-up: see
 [`plans/11-data-as-store/README.md`](plans/11-data-as-store/README.md).
 
 ---
+
+## The drawing-pass baseline (loft#1426, @PLN157)
+
+The N-class gap measured by a CONSUMER on a real workload, with a byte-identical
+reference: the `drawing` library (loft-libs-graphics, branch `drawing-lock`)
+times 14 routines against a pure-Rust port of the same arithmetic in the same
+order, and every row's FNV-1a-32 output hash agrees across the interpreter,
+`--native-release` and `rustc -O` — so the ratios below are like for like.
+Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio):
+
+| routine | Rust | loft-native | native / Rust |
+|---|---:|---:|---:|
+| `hash` — 100 000 calls of a 4-line seed hash | 162,320 | 1,771,660 | 10.9 |
+| `hair_brush` | 13,260 | 57,200 | 4.3 |
+| `smooth_pts` — 61 points | 220 | 57,640 | 262 |
+| `fronds` — depth 2, 1296 points | 43,620 | 2,149,200 | 49 |
+| `lock_layer` — 22 080 px | 1,032,340 | 30,850,860 | 30 |
+| `lock_layer` curved — 38 250 px | 779,600 | 26,213,820 | 34 |
+| `composite_layer` | 63,100 | 1,656,000 | 26 |
+| `fill_poly` circle — 31 497 px | 34,620 | 594,740 | 17 |
+| `fill_poly` pentagram | 13,460 | 225,100 | 17 |
+| `wide_line` | 4,500 | 78,340 | 17 |
+
+Attribution (measured on the issue): ~7 ns/call of prelude instrumentation
+(M1), the store-resolved element reads/writes and un-hoisted record scalars
+(M2, ~90 % of `lock`/`composite`/`fill_poly`), sentinel/NaN arithmetic on
+non-null operands (M3), and a bitcode-free rlib that blocks post-hoc inlining
+(M4).  Opt flags and the cdylib boundary are ruled out (M0).  @PLN157
+(`plans/157-native-4x-drawing/`) drives every judged row to within **4×**.
+
+Regenerate: the in-tree rows (`hash`, `lock` — `bench/12_drawing/`, hashes
+asserted) with `make native-ratio` (`--gate` fails ratios over
+`bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
+with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
+`drawing-lock`).
 
 ## Open work
 

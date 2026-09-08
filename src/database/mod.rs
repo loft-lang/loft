@@ -202,18 +202,27 @@ impl Field {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Parts {
-    Base,                              // One of the simple base types or text.
-    Struct(Vec<Field>),                // The fields of this record.
-    Enum(Vec<(u16, String)>),          // Enumerate type with possible values.
-    EnumValue(u8, Vec<Field>),         // Enumerate value with actual value for typed structures.
-    Byte(i32, bool),                   // start number and nullable flag
-    Short(i32, bool),                  // start number and nullable flag
+    Base,                      // One of the simple base types or text.
+    Struct(Vec<Field>),        // The fields of this record.
+    Enum(Vec<(u16, String)>),  // Enumerate type with possible values.
+    EnumValue(u8, Vec<Field>), // Enumerate value with actual value for typed structures.
+    Byte(i32, bool),           // start number and nullable flag
+    Short(i32, bool),          // start number and nullable flag
     Int(i32, bool), // 4-byte integer field (size(4) annotation). Null sentinel: i32::MIN.
     ShortRaw(i32, bool), // P184 Phase 4b: 2-byte narrow vector element. Direct encoding (no +1 shift). Null sentinel: i16::MIN.
-    Vector(u16),         // The records are part of the vector
-    Array(u16),          // The array holds references for each record
-    Sorted(u16, Vec<(u16, bool)>), // Sorted vector on fields with an ascending flag
-    Ordered(u16, Vec<(u16, bool)>), // Sorted array on fields with an ascending flag
+    // 4-byte UNSIGNED integer slot — a type whose range is non-negative and runs past
+    // `i32::MAX` (`u32`).  Stored raw by `OpSetInt4Raw`; null sentinel `u32::MAX`.
+    //
+    // The 4-byte twin of `ShortRaw`, and it exists for the same reason: the width alone
+    // does not say how the bytes decode.  `Int` sign-extends and spends `i32::MIN` on
+    // absence, which reads a `u32` at or above 2147483648 as a negative number and reads
+    // this encoding's absence (`u32::MAX`) as the value -1.  Which of the two a slot uses
+    // is `IntegerSpec::unsigned_wide()`, asked once in `NarrowIntKind::of`.
+    IntRaw(i32, bool),
+    Vector(u16),                       // The records are part of the vector
+    Array(u16),                        // The array holds references for each record
+    Sorted(u16, Vec<(u16, bool)>),     // Sorted vector on fields with an ascending flag
+    Ordered(u16, Vec<(u16, bool)>),    // Sorted array on fields with an ascending flag
     Hash(u16, Vec<u16>), // A hash table, listing the field numbers that define its key
     Index(u16, Vec<(u16, bool)>, u16), // An index to a table, listing the key fields and the left field-nr
     Radix(u16, Vec<u16>),              // A spatial index with the listed coordinate fields as a key
@@ -1814,6 +1823,10 @@ impl Stores {
         index: i64,
     ) -> crate::keys::DbRef {
         let len = crate::vector::length_vector(db, &self.allocations);
+        // @FR-H-Index — the native half of the one normalisation: negative counts from the
+        // end, and only a STILL-out-of-range index is out of bounds.  Kept byte-for-byte with
+        // `State::vec_get_or_raise` because a divergence here is a different program, not a
+        // different speed.
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {
@@ -1855,6 +1868,47 @@ impl Stores {
             crate::vector::get_vector_hoisted::<VERIFY>(h, db, size, index, &self.allocations)
         } else {
             self.vec_get_or_raise_runtime(db, size, index)
+        }
+    }
+
+    /// The write twin of [`Self::vec_get_hoisted_or_raise_runtime`] (@PLN157 P4b): one
+    /// indexed element WRITE against an already-derived [`crate::vector::VecHeader`] —
+    /// in range, one bounds test and one typed store, with no `DbRef` built between
+    /// them.  Every other index — negative, out-of-range, `i64::MIN` — falls through to
+    /// `vec_get_or_raise_runtime` plus the template's `rec != 0` write, so the raise it
+    /// reports and the null-element behaviour keep their one definition.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes
+    /// `db` — the point of the switch.  Never in the emitted default.
+    #[inline]
+    pub fn vec_set_hoisted_or_raise_runtime<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        fld: u32,
+        val: T,
+    ) {
+        if index >= 0 && index < i64::from(h.len) {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    crate::vector::vec_header(db, &self.allocations),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+            }
+            *self.allocations[h.store_nr as usize].addr_mut::<T>(
+                h.rec,
+                crate::vector::checked_vec_pos(index as u32, size) + fld,
+            ) = val;
+        } else {
+            let elem = self.vec_get_or_raise_runtime(db, size, index);
+            if elem.rec != 0 {
+                T::set_in(self.store_mut(&elem), elem.rec, elem.pos + fld, val);
+            }
         }
     }
 

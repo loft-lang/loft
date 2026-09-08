@@ -6,14 +6,50 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **2** — a lambda's `??`-default store leaks one store per call where the borrow arm's
-witness cannot be NAMED and the call has nothing to witness either: TWO store-bearing
-captures, whose return dep names `__closure` and not which slot (D-clo-7, below; that entry's
-value half, its BOUND-return leak half, its ARGUMENT-witness half, its single-CAPTURE witness
-and its literal-`null` argument are all closed), and the same `??` at a COLLECTION return
-leaks its mint arm because declining the unguarded lift was the only cure correct on both
-backends (D-clo-14; its cost is now measured on the PEAK, and both frees a cure must guard
-are named — see the entry).
+OPEN: **0**.  This header read **2** until 2026-09-07, naming `D-clo-7` and `D-clo-14`; both
+CLOSED on 2026-09-03 and the count was not carried here (the entries themselves say so, and
+[ROADMAP.md](ROADMAP.md) has read 0 since).  `D-clo-23` below was opened and closed the same
+day it was found.
+
+### D-clo-23 — OPENED AND CLOSED (2026-09-07, loft#1409): `(L-CapWrite)` held at two integer widths, not at every one
+
+`(L-CapWrite)` shares a captured scalar in the WRITE direction, and it is stated over "a
+scalar" — no width in it, exactly as it carries no nullability (which is what loft#1408
+restored one axis over).  A mutated scalar capture is boxed into a `__cell_<T>` record to give
+the write somewhere both sides can reach, and the namer had templates for the two canonical
+8-byte integers only.  Every other width returned `None`, the synthesis pass skipped it, and
+the capture kept an un-boxed stack slot — which carries a DIRECT call's write and nothing
+else.  So `f(0)` wrote through and `call_it(f, 0)` dropped the write, silently, on both
+backends.
+
+**The filed scope was the `forced_size` aliases and it was too narrow.**  The namer keyed on
+storage WIDTH, so a bounds-only narrow type — `integer limit(0, 100)`, no `size()` anywhere —
+fell in the same hole.  `boolean`, `character`, `single`, `float`, `text` and a plain enum were
+never affected: each owns its storage on its own def, and it is the `integer` def, shared by
+every width, that could not carry one.
+
+The cure is width templates, and the rules chose it rather than the alternative the issue
+offered.  A blanket REFUSAL was inadmissible — `(L-CapWrite)` says the write lands, so refusing
+it is a second deviation, and it would have broken the direct-call spelling that was already
+correct.  What the fix must not do is widen the capture on the way into its box, which is now
+written down as `(L-CapBox)`: a cell is deduped by NAME, so two captures share storage exactly
+when they share a name, and naming a narrow cell after its alias would have given
+`integer limit(0, 100) size(1)` and `u8` one cell and silently widened the first one's declared
+range to the second's.  The stem therefore carries the whole storage identity — width, bounds
+and the null-flag — and the NAME is derived from the value type rather than restated beside it,
+because those two had to agree and were two independent matches.
+
+⚠ **Two things the cure exposed, both older than it.**  A cell's `value` attribute was flagged
+nullable while its TYPE was dense — `add_attribute` marks every attribute nullable — and the
+disagreement is invisible at 8 bytes and decisive at every narrow one: the width is read from
+the type in one place and from the sentinel-reserving flag in another.  And the native
+generator resolved a field's width from the attribute's ALIAS only, where the interpreter had
+carried a second rung — the width the TYPE itself holds — since @PLN114 added it for
+`__tuple<…>`'s synthesized fields.  A field built from a Type alone has no alias, so the two
+backends registered one field two ways (`byte<0,true>` against `short<0,true>`, one byte
+against two) and every type id past it was renamed (loft#739).  The generator's own comment
+claimed it mirrored the interpreter exactly; it had been left behind by one rung.  Both are
+fixed here, and the guard runs under `LOFT_STRICT_SCHEMA_IDS`.
 
 **D-clo-18 left the register on 2026-09-03 without being fixed**, which is why the count fell to
 2 with no code change: a `&` scalar parameter written from inside a closure is permanently

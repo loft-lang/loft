@@ -51,30 +51,32 @@ fn string_scope() {
     // @PLAN53 — aligned layout: every slot step rounds up to 8.
     // @PLN25 DN3: `t as integer` now yields `integer?`; the `?? 0` discharge
     // adds a null-coalesce block (`ncc:14` / `__ncc_1`) at the tail.
+    // @PLN157 P3b: both counted loops carry literal `lo`, so each drops its
+    // null-test-and-choose ops (~4 apiece) and every later span starts earlier.
     .slots(
         "\
   block:1
-  __work_5+24=8 [0..150]
-  __work_4+24=32 [3..149]
-  __work_3+24=56 [6..148]
-  __work_2+24=80 [9..147]
-  __work_1+24=104 [12..146]
-  test_value+24=128 [15..145]
+  __work_5+24=8 [0..142]
+  __work_4+24=32 [3..141]
+  __work_3+24=56 [6..140]
+  __work_2+24=80 [9..139]
+  __work_1+24=104 [12..138]
+  test_value+24=128 [15..137]
   │ block:2
-  │ a+8=152 [17..107]
-  │ b+24=160 [18..124]
+  │ a+8=152 [17..99]
+  │ b+24=160 [18..116]
   │ │ for:3
-  │ │ n#index+8=184 [22..103]
-  │ │ │ loop:4L [seq 23..104]
-  │ │ │ n+8=192 [35..81]
+  │ │ n#index+8=184 [22..95]
+  │ │ │ loop:4L [seq 23..96]
+  │ │ │ n+8=192 [31..73]
   │ │ │ │ block:6
-  │ │ │ │ t+24=200 [36..103]
+  │ │ │ │ t+24=200 [32..95]
   │ │ │ │ │ for:9
-  │ │ │ │ │ _m#index+8=224 [65..81]
-  │ │ │ │ │ │ loop:10L [seq 66..82]
-  │ │ │ │ │ │ _m+8=232 [78..78]
+  │ │ │ │ │ _m#index+8=224 [61..73]
+  │ │ │ │ │ │ loop:10L [seq 62..74]
+  │ │ │ │ │ │ _m+8=232 [70..70]
   │ │ │ │ │ │ │ ncc:14
-  │ │ │ │ │ │ │ __ncc_1+8=240 [96..99]",
+  │ │ │ │ │ │ │ __ncc_1+8=240 [88..91]",
     )
     .result(Value::str("136 via n:1=1 n:2=12 n:3=122 "));
 }
@@ -86,21 +88,24 @@ fn loop_variable() {
         // slot lands above the loop body.
         // @PLN25 DN3: `b as integer` now yields `integer?`, so `?? 0` discharges it
         // — that adds a null-coalesce block (`ncc:7` / `__ncc_1`) to the layout.
+        // @PLN157 P3b: a literal-`lo` counted loop initialises its counter to
+        // `lo - 1` and increments unconditionally — the null-test-and-choose
+        // ops are gone, so every span past the loop head starts ~4 ops earlier.
         .slots(
             "\
   block:1
-  __work_1+24=8 [0..61]
+  __work_1+24=8 [0..57]
   │ block:2
-  │ a+8=32 [4..38]
+  │ a+8=32 [4..34]
   │ │ for:3
-  │ │ _t#index+8=40 [6..37]
-  │ │ │ loop:4L [seq 7..38]
-  │ │ │ _t+8=48 [19..19]
+  │ │ _t#index+8=40 [6..33]
+  │ │ │ loop:4L [seq 7..34]
+  │ │ │ _t+8=48 [15..15]
   │ │ │ │ │ ncc:7
-  │ │ │ │ │ __ncc_1+8=48 [26..29]
+  │ │ │ │ │ __ncc_1+8=48 [22..25]
   │ │ │ │ block:6
-  │ │ │ │ b+24=56 [20..37]
-  test_value+8=80 [39..46]",
+  │ │ │ │ b+24=56 [16..33]
+  test_value+8=80 [35..42]",
         )
         .result(Value::Int(246));
 }

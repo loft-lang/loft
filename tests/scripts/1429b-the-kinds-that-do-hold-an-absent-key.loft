@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1429's other half: the kinds that key on the VALUE hold an absent key like any other,
+// which is what the two refusals in `1429` name as the cure.  A message naming a cure that
+// does not work is the next defect, so the cure is measured here.
+//
+// `hash` looks up by value, `sorted` and `index` order by it, and `(L-Null)`'s in-band
+// sentinel gives absence a place in that order — first, below every present key.  A `spatial`
+// interleaves its axes into a Morton code and a `trie` walks a text's bytes; neither has a
+// place to put an absence, which is why they refuse one.
+//
+// Axes this file MOVES:  the kind (`hash` · `sorted` · `index`), the key's base type (`text` ·
+//                        `integer`), and whether the record's key is PRESENT or absent.
+// Axes it HOLDS FIXED:   one key per collection, two or three records.
+//
+// @falsified-at: e9f45817 — INERT by design: every cell is accepted and correct on both
+//   builds, and it is here to stay that way while `1429` tightens the two kinds beside it.
+//   Scored by hand, both backends.
+
+struct Hk { k: text?, n: integer }
+struct Ok { k: integer?, n: integer }
+struct Ik { k: integer?, n: integer }
+struct Dt { k: text, n: integer }
+struct Dp { x: integer, y: integer, n: integer }
+
+fn main() {
+  // A hash keys on the VALUE: a present key is found, and an absent one is a record the
+  // collection holds like any other.
+  h: hash<Hk[k]> = [Hk { k: "a", n: 1 }, Hk { k: null, n: 2 }];
+  ha = h["a"];
+  assert(ha != null && ha.n == 1, "c5 a present key in a nullable-keyed hash: {ha}");
+  hn = 0;
+  for e in h { hn = hn + e.n; }
+  assert(hn == 3, "c5b and the absent-keyed record is held too: {hn}");
+
+  // A sorted orders by the value, and an absence sorts BEFORE every present key.
+  s: sorted<Ok[k]> = [Ok { k: 5, n: 1 }, Ok { k: null, n: 2 }, Ok { k: 3, n: 3 }];
+  sq = s[3];
+  assert(sq != null && sq.n == 3, "c5c a present key in a nullable-keyed sorted: {sq}");
+  first = 0;
+  for e in s { first = e.n; break; }
+  assert(first == 2, "c5d and the absent key comes first in the order: {first}");
+
+  // An index answers both ways over the same records.
+  i: index<Ik[k]> = [Ik { k: 5, n: 1 }, Ik { k: 3, n: 2 }];
+  ip = i[5];
+  assert(ip != null && ip.n == 1, "c5e a nullable-keyed index looks up: {ip}");
+
+  // The two kinds that refuse an absent key still take their dense one.
+  t: trie<Dt[k]> = [Dt { k: "abc", n: 7 }];
+  td = t["abc"];
+  assert(td != null && td.n == 7, "c2 a dense trie key still keys: {td}");
+  p: spatial<Dp[x, y]> = [Dp { x: 1, y: 2, n: 9 }];
+  pd = p[1, 2];
+  assert(pd != null && pd.n == 9, "c4 a dense spatial axis still keys: {pd}");
+}

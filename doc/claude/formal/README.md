@@ -145,7 +145,7 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Three deviations are open, in two chapters:** operational.md 2 and layout.md 1. Every
+**Four deviations are open, in three chapters:** operational.md 2, layout.md 1 and performance.md 1. Every
 other chapter is at 0, and each zero is a claim to re-measure against the oracle line its
 chapter names. The two in operational.md are the **meta** entry, `D-op-1`/`D-op-2` — there
 being no shared operational semantics, the interpreter is the spec and a backend divergence
@@ -177,7 +177,7 @@ chapters do not.
 | doc | area | status |
 |---|---|---|
 | [types.md](types.md) | type system + conversion relation (incl. integer width) | **0 open** — the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
-| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
+| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** (D-bind-28 closed 2026-09-07: the `&hash<τ[k]>` PARAMETER spelling links like the LOCAL and FIELD ones) — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
 | [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **1 open** (D-heap-1: a copy of a tuple releases a droppable member twice — nested, nullable and parameter shapes) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
@@ -194,6 +194,7 @@ chapters do not.
 | [collections.md](collections.md) | collection kinds (`vector`/`hash`/`sorted`/`index`/`spatial`/`trie`), indexing & slicing | **0 open** — the six kinds, indexing, slicing (`Slice-Open`/`Slice-Cap` hold), linked groups; still a SCOPE doc graduating to rules; register in [collections-history.md](collections-history.md) |
 | [ownership.md](ownership.md) | the `deps` / borrow **checker** (lifetimes) — distinct from binding.md's surface | **0 open** — every store-lifetime decision reads the one total `deps` fact (`O-Deps`), per binding, per path, complete (`O-Complete`); the soundness proof heap.md's free rules rest on; register in [ownership-history.md](ownership-history.md) |
 | [capabilities.md](capabilities.md) | sandbox **admission** — what a restricted caller may do (call / parameter / field / mutation rights) | **0 open** — the 6-rule judgment `P;ctx ⊢ e ✓` fully enforced, each closed entry with a RED/GREEN adversarial pair; register in [capabilities-history.md](capabilities-history.md) |
+| [performance.md](performance.md) | routines pull their weight — the DISTRIBUTION's speed contract | **1 open** — `Perf-Like` (hash-equal lanes before any comparison), `Perf-Weight` (per-release measurement against an industry-language twin — drift satisfies nothing), `Perf-Twin` (a twin is written where a hit is expected, never waived), `Perf-Cure` (the twin MEASURES, never ships — the cure goes to the engine, keeping libraries readable loft); D-perf-1 = loft#1426 |
 
 ## Roadmap
 
@@ -240,6 +241,20 @@ What that buys, and none of it is available from a rule NAME alone:
    exists for them. A citation naming one is an error, which is exactly what the resolve check
    catches.
 
+**The measurement that argues for the mechanism rather than for the register.** A deviation
+entry can name its own generator, in as many words, and still not prevent the next instance —
+because the entry is reachable from the RULES doc and the defect is met in the CODE.
+`D-bind-17` closed on 2026-09-06 saying what had been missing was *"one spelling of the SLOT
+behind a link, at the nine sites that each asked the link's inner type bare"*. On 2026-09-07,
+loft#1443 and loft#1454 found **six more sites doing exactly that**, for a different τ — a
+fn-typed link — across the parser, both backends' emitters and the native reachability marker.
+The entry did not fail to describe the class. It failed to be reachable from the sites that
+needed it: a reader at `variables.tp(var)` has nothing to grep, because the thing they are
+about to get wrong is an absence. That is the case for the citation direction — **a site
+enforcing a rule names it, so "which sites ask this?" is a grep instead of a memory** — and it
+is why 179 of 257 rules having no code representation is the backlog rather than a statistic.
+Better prose in the register could not have closed any of the six.
+
 **Why this is the quality lever, and not just tidiness.** Fixing a bug has no intrinsic test
 for *did we now cover every similar case?* — a fix is shaped by the subset of the language
 that happened to get stressed, and nothing in it asks about the rest. A citation converts that
@@ -282,3 +297,20 @@ system grows, anchor the question on the RULE, not on the code*.
 A CLOSED deviation leaves the rules doc; its entry — dates, measurements, what closed it —
 is kept in `<area>-history.md`. The count of OPEN deviations per doc is the area's distance
 from formal.
+
+⚠ **A deviation NUMBER is a property of the repository, not of your checkout.** Several
+agents hold sibling checkouts of this repo at once, each with a different subset of the
+others' branches, and a register is cherry-picked in pieces like anything else — so the
+next free `D-<area>-N` has to be grepped across **every** checkout, not across the file
+you are editing. Measured 2026-09-08: `D-bind-28` was taken on a sibling branch and
+reused here, because `grep '^> \*\*D-bind-'` over the local `binding-history.md` said it
+was free — and it was free *in that file*, while `binding.md` in the same working tree
+carried its header. Renumbered to `D-bind-29`.
+
+The same partial-pick shape explains a count that looks wrong rather than old: a rules
+doc can carry a deviation's HEADER from before the commit that closed it while the same
+tree already contains the fix, so `binding.md` reads `OPEN: 1` beside a working
+behaviour. **Do not reconcile a disagreement like that by editing a number** — establish
+which side is older, and note it. `scripts/rule_tags.py` cannot help here either: it
+takes a tag's status from the first 120 characters after its FIRST definition, so a
+deviation written in parts reports one status for all of them (loft#1452).

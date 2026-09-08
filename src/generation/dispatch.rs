@@ -150,7 +150,13 @@ impl Output<'_> {
     /// tracker that disagreed with the emitter is exactly how the store leaked (loft#823).
     fn materialises_element(&self, var: u16, to: &Value) -> bool {
         let variables = self.data.def(self.def_nr).variables();
-        variables.tp(var).heap_def_nr().is_some()
+        // Through `base()`: `heap_def_nr` names the variant and not the marker, so a nullable
+        // heap local answered `None` and this arm declined — the element stayed an ALIAS and a
+        // write through it reached the container.  `@FR-L-Null` makes `E?` the same record
+        // behind a nullability bit, so the copy question cannot turn on the `?`.  The
+        // interpreter twin peels for the same reason; asked bare, the two backends disagreed
+        // and only `--native` kept the defect (loft#1456).
+        variables.tp(var).base().heap_def_nr().is_some()
             // @FR-O-Proxy asks copy — the arm this selects ALLOCATES a record and deep-copies
             // into it, so a proxy that answered "owner" for a borrow costs a materialisation
             // and never a release.
@@ -346,6 +352,16 @@ impl Output<'_> {
                 // second half of loft#655, invisible until the interpreter half was
                 // fixed and compilation got far enough to reach it.
                 let needs_bool_coerce = matches!(inner_slot, Type::Boolean);
+                // The fn-ref half of the same rule: a `&fn(…)` slot holds the `(u32, DbRef)`
+                // PAIR, while a bare fn name or a NON-capturing lambda carries only the d_nr
+                // and emits as an `i64` — rustc E0308 against the pair, where the interpreter
+                // wrote the slot correctly (loft#1443).  Signalled through `fn_ref_context`
+                // rather than by wrapping the emitted text, for the reason the tuple-element
+                // write gives: an if-VALUED source has to build the pair inside EACH branch,
+                // and a wrap around the whole `if` would leave both arms a bare `i64`.  A
+                // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
+                // untouched — which is why this hid behind the shape people write first.
+                let needs_fn_pair = matches!(inner_slot, Type::Function(_, _, _));
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -364,7 +380,12 @@ impl Output<'_> {
                         write!(w, "(")?;
                     }
                 }
+                let prev_fn_ref_ctx = self.fn_ref_context;
+                if needs_fn_pair {
+                    self.fn_ref_context = true;
+                }
                 self.output_code_inner(w, to)?;
+                self.fn_ref_context = prev_fn_ref_ctx;
                 if amp_owned_writeback {
                     // Through the same helper the interpreter's `OpFreeRefIfDistinct`
                     // reaches, so the distinctness test and the caller's
@@ -407,6 +428,13 @@ impl Output<'_> {
                     | Type::Character
                     | Type::Tuple(_)
                     | Type::Text(_)
+                    // loft#1454 — a fn-ref local link.  A fn-ref lives in the frame as a
+                    // 20-byte value exactly as a tuple does, so it takes the same `*mut T`
+                    // shape and the same `addr_of_mut!` bind.  Left out, it reproduced the
+                    // `Optional` symptom the paragraph above records verbatim: no arm
+                    // matched, the bind emitted no right-hand side (`let mut var_pd: … =
+                    // as …;`) and rustc reported that instead of the missing case.
+                    | Type::Function(_, _, _)
             )
         {
             let name = sanitize(variables.name(var));
@@ -485,6 +513,11 @@ impl Output<'_> {
                 // A text RHS yields a `&str` or a `String`; the slot is a `String`.  The
                 // same coercion the `&text` PARAMETER write-back carries.
                 let text_link = matches!(inner.base(), Type::Text(_));
+                // The fn-ref half of the same family: the slot is the `(u32, DbRef)` PAIR,
+                // while a bare fn name or a non-capturing lambda carries only the d_nr.
+                // Asked through `fn_ref_context` like the parameter write-back, so an
+                // if-VALUED source builds the pair inside each arm (loft#1454).
+                let fn_link = matches!(inner.base(), Type::Function(_, _, _));
                 write!(w, "unsafe {{ *var_{name} = ")?;
                 if bool_link {
                     write!(w, "u8::from(")?;
@@ -492,7 +525,12 @@ impl Output<'_> {
                 if text_link {
                     write!(w, "(")?;
                 }
+                let prev_fn_ref_ctx = self.fn_ref_context;
+                if fn_link {
+                    self.fn_ref_context = true;
+                }
                 self.output_code_inner(w, to)?;
+                self.fn_ref_context = prev_fn_ref_ctx;
                 if bool_link {
                     write!(w, ")")?;
                 }
@@ -960,7 +998,10 @@ impl Output<'_> {
         // not for an element read, so the F2 strip alone left `--native` still reading the
         // wrong element (probe 05: `c.n 44 want 33`) while the interpreter was already
         // correct.  One fact, and until this both backends did not act on it.
-        if let Some(d_nr) = variables.tp(var).heap_def_nr()
+        // `base()` for the same reason the predicate above peels: the marker does not change
+        // which record this is (@FR-L-Null).  The GATE and the EMIT both ask, so peeling only
+        // one leaves the arm selected and unreachable.
+        if let Some(d_nr) = variables.tp(var).base().heap_def_nr()
             && self.materialises_element(var, to)
         {
             let tp_nr = self.data.def(d_nr).known_type();

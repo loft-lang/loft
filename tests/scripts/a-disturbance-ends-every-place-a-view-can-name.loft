@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(B-Disturb)` ends the place a view names when its container is disturbed — whatever the
+// disturbance is SPELLED as, wherever the container is reached from, and however many places
+// the view can name.  Three cells of that were missing, and all three failed in the PLAIN
+// spelling exactly as in the `??` one, so none of them was loft#1401's discharge defect.
+//
+//   1. A `sorted` removal renumbers positions.  `sorted` is the INLINE keyed kind — its
+//      elements sit in key order in one dense array — so `(Col-RemoveDense)` covers it beside
+//      the vector, while `hash` and `index` give each element its own record and renumber
+//      nothing (`(Col-RemoveKeyed)`, measured below as cells 2 and 3).  All five keyed kinds
+//      remove through ONE op, so the reshape had to be keyed on the KIND, not on the op.
+//   2. A removal reached through a FIELD — `p.va.remove(0)` — names its container as a
+//      projection, and only a plain `Var` was collected.  The VIEW side already named the
+//      place `(p, off_va)`; only the disturbance side was short, so the two never met.
+//   3. A value branch whose two arms view DIFFERENT containers named NEITHER, because a view
+//      was recorded as one container and there was nowhere to put the second.
+//
+// ⚠ THE CONTROLS ARE THE POINT, AGAIN.  Over-materialising silently loses a write that lands
+// today, so widening a disturbance is the dangerous direction: `grown_containers` records the
+// measurement that proves it — collecting the PARENT for a field-qualified growth shook every
+// view rooted at the same variable, and `moros_editor`'s undo stack silently stopped recording.
+// SIX of the eleven cells are what keep this fix from being that one: the four own-record keyed
+// kinds (`hash`, `index`, `trie`, `spatial`), a sibling MEMBER removed, a sibling member GROWN,
+// and an undisturbed two-container branch.  Each has a FIRING twin here, so none of them can
+// read green by never being reached — `LOFT_DEBUG_F8=1` names exactly the positive cells.
+//
+// @falsified-at: f4403e62 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   One failure, not four, because `assert` stops the run — cell 1 is simply reached first.
+//   Measured apart at that commit: cells 1, 4, 7 and 8b each read the element that shifted in,
+//   and all six controls are unmoved, which is what makes them controls rather than cells.
+
+struct Box  { n: integer, tag: integer }
+struct Pair { va: vector<Box>, vb: vector<Box> }
+struct Key  { k: text, tag: integer }
+struct Pt    { x: integer, y: integer, tag: integer }
+struct Group { items: vector<Box>, by_n: hash<Box[n]> }
+
+// 1 — a `sorted` removal renumbers, so a view of another element must materialise.
+fn test_a_sorted_removal_is_a_reshape() {
+  s: sorted<Box[n]> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  c = s[2];
+  s[1] = null;
+  assert(c?.tag == 22, "sorted removal: got {c?.tag}, want the 22 its element held");
+}
+
+// 2 — CONTROL: a `hash` gives each element its own record, so a removal renumbers nothing and
+// the view must keep aliasing.  If this materialised, the fix would be keyed on the op.
+fn test_a_hash_removal_is_not_a_reshape() {
+  h: hash<Box[n]> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  c = h[2];
+  h[1] = null;
+  c?.tag = 99;
+  assert((h[2] ?? Box{n:0,tag:0}).tag == 99,
+         "hash removal: got {(h[2] ?? Box{n:0,tag:0}).tag}, want the write to land");
+}
+
+// 3 — CONTROL: an `index` is the other own-record keyed kind.
+fn test_an_index_removal_is_not_a_reshape() {
+  i: index<Box[n]> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  c = i[2];
+  i[1] = null;
+  c?.tag = 99;
+  assert((i[2] ?? Box{n:0,tag:0}).tag == 99,
+         "index removal: got {(i[2] ?? Box{n:0,tag:0}).tag}, want the write to land");
+}
+
+// 3b — CONTROL: `spatial` and `trie` are the remaining own-record keyed kinds.  One op serves
+// all five, so the kind gate has to answer for every one of them, not just the two above.
+fn test_the_other_keyed_kinds_are_not_reshaped() {
+  t: trie<Key[k]> = [Key{k:"a",tag:11}, Key{k:"b",tag:22}, Key{k:"c",tag:33}];
+  ct = t["b"];
+  t["a"] = null;
+  ct?.tag = 99;
+  assert((t["b"] ?? Key{k:"z",tag:0}).tag == 99,
+         "trie removal: got {(t["b"] ?? Key{k:"z",tag:0}).tag}, want the write to land");
+  sp: spatial<Pt[x,y]> = [Pt{x:1,y:1,tag:11}, Pt{x:2,y:2,tag:22}, Pt{x:3,y:3,tag:33}];
+  cp = sp[2,2];
+  sp[1,1] = null;
+  cp?.tag = 99;
+  assert((sp[2,2] ?? Pt{x:0,y:0,tag:0}).tag == 99,
+         "spatial removal: got {(sp[2,2] ?? Pt{x:0,y:0,tag:0}).tag}, want the write to land");
+}
+
+// 4 — a removal reached through a FIELD ends the places inside that field.
+fn test_a_removal_through_a_field_is_a_disturbance() {
+  p = Pair{va: [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}], vb: []};
+  c = p.va[1];
+  p.va.remove(0);
+  assert(c?.tag == 22, "field removal: got {c?.tag}, want the 22 its element held");
+}
+
+// 5 — CONTROL: the disturbance is of a SIBLING member.  `va` is untouched, so the view of its
+// element keeps aliasing and the write must reach the container.  This is the cell that says
+// the fix compares PLACES and not variables — the `moros_editor` shape, in miniature.
+fn test_a_removal_from_a_sibling_member_leaves_the_view_alone() {
+  p = Pair{va: [Box{n:1,tag:11}, Box{n:2,tag:22}], vb: [Box{n:3,tag:33}, Box{n:4,tag:44}]};
+  c = p.va[0];
+  p.vb.remove(0);
+  c?.tag = 55;
+  assert((p.va[0] ?? Box{n:0,tag:0}).tag == 55,
+         "sibling member: got {(p.va[0] ?? Box{n:0,tag:0}).tag}, want the write to land");
+}
+
+// 6 — CONTROL: a sibling field GROWING is the same question on the other half, and it is the
+// one that was measured to break a real program.  A view of `va` must survive `vb` growing.
+fn test_a_growth_of_a_sibling_member_leaves_the_view_alone() {
+  p = Pair{va: [Box{n:1,tag:11}, Box{n:2,tag:22}], vb: []};
+  c = p.va[0];
+  p.vb += [Box{n:9,tag:99}, Box{n:8,tag:88}, Box{n:7,tag:77}];
+  c?.tag = 55;
+  assert((p.va[0] ?? Box{n:0,tag:0}).tag == 55,
+         "sibling growth: got {(p.va[0] ?? Box{n:0,tag:0}).tag}, want the write to land");
+}
+
+// 7 — a branch whose arms view TWO containers: either one being disturbed ends the binding.
+fn branch_over_two(k: integer) -> integer {
+  w: vector<Box> = [Box{n:7,tag:77}];
+  v: vector<Box> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  c = if k > 0 { w[0] ?? Box{n:0,tag:0} } else { v[1] ?? Box{n:0,tag:0} };
+  v.remove(0);
+  return c.tag;
+}
+fn test_a_branch_over_two_containers_names_both() {
+  taken = branch_over_two(0);
+  assert(taken == 22, "two containers, v arm: got {taken}, want 22");
+  other = branch_over_two(1);
+  assert(other == 77, "two containers, w arm: got {other}, want 77");
+}
+
+// 8 — CONTROL: the same two-container branch with NOTHING disturbed keeps aliasing, so a write
+// through the binding still reaches whichever container the taken arm named.
+fn test_an_undisturbed_two_container_branch_still_aliases() {
+  w: vector<Box> = [Box{n:7,tag:77}];
+  v: vector<Box> = [Box{n:1,tag:11}, Box{n:2,tag:22}];
+  k = 0;
+  c = if k > 0 { w[0] ?? Box{n:0,tag:0} } else { v[1] ?? Box{n:0,tag:0} };
+  c.tag = 55;
+  assert((v[1] ?? Box{n:0,tag:0}).tag == 55,
+         "undisturbed branch: got {(v[1] ?? Box{n:0,tag:0}).tag}, want 55");
+}
+
+// 8b — the container is a PARAMETER, and the disturbance RE-RUNS in a loop.  A view rebound
+// each turn must read its own element every turn, not the one that shifted in.
+fn drain_sorted(s: sorted<Box[n]>) -> integer {
+  tot = 0;
+  for k in 1..4 {
+    c = s[k + 1] ?? Box{n:0,tag:0};
+    s[k] = null;
+    tot += c.tag;
+  }
+  return tot;
+}
+fn test_a_parameter_container_in_a_loop() {
+  got = drain_sorted([Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}, Box{n:4,tag:44}]);
+  assert(got == 22 + 33 + 44, "sorted drain: got {got}, want 22+33+44");
+}
+
+// 8c — CONTROL, and the one that cost the most: a `#remove` LOOP over a linked-group member.
+// The loop's own iteration scratch is a view of `(d, off_items)` by every test this walk
+// applies, so once a removal reached through a field became a disturbance it was shaken —
+// and the loop then iterated a COPY while removing from the original and never terminated.
+// A binding the loop ITERATES is not materialised — the iteration depends on its IDENTITY, so
+// a store of its own is not a copy of a value but a different loop.  `903-loop-remove` is
+// where this surfaced (0.06s → a 300s corpus timeout), and it is pinned here too because the
+// reason belongs beside the fix.  ⚠ The wider rule *"a view the author cannot name"* was
+// measured WRONG on the way: the parser renames author bindings too, and a `match` payload
+// (`_mv_<field>_N`) must still materialise — spelled as a name test it traded this hang for a
+// silent wrong answer in `a-payload-binding-warns-when-its-subject-is-given-another-variant`.
+fn test_a_remove_loop_over_a_group_member_terminates() {
+  d = Group{items: [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}], by_n: []};
+  for e in d.items { e#remove; }
+  assert(len(d.items) == 0, "remove loop: {len(d.items)} left, want 0");
+  assert(len(d.by_n) == 0, "remove loop, keyed member: {len(d.by_n)} left, want 0");
+}
+
+// 9 — the plain spelling of cell 1 agrees.  Every cell here was measured to fail in BOTH
+// spellings, which is what said they are not loft#1401's class; they must now agree the other
+// way too.
+fn test_the_plain_and_discharged_spellings_agree() {
+  s: sorted<Box[n]> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  plain = s[2];
+  s[1] = null;
+  t: sorted<Box[n]> = [Box{n:1,tag:11}, Box{n:2,tag:22}, Box{n:3,tag:33}];
+  disch = t[2] ?? Box{n:0,tag:0};
+  t[1] = null;
+  assert(plain?.tag == 22, "plain sorted: got {plain?.tag}, want 22");
+  assert(disch.tag == 22, "discharged sorted: got {disch.tag}, want 22");
+}
+
+fn main() {
+  test_a_sorted_removal_is_a_reshape();
+  test_a_hash_removal_is_not_a_reshape();
+  test_an_index_removal_is_not_a_reshape();
+  test_the_other_keyed_kinds_are_not_reshaped();
+  test_a_removal_through_a_field_is_a_disturbance();
+  test_a_removal_from_a_sibling_member_leaves_the_view_alone();
+  test_a_growth_of_a_sibling_member_leaves_the_view_alone();
+  test_a_branch_over_two_containers_names_both();
+  test_an_undisturbed_two_container_branch_still_aliases();
+  test_a_parameter_container_in_a_loop();
+  test_a_remove_loop_over_a_group_member_terminates();
+  test_the_plain_and_discharged_spellings_agree();
+}

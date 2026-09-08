@@ -1,0 +1,53 @@
+// @PLN157 P3 (loft#1426 M3) — float compares: the proven-plain form and the
+// kept-sentinel form answer the SAME booleans on both backends.
+//
+// The native emitter rewrites `<`/`<=`/`==`/`!=` on PROVABLY non-NaN floats
+// to plain Rust operators; everything else keeps the NaN-aware template.
+// These cells pin the boundary from both sides:
+//   - proven operands (literals, `??`-discharged, `?`-asserted, negation,
+//     if-merge, clean locals) — values must not move;
+//   - UNPROVEN operands carrying a real null — loft's order (null sorts
+//     below every number) must survive, which the plain form would break.
+// @falsified-at: hand-measured (sabotage, 2026-09-07) — the emitter's proof check
+// disabled (plain emission unconditional) turns line 37 red on --native:
+// "null sorts below the smallest number" (NaN < x is false in plain Rust);
+// restored byte-identically, all four lanes green (interpret / native /
+// LOFT_NN_VERIFY / LOFT_NO_NN_FAST).  The pre-P3 build passes by design — the
+// guard pins a NEW rewrite's boundary, so its red case is a wrong proof, not
+// the parent commit.
+
+fn take(x: float) -> float { x }
+
+fn main() {
+  a = 1.5;
+  b = 2.5;
+  // Proven: discharged division + literals + negation + if-merge.
+  s = ((a / b) ?? 0.0);
+  t = -s;
+  u = if s >= 0.0 { s } else { t };
+  assert(s < 1.0, "discharged < literal");
+  assert(t < 0.0, "negated discharge < literal");
+  assert(u <= s, "if-merge <= local");
+  assert(!(u < t), "merge not below its negation");
+
+  v: vector<float> = [0.25, 0.75];
+  w = v[1]?;
+  assert(w > 0.5, "?-asserted element > literal");
+
+  // Unproven: a REAL null through an un-discharged nullable — null sorts
+  // BELOW every number in loft's order, both directions.
+  n = 0.0 / 0.0;
+  assert(n == null, "0/0 answers null");
+  lt_holds = n < -1000000.0;
+  gt_holds = -1000000.0 < n;
+  assert(lt_holds, "null sorts below the smallest number");
+  assert(!gt_holds, "no number sorts below null");
+  assert(!(n == 0.0), "null equals no number");
+  assert(n != 0.0, "null differs from every number");
+  assert(n == 0.0 / 0.0, "null equals null");
+
+  // Unproven-but-fine: parameters keep the template and still agree.
+  p = take(0.5);
+  assert(p < 1.0, "parameter < literal");
+  println("nn-float-compare ok");
+}

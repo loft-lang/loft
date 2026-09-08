@@ -25,7 +25,7 @@
 // @EXPECT_ERROR: Cannot assign Wrap to a field of type vector<float>
 // @EXPECT_ERROR: Cannot assign integer to a field of type text
 // @EXPECT_ERROR: Cannot assign Wrap to a field of type Inner
-// @EXPECT_ERROR: Cannot assign Wrap to a field of type hash<E,["k"]>
+// @EXPECT_ERROR: Cannot assign Wrap to a field of type hash<E[k]>
 // @EXPECT_ERROR: Cannot assign text to a field of type vector<single>
 // @EXPECT_ERROR: Cannot assign Wrap to a field of type vector<float>
 // @EXPECT_ERROR: Cannot assign Wrap to a field of type vector<float>

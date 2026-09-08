@@ -110,6 +110,16 @@ word `null` — the single exception is a null **character** (codepoint 0), whic
 is a compact `{field:value}` form, and the `:j` spec switches it to JSON with quoted keys (verified:
 `{r:128,g:0,b:128}` vs `{"r":128,"g":0,"b":128}`).
 
+> **A TUPLE has no row here, and its absence is a DECISION rather than a gap.**
+> `"{t}"` on a `(integer, integer)` is `error: Cannot format type (integer, integer)`, and
+> [TUPLES.md § Non-goals](../TUPLES.md) declares whole-tuple formatting a compile error, with
+> the cure named: a named struct, or element-by-element access. The row is stated as absent
+> because a reader checking `(F-Render)` against the compiler finds a refusal the rules do not
+> mention and reads it as an unruled edge — which is a report, not a defect. Its neighbour
+> `(T-Absent)` gives the reason a tuple is the type that keeps meeting this: *"a tuple has no
+> faithful document form anyway"*, which is the same argument one level down. A tuple's
+> MEMBERS render by their own rows, so `"{t.0}"` is the supported spelling.
+
 ### Format spec — width, alignment, padding, precision, radix, sign
 
 ```

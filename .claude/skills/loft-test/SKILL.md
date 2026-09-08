@@ -1,16 +1,16 @@
 ---
 name: loft-test
-description: Reference for writing tests against the loft interpreter, --native backend, and WASM build. Apply whenever adding, editing, or reviewing tests/*.rs or tests/scripts/*.loft / tests/docs/*.loft. Covers test-binary layout, the `code!` and `cross_mode!` macros, the @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @NAME / @TITLE annotations on `.loft` files, ignore conventions, P-id rules, and the targeted-suite map for subsystem changes.
+description: Reference for writing tests against the loft interpreter, --native backend, and WASM build. Apply whenever adding, editing, or reviewing tests/*.rs or tests/scripts/*.loft / tests/docs/*.loft. Covers test-binary layout, the `code!` and `cross_mode!` macros, the @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @NAME / @TITLE annotations on `.loft` files, ignore conventions, P-id rules, the `@falsified-at:` gate, and which check to run for a change.
 user-invocable: false
 ---
 
 # Loft Testing Reference
 
 Always consult this before adding or modifying tests under `tests/`.
-The loft project has ~30 integration test binaries plus a custom
-testing framework; picking the wrong binary or the wrong macro means
-either a slow CI cycle or a test that doesn't actually validate the
-change.
+The loft project has 260+ integration test binaries (`ls tests/*.rs`
+is the census) plus a custom testing framework; picking the wrong
+binary or the wrong macro means either a slow CI cycle or a test that
+doesn't actually validate the change.
 
 For runtime debugging conventions (LOFT_LOG presets, dump files), see
 the parent project's [TESTING.md](../../../doc/claude/TESTING.md).  This
@@ -26,23 +26,19 @@ binary that matches the kind of behaviour you're verifying.
 
 | Binary | Purpose | Typical macro / harness |
 |---|---|---|
-| `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter**.  Verifies parse → scope-check → bytecode → execute end-to-end against `// @EXPECT_*` annotations in the script. | Reads scripts from disk; no Rust-level macro. |
-| `tests/native.rs` | Same scripts as wrap.rs but driven through `--native` (rustc compilation).  Catches codegen vs interp divergence. | Disk-driven; reuses `find_loft_rlib` + `compile_native_job` helpers. |
-| `tests/issues.rs` | The 540-test regression register — every fix lands here.  Most expression / control-flow / parser fixes get pinned by a small named test. | `code!(...)` |
-| `tests/expressions.rs` | Language feature tests grouped by topic (T1 tuples, T1.10 cells, …). | `code!(...)` and `expr!(...)` |
+| `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / `loft_suite`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
+| `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`).  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
+| `tests/issues.rs` | The regression register (800+ tests) — small named pins for fixes.  Prefer a `tests/scripts/*.loft` file where possible: it locks all three backends. | `code!(...)` |
+| `tests/expressions.rs` | Language feature tests grouped by topic. | `code!(...)` and `expr!(...)` |
 | `tests/parse_errors.rs` | Negative tests — the loft source must produce a specific diagnostic. | `code!(...).error(...).warning(...)` |
-| `tests/threading.rs` | `run_parallel_*` direct API tests.  Touch this when changing `src/parallel.rs` or `src/codegen_runtime.rs::n_parallel_*`. | Direct Rust API calls. |
-| `tests/threading_chars.rs` | `par(...)` over `vector<character>` and `vector<text>` canaries; 4 currently `#[ignore]`d on T1.8a. | Direct Rust API. |
-| `tests/tuple_matrix.rs` | Plan-14 cross-mode matrix — every cell runs interp + `--native` and asserts byte-identical stdout.  **Heavy by default — every cell is `#[ignore]`d.** | `cross_mode!(name, body)` |
-| `tests/codegen_emitter.rs` | Native-codegen emitter registry tests.  P200 / P202 / P203 / P204 / P205 regressions live here. | Direct registry/dispatch tests. |
-| `tests/exit_codes.rs` | Whole-binary exit-code tests — invokes the compiled `loft` binary as a subprocess via `env!("CARGO_BIN_EXE_loft")`. | `std::process::Command` |
-| `tests/error_messages.rs` | Diagnostic *rendering* tests (not just text content) — caret placement, source-line context, summary. | Subprocess invocation. |
-| `tests/leak.rs` | Store-allocation leak detection. | `code!(...)` with `LOFT_LOG=alloc_free` style asserts. |
-| `tests/format.rs` | `{x:fmt}` interpolation tests. | `code!(...)` |
-| `tests/imports.rs` | `use foo` / `use foo::*` tests with fixtures in `tests/lib/`. | `code!(...)` and disk fixtures. |
-| `tests/slots.rs` / `slot_v2_baseline.rs` | Slot-allocator invariants.  Touch when changing `src/scopes.rs` or slot codegen. | Programmatic IR walks. |
-| `tests/graphics_gold.rs` | Pixel-comparison golden tests for the graphics library. | Subprocess invocation. |
-| `tests/html_wasm.rs` / `wasm_entry.rs` | WASM build verification. | Subprocess. |
+| the `*_matrix.rs` binaries | Cross-mode matrices (`tuple_matrix`, `closure_matrix`, `coroutine_matrix`, `mut_closure_matrix`, `binary_io_matrix`, `template_matrix`, `par_nested`) — every cell runs interp + `--native` and asserts byte-identical stdout. | `cross_mode!(name, body)` |
+
+That is the load-bearing subset.  The full census is `ls tests/*.rs` — most binaries
+are single-topic and self-describing (`exit_codes.rs`, `error_messages.rs`,
+`leak.rs`, `codegen_emitter.rs`, `slots.rs`, golden harnesses like
+`crystal_editor_gold.rs` / `layout_golden.rs`, …); TESTING.md carries the framework
+reference.  Do not extend a table here — it drifts (this one carried two deleted
+binaries for months).
 
 **When unsure where a test belongs**, look for an existing test that
 shares the *kind* of failure you'd reproduce (parse error → parse_errors,
@@ -51,7 +47,7 @@ template → codegen_emitter).  Match the shape, don't invent a new file.
 
 **Common module:** `tests/common/mod.rs` is `mod common;` from each
 binary.  It exposes `cached_default()` (cached default-stdlib parse —
-saves ~2s per test) and `cross_mode::run_cross_mode()` (the cross-mode
+avoids a per-test stdlib re-parse) and `cross_mode::run_cross_mode()` (the cross-mode
 harness).  Every helper there is `#[allow(dead_code)]` because not
 every binary uses every helper.
 
@@ -60,7 +56,7 @@ every binary uses every helper.
 ## The `code!` macro — primary unit-test API
 
 Lives in `tests/testing.rs`.  Used by issues / expressions / parse_errors /
-format / leak / imports / structs / vectors / strings / etc.
+slots / doc_hygiene and others (`grep -l 'code!' tests/*.rs` is the census).
 
 ```rust
 mod testing;
@@ -81,7 +77,9 @@ Chain methods:
 |---|---|
 | `.expr(s)` | After running the loft source, evaluate this expression and capture its result for `.result()` |
 | `.result(v)` | Assert the most recent `.expr()` produced this `Value` (`Value::Int`, `Value::Text`, `Value::Boolean`, `Value::Null`, …) |
-| `.typed(t)` | Assert the result type matches |
+| `.tp(t)` | Assert the result type matches |
+| `.advice(msg)` | Expect an `advice:` diagnostic (the non-gating tier) |
+| `.slots(…)` / `.invariants_pass()` | Slot-layout / invariant assertions (see `tests/testing.rs`) |
 | `.error(msg)` | Expect this exact diagnostic (substring or full).  Format: `"<text> at <test_name>:<line>:<col>"`.  Multiple `.error(...)` calls assert multiple diagnostics. |
 | `.warning(msg)` | Same as `.error` but for warnings.  Warnings don't suppress execution. |
 | `.fatal(msg)` | Expect a fatal panic with this message. |
@@ -103,8 +101,12 @@ declarations; `expr!` for one-liners.
 
 ## The `cross_mode!` macro — interp ↔ native equivalence
 
-Lives in `tests/common/cross_mode.rs`.  Used **only** by
-`tests/tuple_matrix.rs` today.  Plan-14 owns the cross-mode contract:
+Lives in `tests/common/cross_mode.rs` (its header doc is the contract — the
+run-by-default decision is @PLN114).  Used by the seven matrix binaries
+(`tuple_matrix`, `closure_matrix`, `coroutine_matrix`, `mut_closure_matrix`,
+`binary_io_matrix`, `template_matrix`, `par_nested`); the
+`run_cross_mode_expect` / `_rejected` / `_leak_free` variants cover
+expected-output, must-refuse and leak-free cells:
 
 ```rust
 mod common;
@@ -132,26 +134,17 @@ Mechanics:
 - Helper fns must live alongside `fn test`, not nested inside it.
 - The harness appends `fn main() { test(); }`, so don't include your own.
 
-**Heavy by default.**  Every `cross_mode!`-generated test is
-`#[ignore = "tuple_matrix — run with --test tuple_matrix -- --ignored"]`.
-Default `cargo test` skips them.  To run the matrix:
+**The cells RUN BY DEFAULT** (@PLN114): the macro applies no `#[ignore]`, and the
+whole tuple matrix takes on the order of seconds on a warm target/ — the cost was
+never the issue; the silence was.  Run it like any binary:
 
 ```bash
-# All cells:
-cargo test --release --test tuple_matrix -- --ignored
-
-# A single cell:
-cargo test --release --test tuple_matrix -- --ignored e1_d1_int_int_local
-
-# Skip known-broken cells (P207, T1.8a):
-cargo test --release --test tuple_matrix -- --ignored \
-    --skip e1_d1_char_int_local \
-    --skip e1_d2_return_int_int \
-    --skip e2_d2_return_text_text
+cargo test --release --test tuple_matrix              # all cells
+cargo test --release --test tuple_matrix e1_d1_int_int_local   # one cell
 ```
 
-Each `--native` run invokes `rustc`; cells take 1–10 s each on a warm
-target/.  That's why they're not on the default path.
+(Do NOT pass `-- --ignored` — with no ignored cells it runs ZERO tests and reads
+as green.)
 
 ---
 
@@ -162,7 +155,7 @@ file is picked up by:
 
 - `tests/wrap.rs::dir` (and `::loft_suite`) — runs it through the
   **interpreter** end-to-end.
-- `tests/native.rs::tests` — generates Rust source, compiles with
+- `tests/native.rs::native_dir` / `::native_scripts` — generates Rust source, compiles with
   `rustc`, runs the **native** binary.
 - `tests/wrap.rs::wasm_dir` — compiles via `--native-wasm`, optionally
   runs with `wasmtime` (skipped silently if `wasm32-wasip2` or
@@ -196,7 +189,7 @@ codegen bug, dropping a single `.loft` reproducer into `tests/scripts/`
 locks all three backends in one stroke; the same coverage in Rust
 would be three separate tests.
 
-This is also why **the cross-mode Rust harness exists at all**: plan-14
+This is also why **the cross-mode Rust harness exists at all**: a matrix
 needs precise per-cell control of which loft snippet runs in which
 mode and a stdout-equivalence assertion.  For broader regression
 coverage where you trust the assertions in the script body itself, a
@@ -206,7 +199,7 @@ coverage where you trust the assertions in the script body itself, a
 
 | Location | Purpose | Doc fields required? |
 |---|---|---|
-| `tests/scripts/<NN>-<topic>.loft` | Regression script for a fix or a feature corner case.  Numbered prefix sorts the run order; new files get the next free number. | No |
+| `tests/scripts/<name>.loft` | Regression script for a fix or a feature corner case.  Live naming: the issue number as prefix (`1004-…`) or a descriptive slug (`a-format-spec-is-honoured-not-dropped.loft`). | No — but `@falsified-at:` is gated (below) |
 | `tests/docs/<NN>-<topic>.loft` | Topic-level documentation script.  Output is part of the public language reference (`gendoc` writes HTML from these). | **Yes** — `@NAME` + `@TITLE` |
 | `tests/lib/<name>.loft` | Library fixture for tests using `// @ARGS: --lib tests/lib`. | No |
 
@@ -223,8 +216,9 @@ specific `fn`.
 | `// @ARGS: --lib <dir>` | Header | Extra CLI args passed to both wrap.rs and native.rs runners.  Only `--lib <dir>` is recognised at the test layer; other flags are ignored.  Use to point a script at a fixture directory (e.g. `// @ARGS: --lib tests/lib`). |
 | `// @EXPECT_ERROR: <substring>` | Anywhere | The script is expected to fail parse / scope-check / runtime with a diagnostic containing this substring.  Multiple `@EXPECT_ERROR:` lines accumulate.  Native runs **skip** files with `@EXPECT_ERROR` (the negative test only runs against the interpreter). |
 | `// @EXPECT_WARNING: <substring>` | Anywhere | Like `@EXPECT_ERROR` but for warnings — execution proceeds. |
-| `// @EXPECT_FAIL` | File-level (header) **or** fn-level (the comment block immediately above a `fn`) | Tolerate a panic.  File-level: parse / scope-check / runtime failures are accepted anywhere.  Fn-level: only the named fn's panic is tolerated; sibling fns still must pass.  Add a colon-trailing reason when known: `// @EXPECT_FAIL: native function not loaded`.  Native runs **skip** files with `@EXPECT_FAIL` entirely. |
+| `// @EXPECT_FAIL` | File-level (header) **or** fn-level (the comment block immediately above a `fn`) | Tolerate a panic.  File-level: parse / scope-check / runtime failures are accepted anywhere.  Fn-level: only the named fn's panic is tolerated; sibling fns still must pass.  Add a colon-trailing reason when known: `// @EXPECT_FAIL: native function not loaded`.  Native runs skip the file only for a FILE-LEVEL `@EXPECT_FAIL`; a fn-level one skips just that fn and the siblings still run natively (loft#1311). |
 | `// #warn <text>` | Anywhere | Older-style expected warning.  Still supported; `@EXPECT_WARNING:` is preferred for new tests. |
+| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft` | The falsification receipt: `make falsify GUARD=<file> REF=<commit>` proves the guard FAILS on the build it was written to catch, and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  TESTING.md § falsification. |
 
 **Diagnostic-format rule:** the `<substring>` for `@EXPECT_ERROR` and
 `@EXPECT_WARNING` is a substring match against the rendered diagnostic.
@@ -240,9 +234,9 @@ itself with `@EXPECT_FAIL`:
 
 | Constant | File | When to add |
 |---|---|---|
-| `SUITE_SKIP` (in `wrap.rs`) | Currently empty.  Used for "interpreter can't run this" — extremely rare since the interpreter is the reference backend. |
-| `WASM_SKIP` (in `wrap.rs`) | Add when WASM build can't accept the script (e.g. threading model differences).  Each entry includes a `// todo!()` comment explaining why. |
-| `NATIVE_SKIP` (in `native.rs`) | Currently empty for `tests/docs/`.  Same idea: native-specific feature gap. |
+| `SUITE_SKIP` (in `wrap.rs`) | Used for "interpreter can't run this" — extremely rare since the interpreter is the reference backend. |
+| `WASM_SKIP` (in `wrap.rs`) | Add when WASM build can't accept the script (e.g. threading model differences).  An entry carries the open issue and the condition that removes it (TESTING.md § Every skip). |
+| `NATIVE_SKIP` (in `native.rs`) | For `tests/docs/`: native-specific feature gap. |
 | `SCRIPTS_NATIVE_SKIP` (in `native.rs`) | Same as `NATIVE_SKIP` but for `tests/scripts/`. |
 
 Prefer `@EXPECT_FAIL` for "this is broken right now" (single source of
@@ -286,7 +280,6 @@ Reason categories:
 |---|---|---|
 | `P###` / `#NNN` | Open bug — now a **GitHub Issue** (legacy `P###` ids survive as references; PROBLEMS.md is the closed archive).  Un-ignore in the commit that closes it (`Fixes #NNN`). | `#[ignore = "P207 — native char-tuple-elem eq codegen bug"]` |
 | `<feature-tag> — <plan-ref>` | Waiting on a feature or plan phase that hasn't shipped.  Un-ignore in a one-line follow-up commit when the feature lands. | `#[ignore = "T1.8a — plan-06 phase 9a"]` |
-| `tuple_matrix — run with …` | Heavy-by-default test.  Auto-applied by `cross_mode!`.  Don't write by hand. | (macro-applied) |
 | `<plan>-<phase>` | Pending implementation in a multi-phase plan.  Same un-ignore rules as a bug, but tracked via the plan rather than an Issue. | `#[ignore = "plan-14 phase 03"]` |
 | `<plan> (<sub>) — un-ignore when <trigger>` | User-facing lock-in test: the test demonstrates a today-broken behaviour, marked ignored so CI stays green; auto-flips to PASS when the trigger fires. | `#[ignore = "plan-17 (A) caveat — implicit generic-tuple type inference; un-ignore when the parser propagates substituted return types to receiving variables (DEFERRED.md / USER_FACING.md)"]` |
 
@@ -360,11 +353,13 @@ closed/historical archive; the legacy `P###` ids survive only as references).
 ## Targeted regression — which suites to run
 
 **Just run `./scripts/find_problems.sh`.** Its default is the CURATED set —
-everything except a short named list of slow-and-few binaries — which is 3733 of
-3833 tests in ~70s instead of ~370s. You no longer have to guess which suites
-your change could break, and guessing is what the old table here asked for: it
-named 18 binaries of 177, and two (`format`, `graphics_gold`) had not existed for
-some time.
+everything except a short named list of slow-and-few binaries.  The current
+numbers (test counts, timings, the excluded list) live in
+`scripts/find_problems.sh` / `scripts/test_subjects.sh`, which also carry the
+re-measure recipe — don't trust a copy of them here.  You no longer have to
+guess which suites your change could break, and guessing is what the old table
+here asked for: it named a fifth of the binaries, two of which had not existed
+for some time.
 
 Guessing does not work, and there is a worked example. An over-broad change to
 the parser's `null()` was caught by `binary_io_matrix` — a binary no
@@ -374,9 +369,9 @@ by EXCLUSION leaves a miss set that is small, named and reviewable.
 
 | You want | Run |
 |---|---|
-| the normal check before a commit | `./scripts/find_problems.sh` (~70s) |
+| the normal check before a commit | `./scripts/find_problems.sh` |
 | a tight loop on one area | `./scripts/find_problems.sh --subject <name>` (seconds) |
-| everything, incl. the slow-and-few | `./scripts/find_problems.sh --full` (~370s) |
+| everything, incl. the slow-and-few | `./scripts/find_problems.sh --full` |
 | to see subjects + what is excluded | `./scripts/find_problems.sh --list-subjects` |
 
 Subjects are `parser scopes codegen runtime store wasm packages lsp sql docs
@@ -385,8 +380,8 @@ binary joins the subject its name already matches. They are a convenience for
 tight loops, not the safety mechanism — the default is subtractive, so a gap in
 a subject costs seconds, never coverage.
 
-What the default skips is eight binaries that are slow AND have very few tests
-(they hold 57% of the suite's work for 4.5% of its binaries). CI's
+What the default skips is the `HEAVY_BINARIES` list in `scripts/test_subjects.sh` —
+binaries that are slow AND have very few tests. CI's
 `Test (ubuntu-latest)` job runs the suite unsharded as a required check, so none
 of them can be skipped on the way to main.
 
@@ -427,7 +422,7 @@ full rationale.
   `issues.rs` or `parse_errors.rs`).
 - `<feature>_<aspect>_<expected>` — feature tests.  E.g.
   `tuple_match_binding`, `tuple_compound_assign_rejected`.
-- `e<elem>_d<dest>_<sub>` — plan-14 matrix cells.  Don't reuse this
+- `e<elem>_d<dest>_<sub>` — tuple-matrix cells.  Don't reuse this
   prefix outside `tests/tuple_matrix.rs`.
 
 The `should_panic` attribute is rare — most negative behaviour goes
@@ -448,9 +443,10 @@ for runtime panics that have no diagnostic-printing path.
 - [ ] No nested `fn` definitions in any loft body string.
 - [ ] No `->` arm separators in any `match` (use `=>`).
 - [ ] No `cross_mode!` body shorter than `fn test() { … }` (the harness appends `fn main`, nothing else).
-- [ ] If introducing a new `tests/*.rs` binary, added a row to the test-binary table above.
+- [ ] If introducing a new `tests/*.rs` binary, its name matches a subject pattern in `scripts/test_subjects.sh` (or extend one).
 - [ ] If adding a `.loft` test, picked the right location: `tests/scripts/` (regression) vs `tests/docs/` (also drives HTML).
 - [ ] `tests/docs/*.loft` files have both `@NAME:` and `@TITLE:` header comments.
+- [ ] Every new `tests/scripts/*.loft` records `@falsified-at:` (run `make falsify` — the doc_hygiene gate fails without it).
 - [ ] `@EXPECT_ERROR:` / `@EXPECT_WARNING:` substrings do NOT include the `at file:line:col` tail.
 - [ ] `@EXPECT_FAIL` placement is correct: file-level only when the comment is in the header above the first declaration; fn-level only when the comment is the line(s) immediately above the target `fn`.
 
@@ -495,31 +491,11 @@ are evaluated only when the branch fires.
 
 ### Adding a new category — selective rule
 
-The `LOFT_TRACE` infrastructure is designed for **recurring**
-diagnostic vantages — not one-off probes.  When debugging surfaces
-a useful eprintln, ask:
-
-- **One-off** (specific to this bug, unlikely to recur): keep the
-  `eprintln!` local, remove before commit.  No trace point.
-- **Recurring** (likely to be revisited for similar bugs in the
-  same subsystem): convert to a `loft_trace!(category, …)` call.
-  Permanent; future sessions enable the category and observe.
-
-Categories live where the recurrence justifies them.  Today's
-four categories cover parser-time debugging because that's where
-the recent bug-fix density was.  Future categories MAY cover:
-
-- `database` — store allocation, free, leak tracking.
-- `data` / `types` — type resolution, narrowing, deps.
-- `codegen` — generation/* template substitution + emit.
-
-Add categories only when a real recurring use case appears, not
-pre-emptively.  `src/trace.rs` documents the steps:
-
-1. Add a `pub <name>: bool` field to `TraceCategories`.
-2. Add the initialiser line.
-3. Add a macro arm in `loft_trace!` (mirror existing pattern).
-4. Update the table above.
+Trace points are for **recurring** diagnostic vantages, not one-off probes: a
+bug-specific `eprintln!` stays local and is removed before commit; a vantage you
+expect to revisit becomes a `loft_trace!(category, …)` call.  The mechanics of
+adding a category (field, initialiser, macro arm) are documented in
+`src/trace.rs` itself — follow it, then extend the table above.
 
 ### When NOT to use `LOFT_TRACE`
 

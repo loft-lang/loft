@@ -1,0 +1,86 @@
+// @PLN157 P4a/b (loft#1426 M2) — a loop whose only store writes are scalar
+// element SETS keeps its vector headers, and those writes fuse into one
+// bounds-tested store.  The cells pin the boundary from both sides:
+//   - in-place write loops keep exact values, and a second binding (`u = a`,
+//     which COPIES in loft) keeps copy-bind semantics — the writes land in
+//     `u` only;
+//   - a GROWING write in the same body still declines (values must be right
+//     precisely because the header hoist did NOT fire);
+//   - out-of-range writes keep raising through the ONE definition: the fused
+//     form's off-fast-path falls back into `vec_get_or_raise_runtime` itself,
+//     so there is no second raise to pin here.
+// `LOFT_NO_WRITE_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-07) — the fused write's
+// field offset shifted by 8 in the emitter turns c1/c2/c3 red on --native
+// (neighbouring elements receive the writes); restored byte-identically,
+// interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_WRITE_HOIST all green.
+
+struct Lay { x0: integer = 0, best: vector<float>, sb: vector<float> }
+
+/// @PLN157 P4d — the raster shape: vectors reached through CONST field
+/// offsets hoist by path and their writes fuse.  Two sibling fields prove
+/// the keys stay apart.
+fn shade(lay: Lay, n: integer) -> float {
+  s = 0.0;
+  for i in 0..n {
+    lay.best[i] = (lay.best[i] ?? 0.0) * 2.0;
+    lay.sb[i] = (lay.best[i] ?? 0.0) + 0.25;
+    s += (lay.best[i] ?? 0.0) + (lay.sb[i] ?? 0.0);
+  }
+  s
+}
+
+fn bump(v: vector<integer>, n: integer) -> integer {
+  s = 0;
+  for i in 0..n { v[i] = (v[i] ?? 0) * 2 + i; s += v[i] ?? 0; }
+  s
+}
+
+fn scale(v: vector<float>, n: integer) -> float {
+  s = 0.0;
+  for i in 0..n { v[i] = (v[i] ?? 0.0) * 0.5; s += v[i] ?? 0.0; }
+  s
+}
+
+fn main() {
+  a: vector<integer> = [10, 20, 30];
+  r = bump(a, 3);
+  println("c1 sum={r} a={a[0] ?? -1},{a[1] ?? -1},{a[2] ?? -1}");
+  assert(r == 20 + 41 + 62, "in-place int writes: 10*2+0, 20*2+1, 30*2+2 summed");
+  assert((a[2] ?? -1) == 62, "the writes landed in the vector");
+
+  // A second binding: `u = a` COPIES (the bind semantics the dead-store lint
+  // documents), so writes to `u` never reach `a` — and the hoist tier must not
+  // change that: both vectors hoist headers, `u` takes the writes, `a` keeps
+  // its values.  123 = 20+41+62, `a` after `bump`.
+  u = a;
+  s2 = 0;
+  for i in 0..3 { u[i] = 1000 + i; s2 += a[i] ?? 0; }
+  println("c2 copy-bind sum={s2}");
+  assert(s2 == 123, "the copy-bind keeps `a` untouched by `u`'s writes");
+  assert((u[2] ?? -1) == 1002, "and `u` took the writes");
+
+  f: vector<float> = [8.0, 4.0, 2.0];
+  fs = scale(f, 3);
+  assert(fs == 4.0 + 2.0 + 1.0, "in-place float writes");
+  println("c3 floats={fs}");
+
+  // A growing write beside an in-place one: the hoist declines, values exact.
+  g: vector<integer> = [5];
+  t = 0;
+  for i in 0..2 { g[0] = (g[0] ?? 0) + 1; g += [i]; t += len(g); }
+  println("c4 n={len(g)} g0={g[0] ?? -1} t={t}");
+  assert(len(g) == 3 && (g[0] ?? -1) == 7 && t == 2 + 3, "grow + in-place stay exact");
+
+  // P4d: field-reached vectors, two sibling fields, hand-computed:
+  // best: 1.0,3.0 -> 2.0,6.0; sb takes best+0.25 -> 2.25,6.25; s = 2+2.25+6+6.25.
+  l = Lay { x0: 7, best: [1.0, 3.0], sb: [0.0, 0.0] };
+  sh = shade(l, 2);
+  println("c5 shade={sh} best1={l.best[1] ?? -1.0} sb1={l.sb[1] ?? -1.0}");
+  assert(sh == 16.5, "field-path writes and reads stay exact");
+  assert((l.best[1] ?? -1.0) == 6.0 && (l.sb[1] ?? -1.0) == 6.25,
+         "each sibling field took its own writes — the path keys stay apart");
+
+  println("write-hoist ok");
+}

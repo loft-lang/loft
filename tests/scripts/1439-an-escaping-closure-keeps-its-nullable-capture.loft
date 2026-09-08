@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1439 — who frees the store behind a captured NULLABLE heap local.
+//
+// `c: S? = S { … }` lowers through a work-ref: the store is minted into `__ref_p2_1` and the
+// local adopts it, where the dense spelling has no work-ref at all.  When a closure captures
+// that local and OUTLIVES the frame, three parties name one store — the local (whose free
+// `capture_adoption_owns_free` suppresses), the closure record (which adopted it), and the
+// work-ref (whose free was plain).  The plain one ran, so the escaped closure read a released
+// record: `-2401053088876216593` where its dense twin answers 7, on both backends, and
+// `LOFT_STRICT_STORES=1` names it as USE AFTER FREE.
+//
+// The work-ref's free is conditional now, and THREE facts have to meet — each one alone is a
+// wrong answer, and each has a cell here:
+//   * the record ADOPTED the capture (e5: a kept closure's record adopts too, but see below);
+//   * the record ESCAPES, which the declared return type names (`DepEntry::CalleeFrame`) —
+//     e5's closure stays, so the frame's free is still the store's only release;
+//   * the capture attribute is one the cascade FOLLOWS — e6's record `Enum` capture is not,
+//     so declining the frame's free there LEAKS (measured: `kt=83 Circle50×1` never freed).
+//
+// Axes this file MOVES:  the captured type (struct · vector · hash · text · record enum), the
+//                        value (present · ABSENT), whether the closure escapes, and how many
+//                        closures and locals are in play.
+// Axes it HOLDS FIXED:   one capture per closure, and the escape is always the function's own
+//                        return value — a struct holding a capturing closure cannot be
+//                        returned at all (refused by #318) and a `&fn()` parameter does not
+//                        compile (loft#1443, an ICE and a gap rather than a decision — the
+//                        rules admit `&τ` for every τ), so that is the only route out TODAY and
+//                        this file's coverage question reopens when #1443 lands.
+//
+// ⚠ Two closures over the SAME local, one escaping, is loft#1440 and is NOT fixed here: both
+// records adopt the one store and the one left behind frees it.  Its dense twin fails
+// identically, which is what says it is a different defect — this file's cells all keep one
+// adopter per store.
+//
+// @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  The control fails as a store-lifetime violation
+//   (`USE AFTER FREE (read) store #N type=C39`), which is the channel this defect has.
+//   `LOFT_STRICT_STORES` alone is enough and is the load-bearing half — measured; `LOFT_POISON`
+//   adds nothing here, since the question is WHEN the store was released and not what its bytes
+//   read afterwards.
+//
+//   Re-measured on a PRISTINE `git worktree add --detach e9f45817` with its own target dir,
+//   because a cached control can be run in a way that scores the wrong tree: control-native
+//   exit 1 with 6 use-after-free reports and ZERO assertion failures, control-interpret exit 1
+//   with 4.  Both legs carry the claim, and neither carries it through an assertion — which is
+//   why the native harness's "one binary, first failed assertion ends the run" does not weaken
+//   this one: the store channel is reported per violation, not per cell.
+//
+//   ⚠ In PLAIN mode it reads INERT, and that is the finding rather than a harness quirk: the
+//   freed record keeps its bytes until something writes over them, so the escaped closure reads
+//   7 on the control as often as not.  The `j1` vector below is chosen to make reuse likely and
+//   still does not make it reliable — measured, the same probe answered
+//   -2401053088876216593 in one program and 7 in another whose only difference was how many
+//   closures ran before it.  That number is not assertable and is not in any cell here.
+
+struct C39 { a: integer }
+enum Sh39 { Ci39 { r: integer }, Sq39 { s: integer } }
+
+// e1 — the defect: a nullable struct local captured by a closure that leaves the frame.
+fn esc_null() -> fn() -> integer { n: C39? = C39 { a: 7 }; fn() -> integer { if n == null { -1 } else { n.a } } }
+// e2 — its dense twin, which has no work-ref and was always right.
+fn esc_dense() -> fn() -> integer { d: C39 = C39 { a: 7 }; fn() -> integer { d.a } }
+// e3 — an ABSENT capture: there is no store to hand over, and the answer is the arm's.
+fn esc_absent() -> fn() -> integer { n: C39? = null; fn() -> integer { if n == null { -1 } else { n.a } } }
+
+// e4 — the other nullable heap kinds, none of which lowers through this work-ref.
+fn esc_vec() -> fn() -> integer { v: vector<integer>? = [4, 5, 6]; fn() -> integer { w = v ?? []; w[1] ?? -1 } }
+fn esc_hash() -> fn() -> integer { h: hash<C39[a]>? = [C39 { a: 5 }]; fn() -> integer { e = h[5]; if e == null { -1 } else { e.a } } }
+fn esc_text() -> fn() -> integer { t: text? = "abcd"; fn() -> integer { (t ?? "").len() } }
+
+// e5 — the closure STAYS: nothing else will free the store, so the frame still must.  A leak
+// here is the failure this cell watches for, not a wrong value.
+fn kept_null() -> integer { n: C39? = C39 { a: 8 }; f = fn() -> integer { if n == null { -1 } else { n.a } }; f() }
+
+// e6 — a record ENUM capture, whose attribute the record's cascade does not follow: the frame's
+// free is its only release, and declining it leaks.
+fn esc_enum() -> fn() -> integer { e: Sh39? = Ci39 { r: 4 }; fn() -> integer { match e { Ci39 { r } => r, Sq39 { s } => s, } ?? -1 } }
+
+// e7 — two closures over DIFFERENT nullable locals, one escaping and one kept: the escaping
+// record holds its own capture and the kept one's store is the frame's to release.  The
+// by-NAME test is what keeps these apart.
+fn two_locals() -> fn() -> integer {
+  keep: C39? = C39 { a: 3 };
+  gone: C39? = C39 { a: 9 };
+  k = fn() -> integer { if keep == null { -1 } else { keep.a } };
+  y = k();
+  fn() -> integer { (if gone == null { -1 } else { gone.a }) + y - y }
+}
+
+fn main() {
+  // Every cell reads its closure AFTER a vector has taken the released store back: the wrong
+  // answer is only observable once something else has filled it.
+  a = esc_null();
+  b = esc_dense();
+  z = esc_absent();
+  // A vector of the SAME element type: a store handed back is handed out again to these
+  // records, so a read through the freed handle answers one of THEIR values rather than 7.
+  // An `integer` vector reuses the store too, but leaves the old bytes in place — which is how
+  // this defect stayed silent on an ordinary build.
+  j1: vector<C39> = [C39 { a: 91 }, C39 { a: 92 }, C39 { a: 93 }, C39 { a: 94 }];
+  assert(a() == 7, "e1 an escaping closure keeps its nullable capture: {a()}");
+  assert(b() == 7, "e2 the dense twin, which never had a work-ref: {b()}");
+  assert(z() == -1, "e3 an absent capture has no store to hand over: {z()}");
+
+  v = esc_vec();
+  h = esc_hash();
+  t = esc_text();
+  j2: vector<integer> = [81, 82, 83, 84];
+  assert(v() == 5, "e4 a nullable vector capture: {v()}");
+  assert(h() == 5, "e4b a nullable keyed capture: {h()}");
+  assert(t() == 4, "e4c a nullable text capture: {t()}");
+
+  assert(kept_null() == 8, "e5 a closure that stays reads its capture: {kept_null()}");
+
+  e = esc_enum();
+  j3: vector<integer> = [71, 72, 73];
+  assert(e() == 4, "e6 a record-enum capture survives its return: {e()}");
+
+  w = two_locals();
+  j4: vector<integer> = [61, 62, 63];
+  assert(w() == 9, "e7 the escaping closure of two names its own capture: {w()}");
+}

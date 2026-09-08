@@ -956,6 +956,93 @@ pub fn retbuf_claim_guard_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_CLAIM_GUARD"))
 }
 
+/// @PLN157 § V (Route R): a return-position struct LITERAL builds into the caller's
+/// `__retbuf` — **DEFAULT ON**.  Opt OUT with `LOFT_NO_VALUE_RETURN`.
+///
+/// A `fn f(…) -> S { … S { … } }` carries a hidden `__retbuf` argument like every heap
+/// return does, and the literal ignored it: the tail minted a work-ref store of its own,
+/// so the caller allocated a buffer nothing wrote and then freed the record it got back
+/// instead — one store allocated and freed per call.  In a per-pixel loop that is the
+/// dominant cost (`brush_sample` in the drawing pass: with [`retbuf_reuse_enabled`],
+/// `lock` 25.6M → 17.9M ns/op, −30 %; alone it is a wash, since the buffer is still null).
+///
+/// The tail's work-ref is substituted BY the buffer variable, so the same `OpDatabase`
+/// runs against the caller's slot.  That op is the reuse-or-allocate primitive — it
+/// clears an existing store in place and allocates a fresh one from a null slot — so a
+/// call site that supplied no buffer (a fn-ref dispatch, the host entry, a `parallel`
+/// worker) keeps exactly today's behaviour, which is what makes the substitution safe
+/// without a per-site proof.  The return TYPE is deliberately unchanged: an empty return
+/// dep is what `return_adopts_fresh_store` reads, and that is the ABI leg whose paired
+/// `OpFreeRefIfDistinct(__ref_N, v)` already answers *did the callee fill my buffer or
+/// mint its own?* at run time — the case this makes common rather than rare.
+///
+/// One cached env read.  See `Parser::classify_reference_delivery`'s `BuildIntoBuffer`
+/// cell, `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § V.
+#[must_use]
+pub fn value_return_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
+}
+
+/// @PLN157 § V (Route R, caller half): a call's hidden RECORD buffer is allocated once —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_RETBUF_REUSE`.
+///
+/// `__ref_N` is declared null and never allocated, so even after [`value_return_enabled`]
+/// points the literal at it the callee's `OpDatabase` still mints a store from a null slot
+/// on EVERY call.  Allocating it once at its null-init — what the VECTOR twin
+/// (`gen_set_first_vector_null`) has always done — turns that per-call mint into a record
+/// the callee writes in place: `lock` 25.6M → 17.9M ns/op (−30 %), hashes exact.
+///
+/// The buffer's store then outlives the call, so it may only be allocated where the
+/// RESULT's free is guarded against it — `scopes`'s `witness_buffer`, whose
+/// `OpFreeRefIfDistinct(v, __ref_N)` declines exactly when the two alias.  A site with a
+/// plain free (`keep += [mk(i)]`, whose result lands in a `__lift_N` temp) releases the
+/// buffer's store and the next turn of the loop writes a freed one, so those buffers are
+/// left null and keep today's mint-per-call.  This switch is the A/B on one binary and the
+/// first bisect step for a wrong value out of a struct-returning call in a loop.
+#[must_use]
+pub fn retbuf_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_REUSE"))
+}
+
+/// `LOFT_NO_RETBUF_WITNESS_GATE=1` — the POSITIVE CONTROL for
+/// [`retbuf_reuse_enabled`]'s gate. **OPT-IN, DEFAULT OFF; never set in production.**
+///
+/// Allocates the buffer at EVERY call site instead of only the witness-guarded ones, which
+/// is the unsound half the gate exists to refuse: a result freed with a plain `OpFreeRef`
+/// releases the buffer's store, and the next call clears one that is back in the pool.
+/// Without it the § V guard passes on a build with no gate at all and proves nothing.
+#[must_use]
+pub fn retbuf_witness_gate_disabled() -> bool {
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| env_set("LOFT_NO_RETBUF_WITNESS_GATE"))
+}
+
+/// @PLN157 § V-c: a callee whose only store writes are scalars into its own retbuf, and a
+/// RECORD variable's free, do not decline a vector-header hoist — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_RETBUF_HOIST` (read at GENERATION time: the before-half of the A/B on one
+/// binary — `lock` 18.6M → 15.7M ns/op — and the first bisect step for a native-only wrong
+/// answer in a loop that calls a struct-returning fn).  See
+/// `generation::hoist::retbuf_only_writer` and `hoist::frees_a_record` for the arguments;
+/// `LOFT_HOIST_VERIFY=1` is the falsifier for both.
+#[must_use]
+pub fn retbuf_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
+}
+
+/// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
+/// element's record, and a promoted return buffer honours an offered record — **DEFAULT
+/// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary
+/// (`smooth(20000)` 15.2M → 3.2M ns/op, the consumer's `smooth` row −48 %), and the first bisect step for a wrong
+/// element out of `v += [f(…)]` or a vector that lost its elements after such an append.
+#[must_use]
+pub fn append_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_IN_PLACE"))
+}
+
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
 /// dead-after owned source directly into its destination field/element instead of copy-then-free,
 /// for every proven-safe shape (Record `v[i]=e`/`o.f=src`; Construct field-append, fresh
@@ -1824,6 +1911,7 @@ fn compare_key(k: &Content, record: &DbRef, stores: &[Store], key: &Key, pos: u3
             .cmp(s.get_str(s.get_u32_raw(record.rec, record.pos + pos))),
         // Narrow integer keys — match hash_ref / get_key.
         (Content::Long(v), 8) => v.cmp(&i64::from(s.get_i32_raw(record.rec, record.pos + pos))),
+        (Content::Long(v), 12) => v.cmp(&i64::from(s.get_u32_raw(record.rec, record.pos + pos))),
         (Content::Long(v), 9) => v.cmp(&i64::from(s.get_short(
             record.rec,
             record.pos + pos,
@@ -1869,6 +1957,9 @@ pub enum FastKey<'a> {
     Long(u32, i64),
     /// A `size(4)` integer (8), sign-extended from the raw 4 bytes.
     I32(u32, i64),
+    /// A `Parts::IntRaw` 4-byte integer (12), ZERO-extended from the raw 4 bytes —
+    /// the unsigned twin of `I32`, for a range that runs past `i32::MAX`.
+    U32(u32, i64),
     /// A `Parts::ShortRaw` 2-byte integer (11), decoded `read + start`.
     ShortRaw(u32, i32, i64),
     /// `text` (6): the offset holds a 4-byte string handle.
@@ -1886,6 +1977,7 @@ pub fn fast_key<'a>(keys: &[Key], key: &'a [Content]) -> Option<FastKey<'a>> {
         (Content::Long(v), 1) => Some(FastKey::Int(pos, *v)),
         (Content::Long(v), 2) => Some(FastKey::Long(pos, *v)),
         (Content::Long(v), 8) => Some(FastKey::I32(pos, *v)),
+        (Content::Long(v), 12) => Some(FastKey::U32(pos, *v)),
         (Content::Long(v), 11) => Some(FastKey::ShortRaw(pos, k.start, *v)),
         (Content::Str(v), 6) => Some(FastKey::Str(pos, v.str())),
         _ => None,
@@ -1909,6 +2001,7 @@ impl FastKey<'_> {
             FastKey::Int(pos, v) => s.get_int(rec, base + pos) == *v,
             FastKey::Long(pos, v) => s.get_long(rec, base + pos) == *v,
             FastKey::I32(pos, v) => i64::from(s.get_i32_raw(rec, base + pos)) == *v,
+            FastKey::U32(pos, v) => i64::from(s.get_u32_raw(rec, base + pos)) == *v,
             FastKey::ShortRaw(pos, start, v) => {
                 i64::from(s.get_short_full(rec, base + pos, *start)) == *v
             }
@@ -1928,6 +2021,9 @@ fn compare_ref(r1: &DbRef, r2: &DbRef, stores: &[Store], key: &Key, p1: u32, p2:
             .get_str(s.get_u32_raw(r1.rec, p1))
             .cmp(s.get_str(s.get_u32_raw(r2.rec, p2))),
         8 => s.get_i32_raw(r1.rec, p1).cmp(&s.get_i32_raw(r2.rec, p2)),
+        // The unsigned 4-byte encoding must ORDER unsigned too: compared as `i32`,
+        // every key at or above 2147483648 sorts below every key below it.
+        12 => s.get_u32_raw(r1.rec, p1).cmp(&s.get_u32_raw(r2.rec, p2)),
         9 => s
             .get_short(r1.rec, p1, key.start)
             .cmp(&s.get_short(r2.rec, p2, key.start)),
@@ -1982,6 +2078,10 @@ pub fn get_key(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Content> {
             }
             8 => {
                 let v = store(record, stores).get_i32_raw(record.rec, p);
+                result.push(Content::Long(i64::from(v)));
+            }
+            12 => {
+                let v = store(record, stores).get_u32_raw(record.rec, p);
                 result.push(Content::Long(i64::from(v)));
             }
             9 => {
@@ -2049,10 +2149,14 @@ fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHash
         2 => hasher.write_i64(s.get_long(r.rec, p)),
         3 | 4 => (),
         6 => hasher.write_str(s.get_str(s.get_u32_raw(r.rec, p))),
-        // Narrow-integer key storage (Parts::Int / Short / ShortRaw / Byte).
+        // Narrow-integer key storage (Parts::Int / IntRaw / Short / ShortRaw / Byte).
         // Each yields an i64 view so the hash matches `get_key`'s
         // Content::Long(i64) reconstruction at the lookup site.
         8 => hasher.write_i64(i64::from(s.get_i32_raw(r.rec, p))),
+        // Sign-extending this one hashes the probe value 3000000000 as -1294967296,
+        // which lands in a different bucket than the stored record: the lookup then
+        // answers `null` for a record the collection's own iteration yields.
+        12 => hasher.write_i64(i64::from(s.get_u32_raw(r.rec, p))),
         9 => hasher.write_i64(i64::from(s.get_short(r.rec, p, key.start))),
         10 => hasher.write_i64(i64::from(s.get_byte(r.rec, p, key.start))),
         // `Parts::ShortRaw` stores `(val - min) as u16` with no null sentinel, so it

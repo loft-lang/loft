@@ -1,0 +1,150 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Ref-Alias — the `&` annotation makes ANY binding a live LINK to the source instead of
+// a copy, and `d += …` writes THROUGH to it; @FR-B-Ref-Uniform — a `&τ` variable is used
+// EXACTLY like a τ variable, with no operation special-cased.  Both are stated over every τ,
+// so a keyed collection is not an exception the rules admit.
+//
+// It was one.  The `&`-bind's source set was `matches!(source, Type::Vector(_, _))` — a set of
+// ONE — so `a = &h` on a `hash` / `sorted` / `index` / `trie` / `spatial` took the deep-copy
+// path instead: `a` got its OWN store and `OpReplaceKeyed` copied `h` into it.  From the bind
+// on they were two collections, and a write through either was invisible to the other.
+//
+// ⚠ The filed symptom was "the `&` alias silently drops every append", and that reading is
+// what an EMPTY source looks like — `len(h)` stays 0.  The append is NOT dropped: it lands in
+// the alias's own store, and `len(a)` says so.  Every cell below therefore reads BOTH names,
+// because a guard that checked only the source would pass a cure that made the alias
+// unwritable instead of making it a link.
+//
+// ⚠ Each cell's oracle is its own `&`-free twin.  The rules say the two spellings differ only
+// in whether the bind copies, so "what should this answer?" is never a judgement here.
+//
+// The `&hash<…>` PARAMETER spelling is a DIFFERENT shape and is not asserted here; it has its
+// own guard (loft#1445).  ⚠ The reason first written here was WRONG and is kept corrected rather
+// than deleted, because the wrong half is the instructive one.  What was MEASURED is true:
+// peeling the append routes alone turned the refusal into a SILENT DROP (`len` 0, no
+// diagnostic), which is worse than the refusal.  What was ATTRIBUTED is false: the claim that
+// "the keyed emission path does not resolve its store through the parameter's double
+// indirection".  It resolves it, and always did — a keyed INSERT one operator over
+// (`c[7] = Row{…}` through a `&hash<Row[id]>` param) reaches the caller's store on both
+// backends, with a pre-populated destination and the OLD key still readable afterwards.
+//
+// The real cause of the drop is `keyed_known_type` opening with `base()`, which peels
+// `Optional` and NOT the `&`, so a `&`-wrapped keyed type answers `None`; `new_record`'s
+// fallback then hands `OpNewRecord` the `vector<t>` id and `record_finish` dispatches through
+// `Parts::Vector`, so the keyed insert never runs.  Visible as the type NUMBER: `parent_tp`
+// reads the `&vector` twin's id where the plain-`hash` twin's is expected.  So the peel was
+// never the wrong move — it was half a move (loft#1445 peels all three sites).
+//
+// The lesson this paragraph now carries: a correct measurement under an invented cause reads
+// exactly like a finding, and nothing gates a sentence in a comment.
+//
+// @falsified-at: 4444b0d0 — interpret exit 1 -> 0, 6 assertion failures -> 0; native exit
+//   1 -> 0, 1 assertion failure -> 0 (that leg runs every fn in ONE binary, so its first
+//   failure ends the run and its count says nothing about the breadth).
+
+struct Row { id: integer, tag: text }
+struct Wrd { nm: text, n: integer }
+struct Pt { x: integer, y: integer, n: text }
+struct Host { h: hash<Row[id]>, v: vector<integer> }
+
+// ── the link is live in BOTH directions ───────────────────────────────────────────────
+
+fn a_write_through_a_keyed_alias_reaches_the_source() {
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  a = &h;
+  a += [Row{id: 2, tag: "two"}];
+  assert_eq("{len(h)}", "2", "the source sees the alias's append");
+  assert_eq("{h[2].tag}", "two", "and finds it by key");
+}
+
+fn a_write_through_the_source_reaches_a_keyed_alias() {
+  // The other direction — a cure that merely forwarded `+=` through the alias fails here.
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  a = &h;
+  h += [Row{id: 3, tag: "three"}];
+  assert_eq("{len(a)}", "2", "the alias sees the source's append");
+  assert_eq("{a[3].tag}", "three", "and finds it by key");
+}
+
+fn one_collection_not_two() {
+  // The cell that names the defect exactly: before the fix h held {1,3} and a held {1,2},
+  // each with len 2 — so a length check on either side alone looked entirely healthy.
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  a = &h;
+  a += [Row{id: 2, tag: "two"}];
+  h += [Row{id: 3, tag: "three"}];
+  assert_eq("{len(h)} {len(a)}", "3 3", "one collection reached by two names");
+  assert_eq("{h[2] != null} {h[3] != null}", "true true", "both writes are in the source");
+  assert_eq("{a[2] != null} {a[3] != null}", "true true", "and both are in the alias");
+}
+
+// ── every store-backed kind, because the set was the defect ───────────────────────────
+
+fn every_keyed_kind_links_through_an_alias() {
+  h: hash<Row[id]> = [];    ah = &h;  ah += [Row{id: 7, tag: "seven"}];
+  assert_eq("{len(h)} {h[7].tag}", "1 seven", "hash");
+  s: sorted<Row[id]> = [];  as_ = &s; as_ += [Row{id: 7, tag: "seven"}];
+  assert_eq("{len(s)} {s[7].tag}", "1 seven", "sorted");
+  i: index<Row[id]> = [];   ai = &i;  ai += [Row{id: 7, tag: "seven"}];
+  assert_eq("{len(i)} {i[7].tag}", "1 seven", "index");
+  t: trie<Wrd[nm]> = [];    at = &t;  at += [Wrd{nm: "abc", n: 1}];
+  assert_eq("{len(t)} {t["abc"].n}", "1 1", "trie");
+}
+
+fn a_spatial_index_links_through_an_alias() {
+  // spatial is the kind the keyed-field copy path treats apart, so it is asserted on its own
+  // rather than assumed to follow the other four.
+  s: spatial<Pt[x,y]> = [];
+  s += [Pt { x: 1, y: 2, n: "a" }];
+  q = &s;
+  q += [Pt { x: 3, y: 4, n: "b" }];
+  assert_eq("{len(s)} {len(q)}", "2 2", "both names see both points");
+  assert_eq("{s[3,4].n} {q[1,2].n}", "b a", "and each name finds the other's point");
+}
+
+fn a_keyed_struct_field_links_through_an_alias() {
+  // The FIELD provenance — `a = &s.h` — which failed the same way as the local.
+  s = Host { h: [], v: [] };
+  s.h += [Row{id: 1, tag: "one"}];
+  a = &s.h;
+  a += [Row{id: 2, tag: "two"}];
+  assert_eq("{len(s.h)} {len(a)}", "2 2", "the field and its alias are one collection");
+  assert_eq("{s.h[2].tag}", "two", "and the field holds the alias's write");
+}
+
+// ── controls: the vector twin was right all along and must stay right ─────────────────
+
+fn a_vector_alias_is_unchanged() {
+  v: vector<integer> = [];
+  v += [1];
+  e = &v;
+  e += [2];
+  v += [3];
+  assert_eq("{v}", "[1,2,3]", "the source holds every write");
+  assert_eq("{e}", "[1,2,3]", "and so does the alias");
+}
+
+fn a_vector_field_alias_is_unchanged() {
+  s = Host { h: [], v: [] };
+  s.v += [1];
+  b = &s.v;
+  b += [2];
+  assert_eq("{len(s.v)} {len(b)}", "2 2", "the vector field twin of the keyed cell above");
+}
+
+fn a_plain_keyed_bind_still_copies() {
+  // THE control for the cure's direction.  Without the `&` a keyed bind COPIES (@FR-B-Copy),
+  // and a fix that made every keyed bind share would pass every cell above and fail this one.
+  h: hash<Row[id]> = [];
+  h += [Row{id: 1, tag: "one"}];
+  c = h;
+  c += [Row{id: 2, tag: "two"}];
+  assert_eq("{len(h)}", "1", "the source is untouched by a write through the COPY");
+  assert_eq("{len(c)}", "2", "which holds its own");
+  assert_eq("{h[2] == null}", "true", "the copy's record never joins the source");
+}

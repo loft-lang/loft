@@ -13,6 +13,12 @@
 # The fix is to record the run's own identity and check the PROCESS, not the log.
 # `.ci-verdict` holds one line: STATE PID EPOCH [detail].  `status` re-reads the pid, so a
 # run that vanished reports DIED rather than RUNNING.
+# ⚠ EDITING THIS FILE: the whole `start` wrapper below is ONE single-quoted `bash -c`
+# string, so an APOSTROPHE anywhere inside it — including in a comment — ends that string.
+# The failure does not point at your line: `bash -n` reports a syntax error wherever the
+# NEXT quote happens to be, which was 25 lines away in an unrelated comment.  Write "the lint
+# doc URL", never "the lint's doc URL".  This warning is up here rather than beside the code
+# because the apostrophe gets written before anyone reads the middle of the file.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 V=.ci-verdict
@@ -70,7 +76,43 @@ case "${1:-status}" in
         snapshot
         sender=$(grep -oE "SIG[A-Z]+ \{[^}]*\}" target/gate-signals.log 2>/dev/null | tail -1)
         note KILLED "make ci died on signal $((rc-128))${sender:+ — $sender (target/gate-signals.log, target/gate-killer-snapshot.txt)}"
-      else note FAILED "$(grep -m1 -E "^error|FAIL \[" result.txt 2>/dev/null | head -c 90)"
+      else
+        # loft#1448 — name the failing TEST, and say how many.  `grep -m1 "^error|FAIL ["`
+        # took whichever came FIRST in the file, and a cargo error always precedes the test
+        # run: a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the
+        # _audit` reported `error[E0425] … generate_register_from_loft_with_bridges`, a
+        # REGISTRY package the branch had never touched, 1500 lines above the real failure.
+        # Both agents on this box triaged that line and chased the cdylib.
+        #
+        # The COUNT is the other half, and it splits the kinds of red that need opposite
+        # responses.  FAILED with a COUNT is the code, in a test.
+        #
+        # FAILED with ZERO is three things, not one, and reading it as "the box" is wrong two
+        # times out of three: `make ci` is fmt -> clippy -> test, so a FORMAT or a LINT failure
+        # never reaches a test and still reports zero.  Both are the CODE and both are fixed in
+        # seconds; only what is left over — a stale rlib, a corrupt incremental cache, a full
+        # disk — is the box.  Measured the hard way: two agents on this box lost time to the
+        # old wording within one hour, one sent to the format phase and one to the target dir,
+        # each while holding a clippy or rustfmt error in the same verdict line.
+        #
+        # The markers are unambiguous, so the verdict names which of the three it is: clippy
+        # prints the lint doc URL, rustfmt prints `Diff in <path>`.
+        #
+        # nextest prints `FAIL [   1.23s] (12/34) <binary> <test>` once per attempt, so the
+        # retries of one test collapse under `sort -u`.
+        ft=$(grep -oE "FAIL \[[^]]*\].*$" result.txt 2>/dev/null \
+             | awk "{ print \$(NF-1) \"::\" \$NF }" | sort -u)
+        n=$(printf "%s" "$ft" | grep -c . || true)
+        if [ "${n:-0}" -gt 0 ]; then
+          note FAILED "$n test(s) — $(printf "%s" "$ft" | head -3 | tr "\n" " " | head -c 200)"
+        elif grep -q "rust-clippy/.*index\.html#" result.txt 2>/dev/null; then
+          lint=$(grep -oE "index\.html#[a-z_]+" result.txt 2>/dev/null | head -1 | sed "s/.*#//")
+          note FAILED "0 tests — CLIPPY, so THE CODE (lint ${lint:-?}): $(grep -m1 -E "^error: " result.txt 2>/dev/null | head -c 100)"
+        elif grep -q "^Diff in " result.txt 2>/dev/null; then
+          note FAILED "0 tests — RUSTFMT, so THE CODE: $(grep -c "^Diff in " result.txt 2>/dev/null) file(s) unformatted; run \`cargo fmt\`"
+        else
+          note FAILED "0 tests and neither fmt nor clippy — toolchain/box/target-dir: $(grep -m1 -E "^error" result.txt 2>/dev/null | head -c 120)"
+        fi
       fi' >/dev/null 2>&1 &
     echo "RUNNING $! $(date +%s) started" > $V
     echo "gate started (pid $!)"

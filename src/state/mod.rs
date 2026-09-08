@@ -3357,6 +3357,28 @@ impl State {
         Some(keyed_type_source(&tp, data).unwrap_or_else(|| tp.name(data)))
     }
 
+    /// A live frame local's type as the AUTHOR would spell it — for seeding a value back
+    /// into a reconstructed frame where the value alone does not carry its type.
+    ///
+    /// `source_name`, not `name`: `name` is the SCHEMA KEY, and the two differ exactly
+    /// where this is needed (loft#1449).  The one caller is the debugger's text-seed
+    /// prefix, which writes `x = <literal>;` per referenced local — and a `null` literal
+    /// has no type at all, so `ni = null;` fails to compile and the whole expression
+    /// degrades to "couldn't evaluate" even when the question was just *what is `ni`*
+    /// (loft#1459).  Annotating the seed (`ni: integer? = null;`) is what gives the
+    /// absence a type to be absent OF.
+    ///
+    /// `None` for an un-live or unknown local, so the caller keeps its existing
+    /// unannotated seed rather than emitting a line it cannot justify.
+    #[must_use]
+    pub fn frame_local_source_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
+        if !self.frame_local_is_live(name, data) {
+            return None;
+        }
+        let (_, _, tp, _) = self.frame_slot(name, data)?;
+        keyed_type_source(&tp, data).or_else(|| Some(tp.source_name(data)))
+    }
+
     /// @PLN98 P1b — the true live-frame eval: run the already-compiled synthetic
     /// fn `eval_dnr` (built as `fn __eval(k1: K1, …) -> RT { … expr }`) over THIS
     /// paused State, with its keyed-collection arguments `arg_names` bound to the
@@ -3502,7 +3524,7 @@ impl State {
                     None
                 } else {
                     let disc = self.reenter_ret::<u8>(eval_dnr, pos, push);
-                    if disc == 0 {
+                    if Stores::enum_is_null(disc) {
                         Some("null".to_string())
                     } else {
                         let name = ret.name(data);
@@ -4993,7 +5015,7 @@ impl State {
                 let tname = tp.name(data);
                 let tp_known = self.database.name(&tname);
                 if tp_known == u16::MAX {
-                    return format!("<{tname}>");
+                    return format!("<{}>", tp.source_name(data));
                 }
                 let db = *self
                     .database
@@ -5012,13 +5034,84 @@ impl State {
                 let tname = tp.name(data);
                 let tp_known = self.database.name(&tname);
                 let disc = *self.database.store(&self.stack_cur).addr::<u8>(rec, at);
-                if tp_known == u16::MAX || disc == 0 {
+                if tp_known == u16::MAX || Stores::enum_is_null(disc) {
                     "null".to_string()
                 } else {
                     format!("{tname}.{}", self.database.enum_val(tp_known, disc))
                 }
             }
-            other => format!("<{}>", other.name(data)),
+            // `@FR-L-Null` — absence is a SENTINEL inside the slot's own bytes, never an
+            // extra byte or a moved offset, so a `τ?` local reads at its BASE type's
+            // offset and width and only the ANSWER differs.  Without this arm the
+            // catch-all below claimed the shape and printed the TYPE — `n = <integer?>`
+            // where every other local prints a value (loft#1459), so a debugger declined
+            // exactly the locals whose null-ness is being debugged.  @PLN25 made `τ?` the
+            // only nullable form and `@FR-Col-Lookup` gives every keyed point lookup one,
+            // so these are ordinary locals now rather than an edge.
+            //
+            // The sentinels are READ OFF `fill.rs`'s `OpConv*FromNull` — the same table
+            // `data::to_null` names and `set_default_value_nullable` writes — rather than
+            // re-derived here, because a renderer that guesses one wrong reports a real
+            // value as `null`, which is the one lie a debugger must not tell.  A frame
+            // LOCAL is a full-width slot whatever its declared narrow width, which is why
+            // the integer arm above reads `i64` and this may test `i64::MIN` for all of
+            // them.  `Boolean` needs no arm: its own renderer already answers `null` for
+            // the 255 tri-state byte.
+            //
+            // Everything else DELEGATES: a heap handle's zero already reads as null
+            // through `show_loft_bounded`, and a `text` renders its empty handle.  That
+            // is a lower bound on purpose — each is strictly better than printing the
+            // type, and none of them claims a null this cannot prove.
+            Type::Optional(inner) => {
+                let absent = {
+                    let store = self.database.store(&self.stack_cur);
+                    match inner.base() {
+                        Type::Integer(_) => *store.addr::<i64>(rec, at) == i64::MIN,
+                        Type::Float => store.addr::<f64>(rec, at).is_nan(),
+                        Type::Single => store.addr::<f32>(rec, at).is_nan(),
+                        Type::Character => *store.addr::<u32>(rec, at) == 0,
+                        // A handle-carried kind the recursion below cannot render — a keyed
+                        // collection — still has an absence, and `DbRef::is_null` is its one
+                        // home.  Without this the delegate fell to the catch-all and the
+                        // panel printed the TYPE for an ABSENT keyed local, which is
+                        // loft#1459's own symptom wearing a different type name.  The
+                        // POPULATED case still prints the type: rendering a keyed
+                        // collection's contents needs a schema lookup that does not resolve
+                        // here, and that is a separate question from whether it is null.
+                        Type::Hash(_, _, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _) => {
+                            store.addr::<crate::keys::DbRef>(rec, at).is_null()
+                        }
+                        _ => false,
+                    }
+                };
+                if absent {
+                    return "null".to_string();
+                }
+                let rendered = self.render_frame_local(frame_base, off, inner, is_arg, data);
+                // A null `text` is the `STRING_NULL` sentinel — a single NUL byte — and the
+                // Text arm renders it as a literal that LOOKS like a one-character string
+                // (`" "` on a terminal).  That is worse than printing the type: it claims a
+                // value.  Compared against the same renderer that produced it, so the two
+                // cannot drift the way a hand-written `"\0"` literal here would.
+                if matches!(inner.base(), Type::Text(_))
+                    && rendered == loft_text_literal(STRING_NULL)
+                {
+                    return "null".to_string();
+                }
+                rendered
+            }
+            // Nothing above renders this kind — a keyed collection, an iterator, a fn-ref.
+            // Name it the way the AUTHOR wrote it (`hash<P[a]>`), not by the schema key
+            // (`hash<P,["a"]>`), which is `Type::name`'s job and not a spelling to hand a
+            // reader (loft#1434 settled that split for diagnostics; a debugger panel asks
+            // the same question).  A keyed local has no renderer here because its schema
+            // type is minted under two different names by two paths, so `Stores::name`
+            // resolves it only from one of them — a design question, not this arm's.
+            other => format!("<{}>", other.source_name(data)),
         }
     }
 
@@ -5299,6 +5392,12 @@ impl State {
     /// returns.  Negative indices use Python-style addressing
     /// (`v[-1]` == last); only after addressing yields a still-out-of-
     /// range value does the raise fire.
+    ///
+    /// @FR-H-Index — this is where the index becomes an address, so it is where "negative
+    /// counts from the end" and "out of range answers nullref" are decided for the
+    /// interpreter.  `Stores::vec_get_or_raise_runtime` is the native twin, and
+    /// `vec_get_hoisted_or_raise_runtime` sends every non-fast-path index back to it, so the
+    /// normalisation has one definition per backend rather than one per call site.
     #[must_use]
     pub fn vec_get_or_raise(
         &mut self,
@@ -5352,6 +5451,11 @@ impl State {
     /// today returns `char(0)` on OOB (silent wrong-answer); raise
     /// `IndexOutOfBounds` / `NegativeIndex` for the non-nullable path.
     /// Negative addressing mirrors `vec_get_or_raise`.
+    ///
+    /// @FR-H-Index for `text`, whose index is a BYTE offset — so the count from the end is in
+    /// bytes, and `ops::text_character` under this snaps back to the character containing
+    /// that byte.  The value-slice bound `s[a..b]` follows the same rule
+    /// (`@FR-Slice-Value`, `State::get_text_sub`).
     #[must_use]
     pub fn text_char_or_raise(&mut self, val: &str, index: i64) -> char {
         let len = val.len() as i64;

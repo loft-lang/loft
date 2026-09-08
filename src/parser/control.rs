@@ -321,6 +321,16 @@ enum RefDelivery {
     /// local, copy the record into `__retbuf`, and let scope analysis free `__fwd`.
     /// The Reference twin of [`Delivery::ForwardCopy`].
     ForwardCopy,
+    /// @PLN157 § V (Route R) — the tail is a fresh struct LITERAL, which builds into a
+    /// work-ref of its own and leaves the caller's buffer untouched.  Substitute that
+    /// work-ref BY the buffer variable so the literal's `OpDatabase` + field writes land
+    /// in the caller's store: one buffer per call SITE instead of one store per CALL.
+    ///
+    /// Distinct from [`Self::Rename`], which promotes the `__retbuf` ATTR onto a local
+    /// and so publishes a return dep — that makes the result a borrow, which the caller
+    /// answers with a deep copy (`gen_set_first_ref_call_copy`).  Here the signature is
+    /// untouched and the caller keeps its adopt-with-witness lowering.
+    BuildIntoBuffer { work_ref: u16, buf_var: u16 },
     /// `ls` empty and no work-ref to recover — the tail already delivers; emit nothing.
     AsIs,
 }
@@ -407,6 +417,12 @@ struct EnumArm {
     tp: Type,
     guard: Option<Value>,
     bindings: Vec<Value>,
+    /// The arm's test, when it is not a discriminant comparison.  A `null` arm over a
+    /// nullable HEAP subject is the case: absence there is the store-pointer sentinel, not
+    /// a discriminant, so the arm asks `OpRefIsNull` and `discs` says nothing about it
+    /// (`@FR-L-Null-Which` — a local, a parameter and a return spell `S?` as the pointer).
+    /// `None` keeps the ordinary discriminant chain.
+    cond: Option<Value>,
 }
 
 /// One arm of a vector or tuple `match`, collected before the if-chain is assembled.
@@ -911,6 +927,15 @@ impl Parser {
                 Value::Continue(_) => terminated = Some("continue"),
                 _ => {}
             }
+            // A PROJECTION proof holds for the first statement of the block and no further.
+            // Unlike a name's, its lifetime cannot be tracked — anything reaching any part of
+            // the path invalidates it, including a call the parser cannot see through — so it
+            // is dropped after one statement rather than reasoned about.  That is exactly what
+            // keeps `if !db.map[k] { … } else { db.map[k].val }` narrowed while
+            // `else { f(); db.map[k].val }` is not, and it errs toward WARNING, which is the
+            // safe direction: a missed narrowing costs a diagnostic on correct code, a wrong
+            // one costs silence on a null read.
+            self.narrowed_non_null_exprs.clear();
             // @PLN25/#585 guard-clause flow-narrowing: after `if <null-test> { <unconditional
             // exit> }` WITHOUT an else, the null case has already left the block, so the
             // fall-through proves the tested var non-null for the rest of THIS block — the same
@@ -1871,7 +1896,7 @@ impl Parser {
                     if arm_of_sibling {
                         let same_shape = if let Type::Tuple(elems) = t {
                             let names: Vec<String> =
-                                elems.iter().map(|e| e.name(&self.data)).collect();
+                                elems.iter().map(|e| e.name(&self.data)).collect(); // schema-key — the `__tuple<…>` SCHEMA KEY this compares against
                             format!("__tuple<{}>", names.join(","))
                                 == self.data.def(synthetic_d_nr).name()
                         } else {
@@ -2693,6 +2718,18 @@ impl Parser {
                 if Self::tail_forwards_own_store(last, &self.data) {
                     return RefDelivery::ForwardCopy;
                 }
+                // @PLN157 § V — the tail is a struct LITERAL.  `AsIs` claims the tail
+                // already wrote `__retbuf`; a literal writes a work-ref of its own, so
+                // the buffer the caller allocated stays empty and the record handed
+                // back is a store minted per call.  Build into the buffer instead.
+                if crate::keys::value_return_enabled()
+                    && let Some(work_ref) = Self::tail_fresh_object_workref(last)
+                    && self.workref_is_only_the_tail(l, work_ref)
+                    && let Some(buf_var) = self.unpromoted_return_buffer_var()
+                    && self.record_is_fully_written_by_a_literal(buf_var)
+                {
+                    return RefDelivery::BuildIntoBuffer { work_ref, buf_var };
+                }
             }
             RefDelivery::AsIs
         } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
@@ -2769,6 +2806,161 @@ impl Parser {
         })
     }
 
+    /// @PLN157 § V — the work-ref a return-position struct LITERAL builds into, or `None`
+    /// for any other tail.
+    ///
+    /// `parse_object`'s fresh-record arm mints a work-ref, emits `OpDatabase` + the field
+    /// writes against it, and closes the block with `Var(w)` — so the block's last operator
+    /// naming a variable IS the literal's destination.  The `"Object"` block name is what
+    /// separates it from every other block that happens to end in a variable: only the
+    /// literal owns a record nothing else has seen yet, which is the whole reason its
+    /// destination may be swapped.
+    ///
+    /// Peels only `Span` and `Return` on the way in.  A literal reached through an `if`
+    /// arm or an inner block is NOT this shape — those tails have a join to deliver and
+    /// the multi-arm machinery already owns them — and answering `None` there leaves them
+    /// on the delivery path they have today.
+    fn tail_fresh_object_workref(tail: &Value) -> Option<u16> {
+        let mut node = tail.unspan();
+        loop {
+            match node {
+                Value::Return(inner) => node = inner.unspan(),
+                Value::Block(bl) if bl.name == "Object" => {
+                    return match bl.operators.last().map(Value::unspan) {
+                        Some(Value::Var(v)) => Some(*v),
+                        _ => None,
+                    };
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// @PLN157 § V — is `w` the tail's own destination and nothing else?
+    ///
+    /// The substitution redirects every write to `w` into the caller's buffer, so a
+    /// SECOND reader of `w` earlier in the body would read the buffer instead of the
+    /// record it was written to.  A literal's work-ref is normally referenced exactly
+    /// once — at the tail that built it — and this is what makes "normally" checkable
+    /// rather than assumed.  A named local never reaches here (the selector only offers
+    /// the `"Object"` block's own destination), so the guard is against a work-ref the
+    /// parser reused, not against user code.
+    fn workref_is_only_the_tail(&self, l: &[Value], w: u16) -> bool {
+        w < self.vars.count()
+            && self.vars.is_compiler_generated(w)
+            && !Self::ir_var_has_live_use(&l[..l.len() - 1], w)
+    }
+
+    /// @PLN157 § V — this function's hidden return buffer, while it is still the
+    /// signature-time placeholder.
+    ///
+    /// `None` once `ref_return` has promoted it: the attr then carries a local's name and
+    /// the return type names the attr, which is a delivery decision already made.  Also
+    /// `None` when the buffer's record type is not the one the tail builds — a mismatch
+    /// means the tail is not this function's return value — and for a lambda or a generic
+    /// template, whose ABI the promotion machinery deliberately leaves alone.
+    fn unpromoted_return_buffer_var(&self) -> Option<u16> {
+        if self.data.def_type(self.context) != DefType::Function
+            || self.data.def(self.context).name().contains("__lambda")
+        {
+            return None;
+        }
+        let def = self.data.def(self.context);
+        let a_idx = def.hidden_return_buffer_attr()?;
+        if def.attributes()[a_idx].name != "__retbuf" {
+            return None;
+        }
+        let buf_def = def.attributes()[a_idx].typedef.heap_def_nr()?;
+        if def.returned().base().heap_def_nr() != Some(buf_def) {
+            return None;
+        }
+        let v = self.vars.var("__retbuf");
+        (v != u16::MAX && self.vars.is_argument(v)).then_some(v)
+    }
+
+    /// @PLN157 § V — does a literal of this record's type write EVERY stored field?
+    ///
+    /// It is what makes reusing a caller's record sound: with no `OpDatabase` in front of
+    /// the writes, a field the literal leaves alone keeps the PREVIOUS call's value rather
+    /// than its zero.  `object_init` emits a default for every field the literal omits, so
+    /// the answer is normally yes — with one documented exception it names itself: a
+    /// synthetic `__nullable<S>` field is SKIPPED there because "absent" is discriminant 0
+    /// and it relies on the fresh record being zeroed.  Refuse those; the record form they
+    /// have today is correct.
+    pub(crate) fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
+        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+            return false;
+        };
+        !self.data.def(td).attributes().iter().any(|a| {
+            matches!(&a.typedef, Type::Enum(e, true, _)
+                if self.data.def(*e).name().starts_with("__nullable<"))
+        })
+    }
+
+    /// @PLN157 § V — redirect the literal's writes into the caller's buffer.
+    ///
+    /// The literal's `OpDatabase` becomes CONDITIONAL, and both halves are load-bearing:
+    ///
+    /// - the caller offered a record (`store_nr` not the sentinel AND `rec != 0`) — write
+    ///   the fields straight into it.  `OpDatabase` must NOT run there: it clears the whole STORE and claims a
+    ///   new record, which for an ordinary `__ref_N` buffer is merely wasted work and for
+    ///   the placement wire's return ARENA destroys the record the other process is about
+    ///   to read (`lib_placement::wire::run_bound` allocates the answer's record there and
+    ///   marshals it back from the same address).
+    /// - the caller offered nothing — `OpDatabase` mints a store into the buffer slot and
+    ///   the answer is handed over exactly as it was before this pass existed.  Every call
+    ///   site that supplies no buffer keeps today's behaviour, which is what makes the
+    ///   rewrite safe without a per-site proof.
+    ///
+    /// Only the TAIL is rewritten, so the work-ref's own `Set(w, Null)` init stays on `w`
+    /// and cannot null the buffer out from under the writes; any copy of it INSIDE the
+    /// literal is dropped for the same reason.  `w` is left with no store of its own,
+    /// which `skip_free` records.
+    fn build_into_return_buffer(&mut self, l: &mut [Value], work_ref: u16, buf_var: u16) {
+        let last = l.len() - 1;
+        // "The caller offered a record" has to refuse BOTH spellings of absent: the null
+        // store (`rec == 0`, `OpConvBoolFromRef`) and the freed slot (`store_nr == u16::MAX`,
+        // `OpRefIsNull`).  A native free nulls only `store_nr` and leaves `rec` standing, so
+        // a buffer variable freed and then handed on — `if … { return r }` followed by a
+        // tail call — arrives as `{u16::MAX, rec != 0}`, and a `rec`-only test wrote into
+        // store 65535.  `if is_null { false } else { has_rec }` is how `&&` lowers.
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(buf_var)]);
+        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(buf_var)]);
+        let guard = v_if(is_null, Value::Boolean(false), has_rec);
+        let db_nr = self.data.def_nr("OpDatabase");
+        Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
+        Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
+        self.vars.set_skip_free(work_ref);
+    }
+
+    /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
+    /// its `OpDatabase` behind `guard` (true = the caller already supplied a record).
+    fn guard_literal_alloc(tail: &mut Value, work_ref: u16, guard: Value, db_nr: u32) {
+        let mut node = tail;
+        loop {
+            match node {
+                Value::Span(b) => node = &mut b.1,
+                Value::Return(inner) => node = inner,
+                Value::Block(bl) if bl.name == "Object" => {
+                    bl.operators.retain(
+                        |op| !matches!(op, Value::Set(s, v) if *s == work_ref && **v == Value::Null),
+                    );
+                    for op in &mut bl.operators {
+                        if matches!(op, Value::Call(d, args) if *d == db_nr
+                            && matches!(args.first(), Some(Value::Var(v)) if *v == work_ref))
+                        {
+                            let alloc = std::mem::replace(op, Value::Null);
+                            *op = v_if(guard, Value::Null, alloc);
+                            return;
+                        }
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
     /// @PLN85 D-own-1 — emit the mechanism the Reference selector chose. The tail of
     /// `l` is rewritten in place; mirrors `dispatch_vector_delivery`.
     fn dispatch_reference_delivery(&mut self, delivery: RefDelivery, td: u32, l: &mut [Value]) {
@@ -2784,6 +2976,9 @@ impl Parser {
                 self.nrvo_collapse_tail_set(l, &[w]);
             }
             RefDelivery::ForwardCopy => self.emit_forward_copy_ref_409(td, l),
+            RefDelivery::BuildIntoBuffer { work_ref, buf_var } => {
+                self.build_into_return_buffer(l, work_ref, buf_var);
+            }
             RefDelivery::AsIs => {}
         }
     }
@@ -3760,6 +3955,89 @@ impl Parser {
     }
 
     // @F27 — if / else as an expression
+    /// Are these the same projection, ignoring SOURCE POSITIONS?
+    ///
+    /// The proof is pushed from the CONDITION's parse and read at the field-read site, which
+    /// are different source positions, so the `Span` wrappers differ all the way down and a
+    /// plain `==` answers no for two spellings of one lookup.  Measured: the extractor fired
+    /// and the comparison never matched.
+    ///
+    /// Only `Call` is descended, which is all a projection chain is (`OpGetField` /
+    /// `OpGetRecord` / `OpGetVector` over a `Var`); everything else falls back to `==`.  That
+    /// makes the answer CONSERVATIVE by construction — a shape this cannot see through
+    /// compares unequal, and unequal means *do not narrow*, which costs a diagnostic on
+    /// correct code rather than silence on a null read.
+    pub(crate) fn same_projection(a: &Value, b: &Value) -> bool {
+        match (a.unspan(), b.unspan()) {
+            (Value::Call(da, aa), Value::Call(db, ba)) => {
+                da == db
+                    && aa.len() == ba.len()
+                    && aa.iter().zip(ba).all(|(x, y)| Self::same_projection(x, y))
+            }
+            (x, y) => x == y,
+        }
+    }
+
+    /// The PROJECTION a condition proves non-null, and on which side — the expression twin of
+    /// [`Self::narrowing_from_condition`], which answers for a NAME.
+    ///
+    /// `if !db.map[k] { … } else { … }` proves `db.map[k]` non-null in the ELSE arm, and there
+    /// is no variable to record it against.  That shape is why `(N-Prop)` could not land:
+    /// `@FR-Col-Lookup` makes the lookup `τ?`, `(N-Prop)` makes `.val` on it `τ?`, and the
+    /// guard cleared nothing because it cleared names.  Measured over the whole suite, it was
+    /// the ONLY shape that broke — the `?`, `??` and `if x != null` cures were all already
+    /// clean, so this is the last one.
+    ///
+    /// Deliberately narrow: the operand must be a CALL (a lookup or a field read), never a
+    /// bare `Var` — a name is [`Self::narrowing_from_condition`]'s to answer, and answering it
+    /// here as well would put one fact in two lists with two lifetimes.
+    fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        let name = self.data.def(*op).name();
+        let is_projection = |v: &Value| matches!(v.unspan(), Value::Call(_, _));
+        // `if !<proj>` — the negated truthy test, so the projection is non-null on the ELSE
+        // side.  This is the corpus idiom (`if !db.map[k] { -1 } else { db.map[k].val }`).
+        if name == "OpNot"
+            && args.len() == 1
+            && let Value::Call(inner_op, inner_args) = args[0].unspan()
+            && self
+                .data
+                .def(*inner_op)
+                .name()
+                .starts_with("OpConvBoolFrom")
+            && inner_args.len() == 1
+            && is_projection(&inner_args[0])
+        {
+            return Some((inner_args[0].unspan().clone(), false));
+        }
+        // `if <proj>` — the plain truthy test, non-null on the THEN side.
+        if name.starts_with("OpConvBoolFrom") && args.len() == 1 && is_projection(&args[0]) {
+            return Some((args[0].unspan().clone(), true));
+        }
+        // A heap projection tests through its own op, like the name case one door over.
+        if name == "OpNot"
+            && args.len() == 1
+            && let Value::Call(inner_op, inner_args) = args[0].unspan()
+            && matches!(
+                self.data.def(*inner_op).name(),
+                "OpRefIsNull" | "OpVectorIsNull"
+            )
+            && inner_args.len() == 1
+            && is_projection(&inner_args[0])
+        {
+            return Some((inner_args[0].unspan().clone(), true));
+        }
+        if matches!(name, "OpRefIsNull" | "OpVectorIsNull")
+            && args.len() == 1
+            && is_projection(&args[0])
+        {
+            return Some((args[0].unspan().clone(), false));
+        }
+        None
+    }
+
     /// @PLN25 DN3 flow-narrowing — read a non-null proof out of a parsed `if` condition.
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
@@ -3782,6 +4060,21 @@ impl Parser {
             if let Some(v) = pair {
                 return Some((v, name.starts_with("OpNe")));
             }
+        }
+        // A HEAP value tests against `null` through a dedicated op rather than a comparison
+        // with a null literal, so the scalar arm above never sees one: `s == null` on a
+        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and `s != null` is
+        // that test under `OpNot`.  The polarity follows the test's own sense — the bare op
+        // is the `== null` question, which proves the var non-null on the ELSE side, and
+        // negated it is `!= null`, which proves it in the THEN branch.
+        if let Some(v) = self.heap_null_test(test) {
+            return Some((v, false));
+        }
+        if name == "OpNot"
+            && args.len() == 1
+            && let Some(v) = self.heap_null_test(&args[0])
+        {
+            return Some((v, true));
         }
         // `if v` (truthy) — a bare nullable read converted to boolean → non-null in THEN.
         if name.starts_with("OpConvBoolFrom")
@@ -3808,6 +4101,71 @@ impl Parser {
             return Some((*v, false));
         }
         None
+    }
+
+    /// Deliver an indirect call THROUGH a `&fn(…)` link.
+    ///
+    /// `Value::CallRef` names a VARIABLE, and `State::fn_call_ref` reads the 20-byte fn-ref pair
+    /// straight out of that variable's slot (`get_var`, behind an `assert!(fn_var >= 20)`).  A
+    /// link's slot holds a 12-byte stack reference instead, so naming the link is not something
+    /// the call can be taught — the pair has to EXIST at a slot first.
+    ///
+    /// So the pair is materialised into a temp of plain `fn(…)` type and the call names the
+    /// temp.  Reading the link already yields the pair (`OpGetStackFnRef`, loft#1455), which is
+    /// why this needs no new primitive.  `@FR-B-Ref-Uniform`: a `&τ` variable is used exactly
+    /// like a τ variable, and this is what "exactly like" costs for a call.
+    ///
+    /// ONE home for both arities.  The zero-argument call and `try_fn_ref_call` each resolve a
+    /// fn-ref call in their own place, and a second spelling of this materialisation is how the
+    /// two would come to disagree (loft#1455).
+    fn call_through_fn_link(
+        &mut self,
+        v_nr: u16,
+        slot_tp: &Type,
+        args: Vec<Value>,
+        ret: &Type,
+    ) -> Value {
+        let temp = self.create_unique("__fnlink", slot_tp);
+        v_block(
+            vec![
+                Value::Set(temp, Box::new(Value::Var(v_nr))),
+                Value::CallRef(temp, args),
+            ],
+            ret.clone(),
+            "fnlink",
+        )
+    }
+
+    /// The fn-ref slot a variable names, looking THROUGH a `&` link.
+    ///
+    /// `@FR-B-Ref-Uniform` — a `&τ` variable is used exactly like a τ variable, so a
+    /// `&fn(…)` local names a fn-ref slot and is callable.  Both indirect-call sites ask
+    /// through this rather than each peeling for itself.
+    fn fn_slot_type(tp: &Type) -> &Type {
+        match tp {
+            Type::RefVar(inner) => inner.base(),
+            other => other.base(),
+        }
+    }
+
+    /// The variable a HEAP null test names, when `test` is one.
+    ///
+    /// A struct or a vector answers "is this absent?" through its own opcode — `OpRefIsNull`,
+    /// `OpVectorIsNull` — where a scalar compares against a `…FromNull` literal.  Callers that
+    /// read a null proof out of a condition need both spellings; this is the heap one, and it
+    /// answers only for a plain variable, which is the only place a proof can be recorded.
+    fn heap_null_test(&self, test: &Value) -> Option<u16> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        if args.len() != 1 || !matches!(self.data.def(*op).name(), "OpRefIsNull" | "OpVectorIsNull")
+        {
+            return None;
+        }
+        match args[0].unspan() {
+            Value::Var(v) => Some(*v),
+            _ => None,
+        }
     }
 
     /// @PLN25 DN3 fault-op — read a non-zero divisor proof out of a parsed `if` condition.
@@ -3876,6 +4234,12 @@ impl Parser {
         if let Some((v, true)) = narrow {
             self.narrowed_non_null.push(v);
         }
+        // …and the PROJECTION twin, pushed and truncated on the same discipline.
+        let proj_narrow = self.projection_narrowing_from_condition(&test);
+        let proj_base = self.narrowed_non_null_exprs.len();
+        if let Some((ref e, true)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
+        }
         // @PLN25 DN3 fault-op: `if v != 0` proves the divisor `v` non-zero in the THEN branch
         // (and `if v == 0 … else` in the ELSE branch), so `a / v` / `a % v` there is provably fit
         // (types non-null). The THEN proof is pushed now; the ELSE proof is pushed below.
@@ -3916,6 +4280,7 @@ impl Parser {
         // @PLN25 DN3: leave the then-branch — drop its narrowing; the ELSE gets the `== null`
         // proof (the var is non-null on the else side of `if v == null { … } else { … }`).
         self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         // Leaving the THEN branch, drop its `!= 0` divisor proof; an `== 0` condition instead
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
@@ -3923,6 +4288,9 @@ impl Parser {
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {
             self.narrowed_non_null.push(v);
+        }
+        if let Some((ref e, false)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
         }
         if let Some((v, false)) = divisor {
             self.divisor_nonzero.push(v);
@@ -4064,6 +4432,7 @@ impl Parser {
         // @PLN25 DN3: both branches parsed — drop any narrowing back to the enclosing level
         // (the proof holds only inside the if/else, not after it).
         self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         self.divisor_nonzero.truncate(divisor_base);
         // Belt-and-suspenders: `index_bounded` was already restored after the THEN block (it is
         // THEN-only, no else-push), so this is a no-op today — kept for parity with the two
@@ -4241,7 +4610,7 @@ impl Parser {
                 "expected {}, got void on a match arm — this `match` is used as a VALUE, so \
                  every arm has to produce one; give the arm a value, or make the `match` a \
                  statement by ending it with `;`",
-                r.name(&self.data),
+                r.source_name(&self.data),
             );
         }
         self.match_void_arm = outer_void;
@@ -4350,7 +4719,7 @@ impl Parser {
                             | Type::Enum(_, true, _)
                     )
                 {
-                    let en = elm_tp.name(&self.data);
+                    let en = elm_tp.source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4424,10 +4793,21 @@ impl Parser {
             // synth enum (a regular enum's null is the variable store_nr sentinel,
             // not an inline disc — E1).  `null` is a keyword, not an identifier, so
             // it must be matched before the `has_identifier()` variant path below.
-            if valid_enum
-                && e_nr != u32::MAX
-                && self.data.def(e_nr).name.starts_with("__nullable<")
-                && self.lexer.has_token("null")
+            // A nullable HEAP subject spells absence as the store-pointer sentinel rather
+            // than an inline discriminant, so its `null` arm asks `OpRefIsNull` and names no
+            // variant.  `(N-Match)` is stated for every t — it held for a scalar and for the
+            // synthetic inline element only, and the arm-head parser reads a VARIANT name, so
+            // `null` broke out of the loop and the run died on a brace (loft#1417).
+            let synth_null_elem =
+                e_nr != u32::MAX && self.data.def(e_nr).name.starts_with("__nullable<");
+            // Gated on the subject being a HEAP value, not on its declared type carrying a
+            // `?`: by this point the match setup has already peeled `Optional` off the
+            // subject (it reads `Enum(e, true, _)` for a `Tok?` local as much as for a
+            // `Tok` one), so the wrapper is not available to test.  That costs nothing —
+            // `OpRefIsNull` is well defined for any heap subject, and on one that cannot be
+            // absent the arm is simply never taken, exactly like an unreachable `_`.
+            let heap_null_subject = is_struct && !synth_null_elem;
+            if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
                 let arm_write_state = self.vars.save_and_clear_write_state();
@@ -4453,8 +4833,8 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "cannot unify: {} and {}",
-                        result_type.name(&self.data),
-                        arm_type.name(&self.data)
+                        result_type.source_name(&self.data),
+                        arm_type.source_name(&self.data)
                     );
                 }
                 // A `null` arm (disc 0) covers the synth enum's `Null` variant for
@@ -4464,14 +4844,45 @@ impl Parser {
                 if null_variant != u32::MAX {
                     covered.insert(null_variant);
                 }
+                // The inline element reads discriminant 0; the heap subject asks its own
+                // sentinel, and covers no variant — an absent subject is not a variant of
+                // anything, which is why exhaustiveness is untouched for it.
+                let (discs, cond) = if heap_null_subject {
+                    let is_null = self.cl("OpRefIsNull", std::slice::from_ref(&subject_val));
+                    (Vec::new(), Some(is_null))
+                } else {
+                    (vec![0], None)
+                };
                 arms.push(EnumArm {
-                    discs: vec![0],
+                    discs,
                     code: arm_body,
                     tp: arm_type,
                     guard: None,
                     bindings: Vec::new(),
+                    cond,
                 });
                 self.lexer.has_token(","); // optional trailing comma
+                continue;
+            }
+            // A SLICE pattern over a plain struct: the subject would have routed to the cursor
+            // path above if it were one, so say which field stopped it and skip the arm.  The
+            // skip runs on BOTH passes — leaving the `[` for the struct-pattern parser cost the
+            // run its second pass, which is where the reason would have been printed.
+            if is_plain_struct && self.lexer.peek_token("[") {
+                if !self.first_pass {
+                    let why = self.cursor_defect(e_nr);
+                    let subject_name = self.data.def(e_nr).name().to_string();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a slice pattern `[ … ]` matches a vector or a cursor; `{subject_name}` \
+                         is neither — {why}"
+                    );
+                }
+                self.lexer.token("[");
+                self.skip_rest_of_slice();
+                self.expect_match_arm_arrow();
+                self.skip_match_arm_body();
                 continue;
             }
             let Some(first_ident) = self.lexer.has_identifier() else {
@@ -4507,10 +4918,11 @@ impl Parser {
                 if !has_wildcard {
                     continue;
                 }
-                // A total `_` matches everything, so an arm written after it can never be
-                // selected.  Say that here: leaving it to the closing-brace expectation at the
-                // end of the loop reported "Expect token }" — the right caret with the wrong
-                // reason, on the rule the Match chapter states as "put it last".
+                // @FR-M-Wild — a total `_` matches everything, so an arm written after it can
+                // never be selected.  Say that here: leaving it to the closing-brace
+                // expectation at the end of the loop reported "Expect token }" — the right
+                // caret with the wrong reason, on the rule the Match chapter states as "put it
+                // last".
                 //
                 // `continue` rather than `break`, so the unreachable arms are parsed as the
                 // arms they are and the `}` is consumed normally; breaking here produced a
@@ -4575,7 +4987,19 @@ impl Parser {
                 || self.data.def_type(variant_def_nr) != DefType::EnumValue
                 || self.data.def(variant_def_nr).parent() != e_nr;
             if bad_variant {
-                if !self.first_pass && valid_enum && variant_def_nr != u32::MAX {
+                // @FR-M-Unit — an arm's pattern names a VARIANT of the subject's enum, and an
+                // arm that names anything else can never be selected.  The test is on the
+                // SUBJECT enum (`e_nr` resolved, second pass), not on whether the pattern name
+                // resolved to something: a name that resolves NOWHERE is exactly the common
+                // spelling of this mistake — a typo, or a variant that has since been renamed —
+                // and it is the one an author cannot see, because a dead arm looks like a live
+                // one and the value it should have produced comes from `_` instead.
+                //
+                // `e_nr == u32::MAX` stays silent: the subject enum is a cross-package forward
+                // reference whose dependency parses later (#375), so pass 1 skips the arm and
+                // pass 2 reads it with the enum resolved.  The same pairing `valid_enum &&
+                // e_nr != u32::MAX` guards the or-pattern branch below.
+                if !self.first_pass && valid_enum && e_nr != u32::MAX {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4857,6 +5281,11 @@ impl Parser {
                 for c in field_conditions {
                     combined = v_if(combined, c, Value::Boolean(false));
                 }
+                // @FR-P-Guard — the guard runs with the arm's bindings in scope and, when it
+                // is false, the arm fails exactly as if the pattern had not matched: ANDing it
+                // into the arm's own condition is what makes selection move on to the next arm
+                // rather than commit this one.
+                //
                 // If there's also an explicit `if` guard, AND them.
                 if let Some(g) = guard_opt {
                     combined = v_if(combined, g, Value::Boolean(false));
@@ -4866,6 +5295,13 @@ impl Parser {
 
             // Duplicate arm detection.
             // Guarded arms don't count as covering the variant for exhaustiveness.
+            //
+            // @FR-M-Match — selection takes the FIRST arm whose pattern matches, so a variant
+            // named twice makes the later arm dead; that is what `covered` reports.
+            // @FR-M-Total — and it is the same set that decides coverage, which is why the
+            // guarded arm is excluded from BOTH: a guard can reject, so a guarded arm neither
+            // covers its variant nor makes a later one unreachable.  One test, one insertion,
+            // so the two answers cannot drift apart.
             if guard_opt.is_none() {
                 if covered.contains(&variant_def_nr) {
                     if !self.first_pass {
@@ -4947,8 +5383,8 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "cannot unify: {} and {}",
-                    result_type.name(&self.data),
-                    arm_type.name(&self.data)
+                    result_type.source_name(&self.data),
+                    arm_type.source_name(&self.data)
                 );
             }
 
@@ -4981,6 +5417,7 @@ impl Parser {
                 tp: arm_type,
                 guard: guard_opt,
                 bindings: binding_stmts,
+                cond: None,
             });
             // @PLN35 Phase 3: emit one arm per EXTRA listed pattern, each binding
             // the shared slots from its own variant offsets then running a CLONE of
@@ -5007,6 +5444,7 @@ impl Parser {
                         tp: tp.clone(),
                         guard: None,
                         bindings: Vec::new(),
+                        cond: None,
                     });
                 }
             }
@@ -5019,6 +5457,11 @@ impl Parser {
 
         self.lexer.token("}");
 
+        // @FR-M-Exhaust — a match on an enum covers EVERY variant, or carries a `_`; a match
+        // that forgets one is a STATIC error naming what is missing, never a runtime fault.
+        // The `covered` set it reads is filled by the arm loop above under @FR-M-Total's rule
+        // (an unguarded arm only), so the two halves of the totality judgment share one fact.
+        //
         // Exhaustiveness check (second pass only, when no wildcard, when subject is a known enum).
         if !self.first_pass && !has_wildcard && valid_enum {
             let missing: Vec<String> = self
@@ -5093,7 +5536,7 @@ impl Parser {
         // typecheck and balance the stack, so it carries the typed null.
         let mut chain = base;
         for arm in arms.iter().rev() {
-            if arm.discs.is_empty() {
+            if arm.discs.is_empty() && arm.cond.is_none() {
                 // Wildcard — always taken; becomes the else branch of the chain.
                 // guarded wildcard wraps body in If(guard, body, chain_rest).
                 chain = match &arm.guard {
@@ -5101,12 +5544,21 @@ impl Parser {
                     None => arm.code.clone(),
                 };
             } else {
-                // build OR'd comparison for all discriminants in this arm.
-                let mut cmp = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
-                for &d in &arm.discs[1..] {
-                    let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
-                    cmp = v_if(cmp, Value::Boolean(true), next);
-                }
+                // An arm that carries its own test uses it; otherwise build the OR'd
+                // comparison over this arm's discriminants.  The `null` arm of a nullable
+                // HEAP subject is the first kind: absence is the store-pointer sentinel
+                // there, which no discriminant names.
+                let cmp = if let Some(c) = &arm.cond {
+                    c.clone()
+                } else {
+                    let mut cmp =
+                        self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(arm.discs[0])]);
+                    for &d in &arm.discs[1..] {
+                        let next = self.cl("OpEqInt", &[disc_expr.clone(), Value::Int(d)]);
+                        cmp = v_if(cmp, Value::Boolean(true), next);
+                    }
+                    cmp
+                };
                 // guarded arms nest the guard inside the pattern branch.
                 chain = match &arm.guard {
                     Some(guard) => {
@@ -5274,6 +5726,9 @@ impl Parser {
 
     fn parse_match_wildcard_arm(&mut self, result_type: &mut Type) -> (EnumArm, bool) {
         let guard_opt = self.parse_optional_guard();
+        // @FR-M-Total — `total(pat if cond) = false`: a guard can reject after the pattern has
+        // matched, so a guarded `_` secures nothing and the arms after it are reachable.  This
+        // one line is why `_ if cond` is not treated as the last arm.
         let is_exhaustive = guard_opt.is_none();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
@@ -5294,8 +5749,8 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "cannot unify: {} and {}",
-                result_type.name(&self.data),
-                arm_type.name(&self.data)
+                result_type.source_name(&self.data),
+                arm_type.source_name(&self.data)
             );
         }
         let arm = EnumArm {
@@ -5304,6 +5759,7 @@ impl Parser {
             tp: arm_type,
             guard: guard_opt,
             bindings: Vec::new(),
+            cond: None,
         };
         (arm, is_exhaustive)
     }
@@ -5385,6 +5841,7 @@ impl Parser {
             tp: result_type.clone(),
             guard,
             bindings: Vec::new(),
+            cond: None,
         };
         (arm, exhaustive)
     }
@@ -5487,6 +5944,29 @@ impl Parser {
         }
     }
 
+    /// `elm_tp` re-stated as a VIEW into the frame variable `src` — the borrow dep a heap
+    /// element read carries — or the type unchanged when the element holds no `DbRef` (a
+    /// scalar, or a `text` element, which is an owned copy and must keep its own free).
+    ///
+    /// `@FR-O-Deps`: what a value borrows is read off its type, so a read that borrows and says
+    /// nothing is read as OWNED.  This fact was spelled by hand at FIVE sites in this file, each
+    /// a three-arm `match` over `Reference | Vector | Enum`, and three of them let an `Optional`
+    /// fall past — so a NULLABLE element read was left dep-free and the free analysis emitted
+    /// `OpFreeRef` for a record the subject owns: a use-after-free in the repetition
+    /// materialisation on both backends, and an element handed back from `[a, ..] => a` that the
+    /// caller could not see was a view (loft#1414).  The other two peeled correctly and were
+    /// duplicates.  `Type::with_deps` writes through the wrapper, which is why the one home is a
+    /// call to it rather than a sixth spelling.
+    fn element_view_of(elm_tp: &Type, src: u16) -> Type {
+        if !matches!(
+            elm_tp.base(),
+            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, _, _)
+        ) {
+            return elm_tp.clone();
+        }
+        elm_tp.with_deps(&crate::data::Deps::frame1(src))
+    }
+
     /// @PLN35 Phase 2 (P-Cap-View) — mark a slice-element capture that reads a HEAP
     /// element as a borrowed VIEW of the subject, the same way a struct-enum field
     /// binding is (`parse_match_enum_field_bindings`, #429). A slice binding
@@ -5505,19 +5985,21 @@ impl Parser {
     fn mark_slice_element_view(&mut self, bind_nr: u16, elm_tp: &Type, src: u16) {
         if bind_nr == u16::MAX
             || !matches!(
-                elm_tp,
+                elm_tp.base(),
                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
             )
         {
             return;
         }
         self.vars.set_skip_free(bind_nr);
-        let bound_tp = match self.vars.tp(bind_nr).clone() {
-            Type::Reference(td, _) => Type::Reference(td, crate::data::Deps::frame1(src)),
-            Type::Vector(it, _) => Type::Vector(it, crate::data::Deps::frame1(src)),
-            Type::Enum(td, su, _) => Type::Enum(td, su, crate::data::Deps::frame1(src)),
-            other => other,
-        };
+        // A NULLABLE element is the same view: `(L-Null)` gives `E?` the layout of `E`, so a
+        // binding off `vector<E?>` holds the subject's address exactly as its dense twin does
+        // and borrows the same store.  Asked of the wrapper, the test above said "not a record"
+        // and the binding carried EMPTY deps, so `ref_return` could not walk the borrow back to
+        // the subject: a `match v { [a, ..] => a }` returning the element was classified OWNED,
+        // the subject's store was freed at the callee's exit, and the caller read whatever was
+        // allocated next — `101` where its dense twin answers `7`, on both backends (loft#1414).
+        let bound_tp = Self::element_view_of(&self.vars.tp(bind_nr).clone(), src);
         self.vars.set_type(bind_nr, bound_tp);
     }
 
@@ -5643,18 +6125,8 @@ impl Parser {
                                         src,
                                     );
                                 }
-                                let bound_tp = match self.vars.tp(v_nr).clone() {
-                                    Type::Reference(td, _) => {
-                                        Type::Reference(td, crate::data::Deps::frame1(src))
-                                    }
-                                    Type::Vector(it, _) => {
-                                        Type::Vector(it, crate::data::Deps::frame1(src))
-                                    }
-                                    Type::Enum(td, su, _) => {
-                                        Type::Enum(td, su, crate::data::Deps::frame1(src))
-                                    }
-                                    other => other,
-                                };
+                                let bound_tp =
+                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
                                 self.vars.set_type(v_nr, bound_tp);
                             }
                         }
@@ -5707,6 +6179,152 @@ impl Parser {
         0
     }
 
+    /// The enum whose VARIANTS a pattern names when it is written against a value of type
+    /// `tp` — `@FR-M-Unit` / `@FR-M-Variant` asked of a SLOT type rather than of a value.  The
+    /// second half of the answer says whether it is a struct-enum, which is what the branches
+    /// that need a payload (a repetition, an alternation, a `#lexeme` literal) require.
+    ///
+    /// A NULLABLE element names the same enum.  `@FR-L-Null` gives `E?` the layout of `E` —
+    /// variants are numbered from 1 because 0 is the absent value — so the tag test a variant
+    /// pattern builds already answers false for an absent element, which is exactly
+    /// `(M-Variant)`: an absence is no variant.  Asking `Type::Enum` of the WRAPPER instead
+    /// made a `vector<Tok?>` stop being a token stream: `[Id { x }]` was a parse error naming
+    /// nothing, and the unit spelling `[Id]` fell through to the bare-name branch and became a
+    /// BINDING that matched every element, absent ones included (loft#1410).
+    ///
+    /// The tagged `__nullable<S>` is NOT such an enum: its discriminant is `@FR-L-Null-Tag`'s
+    /// presence bit and its two variants are the compiler's, so a pattern naming one would ask
+    /// a variant question of an absence bit.  `None` keeps the element's own refusal there,
+    /// which names the type the author wrote rather than the synthetic.
+    fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
+        let Type::Enum(e_nr, is_struct, _) = tp.base() else {
+            return None;
+        };
+        if self.nullable_payload_struct(*e_nr).is_some() {
+            return None;
+        }
+        Some((*e_nr, *is_struct))
+    }
+
+    /// How a slice element's type is SPELLED to the author.  The tagged `__nullable<S>` is the
+    /// compiler's spelling of `S?` and never belongs in a message: a repetition over a
+    /// `vector<S?>` reported *"'S' is not a variant of __nullable<S>"*, which names a type the
+    /// program cannot write and a question the author did not ask (loft#1410).
+    fn slice_element_name(&self, elm_tp: &Type) -> String {
+        if matches!(elm_tp, Type::Enum(_, true, _))
+            && let Some(struct_d) = self.data.nullable_struct_payload(elm_tp)
+        {
+            return format!("{}?", self.data.def(struct_d).name());
+        }
+        elm_tp.source_name(&self.data)
+    }
+
+    /// Consume a match arm's body without parsing it — for an arm whose PATTERN was refused, so
+    /// the names that pattern would have bound do not come back as a second, misleading
+    /// *"Unknown variable 'x'"* pointing into a body that is fine.  Stops after the arm's own
+    /// `,`, or at the `}` that closes the match.
+    fn skip_match_arm_body(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has {
+                LexItem::None => break,
+                LexItem::Token(t) if depth == 0 && t == "," => {
+                    self.lexer.cont();
+                    break;
+                }
+                LexItem::Token(t) if depth == 0 && t == "}" => break,
+                LexItem::Token(t) if t == "{" || t == "(" || t == "[" => {
+                    depth += 1;
+                    self.lexer.cont();
+                }
+                LexItem::Token(t) if t == "}" || t == ")" || t == "]" => {
+                    depth -= 1;
+                    self.lexer.cont();
+                }
+                _ => self.lexer.cont(),
+            }
+        }
+    }
+
+    /// @PLN35 L2 — is the next element a VARIANT sub-pattern of the element enum type
+    /// (`Ship { carrier }` / bare `Ship`)?
+    ///
+    /// Peeks without consuming, so a plain binding name still falls through to the
+    /// binding branch.  Asked in the TAIL as well as the head: `(P-Rest)` counts the fixed
+    /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
+    /// takes the forms the head does — it just reads at a negative index (loft#1419).
+    fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
+        let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
+            return false;
+        };
+        if let LexItem::Identifier(pname) = &self.lexer.peek().has {
+            self.data.variant_of(elm_e_nr, pname) != u32::MAX
+        } else {
+            false
+        }
+    }
+
+    /// How many fixed elements follow a slice `..`, counted without consuming them.
+    ///
+    /// A tail element is read from the END (`-(tail_len - j)`), so its position is not known
+    /// until the whole tail has been seen — which is why only a BARE NAME was ever accepted
+    /// there.  A bare name defers trivially, because the bind loop runs after `]`; a variant
+    /// sub-pattern or a literal emits its test AS it parses and needs the index in hand
+    /// (loft#1419).  Counting first gives every branch the index it needs, so the tail admits
+    /// the element forms the head does — which is what `(P-Rest)` says, `t` being the count of
+    /// fixed patterns after the rest, with `(P-Point)` making a variant one of them.
+    ///
+    /// ONE look-ahead over the region, reverted before the real parse.  Deliberately not a
+    /// second peek over ground `peek_group_kind` has already covered: that is what corrupts
+    /// the replay buffer, and this runs where no group peek has been.
+    fn count_slice_tail_elements(&mut self) -> i32 {
+        let link = self.lexer.link();
+        let mut depth = 0i32;
+        let mut commas = 0i32;
+        let mut seen_any = false;
+        loop {
+            if matches!(self.lexer.peek().has, LexItem::None) {
+                break;
+            }
+            if depth == 0 && self.lexer.peek_token("]") {
+                break;
+            }
+            if self.lexer.peek_token("{")
+                || self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+            {
+                depth += 1;
+                seen_any = true;
+            } else if self.lexer.peek_token("}")
+                || self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+            {
+                depth -= 1;
+            } else if depth == 0 && self.lexer.peek_token(",") {
+                commas += 1;
+            } else {
+                seen_any = true;
+            }
+            self.lexer.cont();
+        }
+        self.lexer.revert(link);
+        if seen_any { commas + 1 } else { 0 }
+    }
+
+    /// Recover from a REFUSED slice element by swallowing the rest of the pattern through its
+    /// closing `]` — what the group parsers do on the paths that succeed.
+    ///
+    /// Without it the refusal is followed by a first-pass cascade (*"Expect token ,"*, *"Expect
+    /// token }"*, *"unexpected ')'"*) that aborts the run before the second pass emits the real
+    /// reason, so the author is told about a comma instead of about the element type.  Measured
+    /// on a repetition over a NON-enum element, which has always landed here.
+    fn skip_rest_of_slice(&mut self) {
+        while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
+            self.lexer.cont();
+        }
+        self.lexer.token("]");
+    }
+
     /// The integer-discriminant read `OpConvIntFromEnum(OpGetEnum(elem, 0))` for a
     /// struct-enum element value — the same tag read a top-level struct-enum match
     /// emits, used by a slice-element alternation to tag-test each branch.
@@ -5733,6 +6351,19 @@ impl Parser {
             _ => pos,
         };
         let get = self.cl("OpGetVector", &[Value::Var(v), elm_size.clone(), pos]);
+        // @FR-H-Stride — the WIDTH of the read is the declared TYPE's.  The general path below
+        // reaches `get_val` through `get_field(_, usize::MAX, _)`, which re-derives the type from
+        // the DEF (`attr_type` answers `def.returned` for `usize::MAX`) — and a def cannot carry a
+        // width, because the one `integer` def serves all seven.  So a narrow element was read
+        // EIGHT bytes wide however the vector was declared, and `[a, .., z]` over a `vector<u8>`
+        // answered `21542142465` = `0x05_04_03_02_01`, the five elements swallowed whole
+        // (loft#1420).  `get_val` already selects the narrow read op from the spec when the alias
+        // is absent; it just has to be given the type the caller still holds.
+        if let Some((_, nullable, _)) = crate::data::Data::narrow_vector_element(elm_tp) {
+            self.expr_not_null = !nullable;
+            self.expr_not_null_name.clear();
+            return self.get_val(elm_tp, nullable, 0, get, u32::MAX);
+        }
         let td = self.data.type_def_nr(elm_tp);
         self.get_field(td, usize::MAX, get)
     }
@@ -5937,12 +6568,7 @@ impl Parser {
         // A VIEW-read element type (a DbRef INTO the subject) needs a borrow dep on the transient
         // per-iteration read temp so the free-analysis frees each read once (via the copy source),
         // not double-freeing the subject; text/scalar take NO dep (owned copy / no DbRef).
-        let elm_borrowed = match elm_tp {
-            Type::Reference(td, _) => Type::Reference(*td, Deps::frame1(v)),
-            Type::Vector(it, _) => Type::Vector(it.clone(), Deps::frame1(v)),
-            Type::Enum(td, su, _) => Type::Enum(*td, *su, Deps::frame1(v)),
-            other => other.clone(),
-        };
+        let elm_borrowed = Self::element_view_of(elm_tp, v);
         let iter_tp = Type::Iterator(Box::new(elm_borrowed), Box::new(Type::Null));
         self.materialize_iterator(
             &mut mat,
@@ -6146,8 +6772,8 @@ impl Parser {
         lit: &Value,
         lit_tp: &Type,
     ) -> Option<Value> {
-        if let Type::Enum(e_nr, true, _) = elm_tp {
-            self.build_lexeme_literal_match(*e_nr, v, elm_size, elm_tp, pos, lit, lit_tp)
+        if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
+            self.build_lexeme_literal_match(e_nr, v, elm_size, elm_tp, pos, lit, lit_tp)
         } else if Self::slice_literal_compatible(elm_tp, lit_tp) {
             let read = self.read_slice_elem(v, elm_size, elm_tp, pos.clone());
             Some(self.conv_op("==", read, lit.clone(), elm_tp.clone(), lit_tp.clone()))
@@ -6160,21 +6786,21 @@ impl Parser {
     /// `build_literal_match` returns `None`): a `#lexeme` hint for a struct-enum, a type mismatch
     /// for a scalar.
     fn slice_literal_mismatch(&mut self, elm_tp: &Type, lit_tp: &Type) {
-        if let Type::Enum(e_nr, true, _) = elm_tp {
+        if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "{} has no `#lexeme` field a {} literal can match — mark a field `#lexeme` or write the variant pattern",
-                self.data.def(*e_nr).name(),
-                lit_tp.name(&self.data)
+                self.data.def(e_nr).name(),
+                lit_tp.source_name(&self.data)
             );
         } else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "a {} literal cannot match a {} slice element",
-                lit_tp.name(&self.data),
-                elm_tp.name(&self.data)
+                lit_tp.source_name(&self.data),
+                elm_tp.source_name(&self.data)
             );
         }
     }
@@ -6293,7 +6919,7 @@ impl Parser {
         let cap_name = self.lexer.has_identifier().unwrap_or_default();
         self.lexer.token(":");
         let tname = self.lexer.has_identifier().unwrap_or_default();
-        let elm_name = elm_tp.name(&self.data);
+        let elm_name = elm_tp.source_name(&self.data);
         if !self.first_pass && tname != elm_name {
             diagnostic!(
                 self.lexer,
@@ -6612,9 +7238,9 @@ impl Parser {
                     None if !self.first_pass => self.slice_literal_mismatch(elm_tp, &lit_tp),
                     None => {}
                 }
-            } else if matches!(elm_tp, Type::Enum(te, true, _)
+            } else if matches!(self.pattern_variant_enum(elm_tp), Some((te, true))
                 if matches!(&self.lexer.peek().has, LexItem::Identifier(id)
-                    if self.data.variant_of(*te, id) != u32::MAX))
+                    if self.data.variant_of(te, id) != u32::MAX))
             {
                 // A variant sub-pattern `V { f }` / bare `V`, matched at `pos`.  The DIRECT read
                 // (as the head sub-pattern path uses) drives both the tag-test and the field binds.
@@ -7197,8 +7823,8 @@ impl Parser {
                                 Level::Error,
                                 "alternation capture '{}' is {} in one branch but {} in another",
                                 fname,
-                                ftype.name(&self.data),
-                                seen.name(&self.data)
+                                ftype.source_name(&self.data),
+                                seen.source_name(&self.data)
                             );
                         }
                     } else {
@@ -7244,22 +7870,8 @@ impl Parser {
             if !matches!(ftype.base(), Type::Text(_)) {
                 self.vars.set_skip_free(v_nr);
             }
-            let bs = borrow_src;
-            let borrowed = |t: Type| -> Option<Type> {
-                match t {
-                    Type::Reference(td, _) => Some(Type::Reference(td, Deps::frame1(bs))),
-                    Type::Vector(it, _) => Some(Type::Vector(it, Deps::frame1(bs))),
-                    Type::Enum(td, su, _) => Some(Type::Enum(td, su, Deps::frame1(bs))),
-                    _ => None,
-                }
-            };
-            let bound_tp = match self.vars.tp(v_nr).clone() {
-                Type::Optional(inner) => borrowed(*inner).map(Type::optional),
-                other => borrowed(other),
-            };
-            if let Some(b) = bound_tp {
-                self.vars.set_type(v_nr, b);
-            }
+            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
+            self.vars.set_type(v_nr, bound_tp);
         }
 
         // Step 5: `..rest` picks up after WHICHEVER branch matched.  The runtime cursor
@@ -7426,8 +8038,8 @@ impl Parser {
                             Level::Error,
                             "alternation capture '{}' is {} in one branch but {} in another",
                             fname,
-                            ftype.name(&self.data),
-                            seen.name(&self.data)
+                            ftype.source_name(&self.data),
+                            seen.source_name(&self.data)
                         );
                     }
                 } else {
@@ -7471,22 +8083,8 @@ impl Parser {
             if !matches!(ftype.base(), Type::Text(_)) {
                 self.vars.set_skip_free(v_nr);
             }
-            let bs = borrow_src;
-            let borrowed = |t: Type| -> Option<Type> {
-                match t {
-                    Type::Reference(td, _) => Some(Type::Reference(td, Deps::frame1(bs))),
-                    Type::Vector(it, _) => Some(Type::Vector(it, Deps::frame1(bs))),
-                    Type::Enum(td, su, _) => Some(Type::Enum(td, su, Deps::frame1(bs))),
-                    _ => None,
-                }
-            };
-            let bound_tp = match self.vars.tp(v_nr).clone() {
-                Type::Optional(inner) => borrowed(*inner).map(Type::optional),
-                other => borrowed(other),
-            };
-            if let Some(b) = bound_tp {
-                self.vars.set_type(v_nr, b);
-            }
+            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
+            self.vars.set_type(v_nr, bound_tp);
         }
     }
 
@@ -7544,8 +8142,8 @@ impl Parser {
                                     Level::Error,
                                     "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
                                     field_name,
-                                    field_type.name(&self.data),
-                                    shared_ty.name(&self.data)
+                                    field_type.source_name(&self.data),
+                                    shared_ty.source_name(&self.data)
                                 );
                             }
                             // Skip the assignment into the shared slot on a confirmed
@@ -7601,7 +8199,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "guard must be boolean, got {}",
-                    guard_type.name(&self.data)
+                    guard_type.source_name(&self.data)
                 );
             }
             Some(guard_code)
@@ -7628,14 +8226,14 @@ impl Parser {
         // `Variant`).  Tag-test the field's discriminant and recurse into the variant's payload
         // bindings — the same tag-test + payload-bind a top-level struct-enum arm emits, applied to
         // the field-read value (`OpEqInt(OpConvIntFromEnum(OpGetEnum(field_val, 0)), disc)`).
-        if let Type::Enum(e_nr, true, _) = field_type
+        if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
             && let Some(name) = self.lexer.has_identifier()
         {
             if name == "_" {
                 return None;
             }
-            let disc = if let Some(a_nr) = self.data.def(*e_nr).attr_names.get(&name) {
-                if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+            let disc = if let Some(a_nr) = self.data.def(e_nr).attr_names.get(&name) {
+                if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                     i32::from(nr)
                 } else {
                     0
@@ -7647,7 +8245,7 @@ impl Parser {
                         Level::Error,
                         "'{}' is not a variant of {}",
                         name,
-                        self.data.def(*e_nr).name()
+                        self.data.def(e_nr).name()
                     );
                 }
                 return None;
@@ -7657,7 +8255,7 @@ impl Parser {
             let tag_test = self.cl("OpEqInt", &[disc_expr, Value::Int(disc)]);
             // Nested payload: `Variant { subfields }` binds the variant's fields from field_val.
             if self.lexer.peek_token("{") {
-                let variant_def_nr = self.data.variant_of(*e_nr, &name);
+                let variant_def_nr = self.data.variant_of(e_nr, &name);
                 self.parse_match_enum_field_bindings(
                     variant_def_nr,
                     &name,
@@ -7670,7 +8268,7 @@ impl Parser {
             return Some(tag_test);
         }
         // Enum field: the sub-pattern is a variant name (or `_`).
-        if let Type::Enum(e_nr, false, _) = field_type
+        if let Some((e_nr, false)) = self.pattern_variant_enum(field_type)
             && let Some(name) = self.lexer.has_identifier()
         {
             // Wildcard — no condition.
@@ -7678,8 +8276,8 @@ impl Parser {
                 return None;
             }
             // Look up variant discriminant.
-            let disc = if let Some(a_nr) = self.data.def(*e_nr).attr_names.get(&name) {
-                if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+            let disc = if let Some(a_nr) = self.data.def(e_nr).attr_names.get(&name) {
+                if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                     i32::from(nr)
                 } else {
                     0
@@ -7691,27 +8289,34 @@ impl Parser {
                         Level::Error,
                         "'{}' is not a variant of {}",
                         name,
-                        self.data.def(*e_nr).name()
+                        self.data.def(e_nr).name()
                     );
                 }
                 return None;
             };
+            // The comparison is asked of the enum ITSELF, never of a `τ?` wrapper around it:
+            // `(L-Null)` gives the nullable spelling the same byte, and absence — 0 or the
+            // 255 sentinel — is no variant, so a nullable field simply fails every arm it is
+            // not.  Asking the wrapper looked for an operator on `Color?` and `Color?` and
+            // refused the program (loft#1410); a dense field's `base()` is itself, so the
+            // emission there is unchanged.
+            let cmp_tp = field_type.base().clone();
             // Build equality: field_val == Enum(disc)
-            let variant_val = Value::Enum(disc as u8, *e_nr as u16);
+            let variant_val = Value::Enum(disc as u8, e_nr as u16);
             let mut cond = Value::Null;
             self.call_op(
                 &mut cond,
                 "==",
                 &[field_val.clone(), variant_val],
-                &[field_type.clone(), field_type.clone()],
+                &[cmp_tp.clone(), cmp_tp.clone()],
             );
             // or-pattern: Paid | Refunded
             while self.lexer.has_token("|") {
                 if let Some(next_name) = self.lexer.has_identifier() {
                     let next_disc = if let Some(a_nr) =
-                        self.data.def(*e_nr).attr_names.get(&next_name)
+                        self.data.def(e_nr).attr_names.get(&next_name)
                     {
-                        if let Value::Enum(nr, _) = self.data.def(*e_nr).attributes()[*a_nr].value {
+                        if let Value::Enum(nr, _) = self.data.def(e_nr).attributes()[*a_nr].value {
                             i32::from(nr)
                         } else {
                             0
@@ -7723,18 +8328,18 @@ impl Parser {
                                 Level::Error,
                                 "'{}' is not a variant of {}",
                                 next_name,
-                                self.data.def(*e_nr).name()
+                                self.data.def(e_nr).name()
                             );
                         }
                         0
                     };
-                    let next_variant = Value::Enum(next_disc as u8, *e_nr as u16);
+                    let next_variant = Value::Enum(next_disc as u8, e_nr as u16);
                     let mut next_cond = Value::Null;
                     self.call_op(
                         &mut next_cond,
                         "==",
                         &[field_val.clone(), next_variant],
-                        &[field_type.clone(), field_type.clone()],
+                        &[cmp_tp.clone(), cmp_tp.clone()],
                     );
                     // OR: if first matches → true, else check next.
                     cond = v_if(cond, Value::Boolean(true), next_cond);
@@ -7853,8 +8458,8 @@ impl Parser {
                 &pat_pos,
                 Level::Error,
                 "cannot match {} against pattern of type {}",
-                subject_type.name(&self.data),
-                lit_type.name(&self.data)
+                subject_type.source_name(&self.data),
+                lit_type.source_name(&self.data)
             );
         }
         // check for range pattern `lo..hi` or `lo..=hi`.
@@ -8003,7 +8608,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "guard must be boolean, got {}",
-                        guard_type.name(&self.data)
+                        guard_type.source_name(&self.data)
                     );
                 }
                 Some(guard_code)
@@ -8146,6 +8751,41 @@ impl Parser {
         match (source, pos) {
             (Some((si, elm)), Some(pi)) => Some((d_nr, si, pi, elm)),
             _ => None,
+        }
+    }
+
+    /// Why the struct `d_nr` is NOT a cursor, spelled for the author — the diagnostic half of
+    /// [`Self::cursor_shape`], asked when a `match` arm over a plain struct opens with a slice
+    /// pattern, which only a vector or a cursor can wear.
+    ///
+    /// `cursor_shape` answers `None` for every struct that is not one, and the arm was then
+    /// parsed as a STRUCT pattern: the `[` was "expect variant name", the first pass broke out
+    /// silently and the run died on a brace it had never reached, so the author was told about
+    /// a `}` and never about the field that disqualified the struct (loft#1410).  A `?` on the
+    /// source or the position field is the case worth naming, because those two fields still
+    /// read like a cursor's.
+    fn cursor_defect(&self, d_nr: u32) -> String {
+        let attrs = self.data.def(d_nr).attributes();
+        let field_of = |pick: &dyn Fn(&crate::data::Attribute) -> bool| {
+            attrs
+                .iter()
+                .find(|a| !a.constant && pick(a))
+                .map(|a| (a.name.clone(), a.typedef.source_name(&self.data)))
+        };
+        if field_of(&|a| matches!(a.typedef, Type::Vector(_, _))).is_none() {
+            return match field_of(&|a| matches!(a.typedef.base(), Type::Vector(_, _))) {
+                Some((name, tp)) => format!(
+                    "its `{name}` field is `{tp}`, and a cursor reads from a plain `vector<…>`"
+                ),
+                None => "it has no `vector<…>` field for the pattern to read".to_string(),
+            };
+        }
+        match field_of(&|a| a.name == "pos") {
+            Some((_, tp)) => {
+                format!("its `pos` field is `{tp}`, and a cursor's position must be an integer")
+            }
+            None => "it has no integer `pos` field, so nothing says where the pattern starts"
+                .to_string(),
         }
     }
 
@@ -8492,6 +9132,8 @@ impl Parser {
                 let mut multi_alt = false;
                 let mut head: Vec<String> = Vec::new();
                 let mut tail: Vec<String> = Vec::new();
+                // How many fixed elements follow the `..`, known as soon as the rest is seen.
+                let mut tail_total: i32 = 0;
                 let mut has_rest = false;
                 let mut rest_name: Option<String> = None;
                 loop {
@@ -8516,6 +9158,13 @@ impl Parser {
                         if let Some(name) = self.lexer.has_identifier() {
                             rest_name = Some(name);
                         }
+                        // Everything from here to `]` is the fixed TAIL, and each of its
+                        // elements is read from the end.  Count them now so a variant
+                        // sub-pattern or a literal there knows its own index while it parses
+                        // (loft#1419); a bare name does not need it, which is why only bare
+                        // names used to be admitted.
+                        self.lexer.has_token(",");
+                        tail_total = self.count_slice_tail_elements();
                     } else if self.match_cursor.is_some()
                         && head.is_empty()
                         && !has_rest
@@ -8538,7 +9187,7 @@ impl Parser {
                         multi_alt = true;
                         break;
                     } else if !has_rest
-                        && !matches!(&elm_tp, Type::Enum(..))
+                        && self.pattern_variant_enum(&elm_tp).is_none()
                         && let Some(is_rep) = self.peek_scalar_type_capture()
                     {
                         // @PLN35 slice 1 — a scalar type-annotated capture `name:Type` (single —
@@ -8585,7 +9234,7 @@ impl Parser {
                         let name = self.lexer.has_identifier().unwrap();
                         self.lexer.token(":");
                         let tname = self.lexer.has_identifier().unwrap_or_default();
-                        let elm_name = elm_tp.name(&self.data);
+                        let elm_name = elm_tp.source_name(&self.data);
                         if !self.first_pass && tname != elm_name {
                             diagnostic!(
                                 self.lexer,
@@ -8634,23 +9283,16 @@ impl Parser {
                         }
                         elem_conds.append(&mut sub_conds);
                         head.push("_".to_string());
-                    } else if !has_rest && {
-                        // @PLN35 L2 — is this head element a VARIANT sub-pattern of the element
-                        // enum type (`Ship { carrier }` / bare `Ship`)?  Peek without consuming so a
-                        // plain binding name still falls through to the branch below.
-                        if let Type::Enum(elm_e_nr, _, _) = &elm_tp {
-                            if let LexItem::Identifier(pname) = &self.lexer.peek().has {
-                                self.data.variant_of(*elm_e_nr, pname) != u32::MAX
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } {
+                    } else if self.peek_is_variant_subpattern(&elm_tp) {
                         // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
                         // placeholder keeps the position count so following bare-name indices align.
-                        let position = head.len() as i32;
+                        // A head element counts forward from 0; a tail element counts BACK from
+                        // the end, exactly as a bare tail name does.
+                        let position = if has_rest {
+                            -(tail_total - tail.len() as i32)
+                        } else {
+                            head.len() as i32
+                        };
                         let read =
                             self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
                         let mut sub_conds: Vec<Value> = Vec::new();
@@ -8665,7 +9307,11 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
-                        head.push("_".to_string());
+                        if has_rest {
+                            tail.push("_".to_string());
+                        } else {
+                            head.push("_".to_string());
+                        }
                     } else if group_kind == SliceGroupKind::Repetition {
                         // @PLN35 Phase 6 — a repetition `[ head…, ( [name:] V )*[(Sep)] [tail…]
                         // [, ..rest] ]` / `…+`.  `head` is any fixed prefix already parsed (its
@@ -8673,8 +9319,7 @@ impl Parser {
                         // and any fixed `tail` after the group is matched from the END.
                         // `parse_slice_repetition` builds the run-loop cond + collection and
                         // consumes through `]`, so break the element loop.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             let head_len = head.len() as i32;
                             // Bind any BARE-NAME head element (a variant sub-pattern / literal
                             // already emitted its own bind/cond and left a "_").  These are safe:
@@ -8708,13 +9353,14 @@ impl Parser {
                             multi_alt = true;
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "a repetition `( … )*` slice element needs a struct-enum element type"
+                                    "a repetition `( … )*` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("(");
+                            self.skip_rest_of_slice();
                         }
                         break;
                     } else if group_kind == SliceGroupKind::Alt && head.is_empty() {
@@ -8723,8 +9369,7 @@ impl Parser {
                         // (a degenerate alternation `(a | ε)`).  Predictive dispatch on the leading
                         // tags over a sequence per branch; it builds the arm `cond` itself and
                         // consumes through `]`, so break the element loop and skip the length gate.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             self.parse_multi_element_alternation(
                                 e_nr,
                                 v,
@@ -8737,13 +9382,14 @@ impl Parser {
                             multi_alt = true;
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type"
+                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("(");
+                            self.skip_rest_of_slice();
                         }
                         break;
                     } else if !has_rest && self.lexer.peek_token("(") {
@@ -8752,8 +9398,7 @@ impl Parser {
                         // the element against each branch and bind the shared captures from the
                         // matching variant's offsets. A `_` placeholder keeps position alignment
                         // for following bare-name indices, as the variant sub-pattern branch does.
-                        if let Type::Enum(elm_e_nr, true, _) = &elm_tp {
-                            let e_nr = *elm_e_nr;
+                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
                             let position = head.len() as i32;
                             let read =
                                 self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
@@ -8767,24 +9412,30 @@ impl Parser {
                             head.push("_".to_string());
                         } else {
                             if !self.first_pass {
+                                let elm_name = self.slice_element_name(&elm_tp);
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type"
+                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
                                 );
                             }
-                            self.lexer.token("("); // consume to make progress
+                            self.skip_rest_of_slice();
                             break;
                         }
-                    } else if !has_rest && self.peek_is_slice_literal() {
+                    } else if self.peek_is_slice_literal() {
                         // @PLN35 Phase 6.3 (P-Lit) — a LITERAL head element `[ 1, … ]` /
                         // `[ "kw", … ]`.  On a SCALAR element it matches by direct EQUALITY
                         // against `v[pos]`.  On a STRUCT-ENUM element (a token stream) it matches
                         // against the variant's `#lexeme` field — so `"fn"` reads like the
                         // grammar, standing in for `Keyword { name: "fn" }`.  A "_" placeholder
                         // keeps following bare-name indices AND the length gate aligned, and the
-                        // condition is AND'd into the arm like a variant tag test.  Head only.
-                        let position = head.len() as i32;
+                        // condition is AND'd into the arm like a variant tag test.  In the TAIL
+                        // it reads at a negative index, the same way a bare tail name does.
+                        let position = if has_rest {
+                            -(tail_total - tail.len() as i32)
+                        } else {
+                            head.len() as i32
+                        };
                         let mut lit = Value::Null;
                         let lit_tp = self.expression(&mut lit);
                         match self.build_literal_match(
@@ -8801,7 +9452,11 @@ impl Parser {
                             }
                             None => {}
                         }
-                        head.push("_".to_string());
+                        if has_rest {
+                            tail.push("_".to_string());
+                        } else {
+                            head.push("_".to_string());
+                        }
                     } else if let Some(id) = self.lexer.has_identifier() {
                         if has_rest {
                             tail.push(id);
@@ -8953,20 +9608,19 @@ impl Parser {
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
                     }
-                    // @PLN35 Phase 2 (P-Rest) — `..name`: bind `name` to the FRESH sub-slice
-                    // `v[head_len .. len - tail_len]`.  Reuse the proven compile-time slice
+                    // @FR-P-Rest — `..name` binds `name` to the FRESH sub-slice
+                    // `v[head_len .. len - tail_len]`, so fixed elements MAY follow the rest and
+                    // the middle shrinks by however many do.  Reuse the proven compile-time slice
                     // materialisation (`materialize_iterator`): a minimal slice `Value::Iter` over the
                     // index range, copied element-type-aware into a fresh vector (P-Cap-Fresh — the
-                    // result is INDEPENDENT of the subject, so it is safe to return or mutate). Named
-                    // rest is tail-only.  Bounds are in range by the `fixed <= len` arm condition.
+                    // result is INDEPENDENT of the subject, so it is safe to return or mutate).
+                    // Bounds are in range by the `fixed <= len` arm condition, which counts head AND
+                    // tail.  The tail elements are already bound above, at negative indices — the
+                    // same reads the un-named gap `[a, .., z]` has always used, which is why naming
+                    // the middle needs no machinery of its own.  A tail element is a BARE NAME:
+                    // a variant sub-pattern or literal after a `..` is not parsed in either
+                    // spelling (loft#1419), which is the one part of `t` still outstanding.
                     if let Some(name) = rest_name.clone() {
-                        if !tail.is_empty() && !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a named rest `..{name}` must be the last slice element"
-                            );
-                        }
                         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
                         let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
                         self.vars.defined(rest_var);
@@ -9336,7 +9990,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "guard must be boolean, got {}",
-                        gt.name(&self.data)
+                        gt.source_name(&self.data)
                     );
                 }
                 Some(g)
@@ -9600,7 +10254,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "'is' requires an enum type, got {}",
-                        subject_type.name(&self.data)
+                        subject_type.source_name(&self.data)
                     );
                 }
                 return Type::Boolean;
@@ -9710,12 +10364,29 @@ impl Parser {
                                     Type::Reference(variant_def_nr, Deps::none()),
                                 ),
                             );
-                            // The capture binds a borrowed view into the
-                            // subject's record — scope cleanup must not
-                            // emit OpFreeRef for it (see the same
-                            // note at parse_match_enum_field_bindings in
-                            // this file for the match-arm path).
-                            self.vars.set_skip_free(v_nr);
+                            // A HEAP capture binds a borrowed view into the subject's
+                            // record — scope cleanup must not emit OpFreeRef for it (see
+                            // the same note at parse_match_enum_field_bindings in this
+                            // file for the match-arm path).
+                            //
+                            // A TEXT payload is the exception, and it is the same
+                            // exception the match site already carries: `_mv_<f> =
+                            // OpGetText(subj, off)` is typed plain `text`, an OWNED copy
+                            // with its own allocation, so scope cleanup must free it.
+                            // `skip_free` there leaks that copy once per taken arm, which
+                            // is invisible to the store-leak gate (the buffer belongs to a
+                            // Rust `String`, not to a store record) and shows up only
+                            // under valgrind.  Freeing is safe in the NOT-taken arm for
+                            // the reason it is safe at the match site: the binding is
+                            // default-initialised to `""` at block entry, and
+                            // `OpFreeText("")` is a no-op that reads no garbage.
+                            // Registering the view is what gives a write spelled through
+                            // the binding its route back to the field, as `match` has.
+                            if matches!(field_type.base(), Type::Text(_)) {
+                                self.record_text_payload_view(v_nr, &field_read);
+                            } else {
+                                self.vars.set_skip_free(v_nr);
+                            }
                             // ...and the borrow must be in the TYPE, which is the other half
                             // of that note and was applied only to the `match` path.  #429
                             // gave a HEAP payload binding a frame dep on its subject because
@@ -9807,6 +10478,20 @@ impl Parser {
         if let Type::RefVar(inner) = in_type {
             return self.for_type(inner);
         }
+        // …and peel `τ?` for the same reason (@PLN25's dn1 audit named this site and
+        // prescribed exactly this: *"`for x in nullable` misses Text/Integer arms"*).
+        //
+        // The ELEMENT type of a nullable collection is its element type; the `?` is a fact
+        // about the collection, not about what it holds.  Left unpeeled, every arm below
+        // missed and the fall-through reported *"Unknown in expression type vector<T>?"* —
+        // a second error for one mistake, and the unhelpful one of the two, since
+        // `Parser::iterator` already refuses the loop by naming the `?` and the discharge
+        // that clears it.  Peeling does not make the loop legal: there is no `τ? ⤳ τ`
+        // ([types.md](../../doc/claude/formal/types.md) N-Coal / N-Default), so the refusal
+        // still stands — it just stands alone.
+        if let Type::Optional(inner) = in_type {
+            return self.for_type(inner);
+        }
         if let Type::Vector(t_nr, dep) = &in_type {
             let mut t = *t_nr.clone();
             if let Type::Enum(nr, true, _) = t
@@ -9892,7 +10577,7 @@ impl Parser {
                 self.lexer,
                 Level::Error,
                 "Unknown in expression type {}",
-                in_type.name(&self.data)
+                in_type.source_name(&self.data)
             );
             Type::Null
         } else {
@@ -10202,6 +10887,13 @@ impl Parser {
                 }
                 dep.push(a as u16);
             }
+            // ATTR space, stated rather than inherited.  Every entry collected above is
+            // an ATTRIBUTE index — each is an `add_attribute` result — and
+            // `Definition.returned` is the DEF-space home, which `call_dependencies`
+            // reads with `as_attr_indices`.  `dep` starts as the CURRENT return type's
+            // list, so without this it carries whatever space that had and the same
+            // number reads as a caller FRAME variable (@FR-F-Ret).
+            let dep = Deps::attrs(dep.to_vec());
             let new_ret = if ret_is_optional {
                 Type::optional(Type::Text(dep))
             } else {
@@ -14384,7 +15076,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Unexpected return type in ref_return: {}",
-                        ret.name(&self.data)
+                        ret.source_name(&self.data)
                     );
                     return;
                 }
@@ -15043,13 +15735,18 @@ impl Parser {
     ) -> Type {
         let call_pos = self.lexer.pos().clone();
         let mut list = Vec::new();
-        let mut types = Vec::new();
+        let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
         if self.lexer.has_token(")") {
             // Check for zero-argument fn-ref call
             if self.vars.name_exists(name) {
                 let v_nr = self.vars.var(name);
-                if let Type::Function(param_types, ret_type, _) = self.vars.tp(v_nr).clone()
+                // Through the LINK as well as bare (`@FR-B-Ref-Uniform`).  A `&fn(…)` local
+                // names a fn-ref slot and is callable; read bare this matched nothing and the
+                // call fell through to `Unknown function` (loft#1455).
+                let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
+                let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
+                if let Type::Function(param_types, ret_type, _) = slot_tp.clone()
                     && param_types.is_empty()
                 {
                     // @PLN85 L1 — callee-attr-space deps must not leak into the
@@ -15080,7 +15777,11 @@ impl Parser {
                         for &cv in &std::mem::take(&mut self.last_closure_captured_vars) {
                             self.var_usages(cv, true);
                         }
-                        *val = Value::CallRef(v_nr, args);
+                        *val = if through_link {
+                            self.call_through_fn_link(v_nr, &slot_tp, args, ret_type.as_ref())
+                        } else {
+                            Value::CallRef(v_nr, args)
+                        };
                     }
                     return *ret_type;
                 }
@@ -15225,9 +15926,18 @@ impl Parser {
             }
             // for map/filter/reduce, infer lambda hint from the vector
             // element type so that short-form |x| lambdas can infer types.
+            // Hint from the receiver's BASE, so a `vector<T>?` seeds the lambda exactly as its
+            // dense twin does.  The call is still REFUSED below — `map` does not unwrap a
+            // nullable receiver any more than `for` iterates one — but the refusal is the only
+            // thing the author should hear.  Read through the `?`, `map(v, |e| e.x)` on a
+            // `vector<It>?` had nothing to seed `e` with and reported three errors about the
+            // LAMBDA before the one about the receiver: *"Cannot infer type for lambda
+            // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
+            // then *"map: first argument must be a vector"*.  The author was sent to annotate a
+            // parameter the dense spelling infers fine (loft#1453).
             if fn_def_nr.is_none()
                 && !types.is_empty()
-                && let Type::Vector(elm, _) = &types[0]
+                && let Type::Vector(elm, _) = types[0].base()
             {
                 let elem = *elm.clone();
                 let hint = match (name, arg_idx) {
@@ -15516,7 +16226,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "field_value needs a record — {} has no fields to read",
-                        types[0].name(&self.data)
+                        types[0].source_name(&self.data)
                     );
                     return answer;
                 }
@@ -15532,7 +16242,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "field_value takes a position or a path of positions — {} is neither",
-                        types[1].name(&self.data)
+                        types[1].source_name(&self.data)
                     );
                     return answer;
                 }
@@ -15724,7 +16434,10 @@ impl Parser {
             }
         }
         let v_nr = self.vars.var(name);
-        let Type::Function(param_types, ret_type, _) = self.vars.tp(v_nr).clone() else {
+        // Through the LINK as well as bare — see the zero-argument twin (loft#1455).
+        let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
+        let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
+        let Type::Function(param_types, ret_type, _) = slot_tp.clone() else {
             return None;
         };
         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
@@ -15824,7 +16537,11 @@ impl Parser {
             // at runtime.  `get_field` produces the (d_nr,
             // closure_DbRef) tuple via the new fn_ref_field_read
             // gate added in P215 (parser/mod.rs::get_field).
-            let call_ir = Value::CallRef(v_nr, converted);
+            let call_ir = if through_link {
+                self.call_through_fn_link(v_nr, &slot_tp, converted, ret_type.as_ref())
+            } else {
+                Value::CallRef(v_nr, converted)
+            };
             // P215: detect "this name was captured from outer scope" by
             // checking `captured_names` (populated either in this turn
             // through Step 1 above, or in a prior pass).  `name_exists`

@@ -1,0 +1,208 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Ref-Uniform — "a `&τ` variable is used EXACTLY like a τ variable ... every operation
+// goes through the link via the EXISTING mutation code ... no operation is special-cased".
+// @FR-C-Ref — `&τ ⤳ σ ⟸ τ ⤳ σ`, a reference reads through to its referent.
+//
+// Together those two say a `&vector<T>` parameter admits everything a `vector<T>` parameter
+// does.  It did not, and the two reasons were independent:
+//
+//   the SPECIAL-CASES  `insert` / `reverse` / `sort` / `reserve` are compiler special-cases
+//                      (they need the element WIDTH, which only the parser knows), and each
+//                      matched `Type::Vector` against the argument type UNPEELED.  A
+//                      `&vector<T>` is `RefVar(Vector(..))`, so all four answered "not a
+//                      vector" and refused — while `.remove`, `v[i] = x`, `+=`, `len`,
+//                      `.clear`, `for..in` and `v[a..b]` went through the ordinary call path
+//                      and worked.  The refusal named the receiver's own type as the problem.
+//   the GENERICS       `Parser::resolve_type_var` binds a type variable to the argument's
+//                      DATA SHAPE.  It strips the `Rewritten` construction marker for that
+//                      exact reason, and did not strip the `&` link — so `vector<T>` never
+//                      unified with a `&vector<integer>` argument and every generic over a
+//                      collection was unreachable through a reference: `sum`, `min_of`,
+//                      `max_of`, and any generic a USER writes.
+//
+// One home answers both: `Type::peel_link`, the shape question with the route peeled off.
+//
+// ⚠ The CONTROLS carry the argument.  The same call through a PLAIN `vector<T>` parameter was
+// always fine, and the non-special-cased operations were always fine through the `&` — so the
+// fault was never "references are broken", it was "these particular sites re-derived the shape
+// and forgot the link".  Delete either control and the guard can no longer say which.
+//
+// ⚠ The narrow-width cells are here because `insert` and `reverse` are exactly the operations
+// @FR-H-Stride governs (loft#1412, loft#1420): letting them through the link is only right if
+// they still slide by the DECLARED width.  A `vector<u8>` that reverses to `0,0,0,0,0` would
+// pass a bare "it compiles" check.
+//
+// ⚠ WHAT THIS FILE DELIBERATELY DOES NOT COVER — the KEYED kinds.  `matrix_axes.py` reports
+// `hash`, `sorted`, `index` as unreached container kinds, and that absence is a decision, not an
+// oversight: `c += […]` through a `&` to a keyed collection is still REFUSED (D-bind-28,
+// loft#1433), and the refusal is the safer state.  Peeling the link in `is_keyed` /
+// `is_collection` / `append_source` routes the append and emits correct-looking IR, and then
+// `hash` and `index` answer LOST and CORRUPT records while `sorted` and `vector` come out right
+// — so lifting that refusal without fixing the keyed emission path converts a compile error
+// into a silent wrong answer.  When #1433 closes, the cells belong here.
+//
+// The `&Box` in `amp_field` draws `slow-reference-parameter`, and that advice is CORRECT — a
+// field mutation reaches the caller without the `&`.  It is pinned rather than avoided because
+// the `&` is the whole point of that cell: the composition under test is a special-case reached
+// through a LINKED parameter's field, and dropping the `&` to quiet the advice would delete the
+// case.  An `@EXPECT_WARNING` that never fires is fatal, so this pin also guards the advice.
+// @EXPECT_WARNING: Advice[slow-reference-parameter]
+//
+// @falsified-at: 70a60c3ba — interpret exit 1 -> 0, native exit 1 -> 0.  The channel that moves
+// is EXIT, not asserts: every cell below is a COMPILE error on that build (24 of them), so the
+// pre-fix run cannot reach an assertion at all.  That is the honest reading — a guard against a
+// REFUSAL falsifies on exit, and an assert-count of 0 on both sides is the expected shape here
+// rather than a sign the guard is inert.
+
+fn amp_insert(v: &vector<integer>)  { insert(v, 1, 99); }
+fn amp_reverse(v: &vector<integer>) { reverse(v); }
+fn amp_sort(v: &vector<integer>)    { sort(v); }
+fn amp_reserve(v: &vector<integer>) { reserve(v, 64); v += [7]; }
+
+fn plain_insert(v: vector<integer>)  { insert(v, 1, 99); }
+fn plain_reverse(v: vector<integer>) { reverse(v); }
+
+fn narrow_insert(v: &vector<u8>)  { insert(v, 1, 99); }
+fn narrow_reverse(v: &vector<u8>) { reverse(v); }
+
+struct Row { id: integer, tag: text }
+struct Box { items: vector<integer> }
+
+fn amp_text_insert(v: &vector<text>)   { insert(v, 1, "NEW"); }
+fn amp_text_sort(v: &vector<text>)     { sort(v); }
+fn amp_struct_reverse(v: &vector<Row>) { reverse(v); }
+fn amp_field(b: &Box)                  { insert(b.items, 1, 99); }
+
+fn joined_text(v: vector<text>) -> text {
+  s = "";
+  for e in v { s = s + e; s = s + ","; }
+  return s;
+}
+fn joined_rows(v: vector<Row>) -> text {
+  s = "";
+  for e in v { s = s + e.id; s = s + ":"; s = s + e.tag; s = s + ","; }
+  return s;
+}
+
+fn user_first < T: Ordered > (v: vector<T>) -> T? { return v[0]; }
+fn amp_generics(v: &vector<integer>) -> integer {
+  v[0] = 10;
+  return sum(v) + (min_of(v) ?? 0) + (max_of(v) ?? 0) + (user_first(v) ?? 0);
+}
+
+fn joined(v: vector<integer>) -> text {
+  s = "";
+  for e in v { s = s + e; s = s + ","; }
+  return s;
+}
+fn joined_narrow(v: vector<u8>) -> text {
+  s = "";
+  for e in v { s = s + e; s = s + ","; }
+  return s;
+}
+
+// The four compiler special-cases reach the caller's vector through the link, and land the
+// same values the plain-parameter spelling lands.
+fn the_special_cases_go_through_the_link() {
+  a = [11, 22, 33];
+  amp_insert(a);
+  assert(joined(a) == "11,99,22,33,", "&insert: {joined(a)}");
+
+  b = [11, 22, 33];
+  amp_reverse(b);
+  assert(joined(b) == "33,22,11,", "&reverse: {joined(b)}");
+
+  c = [33, 11, 22];
+  amp_sort(c);
+  assert(joined(c) == "11,22,33,", "&sort: {joined(c)}");
+
+  // reserve is capacity only — neither length nor contents move — so the append after it is
+  // what shows the collection is still the caller's.
+  d = [11, 22, 33];
+  amp_reserve(d);
+  assert(joined(d) == "11,22,33,7,", "&reserve: {joined(d)}");
+}
+
+// CONTROL — the plain-parameter spelling was never broken, and still answers the same.
+fn a_plain_parameter_answers_the_same() {
+  a = [11, 22, 33];
+  plain_insert(a);
+  assert(joined(a) == "11,99,22,33,", "plain insert: {joined(a)}");
+
+  b = [11, 22, 33];
+  plain_reverse(b);
+  assert(joined(b) == "33,22,11,", "plain reverse: {joined(b)}");
+}
+
+// CONTROL — the operations that never went through a special-case were always reachable
+// through the link, which is what localises the fault to the four sites above.
+fn the_ordinary_operations_were_always_reachable() {
+  a = [11, 22, 33];
+  amp_ordinary(a);
+  assert(joined(a) == "99,33,7,", "ordinary ops through &: {joined(a)}");
+}
+fn amp_ordinary(v: &vector<integer>) {
+  v[0] = 99;      // element write
+  v.remove(1);    // dense removal
+  v += [7];       // append
+  assert(len(v) == 3, "len through &: {len(v)}");
+}
+
+// A link does not widen the element: `insert` and `reverse` still slide by the DECLARED width.
+fn the_link_does_not_widen_a_narrow_element() {
+  a: vector<u8> = [11, 22, 33, 44, 55];
+  narrow_insert(a);
+  assert(joined_narrow(a) == "11,99,22,33,44,55,", "&insert u8: {joined_narrow(a)}");
+
+  b: vector<u8> = [11, 22, 33, 44, 55];
+  narrow_reverse(b);
+  assert(joined_narrow(b) == "55,44,33,22,11,", "&reverse u8: {joined_narrow(b)}");
+}
+
+// A generic over `vector<T>` binds T through the link — stdlib and user-written alike.
+fn a_generic_binds_through_the_link() {
+  v = [1, 2, 3];
+  // after v[0] = 10: sum 15, min 2, max 10, first 10  =>  37
+  assert(amp_generics(v) == 37, "generics through &: {amp_generics(v)}");
+  // and the write reached the caller
+  assert(joined(v) == "10,2,3,", "generic fn wrote through: {joined(v)}");
+}
+
+// The element type is not the axis the fault lived on, and this says so: `text` (whose
+// elements carry their own storage), a STRUCT element, and `float` all go through the link
+// once the shape question is asked correctly.  Kept because these are the compositions the
+// fix newly ADMITS — a peel that reached only `vector<integer>` would pass everything above.
+fn the_link_carries_every_element_type() {
+  a: vector<text> = ["aa", "bb", "cc"];
+  amp_text_insert(a);
+  assert(joined_text(a) == "aa,NEW,bb,cc,", "&insert text: {joined_text(a)}");
+
+  b: vector<text> = ["cc", "aa", "bb"];
+  amp_text_sort(b);
+  assert(joined_text(b) == "aa,bb,cc,", "&sort text: {joined_text(b)}");
+
+  c: vector<Row> = [Row{id: 1, tag: "x"}, Row{id: 2, tag: "y"}];
+  amp_struct_reverse(c);
+  assert(joined_rows(c) == "2:y,1:x,", "&reverse struct: {joined_rows(c)}");
+}
+
+// The argument does not have to BE the parameter: a vector FIELD reached through the `&`
+// resolves the same way, which is the composition a library method is actually written as.
+fn a_field_reached_through_the_link_works_too() {
+  g = Box{ items: [1, 2, 3] };
+  amp_field(g);
+  assert(joined(g.items) == "1,99,2,3,", "&param -> field -> insert: {joined(g.items)}");
+}
+
+fn main() {
+  the_special_cases_go_through_the_link();
+  a_plain_parameter_answers_the_same();
+  the_ordinary_operations_were_always_reachable();
+  the_link_does_not_widen_a_narrow_element();
+  the_link_carries_every_element_type();
+  a_field_reached_through_the_link_works_too();
+  a_generic_binds_through_the_link();
+  print("a-reference-parameter-reaches-the-whole-surface: PASS");
+}

@@ -64,6 +64,17 @@ arm, so `Circle { r } => r * r` uses the matched value's `r` (verified: `25` for
 wildcard `_` matches everything and is the default — it must come last, because any arm written
 after it could never run (loft rejects that at compile time).
 
+**A NULLABLE subject or element names the same variants.** `E?` is `E`'s layout with the
+reserved discriminant 0 for absence (`layout.md` `(L-Null)` / `(L-Enum)`), so `V` and `V { f }`
+are asked of a `vector<E?>` element exactly as of a dense one, and an ABSENT value matches no
+variant arm — a variant is 1 or above. That is `(M-Unit)` / `(M-Variant)` read literally, and
+it needs no null test of its own. What the compiler did instead was ask `Type::Enum` of the
+WRAPPER: `[Id { x }]` over a `vector<Tok?>` was a parse error naming nothing, and the unit
+spelling `[Id]` degraded into a bare-name BINDING that matched every element, absent ones
+included (loft#1410 — `Parser::pattern_variant_enum` is the one home that answers this
+question now).  A subject that is absent falls to the `_` arm, and where there is none the
+match answers null, which `(N-Store)` then reports at the slot it reaches.
+
 ### Exhaustiveness is checked at compile time
 
 ```
@@ -128,8 +139,10 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
   (P-Seq)    ⟨[p₁ … pₙ], κ⟩: run p₁ from κ→κ₁, …, pₙ from κ_{n-1}→κₙ; ANY pᵢ ⇓ Fail ⟹ the whole
              sequence ⇓ Fail (κ unchanged).  binds = ⋃ᵢ binds_i.
   (P-Whole)  an ARM's sequence pattern must consume the WHOLE input (κ' = ⟨len(src),src⟩); a proper
-             PREFIX ⇓ Fail for arm-selection UNLESS the sequence ends in `..rest`, which absorbs the
-             remainder.  (This is why `[a,b,c]` needs exact length today.)
+             PREFIX ⇓ Fail for arm-selection UNLESS the sequence CONTAINS a rest, which absorbs
+             whatever the fixed elements around it do not take (`P-Rest`'s `t` counts the ones
+             AFTER it, so the rest need not be last).  (This is why `[a,b,c]` needs exact length
+             today.)
   (P-Alt)    ⟨(a | b), κ⟩: try a from κ; if Match, that; else try b from the SAME κ.  Ordered choice
              — FIRST success wins; both Fail ⟹ Fail.
   (P-Opt)    ⟨(a)?, κ⟩: try a; on Match(bs,κ') that; on Fail ⟹ Match(bs↦null, κ) — succeeds with a's
@@ -150,6 +163,16 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
   (P-Atomic) ⟨pat,κ,σ⟩ ⇓ Fail ⟹ σ UNCHANGED, κ not advanced (INV-Pure).  Provisional captures from a
              failed attempt are NEVER observable — the arm body runs ONLY after a committed whole-match.
 ```
+
+**The parentheses above are METANOTATION, and the concrete syntax has two spellings.**  `⟨(a)*⟩`
+says *"a repetition of the pattern a"*; it does not say the source contains a `(`.  A VARIANT
+element is written with the parens — `[ (x: Num)*, ..rest ]`, `[ (Kw { k })? ]` — and a SCALAR
+element is written without them, as a bare capture with the suffix on the type:
+`[ xs:integer* ]`.  There is no parenthesised scalar form and no bare variant form; each kind
+takes exactly one of the two, and the wrong one is a parse error that reports `Expect token ,`
+rather than naming the spelling.  Reading `(a)*` as literal syntax is what a first reader does —
+it cost four wrong probes in the walk that added this note (QUALITY.md B8i) — so the two forms
+are written out here beside the rule they instantiate.
 
 **In words.** A pattern either matches — moving the cursor forward and binding names — or fails,
 leaving everything exactly as it was. A sequence runs its parts in order and fails as a whole if any
@@ -172,10 +195,11 @@ backtracking safe.
                      totality, whatever its pattern.
              ENFORCEMENT splits on whether coverage is DECIDABLE:
                • ENUM subject — the variant set is finite + known, so coverage IS checked.  A variant
-                 counts as covered only by a TOTAL arm (bare `Variant` / `_` / bare binding), NEVER by
-                 a guarded or otherwise non-total arm.  A variant left uncovered with no `_` is a
-                 STATIC ERROR ("match on T is not exhaustive — missing: X; add the missing variants or
-                 a `_ =>` wildcard").
+                 counts as covered only by a TOTAL arm (bare `Variant` / `_`), NEVER by a guarded or
+                 otherwise non-total arm.  A variant left uncovered with no `_` is a STATIC ERROR
+                 ("match on T is not exhaustive — missing: X; add the missing variants or a `_ =>`
+                 wildcard"), and an arm naming something that is NOT a variant of the subject's enum
+                 is a static error at the arm (M-Unit) rather than an arm that never fires.
                • SCALAR subject (integer / character — an unbounded domain) — coverage is NOT decidable
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
                  the C80 spreadsheet model ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)) it then
@@ -186,7 +210,18 @@ backtracking safe.
 
 **In words.** For an ENUM subject this keeps loft's promise that a `match` never falls through to
 nothing: the compiler requires the arms to cover every variant (a variant counts only when a TOTAL
-arm names it — a guard does not), or a final `_`; otherwise the program does not compile. For a
+arm names it — a guard does not), or a final `_`; otherwise the program does not compile.
+
+> ⚠ **A bare binding is an ELEMENT pattern, never an enum ARM.** `total(bare name) = true` above is
+> about a POINT pattern inside a sequence — `[a, b] => a + b` binds two elements — and the ARM
+> position has no such form: the grammar is `pattern ::= '_' | 'null' | literal | range |
+> CamelIdent [ '{' field_bind '}' ]` (LOFT.md § Grammar), so `match c { A => 1, other => 2 }` does
+> not bind `c` to `other`; `other` is read as a variant name and there is no variant of that name.
+> The enum-subject bullet said "bare binding" for two months and the code never had it — corrected
+> 2026-09-07, together with the silence that hid it: an arm whose name resolved NOWHERE was
+> skipped without a diagnostic, so a misspelled or renamed variant fell to `_` and the program
+> answered the wildcard's value on both backends
+> (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
 no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
@@ -222,7 +257,7 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code deviation).
+OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's D-op-1).
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the
@@ -233,10 +268,55 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   `tests/boolean_match_exhaustive.rs` (the warning stream, which no corpus channel scores);
   falsified at `dd46146c` — five warnings → none on both backends.
 
-- **PEG patterns are SHIPPED (@PLN35)** — the *Rules — PEG patterns* § opens **no** deviation: the
-  shipped implementation (phases 1–7 + PC1–PC5, [plans/35-match-peg](../plans/35-match-peg/))
-  conforms to the stated rules, verified both backends. Each rule is pinned by the @PLN89 oracle in
-  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).
+- **D-match-2 — OPENED AND CLOSED 2026-09-07.**  `(M-Unit)` says an arm's pattern names a variant
+  of the subject's enum.  An arm naming something else was refused only when the name resolved to
+  SOME other definition; a name that resolved NOWHERE — a typo, or a variant renamed since the arm
+  was written — was skipped in silence, its body still parsed and type-checked, and the subject
+  fell to whatever arm came next.  With a `_` present that is a wrong ANSWER with no diagnostic on
+  either backend: `match c { Red => "red", Grean => "GREEN", _ => "other" }` answered `"other"` for
+  `Colour::Green`.  The gate was on the PATTERN name resolving; it is now on the SUBJECT enum being
+  resolved (`valid_enum && e_nr != u32::MAX`), which is the condition the skip actually exists for
+  — a cross-package forward reference read on pass 2 (#375).  Guard
+  `tests/scripts/a-match-arm-names-a-variant-that-exists.loft`, three arms, falsified at
+  `a192aecbd` (all three compiled and ran there, zero diagnostics).  The same walk corrected
+  `(M-Total)`'s enum bullet, which offered "bare binding" as a covering arm form — an element
+  pattern the ARM grammar does not have, and the reading that makes the silent skip look
+  deliberate.
+
+- **D-match-3 — OPENED AND CLOSED 2026-09-07.**  `(P-Rest)` binds `..name` to `src[i .. len−t]`
+  with `t` counting the fixed elements AFTER the rest, and the parser refused every `t > 0`
+  spelling: `[a, ..mid, z]` reported *"a named rest `..mid` must be the last slice element"*.  The
+  refusal — not the rule — was the defect, because the UN-NAMED gap `[a, .., z]` was already legal
+  and already bound `z` from the end: the language could match the shape and not name what was in
+  it.  Nor was anything missing underneath.  The arm gate is `head + tail <= len`, the tail is read
+  at negative indices, and `hi = len − tail_len` was computed inside the refused branch itself, so
+  the diagnostic stood in front of a correct lowering; `materialize_named_rest` already takes
+  runtime bounds (the repetition path passes them, native-verified by `35o-tail-elements`).  Closed
+  by deleting the diagnostic.  Guard
+  `tests/scripts/a-named-rest-leaves-room-for-the-elements-after-it.loft` — head 0/1/2 × tail 1/2,
+  the empty middle (`lo == hi`) and the under-length subject that must NOT match, scalar / text /
+  struct / struct-enum elements, `(H-Alloc)` independence, the reuse cell, and a guarded arm — each
+  asserted beside the un-named spelling on the same subject, so a future drift between the two
+  paths fails here.  Falsified at `4e5725a2c` (both backends refuse, exit 0 → 1).
+
+- **D-match-4 — OPEN (loft#1419).**  `(P-Rest)`'s `t` counts *fixed patterns*, and `(P-Point)`
+  makes a unit variant, a struct variant, a literal, `_` and a bare binding all point patterns.
+  Only `_` and a bare binding are accepted after a `..`: the element loop takes `has_identifier()`
+  there, so `[Kw { word }, .., End { e }]` binds the name `End` and then chokes on `{`, reporting
+  four cascading *"Expect token ,"* messages that name nothing.  Pre-existing and independent of
+  the rest's spelling — it reproduces on the un-named gap and on a literal alike.  Closing it means
+  reading a tail sub-pattern at a NEGATIVE index, so the tail length must be known before the
+  sub-pattern is parsed; the repetition path already does exactly that
+  (`35o-tail-elements.loft`), which is the precedent to follow.  Workaround (verified, both
+  backends): bind a bare name and destructure it in a nested `match`.
+
+- **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
+  [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
+  with the ONE exception D-match-4 records below. Each rule is pinned by the @PLN89 oracle in
+  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).  This bullet read *"opens no
+  deviation"* for as long as `(P-Rest)`'s `t` was refused outright, which is the shape of claim
+  the rule-led walk exists to re-measure: a conformance line is only as strong as the oracle
+  under it, and no oracle case had ever spelled a rest with anything after it.
 - **Conformance is differential** — `match` dispatch is enforced across the two backends by the
   @PLN89 oracle (D-op-1): `20-nested-enum-match` and `07-enum-match-dispatch` carry struct-payload
   variants, recursive walks, and matches whose arms return different variants, precisely because
@@ -252,10 +332,24 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   Circle { r } => r*r }` is `25`.
 - **Wildcard default (`M-Wild`)** — `match C::D { A => 1, _ => 0 }` is `0`; an arm after `_` is a
   compile error.
+- **An arm names a real variant (`M-Unit`)** — `match c { Red => …, Grean => …, _ => … }` over
+  `enum Colour { Red, Green, Blue }` does NOT compile ("'Grean' is not a variant of Colour"),
+  whether or not a definition of that name exists elsewhere, and whether or not a `_` would have
+  absorbed the subject.
+- **A guard covers nothing (`M-Total`)** — `match c { A if x => 1, B => 2 }` over `enum C { A, B }`
+  does not compile ("missing: A"), and `match c { _ if x => 1 }` does not compile ("missing: A, B");
+  a false guard moves selection to the next arm with no binding left behind (`P-Guard`,
+  `P-Atomic`).
+- **Scalar fall-through is null (`M-Total`)** — `match n { 1 => 10, 2 => 20 }` with `n = 9` is
+  `null`, and the match's type is nullable; no error, no fault.
 - **Exhaustiveness (`M-Exhaust`)** — `match c { A => 1 }` over `enum C { A, B }` does NOT compile
   ("missing: B"); adding a `B => …` arm or a trailing `_` makes it compile.
 - **As an expression (`M-Expr`)** — `r = match c { A => 100, B => 200 }` binds `r` to the arm's
   value (`100`).
+- **A rest need not be last (`P-Rest`)** — `match v { [a, ..mid, z] => … }` over `[1,2,3,4,5]`
+  binds `a=1`, `mid=[2,3,4]`, `z=5`; over `[1,2]` it MATCHES with `mid` empty; over `[1]` it does
+  not match at all (`head + tail` is 2).  `mid` is a fresh vector, so mutating it leaves `v`
+  untouched.  A tail element is a bare name or `_` (D-match-4).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on which
 arm a `match` selects, on a bound payload value, or on whether a match is exhaustive is the

@@ -355,7 +355,81 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0** — D-bind-20 CLOSED 2026-09-06 (loft#1393): a view whose container is itself a
+**OPEN: 1.**
+
+* **D-bind-29** *(open, loft#1463)* — the FUNCTION half of `(B-Ref-Uniform)`, on `--native`
+  only.  A write through a `&fn(…) -> τ` link does not land when the caller's slot already
+  holds a CAPTURING closure: the interpreter writes it, native leaves the old value in place
+  and says nothing.  A capturing closure occupies the 20-byte stack form (8 B `d_nr` + a 12 B
+  closure `DbRef`) where an empty-environment one carries only the `d_nr`, and the native
+  write-back is right for the second and not the first.  loft#1443's guard pins the caller's
+  slot to a non-capturing initial value in every one of its cells, which is why the axis was
+  never moved; measured on both sides of that issue's own lifetime fix, so it is independent
+  of it.  `silent-wrong`: the caller keeps calling its own closure and gets a plausible answer.
+
+**D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
+The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
+special-cased.  THREE independent mechanisms broke that for collections and all three are now
+closed; the keyed PARAMETER took two attempts, and what closed it was splitting the overloaded
+predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather than widening it.
+
+* **CLOSED 2026-09-07 — the VECTOR surface.**  Four compiler special-cases (`insert`,
+  `reverse`, `sort`, `reserve`) matched `Type::Vector` against the argument type with the `&`
+  still on it, and `Parser::resolve_type_var` bound a type variable to the argument's shape
+  without stripping the link — so every generic over `vector<T>` (`sum`, `min_of`, `max_of`,
+  and any a USER writes) was unreachable through a reference.  Both now ask `Type::peel_link`,
+  the one home for *what a value IS* as opposed to *how it is reached*.  `(C-Ref)` settled it:
+  a reference reads through to its referent, so the refusals were deviations rather than design
+  calls.  The ordinary operations (`.remove`, `v[i] = x`, `+=`, `len`, `.clear`, `for..in`,
+  `v[a..b]`) went through the normal call path and were correct throughout, which is what
+  localised the fault to the sites that re-derived the shape.
+* **CLOSED 2026-09-07 (loft#1433) — the keyed BIND.**  `a = &h` on any of the five keyed kinds
+  was a COPY rather than a link: the `&`-bind's source set was `matches!(source,
+  Type::Vector(_, _))`, a set of ONE, so a keyed source took the deep-copy path and got its own
+  store with `OpReplaceKeyed` filling it from the source.  The two collections were then
+  independent — measured, after one write through each name `h` held `{1,3}` and `a` held
+  `{1,2}`, *both reporting length 2*.  The set now comes from `vectors::is_collection`, which
+  `(Col-Store)` already defines as the `is_keyed` set plus `Vector`.
+  ⚠ **This was NOT the broken emission path below**, though loft#1433 was filed as if it were
+  ("the alias silently drops every append", which is how an EMPTY source presents).  The append
+  was never dropped: it landed in the alias's own store.  The bind and the append are two
+  faults, and both are now closed.
+* **OPEN — the keyed PARAMETER (loft#1445).**  ⚠ A first fix was landed and REVERTED the same
+  day: it peeled the link in the SHARED `is_keyed` / `is_collection`, which are asked at 78
+  sites and answer both *which collection kind* and *does this variable own a store*; a
+  `&hash` parameter's `Set(v, Null)` then reached `gen_keyed_null` (which allocates a keyed
+  LOCAL's store, resolving with the unpeeled `base()`) and ICEd, taking loft#1291's guard from
+  8/8 green to 8/8 `unreachable!`.  The diagnosis below is unaffected and is what the narrow
+  rework implements — peel at the `+=` ROUTE, not in the shared predicates.  `c += […]` on a `&hash` /
+  `&sorted` / `&index` / `&trie` / `&spatial` PARAMETER was refused, naming a `vector<τ>` the
+  program never wrote.  Closed by peeling the link at all THREE predicate sites — `is_keyed`,
+  `is_collection` and `keyed_known_type` — plus the `+=` route's DESTINATION.
+  ⚠ **The fourth is not optional and its omission fails in the CONTROL:** peeling the
+  predicates alone hands `append_source` a `RefVar` that matches no arm, and the
+  `&vector<Row>` twin that always worked starts refusing.  Separately, two of the five kinds
+  (`trie`, `spatial`) were an ICE through `&` at all — a deref allow-list listing kinds instead
+  of deriving them from `vectors::is_collection`.
+  ⚠ **This entry previously said the refusal was the SAFER state and that "the fix belongs in
+  the keyed emission path, not in the predicates".  That conclusion was exactly backwards, and
+  the correction is worth more than the entry.**  The MEASUREMENTS behind it were real — the
+  surface peel alone gives `len` 0 with no diagnostic, and on another build `len=1` with empty
+  payload fields.  The ATTRIBUTION was invented: the emission path resolves a keyed store
+  through a `&` parameter and always did, which a keyed INSERT one operator over
+  (`c[7] = Row{…}`) demonstrates on both backends with the pre-existing key still readable.
+  The real cause was a THIRD instance of the SAME predicate miss — `keyed_known_type` also
+  opening with `base()` — so the fallback handed `OpNewRecord` the `vector<τ>` id and
+  `record_finish` dispatched through `Parts::Vector`.  It presents as a wrong type NUMBER
+  (`parent_tp` reading the `&vector` twin's id), not as a reachability failure, which is why a
+  mechanism sentence could not tell the two apart and a `parent_tp` comparison could.  The peel
+  was never the wrong move — it was half a move, and calling the remaining half "the emission
+  path" sent the next reader to rebuild something that was not broken.
+
+The closed ones: D-bind-25/26/27 CLOSED 2026-09-07: `(B-Disturb)` ends a place
+for a `sorted` removal (`(Col-RemoveDense)` — the INLINE keyed kind), for a removal reached
+through a FIELD, and for every place a branch's arms can name rather than only an agreed one;
+D-bind-24 CLOSED 2026-09-06 (loft#1401): a projection
+discharged with `??` is the view its plain spelling is, so it materialises where that one does;
+D-bind-20 CLOSED 2026-09-06 (loft#1393): a view whose container is itself a
 view is a place inside the OUTER container, so a disturbance of that one ends it; D-bind-19
 CLOSED 2026-09-06 (the `@FR-O-Owner` walk): a struct-ENUM PAYLOAD view is a view like any
 other, and `(B-View)` materialises it; D-bind-18 CLOSED 2026-09-06 (loft#1392): a VECTOR link
@@ -369,7 +443,7 @@ behind a link, at the nine sites that each asked the link's inner type bare.  Th
 `fn f(p: &integer?)`) is refused where its type is built, until the read and write lowerings
 carry the wrapper on both backends; before the refusal the local bind was a silent copy.*
 
-Every deviation this doc has carried is closed; the record is in
+The record of the closed ones is in
 [binding-history.md](binding-history.md).
 
 > **A zero here is a claim to re-measure, and this is what the oracle covers.** The `&`

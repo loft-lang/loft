@@ -1,0 +1,16 @@
+// The `?` wrapper half of the keyed-collection spelling, kept apart from its sibling case
+// because this refusal CASCADES — the `for` bails without consuming its body, so any later
+// error in the same file never reports.
+//
+// Both spellings in the message are the source one: the subject `hash<Row58[id]>?` and the
+// cure `hash<Row58[id]>`. loft#1434 is the pass that fixed exactly this arm, after loft#956
+// had converted the site and left every wrapper rendering its payload through the schema key.
+
+struct Row58 { id: integer, v: integer }
+
+fn main() {
+  absent: hash<Row58[id]>? = null;
+  for row in absent {
+    println("{row.v}");
+  }
+}

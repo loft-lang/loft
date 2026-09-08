@@ -188,6 +188,17 @@ pub struct Variable {
     /// indirection parameters use, slowing every access to carry a compile-time fact.
     /// See loft#779 / `formal/binding.md` D-bind-8.
     amp_link: bool,
+    /// Is this the temp a `for` loop holds its iteration SOURCE in?
+    ///
+    /// A vector-valued `for … in <expr>` binds the source to a temp and iterates THAT
+    /// (`Parser::parse_for` and the comprehension's twin), so the iteration depends on the
+    /// temp's identity: give it a store of its own and the loop walks a copy while the body's
+    /// `#remove` empties the original, which does not terminate.
+    ///
+    /// So the view-materialise walk skips it.  A NAME test would not do — the parser renames
+    /// author bindings too, and a `match` payload (`_mv_inner_N`) is a view the author wrote
+    /// and must still materialise — which is why this is a marker set where the temp is made.
+    iteration_source: bool,
     /// Whether this variable's stack storage has been initialised by codegen.
     /// Set to `true` when the first-allocation init opcodes are emitted (A6.3).
     /// Arguments are pre-allocated by the caller, so they start as `true`.
@@ -630,6 +641,7 @@ impl Function {
                 const_binding: false,
                 value_const: false,
                 amp_link: false,
+                iteration_source: false,
                 first_def: u32::MAX,
                 last_use: 0,
                 pre_assigned_pos: u16::MAX,
@@ -2040,6 +2052,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             amp_link: false,
+            iteration_source: false,
             stack_allocated: false,
             skip_free: false,
             captured: false,
@@ -2071,6 +2084,7 @@ impl Function {
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
             amp_link: self.variables[var as usize].amp_link,
+            iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
             skip_free: false,
             captured: false,
@@ -2105,6 +2119,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             amp_link: false,
+            iteration_source: false,
             stack_allocated: false,
             skip_free: false,
             captured: false,
@@ -2136,6 +2151,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             amp_link: false,
+            iteration_source: false,
             stack_allocated: false,
             skip_free: false,
             captured: false,
@@ -2525,7 +2541,7 @@ impl Function {
                 } else {
                     type_def
                 };
-                let scalar_name = scalar.name(data);
+                let scalar_name = scalar.source_name(data);
                 diagnostic!(
                     lexer,
                     Level::Error,
@@ -2605,14 +2621,17 @@ impl Function {
             && !matches!(var_tp, Type::Optional(_))
             && var_tp.is_equal(type_def.base());
         if widened_to_nullable {
-            let base = var_tp.name(data);
+            // The SOURCE spelling, not the schema key: this message names a type back to the
+            // author four times, and `name` re-spells a keyed payload (`hash<It,["k"]>` for
+            // what they wrote as `hash<It[k]>`).
+            let base = var_tp.source_name(data);
             diagnostic!(
                 lexer,
                 Level::Error,
                 "Variable '{}' cannot change type from {} to {}; discharge the null where it is produced: `?` (the type's default) or `?? <default>`, or declare it `{}?` to let it hold null (do NOT cast with `as`: `as {}` is refused for the same reason this store is, and `as {}?` returns here)",
                 self.name(var_nr),
                 base,
-                type_def.name(data),
+                type_def.source_name(data),
                 base,
                 base,
                 base
@@ -2640,8 +2659,8 @@ impl Function {
             Level::Error,
             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
             self.name(var_nr),
-            var_tp.name(data),
-            type_def.name(data)
+            var_tp.source_name(data),
+            type_def.source_name(data)
         );
     }
 
@@ -2747,6 +2766,17 @@ impl Function {
 
     /// Mark `var_nr` as bound with an explicit `&` at a struct-typed projection —
     /// the author asked for a live link, not a view loft may quietly copy (@PLN130 F9).
+    /// Mark `var_nr` as a `for` loop's iteration SOURCE holder — see the field's own doc.
+    pub fn set_iteration_source(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].iteration_source = true;
+    }
+
+    /// Does the loop iterate THIS variable, so that its identity is load-bearing?
+    #[must_use]
+    pub fn is_iteration_source(&self, var_nr: u16) -> bool {
+        self.variables[var_nr as usize].iteration_source
+    }
+
     pub fn set_amp_link(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].amp_link = true;
     }
@@ -3760,6 +3790,11 @@ impl Function {
 
     /// Mark a variable as captured by a closure.
     /// Suppresses the "never read" warning without affecting dead-assignment tracking.
+    ///
+    /// ⚠ This flag is LOAD-BEARING FOR CODEGEN as well as for diagnostics:
+    /// [`rebind_must_mint`](Self::rebind_must_mint) reads it to deny in-place store reuse
+    /// on a rebind (loft#1447).  Narrowing where it is set to quiet a warning would
+    /// silently restore a wrong VALUE, not just a lint.
     pub fn set_captured(&mut self, v: u16) {
         self.variables[v as usize].captured = true;
     }
@@ -3810,6 +3845,32 @@ impl Function {
             return false;
         }
         !self.is_inline_ref(v) && !self.is_skip_free(v) && self.is_independent(v)
+    }
+
+    /// @FR-L-CapHeap — must a whole-value REBIND of this local mint a FRESH store,
+    /// rather than re-mint the one its slot already holds?
+    ///
+    /// Deliberately a separate predicate from [`owns_store`](Self::owns_store) rather
+    /// than a widening of it.  `owns_store` answers who owes the FREE and is shared with
+    /// `generation::dispatch` so parser and codegen cannot drift (loft#664); changing what
+    /// it means changes the free path.  This one asks only whether in-place REUSE is
+    /// licensed, and the two answers differ for exactly one population: a captured heap
+    /// local still owns its store, so `owns_store` is true, while a closure record built
+    /// over it is a SECOND holder and in-place reuse is not licensed.
+    ///
+    /// `(L-CapHeap)` says the closure answers the value it was BUILT with, so re-minting
+    /// the same store in place makes it answer the rebind instead — loft#1447, where a
+    /// captured `d: C = C{5}` read 9 after `d = C{9}` while its nullable twin read 5.
+    ///
+    /// Every rebind, not only one after the build: `set_captured` runs when the closure
+    /// BODY is parsed, so on pass 2 this is known for the whole function, and minting for
+    /// a rebind that precedes the build is semantically identical to re-minting (nothing
+    /// observes the store yet) at the cost of one allocation on a path that is, by
+    /// construction, already building a closure.
+    pub fn rebind_must_mint(&self, v: u16) -> bool {
+        (v as usize) < self.variables.len()
+            && self.is_captured(v)
+            && crate::data::is_dbref(self.tp(v).base())
     }
 
     /// Record that fn_ref variable `fn_ref` has its closure stored in `clos`.

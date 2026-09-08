@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The PARAMETER half of loft#1408's refusals — split from `1408b` because the sharing errors
+// there abort before the pass that asks these, so keeping all five in one file left three
+// cells unreached.
+//
+// Both refusals are decided contract, and both read `accumulate_scalars_to_box`'s scalar list
+// to learn that a parameter was written from inside a closure.  A `τ?` fell out of that list,
+// so for a nullable parameter `const` was silently not enforced and the C115 `&` refusal was
+// never asked — the program compiled and ran.
+//
+// Axes this file MOVES:  the modifier (`const`, `&`) and the scalar kind whose storage differs
+//                        under it (integer in-band, text by pointer).
+// Axes it HOLDS FIXED:   the write is a whole-value REASSIGNMENT of the parameter itself, which
+//                        is what both refusals are about; a field write THROUGH a heap
+//                        parameter is `(L-CapHeap)` sharing and is not refused (guarded as a
+//                        control by `1408` c10).
+//
+// @falsified-at: 2808e183 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   On the control build none of the three fires: the file compiles and runs to completion,
+//   which is the defect.  Each dense twin was refused on that build, so what moved is the
+//   pairing, not the message.
+//
+// @EXPECT_ERROR: Cannot modify const parameter
+// @EXPECT_ERROR: Cannot modify const parameter
+// @EXPECT_ERROR: Cannot write to the `&` parameter
+
+// c1 — `const` on a nullable parameter, reassigned from inside a closure.  The sharpest of
+// the three: without the refusal the program compiles, so `const` does not hold.
+fn const_param_integer(p: const integer?) {
+  g = fn(d: integer) { p = 1; };
+  g(0);
+}
+
+// c2 — the same for the pointer-stored scalar.
+fn const_param_text(p: const text?) {
+  g = fn(d: integer) { p = "b"; };
+  g(0);
+}
+
+// c3 — the C115 decided refusal.  `(L-CapScalar)` hands the closure a COPY of a `&` scalar
+// parameter, so a write to it inside the closure has no shared record to land in; refusing it
+// is the contract rather than a gap, and for a nullable parameter it was not being asked.
+fn ref_param_integer(p: &integer?) {
+  g = fn(d: integer) { p = 1; };
+  g(0);
+}
+
+fn main() {
+  const_param_integer(5);
+  const_param_text("a");
+}

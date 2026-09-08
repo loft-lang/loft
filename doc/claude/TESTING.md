@@ -96,7 +96,34 @@ died in the same second; a per-process kill takes one process, not two unrelated
 **1** when the count is ZERO, so a clean gate is reported as a failed command.  Three
 passing runs were misread that way in one session.  Use `|| true`, or put the count first.
 
-### Preferred shape — background + peek + wait
+### ⚠ If you are an AGENT: run the BLOCKING form and let the harness background it
+
+There are **two** backgrounding mechanisms and using both cancels the notification.  The
+script's `--bg` detaches a subshell and returns in seconds; a harness that watches the
+*command* then sees a fast exit and has nothing left to report, so the agent is left polling.
+The harness's own background mode watches the PID it started and fires a completion event.
+
+So an agent wants the **blocking** command, backgrounded by the harness:
+
+```
+Bash(command="./scripts/find_problems.sh", run_in_background=true)   # curated, ~70 s
+Bash(command="make ci",                    run_in_background=true)   # full gate, ~10 min
+```
+
+One process, one notification, and the summary still lands in `/tmp/loft_problems.<id>.txt`.
+`--bg` remains right for a HUMAN at a terminal, which is what the rule below was written for:
+there the cost is a blocked prompt, and nobody is waiting on an event.
+
+⚠ **Never wait with a `pgrep` loop.**  `until ! pgrep -f "cargo nextest"; do sleep 5; done`
+never terminates: the loop runs inside a shell whose own command line CONTAINS that string, so
+`pgrep` matches itself.  Measured 2026-09-08 — a waiter spun for 55 minutes, and because the
+real command was chained after it (`… ; ./scripts/find_problems.sh --bg`) **the gate never
+started at all** while three status reports said it was running.  A self-matching predicate
+does not fail loudly; it reports the opposite of the truth.  If you must poll, use the script's
+own `--peek` (which reads state, not process tables), or `--wait`, which watches a recorded PID
+rather than a pattern.
+
+### Preferred shape (human, at a terminal) — background + peek + wait
 
 ```bash
 ./scripts/find_problems.sh --bg        # kick it off, returns immediately
@@ -282,6 +309,19 @@ Both macros call into `testing_code` / `testing_expr`, which construct a `Test` 
 - **`self.file`** — the containing module name (e.g. `enums`)
 
 These two strings determine where the generated test file is written.
+
+⚠ **A `code!` snippet is parsed as STDLIB SOURCE, and some behaviour is gated on that.**  The
+macro parses against the cached stdlib `Data`, so the snippet's source IS `STD_SOURCE` — and any
+feature whose gate reads `source != STD_SOURCE` is OFF inside it.  Measured on
+`null_element_in_value_enum_vector_rejected` (loft#1416): `v: vector<Color?> = [Color.Red, null]`
+compiles as a user file and is still REFUSED in `code!`, because `e2_rewrite_enabled` is one of
+those gates, so the `?` in that snippet is inert and the cell pins the DENSE refusal.  A cell
+whose subject is a nullable ELEMENT belongs in `tests/scripts/`, not here.  Not every `?`
+question is affected — the enum-dispatcher scan is source-independent, so
+`nullable_receiver_implements_its_variant` does go red on the pre-fix build (measured against
+`e9f45817` in the cached falsify worktree) — but which half you are in is not visible from the
+snippet, so **a `code!` cell about nullability is run against the pre-fix build before it is
+trusted**.
 
 ### The `Test` struct
 
@@ -590,6 +630,29 @@ requires one on every file added under `tests/scripts/`, against the ratchet in
 `tests/falsified.baseline`; `// @falsified-at: none — <reason>` is the honest opt-out for a
 file that genuinely cannot fail on any earlier build.
 
+### The defect no guard can catch — the corpus EMISSION diff
+
+`make falsify` scores a guard, and a guard scores a program someone wrote.  Neither sees the
+defect whose symptom is *"a program nobody changed is compiled differently now"* — and that is
+not only a refactor's question.  `scripts/introspect_diff.sh <before-loft> <after-loft>` runs
+`loft introspect` (IR + bytecode + generated Rust + stderr) over every corpus file with both
+binaries and names each file that moved; a behaviour-preserving change wants `IDENTICAL`, and a
+FIX wants a list it can explain file by file.
+
+**It found a defect that no test failed on (@PLN153 batch 9, loft#1435).**  The diff after
+loft#1427's fix read `DIFFERENT 6 of 1352`, and two of the six were files the batch had never
+touched: `tests/scripts/05-enums.loft` and `tests/docs/09-enum.loft` had each GAINED a
+synthesised variant dispatcher.  Reading why said that the dispatcher scan bucketed by ENUM
+rather than by method, so an enum with two methods per variant got a dispatcher for one of them
+and — where their parameter shapes disagreed — for neither.  Both files passed on every build
+before and after, because both call their methods on concrete variants; the machinery they
+document was simply not being built.  No guard could have caught that: the missing thing was
+never called.
+
+So the rule is: **run it after a fix, not only after a refactor, and explain every file it
+names.**  A moved file that is one of your own new guards is expected; a moved file you have
+never opened is either a second defect or a second fix, and it is worth the read either way.
+
 **A defect only an instrument can see is scored with the instrument armed.**  `LOFT_POISON=1
 LOFT_STRICT_STORES=1 make falsify GUARD=… REF=…` passes both through to the control and to
 this tree.  Measured need: a stale work-ref reclaiming, in place, a store number another
@@ -696,6 +759,49 @@ used to keep seven days); `make sweep-scratch` runs it on the checkout's scratch
 `TMPDIR` with the session prune, and prints `df` after.  Both touch only loft's own names,
 only dead pids or aged entries, and never a sibling checkout's gate scratch.  A run of `df -h /`
 before a gate is cheaper than reading a `FAIL unknown-mode` as a code fault.
+
+### A cancelled run measures its FIRST failure and nothing else
+
+A gate that stops at the first red is a measurement of one defect. That is fine when a
+change has one; it is actively misleading when a change WIDENS something, because a
+widening's casualties are not co-located and each one hides the ones behind it.
+
+Measured 2026-09-08, giving `@FR-Col-Lookup` its `τ?` on keyed point lookups — three
+defects, three separate subsystems, and it took three gates to see them:
+
+| gate | reported | not run |
+|---|---|---|
+| 1 | `b_ref_reshape_rekey_through_amp_link` — the `&` marker lost | 1338 |
+| 2 | `rpc_eval_in_a_keyed_collection_frame` — the debugger could not read a keyed element | 50 |
+| 3 | `wrap::loft_suite` — a partial-key `= null` lost its refusal | 0 |
+
+Each was real, each was caused by the same one-line widening, and **none was reachable
+while the one ahead of it stood**. Reading gate 1 as "one test to fix" would have been
+wrong twice, and a targeted suite would not have helped: the three live in
+`parse_errors`, `rpc` and `wrap` respectively, so no `--subject` covers them together.
+
+So for a change that widens a TYPE, a predicate, or a rule's reach, run the suite
+`--no-fail-fast` — `./scripts/find_problems.sh --bg` already does, and it is the run
+nobody reaches for when the change "should be small". The cost is one full suite; the
+alternative is learning the casualty count one gate at a time.
+
+### When two trees disagree about the wreckage, guard the REFUSAL
+
+A defect that should be refused and is not usually leaves damage behind, and the damage
+is the tempting thing to assert. It is also the thing that varies. The same missing
+refusal (a `text` key re-keyed through a `&` view) left a record reachable by **no** key
+on one tree and reachable by its **new** key on a sibling branch — same defect, two
+downstream behaviours, because the branches differ in whether a write through a `&`
+re-indexes.
+
+A cell asserting the wreckage passes on one tree and fails on the other **for a reason
+that has nothing to do with the defect**. A cell asserting the refusal — a
+`tests/parse_errors.rs` entry whose whole expectation is the compile error — is true on
+both, because the refusal is what the trees agree should exist and the wreckage is what
+they do not.
+
+The corollary is that such a cell pins no runtime values at all, and that is correct
+rather than lazy: a refusal fires before any of them can happen.
 
 ### The set a suite RUNS is not the set it CONTAINS (`LOFT_TRACE_ASSERTS`)
 
@@ -1192,9 +1298,22 @@ flag to ask for rather than a flag to avoid.
 | `find_problems.sh` | curated — ~70s, 97.4% of the tests |
 | `find_problems.sh --full` | every test — ~370s |
 | `find_problems.sh --subject <name>` | one area — seconds |
+| `find_problems.sh --changed [ref]` | the subjects the DIFF touches (uncommitted edits, or against `ref`) — seconds; falls back to curated, saying why, when the diff touches something every binary depends on |
 | `find_problems.sh --list-subjects` | the subjects, and what the default excludes |
 
 Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`.
+
+**The rebuild step is selection-aware (@PLN159 I).**  Before the tests, `find_problems.sh`
+refreshes the artifacts they link: the sibling and fixture cdylibs, the dev `libloft.rlib`
+beside the test-profile `loft` the tests spawn (~1 s: the same compile nextest is about to do,
+plus the uplift), and — only when a selected binary needs them — the release `libloft.rlib`
++ `target/release/loft` (the 29 binaries that spawn the release binary; the html, browser and
+engine_host suites and a few CLI ones) and the two wasm rlibs (the wasm/html suites, and any
+binary driving `--html` / `--native-wasm`).  It decides by READING the selected sources, not
+by the subject's name; the curated and full runs need everything.  Measured before this: a
+one-file edit followed by `--subject parser` spent 158 s rebuilding the release and wasm rlibs
+(non-incremental, whole-crate builds) ahead of 13 s of tests.  The timing summary names what
+it skipped and why.
 
 ### Why it curates by EXCLUSION
 
@@ -1236,6 +1355,20 @@ error, and because an expanded selection can be read back and checked.
 Subjects are a convenience for tight loops, **not** the safety mechanism. The
 default being subtractive is what makes it safe to leave them approximate: a gap
 in a subject costs seconds, never coverage.
+
+**Every binary matches at least one subject** — `doc_hygiene::every_test_binary_matches_a_subject`
+asks the map's own `unmatched_binaries` and goes red on a name it reports (@PLN159 H).
+Measured before the guard: 80 of 261 binaries matched nothing, so a source-side edit under
+`--subject` never ran `hoist_gate`, `differential_oracle` or `variant_field`.  A new
+`tests/<name>.rs` either carries a name an existing pattern picks up or extends the map in the
+same commit; the failure message names the binary.
+
+`--changed` is the same map read from the other side: `scripts/test_subjects.sh`'s
+`SUBJECT_PATHS` maps a source PATH to a subject, so the diff picks the subjects, an edited
+`tests/<name>.rs` picks its own binary, and an edited corpus file picks the three corpus runners.
+`make ci` uses the same mapping for ORDER only — `scripts/nextest_priority.sh` hands nextest a
+`priority` override so the diff's binaries run first and a red gate says so in its first minute
+(the gate is fail-fast); what runs is unchanged.
 
 ## Test speed — a report, never a gate (`make speed`)
 
@@ -1371,6 +1504,28 @@ prints the pc and stops there; `LOFT_STORES=timeline` resolves the same pc again
 denser per-run table.
 
 ## Hang guard (`LOFT_MAX_OPS`)
+
+> **Reach for `perf` FIRST when the hang is in a build you already have.**  This guard needs a
+> rebuild with debug-assertions flipped on (below), which is minutes; a running process can be
+> sampled in seconds and needs nothing:
+>
+> ```bash
+> <the hanging command> & BGPID=$!
+> sleep 6 && perf record -F 199 -g -p $BGPID -o /tmp/hang.data -- sleep 6
+> kill -9 $BGPID; perf report -i /tmp/hang.data --stdio --no-children | head -15
+> ```
+>
+> `gdb -p` is the reflex and it gave NOTHING here (ptrace is restricted on this box), so `perf`
+> is the one to try first.  What it buys over a timeout is the same thing `LOFT_MAX_OPS` buys —
+> the loop, not just the fact — and it works on a release build.
+>
+> ⚠ **And read the answer as a LOCATION, not a cause.**  A hang whose samples are all in
+> `State::execute_argv` is an interpreter loop that is not terminating; it does not follow that
+> the DEFECT is in the interpreter.  Measured (D-bind-26): a compile-time analysis decided to
+> materialise the temp a `for` loop iterates, so the loop walked a copy while its body emptied
+> the original — the whole fault was in `scopes.rs`, with no compile-time symptom at all, and
+> the corpus reported only two 300s timeouts.  When the samples name a runtime loop, ask what
+> COMPILED that loop differently, and bisect the change set by building and timing.
 
 The third sibling, and the only one that is **debug-assertions only**. The
 interpreter counts executed operations and, on reaching the ceiling, panics with the
@@ -2089,6 +2244,15 @@ dual-mode coverage.
 
 **When a `.rs` test and a script test cover the same behaviour**, the `.rs` test should be removed
 — the script is the authoritative version.
+
+**What grows the gate is binaries and compile-spawning tests, not tests** (@PLN159).  A corpus
+file costs ~5 ms to run and nothing to build; a new `tests/*.rs` binary is a compile plus a link in
+every build (dev/test, release, clippy `--all-targets`) — 68 binaries in June 2026, 261 in
+September; and a test that spawns `rustc`, a cargo build or a wasm build is 10–60 s of CPU that
+does not parallelise and starves every test beside it.  So a new Rust test joins an existing
+binary of its subject unless it needs its own process-level fixture, and a test that needs a
+compiled artifact shares ONE fixture per binary (build once behind a `OnceLock`, or through the
+content-keyed cache the corpus runner uses — `native_cache_key`) rather than compiling per test.
 
 **Naming a bug regression: use the GitHub issue number.**  A regression for a fixed bug is
 `tests/scripts/<issue>-<slug>.loft` — e.g. `366-native-abib-scalar-literal-arg.loft` guards #366,
@@ -2934,6 +3098,137 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
+and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each
+unmatched one (`unmatched_expect` over the whole list, loft#929's own fix), so a file CAN hold
+four expected errors and `1423b` does.  What stops is the COMPILER: a refusal emitted during the
+parse that leaves the parser desynchronised — the nullable-collection refusals are the measured
+case — ends the run before the phase that would emit the others.  Measured order-independently:
+two `rev` refusals in one file report 2, a `.remove` refusal beside a return-type error reports
+2, and a `rev` refusal beside that same return-type error reports **1**.
+
+⚠ This has been written into corpus files as *"a firing `@EXPECT_ERROR` stops the run"*, which
+is false and sends the next reader to the harness.  The residue is tracked on loft#1453; the
+recovery fix is a parser change with its own matrix, because several guards pin the cascade
+text by hand.
+
+**A use-after-free guard passes on the bytes the freed slot still holds — every assertion, on
+every cell.**  loft's arena free is not a `libc` free: the record is marked dead and the bytes
+stay put until something else claims the slot.  So a guard over a value that is read AFTER its
+store was freed reads the right value and goes green, and stays green for as long as nothing
+reallocates over it.  Measured on
+`tests/scripts/1443-a-closure-written-through-a-fn-parameter-link.loft`: on the build where the
+callee freed the closure record it had just handed to its caller, the file reported **13 passed**
+— all of it, including five cells whose whole subject was that record.  Under `LOFT_POISON=1`,
+which fills a freed record with `0xDEADBEEF`, the same file on the same build reports **8
+failed**.
+
+Two consequences, and the second is the one that bites:
+
+- **A lifetime guard is a POISON-gate guard, and its file has to say so.**  Its cells are not
+  self-sufficient; a green `loft test` over them says nothing about the lifetime half, and the
+  nightly `LOFT_POISON` sweep is what actually reads them.  Write that into the file, beside the
+  `@falsified-at:` line, or the next reader takes a local green as coverage.
+- **`make falsify` on such a guard measures nothing unless it runs under the poison switch.**
+  Exit codes and assertion counts are identical on both sides of the fix without it.  So the
+  falsification line records the switch: *"interpret 8 assertion failures → 0, 13 passed both
+  times WITHOUT poison"* — that second number is the whole point, and a falsification that omits
+  it is a claim the guard cannot support.
+
+`LOFT_STRICT_STORES=1` is the sharper instrument for the same class — it names the store, the
+type, the freeing op and the reading op — but it REPORTS rather than gates: on the build above it
+printed twenty `USE AFTER FREE` lines while the run still reported `13 passed`.  Reach for it to
+diagnose, and for `LOFT_POISON` to gate.
+
+**A guard over the newly-ACCEPTED shape does not reach the sites that CONSUME it — and knowing
+the class does not save you.**  Measured twice on 2026-09-08, in both checkouts, four hours
+apart.  Peeling a type at a PARSER site makes a spelling parse that used to be refused; every
+site downstream that matched the un-peeled spelling now receives it, and one of them panics.
+`e = v[i]; e.0` binds an `Optional(Tuple)`, the parser emits `TupleGet`, and
+`state::codegen` matched `Type::Tuple` bare — *"TupleGet on non-tuple variable"*, an internal
+compiler error where a clean refusal stood, on both backends.  **A clean refusal traded for an
+ICE is the one direction a fix must not move.**
+
+The sibling checkout had diagnosed exactly this shape for another issue that morning and
+written it up — and then shipped it, because **its guard carried only the INLINE spelling**
+(`v[i].0`), which never binds a local and so never reaches the panicking arm.  The cell
+exercised the shape the parser now accepts; it did not exercise a consumer of that shape.  So
+the rule is not *"remember the class"* — it is:
+
+> When a fix makes a shape ACCEPTED, the guard's cells are chosen from the sites that will now
+> RECEIVE it — a local bound from it, a write through it, a call taking it — and not from the
+> spelling that used to be refused.
+
+What caught it was an accident worth copying deliberately: the cell with the local bind lived in
+a file written to assert the old REFUSAL, so its shapes had been chosen for coverage of the
+refusal rather than of the happy path.  **When a refusal goes, rewrite its guard rather than
+deleting it** — its cells are a survey of the shapes that reach the site, taken by someone who
+was trying to hit all of them.
+
+**A probe whose TEST is looser than its question, which is a different failure from the one
+below and fails the other way.**  Setup contamination puts the answer into the channel; this
+one accepts the wrong answer out of it — and it almost always fails toward "nothing found",
+which reads as clean.  SUBSTRING where EXACT was meant is the commonest form.  Measured
+2026-09-07 counting formal rules with no code citation: the predicate included
+`"0 citation" in <summary>`, which is `True` for **"10 citation(s)"** and "20 citation(s)", so
+every rule with exactly ten or twenty citations counted as having none.  Three chapters read
+one too high, and nothing in the output could show it — a plausible number, no error, no empty
+cell to notice.  It survived being used to CORRECT someone else's table.
+**Assert on the structured thing** (here: does a `src/` line come back at all), never on a
+substring of a human-readable summary; and when a number disagrees with someone else's, check
+whether the DIRECTION of the difference is possible before explaining it — the two trees here
+were in a superset relation, so the sign was already impossible and no story about them could
+have been true.
+
+**A probe whose SETUP contains the thing it tests for measures the setup.**  This is the one
+that survives "measure first", because the probe runs first and still answers the wrong
+question — a probe written from a hypothesis inherits the hypothesis.  Measured 2026-09-07,
+while checking whether a bracketed `pgrep -f "[x]…"` waiter self-matches: both the bracketed
+and the unbracketed form went into ONE shell invocation, so the wrapper's `argv` carried the
+plain string, the bracketed regex matched it, and the run reported *"the bracket self-matches"*
+— the exact failure the probe existed to detect, committed by the probe. Split apart, one
+per invocation, the bracketed form exits on the first poll and the plain one loops forever:
+the opposite conclusion. The tell is that the probe and its subject share a channel — the same
+command line, the same directory, the same cache, the same process. **Ask what the setup itself
+puts into the channel being read, and run one cell per invocation when the answer is "the thing
+I am looking for".**  A positive AND a negative control in one run is the commonest way in.
+
+**A matrix with no CONTROL cannot see the regression the fix causes, because that failure
+lands where nothing is looking.**  Every cell in a boundary matrix is a case that is BROKEN, so
+a matrix built only from those cells answers "fixed" and says nothing about the cases that
+already worked — and a fix reached by widening a predicate is exactly the shape that breaks
+one.  Measured 2026-09-07 on loft#1445 (whose first fix was REVERTED for a second regression of
+the same shape — see below): teaching `is_keyed` / `is_collection` to peel the `&`
+link made a `&hash<τ[k]>` parameter's `+=` route correctly, and in the same build the
+`&vector<τ>` twin that had worked all along began answering *"cannot append `vector<Row>` to
+`&vector<Row>`"* — the routes now claimed a statement whose DESTINATION was still a `RefVar`,
+which `append_source` matches no arm for.  Both halves were one edit apart, and the cell under
+test was green in both states.  **Put the nearest spelling that ALREADY WORKS in the matrix,
+and re-run it on every build** — for a `&` fix that is the dense twin and the vector twin, for
+a keyed fix the vector, for a nullable fix the plain one.  It costs one line per cell and it is
+the only thing standing between "the bug is fixed" and "the bug is fixed and something else is
+not".  The companion rule for the destination side is loft#1433's: a destination that starts
+EMPTY cannot tell an append that reached the caller's collection from one that built a fresh
+collection and counted itself, so populate it first and read the OLD key as well as the new one.
+
+⚠ **And the sequel, which is the sharper half: that same widening broke a THIRD thing neither
+matrix could see.**  `is_keyed` / `is_collection` are asked at 78 sites and answer TWO
+questions — *what kind of collection is this* (the link must peel) and *does this variable own
+a store* (it must not, since a `&` parameter aliases the caller's).  Peeling changed the second
+silently, and `Set(v, Null)` on a `&hash` parameter then routed into `gen_keyed_null` — which
+exists to allocate a keyed LOCAL's own store and resolves its type with the UNPEELED `base()` —
+straight to `unreachable!("gen_keyed_null on non-keyed type")`.  `1291-a-keyed-write-back-does-
+not-release-the-callers-store.loft` went 8/8 green to 8/8 ICE, and the shape that surfaced it
+was a REBIND, which no append matrix carries.  Splitting an `is_owned_keyed` out for the two
+null-init sites was then measured to fail DIFFERENTLY (a slot fault in `__lift_1`), proving more
+than two of the 78 read the widened answer.  **A predicate asked at dozens of sites is asked
+more than one question; widening it is not a local change, and the bound on what you broke
+cannot be established by inspection.**  What closed it was giving each question its own NAME:
+`keyed_kind` peels (which kind / which type id / which insert) and `owns_keyed_store` does not
+(what may be allocated, minted or replaced in place), leaving `is_keyed` to the sites that never
+had to tell them apart.  A separate predicate, never a better condition — the same cure
+`rebind_must_mint` took beside `owns_store` for loft#1447.
+
 **A reproduction that hits a WARM CACHE measures nothing — and the tell is the clock.**  A
 red `make ci` named a native cell that took **2.2 s** in the gate; every attempt to reproduce
 it took **51 ms**.  On that basis it was reported "not reproducible" three ways — 20 serial
@@ -2946,6 +3241,25 @@ low memory (it kills background tasks on its own budget) was read as a statement
 BOX while `free` showed 55–59 GB available at that very moment.  **State the failure's cost —
 wall-clock, or a counter like *did it compile?* — and check the repro matches it BEFORE
 reporting a negative.**
+
+**A cell at the EDGE of the data can be right for the wrong reason, so the boundary is the
+worst place to score a width.**  A read that is too WIDE is wrong in the middle of a vector and
+correct at its end, because the bytes past the last element are zero.  Measured 2026-09-07 on
+loft#1420: slice-pattern element reads over a `vector<u8>` used an 8-byte stride, and fixing the
+STRIDE alone corrected `reverse`, the `..rest` materialisation and the TAIL read while the HEAD
+still answered `0x05_04_03_02_01` — all five elements swallowed by one read.  "Tail right, head
+wrong" reads as one straggler and was two independent roots; the tail cell had never tested the
+one it appeared to.  **Score the cell where neighbours exist on BOTH sides**, and keep a boundary
+cell only for the bounds question it actually answers.
+
+**And a value that fits every candidate width tests none of them.**  The sibling half of the same
+trap: a matrix whose cells all hold `7` cannot see a wrong width at all, because `7` reads back
+correctly at one byte, two, four and eight.  Cells holding `1..5` are barely better — they catch a
+read that is too wide (it swallows a neighbour) and say nothing about one that is too narrow.
+**Give each declared width a value the next-narrower one truncates** — `300` for a 2-byte element,
+`70000` for a 4-byte — so the element reads correctly at its declared width and at no other.
+(loft#1409 found the same thing from the other side: a bounds-only `integer limit(0, 100)` storing
+`200` was the cell that discriminated, where every full-range value had not.)
 
 **Racing a race is usually not a falsifiable guard; assert the PROPERTY the race violates.**
 The obvious guard for the cache-publish race — N concurrent cold-cache runs of one source,
@@ -3056,6 +3370,27 @@ grepped the output for the program's own marker, and the parse error ECHOES the 
 source line, so `print("g6")` appeared in the failure text and the cell reported that it had
 run. Score RAN on something the program cannot forge — a `^error` line, or an exit code —
 never on its own output.
+
+**A cell your new guard fails may belong to somebody else, and the cheapest way to know is to
+revert your own fix and measure again.**  A guard written for one defect exercises shapes the
+suite never had, so it walks into OTHER live defects — and every one of them arrives looking
+like a regression you just caused, at the worst possible moment, with your own change the
+obvious suspect.  Reverting the fix in place (the inverse edit, never `git checkout`) and
+re-running the same cell answers it in one build: same output both ways means the defect is
+older than you.  Measured three times on 2026-09-07 while writing two guards — a `τ?` return
+losing its absence once bound (loft#1421), a minted store leaking through a parameter-bound
+local (loft#1422), and a generic pinned at `i32` refusing a later `integer` (loft#1418).  All
+three were identical with the fix applied and reverted; all three were separately filed with
+that A/B quoted as the evidence, and none of them was the fix under test.  The failure mode
+this avoids is not a wrong fix but a wasted retreat: without the A/B the natural move is to
+back out a correct change because its guard went red.
+
+⚠ **The corollary is that a guard must not assert what it does not own.**  Once the A/B says a
+cell belongs to another defect, take the cell OUT and say why in the header, with the issue
+number — do not weaken the assertion to whatever the tree currently answers.  Asserting the
+broken behaviour freezes it into the contract, and asserting nothing at all loses the fact.
+`1415-a-null-arm-source-that-views-a-parameter.loft` reads its absence inline and through `??`
+for exactly this reason: the bound spelling is loft#1421's, and the header says so.
 
 **The before/after oracle has to PREDATE the defect, and the released binary often does not.**
 The installed release is the usual before-half (the installed release as the before/after oracle),
@@ -3434,6 +3769,137 @@ re-executes after the handler and re-raises. `libc::raise(SIGSEGV)` runs the han
 RETURNS, and the child exits normally. Fault for real in a forked child
 (`std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1)`, volatile so it cannot be optimised
 into something that never faults) and assert `WIFSIGNALED`.
+
+**A round-trip is not an oracle when the writer is the reader's TWIN.**  `radix_db::paged::
+every_axis_width_decodes_to_what_was_written` exists to fix each side of the spatial axis
+decode to the value that was WRITTEN — and its local `write_axis` was written as *"the mirror
+of the `axis_i64` arm that reads it back"*, so it stored what that arm would read.  Reader and
+writer shared one defect (a hard-coded `0` where the key's declared range minimum belongs), the
+round-trip agreed with itself, and every width passed.  The neighbouring
+`a_paged_box_agrees_with_the_resident_one` passed for the same reason one level up: BOTH readers
+were wrong the same way, and its doc comment states the contract as *"the two must not disagree
+with each other"* — the wrong oracle, written down as if it were the right one.  The third party
+neither test asked is the REAL writer (`database/structures.rs`: `Enc::Byte(from) => set_byte(..,
+from, v)`), and it is the only one that decides what the bytes mean.  **Write through the
+product's own setter, never a test-local mirror of the reader**; and when a test asserts that two
+implementations agree, say which one is the oracle — if the answer is "neither", the test cannot
+fail for the reason it was written (loft#1431).
+
+**A VALUE assertion is vacuous when the computed value cannot witness the defect — guard the
+fix's emitted SIGNATURE instead.**  Two ways the value misleads, both measured on 2026-09-07.
+loft's arena "free" is not a libc `free()`: the record keeps its bytes, so a read through a
+dangling reference answers *correctly* — both backends agree, the whole corpus is green, and
+`make ci` cannot see the defect at all.  Or the wrong answer is one the program could
+legitimately produce, so nothing about it reads as corruption.  A guard written the obvious way
+— do the values come back right? — is not a guard against either.
+
+- **loft#1361, the loud half.** `u = t` on a nested tuple emitted `OpFreeRef(_tuphold_1.0)` and
+  destroyed the source's vector; under poison the freed record surfaces as `0xDEADBEEF` arriving
+  in `vector_append`.  A genuine use-after-free, wrong-looking once you are looking.
+- **loft#1441, the quiet half.** A `text` return delivered through a work buffer, two identical
+  calls: *the FIRST answers `[world]` and the SECOND answers `[]`*.  The wrong answer is a
+  plausible empty string, so it reads as data rather than as damage.  **The ASYMMETRY is the
+  tell** — identical calls differing by POSITION — and a two-call probe that only asks "is the
+  answer a string" passes.
+
+⚠ **The asymmetry says a slot is unsound; it does NOT say which mechanism.**  This entry first
+carried the inference *"differing by position means a slot REUSED after a free"*, and that was
+wrong: loft-c1 suppressed the work buffer's `OpFreeText` behind a switch and ran the repro both
+ways on one binary — call 2 and call 3 answered empty **identically with the free emitted and
+suppressed**.  Removing the free changes nothing, so #1441 is not a use-after-free at all.  Read
+it as a definite-assignment hole — a slot never written — with the position-dependence explained
+by what earlier frames happened to leave, not by a free.
+
+**Which half of `LOFT_POISON` fires tells you which class you have**, and the instrument has
+exactly two sites:
+
+| site | fills | catches |
+|---|---|---|
+| `database/allocation.rs` `free_named` | a freed store's payload, past the 8-byte header | a stale `DbRef` read **after free** — a real UAF (#1361) |
+| `state/mod.rs` `reserve_frame` | the freshly-reserved frame region, above the old TOS | a read of a slot **this call never wrote** (#1441) |
+
+Both are one env read of `LOFT_POISON=1` and both are off by default, which is why "under poison"
+alone does not name a cause.  The stack half poisons at RESERVE precisely because poisoning at
+*free* would clobber the pop primitive and the transient return value still occupying the vacated
+region; a correct program never observes the sentinel, because definite assignment writes every
+slot before it is read.  So a hit there is a claim about ASSIGNMENT, and a hit in the arena half
+is a claim about LIFETIME.
+
+So when the symptom is layout-fragile, assert what the fix DETERMINES rather than what the
+program happens to compute: the emitted IR.  `OpFreeRef(_tuphold` must not appear, because the
+nested-tuple hold borrows its source and nothing may free through it.  That is deterministic,
+it fails on the pre-fix build with its own message, and it needs no sanitizer to run in `make ci`.
+
+**Pair it with a positive assertion that the construct is still BUILT.**  A bare "must not
+contain" passes for free the moment the code stops taking that path — it cannot distinguish
+*fixed* from *gone*, which is the failure mode that shape has by construction.  Assert the hold
+exists AND that nothing frees through it.
+
+**The method note, which cost the most.**  Three plausible causes were read off the IR for #1441,
+each surviving until it met an experiment; the one cheap experiment — turn the suspect OFF and
+measure the same repro on the same binary — settled it in a single build.  It should have come
+first.  A coherent explanation is a hypothesis, and a hypothesis that has been read three times
+is still a hypothesis; reading is not a control.
+
+⚠ The gate's own harness is load-bearing here.  `LOFT_POISON=1 loft --interpret --tests <file>`
+**passes** on the broken build: the nightly runs these through `wrap` under nextest
+(`--lib --test issues --test wrap --test strings --test frame_vars`), which leak-checks and gives
+each test its own process, and the `--tests` spelling reaches none of that.  Reproduce with the
+gate's command or you will report "cannot reproduce" on a defect that is present.
+
+⚠ **And `cargo test --test <name>` names a test TARGET — a `tests/*.rs` file stem — never a
+test function.**  `cargo test --release --test native_scripts` measures NOTHING: `native_scripts`
+is a function in `tests/native.rs`, so cargo answers *"no test target named …"* followed by the
+list of available targets, which through a `| tail` reads like a build log.  The correct spelling
+names the target and then filters: `cargo test --release --test native native_scripts`.
+
+The trap is not the typo, it is what the failure looks like: a run that measured nothing emits no
+`test result:` line, so a wait-loop polling for one waits forever while the buffered output looks
+like work in progress — and reporting *"re-ran it, no failures"* off that is true and worthless.
+**Wait on the SUCCESS sentinel, never on the absence of an error**, and read the `N passed` count
+before believing a re-run: the absence of failures is not a pass, which is the same positive-half
+rule this section applies to guards.
+
+⚠ **But the converse trap is real too, and it caught two of us on one afternoon: a report that
+cannot say WHAT it checked is not evidence that it checked nothing.**  `loft --interpret --tests
+<file>` on a file carrying FILE-level `@EXPECT_ERROR` pins prints
+
+```
+  ok    893-field-store-type.loft  (0 expected errors: )
+```
+
+— a zero and an empty list, which reads exactly like a run that scored no pins.  It is not.  The
+count is `file_result.tests.len()` (`src/test_runner.rs`), which counts **per-FUNCTION**
+expectations; a file whose pins are file-level has none of those and reports `0` while its pins
+are checked normally.
+
+**Falsified rather than reasoned about, which is the only reason the entry is the right way
+round.**  Take a scratch copy, change ONE pin and nothing else — `hash<E,["k"]>` to
+`hash<E[k]>` — and run the same command, with the unmodified copy beside it as the control:
+
+| copy | result |
+|---|---|
+| one pin wrong | `FAIL  one.loft  (parse errors)` |
+| unmodified | `ok` |
+
+So the pins are scored, per pin, and the check can fail.  Both of the sessions that read that `0`
+as vacuity had already concluded the spelling was blind and were about to write it down.  The
+cheap control — corrupt one cell and look — cost thirty seconds and reversed the finding.
+
+The rule that survives is the pair, not either half: **a report saying `ok` proves nothing until
+you know the instrument can say `FAIL`** — and *"I cannot see what it measured"* is a fact about
+the report, never a measurement of the instrument.
+
+
+**A fixture chosen for convenience lands where every candidate implementation agrees.**  This is
+the cause behind the two entries above and it was sighted three times in one day: `7` fits every
+width; `1..5` fits one byte; a `u16` spatial axis at `300` sits below the signed midpoint where a
+signed and an unsigned decode return the same number.  All three were picked because they were
+easy to type, and each one put the cell in the region where the bug is invisible.  **Choose each
+fixture as the value that DISCRIMINATES** — past the next-narrower width, past the signed
+midpoint, off a zero bias — and if a value was chosen for any other reason, that cell is not yet
+a measurement.
+
 
 ## Diagnostic tiers — what `--deny-warnings` may fail on
 

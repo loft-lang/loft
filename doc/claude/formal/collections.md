@@ -53,13 +53,25 @@ reaches the generic scalar-range branch). This split is the doc's spine.
   (Col-Spatial) spatial<T[a]> / [a,b] / [a,b,c]   1–3 coordinate axes (MAX_AXES=3), Morton/Z-order radix tree;
                                               the runtime Parts variant is `Radix`.  integer-not-null coord keys;
                                               negative coords via offset-binary (signed axes order like sorted).
-  (Col-Trie)    trie<T[k]>                    a radix tree over ONE `text` key field: exact lookup, KEY-ORDERED
+  (Col-Trie)    trie<T[k]>                    a radix tree over ONE `text`-NOT-NULL key field: exact lookup, KEY-ORDERED
                                               iteration, and a PREFIX slice — the operation the kind exists for.
                                               Shares `radix_tree` with `Radix` and nothing above it: `Radix` is
                                               GEOMETRIC (Morton interleave, boxes, nearest) and none of that
                                               means anything for a word, which is why `spatial` is not spelled
                                               `radix` at the surface.
 ```
+**The two NOT-NULL keys are the two kinds that key on something other than the value.**  A trie
+walks the BYTES of its key and a spatial interleaves its axes into a Morton code, and an absence
+has neither: no byte string (and `""` is a different value — `(L-Null-Text)`), no position on the
+curve.  So both refuse a `?` on a key at the declaration, naming it.  The three VALUE-keyed kinds
+do not ask: `hash` keys on the value, where an absent key is a value like any other, and `sorted`
+and `index` order by it, where `(L-Null)`'s in-band sentinel puts an absence first, below every
+present key — measured in `tests/scripts/1429b-the-kinds-that-do-hold-an-absent-key.loft`, which
+is also where the two refusals' advertised cures are checked.  Asked as a bare `Type::Text`, the
+kind test read a `text?` as "not a text", which let it take a spatial AXIS' place: accepted,
+iterating its records, and answering null for a point just inserted — loft#799's failure reached
+through the `?` (loft#1429).
+
 *Anchors:* `Type::{Vector,Hash,Sorted,Index,Radix,Trie}` (src/data.rs); DATABASE.md:693,:704; spatial
 surface tests/scripts/48-spatial-construct-free.loft; trie `Parts::Trie` (database/mod.rs:194) + @PLN134. **To decide when writing:** which formers
 live here vs in types.md's former list (recommend: types.md gains the one-line formers; collections.md
@@ -70,9 +82,32 @@ owns their *operations + order*).
 ```
   (Col-Cons)    c: <kind><…> = []             empty-literal construction (all kinds).
   (Col-Insert)  c += [ rec, … ]               append/insert a record; keyed kinds place it by key.
+  (Col-Insert-Absent)  c: <kind><…>?  holding null,  c += [ rec, … ]
+                ⟹  c is first instantiated with its default — the empty collection — and the
+                records are then inserted exactly as (Col-Insert) says.  No diagnostic: to an
+                insert, an absent collection and an empty one are the same place, so this is a
+                DEFINED semantic and not a discharge the author forgot.  It is the ONE write
+                that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
 ```
 *Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
+
+**An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
+vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an
+element or a parameter of a nullable collection type behaves the same, and so does every keyed
+kind (loft#1213 is the keyed FIELD half of it).  This is deliberately the opposite answer from
+iteration: a `for` over a nullable collection is refused until discharged
+([iteration.md](iteration.md)), because a loop body binds a dense element and the only way
+there is an unwrap, while an insert has no such binding — its only question is *which store*,
+and an absent collection has exactly one sensible answer to it.  Where an absent collection field comes from, and why the case is kept rather than
+refused: nearly every path in a program starts a collection EMPTY, so the one producer of an
+absent one is DECODING — a JSON document whose key is missing leaves a `vector<It>?` field
+null, and the first thing the program then does with it is add to it.  Requiring
+`s.items = s.items ?? []` before every such append would bill every decoder's consumer for a
+distinction the insert cannot even observe.  The type of `c` is unchanged
+by the append (still `<kind><…>?`); what changes is the value it holds.  Measured on both
+backends before it was ruled (`n: vector<It>? = null; n += [It{…}]; len(n) == 1`), and the
+refusal alternative is declined in [DESIGN_DECISIONS.md C118](../DESIGN_DECISIONS.md).
 
 **What `Col-Insert`'s source may BE, and what it may not.** The rule is written over one
 spelling, `c += [ rec, … ]`, and three source shapes satisfy it: the collection ITSELF (for a
@@ -141,14 +176,92 @@ every read would then pay for the check.
   (Col-Lookup)  Γ ⊢ c[key] ⇒ τ?              a keyed point lookup is NULLABLE — an absent key yields the
                                               null record (P285), discharged by `?? d` / `match` like any τ?.
 ```
-*Anchor:* fields.rs:700-706 (P285, the `expr_not_null` clear); mirrors types.md `(N-Index)` for `v[i]`.
+*Anchor:* `fields.rs::wrap_keyed_lookup_nullable` — the ONE home both keyed arms
+(`Hash|Radix|Trie`, `Sorted|Index`) call, which wraps the element type `Optional` for a POINT
+lookup.  A RANGE slice (spatial box, trie prefix) answers the collection for an enclosing `for`
+and takes no `?`: iterating one is total.  ⚠ **Point-ness is DERIVED, never asserted, and the
+third slice spelling is why.**  Beside the spatial `(` and the trie prefix — both decidable from
+the SHAPE before `parse_key` runs — a `sorted`/`index` subscript becomes an iterator INSIDE
+`parse_key`, for a PARTIAL key (`m[1]` on a two-key index, rewritten `m[1..=1]`) and for the
+`..` range form.  The `Sorted|Index` arm once asserted the opposite in a comment (*"no RANGE
+form here, so every arrival is a point lookup"*) and wrapped both; the cost was not a wrong type
+but a lost REFUSAL — `d.m[1] = null` stopped being *"Cannot assign null to a partial-key
+lookup"*, while the partial-key READ stayed diagnosed, so the file read as covered.  Both arms
+now ask `!matches!(code.unspan(), Value::Iter(..))`: the value `parse_key` produced answers for
+every slice spelling at once, where a type test answers for none of them.
+The `expr_not_null` clear beside it is the LINT half
+and enforces nothing — it was this rule's anchor until loft#1450, which is how `OPEN: 0` could
+read green over a live gap (`D-col-lookup`, closed).  The RECEIVER-absent case is a separate
+rule, typed at `parse_index` (`@FR-N-Domain`).  Mirrors types.md `(N-Index)` for `v[i]`.
+
+### 1.3b One field, one decode — `Col-Axis`
+
+```
+  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes — layout.md
+                `(L-Narrow-Decode)`, of which this is the KEYED refinement.  The kind of collection
+                asking does not change what the bytes mean, and neither does the storage asked
+                (resident `Store` or paged image), so a lookup answers a record for exactly the
+                keys its own iteration yields.
+```
+*Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
+value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
+
+**Arity is part of the key.** A point lookup supplies every field the declaration names, and
+a SHORT key is refused — at `hash`, at `spatial` and at `trie`.  `index` and `sorted` are the
+exception and not a hole in it: a partial key there is a real operation, rewritten to
+`c[k..=k]` and iterated, refused only in a VALUE position.  A `spatial` is not that case even
+though its Morton code has prefixes — a Z-order prefix is a QUADRANT, not a 1-D range — and a
+raw Morton-code subscript is not a surface this doc admits: `(Col-Trie)` shows what it looks
+like when a kind's own operation IS admitted (*"a PREFIX slice — the operation the kind exists
+for"*), while `(Col-Spatial)` names axes and an internal representation and nothing more.  An
+implementation detail is not a surface.  Stated as the COMPLEMENT of the iterating kinds, so a
+kind added to the language refuses by default — the cost of an omission here is a lookup that
+answers `null` from a malformed key, which no reader can tell from a genuine miss (loft#1457,
+`1457-…` and `1457b-…`).
+
+**In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
+slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
+descriptor carries the minimum so a reader can undo it. It exists because a reader that
+re-derives the decode instead of reading `Key::start` gets a different code for the same record
+than the writer produced — which does not present as an error, but as `c[k]` answering `null` for
+a record `for x in c` yields (loft#1431, the two `spatial` readers, where `u8` and `integer`
+stayed correct because their bias is zero).
+
+`(Col-Axis)` is about the DECODE only. Which values an axis may take is `(Col-Spatial)`'s
+integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level
+down (loft#1437).
+
+### 1.3b One field, one decode — `Col-Axis`
+
+```
+  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes — layout.md
+                `(L-Narrow-Decode)`, of which this is the KEYED refinement.  The kind of collection
+                asking does not change what the bytes mean, and neither does the storage asked
+                (resident `Store` or paged image), so a lookup answers a record for exactly the
+                keys its own iteration yields.
+```
+*Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
+value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
+
+**In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
+slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
+descriptor carries the minimum so a reader can undo it. It exists because a reader that
+re-derives the decode instead of reading `Key::start` gets a different code for the same record
+than the writer produced — which does not present as an error, but as `c[k]` answering `null` for
+a record `for x in c` yields (loft#1431, the two `spatial` readers, where `u8` and `integer`
+stayed correct because their bias is zero).
+
+`(Col-Axis)` is about the DECODE only. Which values an axis may take is `(Col-Spatial)`'s
+integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level
+down (loft#1437).
 
 ### 1.4 Iteration order per kind — `Col-Order` (EXTENDS [concurrency.md](concurrency.md) `C-Order`)
 
 ```
   (Col-Order)   for x in c { … } visits in a per-kind ORDER, identical on both backends:
                   vector  → index order 0,1,2,… (iteration.md I-For)
-                  hash    → UNSORTED bucket walk (no key order) — the C-Order decided edge
+                  hash    → KEY order, via the ordered snapshot the walk builds for it
+                            (its `par` walk is the UNSORTED one — concurrency.md C-Order)
                   sorted  → key order
                   index   → key order (its tree side)
                   spatial → Morton / Z-order
@@ -168,6 +281,19 @@ every read would then pay for the check.
 divergence-prone rule** (interp store-walk vs native emitted loop) — the whole reason the area needs
 pinning. `C-Order` already states the hash edge; `Col-Order` generalises it to every kind.
 
+**The hash line read the opposite of the rule it cites, and of what ships, until 2026-09-06.**
+It said *"UNSORTED bucket walk (no key order) — the C-Order decided edge"*, and the edge
+`C-Order` actually decides is the other one: the SEQUENTIAL walk is key-ordered and only the
+`par` walk gives that up, "because the parallel queue has no use for key order". Measured on
+both backends: a `hash<E[id]>` filled 49 down to 0 iterates 0,1,2,…,49, a `hash<E[k]>` on text
+iterates alphabetically, and the same collection under `par(…, 4)` comes out scrambled. The
+parser builds the ordered snapshot that makes it so (`parse_for`'s `hash_scratch`, an O(n log n)
+key sort for a hash and nothing for a radix, which is already ordered), and LOFT.md and
+STDLIB.md both describe it — *"hash iterates via its internal ordered index"*. So this was a
+transcription inverted in one place, not a rule the code had drifted from: the code, `C-Order`
+and the user-facing docs already agreed, and only this line dissented. Found in the
+`@FR-Col-Order` walk (QUALITY.md B8g).
+
 `Col-Order-Sign` is the half that was violated rather than merely unpinned. `index` applied the
 sign a second time in two places — the iterator bit (`fill_iter`) and the range-cursor bound swap
 (`tree::range_cursors`) — and reversing a total order twice is the identity, so every query on a
@@ -182,12 +308,30 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
   (Slice-Value)  v[a..b] / v[a..=b] / v[a..] / v[..b]  yields a FRESH sub-collection value:
                    vector<τ> → a fresh vector<τ> (H-Alloc); text → a text substring.
                  Bounds CLAMP: a partial-OOB slice returns the in-range part; a fully-OOB slice ⟹ [].
+                 A NEGATIVE bound counts from the END — `size + bound`, floored at the start, so
+                 v[-2..] is the last two and v[-99..] is the whole value.  EITHER end, BOTH kinds.
+                 A reversed range (after that normalisation) ⟹ [].
                  `..` is end-EXCLUSIVE, `..=` end-INCLUSIVE.  (Index vs slice asymmetry for text:
                  v[i] ⇒ character, v[i..j] ⇒ text.)
 ```
-*Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234.
+*Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
+negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
 **To verify when writing:** the exact clamp values on both backends; freshness (a value slice is
 independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
+
+> **`size` is the unit the bound counts in, and the two kinds count different things.** A
+> `vector<τ>` bound is an ELEMENT index; a `text` bound is a BYTE offset (`size(s)`, not the
+> character count `len(s)`), so counting from the end counts bytes and the boundary snap under
+> it decides which character you get — `"héllo"[-4..]` lands inside the two-byte `é` and answers
+> `"éllo"`. That is the same units split `char_slice` exists for (STDLIB.md), and it is why the
+> negative bound is spelled `size + bound` here rather than `len + bound`.
+>
+> **The `from` end was the half that did not hold.** Until 2026-09-07 a text slice normalised
+> only its `till`: `s[-2..]` answered `""` where `v[-2..]` answered the last two, on both
+> backends, with `s[..-1]` right beside it — three implementations of one operation, and the one
+> that had it right (`ops::sub_text`, which INTERNALS.md documents as end-relative on both ends)
+> was the unused one. Pinned by `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft`,
+> which reads every text cell against the vector cell for the same bound.
 
 ### 1.6 Keyed range-slice iterators — `Slice-KeyedIter` (`D-key-1`, the shipped decided edge)
 
@@ -392,7 +536,11 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in
+**OPEN: 1.**  `D-col-lookup` (loft#1450, opened 2026-09-07): `(Col-Lookup)`'s `τ?` is carried by
+the `expr_not_null` LINT flag its own anchor cites and never reaches a type, so a lookup that
+misses in a present collection binds into a non-null slot in silence, on all four keyed kinds.
+Deferred on cost (351 corpus sites), not on doubt.  The RECEIVER-absent half is closed
+(`D-Null-Recv`, [types-history.md](types-history.md)).  The rest of the record is in
 the companion [collections-history.md](collections-history.md).
 
 ## 4. Conformance / oracle plan (how each rule gets pinned — [VERIFICATION.md](VERIFICATION.md))

@@ -773,10 +773,46 @@ fn resolve_recursive(
     let version = resolved
         .best
         .ok_or_else(|| {
+            // A yanked version stays LISTED in `versions` (PKG_REGISTRY.md § Yanking keeps
+            // it so a `loft.lock` pin still resolves), so listing the keys bare tells the
+            // reader "0.1.0 is available" in the same breath as refusing a constraint
+            // 0.1.0 plainly satisfies.  Marking them is the difference between a message
+            // that reads as a resolver bug and one that names the cause — and when the
+            // yank IS the cause, saying so outright, because that reader's next move is
+            // to raise their floor rather than to re-read the constraint.
+            let yanked: std::collections::HashSet<&str> =
+                pkg.yanked.iter().map(String::as_str).collect();
+            let listed = pkg
+                .versions
+                .keys()
+                .map(|v| {
+                    if yanked.contains(v.as_str()) {
+                        format!("{v} (yanked)")
+                    } else {
+                        v.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let blocked: Vec<&str> = pkg
+                .versions
+                .keys()
+                .filter(|v| yanked.contains(v.as_str()))
+                .filter(|v| registry_index::satisfies(v, constraint_str))
+                .map(String::as_str)
+                .collect();
+            let because = if blocked.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " — every version that matches is yanked ({}); \
+                     raise the constraint, or ask for one by exact version to take it anyway",
+                    blocked.join(", ")
+                )
+            };
             format!(
                 "no version of `{name}` satisfies constraint `{constraint_str}` \
-                 (available: {})",
-                pkg.versions.keys().cloned().collect::<Vec<_>>().join(", ")
+                 (available: {listed}){because}"
             )
         })?
         .clone();
@@ -1075,6 +1111,66 @@ mod tests {
             "msg: {err}"
         );
         assert!(err.contains("0.1.0"), "msg: {err}");
+        // Negative control for the yank clause below: nothing here is yanked, so the
+        // message must NOT claim a yank is why resolution failed.
+        assert!(!err.contains("yanked"), "msg: {err}");
+    }
+
+    /// A yanked version stays LISTED, so the failure message has to say which entries
+    /// the resolver refused — otherwise it names `0.1.0` as available in the same breath
+    /// as refusing a constraint `0.1.0` satisfies, and reads as a resolver bug.
+    /// (Met live: yanking `imaging` 0.1.0 for loft#1448 made `^0.1.0` fail with a list
+    /// that included the version it had just skipped.)
+    #[test]
+    fn an_unsatisfiable_constraint_names_the_yank_that_caused_it() {
+        let mut p = pkg("a", vec![ver("0.1.0", &[]), ver("0.3.0", &[])]);
+        p.yanked = vec!["0.1.0".to_string()];
+        let idx = index(vec![p]);
+        let mut graph = Vec::new();
+        let err = resolve_recursive(
+            &idx,
+            "a",
+            Some("^0.1.0"),
+            &opts(),
+            &BTreeMap::default(),
+            &mut graph,
+        )
+        .expect_err("the only matching version is yanked");
+        assert!(err.contains("0.1.0 (yanked)"), "msg: {err}");
+        assert!(
+            err.contains("every version that matches is yanked"),
+            "msg: {err}"
+        );
+        // The unyanked sibling is listed plainly — the marker is per version, not a
+        // banner over the whole package.
+        assert!(
+            err.contains("0.3.0") && !err.contains("0.3.0 (yanked)"),
+            "msg: {err}"
+        );
+    }
+
+    /// The clause is about the CAUSE, so a failure the yank did not cause must not carry
+    /// it — a yanked version that could never have matched is listed, and nothing more.
+    #[test]
+    fn a_yank_that_did_not_cause_the_failure_is_not_blamed_for_it() {
+        let mut p = pkg("a", vec![ver("0.1.0", &[]), ver("0.3.0", &[])]);
+        p.yanked = vec!["0.1.0".to_string()];
+        let idx = index(vec![p]);
+        let mut graph = Vec::new();
+        let err = resolve_recursive(
+            &idx,
+            "a",
+            Some("^0.9"),
+            &opts(),
+            &BTreeMap::default(),
+            &mut graph,
+        )
+        .expect_err("no version reaches 0.9");
+        assert!(err.contains("0.1.0 (yanked)"), "msg: {err}");
+        assert!(
+            !err.contains("every version that matches is yanked"),
+            "msg: {err}"
+        );
     }
 
     #[test]

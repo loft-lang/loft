@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Every renderable part of a tuple renders — the half that makes the whole-tuple refusal a
+// DECISION rather than an absence.
+//
+// `formatting.md` `(F-Render)` gives a row to every scalar, to `vector` and to `struct`, and
+// none to a tuple; TUPLES.md § Non-goals is where that is decided, with the cure named:
+// element-by-element access.  This file is that cure, exercised.
+//
+// Its sibling `a-whole-tuple-has-no-rendering-and-says-so.loft` holds the refusal, and they are
+// two files because a compile-time refusal stops the run before any test function beside it
+// executes (TESTING.md § How a guard reads green).  **Written as one file, these cells silently
+// did not run** — the harness reported `1 expected error` and nothing else, which reads as a
+// pass.  That is the phase masking, met while writing the guard for it.
+//
+// Axes this file MOVES:  where the tuple LIVES (a stack local, nested inside another tuple, a
+//                        struct field), the member's type (integer · text), and which member is
+//                        read (first · second · the one beside a nested tuple).
+// Axes it HOLDS FIXED:   the access is a member READ; the whole-tuple form is the sibling's.
+//
+// @falsified-at: none — these have rendered correctly throughout; the file exists so that a
+//   cure satisfying the sibling's `@EXPECT_ERROR` by dropping tuples from the formatter
+//   entirely fails HERE instead of reading green.
+
+struct HoldsT { t: (integer, text), n: integer }
+
+fn test_every_renderable_part_of_a_tuple_still_renders() {
+  t = (1, "two");
+  assert("{t.0}" == "1", "a member renders: got {t.0}");
+  assert("{t.1}" == "two", "a text member renders: got {t.1}");
+
+  n = ((3, 4), 5);
+  inner = n.0;
+  assert("{inner.1}" == "4", "a nested tuple's member renders: got {inner.1}");
+  assert("{n.1}" == "5", "the member beside a nested tuple: got {n.1}");
+
+  h = HoldsT { t: (6, "six"), n: 7 };
+  assert("{h.t.0}" == "6", "a stored tuple's member renders: got {h.t.0}");
+  assert("{h.n}" == "7", "the field beside it: got {h.n}");
+}

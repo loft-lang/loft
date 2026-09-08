@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 
 /// Checked vector position — `8 + index * size` using u64 to detect overflow.
 #[inline]
-fn checked_vec_pos(index: u32, size: u32) -> u32 {
+pub(crate) fn checked_vec_pos(index: u32, size: u32) -> u32 {
     let pos = u64::from(index) * u64::from(size) + 8;
     u32::try_from(pos)
         .unwrap_or_else(|_| panic!("Vector position overflow: index={index} size={size}"))
@@ -487,6 +487,12 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
     keys::store(db, stores).get_u32_raw(db.rec, db.pos) == DbRef::ABSENT_REC
 }
 
+/// @FR-I-Empty and @FR-I-NullSrc share ONE home, and this is it: a `for` runs its body while
+/// the cursor is below this length, so answering 0 for a null source is what makes a null
+/// iterate zero times rather than fault.  The two rules are one line of code because they are
+/// one question — how many elements does this source have — and `nullref` is a RUNTIME null of
+/// a non-nullable type.  A source whose TYPE is `τ?` never reaches here: it is refused at parse
+/// time, since `types.md` admits no implicit unwrap (`Parser::iterator`).
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
     // the null sentinel is checked first so it never indexes stores[u16::MAX].
@@ -596,6 +602,34 @@ pub struct VecHeader {
     pub store_nr: u16,
     pub rec: u32,
     pub len: u32,
+}
+
+/// The scalar types a fused element WRITE stores (@PLN157 P4b), with the typed
+/// `Store` setter its fallback path uses — so the off-fast-path write is the same
+/// call the `#rust` template made, not a second spelling of it.
+pub trait HoistScalar: Copy + 'static {
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self);
+}
+
+impl HoistScalar for i64 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_int(rec, fld, val);
+    }
+}
+
+impl HoistScalar for f32 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_single(rec, fld, val);
+    }
+}
+
+impl HoistScalar for f64 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_float(rec, fld, val);
+    }
 }
 
 /// Derive [`VecHeader`] for the vector `db` points at.
@@ -718,6 +752,10 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     }
 }
 
+/// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later
+/// element down one, so there are no holes and no tombstones and index `j > i` now names what
+/// was at `j+1`.  That renumbering is what ends the place a view names (@FR-B-Disturb), so it
+/// is a contract rather than an implementation choice (@PLN130 F3 declined hole-punching).
 pub fn remove_vector(db: &DbRef, size: u32, index: i64, stores: &mut [Store]) -> bool {
     if db.is_null() {
         return false; // nothing to remove from a null (absent) vector

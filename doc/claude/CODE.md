@@ -182,12 +182,77 @@ Three shapes that read as correct and are not, each measured in this repo's own 
   yourself.
 - **Never wait on a process NAME whose text is inside the waiting script, and never `pkill`
   by name on a shared box.** `until ! pgrep -f "make ci"` never exits: the poller's own
-  `bash -c '…'` command line contains `make ci`, and the `[m]ake` bracket only stops `pgrep`
-  matching ITSELF, not the parent shell. `pkill -f "make ci"` matched — and killed — a sibling
-  checkout's run. Wait on an artefact or a pid file instead (`make ci` records its run in
-  `.ci-running`), stop a run through the tool that started it
+  `bash -c '…'` command line contains `make ci`. `pkill -f "make ci"` matched — and killed — a
+  sibling checkout's run. Wait on an artefact or a pid file instead (`make ci` records its run
+  in `.ci-running`), stop a run through the tool that started it
   (`scripts/find_problems.sh --stop`), and before acting on a "concurrent run" claim read
   the candidates' `readlink /proc/<pid>/cwd`.
+
+  ⚠ **The `[m]ake` bracket works, and that is exactly why it is not a rule you can rely on.**
+  Measured 2026-09-07: a bracketed waiter exits on the first poll, an unbracketed one loops
+  forever. What defeats the bracket is the PLAIN string appearing anywhere else on an ancestor's
+  command line — a second command in the same invocation, an `echo`, a log path — because then
+  the ancestor's argv carries the unbracketed text for the bracketed regex to match. That is
+  invisible and easy: the measurement above read "bracket self-matches" on its first attempt
+  because both forms were in one command. A waiter that is correct today breaks when someone
+  adds an `echo` beside it, so **wait on a recorded PID** — `scripts/ci-run.sh status`, or the
+  pid `find_problems.sh --bg` prints — which has no pattern to defeat.
+
+  ⚠ **An ALTERNATION defeats the bracket one branch at a time, and that is how it actually
+  bites.** Measured 2026-09-07: `pgrep -f "wasm-pack|[m]ake wasm"` reported "still building" for
+  eight minutes after `make wasm` had finished, because only the SECOND branch was bracketed —
+  the waiter's own argv contains the literal `wasm-pack`, so the first branch matched the
+  waiter. Every branch needs its own bracket, which is precisely the sort of detail that is
+  right when written and wrong after one edit.
+
+  **The check with no pattern at all is to ask the ARTEFACT, not the process.** `ls
+  --time-style=+%H:%M:%S <output>` against `date` answers *is it done?* directly, cannot
+  self-match, and is what finally caught that eight-minute stall.
+
+  `pgrep -x` is not the way round it either, and it is WORSE rather than merely inadequate. It
+  matches `comm`, which the kernel truncates to `TASK_COMM_LEN` — 16 bytes including the NUL —
+  so a name past 15 characters can never match and the check silently always passes. Measured
+  from both ends: `pgrep -x` on a 23-character name finds nothing while the same `-x` against
+  its truncated `comm` matches, and `pgrep` itself warns — on a tty, which is exactly where a
+  scripted waiter is not.
+
+  **The failure MODES are what rank the two.** `-f` self-matching fails LOUD: the loop blocks
+  and you go looking. `-x` past 15 characters fails silent and closed — a liveness check that
+  reports "finished" the whole time. Reaching for `-x` after being burned by `-f` is reaching
+  for the next pattern instead of stopping using patterns, which is the actual lesson: use the
+  recorded pid.
+
+- ⚠ **`git merge-base --is-ancestor <sha> HEAD` is not the test for "do I have this CHANGE".**
+  It answers about COMMITS, and the moment any checkout cherry-picks, the same change exists
+  under a different sha and every ancestry test reads MISSING for the rest of time.  The test
+  is `git show <sha> | git patch-id --stable` on both sides, compared.  Measured 2026-09-07: a
+  peer reported that `tuxedo-1361-tuple-copy` lacked `cbbea3cd2` (loft#1407's use-after-free
+  fix) and therefore carried a live `(H-View)` UAF; I re-ran their check, got the same
+  NOT-AN-ANCESTOR, and confirmed it.  Both wrong — the tree had it as `c0c2a9cb`, and both
+  shas give patch-id `d935f9a4ec628af42b5d8f8b277d251a18edb63d`.  What caught it was the
+  cherry-pick producing an EMPTY patch, not either agent's reasoning.  Across checkouts that
+  continuously pick from each other, "do I have this commit" is almost never the question
+  being asked.  **And the second-order lesson costs more than the first: verifying a peer by
+  re-running the peer's own method can only ever confirm them.  Verification means changing
+  the instrument.**
+
+- ⚠ **Never kill a `make ci` mid-compile — and if you must, clear the incremental dir in the
+  same breath.**  A killed compile leaves `target/debug/incremental` inconsistent, and the NEXT
+  build fails at link with undefined `core::ptr::drop_glue::<…>` and `anon.<hex>.llvm.<hex>`
+  referenced from `.rcgu.o` files.  Those names appear in NO source file, so the failure reads
+  like a link or codegen defect and cannot be grepped for.  The cure is `cargo clean -p loft`
+  and nothing smaller: hand-globbing `target/debug/deps/loft-*` does NOT match `libloft.rlib`,
+  so the stale rlib survives and the next gate fails identically with DIFFERENT symbols
+  (`loft::vector::get_vector`, `loft::keys::explain_enabled::ON`, now referenced from inside
+  the rlib).  Measured 2026-09-07: three gates, two of them wasted, and a 66 GiB clean.  A
+  second gate is cheaper than a corrupted target dir, so prefer letting one finish.
+
+- ⚠ **`CI-RESULT: FAILED` with a `FAIL [` count of ZERO is never the code under test.**  It is
+  the toolchain, the box, or the target dir — a link failure, contention, a corrupt incremental
+  cache.  Read the count BEFORE reading a single line of the error text; the verdict line's
+  captured `error[` is frequently a package you never touched.  Measured 2026-09-07: this
+  distinction was re-derived from error text three times in one evening because the count was
+  only reachable by grepping.  `scripts/ci-run.sh` now names the failing TEST and how many.
 
 ---
 

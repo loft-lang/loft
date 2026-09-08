@@ -96,7 +96,12 @@ fn key_type_nr_for_content(content: u16, types: &[Type]) -> i8 {
 /// key unfindable, and a `u16` key at or above 32768 decode NEGATIVE.
 ///
 /// `Parts::Int` really is raw (`set_i32_raw` stores the value itself), so it and every
-/// base type answer `0`, which is inert at the read sites.
+/// base type answer `0`, which is inert at the read sites.  `Parts::IntRaw` likewise.
+///
+/// @FR-L-Narrow-Enc — the `type_nr` is what carries the ENCODING to the key readers, which is
+/// why the unsigned 4-byte Part needs its own number rather than sharing `Int`'s: at one
+/// number they order, hash and reconstruct a key through one decode, and a `u32` at or above
+/// 2147483648 then hashes as a negative and the lookup misses a record that is present.
 fn key_descriptor_for_content(content: u16, types: &[Type]) -> (i8, i32) {
     if content <= 5 {
         return (1 + content as i8, 0);
@@ -106,8 +111,28 @@ fn key_descriptor_for_content(content: u16, types: &[Type]) -> (i8, i32) {
         Parts::Short(min, _) => (9, *min),
         Parts::Byte(min, _) => (10, *min),
         Parts::ShortRaw(min, _) => (11, *min),
+        // The unsigned 4-byte encoding is its own key kind: reading it under `Int`'s
+        // signed `get_i32_raw` orders and hashes a `u32` at or above 2147483648 as a
+        // negative number, so a keyed lookup answered `null` for a record its own
+        // iteration yields (loft#1437).  Raw like `Int`, so the shift is 0.
+        Parts::IntRaw(_, _) => (12, 0),
         _ => (7, 0),
     }
+}
+
+/// The schema key a narrow-integer Part is registered under.
+///
+/// One home with the native generator, which looks a registered element type up BY THIS
+/// NAME: the two spelling it separately is how a `vector<u32>` element was registered as
+/// `int<0,false>` by `init()` while the compiler had `int_raw<0,false>`, minting an extra
+/// type and renaming every id past it.
+///
+/// The kind is the caller's own identity, not a re-derivation from `(width, nullable)` —
+/// `Stores::short` is called with `nullable == false` for a slot that still uses the `+1`
+/// sentinel encoding, so the width and the flag together do not name the kind.
+fn narrow_part_name(kind: crate::data::NarrowIntKind, min: i32, nullable: bool) -> String {
+    kind.part_name(min, nullable)
+        .expect("every narrow kind has a Part name; only the wide `Int` has none")
 }
 
 impl Stores {
@@ -2027,11 +2052,7 @@ impl Stores {
     }
 
     pub fn byte(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = if min == 0 && !nullable {
-            "byte".to_string()
-        } else {
-            format!("byte<{min},{nullable}>")
-        };
+        let name = narrow_part_name(crate::data::NarrowIntKind::Byte, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2205,7 +2226,7 @@ impl Stores {
     }
 
     pub fn short(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = format!("short<{min},{nullable}>");
+        let name = narrow_part_name(crate::data::NarrowIntKind::Short, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2224,7 +2245,7 @@ impl Stores {
     /// fields with `u16` / `i16` continue to use `Parts::Short` (the
     /// legacy `+1` encoding with raw=0 null sentinel).
     pub fn short_raw(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = format!("short_raw<{min},{nullable}>");
+        let name = narrow_part_name(crate::data::NarrowIntKind::ShortRaw, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2241,13 +2262,33 @@ impl Stores {
     /// as the null sentinel.  Stack values stay 8-byte i64 — narrowing
     /// happens at the field boundary via OpSetInt4/OpGetInt4.
     pub fn int(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = format!("int<{min},{nullable}>");
+        let name = narrow_part_name(crate::data::NarrowIntKind::Int4, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
             let num = self.types.len() as u16;
             self.types
                 .push(Type::new(&name, Parts::Int(min, nullable), 4));
+            self.names.insert(name, num);
+            num
+        }
+    }
+
+    /// 4-byte UNSIGNED integer field type — a range that is non-negative and runs past
+    /// `i32::MAX` (`u32`).  Stored raw, no shift; `u32::MAX` reserved as the null
+    /// sentinel, which is why `u32` is declared `limit(0, 4294967294)`.
+    ///
+    /// The 4-byte twin of [`Stores::short_raw`].  A slot picks between this and
+    /// [`Stores::int`] through [`crate::data::NarrowIntKind::part`], never by re-asking
+    /// the range at the mint site.
+    pub fn int_raw(&mut self, min: i32, nullable: bool) -> u16 {
+        let name = narrow_part_name(crate::data::NarrowIntKind::Int4Raw, min, nullable);
+        if let Some(nr) = self.names.get(&name) {
+            *nr
+        } else {
+            let num = self.types.len() as u16;
+            self.types
+                .push(Type::new(&name, Parts::IntRaw(min, nullable), 4));
             self.names.insert(name, num);
             num
         }
@@ -2422,6 +2463,23 @@ impl Stores {
                 self.types[known_type as usize].name
             );
         }
+    }
+
+    /// Does this enum discriminant name a VARIANT, or is it an ABSENCE?
+    ///
+    /// One home for a predicate that has **two** null bytes, which is why restating it
+    /// keeps going wrong.  Both reach a program: an explicit null writes `255`
+    /// (`OpConvEnumFromNull`), while zero-init storage and `OpGetEnum` on an absent
+    /// record produce `0` — `default/01_code.loft` spells the pair as
+    /// `OpConvBoolFromEnum`'s `@v1 != 255 && @v1 != 0`, and [`enum_val`](Self::enum_val)
+    /// already answers `"null"` for both.  A reader that restates it as `disc == 0`
+    /// therefore renders 255 through `enum_val`'s own fallback and prints `Col.null`
+    /// — a variant path taken for a value that has no variant (loft#1459).  `255` is
+    /// safe to reject because it is not a variant of any enum, and neither is `0`
+    /// (variants are numbered from 1).
+    #[must_use]
+    pub const fn enum_is_null(disc: u8) -> bool {
+        disc == 0 || disc == u8::MAX
     }
 
     #[must_use]
@@ -2601,6 +2659,9 @@ impl Stores {
             // The width that had no arm: a raw `i32` whose reserved code is `i32::MIN`,
             // which is also exactly what the write side puts there.
             Parts::Int(_, nullable) => Some(nullable && store.get_i32_raw(rec, pos) == i32::MIN),
+            // The unsigned 4-byte encoding reserves the TOP code, as `ShortRaw` does one
+            // width down — `i32::MIN` is the legal value 2147483648 here.
+            Parts::IntRaw(_, nullable) => Some(nullable && store.get_u32_raw(rec, pos) == u32::MAX),
             _ => None,
         }
     }
@@ -2766,6 +2827,7 @@ impl Stores {
             Parts::Byte(start, nul) => format!("byte(start={start},null={nul})"),
             Parts::Short(start, nul) => format!("short(start={start},null={nul})"),
             Parts::Int(start, nul) => format!("int4(start={start},null={nul})"),
+            Parts::IntRaw(start, nul) => format!("int4raw(start={start},null={nul})"),
             Parts::ShortRaw(start, nul) => format!("shortraw(start={start},null={nul})"),
             Parts::Vector(e) => format!("vector<{}>(elem_size={})", name(*e), self.size(*e)),
             Parts::Array(e) => format!("array<{}>(elem_size={})", name(*e), self.size(*e)),
@@ -2900,9 +2962,11 @@ impl Stores {
             // narrow-text shapes.
             Parts::Base if content == 5 => true,
             Parts::Base => false,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::Int(_, _) | Parts::ShortRaw(_, _) => {
-                false
-            }
+            Parts::Byte(_, _)
+            | Parts::Short(_, _)
+            | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
+            | Parts::ShortRaw(_, _) => false,
             Parts::Enum(variants) => {
                 // Untyped enum (1-byte disc) is owned-free; struct-enum
                 // (variants with payload) is owned because it carries

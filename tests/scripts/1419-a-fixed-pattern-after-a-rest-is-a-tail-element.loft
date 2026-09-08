@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-P-Rest defines a named rest as `src[i .. len-t]` with `t` the count of FIXED patterns
+// after the rest, and `(P-Point)` makes a variant or a literal one of those patterns.  So a
+// variant after a `..` is a fixed pattern the rules admit — and the parser took only a BARE
+// NAME there, so `End { e }` bound the name `End` and then choked on `{`, four cascading
+// "Expect token" messages naming nothing the author could act on (loft#1419).
+//
+// The reason it was bare-name-only is worth keeping: a tail element reads from the END, at
+// `-(tail_len - j)`, and a bare name defers trivially because the bind loop runs after `]`.
+// A variant sub-pattern or a literal emits its test AS it parses, so it needs its index in
+// hand — which is not known until the whole tail has been seen.  Counting the tail once, when
+// the `..` is consumed, gives every branch the index it needs, and the tail then admits the
+// same element forms the head does.
+//
+// The head cells are controls: they exercise the branches that already worked, so a cure that
+// merely moved the head's positions would fail them rather than read green.
+//
+// @falsified-at: d9850164 — interpret exit 1 -> 0, native exit 1 -> 0, assertion column 0 on
+//   both sides.  Zero because the control build does not PARSE the file: the tail sub-pattern
+//   cascades and no cell runs to fail.  An exit-only move is the weaker falsification, which is
+//   why the head controls and the two-fixed-tail cell are here — they assert VALUES, so a cure
+//   that parsed the tail but read the wrong positions fails on a number rather than passing.
+
+enum Tok { Kw { word: text }, End { e: integer }, Num { n: integer } }
+
+fn tail_variant(ts: vector<Tok>) -> integer {
+  match ts { [Kw { word }, .., End { e }] => e, _ => -1 }
+}
+fn tail_named_rest(ts: vector<Tok>) -> integer {
+  match ts { [Kw { word }, ..mid, End { e }] => e + len(mid), _ => -1 }
+}
+fn tail_two_fixed(ts: vector<Tok>) -> integer {
+  match ts { [Kw { word }, .., Num { n }, End { e }] => n * 100 + e, _ => -1 }
+}
+fn tail_bare_name(ts: vector<Tok>) -> integer {
+  match ts { [Kw { word }, .., z] => match z { End { e } => e, _ => 0 }, _ => -1 }
+}
+fn head_variant(ts: vector<Tok>) -> integer {
+  match ts { [End { e }, ..] => e, _ => -1 }
+}
+fn literal_in_tail(ns: vector<integer>) -> integer {
+  match ns { [a, .., 9] => a, _ => -1 }
+}
+fn literal_in_head(ns: vector<integer>) -> integer {
+  match ns { [9, .., a] => a, _ => -1 }
+}
+
+fn a_variant_after_a_rest_is_a_tail_element() {
+  assert_eq("{tail_variant([Kw{word:\"a\"}, End{e:9}])}", "9", "the tail variant binds with an empty middle");
+  assert_eq("{tail_variant([Kw{word:\"a\"}, Num{n:3}, End{e:9}])}", "9", "and with a middle");
+  assert_eq("{tail_variant([Kw{word:\"a\"}, Num{n:3}])}", "-1", "and does not match a wrong tail variant");
+}
+
+// The rest is `len - t` long, so naming it proves `t` was counted: one fixed tail element
+// leaves the middle one shorter than a bare `..` would.
+fn a_named_rest_shrinks_by_the_fixed_tail() {
+  assert_eq("{tail_named_rest([Kw{word:\"a\"}, End{e:9}])}", "9", "an empty middle adds nothing");
+  assert_eq("{tail_named_rest([Kw{word:\"a\"}, Num{n:3}, End{e:9}])}", "10", "a one-element middle adds one");
+  assert_eq("{tail_named_rest([Kw{word:\"a\"}, Num{n:3}, Num{n:4}, End{e:9}])}", "11", "a two-element middle adds two");
+}
+
+// Two fixed tail patterns: each must read its OWN position from the end, so a cure that
+// counted them but mis-assigned the indices answers a different number rather than failing.
+fn two_fixed_tail_patterns_read_their_own_positions() {
+  assert_eq("{tail_two_fixed([Kw{word:\"a\"}, Num{n:3}, Num{n:4}, End{e:9}])}", "409",
+            "the LAST Num is the one the pattern names");
+  assert_eq("{tail_two_fixed([Kw{word:\"a\"}, End{e:9}])}", "-1", "too short does not match");
+}
+
+fn a_literal_after_a_rest_is_a_tail_element() {
+  assert_eq("{literal_in_tail([1, 2, 9])}", "1", "the tail literal matches");
+  assert_eq("{literal_in_tail([1, 2, 8])}", "-1", "and refuses a different value");
+}
+
+// ── Controls: the head forms, which already worked ──
+fn the_head_forms_are_unchanged() {
+  assert_eq("{tail_bare_name([Kw{word:\"a\"}, End{e:9}])}", "9", "a bare tail name still binds the last element");
+  assert_eq("{head_variant([End{e:5}, Kw{word:\"z\"}])}", "5", "a head variant still matches");
+  assert_eq("{head_variant([Kw{word:\"a\"}, End{e:9}])}", "-1", "and still refuses the wrong head");
+  assert_eq("{literal_in_head([9, 2, 7])}", "7", "a head literal still matches");
+  assert_eq("{literal_in_head([1, 2, 7])}", "-1", "and still refuses");
+}

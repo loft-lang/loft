@@ -656,6 +656,14 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // @PLN157 P4b — the write twin: a fused element WRITE also folds its inner
+            // element address away, so that address must not be lifted either.  Both
+            // sides ask `fused_element_write`, so they cannot disagree.
+            if let Some(fused) = self.fused_element_write(self.data.def(*d_nr).name(), vals) {
+                self.collect_pre_evals_inner(fused.index, result)?;
+                self.collect_pre_evals_inner(fused.fld, result)?;
+                return self.collect_pre_evals_inner(fused.val, result);
+            }
             let def_fn = self.data.def(*d_nr);
             if def_fn.rust().is_empty() {
                 // User-defined function: pre-eval any Block or nested user-fn arguments

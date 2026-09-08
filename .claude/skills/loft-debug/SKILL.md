@@ -46,11 +46,11 @@ irreversible moves not to make.
   you scope + workaround for free, and the fix commit must claim it (below).
 - Single file, interpreter: `cargo run --bin loft -- --interpret file.loft`
 - Native: `cargo run --bin loft -- --native file.loft`
-- ⚠ **The default backend on this box is `--native`.** For the SEEING loop ALWAYS pass
+- ⚠ **The default backend is `--native` (compiled-in default everywhere).** For the SEEING loop ALWAYS pass
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in
   seconds, whereas `--native` pays a rustc compile per probe (that cost belongs at the
   final verify, not the loop).
-- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § Debug logging / `doc/claude/TESTING.md`
+- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § `LOFT_LOG` quick reference / `doc/claude/TESTING.md`
   § LogConfig): `minimal` (exec trace — cleanest for runtime bugs), `static` (IR +
   bytecode, fastest for codegen), `crash_tail:N` (last N lines, flushed on panic),
   `ref_debug` (stack snapshots after Ref/CreateStack), `variables` (the per-fn var
@@ -60,6 +60,8 @@ irreversible moves not to make.
   bytecode + execution trace; the root cause is almost always visible there. (See
   `doc/claude/DEBUG.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
   investigate (CLAUDE.md § Debugging policy) — read the dump and reason.
+- **Tight loop**: `./scripts/find_problems.sh --subject <name>` (seconds) while
+  iterating — full suite only before a commit (CLAUDE.md § Key commands).
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
 
@@ -69,10 +71,10 @@ The @PLN16 debugger speaks NDJSON over stdio (the contract:
 `doc/claude/plans/16-debugger/PROTOCOL.md`). One `printf` pipes a whole scripted
 session — breakpoint → inspect the live frame → eval → edit → resume. Patterns
 below verified hands-on against this tree and a real multi-module consumer
-(crawler's Sim). ⚠ Version boundary: an installed binary OLDER than the rpc
-fixes (commit `9de72ada`) sends NO `verified` field on setBreakpoints and
-ignores string-form `"log"` (array only) — when driving `/usr/local/bin/loft`,
-prefer `target/*/loft` from this tree if the response lacks `verified`.
+(crawler's Sim). ⚠ Version boundary: an installed binary older than the rpc
+fixes sends NO `verified` field on setBreakpoints and ignores string-form
+`"log"` (array only) — when driving an installed `loft`, prefer `target/*/loft`
+from this tree whenever the setBreakpoints response lacks `verified`.
 
 ```sh
 printf '%s\n' \
@@ -136,22 +138,25 @@ printf '%s\n' \
 
 1. **Default is `--native`** — see above; pass `--interpret` for the seeing loop.
 2. **Toolchain mismatch.** The box's rustup default can differ from the repo's
-   `rust-toolchain.toml` (e.g. 1.96 default vs 1.95 rlibs). Then `--native` fails
+   `rust-toolchain.toml`. Then `--native` fails
    `E0514 incompatible rustc`, *or* forcing a toolchain triggers a full from-scratch
-   rebuild (~30 min). Fix: run native from **inside the repo** so `rust-toolchain.toml`
+   rebuild. Fix: run native from **inside the repo** so `rust-toolchain.toml`
    applies; if a snap `rustc` is first on PATH, prefix
-   `PATH="$(dirname "$(rustup which rustc)"):$PATH"`.
+   `PATH="$(dirname "$(rustup which rustc)"):$PATH"`. `find_problems.sh` self-heals
+   the cross-toolchain-polluted `libloft_ffi-*.rlib` case before building; hand-fix
+   only direct `--native` runs outside the script.
 3. **Stale dependency rlibs.** After a rebase / `Cargo.lock` bump, a `--lib`-only build
    leaves dep rlibs stale → native tests fail `crate rustls / ureq / webpki / ring
    required to be available in rlib format, but was not found`. Fix: a **full**
    `cargo build --release` (NOT `--lib`) — the native harness links the whole dep
    tree. These are FALSE failures.
-4. **`rust-lld` SIGBUS in tmpfs `/tmp` under parallel native compiles.** Native tests
-   flake under `find_problems`' parallelism. Confirm any native failure **serially**
+4. **Linker flakes under parallel native compiles** (seen as `rust-lld` SIGBUS in a
+   tmpfs `/tmp` on Linux). Native tests flake under `find_problems`' parallelism.
+   Confirm any native failure **serially**
    (`cargo test --release --test <bin> <name> -- --test-threads=1`) before trusting it.
-5. **Unhashed `libloft.rlib`.** After changing `loft-ffi/` or `loft-core` runtime code,
-   `cargo build --release --lib` before native tests (else a wave of stale-rlib false
-   failures).
+5. **Stale `libloft.rlib`.** After changing `loft-ffi*/` or the `loft` crate's runtime
+   code, run `make check-rlib` (the 1s pre-flight) before native tests — it says whether
+   the rlib the native tests link is current; a stale one is a wave of false failures.
 
 Pattern: a sudden wave of native-compile/link failures right after a rebase / dep /
 toolchain change is almost always 2–5, not a regression. Rebuild fully + re-run
@@ -163,8 +168,9 @@ serially before believing them.
   `pkill -f "cargo run …"` matches a SIBLING agent's identical command — it has killed
   another agent's build (and the killer's own). To stop your OWN background task, kill
   only its specific PID / task-id.
-- **Never touch `/home/jurjen/workspace/loft2`** — a parallel agent's workspace, not
-  yours. A `--out-dir .../loft2/…` in a process you're inspecting means it is NOT yours.
+- **Never touch a sibling checkout of this repo** (a parallel agent's workspace). An
+  `--out-dir` pointing into a tree that is not your working directory, in a process you
+  are inspecting, means that process is NOT yours.
 - **An anomaly right before a destructive command (kill / rm / force-push / overwrite)
   is a STOP, not a footnote.** Investigate the surprise first — there is no undo, and
   this is exactly where "don't act on partial sight" matters most.

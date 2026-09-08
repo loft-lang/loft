@@ -45,12 +45,22 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   native tests link, and a bare `cargo test`
                                          #   builds no rlib either (`make ci` builds all
                                          #   three itself, so it needs no pre-flight)
-./scripts/find_problems.sh --subject <name>     # SECONDS — the tight loop; use this while
+./scripts/find_problems.sh --changed [ref]      # SECONDS — the tight loop: the subjects YOUR
+                                         #   DIFF touches (uncommitted edits, or vs `ref`),
+                                         #   an edited tests/<x>.rs picks its own binary, an
+                                         #   edited corpus file picks the corpus runners.
+                                         #   Falls back to the curated set, saying why, when
+                                         #   the diff touches what every binary depends on.
+./scripts/find_problems.sh --subject <name>     # one area by name; use this or --changed while
                                          #   iterating, not `make ci`.  Subjects: parser scopes
                                          #   codegen runtime store wasm packages lsp sql docs
                                          #   host (`--list-subjects` to see them + exclusions).
-                                         #   Shape: --subject while iterating → the two clippy
-                                         #   variants + fmt → ONE `make ci` before committing.
+                                         #   Shape: --changed/--subject while iterating → the
+                                         #   two clippy variants + fmt → ONE `make ci` before
+                                         #   committing (it runs your diff's subjects FIRST, so
+                                         #   a red shows in its first minute; and it QUEUES
+                                         #   behind another checkout's gate — one at a time on
+                                         #   this box, LOFT_GATE_PARALLEL=1 to run beside it).
                                          #   `make ci` is ~10 min and only that if the box is
                                          #   idle — two checkouts running gates at once doubles
                                          #   it (CI_BUDGET.md § A LOCAL `make ci`).
@@ -388,7 +398,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·
-[QUALITY.md](doc/claude/QUALITY.md) open work · [GOALS.md](doc/claude/GOALS.md) (purpose + goals A–F) ·
+[QUALITY.md](doc/claude/QUALITY.md) open work · [GOALS.md](doc/claude/GOALS.md) (purpose + goals A–G) ·
 [BUS_FACTOR.md](doc/claude/BUS_FACTOR.md) (the development model — repo + agent, no single point of failure) ·
 [STRONG_POINTS.md](doc/claude/STRONG_POINTS.md) ·
 [CONTROL.md](doc/claude/CONTROL.md) the census of where the programmer is NOT in
@@ -435,7 +445,10 @@ class; the pass converts ONE rising class into ONE generalization — a report, 
 per cycle: its state write-up and its committed checklist evidence) · [LIBRARY_DOC_REVIEW.md](doc/claude/LIBRARY_DOC_REVIEW.md) (the monthly by-hand doc review, both
 halves: `make libraries-review` says which libraries owe a review or have moved since their
 watermark, `make features-review` does the same for the `@F` catalogue, `scripts/doc-review.sh
---since` drills into one library's functions — all three REPORT, none gates) · [COMPATIBILITY.md](doc/claude/COMPATIBILITY.md) (the breaking-change policy, @PLN102 arc A) · [MOVING.md](doc/claude/MOVING.md) ·
+--since` drills into one library's functions — all three REPORT, none gates) ·
+[SKILLS_REVIEW.md](doc/claude/SKILLS_REVIEW.md) (the same watermark pass for the agent
+skills: `make skills-review` says which skills owe a read because they or the docs they
+cite moved; the read itself is by hand on three axes — content, usability, conciseness) · [COMPATIBILITY.md](doc/claude/COMPATIBILITY.md) (the breaking-change policy, @PLN102 arc A) · [MOVING.md](doc/claude/MOVING.md) ·
 [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG_TECHNICAL.md](doc/claude/CHANGELOG_TECHNICAL.md) ·
 [DOC.md](doc/claude/DOC.md) (how `gendoc` renders a topic) ·
 [USER_DOCS.md](doc/claude/USER_DOCS.md) — the design for the documentation a DISTRIBUTION

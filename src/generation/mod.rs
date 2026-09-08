@@ -13,6 +13,7 @@ mod coroutine;
 mod dispatch;
 mod emit;
 pub mod hoist;
+pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 mod text;
@@ -260,10 +261,20 @@ fn collect_fn_ref_literals(
 ) {
     match val {
         Value::Set(var, inner) => {
-            if matches!(
-                variables.tp(*var),
-                Type::Function(_, _, _) | Type::Routine(_)
-            ) {
+            // Through the LINK as well as bare: `@FR-B-Ref-Intro` gives `&τ` for every τ, so
+            // a `&fn(…)` parameter names a fn-ref slot and a d_nr written through it keeps
+            // that function reachable.  Read bare, a function reached ONLY by a write
+            // through such a link was pruned, had no arm in the native dispatch, and the
+            // call panicked `invalid fn-ref` — the same shape as the @P299, @P328 and
+            // loft#1069 recoveries above, with the link as the spelling that hid it
+            // (loft#1443).
+            // `peel_link` IS this question — `base()` and then every `&` — and asking it by
+            // name rather than by a local `match` is `@FR-B-Ref-Uniform`'s own argument: the
+            // linkage lives in the TYPE, so a site that wants to know what a value IS says so
+            // once.  Hand-rolled here and at four more sites across loft#1443/#1454/#1455
+            // before the accessor reached this tree.
+            let slot_tp = variables.tp(*var).peel_link();
+            if matches!(slot_tp, Type::Function(_, _, _) | Type::Routine(_)) {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
             // loft#1069 — a fn-ref stored into a TUPLE MEMBER. `t: (fn(…), integer) =
@@ -587,7 +598,7 @@ pub struct Output<'a> {
     /// of a variable listed here skips the store resolution and the length load; every
     /// other read emits unchanged. One frame is pushed per `Value::Loop`, so a frame is
     /// popped exactly where the local it names goes out of scope.
-    pub vec_headers: Vec<HashMap<u16, String>>,
+    pub vec_headers: Vec<HashMap<hoist::PathKey, String>>,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
@@ -610,6 +621,38 @@ pub struct Output<'a> {
     /// top of the header hoist could only be estimated. It also bisects a native-only wrong
     /// answer in a vector loop one stage further than the all-or-nothing switch does.
     pub elem_fuse_disabled: bool,
+    /// `LOFT_NN_VERIFY=1` — emit the CHECKING form of every compare the
+    /// non-sentinel pass simplified: assert neither operand is NaN, then
+    /// compare plain.  A wrong proof panics at the exact site instead of
+    /// answering a differently-ordered boolean.  See [`non_sentinel`].
+    pub nn_verify: bool,
+    /// `LOFT_NO_NN_FAST=1` — emit every float compare through its `#rust`
+    /// template, as before @PLN157 P3.  The bisect switch for a native-only
+    /// wrong boolean around floats, same contract as `LOFT_NO_VECTOR_HOIST`.
+    pub nn_fast_disabled: bool,
+    /// Per-definition cache of [`non_sentinel::non_sentinel_float_vars`],
+    /// keyed by `def_nr` — computed on the first simplifiable compare a
+    /// function emits, shared by the rest.
+    nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
+    /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
+    leaf_cache: HashMap<u32, bool>,
+    /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
+    /// before N4.  The bisect switch for a diagnostic that lost its
+    /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
+    pub leaf_elide_disabled: bool,
+    /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
+    /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
+    /// `--html` build also has `emit_live == false` (debug is opt-in there)
+    /// and MUST keep its named frames — the browser panic hook's frame block
+    /// is a pinned contract (`html_panic_names_itself_and_its_loft_frames`),
+    /// and losing it was the regression off-box CI caught on 2026-09-07.
+    pub lean_tier: bool,
+    /// `LOFT_NO_WRITE_HOIST=1` — classify in-place element writes as hoist
+    /// blockers again (@PLN157 P4a), so a loop that writes keeps the pre-885
+    /// per-element form for everything.  One step finer than
+    /// `LOFT_NO_VECTOR_HOIST` when bisecting a wrong answer in a loop that
+    /// both reads and writes vectors.
+    pub write_hoist_disabled: bool,
     /// O7: number of consecutive format/append ops following the current
     /// `OpClearStackText`/`OpClearText`.  Set by `output_block` before each
     /// op is emitted; consumed (and reset to 0) by `clear_stack_text`.
@@ -739,6 +782,17 @@ pub struct Output<'a> {
     /// sets it `false`, so the generated Rust carries ZERO live-dispatch
     /// machinery — the smallest release binary, no live-flip / breakpoints.
     pub emit_live: bool,
+    /// @PLN157 — did the author ask to trade away frame NAMING?  Distinct from
+    /// [`emit_live`](Self::emit_live), which asks whether the live/debug tier ships.
+    /// The two coincide on the NATIVE paths, where `emit_live` is true unless
+    /// `--lean` is passed — and diverge on `--html`, where a production browser
+    /// client is debug-OFF by default (@PLN98 P3.4) and so has `emit_live == false`
+    /// without anybody asking for a lean build.  Selecting the nameless
+    /// [`cr_call_push_lean`](crate::codegen_runtime::cr_call_push_lean) off
+    /// `!emit_live` therefore stripped loft frame names from EVERY browser panic,
+    /// which is what `html_wasm::html_panic_names_itself_and_its_loft_frames`
+    /// caught.  The frame-naming question has one home, and this is it.
+    pub lean: bool,
     /// @PLN98 P3.1 — the program's own source text, emitted as a `static LOFT_SRC`
     /// blob in a live build so the parked interpreter can bootstrap from EMBEDDED
     /// bytes ([`live_dispatch::bootstrap_from_bytes`](crate::live_dispatch::bootstrap_from_bytes))
@@ -1388,6 +1442,7 @@ enum BareIo {
     Short(i32, bool),
     ShortRaw(i32, bool),
     Int(i32, bool),
+    IntRaw(i32, bool),
     Vector(u16),
     Sorted(u16, Vec<(u16, bool)>),
     Hash(u16, Vec<u16>),
@@ -1425,6 +1480,13 @@ impl<'a> Output<'a> {
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
             hoist_disabled: std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0"),
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
+            nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
+            nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
+            nn_cache: HashMap::new(),
+            leaf_cache: HashMap::new(),
+            leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
+            lean_tier: false,
+            write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
             yield_collect: false,
             yield_collect_text: false,
@@ -1451,6 +1513,7 @@ impl<'a> Output<'a> {
                 .collect(),
             live_fns: Vec::new(),
             emit_live: true,
+            lean: false,
             program_src: None,
             debug_name: None,
             keep_fn_names: false,
@@ -1672,30 +1735,41 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        let mut frame: HashMap<u16, String> = HashMap::new();
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let candidates = if self.hoist_disabled {
             Vec::new()
         } else {
-            hoist::hoistable_vectors(lp, self.data, self.def_nr, &mut self.hoist_cache)
+            hoist::hoistable_vectors(
+                lp,
+                self.data,
+                self.def_nr,
+                &mut self.hoist_cache,
+                !self.write_hoist_disabled,
+            )
         };
         let mut lines: Vec<String> = Vec::new();
-        for v in candidates {
-            if self.vec_headers.iter().any(|f| f.contains_key(&v)) {
+        for (path, expr) in candidates {
+            if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
             }
             // A generator's locals live on the generator struct and are named `self.var_x`
             // inside its `next` methods. The prelude below spells a plain local, so a
             // vector that moved onto the struct is left alone rather than named wrongly.
-            if self.coroutine_persistent_fields.contains_key(&v) {
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
             }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
-            let var = sanitize(self.data.def(self.def_nr).variables().name(v));
+            // The path expression is pure (a Var, or const `OpGetField`s over one —
+            // `vector_path` vouched), so evaluating it once here is exactly the
+            // evaluation the loop body repeats.
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
             lines.push(format!(
-                "let {name} = vector::vec_header(&(var_{var}), &stores.allocations);"
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations);"
             ));
-            frame.insert(v, name);
+            frame.insert(path, name);
         }
         let opened = !lines.is_empty();
         if opened {
@@ -1721,11 +1795,11 @@ impl Output<'_> {
 
     /// The Rust local holding `var`'s hoisted header, when an enclosing loop derived one.
     #[must_use]
-    pub fn active_vec_header(&self, var: u16) -> Option<&str> {
+    pub fn active_vec_header(&self, path: &hoist::PathKey) -> Option<&str> {
         self.vec_headers
             .iter()
             .rev()
-            .find_map(|f| f.get(&var).map(String::as_str))
+            .find_map(|f| f.get(path).map(String::as_str))
     }
 
     /// Whether this call is emitted as ONE fused element read (loft#885 stage 2) — the
@@ -1746,8 +1820,75 @@ impl Output<'_> {
             return None;
         }
         let fused = hoist::fused_element_read(self.data, getter, args)?;
-        self.active_vec_header(fused.var)?;
+        self.active_vec_header(&fused.path)?;
         Some(fused)
+    }
+
+    /// Whether this call is emitted as ONE fused element WRITE (@PLN157 P4b) — the
+    /// shape qualifies, the enclosing loop hoisted a header for the vector, and the
+    /// fusion is not switched off by `LOFT_NO_ELEM_FUSE`.  Same one home, same
+    /// reason as [`Self::fused_element_read`]: the emitter and the pre-eval
+    /// collector must reach the SAME verdict, or the element address the fusion
+    /// folds away is also lifted into a `let _pre_N` and resolves twice.
+    #[must_use]
+    pub fn fused_element_write<'a>(
+        &self,
+        setter: &str,
+        args: &'a [Value],
+    ) -> Option<hoist::FusedWrite<'a>> {
+        if self.elem_fuse_disabled {
+            return None;
+        }
+        let fused = hoist::fused_element_write(self.data, setter, args)?;
+        self.active_vec_header(&fused.path)?;
+        Some(fused)
+    }
+
+    /// Are ALL of `args` provably non-sentinel (non-NaN float / non-MIN
+    /// integer) in the current function (@PLN157 P3)?  Computes the
+    /// per-definition var facts on the first simplifiable op a function
+    /// emits and caches them for the rest; the callers are the
+    /// float-compare and integer-arithmetic emitters, which fall through to
+    /// the `#rust` template on a `false`.
+    pub fn non_sentinel_args(&mut self, args: &[Value]) -> bool {
+        let vars = if let Some(v) = self.nn_cache.get(&self.def_nr) {
+            v.clone()
+        } else {
+            let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
+                self.data,
+                self.data.def(self.def_nr).code(),
+            ));
+            self.nn_cache.insert(self.def_nr, map.clone());
+            map
+        };
+        args.iter()
+            .all(|a| non_sentinel::non_sentinel(self.data, &vars, a))
+    }
+
+    /// N4 (@PLN157): is this definition a LEAF — a body with no call to a
+    /// user function (`n_*`, or a loft-bodied `t_*` method), no fn-ref
+    /// call, no `parallel`, no `yield`?  A leaf cannot recurse — nothing it
+    /// calls can re-enter it — so its prelude can be elided entirely; op
+    /// calls (`Op*`, `#rust`-bodied stubs) are the body's work, not routes
+    /// back into user code.  `stack_trace()`/`assert`/`panic` are calls,
+    /// so a leaf can never ask for the frame it does not have.
+    fn is_elidable_leaf(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.leaf_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let leaf = !data.def(def_nr).code().any_node(&mut |v| match v {
+            Value::Call(d, _) => {
+                let callee = data.def(*d);
+                let name = callee.name();
+                name.starts_with("n_")
+                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+            }
+            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+            _ => false,
+        });
+        self.leaf_cache.insert(def_nr, leaf);
+        leaf
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -3118,6 +3259,9 @@ extern crate loft;"
                 crate::database::Parts::Int(min, nullable) => {
                     bare_io.push((tid, BareIo::Int(*min, *nullable)));
                 }
+                crate::database::Parts::IntRaw(min, nullable) => {
+                    bare_io.push((tid, BareIo::IntRaw(*min, *nullable)));
+                }
                 crate::database::Parts::Vector(c) => {
                     bare_io.push((tid, BareIo::Vector(*c)));
                 }
@@ -3624,6 +3768,9 @@ extern crate loft;"
             }
             BareIo::Int(min, nullable) => {
                 writeln!(w, "    let t{tid} = db.int({min}, {nullable});")?;
+            }
+            BareIo::IntRaw(min, nullable) => {
+                writeln!(w, "    let t{tid} = db.int_raw({min}, {nullable});")?;
             }
             BareIo::Vector(c) => {
                 let c_ref = type_id_ref(*c);
@@ -4237,22 +4384,14 @@ extern crate loft;"
                 // `narrow_vector_content` registered — `part_min`, not the declared `min`
                 // (they differ for a nullable signed narrow element).
                 let elm_min = spec.part_min(n, elm_nullable);
-                let name = match n {
-                    1 => {
-                        if elm_min == 0 && !elm_nullable {
-                            "byte".to_string()
-                        } else {
-                            format!("byte<{elm_min},{elm_nullable}>")
-                        }
-                    }
-                    // A nullable 2-byte element is the `+1` sentinel encoding
-                    // (`Parts::Short`), the non-null one direct (`ShortRaw`) —
-                    // mirroring `Data::narrow_vector_content`.
-                    2 if elm_nullable => format!("short<{elm_min},true>"),
-                    2 => format!("short_raw<{elm_min},false>"),
-                    4 => format!("int<{elm_min},{elm_nullable}>"),
-                    _ => String::new(),
-                };
+                // The kind and its NAME both come from the one home the compiler
+                // registered this element through (`Data::narrow_vector_content`), so a
+                // width's encoding cannot be decided one way here and another there.
+                // `narrow_vec` is true: this IS the element path.
+                let name =
+                    crate::data::NarrowIntKind::of(n, elm_nullable, true, spec.unsigned_wide())
+                        .part_name(elm_min, elm_nullable)
+                        .unwrap_or_default();
                 if !name.is_empty() {
                     let narrow = self.stores.name(&name);
                     if narrow != u16::MAX {
@@ -4404,10 +4543,25 @@ extern crate loft;"
         if let Type::Integer(int_spec) = typedef {
             // Post-2c: the field's size may come from the integer alias's
             // `size(N)` annotation (captured in `Attribute.alias_d_nr` →
-            // `Data::forced_size`) OR from the `Type::Integer` range.
-            // Mirrors `src/typedef.rs:354-373` exactly so the runtime
+            // `Data::forced_size`), from the width the TYPE itself carries, or
+            // from the `Type::Integer` range.  Mirrors `fill_database`'s integer
+            // arm in `src/typedef.rs` exactly, all three rungs, so the runtime
             // Parts matches the interpreter's (Byte/Short/Int/base).
-            let field_size = forced_size.unwrap_or_else(|| typedef.size(nullable));
+            //
+            // The middle rung is the one a SYNTHESIZED field needs.  `parse_field`
+            // captures `alias_d_nr` for a field somebody declared, so `u8?` on a
+            // struct resolves its width through the alias; a field built from a
+            // Type alone — `__tuple<…>`'s elements, a mutated capture's `__cell_…`
+            // value — has no alias, and without this rung the range heuristic
+            // silently widens it (a nullable `u8` reserves its sentinel and becomes
+            // a 2-byte `short`).  The compiler reads the width off the type and does
+            // not widen, so the two disagreed about one field: `byte<0,true>` in the
+            // compiler's table against `short<0,true>` in generated `init()`, which
+            // renames every id past it (loft#739).  @PLN114 added the rung to the
+            // interpreter for the tuple case; this is its native twin.
+            let field_size = forced_size
+                .or_else(|| int_spec.forced_size.map(std::num::NonZeroU8::get))
+                .unwrap_or_else(|| typedef.size(nullable));
             // …including the OFFSET the Part carries: `part_min`, the same one the field's
             // ops encode against, which a nullable signed narrow field shifts by one.
             // Emitting the declared `min` here left the generated `init()` registering a
@@ -4420,38 +4574,26 @@ extern crate loft;"
                  field_size={field_size} for `{field_name}` — only 1/2/4/8 \
                  are supported by db.byte / db.short / db.int / db.field"
             );
-            if field_size == 1 {
-                emit_db_field(
+            // The constructor comes from the ONE width→Part home, the same one
+            // `typedef.rs` registers the interpreter's schema through — so `init()`
+            // cannot register a Part the compiler did not name.  A width with no narrow
+            // Part registers no type at all, as the wide 8-byte default.
+            match crate::data::NarrowIntKind::of(
+                field_size,
+                nullable,
+                false,
+                int_spec.unsigned_wide(),
+            )
+            .part_ctor()
+            {
+                Some(ctor) => emit_db_field(
                     w,
                     s_var,
                     field_name,
-                    "byte",
-                    &format!("db.byte({min}, {nullable})"),
-                )?;
-            } else if field_size == 2 {
-                // Match the ONE width→op home (`NarrowIntKind::of(2, nullable, false)`): a
-                // NULLABLE 2-byte field is `db.short` (the `+1` sentinel encoding), a NON-null
-                // one is `db.short_raw` (direct — the `ShortFull` write is `OpSetShortRaw`).
-                // Using `db.short` for a non-null field made the schema READ (`ShowDb`/to_json/
-                // store round-trip) apply the `+1` shift the direct write never did → a non-null
-                // `u16` field read back off-by-one / `i32::MIN` (interp fixed in typedef.rs; this
-                // is the native db-setup twin).
-                let (label, ctor) = if nullable {
-                    ("short", format!("db.short({min}, {nullable})"))
-                } else {
-                    ("short_raw", format!("db.short_raw({min}, {nullable})"))
-                };
-                emit_db_field(w, s_var, field_name, label, &ctor)?;
-            } else if field_size == 4 {
-                emit_db_field(
-                    w,
-                    s_var,
-                    field_name,
-                    "int",
-                    &format!("db.int({min}, {nullable})"),
-                )?;
-            } else {
-                writeln!(w, "    db.field({s_var}, \"{field_name}\", 0);")?;
+                    ctor,
+                    &format!("db.{ctor}({min}, {nullable})"),
+                )?,
+                None => writeln!(w, "    db.field({s_var}, \"{field_name}\", 0);")?,
             }
             return Ok(());
         }
@@ -5037,10 +5179,45 @@ extern crate loft;"
                 let fnref_guard = format!(
                     "\n  let _fnref_guard = codegen_runtime::FnRefBufGuard::new(cell, {hands_up});"
                 );
+                // @PLN157 lean tier: a `--lean` build keeps only the depth cap
+                // (one bounds test + two Cell updates, ~1.2 ns) and trades away
+                // `stack_trace()` frames, the panic frame block and the watchdog
+                // breadcrumb.  See `cr_call_push_lean`.
+                //
+                // Keyed on `lean`, NOT on `!emit_live`.  The original reading was
+                // "without the live tier there is nobody to name frames FOR" —
+                // false, because the PANIC path names them and ships in every
+                // build.  `emit_live` is additionally false for a production
+                // `--html` client (debug-OFF by default, @PLN98 P3.4), so that
+                // reading silently stripped the frame names from every browser
+                // panic while `--lean` was never passed.
+                //
+                // N4 (@PLN157): a LEAF — a body that calls no user function —
+                // carries no frame at all.  It cannot recurse (nothing it
+                // calls can re-enter it, so the depth cap needs no entry) and
+                // cannot reach `stack_trace()`/`assert`/`panic` (each is a
+                // call); a runtime fault inside it keeps its exact position
+                // and loses only the innermost frame NAME from the chain.
+                // The live-flip check stays — editing a leaf live is the
+                // live tier's contract.  Probed at −39 % on the hash row,
+                // −7 % on lock; `LOFT_NO_LEAF_PRELUDE=1` restores the push.
+                let leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let push = if leaf {
+                    String::new()
+                } else if !self.lean {
+                    format!(
+                        "\n  cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
+                         let _call_guard = codegen_runtime::CallGuard;"
+                    )
+                } else {
+                    format!(
+                        "\n  cr_call_push_lean(\"{escaped_file}\", {loft_line});\n  \
+                         let _call_guard = codegen_runtime::CallGuard;"
+                    )
+                };
                 self.call_stack_prefix = Some(format!(
-                    "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  \
-                     cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
-                     let _call_guard = codegen_runtime::CallGuard;{fnref_guard}{vdb_prologue}"
+                    "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\
+                     {push}{fnref_guard}{vdb_prologue}"
                 ));
                 self.output_block(w, body, returns_text, true)?;
                 self.call_stack_prefix = None;

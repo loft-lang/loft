@@ -555,6 +555,9 @@ fn write_db_parts(stores: &mut Stores, r: &Record, parts: &Parts) {
         Parts::Byte(start, nullable) => write_pt_num(stores, r, ds::PT_BYTE, *start, *nullable),
         Parts::Short(start, nullable) => write_pt_num(stores, r, ds::PT_SHORT, *start, *nullable),
         Parts::Int(start, nullable) => write_pt_num(stores, r, ds::PT_INT, *start, *nullable),
+        Parts::IntRaw(start, nullable) => {
+            write_pt_num(stores, r, ds::PT_INT_RAW, *start, *nullable);
+        }
         Parts::ShortRaw(start, nullable) => {
             write_pt_num(stores, r, ds::PT_SHORT_RAW, *start, *nullable);
         }

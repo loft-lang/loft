@@ -11,7 +11,7 @@ engine), the hex-world library, the editor, the games. loft exists so those can
 be built, picked up, and enjoyed.
 
 Its technical north star is **stability**. This document splits the work into
-**six goals (A–F)**. Each goal carries a **Check**: a command to run, or a fact to
+**seven goals (A–G)**. Each goal carries a **Check**: a command to run, or a fact to
 observe. The point is to *measure* progress, not claim it. A Check stays the same
 over time; its result does not — run it to see where you stand today.
 
@@ -208,6 +208,44 @@ speed of it is a `--native` concern (the interpreter's dispatch overhead masks l
 so today loft lets you *express* the right layout and `--native` turns that into machine
 cost.
 
+### Fixable end to end — the open-source lesson
+
+A production lesson sits under the whole distribution: **almost no tool or library
+anyone ever adopted was 100 % reliable or a perfect fit** — JVM stack limits, kernel
+NFS locking, database connections going stale in ways the client library never surfaced
+(the server unresponsive, the connection dropped, or routing silently switched to
+another replication instance) with no quick way to ask whether a given connection could
+still be trusted.  What
+separated the workable stacks from the rest was never their defect count; it was that
+with an open stack you can **write the fix yourself, ship it to your own users the same
+day, and file it upstream after** — instead of waiting on a vendor's queue with a
+customer on the line.
+
+loft's process is that lesson made structural, at every layer of its own stack:
+
+- **The distribution owns every layer** (lavition → loft → libraries), all public, all
+  fixable in-house — and external dependencies are kept few and inventoried
+  ([DEPS_INVENTORY.md](DEPS_INVENTORY.md)) so there is no layer we *cannot* fix fast.
+- **The default is FIX, not file** (CLAUDE.md § Bug-filing policy): a consumer that
+  hits a defect gets the fix, not a ticket — the dogfood split exists so the language
+  side repairs on the spot while the consumer keeps building.
+- **Anyone can be the fixer** ([BUS_FACTOR.md](BUS_FACTOR.md)): the how-to-fix
+  knowledge is in the repo, so "we can fix it ourselves" does not depend on one person.
+
+The obligation runs both ways: when loft's own users hit a defect, they deserve the
+same same-day fixability we demanded from our stacks — which is why an open issue is
+never carried into a release, and why `hit-by:` names the project waiting on it.
+
+**And this is the real reason for the educational half.** No game creation team should
+be forced to work another way: readable libraries and a comprehensible stack are what
+make the fix-it-yourself capability TRANSFERABLE — a team that can understand how
+things work can fix them and ship their game, instead of waiting on us the way we
+refused to wait on vendors.  The teaching corpus (Goal B) is not pedagogy on the side;
+it is same-day fixability, handed downstream.  The loop then closes upstream: loft is
+**open to all submissions and aids them** — a team's fix is welcomed, reviewed, and
+landed ([CONTRIBUTING.md](../../CONTRIBUTING.md), README § Contributing), so the fix
+they shipped their game on becomes everyone's.
+
 ### Why a language, not a store bolted onto an existing one
 
 A key reason loft is a *language* and not an in-memory data store added to Rust
@@ -305,8 +343,9 @@ stated), so the discipline is to keep each derivation **legible** — economy in
 service of a maker who can still predict what the code does, never cleverness for its
 own sake.
 
-The six goals below are **foundation goals**: loft must be sound (A), shipped and
-clear (B), capable (C), portable (D), predictable (E), and friction-free (F). A
+The seven goals below are **foundation goals**: loft must be sound (A), shipped and
+clear (B), capable (C), portable (D), predictable (E), friction-free (F), and fast
+enough to pull its weight (G). A
 crack in the foundation becomes a crack in everything above it. The same bar holds
 for the libraries on top — and they are the real end. The shift up is now underway:
 the libraries are **extracted, versioned, and installable** through the
@@ -320,18 +359,19 @@ work moving up.
 
 ---
 
-## The six goals at a glance
+## The goals at a glance
 
 | | Goal | In one line |
 |---|---|---|
 | **A** | Soundness | no silent corruption — now, and across toolchain bumps |
-| **B** | Release & legibility | it ships, and the value is legible on contact |
+| **B** | Release & legibility | it ships, and the value is legible on contact — libraries readable as the teaching corpus |
 | **C** | Capability | real consumers keep building and running |
 | **D** | Parity | identical on every OS × backend |
 | **E** | Predictable memory | the source is the truth — *surpass Rust here* |
 | **F** | Friction-free | the language serves the programmer, never the compiler |
+| **G** | Performance | every routine within the bar of its industry reference twin |
 
-All six point at one destination: **boring** — a tool noticed only in its absence
+All seven point at one destination: **boring** — a tool noticed only in its absence
 (§ [The destination is BORING](#the-destination-is-boring--a-tool-you-notice-only-when-it-is-missing)).
 Soundness, parity and predictable memory remove the surprises; friction-free removes
 the ceremony. A release whose headline is *fewer things you have to think about* is
@@ -434,6 +474,13 @@ goal is met by the starting path *existing*, not by a user count. The same legib
 governs *developing* loft: everything needed to work on it lives in the repo — the
 source, the docs, and the executable skills — so any coding agent can continue it, and
 the project has no single point of failure. See [BUS_FACTOR.md](BUS_FACTOR.md).
+And it governs the **libraries' own source**: they double as loft's teaching corpus —
+an open-source project heads-on, where every part of a library stays as readable as
+possible, so a game team can understand it, fix it, and ship — the fixability Purpose
+§ *Fixable end to end* promises, made transferable.  What this refuses by name is the "fast pass" pattern (readable code shadowed
+by an optimized twin nobody can follow): a slow routine is fixed in the engine or in its
+own loft algorithm, and a native rewrite is a recorded per-routine edge case
+([formal/performance.md](formal/performance.md) `(Perf-Cure)`).
 
 **Check.**
 - A release tag exists within the project's release cadence (`git tag` → latest),
@@ -855,6 +902,39 @@ the **whole syntax** — and, per the paragraph above, the engine surface too.
 
 ---
 
+## Goal G — Performance (every routine pulls its weight)
+
+**Definition.** loft is a **fast implementation**, measured — not against its own
+previous release, which compares to nothing outside the project, but against
+**reference implementations in industry-standard languages** (pure Rust; C#
+admissible).  Every public routine of the stdlib and of a shipped library keeps its
+native time within a stated per-class bar of its reference twin, on a fixed workload
+whose lanes are proven output-hash-equal before any comparison is admitted.  The
+contract is [formal/performance.md](formal/performance.md) (`Perf-Like` /
+`Perf-Weight` / `Perf-Twin` / `Perf-Cure`); the model harness is the drawing
+library's `bench/` (loft#1426), and @PLN158 generalizes it.
+
+**Scope.** This is a *within-the-bar* goal, and it amends nothing in Goal E's axis
+statement: loft does not claim to surpass Rust at performance — it claims not to fall
+behind the industry by more than the stated bar, per routine, measured per release.
+And the CURE discipline is what keeps G from eating B: the twin measures and never
+ships, so getting fast never costs the libraries their readability.
+
+**Check.**
+- `make release-checklist` → `M-perf-pass` read on the cycle (the per-library
+  `bench/compare.py` tables, hashes agreeing, ratios within the bar).
+- `python3 scripts/rule_tags.py check` green with `formal/performance.md`'s
+  deviation count shrinking — each `D-perf-n` names a routine class below the bar.
+- `make profile` attribution on any flagged routine: a loft hot loop matching its
+  reference's is an ENGINE deviation (like D-perf-1), never a library rewrite.
+
+**Relation.** G is the measured half of Purpose § *Legible cost*: that section keeps
+performance-critical *decisions* in the programmer's hands; G keeps the *implementation
+underneath* those decisions competitive, so a maker who did everything right is not
+slow anyway.
+
+---
+
 ## The two floors — why dogfood is paused, and when it resumes
 
 The dogfood loop normally sets the agenda (CLAUDE.md § "Development cadence"). It is
@@ -942,6 +1022,8 @@ foundation floor. Until the soundness floor confirms, A stays the foundation wor
 
    F (friction-free surface) ── orthogonal: the user-friction cost
         of delivering any of A–E must stay near zero
+   G (performance) ── orthogonal: each routine within the bar of its
+        industry reference twin, without costing B's readable libraries
 ```
 
 Dogfood makes loft *worth using*. The sanitizer makes it *safe to keep using*. Goal

@@ -1,0 +1,196 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN157 § V (loft#1426) — a function whose tail is a struct LITERAL builds the record
+// into the `__retbuf` its caller handed it, and the caller allocates that buffer ONCE.
+//
+// Before this, `fn mk(u) -> S { S { … } }` ignored the buffer, minted a store of its own
+// and handed it over, so a per-pixel call in a raster loop allocated and freed one store
+// per pixel — the dominant remaining cost of the drawing pass (`lock` 25.6M → 17.9M ns/op,
+// hashes unchanged).  The values are the same either way, which is why this file is a
+// LOCK: it states what may not change while the delivery does.
+//
+// The cells are the composition axes reuse can break, and each one is a way a record that
+// is no longer fresh per call could be observed:
+//
+//   c1  the target shape — a call in a loop whose result is field-read inline
+//   c2  the result bound to a local first (the buffer must not be reused under it)
+//   c3  the result APPENDED to a vector, so it escapes the call that made it
+//   c4  the result stored in a struct FIELD, the other escape
+//   c5  the result returned onward, so the buffer travels one frame further
+//   c6  two live results at once, from two call sites
+//   c7  a value that must survive a LATER call — copy-bind semantics, the invariant the
+//       whole rewrite rests on (`u = a` copies, so one buffer per site is enough)
+//   c8  an OMITTED field taking its declared default, and c9 one taking its type's zero:
+//       with no `OpDatabase` in front of the writes, a field the literal leaves alone
+//       would keep the PREVIOUS call's value.  Both must read their default every call.
+//   c10 a nested call — the inner literal's buffer is the outer call's argument
+//   c11 a buffer variable FREED and handed on: an early `return r` makes `r` the buffer
+//       variable, and the tail call receives it after the chain freed it.  A native free
+//       nulls `store_nr` and leaves `rec` standing, so "the caller offered a record" has
+//       to refuse that spelling of absent too (it wrote into store 65535 when it did not)
+//   c12 the result local REASSIGNED from another local inside the loop, and c13 from a
+//       second call site under a condition: a reassignment frees the store it displaces,
+//       which under reuse is the buffer's — the gate declines such a local (measured, a
+//       use-after-free on every turn after the first when it did not)
+//   c14 two call sites into one same-scope local, c15 a lift inside a NESTED loop,
+//   c16 the buffer-fed value RETURNED from inside the loop, c17 appended to a vector and
+//       read back after the loop
+//   c18 a NULLABLE-typed local fed by the call and reassigned, c19 an rhs that READS the
+//       local (`v = mk(v.a + 1)` — old, new and the buffer are one store, and the rhs must
+//       still see the old value), c20 a nullable local displaced by `null`, c21 a lift
+//       inside an `if` arm inside the loop, c22 the local returned AFTER a reassignment,
+//       c23 two live values from one site through a copy — the § V-b matrix, each a cell
+//       the widening broke or nearly broke
+//
+// @falsified-at: none — no CELL can change value on an earlier build, because the delivery
+// this changes is invisible to a correct program: both forms answer the same numbers, and
+// that is the claim.  Its control is an A/B on ONE binary and it is automated rather than
+// written down here — `tests/retbuf_reuse.rs` runs c3's shape under
+// `LOFT_NO_RETBUF_WITNESS_GATE=1` (allocate every buffer, not only the witness-guarded
+// ones) and asserts `LOFT_STRICT_STORES=1` reports the use-after-free the gate exists to
+// refuse.  That control fires and the default is clean, on both backends.
+
+struct S { a: integer, b: integer }
+struct D { a: integer = 7, b: integer }
+struct Z { a: integer, b: integer }
+struct Box { s: S }
+
+fn mk(u: integer) -> S { S { a: u, b: u * 2 } }
+fn mk_d(u: integer) -> D { D { b: u } }
+fn mk_z(u: integer) -> Z { Z { b: u } }
+fn wrap(u: integer) -> S { mk(u + 100) }
+fn chain(c: integer) -> S {
+  if c > 0 { r = mk(1); if r.a > 99 { return r; } }
+  mk(3)
+}
+fn mk2(u: integer) -> S { S { a: u + 1000, b: 0 } }
+fn pick(stop: integer) -> S {
+  for i in 0..5 { v = mk(i); if v.a == stop { return v; } }
+  mk(99)
+}
+fn after_reassign() -> S {
+  v = mk(1);
+  v = mk2(2);
+  v
+}
+
+pub fn test() {
+  // c1 — the target: the result is field-read where it is made.
+  c1 = 0;
+  for i in 0..5 { c1 += mk(i).a + mk(i).b; }
+  assert(c1 == 30, "c1 inline field read: {c1}");
+
+  // c2 — bound to a local, then read.
+  c2 = 0;
+  for i in 0..5 { s = mk(i); c2 += s.a + s.b; }
+  assert(c2 == 30, "c2 bound to a local: {c2}");
+
+  // c3 — the result ESCAPES into a vector.  Every element must keep its own value; a
+  // reused buffer that the vector aliased would leave all three reading the last one.
+  keep: vector<S> = [];
+  for i in 0..3 { keep += [mk(i)]; }
+  assert(len(keep) == 3, "c3 length: {len(keep)}");
+  assert(keep[0]?.a == 0 && keep[1]?.a == 1 && keep[2]?.a == 2,
+         "c3 elements: {keep[0]?.a} {keep[1]?.a} {keep[2]?.a}");
+
+  // c4 — the result escapes into a struct field.
+  b0 = Box { s: mk(3) };
+  b1 = Box { s: mk(4) };
+  assert(b0.s.a == 3 && b1.s.a == 4, "c4 fields: {b0.s.a} {b1.s.a}");
+
+  // c5 — returned onward through a second frame.
+  c5 = 0;
+  for i in 0..3 { c5 += wrap(i).a; }
+  assert(c5 == 303, "c5 forwarded: {c5}");
+
+  // c6 — two live results at once, from two call sites.
+  x = mk(11);
+  y = mk(22);
+  assert(x.a == 11 && y.a == 22, "c6 two live: {x.a} {y.a}");
+
+  // c7 — a value that must survive a LATER call.  `u = a` COPIES, so the earlier answer
+  // is the earlier answer whatever the next call writes into the buffer.
+  held = mk(31);
+  after = mk(41);
+  assert(held.a == 31 && held.b == 62, "c7 survives a later call: {held.a} {held.b}");
+  assert(after.a == 41, "c7 later call: {after.a}");
+
+  // c8 — an omitted field with a DECLARED default, read every call.
+  c8 = 0;
+  for i in 0..4 { c8 += mk_d(i).a; }
+  assert(c8 == 28, "c8 declared default per call: {c8}");
+
+  // c9 — an omitted field taking its TYPE's zero, read every call.
+  c9 = 0;
+  for i in 0..4 { c9 += mk_z(i + 1).a; }
+  assert(c9 == 0, "c9 zero default per call: {c9}");
+
+  // c10 — a nested call: the inner literal's buffer is the outer call's argument.
+  n = Box { s: wrap(7) };
+  assert(n.s.a == 107 && n.s.b == 214, "c10 nested: {n.s.a} {n.s.b}");
+
+  // c11 — the buffer variable freed by its own chain, then handed to the tail call.
+  assert(chain(1).a == 3 && chain(0).a == 3, "c11 freed buffer handed on: {chain(1).a} {chain(0).a}");
+
+  // c12 — the result local reassigned from another local inside the loop.
+  other = S { a: 7, b: 8 };
+  c12 = 0;
+  for i in 0..3 { v = mk(i); v = other; c12 += v.a; }
+  assert(c12 == 21, "c12 displaced by a local: {c12}");
+
+  // c13 — the result local reassigned from a second call site under a condition.
+  c13 = 0;
+  for i in 0..4 { w2 = mk(i); if i % 2 == 1 { w2 = mk2(i); } c13 += w2.a; }
+  assert(c13 == 2006, "c13 displaced by a second site: {c13}");
+
+  // c14 — two call sites into one same-scope local.
+  v14 = mk(5);
+  w14 = v14.a;
+  v14 = mk2(6);
+  assert(w14 + v14.a == 1011, "c14 two sites, one local: {w14 + v14.a}");
+
+  // c15 — a lift inside a nested loop.
+  c15 = 0;
+  for i in 0..2 { for j in 0..3 { c15 += wrap(i + j).a; } }
+  assert(c15 == 609, "c15 nested lift: {c15}");
+
+  // c16 — the buffer-fed value returned from inside the loop.
+  assert(pick(3).a == 3 && pick(42).a == 99, "c16 returned from the loop: {pick(3).a} {pick(42).a}");
+
+  // c17 — appended to a vector, read back after the loop.
+  keep2: vector<S> = [];
+  for i in 0..3 { keep2 += [wrap(i)]; }
+  assert(keep2[0]?.a + keep2[1]?.a + keep2[2]?.a == 303, "c17 appended then read back: {keep2[0]?.a + keep2[1]?.a + keep2[2]?.a}");
+
+  // c18 — a nullable-typed local fed by the call, reassigned in the loop.
+  c18 = 0;
+  for i in 0..4 { n18: S? = mk(i); if i % 2 == 0 { n18 = mk2(i); } c18 += n18?.a; }
+  assert(c18 == 2006, "c18 nullable local reassigned: {c18}");
+
+  // c19 — the rhs reads the local: old, new and the buffer are one store.
+  r19 = mk(1);
+  for i in 0..3 { r19 = mk(r19.a + 1); }
+  assert(r19.a == 4, "c19 rhs reads the local: {r19.a}");
+
+  // c20 — a nullable local displaced by null.
+  c20 = 0;
+  for i in 0..3 { n20: S? = mk(i); if i == 1 { n20 = null; } if n20 == null { c20 += 100; } else { w20 = n20 ?? mk(0); c20 += w20.a; } }
+  assert(c20 == 102, "c20 displaced by null: {c20}");
+
+  // c21 — a lift inside an if arm inside the loop.
+  keep3: vector<S> = [];
+  for i in 0..4 { if i % 2 == 1 { keep3 += [mk(i)]; } }
+  assert(len(keep3) * 10 + keep3[0]?.a + keep3[1]?.a == 24, "c21 lift in an if arm: {len(keep3) * 10 + keep3[0]?.a + keep3[1]?.a}");
+
+  // c22 — the local returned after a reassignment.
+  assert(after_reassign().a == 1002, "c22 returned after reassignment: {after_reassign().a}");
+
+  // c23 — two live values from one site through a copy.
+  a23 = mk(1);
+  b23 = a23;
+  a23 = mk(2);
+  assert(a23.a * 10 + b23.a == 21, "c23 copy then reassign: {a23.a * 10 + b23.a}");
+}
+
+fn main() { test(); }

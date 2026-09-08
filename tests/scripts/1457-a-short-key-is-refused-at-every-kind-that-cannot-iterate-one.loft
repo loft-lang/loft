@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1457 — a SHORT key (fewer subscripts than the declaration names) at every keyed kind.
+//
+// Three kinds refused it and `spatial` did not: `s[5]` on a `spatial<P[x, y]>` built a complete
+// lookup out of a malformed key and answered null, with no diagnostic — and null is also what a
+// genuine miss answers, so the two were indistinguishable to the author.
+//
+// **The rules settle what the issue filed as a design question.**  There is a reading under
+// which `s[5]` is a raw MORTON-CODE lookup, since a spatial's stored form is a Morton interval
+// and one integer is a well-formed code.  `formal/collections.md` does not admit it: `(Col-Trie)`
+// shows what it looks like when a kind's own operation IS admitted — *"a PREFIX slice — the
+// operation the kind exists for"* — while `(Col-Spatial)` names 1–3 coordinate AXES and an
+// internal representation (*"Morton/Z-order radix tree … the runtime Parts variant is `Radix`"*)
+// and no surface operation beyond the axes.  An implementation detail is not a surface, so the
+// short key is refused.
+//
+// `index` and `sorted` are the exception and keep their own message: a partial key there is a
+// REAL operation, rewritten to `idx[k1..=k1]` and iterated, refused only in a value position.
+// `spatial` is not that case even though a Morton code has prefixes — a Z-order prefix is a
+// QUADRANT, not a 1-D range, so routing it through the range path would iterate the wrong
+// records instead of reporting.  That is why the fix refuses rather than widening the iterating
+// set, and why the predicate is stated as the COMPLEMENT of the kinds that iterate: a kind
+// added to the language refuses by default, and the cost of an omission here is a silent null.
+//
+// Axes this file MOVES:  the keyed KIND (hash · spatial · index · sorted), which is the whole
+//                        point — the defect was one kind missing from a hand-named set.
+// ⚠ The two expectations name their COLLECTION, and that is load-bearing rather than tidy.
+// Both cells first expected the bare *"Too few key fields"* — the message as it stood — and
+// `falsify.sh` reported the file INERT: two cells expecting one identical string are satisfied
+// by ONE error between them, so the guard passed on the build it was written to catch.  The
+// message now names the type and both counts, which makes the cells distinguishable and is a
+// better diagnostic besides (it says how many are wanted, and on what).  `1423-…` states the
+// rule this file re-learned: each cell names what the author wrote, which is what keeps the
+// cells from making each other vacuous.
+//
+// Axes it HOLDS FIXED:   the key is SHORT by exactly one, and the declaration has two fields.
+//                        The legitimate spellings and the index/sorted controls are `1457b`'s,
+//                        because a firing `@EXPECT_ERROR` stops the run and can assert nothing
+//                        after it.
+//
+// @falsified-at: 61bfbd96 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2, native
+//   exit 1 -> 0, native expectations FAIL/2 -> 2/2.  Re-measured after the message gained its
+//   type: the FIRST draft, with both cells expecting the bare "Too few key fields", read INERT
+//   on all four rows — the guard passed on the build it was written to catch.
+
+struct P1457 { x: integer, y: integer, v: integer }
+struct H1457 { a: integer, b: integer, v: integer }
+
+// @EXPECT_ERROR: Too few key fields for `spatial<P1457[x, y]>` — 1 given, 2 declared
+fn spatial_short() -> integer {
+  s: spatial<P1457[x, y]> = [P1457 { x: 1, y: 2, v: 7 }];
+  s[5].v ?? -1
+}
+
+// @EXPECT_ERROR: Too few key fields for `hash<H1457[a, b]>` — 1 given, 2 declared
+fn hash_short() -> integer {
+  h: hash<H1457[a, b]> = [H1457 { a: 1, b: 2, v: 7 }];
+  h[5].v ?? -1
+}
+
+// `index` and `sorted` are NOT here even though they refuse too, and the reason is mechanical:
+// the parse stops after these two reports, so a third and fourth expectation in this file are
+// never reached and read as "expected error never emitted".  Their control lives in `1457b`
+// and is stronger for being runnable — that a partial key still ITERATES on a `sorted` says
+// the fix did not flatten them into this refusal, where re-asserting their message would only
+// say the message still exists.

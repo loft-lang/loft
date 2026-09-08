@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Null — `t?` has the same storage as `t`, so it is the same binding and owns its store
+// the same way.  @PLN85's null-arm machinery is what releases such a store when a `t?`-
+// returning function has BOTH a path handing a record up and a path answering `null`: it
+// hoists the value to `__ret_N` and frees each suppressed return source conditionally, so the
+// handing-up path transfers and the null path releases the record it allocated.
+//
+// The set that machinery works from was chosen with a BARE type test, and the one shape it
+// exists for fell past it.  A local that may be ABSENT is exactly what a null-arm return is
+// about, and `d: S?` is `Optional(Reference)`, not `Reference` — so it was never added, got no
+// conditional free, and nothing else frees a return source, because `get_free_vars` skips
+// every one of them.  Each store the minting path handed up was then owned by nobody: one
+// record per call, unbounded (loft#1422).
+//
+// The trigger is that BOTH paths run somewhere in the program, not that either runs twice: a
+// program calling only the minting path is clean, and adding a single `null`-answering call
+// beside it leaks every mint.  Two separate bindings leak exactly as a loop does, so the loop
+// is not part of the shape — which is why the cells below use both spellings.
+//
+// The dense twin was always freed, and that is what hid this: `s = S { a: 1 }` is a
+// `Reference` and passed the bare test.  It is the control here.
+//
+// @falsified-at: a78c9458 — interpret exit 1 -> 0, interpret leaked `kt=81 S×13` -> clean,
+//   native exit 1 -> 0, native leaked `kt=81 S×13` -> clean.  Thirteen: twelve from the loop
+//   cell and one from the two-bindings cell.
+//
+//   ⚠ Scored with a `main` appended and `LOFT_STRICT_STORES=1`, not as a plain corpus file.
+//   `make falsify` runs a cell-shaped guard under `--tests`, which does not leak-check at all,
+//   so it reports `leak none` on BOTH trees whatever the guard leaks and calls the guard INERT
+//   — which is what it said here first.  `scripts/falsify.sh` documents the blindness and the
+//   cure at the top; the corpus harness DOES leak-check, so the file gates correctly in place.
+//   Values are asserted as well, so a cure that freed the store too early fails on value
+//   rather than passing quietly.
+
+struct S { a: integer }
+
+fn mint() -> S? { return S { a: 9 }; }
+
+// The shape: a nullable local BOUND FROM A PARAMETER, reassigned from a minting call, handed
+// up on one path and `null` on the other.
+fn rebound_or_null(p: S, c: boolean) -> S? {
+  d: S? = p;
+  if c { d = mint(); }
+  return if c { d } else { null };
+}
+
+// The same shape without the parameter, which was clean before and must stay clean.
+fn fresh_or_null(c: boolean) -> S? {
+  d: S? = null;
+  if c { d = mint(); }
+  return if c { d } else { null };
+}
+
+// The dense control: a `Reference` source passed the bare test and was always freed.
+fn owned_or_null(c: boolean) -> S? {
+  s = S { a: 1 };
+  return if c { s } else { null };
+}
+
+fn both_paths_in_a_loop_release_every_minted_store() {
+  base = S { a: 3 };
+  minted = 0;
+  absent = 0;
+  for i in 0..24 {
+    r = rebound_or_null(base, i % 2 == 0);
+    if r == null { absent = absent + 1; } else { minted = minted + 1; }
+  }
+  assert_eq("{minted}", "12", "the minting path delivered");
+  assert_eq("{absent}", "12", "and the null path answered null");
+  assert_eq("{base.a}", "3", "the caller's own record was never released");
+}
+
+// No loop: two bindings, one per path.  This leaked identically, so the loop was never the
+// shape — without this cell the fix reads as a per-iteration one.
+fn both_paths_as_two_separate_bindings() {
+  base = S { a: 5 };
+  present = rebound_or_null(base, true);
+  absent = rebound_or_null(base, false);
+  assert(present != null, "the minting call delivered a record");
+  assert_eq("{present.a}", "9", "and it reads the minted value");
+  assert(absent == null, "the other call answered null");
+  assert_eq("{base.a}", "5", "and the caller's record is intact");
+}
+
+// A program that only ever mints was already clean, so it is the cell that says the cure did
+// not simply start freeing everything.
+fn the_minting_path_alone_is_unchanged() {
+  base = S { a: 7 };
+  n = 0;
+  for _ in 0..8 {
+    r = rebound_or_null(base, true);
+    if r != null { n = n + 1; }
+  }
+  assert_eq("{n}", "8", "every call delivered");
+  assert_eq("{base.a}", "7", "and the caller's record survived them all");
+}
+
+fn the_parameterless_and_dense_twins_are_unchanged() {
+  fresh = 0;
+  for i in 0..8 {
+    r = fresh_or_null(i % 2 == 0);
+    if r != null { fresh = fresh + 1; }
+  }
+  assert_eq("{fresh}", "4", "the parameterless twin still delivers");
+
+  dense = 0;
+  for i in 0..8 {
+    r = owned_or_null(i % 2 == 0);
+    if r != null { dense = dense + 1; }
+  }
+  assert_eq("{dense}", "4", "and so does the dense one");
+}

@@ -595,6 +595,102 @@ impl NarrowIntKind {
         }
     }
 
+    /// The schema `Parts` type id a slot of this kind stores under — the schema-side
+    /// twin of [`Self::get_op`] / [`Self::set_op`], registering the type if it is new.
+    ///
+    /// @FR-L-Narrow-Enc — the encoding is part of the layout, so the schema and the ops
+    /// take it from one choice.
+    ///
+    /// This is the ONE home for the width→Part decision, and it is deliberately keyed on
+    /// the same [`NarrowIntKind`] the read and write ops come from: a slot's Part and its
+    /// ops then cannot name different encodings, because there is only one choice and all
+    /// three read it.  FIVE call sites used to re-derive this from the width — the struct
+    /// field, the two element paths, and both halves of the native generator — and the
+    /// 4-byte arm of each was `database.int(…)` flat, so an unsigned 4-byte slot was
+    /// WRITTEN by `OpSetInt4Raw` (unsigned, `u32::MAX` for absence) and read back through
+    /// `Parts::Int` (sign-extending, `i32::MIN` for absence).  Every schema-driven route
+    /// — the record render, `to_json`, the store round-trip, and every keyed lookup —
+    /// then answered a `u32` at or above 2147483648 as a negative number, while a direct
+    /// field read of the same field was correct (loft#1437).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], the wide 8-byte default, which has no narrow
+    /// Part: the caller keeps its own wide path.
+    #[must_use]
+    pub fn part(
+        self,
+        database: &mut crate::database::Stores,
+        min: i32,
+        nullable: bool,
+    ) -> Option<u16> {
+        Some(match self {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => database.byte(min, nullable),
+            NarrowIntKind::Short => database.short(min, nullable),
+            // Both 2-byte direct kinds decode the same way; `nullable` is what tells the
+            // Part whether the top code is absence.
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => database.short_raw(min, nullable),
+            NarrowIntKind::Int4 => database.int(min, nullable),
+            // As one width down: the raw and full 4-byte kinds share an encoding and
+            // differ only in whether the reserved top code means absence.
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => database.int_raw(min, nullable),
+            NarrowIntKind::Int => return None,
+        })
+    }
+
+    /// @FR-L-Narrow-Enc — the schema NAME this kind's Part is registered under: the key the `Stores`
+    /// constructors dedupe on, and the key the native generator looks a registered
+    /// element type up by.
+    ///
+    /// It lives here because those are two different pieces of code that must produce
+    /// the SAME string: the generator reconstructing it by hand is how `vector<u32>`
+    /// came out as `int<0,false>` in generated `init()` while the compiler had
+    /// registered `int_raw<0,false>`, which mints an extra type and renames every id
+    /// after it (`LOFT_STRICT_SCHEMA_IDS` reports it; loft#739 is the class).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], which has no narrow Part.
+    #[must_use]
+    pub fn part_name(self, min: i32, nullable: bool) -> Option<String> {
+        Some(match self {
+            // The unqualified `byte` is the historical key for the common shape and is
+            // the name that store is registered under; keeping it is not cosmetic.
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => {
+                if min == 0 && !nullable {
+                    "byte".to_string()
+                } else {
+                    format!("byte<{min},{nullable}>")
+                }
+            }
+            NarrowIntKind::Short => format!("short<{min},{nullable}>"),
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => {
+                format!("short_raw<{min},{nullable}>")
+            }
+            NarrowIntKind::Int4 => format!("int<{min},{nullable}>"),
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => {
+                format!("int_raw<{min},{nullable}>")
+            }
+            NarrowIntKind::Int => return None,
+        })
+    }
+
+    /// @FR-L-Narrow-Enc — the [`crate::database::Stores`] constructor that registers this
+    /// kind's Part, by name: what the native generator writes into `init()`.
+    ///
+    /// It comes from here so the generated schema and the interpreter's are chosen by
+    /// the SAME rule.  Registering a different Part in `init()` renames every type id
+    /// after it, which `LOFT_STRICT_SCHEMA_IDS` reports as schema-id drift (loft#739).
+    ///
+    /// `None` for [`NarrowIntKind::Int`], which has no narrow Part.
+    #[must_use]
+    pub fn part_ctor(self) -> Option<&'static str> {
+        Some(match self {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => "byte",
+            NarrowIntKind::Short => "short",
+            NarrowIntKind::ShortRaw | NarrowIntKind::ShortFull => "short_raw",
+            NarrowIntKind::Int4 => "int",
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => "int_raw",
+            NarrowIntKind::Int => return None,
+        })
+    }
+
     /// True when the 1/2-byte ops take a trailing `min` arg; the 4/8-byte ops
     /// (`Int4`/`Int`) do not.
     #[must_use]
@@ -1741,11 +1837,15 @@ impl Type {
                 inner.renumber_frame_deps(from, to);
                 d.renumber_frame(from, to);
             }
-            Type::Function(args, ret, d) => {
-                for a in args {
-                    a.renumber_frame_deps(from, to);
-                }
-                ret.renumber_frame_deps(from, to);
+            // A fn type's OWN dep is caller-side (the closure / work-buffer note this
+            // frame holds), so it renumbers.  Its `args` and `ret` are the CALLEE's
+            // declared signature, which lives in DEF space — attribute indices — and a
+            // caller's variable swap never relocates those: `Deps::renumber_frame`'s own
+            // contract says applying it to an attr-space list corrupts it.  Descending
+            // was inert in practice (measured: it changed nothing across 1210 corpus
+            // scripts) and became a fault the moment the text-return promotion started
+            // tagging that list correctly.
+            Type::Function(_args, _ret, d) => {
                 d.renumber_frame(from, to);
             }
             Type::RefVar(inner) | Type::Rewritten(inner) | Type::Optional(inner) => {
@@ -1801,6 +1901,34 @@ impl Type {
     /// @PLN25 — the base type with any `Optional` wrapper removed (the agnostic peel).
     pub fn base(&self) -> &Type {
         self.peel_optional().0
+    }
+
+    /// The type's DATA SHAPE — `base()` with every `&` link peeled as well.
+    ///
+    /// @FR-C-Ref — a reference reads through to its referent, so a `&τ` is accepted
+    /// wherever a `τ` is.  @FR-B-Ref-Uniform — a `&τ` variable is used EXACTLY like a `τ`
+    /// variable, because the linkage lives in the TYPE and no operation is special-cased.
+    /// Together they make this the question every site asks that wants to know *what a
+    /// value IS* rather than *how it is reached*: the `&` records the route, never the
+    /// shape.
+    ///
+    /// Reach for it in preference to `base()` at any site that discriminates on a
+    /// CONTAINER kind — `Type::Vector`, the keyed collections, `Type::Reference(File)` —
+    /// because such a site is asking the shape question, and a bare `matches!` against
+    /// the un-peeled type silently answers "no" for every `&` spelling.  That miss is not
+    /// hypothetical: it has now cost the whole `File` surface through a `&File`
+    /// (loft#753), and `insert` / `reverse` / `sort` / `reserve` / `sum` / `min_of` /
+    /// `max_of` plus a keyed `+=` through a `&` parameter.
+    ///
+    /// The loop is a loop rather than one peel because the wrappers nest: a `&τ?` and a
+    /// `&&τ` both reach the shape only by peeling until neither wrapper is on top.
+    #[must_use]
+    pub fn peel_link(&self) -> &Type {
+        let mut tp = self.base();
+        while let Type::RefVar(inner) = tp {
+            tp = inner.base();
+        }
+        tp
     }
 
     /// Is this a `&` parameter whose whole-value write-back INSTALLS a store the callee
@@ -2605,6 +2733,28 @@ impl Type {
     /// functions: `name` answers "which type is this?", this answers "what did they write?".
     #[must_use]
     pub fn source_name(&self, data: &Data) -> String {
+        self.render(data, true)
+    }
+
+    /// Which type is this?  The SCHEMA KEY, not a renderer — see [`Type::source_name`] for
+    /// the user-facing spelling and for what changing this one breaks.
+    #[must_use]
+    pub fn name(&self, data: &Data) -> String {
+        self.render(data, false)
+    }
+
+    /// The ONE type renderer; `source` picks which of the two jobs above it is doing.
+    ///
+    /// The two spellings differ at the keyed collections and nowhere else, which is what
+    /// makes a single body with one flag the honest shape.  Held apart as two match
+    /// statements they drifted three times (loft#956, loft#1434, loft#1445) — and never at a
+    /// keyed arm, always at a CONSTRUCTOR that had not learned to recurse: `source_name`
+    /// grew arms for `Optional` and `&`, so `hash<It[k]>?` read right, while a
+    /// `fn(&hash<It[k]>)` still fell to a catch-all that rendered its parameters through the
+    /// schema key.  Here the recursion carries `source` with it, so a type is spelled one
+    /// way all the way down and a constructor cannot be forgotten — the arm either recurses
+    /// or it is a leaf, and a leaf reads the same under both jobs.
+    fn render(&self, data: &Data, source: bool) -> String {
         /// `-` marks a descending field; `parse_fields` stores ascending as `true`.
         fn ordered(keys: &[(String, bool)]) -> String {
             keys.iter()
@@ -2613,32 +2763,9 @@ impl Type {
                 .join(", ")
         }
         match self {
-            Type::Sorted(tp, key, _) => {
-                format!("sorted<{}[{}]>", data.def(*tp).name, ordered(key))
-            }
-            Type::Index(tp, key, _) => {
-                format!("index<{}[{}]>", data.def(*tp).name, ordered(key))
-            }
-            // `hash` and `spatial` carry no direction, so their keys are plain names.
-            Type::Hash(tp, key, _) => {
-                format!("hash<{}[{}]>", data.def(*tp).name, key.join(", "))
-            }
-            Type::Radix(tp, key, _) => {
-                format!("spatial<{}[{}]>", data.def(*tp).name, key.join(", "))
-            }
-            // Everything else — `trie` included — already reads as the source writes it.
-            _ => self.name(data),
-        }
-    }
-
-    /// Which type is this?  The SCHEMA KEY, not a renderer — see [`Type::source_name`] for
-    /// the user-facing spelling and for what changing this one breaks.
-    #[must_use]
-    pub fn name(&self, data: &Data) -> String {
-        match self {
-            Type::Optional(tp) => format!("{}?", tp.name(data)),
-            Type::Rewritten(tp) => tp.name(data),
-            Type::RefVar(tp) => format!("&{}", tp.name(data)),
+            Type::Optional(tp) => format!("{}?", tp.render(data, source)),
+            Type::Rewritten(tp) => tp.render(data, source),
+            Type::RefVar(tp) => format!("&{}", tp.render(data, source)),
             // A type-variable placeholder renders under the spelling its header wrote: two
             // headers may both write `T` and bind different placeholders, so the second is
             // minted as `T#2`, and a diagnostic must name what the reader wrote.
@@ -2648,7 +2775,25 @@ impl Type {
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
-            Type::Vector(tp, _) => format!("vector<{}>", tp.name(data)),
+            Type::Vector(tp, _) => format!("vector<{}>", tp.render(data, source)),
+            // The four keyed arms ARE the difference between the two jobs.  The key list is
+            // a `Vec` the schema key renders with `{:?}` — `index<Rec,[("id", true)]>`,
+            // carrying a Rust tuple and a boolean whose meaning (ascending) has no spelling
+            // in the language — where the author wrote `index<Rec[id]>`.  `trie` carries ONE
+            // key and already renders it as written, so it needs no pair.
+            Type::Sorted(tp, key, _) if source => {
+                format!("sorted<{}[{}]>", data.def(*tp).name, ordered(key))
+            }
+            Type::Index(tp, key, _) if source => {
+                format!("index<{}[{}]>", data.def(*tp).name, ordered(key))
+            }
+            // `hash` and `spatial` carry no direction, so their keys are plain names.
+            Type::Hash(tp, key, _) if source => {
+                format!("hash<{}[{}]>", data.def(*tp).name, key.join(", "))
+            }
+            Type::Radix(tp, key, _) if source => {
+                format!("spatial<{}[{}]>", data.def(*tp).name, key.join(", "))
+            }
             Type::Sorted(tp, key, _) => {
                 format!("sorted<{},{key:?}>", data.def(*tp).name)
             }
@@ -2677,11 +2822,11 @@ impl Type {
             }
             Type::Integer(spec) => format!("integer({}, {})", spec.min, spec.max),
             Type::Keys => "keys".to_string(),
-            Type::Iterator(elem, _) => format!("iterator<{}>", elem.name(data)),
+            Type::Iterator(elem, _) => format!("iterator<{}>", elem.render(data, source)),
             Type::Tuple(elems) => {
                 let inner = elems
                     .iter()
-                    .map(|e| e.name(data))
+                    .map(|e| e.render(data, source))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("({inner})")
@@ -2689,13 +2834,13 @@ impl Type {
             Type::Function(params, ret, _) => {
                 let p = params
                     .iter()
-                    .map(|t| t.name(data))
+                    .map(|t| t.render(data, source))
                     .collect::<Vec<_>>()
                     .join(", ");
                 if matches!(ret.as_ref(), Type::Void) {
                     format!("fn({p})")
                 } else {
-                    format!("fn({p}) -> {}", ret.name(data))
+                    format!("fn({p}) -> {}", ret.render(data, source))
                 }
             }
         }
@@ -3280,6 +3425,11 @@ mod renumber_frame_deps_tests {
         assert_eq!(inner.depend(), vec![99]);
         assert_eq!(&d.items, &vec![99]);
 
+        // A fn type renumbers its OWN dep and leaves its SIGNATURE alone: `args` and
+        // `ret` are the callee's declared types in DEF space (attribute indices), which
+        // a caller-side variable swap must not relocate.  This half of the test used to
+        // assert the opposite; it only ever built the signature with `Deps::frame`, so
+        // it never exercised the case it was wrong about.
         let mut f = Type::Function(
             vec![text(vec![2])],
             Box::new(text(vec![2])),
@@ -3289,9 +3439,17 @@ mod renumber_frame_deps_tests {
         let Type::Function(args, ret, d) = &f else {
             panic!()
         };
-        assert_eq!(args[0].depend(), vec![99]);
-        assert_eq!(ret.depend(), vec![99]);
-        assert_eq!(&d.items, &vec![99]);
+        assert_eq!(
+            args[0].depend(),
+            vec![2],
+            "a callee's parameter type is DEF space"
+        );
+        assert_eq!(ret.depend(), vec![2], "a callee's return type is DEF space");
+        assert_eq!(
+            &d.items,
+            &vec![99],
+            "the fn value's own dep is caller frame space"
+        );
     }
 
     #[test]
@@ -4372,14 +4530,36 @@ impl Definition {
         }
     }
 
+    /// @PLN157 § V — the variable a return-position struct LITERAL delivers into, when
+    /// this body was rewritten to build into its caller's buffer.
+    ///
+    /// It is an ARGUMENT, and every ownership question below reads an argument as *a store
+    /// the caller already holds and this body must not hand over*.  That reading is right
+    /// for a VISIBLE parameter (`fn id(a: T) -> T { a }`) and wrong for this one: the hidden
+    /// buffer exists FOR the return, and the caller's own lowering — an adopt paired with
+    /// `OpFreeRefIfDistinct(__ref_N, v)` — settles at run time whether the store it gets
+    /// back is that buffer or a fresh one the callee minted from a null slot.
+    ///
+    /// `None` once the return publishes a dep: that is `ref_return`'s promoted-buffer ABI,
+    /// where the caller COPIES out of the buffer and the borrow reading is the correct one.
+    fn value_return_buffer_var(&self) -> Option<u16> {
+        if !self.returned.depend().is_empty() {
+            return None;
+        }
+        let a = self.hidden_return_buffer_attr()?;
+        let v = self.variables.var(&self.attributes[a].name);
+        (v != u16::MAX).then_some(v)
+    }
+
     /// Does ONE return site hand back a store this body owns?  See
     /// [`Self::monomorph_return_is_fresh`] for what the answer is used for and why it
-    /// under-approximates.
-    fn site_is_fresh(v: &Value, vars: &crate::variables::Function) -> bool {
+    /// under-approximates.  `buf` is [`Self::value_return_buffer_var`] — the one argument
+    /// that answers "owned" rather than "borrowed".
+    fn site_is_fresh(v: &Value, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
         match v.unspan() {
             // Null is a value, not a store — it can neither leak nor dangle.
             Value::Null => true,
-            Value::Var(n) => *n < vars.count() && !vars.is_argument(*n),
+            Value::Var(n) => *n < vars.count() && (!vars.is_argument(*n) || buf == Some(*n)),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -4387,13 +4567,13 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars) && Self::site_is_fresh(els, vars)
+                Self::site_is_fresh(then, vars, buf) && Self::site_is_fresh(els, vars, buf)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -4412,7 +4592,7 @@ impl Definition {
             // one both read "capture-free".  The target's own BODY is what tells them
             // apart, which is why the resolution goes to the definition and not the type.
             other => match Self::root_var(other) {
-                Some(n) => n < vars.count() && !vars.is_argument(n),
+                Some(n) => n < vars.count() && (!vars.is_argument(n) || buf == Some(n)),
                 // No readable root (a call, a literal-built aggregate): not proven fresh.
                 None => false,
             },
@@ -4465,13 +4645,14 @@ impl Definition {
     #[must_use]
     pub fn monomorph_fnref_return_slots(&self) -> Option<Vec<u16>> {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
         if sites.is_empty() {
             return None;
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars) {
+            if Self::site_is_fresh(site.unspan(), vars, buf) {
                 continue;
             }
             match site.unspan() {
@@ -4512,13 +4693,14 @@ impl Definition {
     #[must_use]
     pub fn monomorph_direct_call_return_targets(&self) -> Option<Vec<u32>> {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
         if sites.is_empty() {
             return None;
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars) {
+            if Self::site_is_fresh(site.unspan(), vars, buf) {
                 continue;
             }
             match site.unspan() {
@@ -4559,6 +4741,7 @@ impl Definition {
     #[must_use]
     pub fn monomorph_return_is_fresh(&self) -> bool {
         let vars = &self.variables;
+        let buf = self.value_return_buffer_var();
         let mut seen_return = false;
         let mut all_fresh = true;
         let sites = self.return_sites();
@@ -4567,7 +4750,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars) {
+            if !Self::site_is_fresh(inner, vars, buf) {
                 all_fresh = false;
             }
         }
@@ -5290,15 +5473,15 @@ impl Data {
 
     /// map a vector's content `Type` to a narrow
     /// database element type-nr when the content is a `Type::Integer`
+    /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)
     /// with a `forced_size` annotation that [`IntegerSpec::vector_narrow_width`]
-    /// accepts (currently 1 and 4 bytes; 2 opens in Phase 4b).
+    /// accepts — 1, 2 and 4 bytes, so every narrow alias (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`)
+    /// is direct-encoded.
     ///
     /// Returns `None` for:
     /// - non-Integer content (structs, enums, nested vectors, …);
     /// - `Type::Integer` without `forced_size` (plain `integer`,
-    ///   `integer limit(...)`);
-    /// - `forced_size` values outside the narrow gate (today `Some(2)`
-    ///   and larger).
+    ///   `integer limit(...)`), which keeps the wide 8-byte slot.
     ///
     /// The caller falls back to the default wide storage (the
     /// content's own `known_type`, or the plain-`integer` slot) when
@@ -5310,6 +5493,30 @@ impl Data {
     // semantically — future refactors (e.g. looking up an alias's
     // captured forced_size via a Data-side registry) will need it.
     #[allow(clippy::unused_self)]
+    /// The narrow element a vector's STORAGE is registered with: `(spec, nullable, width)`,
+    /// or `None` when the content is not a direct-encoded narrow integer.
+    ///
+    /// @FR-H-Stride — the width is the declared TYPE's and never the definition's.  One
+    /// `integer` def serves all seven widths, so a def cannot carry one: asking it answers the
+    /// 8-byte base for `u8` as readily as for `integer`.  This is the ONE home for the
+    /// question, so the layout [`narrow_vector_content`] registers and the stride
+    /// [`Parser::element_store_size`] measures are decided by the same code and cannot drift
+    /// (loft#1420, where they had).
+    #[must_use]
+    pub fn narrow_vector_element(content: &Type) -> Option<(&IntegerSpec, bool, u8)> {
+        let (spec, nullable) = match content {
+            Type::Integer(spec) => (spec, false),
+            // A nullable narrow element (`vector<u8?>`) reserves a null sentinel the same way a
+            // nullable FIELD does, so its width is the NULLABLE one.
+            Type::Optional(inner) => match &**inner {
+                Type::Integer(spec) => (spec, true),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some((spec, nullable, spec.vector_narrow_width(nullable)?))
+    }
+
     pub fn narrow_vector_content(
         &self,
         content: &Type,
@@ -5319,29 +5526,17 @@ impl Data {
         // same way a nullable FIELD does — peel the `Optional` and register the
         // NULLABLE narrow Parts so the element can hold null (@PLN25 item 2).  A
         // non-nullable `vector<u8>` element stays raw (full range, no sentinel).
-        let narrow = match content {
-            Type::Integer(spec) => Some((spec, false)),
-            Type::Optional(inner) => match &**inner {
-                Type::Integer(spec) => Some((spec, true)),
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some((spec, nullable)) = narrow {
-            let n = spec.vector_narrow_width(nullable)?;
+        if let Some((spec, nullable, n)) = Self::narrow_vector_element(content) {
             // The Part carries the offset the OPS encode against (`part_min`), not the
             // declared `min` — they differ for a nullable signed narrow slot.
             let m = spec.part_min(n, nullable);
-            return match n {
-                1 => Some(database.byte(m, nullable)),
-                // a nullable 2-byte element uses the `+1` sentinel encoding
-                // (`Parts::Short`), matching the nullable field; the non-null
-                // element stays direct (`Parts::ShortRaw`, full 65536 range).
-                2 if nullable => Some(database.short(m, true)),
-                2 => Some(database.short_raw(m, false)),
-                4 => Some(database.int(m, nullable)),
-                _ => None,
-            };
+            // One home for the width→Part decision, shared with the struct-field mint
+            // and keyed on the same `NarrowIntKind` the element's read and write ops
+            // come from.  `narrow_vec` is true here — that is what this site IS — which
+            // at 2 bytes selects the direct encoding for a non-null element and at 4
+            // bytes selects the sentinel-reserving unsigned kind.
+            return NarrowIntKind::of(n, nullable, true, spec.unsigned_wide())
+                .part(database, m, nullable);
         }
         // Plan-06 ARC.md A6.c — fn-ref vector elements are 4-byte
         // d_nrs (`element_stack_size(Type::Function) = 4`).  The previous
@@ -5383,6 +5578,10 @@ impl Data {
     /// renderer read two 2-byte elements as one 8-byte slot (loft#624 nested,
     /// the named remainder of the plan-58 / loft#437 / #457 / #483 family —
     /// `doc/claude/plans/nested-narrow-width/`).
+    /// The db element type a vector's storage is registered with — the ONE home for
+    /// @FR-H-Stride on the vector side.  A site that derives the element from a DEFINITION
+    /// instead loses the declared width of every narrow integer, because one `integer` def
+    /// serves seven widths (loft#1378 the write, loft#1412 the removal).
     pub fn vector_element_type(
         &self,
         content: &Type,
@@ -6529,6 +6728,29 @@ impl Data {
     /// — and looking for the plain key missed it, leaving the pass-1 body (which could
     /// not resolve a name declared later in the file) to reach codegen unrepaired
     /// (loft#1086).
+    /// The type definition a method's RECEIVER names — what the method is a method OF —
+    /// whatever spelling declares it.  `u32::MAX` when the definition takes no receiver.
+    ///
+    /// Nullability is not part of that name.  `fn_key` keys `t_<τ>_m` and `t_<τ?>_m` apart so
+    /// the two are distinct OVERLOADS (@PLN25), and `find_fn` reaches the `τ?` one from a
+    /// dense receiver when no dense one is declared — so the methods of `τ` and the methods
+    /// of `τ?` are ONE set, and every site that enumerates it must see both spellings
+    /// (@FR-F-Recv).  The variant dispatcher is that enumeration: asked bare, a
+    /// `fn area(self: Square?)` was no implementation of `Square` at all, so the arm was
+    /// never emitted and a dispatch on that variant answered another variant's bytes.
+    #[must_use]
+    pub fn receiver_def_nr(&self, d_nr: u32) -> u32 {
+        match self
+            .def(d_nr)
+            .attributes()
+            .first()
+            .map(|a| a.typedef.base())
+        {
+            Some(Type::Reference(nr, _)) => *nr,
+            _ => u32::MAX,
+        }
+    }
+
     #[must_use]
     pub fn fn_key(&self, fn_name: &str, arguments: &[Argument]) -> Option<String> {
         let is_self = !arguments.is_empty() && arguments[0].name == "self";
@@ -6853,13 +7075,42 @@ impl Data {
         if is_self || is_both {
             let type_nr = self.type_def_nr(&arguments[0].typedef);
             let existing = self.attr(type_nr, fn_name) != usize::MAX;
-            // @PLN25 — a `τ?` overload peels to the base type here, so its type attribute
-            // collides with the `τ` base's (true duplicates were already caught by the
-            // mangled-name check above). The base overload owns the single type attribute;
-            // the `τ?` overload is reachable via its distinct mangled key + the `Dynamic`
-            // dispatcher, so skip re-adding it. (Define the non-null overload first.)
-            if existing && matches!(&arguments[0].typedef, Type::Optional(_)) {
-                // nullability overload — the base owns the type attribute; nothing to add.
+            // @FR-F-Recv — `m(τ)` and `m(τ?)` are TWO definitions: the mangled key carries the
+            // `?` (@PLN25), so they never collide there.  They do collide HERE, because a `τ?`
+            // receiver peels to the base type and the two share one attribute slot.
+            //
+            // The slot carries the method's NAME — membership, and what every enumeration site
+            // reads — never the choice between the two overloads; that choice is `find_fn`'s,
+            // and both call spellings ask it.  So the pair is admitted in EITHER order and the
+            // DENSE definition owns the slot whenever one exists, which is the definition
+            // `one_implementation_per_variant` (loft#1427) prefers.
+            //
+            // Keying the collision on "is the new one Optional" instead made the same two
+            // declarations one method or two depending on which was written first: dense-first
+            // was accepted, nullable-first was refused as a redefinition (loft#1432).  A true
+            // duplicate — the same nullability twice — is caught by the mangled-name check
+            // above, and the two arms below are what that check's own reporting leaves.
+            let new_is_optional = matches!(&arguments[0].typedef, Type::Optional(_));
+            let existing_is_optional = existing && {
+                let attr_idx = self.attr(type_nr, fn_name);
+                match &self.def(type_nr).attributes[attr_idx].typedef {
+                    Type::Routine(nr) => matches!(
+                        self.def(*nr).attributes.first().map(|a| &a.typedef),
+                        Some(Type::Optional(_))
+                    ),
+                    _ => false,
+                }
+            };
+            if existing && new_is_optional != existing_is_optional {
+                // The two nullabilities of one method.  Give the slot to the dense one, which
+                // is this definition exactly when the nullable one got there first.
+                if !new_is_optional {
+                    let attr_idx = self.attr(type_nr, fn_name);
+                    self.definitions[type_nr as usize].attributes[attr_idx].typedef =
+                        Type::Routine(d_nr);
+                }
+            } else if existing && new_is_optional {
+                // The same nullability twice, already reported above; nothing to add.
             } else if existing {
                 // The receiver type already carries a member of this name.  Unlike a free
                 // function (which C97 module-scopes to its library), a method lives in the
@@ -7058,9 +7309,17 @@ impl Data {
         // rejected one is looked up again in the type's OWN source, which is where the
         // right package's method lives. `method_receives` only rejects a demonstrably
         // foreign receiver, so a generic or stub candidate resolves exactly as before.
-        // @PLN25 — a `τ?` receiver tries its own overload first and falls back to the base
-        // (non-null) one; the second spelling is the same string when sig == base (gate-OFF
-        // or a non-nullable receiver), and looking it up twice would only repeat the work.
+        // @FR-F-Recv — the receiver's OWN nullability is tried first and the other second.
+        // A `τ?` receiver reaches `m(τ?)` when it is declared and falls back to `m(τ)` with
+        // the `(N-Store)` warning; a `τ` receiver reaches `m(τ)` when it is declared and
+        // falls back to `m(τ?)` for free, because `(N-Intro)` widens a present value into a
+        // nullable slot at no cost.
+        //
+        // BOTH directions, not one.  With only `m(τ?)` declared, `x.area()` on a dense `x`
+        // answered through the attribute table while the free `area(x)` asked here and was
+        // refused as an unknown function — the two spellings of one call disagreeing in the
+        // opposite direction from loft#1432's headline, and a fallback list that named only
+        // the nullable receiver's could not see it.
         //
         // The type's own source is consulted ONLY to replace a candidate this scope
         // answered with and that turned out to be foreign — never as a second place to
@@ -7072,7 +7331,12 @@ impl Data {
         // separator: character)` and the published library stopped compiling, which the
         // freeze forbids. No candidate here means nothing to disambiguate, so the search
         // falls through to the free function below, as it did before loft#850.
-        let spellings: &[&String] = if sig == base { &[&sig] } else { &[&sig, &base] };
+        let optional = format!("{base}?");
+        let spellings: [&String; 2] = if sig == base {
+            [&base, &optional]
+        } else {
+            [&sig, &base]
+        };
         let own_source = self.definitions[type_nr as usize].source;
         for spelling in spellings {
             let key = format!("t_{}{}_{fn_name}", spelling.len(), spelling);
@@ -9089,7 +9353,15 @@ impl Data {
             Type::Single => self.source_nr(0, "single"),
             Type::Character => self.source_nr(0, "character"),
             Type::Routine(d_nr) | Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => *d_nr,
-            Type::Vector(tp, _) | Type::RefVar(tp) => {
+            // `&T` is a reference TO `T`, so its element is `T`'s element — the same
+            // transparency `Rewritten` and `Optional` have above, and for the same reason: a
+            // wrapper is not a container.  Bundled with `Vector` it answered one level short,
+            // so `&vector<τ>` gave the VECTOR's def where `vector<τ>` gives τ's: a removal
+            // through a `&` parameter then shifted by the vector record's width instead of the
+            // element's, and the caller's vector came back with the wrong elements while `len`
+            // stayed right (loft#1411).
+            Type::RefVar(tp) => self.type_elm(tp),
+            Type::Vector(tp, _) => {
                 if let Type::Reference(td, _) = **tp {
                     td
                 } else {

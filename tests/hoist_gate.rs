@@ -130,6 +130,12 @@ fn user_fn_is_followed() {
 /// `hoistable(script, fn_name)` returns the number of vectors the ONE loop in `fn_name`
 /// may hoist, so a `0` cell says the gate declined and a `1` says it fired.
 fn hoistable(script: &str, fn_name: &str) -> usize {
+    hoistable_tier(script, fn_name, true)
+}
+
+/// Same query with the @PLN157 P4a tier explicit: `allow_in_place = false` is the
+/// `LOFT_NO_WRITE_HOIST=1` classification, where any store write blocks.
+fn hoistable_tier(script: &str, fn_name: &str, allow_in_place: bool) -> usize {
     let data = parse(script);
     let d_nr = data.def_nr(fn_name);
     assert!(d_nr != u32::MAX, "`{fn_name}` is not defined");
@@ -137,7 +143,7 @@ fn hoistable(script: &str, fn_name: &str) -> usize {
     let mut total = 0;
     data.def(d_nr).code().any_node(&mut |n| {
         if let Value::Loop(body) = n {
-            total += hoist::hoistable_vectors(body, &data, d_nr, &mut cache).len();
+            total += hoist::hoistable_vectors(body, &data, d_nr, &mut cache, allow_in_place).len();
         }
         false
     });
@@ -150,6 +156,64 @@ const READ: &str = "fn f(v: vector<integer>, n: integer) -> integer {
   s
 }
 fn main() { }";
+
+/// @PLN157 § V-c — a callee whose only store writes are scalars into its own return
+/// buffer (a struct-literal return over an all-scalar record) does not decline the
+/// caller's header hoist; every neighbouring shape still does.
+#[test]
+fn a_scalar_retbuf_writer_does_not_decline_the_hoist() {
+    let script = "\
+struct S { a: float = 0.0, b: float = 0.0 }
+struct V { n: integer = 0, xs: vector<integer> = [] }
+fn mk(u: float) -> S { S { a: u, b: u * 2.0 } }
+fn grow(n: integer) -> V { V { n: n, xs: [n] } }
+fn poke(s: S, u: float) -> S { s.a = u; s }
+fn via(u: float) -> S { t = mk(u); t.b = 1.0; t }
+fn scratch(u: float) -> S { c = S { a: u, b: u }; c.a = 2.0; mk(c.a) }
+fn f_mk(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += mk(v[i]? as float).a; } t }
+fn f_scratch(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += scratch(v[i]? as float).a; } t }
+fn f_bound(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { s = mk(v[i]? as float); t += s.a; } t }
+fn f_grow(v: vector<integer>) -> integer { t = 0; for i in 0..len(v) { t += grow(v[i]?).n; } t }
+fn f_poke(v: vector<integer>, s: S) -> float { t = 0.0; for i in 0..len(v) { t += poke(s, v[i]? as float).a; } t }
+fn f_via(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += via(v[i]? as float).a; } t }
+fn main() { }";
+    assert_eq!(
+        hoistable(script, "n_f_mk"),
+        1,
+        "a scalar-retbuf writer must not decline the hoist"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_grow"),
+        0,
+        "a record with a vector field grows — still a writer"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_poke"),
+        0,
+        "a write to a parameter is not a retbuf write"
+    );
+    // `t = mk(u); t.b = 1.0; t` — NRVO promotes `t` ONTO `via`'s buffer, so both the
+    // inner call and the field write land in the buffer: a retbuf-only writer too.
+    assert_eq!(
+        hoistable(script, "n_f_via"),
+        1,
+        "a promoted local IS the buffer"
+    );
+    // `c` is a scratch record that is never returned: its `OpDatabase` and its field write
+    // target a store that is not the buffer.
+    assert_eq!(
+        hoistable(script, "n_f_scratch"),
+        0,
+        "a write to a scratch local — still a writer"
+    );
+    // The result bound to a local: the loop body carries the local's guarded per-iteration
+    // free, a RECORD free — a release moves no vector header.
+    assert_eq!(
+        hoistable(script, "n_f_bound"),
+        1,
+        "a record free in the loop must not decline the hoist"
+    );
+}
 
 #[test]
 fn a_read_only_loop_hoists() {
@@ -211,14 +275,14 @@ fn the_fused_shape_is_recognised() {
         )
     };
     let read = |getter: &str, inner: Value| {
-        hoist::fused_element_read(&data, getter, &[inner, Value::Int(0)]).map(|f| f.var)
+        hoist::fused_element_read(&data, getter, &[inner, Value::Int(0)]).map(|f| f.path)
     };
 
     for getter in ["OpGetInt", "OpGetSingle", "OpGetFloat"] {
         for elem_op in ["OpGetVector", "OpGetVectorNullable"] {
             assert_eq!(
                 read(getter, vec_read(elem_op)),
-                Some(3),
+                Some((3, Vec::new())),
                 "{getter} over {elem_op} must fuse, naming the vector variable"
             );
         }
@@ -262,5 +326,147 @@ fn main() { }";
         hoistable(script, "n_f"),
         0,
         "a yielding loop must not hoist"
+    );
+}
+
+/// @PLN157 P4a — the in-place tier: a loop whose only store writes are scalar
+/// element SETS keeps its headers, because an in-place write moves no record and
+/// changes no length (aliased or not); anything that grows, removes or rebinds
+/// still declines, and `LOFT_NO_WRITE_HOIST=1` (`allow_in_place = false`)
+/// restores the all-or-nothing gate.
+#[test]
+fn an_in_place_write_loop_keeps_its_headers() {
+    let script = "fn f(v: vector<integer>, n: integer) -> integer {
+  s = 0;
+  for i in 0..n { v[i] = (v[i] ?? 0) + 1; s = s + (v[i] ?? 0); }
+  s
+}
+fn main() { }";
+    assert_eq!(
+        hoistable_tier(script, "n_f", true),
+        1,
+        "an in-place element write must not decline the hoist"
+    );
+    assert_eq!(
+        hoistable_tier(script, "n_f", false),
+        0,
+        "LOFT_NO_WRITE_HOIST restores the pre-P4a gate"
+    );
+}
+
+#[test]
+fn an_in_place_write_through_an_alias_keeps_both_headers() {
+    let script = "fn f(v: vector<integer>, n: integer) -> integer {
+  s = 0;
+  u = v;
+  for i in 0..n { u[i] = 1; s = s + (v[i] ?? 0); }
+  s + len(u)
+}
+fn main() { }";
+    assert_eq!(
+        hoistable_tier(script, "n_f", true),
+        2,
+        "an in-place write cannot move a record, so even the alias's header stays valid"
+    );
+}
+
+#[test]
+fn a_growing_write_beside_an_in_place_one_still_declines() {
+    let script = "fn f(v: vector<integer>, n: integer) -> integer {
+  s = 0;
+  for i in 0..n { v[i] = 1; v += [i]; s = s + (v[i] ?? 0); }
+  s
+}
+fn main() { }";
+    assert_eq!(
+        hoistable_tier(script, "n_f", true),
+        0,
+        "a grow in the same body invalidates headers whatever else is in-place"
+    );
+}
+
+/// @PLN157 P4b — the fused WRITE shape: which setters qualify, and that a vector
+/// operand which is not a plain variable does not.  The emitter and the pre-eval
+/// collector both ask `fused_element_write`, so the pinned shape is the agreement.
+#[test]
+fn the_fused_write_shape_is_recognised() {
+    let data = parse("fn main() { }");
+    let vec_addr = |elem_op: &str| {
+        Value::Call(
+            data.def_nr(elem_op),
+            vec![Value::Var(3), Value::Int(4), Value::Var(7)],
+        )
+    };
+    let write = |setter: &str, inner: Value| {
+        hoist::fused_element_write(&data, setter, &[inner, Value::Int(0), Value::Int(9)])
+            .map(|f| f.path)
+    };
+
+    for setter in ["OpSetInt", "OpSetSingle", "OpSetFloat"] {
+        for elem_op in ["OpGetVector", "OpGetVectorNullable"] {
+            assert_eq!(
+                write(setter, vec_addr(elem_op)),
+                Some((3, Vec::new())),
+                "{setter} over {elem_op} must fuse, naming the vector variable"
+            );
+        }
+    }
+
+    // A setter that re-bases, masks or translates stays unfused rather than approximated.
+    for setter in ["OpSetByte", "OpSetShort", "OpSetBoolean", "OpSetText"] {
+        if data.def_nr(setter) == u32::MAX {
+            continue;
+        }
+        assert!(
+            write(setter, vec_addr("OpGetVector")).is_none(),
+            "{setter} has a different shape and must not fuse"
+        );
+    }
+
+    // A record-field write (`Var` target, no element address) keeps the template.
+    assert!(
+        hoist::fused_element_write(
+            &data,
+            "OpSetFloat",
+            &[Value::Var(3), Value::Int(0), Value::Int(9)]
+        )
+        .is_none(),
+        "a field write on a record is not an element write"
+    );
+}
+
+/// @PLN157 P4d — a vector reached through CONST field offsets hoists and fuses:
+/// the path key carries the offsets, and the collection, the recognisers and the
+/// emission all key on it together.
+#[test]
+fn a_field_reached_vector_hoists_and_fuses() {
+    let script = "struct L { x0: integer = 0, best: vector<float> }
+fn f(lay: L, n: integer) -> float {
+  s = 0.0;
+  for i in 0..n { lay.best[i] = (lay.best[i] ?? 0.0) + 1.5; s += lay.best[i] ?? 0.0; }
+  s
+}
+fn main() { }";
+    assert_eq!(
+        hoistable_tier(script, "n_f", true),
+        1,
+        "a field-reached vector is one hoist candidate"
+    );
+
+    // The recogniser names the path: root var + the const offset chain.
+    let data = parse(script);
+    let field = Value::Call(
+        data.def_nr("OpGetField"),
+        vec![Value::Var(0), Value::Int(8), Value::Int(81)],
+    );
+    let inner = Value::Call(
+        data.def_nr("OpGetVector"),
+        vec![field, Value::Int(8), Value::Var(7)],
+    );
+    assert_eq!(
+        hoist::fused_element_write(&data, "OpSetFloat", &[inner, Value::Int(0), Value::Int(9)])
+            .map(|f| f.path),
+        Some((0, vec![8])),
+        "the write recogniser carries the field path"
     );
 }

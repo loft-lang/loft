@@ -111,6 +111,7 @@ env:
 
 jobs:
   stale-plans-audit:
+    # @nightly-class: report — plan-tracker drift; says nothing about the language
     name: Stale-plan audit (drift advisory + mislabel gate)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -153,6 +154,7 @@ jobs:
           esac
 
   miri:
+    # @nightly-class: unsound — hard UB — alignment, OOB, UAF, uninit
     name: Miri hard-UB gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # @PLN54 S1 — the founding @P383 incident surfaced EXCLUSIVELY on macOS-ARM, so
@@ -241,6 +243,7 @@ jobs:
             database::store_rebase_tests::translate_rewrites_mapped
 
   asan:
+    # @nightly-class: unsound — an out-of-bounds or use-after-free access
     name: ASan UAF/OOB sweep (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # @PLN54 S1 — run the whole-corpus ASan sweep on BOTH the ubuntu-x86_64 and
@@ -349,6 +352,7 @@ jobs:
   # SYSTEM frame surfaces on the Linux leg (different TLS impl), suppress THAT specific
   # frame in lsan_suppressions.txt — never raise the baseline off zero for a real leak.
   asan-leak-gate:
+    # @nightly-class: report — a LEAK, not unsoundness — the baseline is still being triaged
     name: ASan interpreter leak gate (${{ matrix.os }})
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -497,6 +501,7 @@ jobs:
           bash scripts/asan_leak_scan.sh tests/scripts/*.loft tests/docs/*.loft
 
   poison:
+    # @nightly-class: unsound — a store-internal use-after-free the allocator hides
     name: LOFT_POISON arena-UAF gate (store-internal use-after-free)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -560,6 +565,7 @@ jobs:
           -E 'not test(library_suite)'
 
   stack-shadow:
+    # @nightly-class: unsound — a frame slot nobody wrote, mistyped, or stale
     name: LOFT_VERIFY_STACK gate (a frame slot nobody wrote, mistyped, or stale)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -621,6 +627,7 @@ jobs:
           -E 'not test(library_suite)'
 
   tsan:
+    # @nightly-class: unsound — a data race, which is UB and has no other coverage
     name: ThreadSanitizer (par/threading data-race gate)
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -674,6 +681,7 @@ jobs:
           --release --no-fail-fast --test threading --test threading_chars
 
   native-asan:
+    # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
     name: Native-backend ASan (--native codegen)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -748,6 +756,7 @@ jobs:
           done
 
   valgrind:
+    # @nightly-class: unsound — an invalid or uninitialised read in the SHIPPED release binary
     name: Valgrind memcheck sweep (release binary, both backends)
     # Nightly-only: ~1200 memcheck runs exceed the 20-min PR ceiling on their own — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -818,6 +827,7 @@ jobs:
           if-no-files-found: warn
 
   release-gate-sweeps:
+    # @nightly-class: report — coverage replayed for release evidence, not an instrument
     name: Release-gate sweeps (the ignored tests whose reason names this job)
     # Nightly-only: rustc per cell / per run puts both over the PR ceiling — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -854,6 +864,7 @@ jobs:
         run: cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored
 
   debug-asserts:
+    # @nightly-class: unsound — a violated internal invariant
     name: Debug-assertions gate (loft's internal invariants)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -908,6 +919,7 @@ jobs:
           -- --skip library_suite
 
   toolchain-matrix:
+    # @nightly-class: report — beta/nightly std and lint churn must never page us
     name: Suite under ${{ matrix.toolchain }}
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -1002,6 +1014,7 @@ jobs:
   # `@`-tag / markdown link can land on `main`; this nightly run surfaces it
   # within a day.  Same single-binary check, on stable.
   index-hygiene:
+    # @nightly-class: report — documentation drift
     name: doc index hygiene (nightly)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -1050,6 +1063,7 @@ jobs:
           retention-days: 14
 
   library-health:
+    # @nightly-class: report — informational, by its own name
     name: Library health audit (informational)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
     if: github.event_name != 'pull_request'
@@ -1128,22 +1142,29 @@ jobs:
   notify:
     name: Nightly gate failure → tracked issue
     # An automatic ISSUE is an interruption, so it is reserved for the case that
-    # actually warrants one: **the language itself is unsound**.  These four say
-    # exactly that — hard UB, a store use-after-free, an out-of-bounds/UAF access,
-    # or a violated internal invariant — and every one of them now also gates each
-    # PR, so a red here means something got past the PR gate, which is precisely
-    # when a human should be pulled in.
+    # actually warrants one: **the language itself is unsound** — hard UB, a data
+    # race, a store or heap use-after-free, an out-of-bounds or uninitialised read,
+    # a violated internal invariant.  Everything else (toolchain drift, doc index,
+    # library health, the leak baseline) reports in the `daily-status` summary
+    # below and files NOTHING.  A jq crash in a matrix selector became issue #638
+    # under the old any-red rule; that is noise, and noise is what makes a real
+    # alert ignorable.
     #
-    # Everything else (toolchain drift, doc index, library health, the leak
-    # baseline) reports in the `daily-status` summary below and files NOTHING.  A
-    # jq crash in a matrix selector became issue #638 under the old any-red rule;
-    # that is noise, and noise is what makes a real alert ignorable.
+    # ⚠ A gate absent from `needs` is invisible here, and its silence reads as
+    # green — it does not merely fail to file, it AUTO-CLOSES the issue another
+    # gate opened.  That is not hypothetical: `valgrind` was in no list at all, so
+    # when it went red on 2026-09-07 the filed issue named `poison,debug-asserts`
+    # and would have closed itself with memcheck still failing.
     #
-    # The dedup/auto-close contract is unchanged, and the old warning still holds
-    # for THIS list: a gate absent from `needs` is invisible here, and its silence
-    # reads as green and AUTO-CLOSES the issue.  When you add a gate that means
-    # "the language is broken", add it here in the same commit.
-    needs: [miri, asan, poison, stack-shadow, debug-asserts]
+    # Which is why the class now lives ON THE JOB, once — `# @nightly-class:
+    # unsound|report`, the first line of every job block — and this list, the
+    # `daily-status` list and the digest's closing sentence are all DERIVED from
+    # it.  Three copies of one list drifted apart before that; two of them were
+    # already wrong.  `tests/doc_hygiene.rs::nightly_gate_classes_drive_every_
+    # list_that_reads_them` fails when they disagree, and when a job carries no
+    # class at all, so a new gate cannot be added without answering the question.
+    # Reclassifying is a one-word edit to the marker, and it is meant to be one.
+    needs: [miri, asan, poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -1221,7 +1242,9 @@ jobs:
   # without opening anything.
   daily-status:
     name: Daily status (the one place to look)
-    needs: [miri, asan, asan-leak-gate, poison, stack-shadow, tsan, native-asan, debug-asserts, toolchain-matrix, index-hygiene, library-health]
+    needs: [stale-plans-audit, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+            native-asan, valgrind, release-gate-sweeps, debug-asserts, toolchain-matrix,
+            index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate
     runs-on: ubuntu-latest
     permissions:
@@ -1269,7 +1292,8 @@ jobs:
               echo "| \`$wf\` | [$mark]($url) | $when |"
             done
             echo
-            echo "_Gates that FILE an issue when red: miri, asan, poison, debug-asserts —"
-            echo "the language-is-unsound class. Everything else reports here only._"
+            echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
+            echo "miri, asan, poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts."
+            echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

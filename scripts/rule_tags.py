@@ -35,8 +35,13 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FORMAL = os.path.join(ROOT, "doc/claude/formal")
+# Portable by design (the formal-rules skill): another project vendors this file
+# unchanged and points the two roots at its own layout.  RULES_DIR is where the
+# rules docs live; CITE_DIRS (colon-separated) is where citations are scanned.
+FORMAL = os.environ.get("RULES_DIR", os.path.join(ROOT, "doc/claude/formal"))
 SRC = os.path.join(ROOT, "src")
+CITE_DIRS = os.environ.get("CITE_DIRS", "").split(":") if os.environ.get("CITE_DIRS") else [SRC]
+CITE_EXTS = os.environ.get("CITE_EXTS", ".rs").split(",")
 
 # A rule is DEFINED by a rules-block line `  (Name)  prose` or a deviation header `### Name —`.
 # A RULE is defined by a line `  (Name)  prose` INSIDE A FENCED BLOCK — that is the shape the
@@ -53,9 +58,23 @@ DEF_INLINE = re.compile(r"^\s*\(([A-Z][A-Za-z0-9-]{1,40})\)\s", re.M)
 # of thing a registry has to absorb rather than legislate away.
 # The blockquote form must keep the em-dash INSIDE the bold (`> **D-bind-12 — CLOSED …`);
 # `> **D-bind-10**:` is a cross-REFERENCE from another doc, not a second definition.
+# A register entry names its tag in a HEADING or a `>` quote, and what follows the tag is
+# free prose: an em-dash, a `(CLOSED)`, or `, part three —`.  So the tag ends at the first
+# character that cannot be part of one — `'` included, or `### D-gen-4's closure summary`
+# reads as a second definition of D-gen-4 (loft#1452).
+# A deviation tag's final segment is a NUMBER for the counted families (`D-bind-28`,
+# `D-heap-1`) and a WORD for the named ones (`D-Opt-NoNull`, `D-col-null`, `D-Null-Guard`).
+# Requiring a number made every named entry invisible — `types.md` declared `D-Opt-NoNull`
+# open while the tool could not see it at all, and three deviations registered on 2026-09-08
+# were unfindable the moment they were written (loft#1452).
+DEV_TAG = r"D[A-Za-z]*(?:-[A-Za-z][A-Za-z0-9]*)*-(?:\d+|[A-Za-z][A-Za-z0-9]*)|DN\d+[A-Za-z-]*"
+
+DEV_COUNT = re.compile(r"OPEN:\s*\**\s*\d+")
+DEV_DATE = re.compile(r"(20\d\d-\d\d-\d\d)")
+
 DEF_DEV = re.compile(
-    r"(?:^#{2,5}\s+`?(?P<h>D[A-Za-z]*-[a-z]+-\d+|DN\d+[A-Za-z-]*)\b"
-    r"|^>\s*\*\*(?P<q>D[A-Za-z]*-[a-z]+-\d+|DN\d+[A-Za-z-]*)\s+—)",
+    rf"(?:^#{{2,5}}\s+`?(?P<h>{DEV_TAG})(?![A-Za-z0-9_'-])"
+    rf"|^>\s*\*\*(?P<q>{DEV_TAG})(?![A-Za-z0-9_'-]))",
     re.M,
 )
 # A CITATION is `@FR-<Rule>`, boundary-exact so `@FR-B-View` does not match `@FR-B-View-Base`.
@@ -94,16 +113,37 @@ def defined_deviations():
       law, and the site's real subject is the rule the deviation was measured
       against — which is still true, where the deviation no longer is.
     """
-    out = {}
+    entries = collections.defaultdict(list)
     for path in sorted(glob.glob(FORMAL + "/*.md")):
         text = open(path, encoding="utf-8").read()
         for m in DEF_DEV.finditer(text):
             tag = m.group("h") or m.group("q")
-            tail = text[m.end():m.end() + 120]
+            # `OPEN: 3` is a chapter's COUNT, never this entry's status — and it sits within
+            # reach of a summary heading's tail.
+            tail = DEV_COUNT.sub("", text[m.end():m.end() + 120])
             status = "CLOSED" if "CLOSED" in tail else "OPEN" if "OPEN" in tail else "?"
-            files, prev = out.get(tag, ([], "?"))
-            out[tag] = (files + [os.path.basename(path)], status if prev == "?" else prev)
-    return out
+            date = DEV_DATE.search(tail)
+            line = text.count("\n", 0, m.start()) + 1
+            entries[tag].append(
+                (os.path.basename(path), line, status, date.group(1) if date else "0000-00-00"))
+    return {tag: ([r[0] for r in rows], _resolve_status(rows)) for tag, rows in entries.items()}
+
+
+def _resolve_status(rows):
+    """The status of a tag that has SEVERAL entries — the latest dated one wins.
+
+    Two different shapes share a tag, and only the date tells them apart.  A tag can be a
+    TIMELINE — `D-bind-11` was opened 2026-08-19 and closed 2026-09-03, and both entries
+    stand — or it can be one deviation stated in PARTS, as `D-bind-28` is: part two CLOSED
+    and part three REOPENED, both on 2026-09-07, and the tag is OPEN because a part of it
+    is.  Taking the FIRST entry's answer got the second shape wrong for as long as it
+    existed (loft#1452: D-bind-28 read CLOSED while part three said REOPENED); taking
+    "OPEN wins" gets the first shape wrong (it would reopen D-bind-11, D-clo-14, D-gen-4).
+    The latest date is right for both, and ties break on file order, which is the order the
+    parts are written in.
+    """
+    dated = [r for r in rows if r[2] != "?"]
+    return max(dated, key=lambda r: (r[3], r[1]))[2] if dated else "?"
 
 
 def _fenced_lines(text):
@@ -119,12 +159,14 @@ def _fenced_lines(text):
 
 
 def citations():
-    """{tag: [(file, line)]} for every `@Tag` in src/."""
+    """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
     out = collections.defaultdict(list)
-    for path in glob.glob(SRC + "/**/*.rs", recursive=True):
-        for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
-            for tag in CITE.findall(line):
-                out[tag].append((os.path.relpath(path, ROOT), n))
+    for d in CITE_DIRS:
+        for ext in CITE_EXTS:
+            for path in glob.glob(os.path.join(d, "**/*" + ext), recursive=True):
+                for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
+                    for tag in CITE.findall(line):
+                        out[tag].append((os.path.relpath(path, ROOT), n))
     return out
 
 
@@ -134,12 +176,19 @@ def main():
     devs = defined_deviations()
 
     if cmd == "list":
-        want_devs = "--deviations" in sys.argv
-        table = devs if want_devs else rules
-        for tag in sorted(table):
-            print(f"@FR-{tag:<28} {', '.join(sorted(set(table[tag])))}")
-        kind = "deviation entries (NOT citable)" if want_devs else "defined rules"
-        print(f"\n{len(table)} {kind}")
+        # A deviation carries a STATUS as well as its files, so it prints differently from a
+        # rule — and printing it the rule's way raised `unhashable type: 'list'`, which is why
+        # `list --deviations` had never once run (loft#1452).
+        if "--deviations" in sys.argv:
+            for tag in sorted(devs):
+                files, status = devs[tag]
+                print(f"@FR-{tag:<28} {status:<7} {', '.join(sorted(set(files)))}")
+            print(f"\n{len(devs)} deviation entries (NOT citable), "
+                  f"{sum(1 for v in devs.values() if v[1] == 'OPEN')} open")
+            return 0
+        for tag in sorted(rules):
+            print(f"@FR-{tag:<28} {', '.join(sorted(set(rules[tag])))}")
+        print(f"\n{len(rules)} defined rules")
         return 0
 
     cites = citations()

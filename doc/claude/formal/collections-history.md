@@ -6,6 +6,44 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
+> **D-col-3 — OPENED AND CLOSED (2026-09-06, loft#1402) — a by-INDEX removal kept what the
+> element OWNED.**  `(Col-Remove)` deletes one element and LOFT.md says `v#remove` "removes
+> exactly one element, releases what that element owned".  `Stores::remove_vector_at`'s UNLINKED
+> branch shifted the bytes and released nothing, so `v.remove(i)` and `e#remove` retained one
+> record per removal: a constant population cost a record count that grew with the number of
+> removals, without bound, on both backends.  The by-RECORD twin (`remove_owned`, reached by
+> `c[key] = null`) released them and so did the LINKED layout, so one `sorted` leaked through
+> `#remove` and not through `[key] = null`.
+>
+> The branch's own doc said why it thought it needn't: *"a `vector`/`sorted` holds its elements
+> INLINE, so a slot is as wide as an element and there is no separate record to free"* — true of
+> the element's own record, and false of its CLAIMS, which each live in a record of their own.
+> Closed by walking them before the shift, through `get_vector` — the same index→element map
+> `remove_vector` walks, answering `rec == 0` for exactly the indices that one removes nothing
+> for, so the guard and the removal cannot disagree about which indices name an element.
+> Release BEFORE the shift, because an inline element IS the slot; the linked branch can unlink
+> first only because the record it names survives the unlink.
+>
+> **It could not close alone, and that is the entry's lesson.**  While a `??`-discharged binding
+> stayed a live view of the removed element ([binding.md](binding.md) `D-bind-24` / loft#1401),
+> releasing the element's children emptied a value the program was still reading —
+> `445-generic-tree-walk.loft` measured it, and it was RIGHT to fail.  A leak that is
+> load-bearing for a correctness bug is not an independent defect, and ordering the two was the
+> whole of the work.
+>
+> Guarded by `a-vector-removal-releases-what-the-element-owned` (10 cells, both backends,
+> falsified at 6609b01b — loft#1401's fix, i.e. this tree with only the release missing, which
+> is the honest control since at any earlier commit its interaction cell would fail for the
+> other reason).  Its oracle is FLATNESS, not a count: the absolute record count differs between
+> the backends, so each cell runs one workload at two sizes and asserts the two agree.
+> `collect_store_leaks` cannot see this at all — the records are retained inside a LIVE store,
+> so nothing is unfreed at exit.  Found in the `@FR-Col-Remove` walk (QUALITY.md B8f).
+>
+> Filed as `D-col-2`, which loft#1385 had already taken and closed the same day; renumbered
+> here.  The same collision happened to this issue's sibling in [binding.md](binding.md),
+> twice — a deviation number is picked from the rules doc, which carries only the OPEN ones,
+> so the closed ones it cannot see are exactly the ones a new entry collides with.
+
 - **`C-Order`** (hash bucket-walk) — already a decided edge in concurrency.md; `Col-Order` references it.
 - **`D-key-1`** (keyed slice = iterator) — a shipped decided edge (the value-position crash was fixed to a
   clean diagnostic, RELEASE.md 2026-07-04); formalized as `INV-KeyedSlice`, not an open deviation.
@@ -14,7 +52,64 @@
 - **Candidate OPEN (verify):** the per-query scratch-vector allocation for spatial slices (CAVEATS.md notes
   it as the next efficiency lever) — a performance note, likely NOT a formal deviation.
 
-OPEN: **0** — `D-col-null` was opened and CLOSED the same day (2026-08-28, below).
+OPEN: **0** — `D-col-lookup` opened 2026-09-07 and CLOSED 2026-09-08 (loft#1450, below);
+`D-col-null` was opened and CLOSED the same day (2026-08-28, below).
+
+### `D-col-lookup` — OPENED 2026-09-07, CLOSED 2026-09-08 (loft#1450): the rule's cited anchor was a lint switch, not a type
+
+`(Col-Lookup)` states `Γ ⊢ c[key] ⇒ τ?` — *"a keyed point lookup is NULLABLE — an absent key
+yields the null record, discharged by `?? d` / `match` like any τ?"* — and cites
+`fields.rs:700-706` as its anchor.  That site clears `expr_not_null`, which is the input to the
+redundant-check and redundant-coalesce LINTS.  It is not the type.  So a lookup that misses in a
+PRESENT collection binds into a non-null slot with nothing said:
+
+```loft
+h: hash<It[k]> = [];
+e: It = h[1];        // silent; `e` typed non-null `It`, holds the null record
+take(h[1]);          // and the same at the call-argument seam (loft#583's (N-Store) site)
+```
+
+All four keyed kinds answer alike (`hash`, `sorted`, `index`, `trie`), and the two arms in
+`fields.rs` — `Hash|Radix|Trie` and `Sorted|Index` — each do only the clear.
+
+**Closed** by giving both arms one home — `wrap_keyed_lookup_nullable` — which wraps the element
+type for a POINT lookup only.  A spatial or trie RANGE slice answers the COLLECTION for an
+enclosing `for`, and iterating one is total, so wrapping it would demand a discharge for an
+absence that cannot occur; that control is the cell which says the widening did not over-reach.
+The vector arm's two guards come with it: `pln25_dn1_enabled`, and the `tagged_pointer_type`
+check that stops `@FR-N-Idem`'s `τ??` where the element is already a `__nullable<S>` slot.  An
+UNRESOLVED element takes no marker either — `Optional(Unknown)` is not a type the compiler can
+name, and a first-pass lookup is exactly that.
+
+⚠ **"Deferred on cost (351 corpus sites)" was the wrong reading of its own measurement, and the
+error is worth keeping visible.**  Swept file by file, the widening adds **zero** corpus
+failures: those sites emit WARNINGS, which no run fails on, and the single file that did break
+was this fix wrapping an unresolved element rather than a program needing migration.  What
+actually blocked the leg was never migration — it was that the materialise/copy for a nullable
+element view did not happen (loft#1456, five sites, both backends), which was invisible from
+here because it is not a collections question.  The cost estimate was honest and measured; it
+counted the wrong thing, and it read as a reason not to start.
+
+That is also why the two were one fix: with loft#1456 closed, enabling this widening leaves
+`146-keyed-rekey-through-view` green on both backends, every keyed write byte-identical, and the
+slice controls unmoved.
+
+⚠ **This is why this register could read `OPEN: 0` over it**, and the reason is worth stating
+because it is not the usual one.  The rules were complete and the enforcement was not missing —
+what was wrong is that the RULE'S OWN ANCHOR pointed at a lint switch, so a reader checking the
+code against the rule would find a cited, existing, correct-looking site and stop.  A citation
+resolving is not a citation enforcing.  This is a THIRD failure mode beside the two
+[types-history.md](types-history.md) records (an incomplete rule; a complete rule nothing
+re-measures), and the cheapest check for it is to ask what an anchor's site actually decides —
+here, whether it writes a `Type`.
+
+Measured before it was deferred: closing it costs **351 corpus sites** across 21 files, where the
+receiver-absent half (`D-Null-Recv` in [types-history.md](types-history.md), closed 2026-09-07)
+cost none.  It is deferred for that reason and for nothing else — the direction is not in doubt.
+⚠ Whoever takes it: the receiver's `?` must NOT reach a keyed WRITE.  `h[k] = v` parses its target
+through the same `parse_index`, and carried into the place the write is no longer recognised as
+one and lowers to a READ, losing the write in silence — `(Col-Insert-Absent)` makes that write
+total.  `parse_assign_op` is the chokepoint that peels it, keyed on `OpGetRecord`.
 
 ### `D-col-null` — OPENED AND CLOSED (2026-08-28, loft#1120): two answers to *"is this collection null?"*
 

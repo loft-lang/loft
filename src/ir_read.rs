@@ -893,6 +893,10 @@ fn read_db_parts(stores: &Stores, r: Record) -> Parts {
             r.field_int(stores, ds::PTNUM_START) as i32,
             r.field_bool(stores, ds::PTNUM_NULLABLE),
         ),
+        ds::PT_INT_RAW => Parts::IntRaw(
+            r.field_int(stores, ds::PTNUM_START) as i32,
+            r.field_bool(stores, ds::PTNUM_NULLABLE),
+        ),
         ds::PT_SHORT_RAW => Parts::ShortRaw(
             r.field_int(stores, ds::PTNUM_START) as i32,
             r.field_bool(stores, ds::PTNUM_NULLABLE),

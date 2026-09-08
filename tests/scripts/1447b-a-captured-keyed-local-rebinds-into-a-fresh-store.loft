@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1447, the KEYED half — a rebind of a CAPTURED keyed local mints a fresh store.
+//
+// `formal/closures.md` `(L-CapHeap)`: a reassignment of the captured variable is not a
+// mutation-through.  *"`b = other` does not [read through], because it rebinds the variable
+// while the closure keeps the `DbRef` it was built with.  That is what a captured vector and a
+// captured struct do — the closure answers the build-time value."*  The keyed kinds were the
+// outlier: `h = [Row{…}]` reached `gen_keyed_null(first = false)`, whose `OpDatabase` clears
+// the store IN PLACE and reuses `store_nr`, so the record's own handle saw the rebind and
+// `hash` / `sorted` / `index` all answered 9 where the vector and struct spellings answer 5.
+//
+// The licence is POSITIONAL and that is why the fix is in the PARSER rather than in codegen:
+// `is_captured` is a whole-FUNCTION fact (`set_captured` runs when the closure BODY is parsed),
+// so it is true for assignments that PRECEDE the build too — minting on those orphans the store
+// the declaration just allocated.  The parser emits the mint only at loft#895's local-replace
+// site, which a NON-EMPTY keyed literal reaches and a declaration's `= []` does not.
+//
+// ⚠ The `Set(v, Null)` is kept AFTER the mint, not replaced by it.  `@FR-O-Latest`'s scan reads
+// `Value::Set` nodes to learn a local was reassigned after its capture was built, and that fact
+// is what turns OFF `capture_adoption_owns_free` so the frame frees the store the local now
+// names.  Dropping the node minted a store and then suppressed its free — the record kept the
+// build-time store and the new one LEAKED, caught by
+// `1324-a-reassigned-capture-suppresses-the-store-the-record-holds`.
+//
+// Axes this file MOVES:  the keyed KIND (hash · sorted · index), and the CONTROLS are the two
+//                        spellings that were already right (a struct, a vector).
+// Axes it HOLDS FIXED:   the rebind is a non-empty literal — the empty `= []` spelling is a
+//                        declaration's own init and is `505-collection-capture`'s.
+//
+// @falsified-at: 21a497a6 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  (ONE failure per backend, not three: `main`
+//   aborts at the first assert, so the hash cell is the only one that reports even though all
+//   three keyed kinds answer 9 there.  I wrote "three" from the matrix and the tool corrected
+//   it — the count belongs to the harness, not to the defect.)
+
+struct Row1447 { k: integer, v: integer }
+struct S1447 { a: integer }
+
+fn hash_cell() -> integer {
+  h: hash<Row1447[k]> = [];
+  h += [Row1447 { k: 1, v: 5 }];
+  f: fn(integer) -> integer = |i| { (h[1]?.v ?? 0) + i };
+  h = [Row1447 { k: 1, v: 9 }];
+  f(0)
+}
+
+fn sorted_cell() -> integer {
+  s: sorted<Row1447[k]> = [];
+  s += [Row1447 { k: 1, v: 5 }];
+  f: fn(integer) -> integer = |i| { (s[1]?.v ?? 0) + i };
+  s = [Row1447 { k: 1, v: 9 }];
+  f(0)
+}
+
+fn index_cell() -> integer {
+  x: index<Row1447[k]> = [];
+  x += [Row1447 { k: 1, v: 5 }];
+  f: fn(integer) -> integer = |i| { (x[1]?.v ?? 0) + i };
+  x = [Row1447 { k: 1, v: 9 }];
+  f(0)
+}
+
+// The two spellings that were already right.  They are what says the keyed kinds were the
+// outlier rather than the rule being unsettled — a cure that moved these would be widening,
+// not fixing.
+fn struct_control() -> integer {
+  s = S1447 { a: 5 };
+  f: fn(integer) -> integer = |i| { s.a + i };
+  s = S1447 { a: 9 };
+  f(0)
+}
+
+fn vector_control() -> integer {
+  v: vector<integer> = [5];
+  f: fn(integer) -> integer = |i| { (v[0] ?? 0) + i };
+  v = [9];
+  f(0)
+}
+
+// The rebound variable keeps ITS OWN new value — the closure reading the build-time store must
+// not be a copy that also froze the local.
+fn the_local_itself_moves() -> integer {
+  h: hash<Row1447[k]> = [];
+  h += [Row1447 { k: 1, v: 5 }];
+  f: fn(integer) -> integer = |i| { (h[1]?.v ?? 0) + i };
+  h = [Row1447 { k: 1, v: 9 }];
+  (h[1]?.v ?? 0) + f(0)
+}
+
+fn main() {
+  assert(hash_cell() == 5, "hash: closure answers the build-time value, got {hash_cell()}");
+  assert(sorted_cell() == 5, "sorted: got {sorted_cell()}");
+  assert(index_cell() == 5, "index: got {index_cell()}");
+  assert(struct_control() == 5, "struct control unmoved: got {struct_control()}");
+  assert(vector_control() == 5, "vector control unmoved: got {vector_control()}");
+  assert(the_local_itself_moves() == 14, "local 9 + closure 5: got {the_local_itself_moves()}");
+}

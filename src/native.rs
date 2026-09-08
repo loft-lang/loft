@@ -2997,12 +2997,23 @@ fn reflect_field_at(
             }
             // A narrow integer reports `IntegerKind`, so its width and its null
             // live here rather than in the kind the caller sees.
-            Some(LayoutNode::Byte { .. }) => {
-                let v = store.get_byte(value.rec, at, 0);
-                (i64::from(v), 0.0, 0, v == 255 || v == i32::MIN)
+            Some(LayoutNode::Byte { start, nullable }) => {
+                // @FR-L-Narrow-Decode — the stored byte is `value - start`, so the reading adds
+                // it back; the node carries `start` for exactly this, as `ShortRaw` below does.
+                //
+                // 255 is the null CODE only where the field reserves one: a not-null `u8`
+                // spends it on the value 255 and a not-null `i8` on 127, so the sentinel test
+                // asks `nullable` rather than the byte alone.  Read raw for that test — a
+                // biased decode moves the sentinel off 255 and it would never match.
+                let raw = store.get_byte(value.rec, at, 0);
+                let null = raw == i32::MIN || (*nullable && raw == 255);
+                let v = if null { i32::MIN } else { raw + *start };
+                (i64::from(v), 0.0, 0, null)
             }
-            Some(LayoutNode::Short { .. }) => {
-                let v = store.get_short(value.rec, at, 0);
+            Some(LayoutNode::Short { start, .. }) => {
+                // `get_short` decodes its own reserved raw `0` to `i32::MIN`, so unlike the
+                // byte above this arm needs no separate sentinel test — only the bias.
+                let v = store.get_short(value.rec, at, *start);
                 (i64::from(v), 0.0, 0, v == i32::MIN)
             }
             Some(LayoutNode::ShortRaw { start, .. }) => {
@@ -4425,7 +4436,11 @@ pub(crate) fn populate_struct_from_jsonvalue(
             }
         } else if matches!(
             stores.types[content_kt as usize].parts,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+            Parts::Byte(_, _)
+                | Parts::Short(_, _)
+                | Parts::ShortRaw(_, _)
+                | Parts::Int(_, _)
+                | Parts::IntRaw(_, _)
         ) {
             // A narrow-integer field.  @FR-L-Narrow is the authority on which widths
             // belong in this set, and `write_narrow_value` owns their encodings.
@@ -4821,7 +4836,11 @@ fn populate_vector_from_jarray(
             }
         } else if matches!(
             elem_parts,
-            Parts::Byte(_, _) | Parts::Short(_, _) | Parts::ShortRaw(_, _) | Parts::Int(_, _)
+            Parts::Byte(_, _)
+                | Parts::Short(_, _)
+                | Parts::ShortRaw(_, _)
+                | Parts::Int(_, _)
+                | Parts::IntRaw(_, _)
         ) {
             // A narrow-integer element — the element twin of the field arm above, and
             // @FR-L-Narrow is the authority on the width set for both.

@@ -121,8 +121,8 @@ one level apart** — learn the column you're in, but know it's one method.
    output/state) — or build the cheapest thing that *produces* it — and **read the
    invariant off it**. Mind the symmetry with step 3: an instance of the
    **problem/symptom** is the trap (it hides its class); an instance of the
-   **answer/end-result** is the instrument (you read the class *off* it). (§ The
-   other half — `DESIGN_PROTOCOL.md`.)
+   **answer/end-result** is the instrument (you read the class *off* it). (§ *The
+   other half* in the `design-protocol` sibling skill.)
 
 3. **The truth is visible in the class, invisible in the instance.** The shared
    mechanism behind a family of "different" symptoms shows up *in the matrix* and
@@ -136,7 +136,10 @@ one level apart** — learn the column you're in, but know it's one method.
    chasing a one-instance repro there is the matrix aimed down the wrong axis.
 
 4. **Find the ONE invariant; enforce it at the chokepoint — no narrower, no
-   wider.** *Narrower* (a per-case/per-type patch; an N-way spray) leaves the
+   wider.** If the project keeps a named-rule register or formal spec, look the
+   invariant up there BEFORE deriving it — a rule already written settles the
+   question, and the citation is cheaper than the re-derivation.
+   *Narrower* (a per-case/per-type patch; an N-way spray) leaves the
    siblings broken — the same problem, unfinished. *Wider* (re-resolving more
    than the failing region; unifying genuinely distinct cases under a false
    invariant) drags blast radius and is its own brittleness. The proportionate
@@ -423,10 +426,13 @@ makes the *visible* axes safe; the dogfood loop grows what is visible.
 ## Keep `git diff main` usable — one branch, rebase often
 
 For a refactor the sharpest instrument is **`git diff main`**: it shows your delta (am I
-going the right direction?) and gives a clean revert to a known-good baseline
-(`git checkout origin/main -- f`, `git show origin/main:f`). That instrument only works
+going the right direction?) and lets you read the known-good baseline without
+touching your tree (`git show origin/main:f` — never `git checkout … -- f`, which
+silently discards uncommitted work; undo a probe with the inverse edit, and commit
+before anything that rewrites the working tree). That instrument only works
 while you stay on **one** branch held **close to main** — build everything there (mixed
-topics are fine) and **rebase on `origin/main` often**, not once at the end. Per-topic
+topics are fine) and **rebase on `origin/main` often**, not once at the end (with review in
+flight on the branch — an open PR — coordinate before rebasing or force-pushing). Per-topic
 branches, or a branch left to diverge, poison the diff with merge noise AND make overlapping
 work un-mergeable later: a squash upstream vs your original commits is a guaranteed conflict,
 then a multi-commit rebase from hell. Do not create a branch unless the user explicitly asks;
@@ -454,8 +460,10 @@ below point into *this* repository (loft); carrying this skill into another tree
 repointing these links at that tree's equivalents — its debugging policy, its test
 layout.
 
-- **DEBUG method** — `CLAUDE.md` § "Before fixing a non-trivial bug: build the
-  boundary matrix" (the matrix-first protocol, the chokepoint-invariant rule).
+- **DEBUG method** — `CLAUDE.md` § Debugging policy (matrix-first: the boundary
+  matrix, `scripts/matrix_axes.py` for the axes you held fixed, the
+  chokepoint-invariant rule, and read `doc/claude/formal/` FIRST when the fix has
+  a choice in it).
 - **What to vary in the matrix** — `doc/claude/plans/README.md` § The composition
   axes.
 - **DEBUG mechanics (loft)** — the `loft-debug` skill: `LOFT_LOG` presets, dump

@@ -166,16 +166,25 @@ fn test_a_keyed_capture_keeps_its_collection_and_leaks_nothing() {
   // half is asserted here: the caller's collection survives the reassignment and nothing is
   // left unfreed.
   //
-  // ⚠ Deliberately NOT asserted: what the CLOSURE sees. All three keyed kinds answer 51 — the
-  // reassigned value — where the vector and struct cells answer the build-time one, because a
-  // keyed reassignment refills the existing store instead of minting a new one. Which of the
-  // two `(L-CapHeap)` requires is an open question and is filed as such; pinning either answer
-  // here would freeze it by accident.
+  // What the CLOSURE sees IS asserted now, and the answer is the build-time value.
+  //
+  // This cell used to leave it open on purpose: all three keyed kinds answered 51 — the
+  // reassigned value — where the vector and struct cells answered the build-time one, because
+  // a keyed reassignment refilled the existing store instead of minting a new one, and which
+  // of the two `(L-CapHeap)` requires was filed as an open question (loft#1447). It is not
+  // open: `formal/closures.md` says a REASSIGNMENT is not a mutation-through — *"`b = other`
+  // … rebinds the variable while the closure keeps the `DbRef` it was built with … that is
+  // what a captured vector and a captured struct do"* — so the keyed kinds were the outlier
+  // and the rule named the answer before anyone measured it.
   e: hash<Row1324[k]>? = [Row1324 { k: 1, v: 41 }];
   h = fn(n: integer) -> hash<Row1324[k]> { e ?? [] };
   e = [Row1324 { k: 1, v: 51 }];
   assert(len(h(0)) == 1, "the closure's collection length: got {len(h(0))}");
   assert(len(e ?? []) == 1, "the variable's own collection length: got {len(e ?? [])}");
+  assert((h(0)[1] ?? Row1324 { k: 0, v: 0 }).v == 41,
+         "the closure answers the BUILD-time value: got {(h(0)[1] ?? Row1324 { k: 0, v: 0 }).v}");
+  assert(((e ?? [])[1] ?? Row1324 { k: 0, v: 0 }).v == 51,
+         "and the variable its own: got {((e ?? [])[1] ?? Row1324 { k: 0, v: 0 }).v}");
 }
 
 fn test_an_escaping_closure_without_a_reassignment_is_unmoved() {

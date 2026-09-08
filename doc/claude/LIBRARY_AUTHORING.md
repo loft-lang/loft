@@ -28,6 +28,15 @@ needs something the library does not yet do adds it, in the library, and every
 other consumer gets it.  That is the normal way these libraries grow — not an
 exception to be justified.
 
+**And a library is written IN loft, readable first.**  The libraries double as the
+project's teaching corpus, so the "fast pass" pattern — readable code shadowed by an
+optimized native twin nobody can follow — is refused as a matter of contract: a routine
+that measures slow is fixed in the ENGINE (or in its own loft algorithm), and a native
+rewrite is a per-routine edge case with its reason recorded beside it
+([formal/performance.md](formal/performance.md) `(Perf-Cure)`; the measuring pass itself
+is `(Perf-Weight)` — every routine against an industry-language reference twin,
+per release).
+
 Three things follow, and they are the whole rule in practice:
 
 - **Adding is free; breaking is not.**  New functions, new types, new optional

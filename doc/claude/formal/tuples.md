@@ -79,6 +79,36 @@ tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (ver
 integer)`), pass one, and unpack it at the caller. Returning a tuple is the idiomatic
 "return two things," and the result is independent like any return (calls.md).
 
+**A tuple type takes no `?`.** `(N-Opt)` licenses `τ?` for every τ and a tuple is the one former
+with no representation for absence: it is its members' bytes, so `(L-Null)`'s sentinel has no
+value to reserve and `(L-Null-Tag)`'s discriminant is for a struct stored INLINE. So
+`(integer, integer)?` is refused at the declaration, in every position, naming the two cures —
+nullable MEMBERS (`(integer?, text?)`), or a `struct` wrapper, which can be `?`. `(N-Index)`
+still builds the type where the type parser cannot spell it (`v[i]` on a `vector<(τ, τ)>` IS
+`(τ, τ)?`), and every USE of that value is a discharge: `t?` gives the members' defaults,
+`t ?? (…)` a default of your own, and an undischarged member read or destructure is refused with
+the same two cures. The gap between the rule and the model is
+[types-history.md](types-history.md) D-Opt-NoNull, and loft#1423 carries the design call.
+
+### Absence — a tuple type is never nullable; a tuple read as null is all-null members (`T-Absent`)
+
+```
+  (T-Absent)  a TUPLE TYPE is never nullable — `(τ₁, …, τₙ)?` is refused BY NAME at every
+              declaration (types.md N-Opt: a tuple is its members' bytes and has no value to
+              spend on absence) — and a tuple that ARRIVES absent is a PRESENT tuple whose
+              members are all null:   optional((τ₁, …, τₙ))  ≡  (τ₁?, …, τₙ?).
+              Every producer of absence synthesises exactly that, and no `Optional(Tuple)` ever
+              exists, not even in flight: an index that misses (`v[i]` on a vector<(τ₁, τ₂)>,
+              N-Index), a generic `T?` instantiated at a tuple, a decoded document whose key is
+              missing.  The null QUESTION on a tuple is answered by its members, from ONE home:
+              `t == null` and `t ?? d` read "every member null"; `t?` reads the members'
+              defaults (N-Default, loft#1424); `t.i` on such a tuple is `τᵢ?` (N-Prop) and
+              N-Store polices where it lands.  Owner ruling 2026-09-07 (loft#1423): a tuple has
+              no faithful document form anyway, so its absence is presented as the tuple that
+              exists with nothing in it.  The tag layout a stack `(τ, τ)?` would need is
+              declined in DESIGN_DECISIONS C119.
+```
+
 ### Reference tuples — `&(…)` writes the caller's elements in place
 
 ```
@@ -138,7 +168,66 @@ or take the tuple by value and return a new one. The refusal message says both.
 
 ## Deviations
 
-**OPEN: 0** — D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
+**OPEN: 1.**
+
+- **D-tup-10** *(open, loft#1423 / loft#1451)* — `(T-Absent)` says no `Optional(Tuple)` exists,
+  and the code still mints one wherever absence is synthesised: `Type::optional` wraps a
+  `Tuple` like any other type.  Measured (both backends unless said): `v[i].0` on a
+  `vector<(integer, integer)>` by a variable index is REFUSED by name where the rule types it
+  `integer?`; `w: (integer?, integer?) = v[i]` is refused as a type change from
+  `(integer, integer)?`, which is the landing type the rule names; `t == null` is refused
+  (*"No matching operator '=='"*) on BOTH spellings, `(integer?, integer?)` and the in-flight
+  one.  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the identity lives in
+  `Type::optional` (one home — a `Tuple` maps to its member-nullable form); the null question
+  then needs its one tuple home (`== null` / `??` agreeing on "every member null", as `1120-…`
+  made them agree for a collection), and the typed decoder's tuple arm, when it grows one,
+  yields the same value for a missing key.
+
+  ⚠ **This entry claimed the member read, the store and the monomorph's return type would
+  "follow with no per-site work".  Two of those three are FALSE, measured 2026-09-08 by making
+  the arm and running the cells.**  The store/landing half does follow — `w: (integer?,
+  integer?) = v[i]` starts being accepted.  The MONOMORPH does not: loft#1451's reproducer is
+  byte-identical before and after on both backends, and it was closed separately as
+  `D-call-16` in the return-promotion path, not here.  And the consumers REGRESS rather than
+  follow — `?` on a tuple becomes *"cannot build a default for `(integer?, integer?)`"* (guard
+  `1424`), `??` starts emitting a spurious *"stored into a slot of the non-null type
+  `boolean`"*, and `== null` still has no home.  So closing this is six or seven pieces with
+  `1423b` and `1424` as rewrites rather than passes, and `build_default` already refuses
+  `(integer?, integer)` independently.  **The one-arm change must not be landed alone**: it
+  half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
+  refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
+
+D-tup-11 closed 2026-09-08 (loft#1423): `(T-Absent)` says a tuple is absent when EVERY member
+is null, and the null question has ONE home shared by `t == null` and `t ?? d`.  Neither held.
+`coalesce_not_null` carried its own convention — *"a tuple is null when its FIRST FIELD is its
+type's null sentinel"* — which is the SAME test as the rule's for an index miss, where
+`OpGetVectorNullable` nulls every member at once, and a different one for every tuple a program
+builds partly present: `t: (integer?, integer?) = (null, 2)` was discharged WHOLLY, so
+`(t ?? (9, 9)).1` answered `9` and the present `2` was gone, silently, on both backends.  And
+`t == null` had no answer at all — it fell past every gate in the comparison lowering and was
+refused *"No matching operator '=='"* for a type whose `??` beside it worked, so the language
+had a null question a tuple could be asked one way and not the other.  Closed as an OR-fold over
+the members in `coalesce_not_null`, which `null_test`'s new tuple arm negates rather than
+restating: two spellings each carrying their own member walk is what let the first-member
+convention live in one of them unseen.  Guards `1477` (the `??` half: 4 of 10 cells fail on the
+pre-fix build, and the six that pass are every cell whose FIRST member is present) and `1477b`
+(the `==` half, held apart because it does not COMPILE there).  A third defect fell out of the
+same site: the null TEST asked the nullable→non-null STORE face, so `??` reported *"a nullable
+`integer?` is stored into a slot of the non-null type `boolean`"* — a slot the author never
+wrote, at the site of their own discharge — and a tuple made the count its ARITY.  @FR-N-Store
+admits a test, which `null_test` already knew and the coalesce did not; they now admit alike.
+
+⚠ A fourth surfaced only once the walk reached every member, and it is the one worth carrying
+forward: `coalesce_not_null`'s arms match some types in their **BARE spelling only**
+(`matches!(tp, Type::Boolean)`), because every previous caller peeled `Optional` before reaching
+them.  A member type arrives UNPEELED, so a `boolean?` member missed its arm, fell to the generic
+truthiness convert, and `false` read as ABSENT: `(integer?, boolean?) = (null, false)` took the
+default while the same tuple with a bare `boolean` member kept its value, and a direct
+`b: boolean? = false; b ?? true` was right all along.  Peeled at the recursion.  The reason this
+needed its own guard cell is that its three neighbours — `0`, `""`, `0.0` — were right without
+it, so a zero-valued-member family that omitted the boolean would have read as covered.
+
+D-tup-9 closed 2026-09-05: a tuple literal member typed by a generic's type
 variable is copied for every binding — a record or a scalar by @PLN153 phase 1, a vector or a
 keyed collection by the @FR-F-Ret walk's boxed monomorph return (loft#1365).  The non-generic
 shape is D-tup-8, closed.
@@ -148,6 +237,14 @@ the companion [tuples-history.md](tuples-history.md).
 
 ## Conformance
 
+- **Absence (`T-Absent`)** — a tuple is absent only when EVERY member is null, and both
+  spellings of the question agree: `(null, 2) ?? (9, 9)` keeps the `2` and `(null, 2) == null`
+  is `false`, while `(null, null)` takes the default and answers `true`.  Checked with the
+  absent member at the FRONT, at the BACK and in the MIDDLE, at arity 2 and 3, with a `text`
+  and a nested-tuple member, and for both spellings of the type — the written `(τ?, τ?)` and
+  the in-flight `(τ, τ)?` an index miss produces.  Both backends.  A conformance entry naming
+  one member of a family is a claim about that member (see the history file's note on the
+  keyed half), so the front/back/middle split is the point of the list rather than its length.
 - **Construct + project (`T-Cons` / `T-Proj`)** — `t = (3, 7); t.0` is `3`, `t.1` is `7`.
 - **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.
 - **Tuple return + unpack (`T-Ret` + `T-Destr`)** — `fn pair() -> (integer,integer) { (2,3) }`,

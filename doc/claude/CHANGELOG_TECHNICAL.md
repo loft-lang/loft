@@ -9,6 +9,731 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `&` bind to a keyed collection is a link, not a copy (2026-09-07)
+
+`(B-Ref-Alias)` is stated over ANY binding: the `&` annotation makes it a live link to the
+source instead of a copy, and `d += …` writes through.  The `&`-bind's source set in
+`parse_assign_op_inner` was `matches!(amp_vector_source, Type::Vector(_, _))` — a set of ONE —
+so all five keyed kinds took the deep-copy path: `a = &h` gave `a` its own store
+(`OpDatabase`) and `OpReplaceKeyed`-copied `h` into it.  Two independent collections from the
+bind onward.
+
+**The filed root and the measured one differ in a way that changes the guard.**  It was filed
+as *"the `&` alias silently drops every append"*.  The append is not dropped: `len(h)` reads 0
+and `len(a)` reads 1.  From a POPULATED source the symptom hides better — after one write
+through each name, `h` held `{1,3}` and `a` held `{1,2}`, both with length 2 — so a guard
+checking one name's length would have passed.  Every cell in the guard reads both names, and
+`a_plain_keyed_bind_still_copies` is the control a share-everything cure fails.
+
+The set now comes from `vectors::is_collection`, which `(Col-Store)` already defines as the
+`is_keyed` set plus `Vector`; `amp_vector_bind` survives as the narrower fact (the vector's
+whole-value write must clear the shared store in place via `amp_vector_locals`, which emits
+`OpClearVector` and must not see a keyed local).  The keyed deep-copy branch is skipped for a
+`&` bind, so the fall-through leaves the plain `Set(var, src)` handle share and the dep on the
+source survives — that branch's own `make_independent` is what strips it — giving exactly the
+non-owning shape the vector twin had.
+
+⚠ **Third instance of one class.** `Type::is_amp_rebindable_heap` sits beside the defective
+line carrying the full heap set, and its doc records being written as *"one home rather than
+two `matches!` arms, which is how the keyed kinds came to be missing from both (loft#1291)"*.
+loft#1409/#1416 (`cell_stem`'s boxable set) and loft#1443 (`Type::Function` absent from a
+write-back dispatch that panics on its `_` arm) are the same shape.
+
+**What was NOT fixed here, and the wrong reason this entry gave for it.** The `&hash<τ[k]>`
+PARAMETER spelling was still refused at this commit — the append routes did not claim it,
+because `is_keyed` / `is_collection` read `tp.base()`, which peels `Optional` and not the link,
+so `c += [rec]` fell into the VECTOR route and reported a type change.  Closed the same day by
+loft#1445 (its own entry below).
+
+⚠ This paragraph originally continued: *"WITHOUT the keyed emission path resolving its store
+through the parameter's double indirection it converts the refusal into a SILENT DROP."*  The
+MEASUREMENT was right — the surface peel alone does give `len` 0 with no diagnostic.  The
+ATTRIBUTION was invented, and it pointed the next reader at an emission path that was never
+broken: a keyed INSERT one operator over (`c[7] = Row{…}`) reaches the caller's store through
+that exact double indirection on both backends, with the pre-existing key still readable.  The
+real cause was a THIRD site of the same `base()` miss (`keyed_known_type`), visible as a wrong
+type NUMBER rather than as a reachability failure.  Recorded as D-bind-28, now CLOSED in
+`formal/binding-history.md`; D-bind-29 records the other closed half.
+
+Guard: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`, both backends — both
+directions of the link, all five keyed kinds (`spatial` on its own, since the keyed-field copy
+path treats it apart), the struct-field provenance, and the vector + plain-bind controls.
+
+Fixes #1433.
+
+### The unsigned 4-byte encoding gets its own schema Part, and the width→Part choice one home (2026-09-07)
+
+`NarrowIntKind` has carried three 4-byte kinds since `u32` landed — `Int4` (signed, `i32::MIN`
+for absence), `Int4Raw` and `Int4Full` (unsigned, `u32::MAX`). The SCHEMA had one: `Parts::Int`,
+which sign-extends. So a `u32` slot was written by `OpSetInt4Raw` and read back through a Part
+that disagreed with it, and the disagreement was invisible at every value below 2147483648.
+
+Above it, every route that reads through the schema rather than through the field's own op
+answered wrong — the record render, `to_json`, the store round-trip, and all four keyed kinds,
+whose `key_descriptor_for_content` collapsed the two encodings onto `type_nr` 8 and read them
+with the signed `get_i32_raw`. A lookup therefore missed a record its own iteration yielded. The
+nullable form was wrong in both directions at once: `u32::MAX` decoded as -1, so an ABSENCE
+rendered as a value, and 2147483648 decoded as `i32::MIN`, so a VALUE rendered as an absence.
+
+`Parts::IntRaw(min, nullable)` is the 4-byte twin of `Parts::ShortRaw`, with `type_nr` 12 and
+`PT_INT_RAW` (19, appended — a variant's position is its wire code). At 2 bytes the same split
+already existed and was added for the same reason (loft#812): a non-null `u16` read back
+off-by-one because the Part applied a shift the direct write never did.
+
+**What the fix is actually about is the count of homes.** The width→encoding question was
+answered in FIVE places, and the sweep found each only after the previous one was closed:
+`typedef.rs` (struct field), `Data::narrow_vector_content` and `parser/vectors.rs` (element),
+`generation/mod.rs`'s `init()` field emitter, and — the one that made the backends diverge —
+`generation/mod.rs`'s element lookup, which reconstructs the registered type's NAME by hand.
+That last one registered `int<0,false>` for a `vector<u32>` element while the compiler had
+`int_raw<0,false>`: an extra type in generated `init()`, every id past it renamed, reported by
+`LOFT_STRICT_SCHEMA_IDS=1` as the loft#739 class. It needed several `u32` collections in one
+program to surface; each shape alone passed.
+
+All five now derive from `NarrowIntKind`: `part` (the `Parts` id), `part_ctor` (the constructor
+`init()` emits) and `part_name` (the schema key both the constructors and the generator look up
+by). The `Stores` narrow constructors take their name from `part_name` too, so the generator and
+the constructor cannot spell one type two ways.
+
+Five `type_nr` readers needed the new number, not the four the issue named: `compare_ref`,
+`get_key`, `hash_ref`, `radix_db::axis_i64` and `paged_reader::axis_value` — plus `compare_key`,
+a SEPARATE `(Content, type_nr)` match which is what `sorted` and `index` order by, the paged
+compare mirror, `state/io.rs::stack_key`'s `8..=11` range, and `generation/text.rs::emit_content`'s
+`1|5|7|8|9|10|11` (loft#811's class: a missing width falls to `Content::Long(0)`, so the native
+lookup searches for zero). Three more sites had `_ =>` fallbacks that would have taken the new
+kind silently: `type_owns_heap` (`_ => true`), `binary_size` (`_ => 0`), and both directions of
+`codegen_runtime`'s narrow serialisation (an 8-byte read for a 4-byte slot).
+
+`formal/layout.md` gains `(L-Narrow-Enc)` — a width does not determine how its bytes decode, so
+the encoding is part of `layout(τ)` and has one home. `(L-Narrow)` now names `u32` beside `i32`
+at 4 bytes. The golden cannot see this rule (the encoding moves no byte) and neither can a
+backend differential (both read the same `Parts`); what scores it is two ROUTES to one field
+disagreeing. Guard:
+`tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, both backends, with the
+signed controls that a "just make four bytes unsigned" cure fails.
+
+Fixes #1437.
+
+### @PLN156: release gates that prove they ran, and a gate that checks the gates (2026-09-07)
+### An element read cannot be more non-null than the collection it reads from (2026-09-07)
+
+**#1450** (its `(N-Domain)` leg) and the nullable-receiver-index half of **#1434** — a keyed or
+indexed read through an ABSENT collection typed non-null.  `index_provably_fit` elides
+`(N-Domain)`'s `τ?` for an index the developer can vouch for (a literal, a loop variable, a
+bounded computation — the loft#1436 trust), and that proof is about the INDEX; it says nothing
+about whether the COLLECTION exists.  So `m: vector<It>? = null; z: It = m[0]` was silent while
+`m[i]` on the same receiver warned, and the promise turned on the spelling of the subscript.
+The receiver's `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods, so
+it is now read before that peel and carried to the result type — vector plus all four keyed kinds
+(`hash`, `sorted`, `index`, `trie`), whose arms carried only the `expr_not_null` lint clear.  The
+dense-receiver trust is untouched and is the control.
+
+Two prerequisites, both deviations of their own, both fixed here:
+
+* **The discharge narrowed SCALARS only.**  `if s != null { … }` never narrowed a struct or a
+  vector: a heap null test is its own opcode (`OpRefIsNull` / `OpVectorIsNull`) where a scalar
+  compares against a `…FromNull` literal, and `narrowing_from_condition` read only the scalar
+  spelling.  This is `D-Null-Heap`'s class on the discharge side.  It gates shippability rather
+  than politeness — with no working guard, correct guarded code and silent-wrong code produce the
+  same warning; fixing it took the leg's corpus cost from 2 sites to 0.
+* **A narrowing described the assignment TARGET.**  A proof says what a slot HOLDS and dies at the
+  next write, but the target is parsed as an expression, so a proven-non-null variable read as its
+  peeled base and a declared `τ?` slot answered `τ` — `cur: It? = src; if cur == null { return -1; }
+  cur = src;` was reported as a nullable reaching a non-null slot.  Pre-existing on the scalar path
+  and independent of this issue; `warning` gates library CI, so a library that guarded a nullable
+  and rebound it failed its own gate on correct code.
+
+The same place-vs-read distinction is why the receiver's `?` must not reach a keyed WRITE:
+`(Col-Insert-Absent)` makes that write total (loft#1213 materialises an absent keyed destination
+on the write itself), and carried into the target the write lowered to a read and was lost in
+silence.  Peeled at the `parse_assign_op` chokepoint, which is the one home for "the target is a
+place" — all three of the above are enforced there.
+
+Registered as `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` in
+[formal/types-history.md](formal/types-history.md).  The other two legs of #1450 stay open with
+their costs measured: the `(N-Prop)` field read through a nullable receiver (37 corpus sites) and
+`(Col-Lookup)`'s own `τ?` for a missing key in a PRESENT collection (351).
+
+### A frame's release of a captured store is by store identity, not by the capture's name (2026-09-07)
+
+**#1446** — a captured local REASSIGNED after the closure build kept the frame's own scope-exit
+free (`capture_adoption_owns_free` declines to suppress a reassigned local's, loft#1324/#1388),
+and that free reached the store the ESCAPED record holds rather than the one the local now names.
+Both directions wrong at once: the adopted store was freed under a live closure, and the store
+the local ends up holding was the one nobody had claimed.
+
+Closed on the currency `@FR-O-Witness` already names — store IDENTITY.  A literal BUFFER holds
+one store for its entire life, where a capture's NAME covers two as soon as it is reassigned, so
+`CaptureBuilds` now records the adoption against the buffer (`buffer_adopted`, filled from
+`adopted_work_refs` at each assignment as the same in-order walk that fills `adopted` and
+`backing` passes it) and `escaping_record_holds_buffer` decides the frame's release on it.  Both
+halves loft#1439 named are kept per record: the record must ADOPT the capture — one that merely
+borrows leaves the frame's free as the store's only release — and its cascade must REACH the
+store (`capture_attr_is_cascade_relevant`).
+
+**The runtime test could not have expressed this.**  The arm emitted
+`OpFreeRefIfDistinct(buffer, local)`, which compares the buffer against the LOCAL; after a rebind
+the local names the other store, so the guard reads "distinct" and frees exactly what the escaped
+closure is reading.  Its comment carried the false premise in words — *"or it was reassigned
+since (differ -> free, the literal store is dead)"* — and the literal store is not dead when an
+escaping record adopted it.  The suppression is now static, because which store the record took
+is a static fact.
+
+**The filed scope was wider than the defect.**  It was reported as needing two closures with one
+escaping; ONE closure reproduces it, so loft#1440's grouping is not involved at all.  The
+report's own reading (loft#1440's rule applied correctly, the frame's free left over) was right
+about the mechanism and wrong about the boundary.
+
+Guard `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft`, falsified at
+`b8fc41273` WITH `LOFT_STRICT_STORES=1` (interpret and native both exit 1 -> 0); per cell the
+control faults in e1, e2, e4, e6, e7, e8 and e10, while e3 (no rebind) and e9 (a vector capture,
+whose half loft#1324 already closed) are clean there and stand as controls.  Every cell answers
+the right VALUE on the control, so the file is meaningless without the instrument and says so.
+
+Filed while closing it, both measured rather than inherited: **#1447**, the DENSE spelling
+`d: C = C{a:5}; out = fn() { d.a }; d = C{a:9}` answering 9 where the nullable twin answers 5 —
+a dense local has no buffer, so the rebind re-mints through `OpDatabase(d, …)` and REUSES the
+slot's store in place, leaving one store the record still names; upstream of every free, which is
+why no instrument fires (`D-clo-27`).  And **#1448**, the published `imaging-0.1.0` being
+unbuildable from the registry — its `build.rs` calls a `loft-ffi-build` 0.2 API while its
+manifest requires `"0.1"`, which cannot resolve to it; the repo fixture correctly says `"0.2"`,
+so the published manifest is stale.
+
+### One store, one owner — and a dispatcher's arms do not share its work buffers (2026-09-07)
+
+@PLN153 phase 4 batch 10's follow-on, closing the batch's own filed issues.
+
+**#1430** — `create_enum_dispatch_fn` counted the compiler's hidden `___acc_N` text accumulators
+among the parameters every implementation must share, so one arm branching (and therefore given
+one) beside an arm returning a literal (and therefore not) drove `common` to 0 and abandoned the
+dispatcher with no diagnostic.  Hidden attributes are out of the shared count; the dispatcher
+takes its buffer from whichever arm has one; buffers are forwarded only to the arms that declare
+one.  A required VISIBLE parameter one implementation does not share is refused by name where
+that implementation is written.
+
+**#1440** — two closures over one STORE both adopted it, so the record left behind released
+what the escaped one still held.  Among the adopters exactly one keeps it, the one that LEAVES
+the frame; the rest borrow.  Its dense twin failed identically, so this was
+adoption-as-transfer rather than anything about nullability.  The grouping is keyed on the store
+each record adopted — the capture local plus the number of assignments to it before the build —
+because the capture's NAME is not a store: a local assigned between two builds gives the two
+records different ones, and a name-keyed group made the second borrow what the first never held
+(a leaked `S`, caught by an existing guard in the gate).  D-clo-24 closed; what remains of the
+family is #1446, the frame's own free of a reassigned capture's adopted store.
+
+**#1444** — build the escaping closure FIRST and the same use-after-free returns through a
+different door: the declared return type's `DepEntry::CalleeFrame` is published once per lambda
+and overwritten, so it names the last record BUILT rather than the one the return delivers.  Two
+consumers read it — the free-suppression for a handed-out fn-ref, and the ownership question —
+and both were wrong whenever the escaping closure was not written last.  The free-suppression
+now also treats a fn-ref that is a RETURN SOURCE as handed out, and the ownership question reads
+`returned_closure_records`: the records named in RETURN POSITION, off the tail and off every
+`return`.  Return position ONLY — collecting every `FnRef` in the body makes a kept lambda's
+record look delivered.  D-clo-24 and D-clo-25 closed; `closures.md` is back to `OPEN: 0`.
+
+### Two stores a nullable local lost, in the pass that decides who frees (2026-09-07)
+
+@PLN153 phase 4 batch 10, the `scopes.rs` tier-0 group.  Both are use-after-free, both on both
+backends, and neither is visible on the value channel — a released record keeps its bytes until
+something writes over them, so both guards are falsified with `LOFT_POISON=1
+LOFT_STRICT_STORES=1` and say so.
+
+**A closure that outlives its frame lost its nullable capture (loft#1439).**  `c: S? = S { … }`
+lowers through a work-ref where the dense spelling has none, and that work-ref's free ran
+unconditionally right after the closure record adopted the store.  loft#1317 made the same free
+conditional for a RETURNED local and chose "not returned ⟹ plain free" as its boundary, which is
+right for a closure that STAYS — a record left behind never frees, since the fn-ref type carries
+its frame dep and the sweep skips it — and wrong for one that LEAVES, whose cascade frees what it
+adopted.  Three facts now have to meet: the record adopted the capture, the record escapes
+(`DepEntry::CalleeFrame` in the declared return type), and the capture attribute is one the
+cascade FOLLOWS — a record-`Enum` capture is not, and declining the frame's free there leaks.
+
+**A view into a nullable local was not materialised across its reassignment (loft#1442).**
+`established_stores` names the record kinds bare at three tests, so an `Optional(Reference)`
+local established nothing however it was assigned: the view was neither copied out nor reported,
+where the dense twin does both.
+
+`(L-CapOwn)` is the rule the first one needed and `formal/closures.md` did not have — a captured
+heap store is freed once, by whichever of the record and the frame outlives the other — and
+writing it moved that chapter's deviations off zero: **D-clo-24** (loft#1440), two closures over
+one local where only one escapes, both records adopting the one store.  Its dense twin fails
+identically, so it is adoption-as-transfer rather than anything about the `?`.
+
+### Three declaration-time questions answered NO because a `?` was written (2026-09-07)
+
+@PLN153 phase 4 batch 9, the `parser/definitions.rs` tier-0 group.  Each was a bare `matches!`
+over a `Type` variant, and each had a wrong VALUE behind the silence.
+
+**A method on a nullable receiver implemented no variant (loft#1427).**  `fn area(self: Square?)`
+was invisible to the synthesised variant dispatcher (@F20): the arm was never emitted, so the
+dispatch fell to the no-variant-matched tail and answered another variant's bytes on
+`--interpret` and `0` on `--native`, while the DIRECT call on the same variant was right.  With
+every implementation spelled that way there is no dispatcher at all and the call is read as a
+field access.  `fn_key` keys `t_<τ>_m` and `t_<τ?>_m` apart so the two are distinct OVERLOADS
+(@PLN25) and `find_fn` reaches the `τ?` one from a dense receiver — so the methods of τ and the
+methods of τ? are ONE set, which is now the rule `(F-Recv)` in `formal/calls.md` and the one home
+`Data::receiver_def_nr`.  `one_implementation_per_variant` keeps the DENSE overload where both
+are declared, which is the one a direct call takes.
+
+**A dispatcher dispatched whichever method came first (loft#1435).**  The scan's `todo` map was
+keyed by the ENUM, so every method's implementations shared one bucket and the dispatcher was
+named after the first definition in it; the other method's call site failed as a field read, and
+where the two lists' parameter shapes disagreed the bucket bailed and NEITHER was built
+(`tests/scripts/05-enums.loft`: three `area` implementations, three `describe`, no dispatcher for
+either).  The same bucket fed the missing-implementation warning, so one method's coverage
+silenced the other's.  The key is `(enum, method name)`, and the walk over it is SORTED — the
+dispatchers are emitted in creation order and a `HashMap`'s is not stable, so with more than one
+per enum an unsorted walk would make the generated Rust differ between two builds of one program.
+
+**A nullable index field escaped the duplicate refusal (loft#1428).**  Two `index<E[k]>` in one
+struct cannot share a record set — an index keeps its tree links in a field OF the record — and
+spelling either `index<E[k]>?` slipped past the check, after which the two trees overwrote each
+other's links: a lookup answered null for a record its own `for` loop yields.  `(Col-Group)`
+already said a nullable member IS a member; the neighbouring `link_shared_nullable_views` in the
+same file peeled the wrapper by hand, so the drift was inside one file.
+
+**A `text?` key took a spatial axis' place (loft#1429).**  `spatial<W[w]>` with `w: text?` was
+accepted and then answered null for a point just inserted — loft#799's failure, reached through
+the `?`; the same predicate refused a trie's `text?` key with advice for a field that is not a
+text.  The kind question peels and nullability is its own named refusal: `(Col-Trie)` now reads
+`text`-NOT-NULL beside `(Col-Spatial)`'s integer-not-null, while `hash` / `sorted` / `index` key
+on the VALUE and hold an absent key like any other.
+
+The gated `optional` audit row moves `733 | 377 | 5 | 351` → `732 | 380 | 5 | 347`, the phase's
+largest single step.  Filed rather than fixed: loft#1430 (an accumulator asymmetry abandons the
+dispatcher silently), loft#1431 (`spatial` admits any non-text axis; `float` and `i16` then miss
+at the point lookup), loft#1432 (a `τ?` receiver overload after its dense twin is unreachable
+while the reverse order is refused), loft#1434 (a nullable collection can be indexed but not
+iterated) and loft#1436 (an index expression reaching a non-null slot escapes the `(N-Store)`
+gate — phase 3's own residual).
+
+### A tuple type cannot be nullable, and now says so (2026-09-07)
+
+`(N-Opt)` licenses `τ?` for every τ.  A tuple is its members' bytes — `(L-Null)`'s sentinel needs
+a value the type RESERVES and a tuple reserves none, `(L-Null-Tag)`'s discriminant is for a
+struct stored inline — so `(integer, integer)?` has no representation, exactly as a `value
+struct` has none.  The `value struct` case has been refused by name since @PLN101; the tuple case
+was not refused at all.  The type parser's tuple branch returns before `parse_type`'s postfix-`?`
+handling, so the `?` was left in the stream and every position reported a syntax cascade naming
+nothing: *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"*
+inside a `vector<…>`, *"unexpected '?'"* for a field or an alias.
+
+The refusal now names the tuple and both cures (nullable MEMBERS, or a `struct` wrapper), beside
+the `value struct` case in the same function.  It is emitted wherever the type is parsed rather
+than on the second pass: a local's and a field's declared type reach that branch on pass 1 only,
+so a pass-2 gate would have reported for a parameter and stayed silent for the two positions an
+author writes most often.
+
+Recorded as **D-Opt-NoNull** in `formal/types-history.md` — that register's only open entry,
+since closing it is a representation decision (loft#1423), not a fix.
+
+loft#1423.  Guards `tests/scripts/1423-…` (seven positions) and `1423b-…` (the reads on the
+shape `(N-Index)` builds anyway).
+
+### `v[i]?` on a tuple answered null members in a non-null slot (2026-09-07)
+
+`(N-Index)` builds `(τ, τ)?` whether or not the type can be spelled, so the discharges have to
+answer for it.  `Data::has_default` recurses over a tuple's members and admits it;
+`Parser::build_default` had no `Type::Tuple` arm and refused it; and the recovery for that
+disagreement — *"`has_default` passed but the builder cannot form the value … should not happen
+in practice"* — typed the ABSENT value as the non-null base.  So `v[j]?` on an out-of-range index
+answered `null` from a slot typed `(integer, integer)`, while the struct twin `s[j]?.a` answered
+its `0`.  Both backends, nothing said.
+
+Fixed at both ends: the tuple default is its members' defaults — the value the `??` spelling of
+the same discharge hands over — and the recovery REPORTS instead of proceeding, so a future
+disagreement between the two predicates cannot be silent.
+
+The undischarged reads of the same value are refused by name rather than left to the field-name
+parser (*"Expect a field name"* for `v[i].0`, *"Cannot destructure a non-tuple value"* for
+`(a, b) = v[i]` — neither true), and the destructure binds its targets anyway so its refusal is
+the only report.  A peel of the projection was built and measured first: it ICEs in codegen,
+because the value has no representation to project from.
+
+loft#1424.  Guard `tests/scripts/1424-a-tuple-default-is-its-members-defaults.loft`, both
+backends, falsified on its own assertion.
+
+### A slice pattern names the same variants over a `vector<E?>` (2026-09-07)
+
+A structural (slice / PEG) `match` pattern over a vector whose ELEMENT type is nullable was
+refused with a parse error naming nothing — and its UNIT spelling was worse than refused.
+`[Id]` over a `vector<Tok?>` fell past the bare `Type::Enum` peek into the bare-name branch and
+became a BINDING called `Id`, so it matched every element: another variant, and an absent one,
+where the dense twin correctly answers "no match". Silent, both backends.
+
+The issue recorded a cure that would have been wrong: the byte at offset 0 is @PLN25's nullable
+TAG, so the element must be read THROUGH its tag and the pattern made to fail on an absence.
+`loft introspect` says which shape that is true of. A `vector<Tok?>` element where `Tok` is a
+struct-ENUM is 16 bytes, identical to `vector<Tok>`, read through the same
+`OpGetField(elem, 0, kt)` projection, and its variant discriminants start at **1** because 0 is
+the absent value the variants are numbered away from. So a variant tag test already answers
+false for an absence: `(M-Variant)` — an absence is no variant — with no tag read and no
+is-present condition. The tagged `__nullable<S>` the tag reading describes is the STRUCT
+element, and no variant pattern can name a struct's variants.
+
+`Parser::pattern_variant_enum` is the one home: `Type::Enum` of `tp.base()`, `None` for a
+`__nullable<S>` (its discriminant is a presence bit and its two variants are the compiler's, so
+a pattern naming one would ask a variant question of an absence bit). Ten sites read it — the
+scalar-capture guard, the variant sub-pattern peek, the repetition and its tail sub-pattern,
+both alternations, `build_literal_match` and its diagnostic twin, and both arms of
+`parse_field_sub_pattern`, which is where the issue's second error came from: a nullable FIELD
+sub-pattern (`A { t: Id { x } }`) was broken the same way.
+
+A struct that is NOT a cursor now says which field stopped it instead of cascading, and the
+element-type refusals recover through the closing `]`. `cursor_shape`'s tests keep refusing a
+`vector<T>?` source and an `integer?` `pos` — peeling the source test would move which field
+becomes the source, which `153-a-cursor-match-over-a-nullable-subject-advances.loft` pins.
+
+`types.md`'s per-type null table gained the ENUM row it never had, `(L-Null)`'s sentinel list
+gained the enum discriminant, `(L-Enum)` states the numbering and the 254-variant limit, and
+`matching.md` records that a nullable subject or element names the same variants.
+
+loft#1410. Guards `tests/scripts/1410-…` (22 cells, every nullable one beside its dense twin)
+and `1410b-…` (the five refusals). `scripts/introspect_diff.sh` over the corpus: DIFFERENT 3 of
+1338, all three the new guards.
+
+### A slice-pattern element binding borrows the subject it reads (2026-09-07)
+
+`@FR-O-Deps`: what a value borrows is read off its type, so a read that borrows and says nothing
+is read as OWNED. "This element read views its subject" was spelled five times in
+`parser/control.rs`, each a three-arm `match` over `Reference | Vector | Enum`, and three of
+them let an `Optional` fall past. A nullable element binding therefore carried EMPTY deps:
+`match v { [a, ..] => a }` over a local `vector<Tok?>` was classified as returning an OWNED
+value, the subject's store was freed at the callee's exit, and the caller read `101` — the first
+element of the vector allocated next — where the dense twin answers `7`. Both backends;
+`LOFT_POISON=1` is blind to it because the store is live again by the time it is read.
+
+One home, `Parser::element_view_of`, which is a call to `Type::with_deps` — that writes through
+the wrapper already, which is why the fold is a call and not a sixth `match`. The second face of
+the same missing dep surfaced the moment loft#1410 let a repetition run over a nullable element:
+the materialisation's per-element read was freed while the subject still owned it, a poisoned
+read on `--interpret` and an `E0425` on `--native`.
+
+loft#1414. Guard `tests/scripts/1414-…`, falsified against `d6e665ae` on its own assertion.
+
+### A `τ?` argument into a `&τ?` parameter no longer warns (2026-09-07)
+
+2026.8.0's real cost was discovering by hand that several "done" things had never been true —
+step 4 never completed for any release, the validator rejecting loft's own entry, `install.sh`
+leaving installations that do not verify.  @PLN156 lands that reckoning as standing machinery:
+
+- **Step 4's advice became four measured checklist items.**  `A-validator-dryrun`
+  (`scripts/validator-dryrun.py`: the registry's OWN validator against this release's generated
+  entry spliced into a clone of the live index, before the submission; `--replay` re-runs a
+  landed version as-if-new, `--corrupt` is the instrument's falsification — one flipped sha256
+  must red gate 2b, and does), `A-registry-this` (the entry + every triple + each
+  `manifest_sha256`, asked of the index directly — `self-update`'s `Current` verdict prints the
+  RUNNING version either way, so the CLI alone cannot witness a forgotten splice),
+  `A-selfupdate-resolves` (the postscript's command run and read; the empty-index message is a
+  FAIL), and `A-acquisition` (`scripts/acquisition-chain.sh`: install.sh over real transport →
+  `--version` → resolution → the literal anchor line → a program executed; exit 3 keeps "not
+  acquirable yet" apart from "ran and failed").  `M-verify-anchored` retired into it.
+  `.github/workflows/post-publish-verify.yml` runs the chain on every publish and by dispatch
+  against any version.  All four measured green against the live 2026.9.0.
+- **UNKNOWN never aggregates green.**  The checklist summary names every automatic item that
+  never ran, the header stamps the commit measured, and the exit code splits red (1) from
+  not-yet-evidence (3) from green (0).
+- **Cadence on every item.**  `[mid]` = meaningful at the cycle's halfway point (overall
+  stability), `[pre]` = finishable in the month's last days as pre-work, unmarked = the release
+  window; `--phase mid|pre` shows and measures exactly that slice.
+- **`make release-liveness`** (+ the `M-liveness` item): suppressions justified by CLOSED
+  issues, gate workflows that quietly stopped firing (first live run: `win-cdylib.yml` silent
+  48 days), checklist items never recorded in any cycle.  A report, never a gate.
+- **Adversarial install inputs.**  A manifest naming an ABSOLUTE path made `check_manifest`
+  read it — `root.join("/etc/x")` replaces the root — because the escape rule had two homes
+  and only `owned_files` carried the absolute half.  One home now
+  (`verify_self::manifest_path_escapes`), both callers read it, refused before any filesystem
+  access; plus zip-slip cells (`..`/absolute/symlink entries land nothing outside staging).
+- **`make ci` and `find_problems.sh --subject` worked on no Mac since 2808e183.**  macOS's
+  /bin/sh and /bin/bash are bash 3.2: the gate-throttle's `case` pattern inside `$( )` needs
+  the optional leading `(`, `nproc` is `sysctl -n hw.ncpu` (now `CI_NPROC`), and
+  `test_subjects.sh`'s `declare -A` maps are now case-functions.
+### A `τ?` argument into a `&τ?` parameter no longer warns (2026-09-07)
+
+`(N-Store)`'s gate asks one question — is this store's destination non-null? — and `τ?` has
+THREE spellings at it. Two were handled: `Type::Optional`, and the synthetic `__nullable<S>` an
+inline slot holds (loft#1123). The third is a `&` parameter, which carries its nullability
+INSIDE the reference: `&integer?` is `RefVar(Optional(Integer))`, so asking `Type::Optional` of
+the outer type answered about the REFERENCE and not about the slot the store lands in.
+
+Every correct call handing a `τ?` to a `&τ?` parameter therefore warned that the value "becomes
+null there" in "the non-null type `&integer?`" — a message naming a nullable type non-null,
+about the store the signature exists to permit, with no discharge that could satisfy it.
+`warning` is the tier that gates library CI, so a library exposing a `&τ?` parameter failed its
+own CI on correct code.
+
+Both tests now ask the POINTEE, because the pointee is the slot. The rule is not removed, only
+asked of the right face: a nullable argument into a `&integer` parameter still warns, and that
+negative control is half the guard.
+
+loft#1413. Guarded twice, because the defect's channel is a warning and `make falsify` measures
+exit, asserts, leak, panic and refusals: `tests/callarg_nstore.rs` counts the warning and so can
+go red (measured failing with the peel reverted, its non-null twin green), and
+`tests/scripts/1413-…` holds the value half — the writes still reach the caller, so the silence
+is not bought by dropping the store. A `&vector<T>?` still reports from a different site
+(`un_ref` + `convert`'s recursion order), recorded on the issue.
+
+### A nullable capture a closure mutates is neither boxed nor guarded (2026-09-07)
+
+A closure that MUTATES a captured scalar boxes it into a shared `__cell_<T>` record, so the
+closure's write reaches the outer variable and a later call sees what the previous one wrote.
+`accumulate_scalars_to_box` chose that set with a bare `matches!` over the scalar `Type`
+variants, so `Optional(τ)` matched no arm and a NULLABLE capture never entered it.
+
+That one list also drives three REFUSALS, so a `τ?` capture was not merely un-boxed — it was
+unguarded.  Four consequences, all silent, identical on both backends: the write is lost once
+the closure is called through another function (`x: integer?` reads 1 where `x: integer` reads
+7), an interleaved write answers the closure's private copy (`11 21 100` against the dense
+twin's `11 110 110`), sharing one mutable capture between two closures is refused for a dense
+local and silently wrong for a nullable one, `const` on a nullable parameter is silently not
+enforced, and C115's `&`-from-closure refusal is never asked.  Same for `text?`.
+
+`(L-CapScalar)` is not what was wrong: a capture is by value at creation, so a closure reading
+the creation-time value is correct and both spellings agree on it.  The rules were silent on
+where the closure's own WRITE lands — which is what the `__cell_` machinery implements — so the
+rule was extended rather than the code bent: `(L-CapWrite)` in `formal/closures.md`, cited at
+its two enforcing sites.
+
+Cured by the peel at seven sites of one family: the boxable set, the cell name and its `value`
+type (a nullable takes a cell of its OWN, `__cell_opt_<T>`, because the `value` field has to
+declare the nullability or `(N-Store)` is violated at the cell), the read and write ops (chosen
+from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under C90, while the declared
+type keeps its `?` so ordinary discharge still applies), the type-flip preservation guard, and
+the boxed-text LHS test — that last one found by the guard rather than by reading: spelled bare
+it sent a boxed `text?` down the text-special branch and emitted `Set(65535, …)`, loft#1206's
+ICE reached through the cell, while the `+=` test six lines below it already peeled.
+
+loft#1408.  Guards `1408-…` (ten nullable/dense pairs across five scalar kinds × five
+compositions, plus the `(L-CapScalar)` and `(L-CapHeap)` controls), `1408b-…` and `1408c-…`
+(the refusals, split because a firing `@EXPECT_ERROR` stops a file).  A forced-size integer
+capture has the same symptom from a different mechanism and is loft#1409.
+### A `&` keyed collection is used exactly like its dense twin (2026-09-07, loft#1445)
+=======
+### An element read cannot be more non-null than the collection it reads from (2026-09-07)
+
+**#1450** (its `(N-Domain)` leg) and the nullable-receiver-index half of **#1434** — a keyed or
+indexed read through an ABSENT collection typed non-null.  `index_provably_fit` elides
+`(N-Domain)`'s `τ?` for an index the developer can vouch for (a literal, a loop variable, a
+bounded computation — the loft#1436 trust), and that proof is about the INDEX; it says nothing
+about whether the COLLECTION exists.  So `m: vector<It>? = null; z: It = m[0]` was silent while
+`m[i]` on the same receiver warned, and the promise turned on the spelling of the subscript.
+The receiver's `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods, so
+it is now read before that peel and carried to the result type — vector plus all four keyed kinds
+(`hash`, `sorted`, `index`, `trie`), whose arms carried only the `expr_not_null` lint clear.  The
+dense-receiver trust is untouched and is the control.
+
+Two prerequisites, both deviations of their own, both fixed here:
+
+* **The discharge narrowed SCALARS only.**  `if s != null { … }` never narrowed a struct or a
+  vector: a heap null test is its own opcode (`OpRefIsNull` / `OpVectorIsNull`) where a scalar
+  compares against a `…FromNull` literal, and `narrowing_from_condition` read only the scalar
+  spelling.  This is `D-Null-Heap`'s class on the discharge side.  It gates shippability rather
+  than politeness — with no working guard, correct guarded code and silent-wrong code produce the
+  same warning; fixing it took the leg's corpus cost from 2 sites to 0.
+* **A narrowing described the assignment TARGET.**  A proof says what a slot HOLDS and dies at the
+  next write, but the target is parsed as an expression, so a proven-non-null variable read as its
+  peeled base and a declared `τ?` slot answered `τ` — `cur: It? = src; if cur == null { return -1; }
+  cur = src;` was reported as a nullable reaching a non-null slot.  Pre-existing on the scalar path
+  and independent of this issue; `warning` gates library CI, so a library that guarded a nullable
+  and rebound it failed its own gate on correct code.
+
+The same place-vs-read distinction is why the receiver's `?` must not reach a keyed WRITE:
+`(Col-Insert-Absent)` makes that write total (loft#1213 materialises an absent keyed destination
+on the write itself), and carried into the target the write lowered to a read and was lost in
+silence.  Peeled at the `parse_assign_op` chokepoint, which is the one home for "the target is a
+place" — all three of the above are enforced there.
+
+Registered as `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` in
+[formal/types-history.md](formal/types-history.md).  The other two legs of #1450 stay open with
+their costs measured: the `(N-Prop)` field read through a nullable receiver (37 corpus sites) and
+`(Col-Lookup)`'s own `τ?` for a missing key in a PRESENT collection (351).
+
+### A frame's release of a captured store is by store identity, not by the capture's name (2026-09-07)
+>>>>>>> f5cd8a37e (An element read is not more non-null than the collection it reads from (#1450 N-Domain leg, #1434))
+
+`(B-Ref-Uniform)` says a `&τ` variable is used EXACTLY like a `τ` variable, with no operation
+special-cased.  A keyed collection PARAMETER was an exception: `c += [rec]` on a
+`&hash<τ[k]>` fell past every append route to the generic assignment and was refused as
+*"Variable 'c' cannot change type from &hash<Row,["id"]> to vector<Row>"* — a claim about a
+vector in a program with no vector in it.  All five keyed kinds, both backends.
+
+**The filed diagnosis was wrong, and the tell is a type NUMBER.**  The issue says the work is
+that "the emission side does not resolve a keyed store through the parameter's double
+indirection".  It resolves it, and always has: `c[7] = Row{…}` through a `&hash` parameter
+inserts into the CALLER's collection today, one operator over from the statement that was
+refused.  What is wrong is that `keyed_known_type` opens with `base()`, which peels `Optional`
+and not the `&`, so a `&`-wrapped keyed type answers `None` and `new_record`'s fallback hands
+`OpNewRecord` the wrap-`vector<τ>` id: `parent_tp=83` where the dense twin emits `82`, and 83
+is what the `&vector<τ>` twin emits.  `record_finish` dispatches through `Parts::Vector`, the
+keyed insert never runs, `len` reads 0 with no diagnostic.  That is the exact miss P188
+documents one function down, reached by a spelling its comment did not cover — and it is why
+peeling the routing predicates alone was measured to turn the refusal into a silent drop.
+
+**One name, three questions.**  `is_keyed` was asked *what kind of collection is this* (where
+the `&` must peel — the link records the route, never the shape) and *does this variable own a
+store* (where it must not), across 76 call sites.  Widening `is_keyed` itself answered the
+first at the cost of the second, and failed twice in different disguises:
+
+* an **ICE** — `gen_keyed_null` exists to allocate a keyed LOCAL's own store and resolves its
+  type through `base()`, so a `&hash` reaching it hits `unreachable!("gen_keyed_null on
+  non-keyed type")`;
+* and once that was split out, a **silent wrong answer in a caller two frames down** — the
+  `op == "="` keyed-local replace fired for a `&hash`, so `fn set(x: &hash<E[k]>) { x = mk(9); }`
+  reached through a PLAIN forwarder wrote the callee's records into the caller's collection.
+  `showh(h)` read `9:9,` where `1:1,2:2,` is right.  Not a crash and not a refusal.
+
+So the questions are now two NAMES rather than a documented choice between `base()` and
+`peel_link()` at each site: `keyed_kind` (peels — which kind, which type id, which insert) and
+`owns_keyed_store` (does not — what may be allocated, minted or replaced in place), with
+`keyed_local_kind` beside `keyed_local` for the variable-index form.  A new call site picks a
+name that says which question it is asking.
+
+**The destination is the third piece, and doing it second is what makes the control fail.**
+Peeling the routing predicates without peeling `dest` hands `append_source` a `RefVar`, which
+matches no arm, and the `&vector<Row>` twin that had always worked began answering *"cannot
+append `vector<Row>` to `&vector<Row>`"*.  The regression lands in the CONTROL rather than in
+the cell under test; TESTING.md § How a guard reads green gains that.
+
+**How the sites were found.**  Inspection could not bound "which of the 76 read the widened
+answer".  A temporary env-gated form of `is_keyed` that computes BOTH answers, returns the
+narrow one and backtraces on disagreement named every call site that sees a `&`-wrapped keyed
+type in one run of the boundary matrix — four families, twelve hits in `parse_assign_op_inner`
+alone.  Each was then read for which question it asks.
+
+**And a fourth list, one layer down.**  The `&` deref in `state/codegen.rs` named
+`Vector | Reference | Enum(value) | Sorted | Hash | Index` and `panic!`ed on the rest, so
+`&trie` and `&spatial` were an ICE — *"Unknown referenced variable type"* — where their three
+siblings worked, under a comment asserting all five keyed kinds are DbRef-backed "just like
+vectors/references".  Two of five.  That arm now derives from `vectors::is_collection`, which
+`(Col-Store)` already defines as the store-backed set.
+
+Fourth instance of the missing-kind class after loft#1291, loft#1292 and loft#1433 — and the
+FIRST of the sibling class, a predicate that is asked more than one question.  The narrow ones
+announce themselves as ICEs and missing kinds; this one announced itself as a regression
+somewhere else entirely.
+
+Guards: `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft` (all five keyed
+kinds, three source spellings, the `&vector` control and the dense-parameter oracle) and
+`1445b-an-amp-keyed-parameter-derefs-at-every-kind.loft` (the ICE, with the three kinds that
+already worked as its control).  Both backends; each is a hard compile failure on the parent
+commit.  Every destination is POPULATED before the append and every cell reads the pre-existing
+key as well as the new one, because from an EMPTY destination a `len` of 1 cannot tell an append
+that reached the caller from one that built a fresh collection and counted itself — loft#1433's
+lesson on the sibling spelling.
+
+Not closed: `c += other_hash` through a `&` is still refused as *"No matching operator 'Add'"*
+rather than with the keyed merge message its dense twin earns.  Measured UNCHANGED from the
+parent commit, so it is a pre-existing pass-1 routing gap rather than anything this change
+caused; the statement is refused either way, so nothing is silent.
+
+### `(B-Disturb)` ends every place a view can name (2026-09-07, D-bind-25/26/27)
+
+Three neighbours of loft#1401, found by its boundary matrix and each failing IDENTICALLY in the
+plain spelling and the `??` one — which is what said they were not that issue's discharge defect.
+Each is a silent wrong answer on both backends.
+
+**A `sorted` removal is a reshape.**  Measured per keyed kind: `hash` and `index` answer the
+right element after another key is removed and a write through the view still lands; `sorted`
+reads the element that shifted in.  The four own-record kinds leave every other key reachable at
+the same address (`(Col-RemoveKeyed)`), while a `sorted` is the INLINE keyed kind whose elements
+sit in key order in one dense array — `(Col-RemoveDense)`, beside the vector.  All five remove
+through `OpHashRemove`, so the reshape is keyed on the KIND; adding the op flat would have
+materialised the four that are correct today.  Same boundary loft#1402 crossed from the other
+side, where a `sorted` LEAKED through `#remove` while `[key] = null` stayed flat.
+
+**A removal reached through a FIELD is a disturbance.**  `p.va.remove(0)` names its container as
+a projection and only a plain `Var` was collected, so `c = p.va[1]` kept reading the element that
+shifted in — while the same code with `va` in a local materialises and says so.  The collector
+now answers PLACES: a whole variable ends everything inside it, a field ends that field only.
+The precision IS the fix — `grown_containers` records what a variable-granular version costs
+(`moros_editor`'s undo stack silently stopped recording), and two controls pin it.
+
+**A branch over two containers names both.**  `c = if k { w[0] } else { v[1] }` is a view of each
+on the path that takes it, and the walk answered `None` whenever the arms disagreed.  A view is
+now recorded once per PLACE, which the open-view frame already held as one entry per pair, so
+nothing downstream learned a new shape.  With more than one place, the ADVICE could no longer
+re-derive its container from the right-hand side — that names both and only one was disturbed —
+so `views_to_materialise` carries the whole `Disturbance`, which already held the container it
+was observed at.
+
+Landing the field half needed a third rule: **a binding the loop ITERATES is not materialised.**
+The iteration depends on the temp's IDENTITY, so `for e in d.items { e#remove; }` shook the
+loop's own source, walked a COPY while the body emptied the original, and never terminated —
+`903-loop-remove` went from 0.06s to a 300s corpus timeout.  The obvious wider rule (*a view the
+author cannot name*) was measured WRONG: the parser renames author bindings too, and a `match`
+payload must still materialise, so a name test traded the hang for a silent wrong answer.  It is
+a MARKER on the variable the lowering creates (`Function::is_iteration_source`).
+
+Guard: `a-disturbance-ends-every-place-a-view-can-name` (12 cells, both backends, falsified at
+f4403e62).  SEVEN are controls, because widening a disturbance is the direction that silently
+loses a write; each has a FIRING twin in the same file, so none can read green by never being
+reached.
+
+### A `??`-discharged projection is the view its plain spelling is (2026-09-06, loft#1401, D-bind-24)
+
+`c = v[1] ?? Box{n:0}; v.remove(0)` left `c` aliasing POSITION 1, which `(Col-RemoveDense)` had
+just renumbered: it read the value that shifted in and a write through it still reached the
+container — both backends, in silence, where the plain `c = v[1]` materialises and says so.
+`(N-Index)` types `v[i]` as `τ?`, so `??` is the discharge the language REQUIRES for a non-null
+binding.
+
+Filed as one hole; it was four, and each alone leaves the defect standing.  NAMING — a `??`
+lowers to a value block that hoists its subject into a temp and hands that temp back, so the
+walk saw a bare `Var`; a tail is now resolved through the block's OWN bindings, which covers
+`??`, `?? return` and a `match` subject in one step, and the walk answers a PLACE so container
+and field come from one derivation.  COPY — per ARM, as loft#1396/#1399 supply it for a
+branch-valued binding, gated on the walk having named the binding.  `?? return` — its absent
+path leaves by an early return, so the tail is an unconditional `Var` and `is_value_branch` read
+that as "not a branch".  SPELLING — a discharged `v[i]` arrives as `OpGetVectorNullable`, a
+projection by every structural test that is deliberately off `is_projection_op` because the deps
+PROXY strands a store on it; that hazard belongs to the proxy, so `view_source_place` is the
+reading for a walk that only NAMES a place.
+
+The report now follows the COPY rather than the strip, so `(H-Materialise)`'s "and the author is
+told" holds whichever mechanism supplied the store.  The first cut regressed loft#1399 — a `[]`
+MINT arm named the hidden `__vdb_N` it reads its own store out of, and two arms naming different
+containers name none — closed by treating a compiler-generated container as no place at all,
+which `resolve_view_root` already did.  Guard:
+`a-discharged-projection-materialises-like-its-plain-twin` (15 cells, three of them ALIAS
+controls, both backends).  `Fixes #1401`.
+
+### A vector removal releases what the element owned (2026-09-06, loft#1402, D-col-3)
+
+`v.remove(i)` and the in-loop `e#remove` retained one record per removal: 2000 add+remove cycles
+at a population of ZERO held 2004 records where the keyed baseline holds 4.  `remove_vector_at`'s
+UNLINKED branch shifted the bytes and released nothing, so one `sorted` leaked through `#remove`
+and not through `[key] = null`.  Its own doc said why it thought it needn't — "there is no
+separate record to free" — true of the element's own record and false of its CLAIMS.  Walked now
+through `get_vector`, the same index→element map `remove_vector` walks, and released BEFORE the
+shift because an inline element IS the slot.
+
+It could not land alone: while loft#1401 left a `??`-discharged binding viewing the removed
+element, releasing that element's children emptied a value the program was still reading, and
+`445-generic-tree-walk` failed — rightly.  Guard:
+`a-vector-removal-releases-what-the-element-owned` (10 cells, both backends); its oracle is
+FLATNESS rather than a count, because the absolute record count differs between the backends and
+`collect_store_leaks` cannot see a record retained inside a LIVE store.  `Fixes #1402`.
+
+### `(N-Store)` is asked at the assignment target (2026-09-06, loft#1404, D-Null-Assign)
+
+The fifth position loft#1313's heap half did not reach.  `s.rec = null` did not happen —
+`s.rec.n` still read 5 where the literal `S{rec: null}` reads 0 — and `v[i] = null` was a no-op,
+both silent on both backends.  The filed scope was wrong: `x = null` at a heap target spells FIVE
+things and three are not stores, so widening the ask to `is_dbref` would have reported correct
+code.  Measured at the lowering, a keyed `c[key] = null` is `OpHashRemove` (`(Col-Remove)`'s
+delete), `s.coll = null` is `OpClearVector`/`OpClearKeyed` (that field's clear), and a
+`reference<T>` POINTER field is `OpSetDbRef(sentinel)` — a store that LANDS.  Only the two
+dropped writes build `OpCopyRecord(null, …)`, so the ask went to `copy_ref` and needs no
+container, keyed or pointer-marker test.  A gate at the parse site needed all three and still got
+the pointer field wrong, because #328's share marker is not on the resolved target type by then.
+
+The VALUE is unchanged and that is settled: a dense field has no discriminant to spend on
+absence, so the cure the message already named — declare it `τ?` — is the real one.  The
+CONSEQUENCE clause is now the reporting position's, because "the slot holds null" is measured
+true for a scalar and for a record travelling as a HANDLE and false here; the four shipped
+positions keep their wording to the byte.  Six cells in `tests/heap_nstore.rs`, four of them
+negative controls.  `Fixes #1404`.
+
 ### The native cache publishes a whole binary or none of it (2026-09-06)
 
 `--native` compiles into a per-process scratch dir and publishes to a SHARED, content-keyed
@@ -27,6 +752,69 @@ red in two runs of three on `alias_link_baseline::baseline_leak_clean_native` (i
 cells compile one source concurrently), with an empty output block as the only evidence.
 Guarded on the destination's INODE changing across a publish, which fails on the pre-fix form;
 the end-to-end racing test does NOT falsify and its header says so.
+
+### A nullable collection is refused with its discharge, not with a list of kinds (2026-09-06)
+
+`for x in v` where `v: vector<integer>?` reported *"Unknown in expression type
+`vector<integer>?`"* twice and *"cannot iterate over `vector<integer>?`; expected vector,
+sorted, index, hash, text, or range"* once — a kind list that recites the kind the author had
+already picked correctly, when the only thing in the way is the `?`.  `Parser::iterator` now
+recognises a nullable whose inner type IS iterable and names the cure instead: add `?` (the
+type's default, an empty collection) or `?? []`, either of which gives an absent collection
+zero iterations.  Both spellings already worked; nothing said so.
+
+The duplicate line is gone with it: `Parser::for_type` peels `τ?` before resolving the element
+type — the element type of a nullable collection is its element type, the `?` being a fact about
+the collection rather than about what it holds.  @PLN25's dn1 audit carries a NEEDS-FIX row for
+that site (*"`for x in nullable` misses Text/Integer arms → peel in_type"*) AND, further down,
+the verdict that dropped it: peeling `for_type`/`iterator` routed `text?` into a
+text-char-iteration path that PANICS.  Only the first half is taken here — `iterator` does not
+peel, it refuses — so that path is unreachable; verified on `text?` null and present.  Five
+errors become three, informative one first, and the optional audit gains a peeling site
+(729 · 365 · 5 · 359).  The cure named is the inner type's own default, so `text?` is told
+`?? ""` rather than `?? []`.
+
+The refusal is the null model being consistent rather than an omission: iteration is the same
+`(N-Coal)`/`(N-Default)` discharge `v[i]` needs, and a loop that silently accepted a null source
+would be the implicit unwrap `types.md` rules out everywhere else.
+
+### A hash iterates in KEY order, and the rules doc now says so (2026-09-06)
+
+`collections.md`'s `(Col-Order)` read *"hash → UNSORTED bucket walk (no key order) — the C-Order
+decided edge"*, which is the opposite of the edge `concurrency.md (C-Order)` decides: the
+SEQUENTIAL walk is key-ordered and only the `par` walk gives that up.  Measured on both
+backends — a `hash<E[id]>` filled 49 down to 0 iterates 0..49, a text-keyed one alphabetically,
+and the same collection under `par(…, 4)` comes out scrambled — and the parser's `hash_scratch`
+sort is what makes it so, as LOFT.md and STDLIB.md already described.  So the code, `C-Order`
+and the user-facing docs agreed and one line dissented; the line is corrected and
+`@FR-Col-Order` gains its first citation, at the snapshot builder that implements it.  New guard
+`a-collection-iterates-in-the-order-its-kind-defines.loft` pins all six kinds on BOTH backends —
+the half of the rule nothing had asserted — including the `spatial` Morton interleave, whose
+convention is read off four unit-square points rather than assumed (the second axis takes the
+low bit of each pair, so the first-declared axis is major).  QUALITY.md B8g.
+
+### A `#remove` refusal names the collection the author wrote (2026-09-06, loft#1403)
+
+`hash`, `trie` and `spatial` all iterate a pre-sorted SNAPSHOT of their records, so `#remove`
+would remove from the snapshot and is refused for all three — through one scratch variable, and
+so through one message spelled for the hash: a `trie` author was told their loop was "hash
+iteration" and prescribed `hash[key] = null` for a collection they never wrote.  The refusal now
+names the kind, recovered from the scratch's own deps where the source is a local and from the
+struct's one snapshot-walked field for `for e in b.data`; with two such fields the loop's own is
+not decidable from there, so the wording stays kind-neutral rather than guessing.  A `spatial`
+is keyed by coordinate axes and gets `spatial[x, y] = null` as its cure.  The message is a
+pinned surface — `tests/issues.rs`, `the-reference-quotes-its-refusals-word-for-word.loft` and
+CAVEATS.md quote it — and all three moved with it.  The kind is read WITHOUT peeling `τ?`: a
+nullable collection cannot be iterated at all, so one never reaches the question, and a nullable
+SIBLING field is not a candidate for which field the loop is over — peeling counted it and made
+a decidable case answer vaguely.  One more `Type`-discriminating site, on the OPAQUE side of the
+optional audit (729 · 364 · 5 · 360).
+`@FR-Col-Remove` gained its first code citations in the same pass (`remove_vector_at`,
+`remove_owned`, `State::remove`, `vector::remove_vector`), from the walk that found this
+(QUALITY.md B8f), which also filed
+loft#1401 (a `??`-discharged projection escapes `(H-Materialise)` and reads a renumbered
+position after a removal) and loft#1402 (a by-index removal keeps what the element owned — one
+record per removal, and it cannot be closed before #1401).
 
 ### A branch's projecting arm gets its own temp, so a binding chosen by an `if` materialises (2026-09-06, loft#1396)
 

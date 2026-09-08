@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1440 — TWO closures over ONE local, where one of them outlives the frame.
+//
+// `(L-CapOwn)` says a captured heap store is freed ONCE, by whichever of the record and the
+// frame outlives the other.  Adoption was per (record, attribute) with no notion of a second
+// record naming the same local, so BOTH records adopted the one store and their deaths are
+// independent: the record left behind released the store the escaped one still holds, and the
+// caller read a released record.  The DENSE spelling failed identically, which is what says it
+// is adoption-as-transfer rather than anything about the `?`.
+//
+// Among the records that adopted a local's store exactly one keeps it now — the one that LEAVES
+// the frame, since the frame is gone by the time the question is asked — and the rest BORROW.
+// Where none leaves, the first keeps it, which is the single-record case unchanged (e3).
+//
+// Axes this file MOVES:  the local's nullability (both spellings, because the defect had
+//                        nothing to do with it), how many closures share the local (two · one,
+//                        the control), whether any of them escapes at all, and whether the
+//                        local is REASSIGNED between the two builds — which makes the two
+//                        records hold different stores and is the exclusion e5 pins.
+// Axes it HOLDS FIXED:   one struct local per function and one capture per closure; a capture
+//                        the record does not reach (a record `Enum`) is `1439`'s cell.  And the
+//                        shared local is not REASSIGNED AFTER BOTH BUILDS: the grouping is
+//                        right there (both records adopted one store, the escaping one is
+//                        chosen), but the FRAME then frees that store, because
+//                        `capture_adoption_owns_free` declines to suppress a reassigned
+//                        local's free — correct for the store the local names afterwards and
+//                        wrong for the one the records hold.  That is loft#1446, which needs
+//                        the owner witness's release-by-identity rather than this file's rule.  And the
+//                        ESCAPING closure is always the one built LAST.  Building it FIRST was
+//                        a second defect — the declared return type's frame dep named the last
+//                        record BUILT — and is closed by loft#1444, whose own guard moves that
+//                        axis (first, last, middle of three, and four ways of naming the
+//                        return).  Kept fixed here so this file still answers one question.
+//
+// @falsified-at: e9f45817, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  The control reports
+//   `USE AFTER FREE (read) store #N type=C40` for every cell here.  Plain mode reads INERT for
+//   the reason `1439` states at length: a released record keeps its bytes until something
+//   writes over them.
+
+struct C40 { a: integer }
+
+// e1 — the kept closure is called first, then a second closure escapes with the same capture.
+fn null_two() -> fn() -> integer {
+  n: C40? = C40 { a: 5 };
+  k = fn() -> integer { if n == null { -1 } else { n.a } };
+  y = k();
+  fn() -> integer { (if n == null { -1 } else { n.a }) + y - y }
+}
+fn dense_two() -> fn() -> integer {
+  d: C40 = C40 { a: 5 };
+  k = fn() -> integer { d.a };
+  y = k();
+  fn() -> integer { d.a + y - y }
+}
+
+// e3 — the control: ONE closure, kept.  Nothing escapes, so the frame's own arrangement stands
+// and a fix that made every adopter borrow would leak here.
+fn one_kept() -> integer { d: C40 = C40 { a: 7 }; k = fn() -> integer { d.a }; k() }
+
+// e5 — the local is ASSIGNED AGAIN BETWEEN the two builds, so the two records hold DIFFERENT
+// stores (@FR-O-Latest) and neither may be made to borrow the other's: each keeps its own.
+// This is why the grouping is keyed on the STORE a record adopted — the capture local plus the
+// number of assignments before the build — and not on the capture's NAME.  Keyed by name, the
+// second record borrowed one the first never held and the one it did hold was freed by nobody:
+// a leaked `S`, caught by the neighbouring
+// `a-captured-local-reassigned-after-the-build-frees-its-own-store.loft` before this file had
+// the cell.
+fn rebound_between() -> integer {
+  s: C40? = C40 { a: 1 };
+  k1 = fn() -> integer { if s == null { -1 } else { s.a } };
+  a = k1();
+  s = C40 { a: 2 };
+  k2 = fn() -> integer { if s == null { -1 } else { s.a } };
+  a + k2()
+}
+
+// e4 — two closures, NEITHER escaping: the first keeps the store and the second borrows.
+fn two_kept() -> integer {
+  d: C40 = C40 { a: 8 };
+  k1 = fn() -> integer { d.a };
+  k2 = fn() -> integer { d.a * 2 };
+  k1() + k2()
+}
+
+fn main() {
+  a = null_two();
+  b = dense_two();
+  j1: vector<C40> = [C40 { a: 91 }, C40 { a: 92 }, C40 { a: 93 }];
+  assert(a() == 5, "e1 the escaped closure keeps the shared nullable capture: {a()}");
+  assert(b() == 5, "e1d and its dense twin, which failed identically: {b()}");
+
+  assert(one_kept() == 7, "e3 one kept closure is unchanged: {one_kept()}");
+  assert(two_kept() == 24, "e4 two kept closures share one store: {two_kept()}");
+  assert(rebound_between() == 3, "e5 a local reassigned between builds gives each record its own store: {rebound_between()}");
+}

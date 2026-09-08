@@ -169,7 +169,10 @@ jobs:
           if [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
             echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"}]' >> "$GITHUB_OUTPUT"
+            # @PLN159 phase E1 — a FOURTH shard carries the native script corpus alone
+            # (`native::native_scripts`, 219.6 s of the heavy shard's 764.8 s on the run that
+            # measured it), so the serial groups and the corpus overlap instead of queueing.
+            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"}]' >> "$GITHUB_OUTPUT"
           else
             echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest"}]' >> "$GITHUB_OUTPUT"
           fi
@@ -503,6 +506,29 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
+      # @PLN159 phase E2 — two caches that are SAVED by the shard that fills them, restored by
+      # every shard on top of the one above (a restore extracts over what is there, so the
+      # result is the union).  The native script corpus's binaries are filled by the `corpus`
+      # shard, the registry package builds by `heavy`; before this split both rode in the
+      # `target` cache and had to be saved from `heavy` — 3.7 min on the run's critical path.
+      - name: Restore the native-corpus binary cache (non-Windows)
+        if: runner.os != 'Windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: target/loft-native-cache
+          key: ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-corpus-
+      - name: Restore the package build cache (non-Windows)
+        if: runner.os != 'Windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-buildcache-
       # Drops target/'s BULK (the 4.5 GB dep/build artefacts + the ~9-min NTFS
       # save) but KEEPS `target/loft-native-cache` — loft's native-test binary
       # cache (`LOFT_TMPDIR`, env above), keyed on the libloft.rlib content hash.
@@ -922,8 +948,15 @@ jobs:
       # and that run's `target/` is mid-build.  The key is run-scoped, so a partial
       # tree saved there becomes the newest prefix match and would be restored by
       # everything after it — `always()` would quietly poison the cache lineage.
+      #
+      # @PLN159 phase E2 — the 3.7-min `target` save moves OFF the critical path: `rest-a` is
+      # the shortest PR shard (17.4 min against `heavy`'s 29.3 on the run that measured it)
+      # and every shard builds the same `target`, so its copy is as good as any.  What only
+      # one shard fills is saved by that shard under its own key: the corpus binaries by
+      # `corpus`, the package build cache by `heavy` (small — no `target` in it).  An
+      # unsharded leg (push, nightly, Windows) still saves everything in one go.
       - name: Save cargo cache
-        if: "!cancelled() && (matrix.shard == '' || matrix.shard == 'heavy')"
+        if: "!cancelled() && (matrix.shard == '' || matrix.shard == 'rest-a')"
         uses: actions/cache/save@v4
         with:
           path: |
@@ -933,6 +966,18 @@ jobs:
             ~/.loft/build-cache
             ${{ runner.os == 'Windows' && 'target/loft-native-cache' || 'target' }}
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+      - name: Save the native-corpus binary cache
+        if: "!cancelled() && matrix.shard == 'corpus'"
+        uses: actions/cache/save@v4
+        with:
+          path: target/loft-native-cache
+          key: ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+      - name: Save the package build cache
+        if: "!cancelled() && matrix.shard == 'heavy'"
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
 
   # `Test (ubuntu-latest)` is a branch-protection REQUIRED context, and on a PR no
   # single job produces it any more — the leg is three shards (`[heavy]`, `[rest-a]`,
@@ -960,7 +1005,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "heavy + rest-a + rest-b shards: ${{ needs.test.result }}"
+          echo "heavy + corpus + rest-a + rest-b shards: ${{ needs.test.result }}"
           [ "${{ needs.test.result }}" = "success" ]
 
   # @PLAN53 — the cheap per-PR sanitizer.  `stack_align_guard` asserts every

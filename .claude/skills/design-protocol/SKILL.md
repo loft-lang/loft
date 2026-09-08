@@ -313,6 +313,14 @@ That is minutes of scripting, and it pays twice if you **keep it and re-run it**
 one-off answer rots, an instrument does not. But such a tool searches by **shape**, and
 shape is the weaker anchor; the next section is the stronger one.
 
+**The outer radius cuts both ways.** Before writing a routine, verify no library
+already implements it — and when none does, that absence is itself a signal:
+**prioritize building the routine INTO a library** over burying it in the current
+project. Experimenting inside a side project first is fine — prove it where the need
+is concrete — but the end state of a routine worth keeping is *available to more
+projects than this one*. A routine that stays project-local is a duplicate someone
+else has not written yet.
+
 ### As the system grows, anchor the question on the RULE, not on the code
 
 Searching by shape has a **rising false-negative rate**. Early on, two implementations of
@@ -435,3 +443,20 @@ That is why the method has a second engine: **the dogfood loop** — real consum
 toys — is what converts an unknown axis into a known one, and each harvested lesson is
 appended to the axis list your next design's matrix varies. This protocol makes the
 *visible* axes safe; the dogfood loop grows what is visible.
+
+---
+
+## In the loft tree (bindings — skip outside it)
+
+The body above is tree-agnostic. Working in the loft repo, these are the instruments it
+tells you to reach for:
+
+- The outer radius (dependency manifest / package index / library catalogue) is
+  `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
+  never a clone or installed copy.
+- The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
+  is the citation instrument (`list` · `check` · `sites <tag>` · `dups`), and
+  `formal/README.md` says how a rule is written and cited.
+- The verification questions a finished design answers are
+  `doc/claude/DESIGN_VERIFICATION.md § C1`; declined designs are recorded in
+  `doc/claude/DESIGN_DECISIONS.md` — check it before re-proposing one.

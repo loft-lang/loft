@@ -410,6 +410,68 @@ impl Parser {
         }
     }
 
+    /// The refusal a NULLABLE collection earns where a dense one is required — ONE home, so
+    /// the `for` dispatch and the collection builtins cannot drift in what they tell an author.
+    ///
+    /// Only three things differ between the sites: `verb` is the operation as the reader wrote
+    /// it ("iterate over", "map over"), `capability` what the dense type can do ("is iterable",
+    /// "can be mapped"), and `outcome` what a discharged absent value yields ("zero iterations",
+    /// "an empty result").  Everything else is the same wherever the value is used — that the
+    /// cure is `?` or `?? <default>`, and that a `text?` must be told `""` rather than a
+    /// collection literal, which would be a second wrong cure in the same message.  Those are
+    /// the parts that must not be written twice.
+    ///
+    /// Answers whether it fired, so a caller can fall through to its own generic message only
+    /// when the receiver was not a nullable collection at all.
+    pub(crate) fn nullable_collection_refusal(
+        &mut self,
+        is_type: &Type,
+        verb: &str,
+        capability: &str,
+        outcome: &str,
+    ) -> bool {
+        let Type::Optional(inner) = is_type else {
+            return false;
+        };
+        if !matches!(
+            **inner,
+            Type::Vector(_, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+                | Type::Text(_)
+        ) {
+            return false;
+        }
+        // The `??` spelling has to name the DEFAULT of the inner type, not a collection
+        // literal: `text?`'s is the empty text, and telling its author to write `?? []` would
+        // be a second wrong cure in the same message.  `?` is the type's own default either way.
+        let (empty, thing) = if matches!(**inner, Type::Text(_)) {
+            ("\"\"", "text")
+        } else {
+            ("[]", "collection")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "cannot {} {} because it is NULLABLE — a `{}` {}, \
+             but there is no implicit unwrap.  Discharge it first: add `?` (the \
+             type's default, an empty {}) or `?? {}`; either spelling gives an \
+             absent {} {}",
+            verb,
+            is_type.source_name(&self.data),
+            inner.source_name(&self.data),
+            capability,
+            thing,
+            empty,
+            thing,
+            outcome
+        );
+        true
+    }
+
     pub(crate) fn iterator(
         &mut self,
         code: &mut Value,
@@ -609,11 +671,18 @@ impl Parser {
                     // own counter: `e#remove` reads it to decide which way to rewind
                     // the cursor, and without it a `rev()` loop rewound FORWARD and
                     // skipped the next element (loft#903).
-                    self.vars.set_loop(
-                        if reverse { 64 } else { 0 },
-                        self.data.def(vec_tp).known_type(),
-                        code,
-                    );
+                    // @FR-Col-RemoveDense, the `e#remove` half — `OpRemove` reads this back
+                    // as its element type and takes the tail's stride (@FR-H-Stride) from it.  The element DEF cannot
+                    // carry a width — six integer widths share the one `integer` def — so
+                    // recording it slid a narrow element's tail eight bytes per element
+                    // (loft#1412, the `e#remove` spelling of the same fault the explicit
+                    // `v.remove(i)` had).  Ask the same home the storage was built through.
+                    let loop_db_tp = match self.data.vector_element_type(vtp, &mut self.database) {
+                        Some(elem) => elem,
+                        None => self.data.def(vec_tp).known_type(),
+                    };
+                    self.vars
+                        .set_loop(if reverse { 64 } else { 0 }, loop_db_tp, code);
                     if reverse {
                         // Start at length; the first step gives len-1 (last element).
                         *code = v_set(
@@ -717,12 +786,44 @@ impl Parser {
                     // what to substitute.  Old wording "Unknown iterator
                     // type T" left users guessing whether T was the issue
                     // or the syntax.
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "cannot iterate over {}; expected vector, sorted, index, hash, text, or range",
-                        is_type.name(&self.data)
-                    );
+                    //
+                    // A NULLABLE collection is the case where that list is the wrong answer:
+                    // the author picked a kind this loop accepts and only the `?` is in the
+                    // way, so reciting the kinds reads as "you used the wrong one".  What is
+                    // missing is the DISCHARGE — `(N-Coal)` / `(N-Default)`, the same one
+                    // `v[i]` needs, and there is no `τ? ⤳ τ` for a `for` to lean on either.
+                    // Both spellings give an absent collection zero iterations, which is
+                    // what the reader wanted; they just have to say so.
+                    if let Type::Optional(inner) = is_type
+                        && matches!(
+                            **inner,
+                            Type::Vector(_, _)
+                                | Type::Sorted(_, _, _)
+                                | Type::Index(_, _, _)
+                                | Type::Hash(_, _, _)
+                                | Type::Radix(_, _, _)
+                                | Type::Trie(_, _, _)
+                                | Type::Text(_)
+                        )
+                    {
+                        // The `??` spelling has to name the DEFAULT of the inner type, not a
+                        // collection literal: `text?`'s is the empty text, and telling its
+                        // author to write `?? []` would be a second wrong cure in the same
+                        // message.  `?` is the type's own default either way.
+                        self.nullable_collection_refusal(
+                            is_type,
+                            "iterate over",
+                            "is iterable",
+                            "zero iterations",
+                        );
+                    } else {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "cannot iterate over {}; expected vector, sorted, index, hash, text, or range",
+                            is_type.source_name(&self.data)
+                        );
+                    }
                 }
             }
         }
@@ -1860,7 +1961,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "#fields requires a struct variable, got {}",
-                    var_type.name(&self.data)
+                    var_type.source_name(&self.data)
                 );
             }
             // Set code to the source variable so parse_field_iteration receives it.
@@ -1955,20 +2056,88 @@ use #count instead"
                 *t = Type::Void;
                 return;
             }
-            // C60 Step 9: reject #remove on hash iteration.  The parser
-            // substitutes hash iteration with a scratch rec-nr vector
-            // (see parse_for, the `{id}#hash_scratch` variable), so
-            // #remove would remove from the snapshot, not the hash —
-            // silently diverging from the user's intent.
+            // C60 Step 9: reject #remove on a SNAPSHOT walk.  The parser substitutes such
+            // iteration with a scratch rec-nr vector (see parse_for, the
+            // `{id}#hash_scratch` variable), so #remove would remove from the snapshot and
+            // not from the collection — silently diverging from what was written.
+            //
+            // Three kinds take that substitution — `hash`, `trie` and `spatial`
+            // (`Type::Hash | Type::Trie | Type::Radix` at the scratch's creation) — and they
+            // share the one scratch NAME, so a message spelled for the hash told a `trie`
+            // author their loop was "hash iteration" and prescribed `hash[key] = null` for a
+            // collection they never wrote.  The kind is recovered from the scratch's own
+            // deps, which name the source collection; where it cannot be
+            // (a field, a call result — nothing to name), the wording stays kind-neutral
+            // rather than guessing, and the cure is right either way.
             if !self.first_pass {
                 let coll = self.vars.loop_coll_var(index_var);
                 if coll != u16::MAX && self.vars.name(coll).contains("hash_scratch") {
+                    // NOT peeled through `.base()`, and the reason is reachability rather
+                    // than taste: a NULLABLE collection cannot be iterated at all ("cannot
+                    // iterate over `hash<Ent,["k"]>?`"), so a `τ?` never reaches this
+                    // question by the direct route — and where one is a SIBLING field, it is
+                    // not a candidate for "which field is this loop over" either.  Peeling
+                    // counted it as a second match and made a decidable case answer with the
+                    // kind-neutral wording (measured: `{ data: hash<E[k]>, spare:
+                    // hash<E[k]>? }` said "this collection" where it can say `hash`).
+                    fn snapshot_kind(tp: &Type) -> Option<&'static str> {
+                        match tp {
+                            Type::Hash(_, _, _) => Some("hash"),
+                            Type::Trie(_, _, _) => Some("trie"),
+                            Type::Radix(_, _, _) => Some("spatial"),
+                            _ => None,
+                        }
+                    }
+                    let source = self
+                        .vars
+                        .tp(coll)
+                        .depend()
+                        .first()
+                        .map(|d| self.vars.tp(*d).clone());
+                    let kind = match &source {
+                        // A local: the dep names it and its type IS the collection.
+                        Some(tp) if snapshot_kind(tp).is_some() => snapshot_kind(tp),
+                        // A FIELD (`for e in b.data`): the dep names the STRUCT, so the kind
+                        // is the one snapshot-walked field it declares.  Named only when
+                        // there is exactly one — with two the loop's own field is not
+                        // decidable from here, and a guess in a refusal is worse than the
+                        // kind-neutral wording below.
+                        Some(Type::Reference(d, _)) => {
+                            let mut found = self
+                                .data
+                                .def(*d)
+                                .attributes
+                                .iter()
+                                .filter_map(|a| snapshot_kind(&a.typedef));
+                            match (found.next(), found.next()) {
+                                (Some(k), None) => Some(k),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    let what =
+                        kind.map_or_else(|| "this collection".to_string(), |k| format!("a `{k}`"));
+                    // A `spatial` is keyed by its 1-3 coordinate AXES, so `[key]` is not a
+                    // spelling its author can copy; the other two are keyed by one value.
+                    let cure = match kind {
+                        Some("spatial") => "spatial[x, y]",
+                        Some(k) => {
+                            if k == "trie" {
+                                "trie[key]"
+                            } else {
+                                "hash[key]"
+                            }
+                        }
+                        None => "collection[key]",
+                    };
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "#remove is not supported on hash iteration — the \
-                         iterated vector is a sorted snapshot; use \
-                         `hash[key] = null` to remove from the hash"
+                        "#remove is not supported when iterating {what} — the loop walks a \
+                         snapshot of the records, so the removal would not reach the \
+                         collection; remove by key instead (`{} = null`)",
+                        cure
                     );
                     *t = Type::Void;
                     return;
@@ -2353,7 +2522,7 @@ use #count instead"
                     Level::Error,
                     "`{}` has no effect on {}",
                     Self::radix_letter(state.radix),
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             } else if is_text && state.token == "0" && state.width != Value::Int(0) {
                 diagnostic!(
@@ -2377,7 +2546,7 @@ use #count instead"
                     Level::Error,
                     "a precision has no effect on {} — `.N` sets fractional digits, \
                      which only `float` and `single` have",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             }
         }
@@ -2569,7 +2738,7 @@ use #count instead"
                         self.lexer,
                         Level::Error,
                         "Cannot format type {}",
-                        tp.name(&self.data)
+                        tp.source_name(&self.data)
                     );
                 }
             }
@@ -2904,6 +3073,11 @@ use #count instead"
             | Type::Radix(content, _, dep)
             | Type::Trie(content, _, dep) = in_type.clone()
             {
+                // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
+                // order: the hash builder sorts, and the walk reads the sorted copy.  Only
+                // the `par` walk skips the sort (@FR-C-Order), which is the one place the
+                // two orders differ.
+                //
                 // A trie is a radix TREE too, so its in-order walk is already key
                 // order: it takes the tree builder, not the hash one (whose bucket
                 // walk would read a trie's records as a hash table).
@@ -2964,6 +3138,8 @@ use #count instead"
             }
             if matches!(in_type, Type::Vector(_, _)) {
                 let vec_var = self.create_unique("vector", &in_type);
+                // The loop iterates THIS temp — see `Function::iteration_source`.
+                self.vars.set_iteration_source(vec_var);
                 // On the second pass in_type may carry __vdb_N dependencies that
                 // were not present on the first pass (vector_db only runs on pass 2).
                 // Update the temp variable's type so that get_free_vars sees the
@@ -3047,6 +3223,10 @@ use #count instead"
                 );
                 return;
             }
+            // loft#1453 — how many errors stood BEFORE the iterable was resolved, so the
+            // fallback below can tell "there is no iterable here" from "the iterable already
+            // said what is wrong with it".
+            let errors_before_iterable = self.lexer.diagnostics().error_count();
             let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
                 self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
@@ -3085,11 +3265,20 @@ use #count instead"
                 self.vars.set_coll_value(orig_coll_expr.clone());
             }
             if !self.first_pass && iter_next == Value::Null {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Need an iterable expression in a for statement"
-                );
+                // Only when nothing else reported.  `collections::iterator` diagnoses a
+                // nullable collection precisely — naming the `?` and both discharges — and
+                // then returns `Value::Null`, which is indistinguishable here from "no
+                // iterable at all".  Adding this line on top of that one gave the reader the
+                // right sentence followed by two about the parser's own state (loft#1453).
+                // The fallback itself stays: the case its comment below names is real and
+                // reports nothing of its own.
+                if self.lexer.diagnostics().error_count() == errors_before_iterable {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Need an iterable expression in a for statement"
+                    );
+                }
                 // Balance the loop stack before bailing: `start_loop` (above)
                 // has already pushed this loop's scope, so a bare `return`
                 // leaves `current_loop` pointing at it and the ENCLOSING loop's
@@ -3198,7 +3387,7 @@ use #count instead"
                             self.lexer,
                             Level::Error,
                             "for-destructure requires a tuple element type, got {}",
-                            var_tp.name(&self.data)
+                            var_tp.source_name(&self.data)
                         );
                     }
                     Vec::new()
@@ -3998,7 +4187,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "par(...) requires a vector<T> input, not {}",
-                    in_type.name(&self.data)
+                    in_type.source_name(&self.data)
                 );
             }
             self.skip_to_parallel_body();
@@ -4248,7 +4437,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "Parallel worker return type '{}' (size {sz}) is not supported",
-                    ret_type.name(&self.data)
+                    ret_type.source_name(&self.data)
                 );
             }
             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
@@ -5365,6 +5554,32 @@ use #count instead"
         let _in_elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
+            // A NULLABLE vector is not "not a vector" — the author picked the right kind and
+            // only the `?` is in the way, so it earns the discharge message `for` gives rather
+            // than a kind list (loft#1453).  `map` REFUSES it, exactly as `for` does: there is
+            // no implicit unwrap here either.
+            if self.nullable_collection_refusal(
+                &types[0],
+                "map over",
+                "can be mapped",
+                "an empty result",
+            ) {
+                // Recover with the type PASS 1 already gave this call, which is
+                // `vector<callback return>` (loft#945).  The call is refused and the program
+                // will not run; what is left to decide is what the rest of the parse reads, and
+                // both other answers produce a second error about a line whose only fault is
+                // upstream — `vector<unknown>` makes `len(w)` report *"Unknown function len"*,
+                // and the dense receiver type makes pass 2 disagree with pass 1 (*"Variable 'w'
+                // cannot change type"*).  loft#1453's other half is the same complaint about
+                // `for`, so answering it here with a fresh recovery error would be the defect it
+                // fixes.  The lambda types cleanly now, so its return is available.
+                if let Type::Function(_, ret, _) = &types[1]
+                    && !matches!(**ret, Type::Void)
+                {
+                    return Type::Vector(ret.clone(), crate::data::Deps::none());
+                }
+                return placeholder;
+            }
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -5523,11 +5738,18 @@ use #count instead"
         let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "filter: first argument must be a vector"
-            );
+            if !self.nullable_collection_refusal(
+                &types[0],
+                "filter",
+                "can be filtered",
+                "an empty result",
+            ) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "filter: first argument must be a vector"
+                );
+            }
             return Err(placeholder);
         };
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
@@ -6022,12 +6244,22 @@ use #count instead"
     /// Compute the in-store byte size of a vector element type.
     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
         let elm_td = self.data.type_elm(elm);
-        // Post-2c: honor size(N) on integer aliases.  Must run before the
-        // generic `known_type → database.size(...)` path below, because
-        // database.size for the 8-byte integer base returns 8 regardless.
-        if matches!(elm, Type::Integer(_))
-            && let Some(n) = self.data.forced_size(elm_td)
-        {
+        // @FR-H-Stride — a narrow element (`u8`/`i16`/`u32`/…) is one, two or four bytes wide,
+        // and the width is the declared TYPE's.  Must run before the generic
+        // `known_type → database.size(...)` path below, which answers 8 for the integer base
+        // whatever the declaration said.
+        //
+        // This used to ask the element's DEF (`forced_size(type_elm(elm))`) — a test that could
+        // never pass, because `type_elm` maps every `Type::Integer` to the one `integer` def and
+        // that def carries no width.  So the branch was dead and every narrow element measured 8
+        // bytes, while `narrow_vector_content` had registered the STORAGE 1, 2 or 4 wide: a
+        // stride that disagreed with the layout it was walking.  One number reached four
+        // operations — a slice pattern's element reads, `insert`, `reverse` and `reserve` — so
+        // `reverse` on a `vector<u8>` answered `0,0,0,0,0` and `[a, .., z]` answered
+        // `21542142465`, which is `0x05_04_03_02_01`: the five elements swallowed whole
+        // (loft#1420).  Ask the home the storage was registered through, so the two cannot
+        // disagree again.
+        if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
             return i32::from(n);
         }
         // B5 (2026-04-13): for a mixed struct-enum element type
@@ -6086,7 +6318,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        if let Type::Vector(elm, _) = &types[0] {
+        if let Type::Vector(elm, _) = types[0].peel_link() {
             if !matches!(
                 elm.as_ref(),
                 Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
@@ -6095,7 +6327,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "sort is not supported for vector<{}>; use integer, long, float, single, or text",
-                    elm.name(&self.data)
+                    elm.source_name(&self.data)
                 );
                 return Type::Void;
             }
@@ -6121,7 +6353,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let elm_tp = if let Type::Vector(elm, _) = &types[0] {
+        let elm_tp = if let Type::Vector(elm, _) = types[0].peel_link() {
             (**elm).clone()
         } else {
             diagnostic!(
@@ -6145,7 +6377,7 @@ use #count instead"
             "OpInsertVector",
             &[list[0].clone(), elm_size, list[1].clone(), db_tp],
         );
-        let set_val = self.set_field(ed_nr, usize::MAX, 0, Value::Var(tmp), list[2].clone());
+        let set_val = self.set_element(&elm_tp, 0, Value::Var(tmp), list[2].clone());
         *val = v_block(vec![v_set(tmp, insert_call), set_val], Type::Void, "insert");
         Type::Void
     }
@@ -6187,7 +6419,7 @@ use #count instead"
         // contract is the same one `reserve(v, n)` states: capacity only, never the
         // contents or the length, and a count the collection already covers does
         // nothing.  Filling a 1M-entry hash otherwise rebuilds the table 17 times.
-        if matches!(&types[0], Type::Hash(_, _, _)) {
+        if matches!(types[0].peel_link(), Type::Hash(_, _, _)) {
             let Some(kt) = self.keyed_known_type(&types[0]) else {
                 // The collection type never resolved; the cause is already reported.
                 return Type::Void;
@@ -6198,7 +6430,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let Type::Vector(elm, _) = &types[0] else {
+        let Type::Vector(elm, _) = types[0].peel_link() else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -6234,7 +6466,7 @@ use #count instead"
             );
             return Type::Void;
         }
-        let elm_size = if let Type::Vector(elm, _) = &types[0] {
+        let elm_size = if let Type::Vector(elm, _) = types[0].peel_link() {
             self.element_store_size(elm)
         } else {
             diagnostic!(
@@ -6274,7 +6506,14 @@ use #count instead"
         let elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
-            if !self.first_pass {
+            if !self.first_pass
+                && !self.nullable_collection_refusal(
+                    &types[0],
+                    &format!("use {name} on"),
+                    "can be used",
+                    "the answer for an empty one",
+                )
+            {
                 diagnostic!(
                     self.lexer,
                     Level::Error,

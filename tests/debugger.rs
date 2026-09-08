@@ -776,6 +776,74 @@ fn breakpoint_at_fn_body_start_by_name() {
     );
 }
 
+/// loft#1459 — a `τ?` local reads at a paused frame like its dense twin.
+///
+/// `render_frame_local` matched every type in its DENSE spelling, so a nullable local
+/// matched no arm and fell to the `other` catch-all, which prints the TYPE: the panel showed
+/// `n = <integer?>` where every other local shows a value.  `@FR-L-Null` says
+/// layout(τ) = layout(τ?), so the slot reads the same way and all the nullable case owes is
+/// the ABSENT value.
+///
+/// The two cells are the two answers a nullable can give, and both are needed: an ABSENT one
+/// proves the sentinel is recognised rather than printed raw (`i32::MIN` would render as a
+/// large negative number, which looks like a value), and a PRESENT one proves the peel did
+/// not swallow the number with it.  The dense `x` is the control — it never moved, and if a
+/// cure broke it the peel would be doing something other than peeling.
+/// Falsified by removing the `Type::Optional` arm from `State::render_frame_local`:
+/// `left: "<integer?>"  right: "null"`, one assertion failure, 38 other debugger tests
+/// unmoved.  The `m` and `x` cells stay green there, which is what says the peel answers the
+/// ABSENT case and does not merely make the panel print something.
+#[test]
+fn a_nullable_local_reads_like_its_dense_twin_at_a_paused_frame() {
+    let mut p = repl();
+    match p.parse_statement(
+        "fn probe(x: integer) -> integer {\n  n: integer? = null;\n  m: integer? = 42;\n  y = x + 1;\n  y + (n ?? 0) + (m ?? 0)\n}",
+    ) {
+        ParseResult::Ready { .. } => {}
+        other => panic!("def failed: {other:?}"),
+    }
+    let entry = match p.parse_statement("probe(5)") {
+        ParseResult::Ready { entry_def_nr } => entry_def_nr,
+        other => panic!("call failed: {other:?}"),
+    };
+    // Line 4 (`y = x + 1`), so both nullable locals are ASSIGNED by the time the frame is
+    // read, and line 5 READS them so neither slot is dead.  Two vacuity traps avoided, both
+    // met while writing this: breaking at the body START leaves `n` and `m` nonexistent, so
+    // the test passes on the broken build by asserting only the control; and leaving them
+    // unread lets the slot allocator reuse one, which the panel honestly reports as
+    // `n = <reused by m>` — a frame fact, not a nullability one.
+    let d = p.data.def_nr("n_probe");
+    let mut state = State::new(p.database.clone());
+    loft::scopes::check(&mut p.data, &mut p.database);
+    compile::byte_code(&mut state, &mut p.data);
+    assert!(
+        state.set_breakpoint_fn_line(d, 4, &p.data).is_some(),
+        "line 4 breakable; breakable = {:?}",
+        state.breakable_lines()
+    );
+    let name = p
+        .data
+        .def(entry)
+        .name()
+        .strip_prefix("n_")
+        .unwrap()
+        .to_string();
+    state.execute_argv(&name, &p.data, &[]);
+    let hits = state.debug_hits();
+    assert!(!hits.is_empty(), "the breakpoint fired: {hits:?}");
+    let f = &hits[hits.len() - 1];
+    let show = |want: &str| {
+        f.locals
+            .iter()
+            .find(|(n, _)| n == want)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{want} absent>"))
+    };
+    assert_eq!(show("n"), "null", "an ABSENT nullable reads `null`: {f:?}");
+    assert_eq!(show("m"), "42", "a PRESENT nullable reads its value: {f:?}");
+    assert_eq!(show("x"), "5", "CONTROL: the dense local is unmoved: {f:?}");
+}
+
 /// Negative control: debugging on but no breakpoint registered → zero hits, and
 /// the program still runs (the `assert` inside proves execution completed).
 #[test]
@@ -1457,5 +1525,188 @@ fn rx3_ring_is_bounded_to_the_depth() {
     assert_ne!(
         floor_line, origin_line,
         "the dropped step (the origin line) is unreachable — the cap held"
+    );
+}
+
+/// loft#1459 — a `τ?` LOCAL renders its VALUE, not its type.
+///
+/// `render_frame_local` matches on bare `Type` variants and fell to
+/// `other => format!("<{}>", …)` for every `Optional`, so a nullable local printed
+/// `<integer?>` where every other local prints a value — a debugger declining exactly the
+/// locals whose null-ness is being debugged.  @PLN25 made `τ?` the only nullable form and
+/// `@FR-Col-Lookup` gives every keyed point lookup one, so these are ordinary now.
+///
+/// The cells that matter are the NEGATIVE ones, and they are why the sentinels are read off
+/// `fill.rs`'s `OpConv*FromNull` rather than re-derived: a renderer that guesses one wrong
+/// reports a real value as `null`, which is the one lie a debugger must not tell.  So this
+/// pins the two values ADJACENT to a sentinel — an empty `text` (not the `"\0"` null handle)
+/// and `i64::MIN + 1` (not `i64::MIN`) — beside the nulls themselves.  Without those, a fix
+/// that answered `null` for everything would pass.
+#[test]
+fn a_nullable_local_renders_its_value_not_its_type() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &[
+            // every local is READ on the breakpoint line, so none has its slot
+            // reused before the pause — a reused slot renders `<reused by …>` and
+            // would make this cell vacuous rather than failing loudly.
+            "fn probe() -> integer {\n  \
+               ni: integer? = null;   vi: integer? = 42;\n  \
+               nc: character? = null; vc: character? = 'x';\n  \
+               nt: text? = null;      et: text? = \"\";\n  \
+               fi: integer? = -9223372036854775807;\n  \
+               all = \"{ni ?? 0}{vi ?? 0}{nc ?? '?'}{vc ?? '?'}{nt ?? \"\"}{et ?? \"\"}{fi ?? 0}\";\n  \
+               size(all)\n}",
+        ],
+        "probe()",
+        "probe",
+        6, // the tail, with every local still live
+    );
+    assert_eq!(hits.len(), 1, "breakpoint fired once: {hits:?}");
+    let got = |name: &str| {
+        hits[0]
+            .locals
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{name} absent>"))
+    };
+    // absent reads `null` — never `<integer?>`, and never the raw sentinel
+    assert_eq!(got("ni"), "null", "a null integer: {hits:?}");
+    assert_eq!(got("nc"), "null", "a null character: {hits:?}");
+    assert_eq!(got("nt"), "null", "a null text: {hits:?}");
+    // …and PRESENT reads the value, which is what says the arm did not just answer null
+    assert_eq!(got("vi"), "42", "a present integer: {hits:?}");
+    assert_eq!(got("vc"), "'x'", "a present character: {hits:?}");
+    // the two neighbours of a sentinel, which is where a guessed one would show
+    assert_eq!(
+        got("et"),
+        "\"\"",
+        "an EMPTY text is not the null handle: {hits:?}"
+    );
+    assert_eq!(
+        got("fi"),
+        "-9223372036854775807",
+        "i64::MIN + 1 is a value, not the integer sentinel: {hits:?}"
+    );
+}
+
+/// loft#1459 — the two panel kinds whose absence had its own spelling: a value ENUM and a
+/// KEYED collection.
+///
+/// Both fell short in a way an `integer?` cell could not see.  A null value enum reached the
+/// panel as discriminant **255** (`OpConvEnumFromNull`), while the renderer tested only
+/// `disc == 0`, so it took the VARIANT path and `enum_val`'s own out-of-range fallback
+/// supplied the name — the panel printed `Col.null`, a variant spelling for a value that has
+/// no variant.  `default/01_code.loft` already names the predicate that has BOTH bytes
+/// (`OpConvBoolFromEnum`: `@v1 != 255 && @v1 != 0`); restating it as `disc == 0` at four
+/// render sites is what drifted, so `Stores::enum_is_null` is now its one home.
+///
+/// A keyed local had no arm at all and fell to the catch-all, which prints the TYPE — the
+/// loft#1459 headline symptom wearing a different type name, and for a POPULATED hash as
+/// readily as for an absent one.  `@FR-L-Null` gives the absent case a `DbRef` sentinel, so
+/// that half is answered here.  The populated case still prints its type on purpose: a keyed
+/// collection's schema type is minted under two spellings by two paths, so `Stores::name`
+/// resolves it from only one of them, and rendering its CONTENTS waits on that.  What it must
+/// not do is print the schema key at a reader — the catch-all names the type the way the
+/// AUTHOR wrote it (`hash<P[a]>`, not `hash<P,["a"]>`), which is loft#1434's rule.
+///
+/// Falsified by restoring `disc == 0` in `render_frame_local`: the `ne` cell fails with
+/// `left: "Col.null"  right: "null"` and every other cell stays green — including `ve`,
+/// which is what says the predicate widened rather than the variant path being lost.
+/// Falsified again by dropping the keyed arm from the `Optional` sentinel test: `nh` fails
+/// with `left: "<hash<P[a]>>"  right: "null"`, `vh` unmoved.
+#[test]
+fn a_null_enum_and_an_absent_keyed_local_read_as_null() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &[
+            "struct P { a: integer, b: text }",
+            "enum Col { Red, Green }",
+            // Every local is READ on the breakpoint line, so no slot is recycled.
+            "fn probe() -> integer {\n  \
+               ne: Col? = null;      ve: Col? = Col.Green;\n  \
+               nh: hash<P[a]>? = null; vh: hash<P[a]>? = [P { a: 1, b: \"q\" }];\n  \
+               (if ne == null { 0 } else { 1 }) + (if ve == null { 0 } else { 1 })\n    \
+                 + (if nh == null { 0 } else { 1 }) + (if vh == null { 0 } else { 1 })\n}",
+        ],
+        "probe()",
+        "probe",
+        4,
+    );
+    assert_eq!(hits.len(), 1, "breakpoint fired once: {hits:?}");
+    let got = |name: &str| {
+        hits[0]
+            .locals
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("<{name} absent>"))
+    };
+    assert_eq!(
+        got("ne"),
+        "null",
+        "an absent value enum is `null`, not `Col.null`: {hits:?}"
+    );
+    assert_eq!(
+        got("ve"),
+        "Col.Green",
+        "CONTROL: a present variant still names itself: {hits:?}"
+    );
+    assert_eq!(
+        got("nh"),
+        "null",
+        "an absent keyed local is `null`, not its type: {hits:?}"
+    );
+    assert_eq!(
+        got("vh"),
+        "<hash<P[a]>>",
+        "a POPULATED keyed local names the type the AUTHOR wrote — the contents wait on \
+         the schema-key question, but the schema KEY spelling never reaches a reader: \
+         {hits:?}"
+    );
+}
+
+/// loft#1459, the seed half — and this one is a REGRESSION guard on the fix above rather
+/// than a guard on the defect.
+///
+/// `seed_frame` consumes the very literals `render_frame_local` produces, so changing what
+/// a null local RENDERS changes what the REPL bridge and every conditional breakpoint are
+/// handed.  Before the fix that literal was `<integer?>`; now it is `null`.  Measured
+/// rather than assumed: seeding already worked across that change, so nothing needed
+/// doing — but a later "improvement" to the rendering (a raw sentinel, a type suffix, a
+/// bare empty string) would break seeding silently, and no cell above would see it.
+///
+/// The discharge is the half worth pinning: `ni ?? -1` is what someone debugging a null
+/// actually writes, and it has to survive the round trip through the seed.
+#[test]
+fn a_null_local_seeds_with_its_type() {
+    let mut p = repl();
+    let hits = run_with_breakpoint(
+        &mut p,
+        &["fn calc(n: integer) -> integer {\n  \
+             ni: integer? = null;\n  \
+             a = n + 1;\n  \
+             (ni ?? 0) + a\n}"],
+        "calc(10)",
+        "calc",
+        4,
+    );
+    let hit = &hits[0];
+    assert!(
+        hit.locals.iter().any(|(n, v)| n == "ni" && v == "null"),
+        "the frame shows the null: {hits:?}"
+    );
+    let mut s = ReplSession::new("default").expect("stdlib");
+    let bound = s.seed_frame(hit);
+    assert!(bound >= 2, "ni AND a seeded — a null is a value: {bound}");
+    assert!(
+        matches!(
+            s.eval("assert((ni ?? -1) == -1, \"discharged null\")"),
+            Eval::Ran
+        ),
+        "a discharged null evaluates over the seeded frame"
     );
 }

@@ -3118,6 +3118,37 @@ pub const ANY_FIELD: u32 = u32::MAX;
 /// steps are a lower bound, as everything in this walk is.
 #[must_use]
 pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+    projection_place_of(data, value, false)
+}
+
+/// [`projection_container_place`], counting the two NULLABLE element reads as the projections
+/// they are — the answer for a reader that asks *"which place does this value READ OUT OF?"*
+/// rather than *"may I trigger the deps proxy on it?"*.
+///
+/// `OpGetVectorNullable` / `OpVectorRefNullable` are `v[i]` where an out-of-range index answers
+/// the null element instead of raising; they are declared `-> reference[r]` and meet
+/// [`is_projection_op`]'s criterion exactly, and that function's doc block says so at length.
+/// They are kept off ITS list for a reason one layer down — the interpreter's materialise arm
+/// fires on the deps PROXY while the free sweep reads the oracle, so widening the list there
+/// makes the arm allocate a store the sweep declines to free.  That hazard belongs to the
+/// PROXY, not to the notion, so a reader that only needs to NAME a place takes them.
+///
+/// The view-materialise walk is that reader: `(N-Index)` types `v[i]` as `τ?`, so a discharged
+/// element read is the ordinary spelling of a projection and its container has to be nameable,
+/// or the binding stays a live alias across a `remove` that renumbers it (loft#1401).  Nothing
+/// here reaches the proxy: the walk only records which place a view names, and the copy that
+/// pairs with it is emitted per ARM.
+///
+/// Fold the two back together once the arm and the sweep ask one question — the split is a
+/// statement about today's readers, not about the language.
+#[must_use]
+pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+    projection_place_of(data, value, true)
+}
+
+/// The shared peel behind [`projection_container_place`] and [`view_source_place`]:
+/// `nullable_reads` says whether the two null-answering element reads count as projections.
+fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Option<(u16, u32)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
     loop {
@@ -3129,7 +3160,13 @@ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u3
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
-        if !is_projection_op(data, *d) {
+        let projects = is_projection_op(data, *d)
+            || (nullable_reads
+                && matches!(
+                    data.def(*d).name(),
+                    "OpGetVectorNullable" | "OpVectorRefNullable"
+                ));
+        if !projects {
             return None;
         }
         if data.def(*d).name() == "OpGetField"

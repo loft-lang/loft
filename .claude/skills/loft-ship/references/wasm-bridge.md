@@ -10,35 +10,44 @@ cell with no automatic path. The bridge lets the library's wasm call a **host ca
 
 ```
 my_lib/
-├── loft.toml            # [wasm.bridge] block names the crate + the host module
-├── src/my_lib.loft      # the loft API; #native fns map to host imports
+├── loft.toml            # [wasm.bridge] block: crate, host_js, [wasm.bridge.routes]
+├── src/my_lib.loft      # the loft API; #native fns map to bridge routes
 └── wasm/                # the bridge crate
-    └── src/lib.rs        # imports `loft_<lib>.<fn>`; marshals the CBOR ABI
+    ├── Cargo.toml
+    ├── host.js           # what [wasm.bridge] host_js names
+    └── src/lib.rs        # bridge fns the routes point at
 ```
 
-1. **`[wasm.bridge]` in `loft.toml`** — declares the bridge crate and the host-import module
-   name (`loft_<lib>`, e.g. `loft_web`, `loft_crypto`). The `loft_`-prefix is what the runtime
+1. **`[wasm.bridge]` in `loft.toml`** — its real fields are `crate` (the bridge crate),
+   `host_js` (the JS shim file), and a `[wasm.bridge.routes]` table mapping each native
+   symbol (`n_<sym>`) to a bridge function (PACKAGES.md § wasm.bridge). Host-import
+   module names carry the `loft_` prefix (e.g. `loft_web`), which is what the runtime
    recognizes as a permitted host-import module.
-2. **The bridge crate (`wasm/`)** — a small Rust crate compiled to wasm alongside the library.
-   Each `#native` function becomes an `extern` import `loft_<lib>.<fn>` that the crate calls
-   and whose CBOR-encoded args/results it marshals.
+2. **The bridge crate (`wasm/`)** — a small Rust crate compiled to wasm alongside the
+   library. The routed bridge functions receive the loft store + argument references
+   and marshal per function (raw memory, not a serialized envelope).
 3. **The host shim** — the JS/WASI side that *implements* those imports:
    - **Browser (`--html`):** a `host.js` providing `loft_<lib>.<fn>` against the real
      capability (WebCrypto, WebSocket, the DOM). It's wired into the page's import object next
      to the loft runtime imports.
-   - **Headless wasm (`--native-wasm`):** a WASI host shim (a Node/wasmtime driver) providing
-     the same imports — used by the parity gate so you can test the bridge without a browser.
-4. **The CBOR ABI** — args and results cross the boundary CBOR-encoded. This is the silent-
-   corruption surface; see the traps.
+   - **Headless (no browser):** the `--html`-built wasm driven in Node
+     (`LOFT_WASM_HOST_JS=… node tools/wasm_ws_repro.mjs` is the @PLN84 model) — this is
+     how the bridge is tested without a browser. ⚠ `--native-wasm` (wasip2) is a
+     DIFFERENT path: it links the wasm rlib (`wasm_impl`) and never sees `host.js`.
+4. **The marshalling** — values cross the boundary as store/memory references the bridge
+   fn reads and writes per its route; there is no serialized envelope (the "CBOR" in
+   @PLN84 was one WebSocket regression's payload, `ws_cbor.loft`, not the bridge ABI).
+   This is the silent-corruption surface; see the traps.
 
 ## Asyncify — the suspend trap (this one cost real time)
 
 If a bridge function **yields or awaits** (a socket read, a frame yield, anything async on the
-host), the wasm must be asyncify-transformed so it can suspend and resume:
-
-```bash
-wasm-opt --asyncify --pass-arg=asyncify-imports@loft_<lib>.<suspending_fn>[,...] in.wasm -o out.wasm
-```
+host), the wasm must be asyncify-transformed so it can suspend and resume. ⚠ You do NOT run
+`wasm-opt` yourself: `loft --html` runs it unconditionally with a **hardcoded** asyncify
+import allowlist (`src/main.rs`, currently `loft_gl.loft_gl_swap_buffers`,
+`loft_web.ws_yield`, `loft_io.loft_host_http_get`, `loft_io.loft_host_http_range`) — an
+import left OFF that list corrupts the stack, so a new library's suspending import means
+**editing that list in loft** and rebuilding, not an author-side wasm-opt pass.
 
 The trap that bites: **`yield_frame()` only sets a flag — it does NOT itself suspend.** Only an
 import listed in `--pass-arg=asyncify-imports@…` actually unwinds the stack. So a suspending
@@ -46,7 +55,7 @@ call needs a **dedicated suspend import** (the @PLN84 pattern: `loft_web.ws_yiel
 the asyncify import list — not a reuse of a flag-only yield. If your "await" returns instantly
 or hangs, this is almost always why.
 
-## The CBOR ABI traps
+## The boundary-marshalling traps
 
 - **Validate with a round-trip *value* check, not "it didn't crash."** A mis-sized or mis-
   ordered field decodes to garbage that often *looks* plausible — assert the decoded value
@@ -59,7 +68,8 @@ or hangs, this is almost always why.
 
 ## The gate for a bridge
 
-The bridge is done only when the library passes the **parity gate** on `--native-wasm` (via
-the WASI host shim) **and** `--html` (via `host.js`), with results equal to `--interpret`. The
-headless WASI driver exists precisely so you can prove `--native-wasm` parity in CI without a
-browser; build/keep one (the @PLN84 `wasm_ws_repro.mjs` is the model).
+The bridge is done only when the library passes the **parity gate** on `--native-wasm`
+(the wasip2 / wasm-rlib path) **and** `--html` (via `host.js`), with results equal to
+`--interpret`. For the `--html` half without a browser, drive the built wasm in Node —
+the @PLN84 `tools/wasm_ws_repro.mjs` is the model; keep such a driver so the bridge is
+provable in CI.

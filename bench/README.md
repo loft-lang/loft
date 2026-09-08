@@ -18,6 +18,8 @@ Performance comparison across five targets: Python, loft interpreter, loft nativ
 | 08 | word_count | Hash-based word frequency, 600K ops |
 | 09 | matrix_mul | Float dot product, 5M elements |
 | 10 | sort | Insertion sort, 3,000 integers |
+| 11 | par | Parallel for-loop, 100K elements × 50-iter Newton's sqrt |
+| 12 | drawing | Drawing hot loops: seeded hash (100K calls) + brush-lock raster (~22K px), output hashes asserted — the loft#1426 / @PLN157 workload; per-routine ratios gated by `scripts/native_ratio.sh` against `ratio_oracle.tsv` |
 
 ## Targets
 

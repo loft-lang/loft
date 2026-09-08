@@ -1,0 +1,16 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: No matching operator 'Add' on '&hash<Row58[id]>' and '&hash<Row58[id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:31:9
+   |
+31 |   a += b;
+   |         ^
+
+error: No matching operator 'Add' on '&sorted<Row58[-id]>' and '&sorted<Row58[-id]>'
+  --> <cases>/58_keyed_collection_is_spelled_as_written.loft:35:9
+   |
+35 |   a += b;
+   |         ^
+
+error: aborting due to 2 previous errors

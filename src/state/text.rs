@@ -349,6 +349,21 @@ impl State {
         self.put_stack(Str::new(t));
     }
 
+    /// Read a fn-ref through a `&fn(…)` link (`@FR-B-Ref-Intro` — `&τ` for every τ).
+    ///
+    /// The read twin of [`Self::set_stack_fn_ref`], and the same shape as
+    /// [`Self::get_stack_text`] one width over: the pushed reference names the link's slot and
+    /// the 20-byte STACK blob (8 B `d_nr` + 12 B closure `DbRef`) lives where it points.
+    #[inline]
+    pub fn get_stack_fn_ref(&mut self) {
+        let r = *self.get_stack::<DbRef>();
+        let v = *self
+            .database
+            .store(&r)
+            .addr::<[std::mem::MaybeUninit<u8>; 20]>(r.rec, r.pos);
+        self.put_stack(v);
+    }
+
     #[inline]
     pub fn get_stack_ref(&mut self) {
         let fld = self.code::<u16>();
@@ -366,6 +381,32 @@ impl State {
         let r = *self.get_stack::<DbRef>();
         let t = self.database.store_mut(&r).addr_mut::<DbRef>(r.rec, r.pos);
         *t = v1;
+    }
+
+    /// Write a fn-ref through a `&fn(…)` link (`@FR-B-Ref-Intro` — `&τ` for every τ).
+    ///
+    /// The `&` parameter's own frame slot holds a `DbRef` to the caller's fn-ref slot, so the
+    /// write dereferences before storing, exactly as [`Self::string_ref_mut`] does for `&text`.
+    /// `put_var`'s direct write is the wrong one here: it would overwrite the LINK with the
+    /// value and the caller would never see the closure.
+    ///
+    /// The blob is the 20-byte STACK representation of a fn-ref (8 B `d_nr` + 12 B closure
+    /// `DbRef`) — the same one `OpVarFnRef` / `OpPutFnRef` move, and NOT the packed form a
+    /// struct field holds.  `pos` is compensated by the popped span the way every other
+    /// pos-taking op that pops first does.
+    #[inline]
+    pub fn set_stack_fn_ref(&mut self) {
+        let pos = self.code::<u16>();
+        let v = *self.get_stack::<[std::mem::MaybeUninit<u8>; 20]>();
+        let n = self.stack_step(20) as u16;
+        let link = *self.database.store(&self.stack_cur).addr::<DbRef>(
+            self.stack_cur.rec,
+            self.stack_cur.pos + self.stack_pos - u32::from(pos - n),
+        );
+        *self
+            .database
+            .store_mut(&link)
+            .addr_mut::<[std::mem::MaybeUninit<u8>; 20]>(link.rec, link.pos) = v;
     }
 
     pub fn append_stack_text(&mut self) {
@@ -491,7 +532,15 @@ impl State {
         let mut till = *self.get_stack::<i64>() as i32;
         let mut from = *self.get_stack::<i64>() as i32;
         let v1 = self.string();
-        if from < 0 || from >= v1.len as i32 {
+        // @FR-Slice-Value — a negative bound is `size + bound`, floored at the start:
+        // the same rule the vector slice, `s[-1]` and `char_slice` follow, applied to the
+        // FROM end as it already is to the TILL end below.  A byte index is what a text
+        // slice takes, so the count is from the end in BYTES, and the boundary snap under
+        // this normalises whatever character it lands inside.
+        if from < 0 {
+            from = (from + v1.len as i32).max(0);
+        }
+        if from >= v1.len as i32 {
             self.put_stack(Str {
                 ptr: v1.ptr,
                 len: 0,

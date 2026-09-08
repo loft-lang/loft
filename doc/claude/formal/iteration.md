@@ -121,8 +121,20 @@ self-contained receiver, not a reuse of the assignment target).
 
 **In words.** An empty vector, an empty range, or a **null** source all iterate zero times and
 fall through — never a fault. A null source is treated as empty (the same null-continue
-discipline as a read through `nullref`), so a `for` over a possibly-null collection is safe
-without a guard.
+discipline as a read through `nullref`).
+
+**`nullref` is a RUNTIME null of a NON-nullable type, and the distinction is the whole content
+of this rule.** A collection field never filled, or a call whose declared `vector<τ>` return
+answers null, is a `nullref`: it iterates zero times with no guard and no fault (measured, both
+sources). A source whose TYPE is `τ?` is a different question and is REFUSED — `for x in v` with
+`v: vector<integer>?` does not compile, because [types.md](types.md) `(N-Coal)`/`(N-Default)`
+admit no implicit unwrap and a `for` is not an exception to that. The discharge is one character
+and gives exactly this rule's answer: `for x in v?` and `for x in v ?? []` each run zero times.
+
+Until 2026-09-07 this paragraph ended *"so a `for` over a possibly-null collection is safe
+without a guard"*, which reads as a promise about the `?` spelling — the one spelling the rule
+does not cover and the compiler refuses. The formal line was right and its gloss reached one
+case past it (QUALITY.md B8i).
 
 ---
 

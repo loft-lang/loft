@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Col-Store — the store-backed set is `Vector` plus the five keyed kinds, and `vectors::
+// is_collection` is its home.  @FR-B-Ref-Uniform — a `&τ` variable is used exactly like a `τ`
+// variable, so reaching one of those through a `&` is the same deref at all six.
+//
+// The `&` deref in `state/codegen.rs` spelled that set out as a `matches!` list —
+// `Vector | Reference | Enum(value) | Sorted | Hash | Index` — with a `panic!` under it.
+// `Type::Radix` and `Type::Trie` were missing, so TWO OF THE FIVE keyed kinds were an internal
+// compiler error where their three siblings worked:
+//
+//   fatal: internal compiler error
+//     Unknown referenced variable type: trie(730, "nm", deps { items: [] })
+//
+// …directly beneath a comment (@P305) asserting that keyed collections passed by `&` are
+// DbRef-backed "just like vectors/references", which is true of all five.  Fourth instance of
+// one class after loft#1291, loft#1292 and loft#1433: a type set written as a LIST with a kind
+// missing from it, where the cost of the omission is the whole program rather than an
+// optimisation.
+//
+// Every cell writes through the `&` and then reads back through the caller's own name, because
+// a deref that reaches SOMETHING is not the same as a deref that reaches the caller's store.
+//
+// `spatial` is the fifth kind and is NOT asserted here: it has no `c[(x,y)] = v` spelling — that
+// is refused at a plain local too, so it is not the `&`'s business — and the only write it has
+// is the append, which needs loft#1445's peel.  Its deref cell lives in
+// `1445-a-keyed-parameter-appends-through-its-link.loft` beside the other four, so the two
+// guards together cover all five and neither one depends on the other's fix.
+//
+// @falsified-at: afbca3342 (built in its own worktree): `a_trie_parameter_is_reachable_by_key`
+//   is an ICE on that build — the compiler panics at src/state/codegen.rs, so the file does not
+//   run at all.  `the_three_kinds_that_already_worked` passes there, and is the control that
+//   says the defect is the missing kinds and not the `&` itself.
+
+struct Row { id: integer, tag: text }
+struct Wrd { nm: text, n: integer }
+
+fn hash_set(c: &hash<Row[id]>)     { c[7] = Row{id: 7, tag: "seven"}; }
+fn sorted_set(c: &sorted<Row[id]>) { c[7] = Row{id: 7, tag: "seven"}; }
+fn index_set(c: &index<Row[id]>)   { c[7] = Row{id: 7, tag: "seven"}; }
+fn trie_set(c: &trie<Wrd[nm]>)     { c["kk"] = Wrd{nm: "kk", n: 7}; }
+
+fn the_three_kinds_that_already_worked() {
+  h: hash<Row[id]> = [];   hash_set(h);
+  s: sorted<Row[id]> = []; sorted_set(s);
+  ix: index<Row[id]> = []; index_set(ix);
+  assert_eq("{len(h)}", "1", "hash: the caller sees the write");
+  assert_eq("{h[7].tag}", "seven", "hash: by key");
+  assert_eq("{len(s)}", "1", "sorted: the caller sees the write");
+  assert_eq("{s[7].tag}", "seven", "sorted: by key");
+  assert_eq("{len(ix)}", "1", "index: the caller sees the write");
+  assert_eq("{ix[7].tag}", "seven", "index: by key");
+}
+
+fn a_trie_parameter_is_reachable_by_key() {
+  t: trie<Wrd[nm]> = [];
+  trie_set(t);
+  assert_eq("{len(t)}", "1", "trie: the caller sees the write");
+  assert_eq("{t[\"kk\"].n}", "7", "trie: by key");
+}
+

@@ -6,12 +6,169 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
+OPEN: **0** — `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
+(loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
+guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
+assignment TARGET.  `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
+its `has_null(τ)` precondition by owner ruling, and the tuple's absence is tuples.md `(T-Absent)`
+(code half `D-tup-10` there).  `D-Var-Enum` was opened and closed 2026-09-06 (loft#1390, below); `D-Decl-Sev` was opened and closed 2026-09-05 (below); `D-Narrow-Res`, `D-Narrow-Asgn` and `D-Null-Elem` were all opened and closed 2026-08-31 (below); `D-Chk-Yield` was opened and closed 2026-08-28 (below); `D-Var-Join` was opened and closed 2026-08-27 (below); `D-Null-Join` was opened and closed 2026-08-26 (below); `D-Opt-Zero` is CLOSED (2026-08-24, below); the @PLN25 nullability flip (DN1–DN6) is CLOSED (2026-07-02); D1/D2/D4 closed by
 fix/reconciliation.  The **@PLN102 DN3-Float extension** (below) is also CLOSED — SHIPPED
 default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functions type `τ?`
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
+
+`(N-Domain)` types a partial operation `τ?` when the reserved null is reachable from an input,
+and elides that only where the input is *"PROVABLY in-domain (constant / range / guard)"*.  The
+elision is `index_provably_fit`, and what it proves is about the INDEX — a literal the developer
+typed, a loop variable, a bounded computation (the loft#1436 trust).  It says nothing about
+whether the COLLECTION exists.  Reading an element of an absent collection answers the element
+type's null (C80) whatever the index names, so the elision was being asked a question it does
+not answer:
+
+```loft
+m: vector<It>? = null;
+z: It = m[0];        // silent — `z` typed non-null It, holds null
+z2: It = m[i];       // warned — same receiver, same absence, untrusted index
+```
+
+The falsifying pair is those two lines: obeying the rule reports both, obeying the code reports
+one, so the promise depended on the SPELLING OF THE SUBSCRIPT rather than on anything about the
+value.  All four keyed kinds answered the same way (`hash`, `sorted`, `index`, `trie`) — the
+keyed arms carried the `expr_not_null` clear and never a type.
+
+The `?` is discarded by the `base()` peel that lets a `text?` dispatch its methods at all, so
+the fix reads the receiver's nullability BEFORE that peel and carries it to the result type.
+Closed at `parse_index`; the dense-receiver trust is untouched, which is the control.
+
+This also closes the *"nullable-receiver index typing"* half that loft#1434's ruling
+(`(Col-Insert-Absent)`, C118) left open for whoever took the fix.
+
+⚠ **Two legs of loft#1450 stay open and are deliberately NOT closed here**, because they are
+migrations rather than one-site fixes and were measured before the split was chosen: a FIELD
+read through a nullable receiver (`n.v` with `n: It?`, which `(N-Prop)` types `τ?`) costs 37
+corpus sites, and a keyed lookup's own `τ?` for a MISSING key in a PRESENT collection
+(`(Col-Lookup)`) costs 351.  This leg costs none.  `(Col-Lookup)`'s cited anchor is
+`fields.rs:700-706`, *the `expr_not_null` clear* — a typing rule whose recorded enforcement is
+a LINT FLAG, which is why `collections.md` could read `OPEN: 0` over it.
+
+### D-Null-Guard — OPENED AND CLOSED (2026-09-07, loft#1450): the discharge narrowed SCALARS only
+
+`(N-Store)` requires a discharge, so a discharge has to exist for every type it governs.  Flow
+narrowing is the one that costs nothing to write — `if x != null { … }` — and it worked for a
+scalar and for no heap value at all:
+
+```loft
+fn g(s: S?) -> S { if s != null { s } else { S{n:0} } }   // warned, though guarded
+```
+
+A heap value asks "is this absent?" through its own opcode — `OpRefIsNull`, `OpVectorIsNull` —
+where a scalar compares against a `…FromNull` literal, and only the scalar spelling was read out
+of the condition.  So the guarded form and the unguarded form were reported identically, and the
+author who did the right thing got the same diagnostic as the author who did not.
+
+⚠ **This is `D-Null-Heap`'s class, recurred on the other side.**  That entry (2026-09-03,
+loft#1313) closed an ENFORCEMENT gated on a scalar-only predicate; this is the DISCHARGE gated on
+a scalar-only spelling, and the two together give the rule a reader can check the next
+implementation against: **when the null model gains a site, ask whether its predicate reads a
+SCALAR spelling of absence** — the heap spelling is a different opcode, not a different value,
+and every one of these has been invisible to a reader checking the code because the scalar story
+is coherent on its own.
+
+That this leg had to be closed BEFORE `D-Null-Recv` could ship is the measurement worth keeping:
+with no working guard, correct guarded code and silent-wrong code produce the same warning, and a
+rule enforced that way cannot be adopted whatever the register says about it.
+
+### D-Null-Place — OPENED AND CLOSED (2026-09-07, loft#1450): a narrowing described the assignment TARGET
+
+`(N-Decl)` makes a declared slot a COMMITMENT: `x: τ?` is `τ?` for the whole of its life.  A flow
+narrowing is the opposite kind of fact — it says what the slot currently HOLDS, and it dies at the
+next write, which the parser already knew (it drops the proof once the store is built).  It was
+still allowed to describe the target of that very write:
+
+```loft
+cur: It? = src;
+if cur == null { return -1; }
+cur = src;            // "a nullable `It?` is stored into the local `cur` of the non-null type `It`"
+```
+
+The target is parsed as an expression, and a proven-non-null variable reads as its peeled base —
+so a declared `τ?` slot answered `τ`, and writing a `τ?` into its own declared type was reported
+as a nullable reaching a non-null slot.  Two separate store checks consumed that same peeled
+type, which is why the fix is at the assignment chokepoint rather than at either of them: the
+left-hand side of an assignment is a PLACE, not a value read.
+
+The entry is a deviation and not a nicety because the diagnostic is `warning`, and `warning` gates
+a library's CI (`LOFT_DENY_WARNINGS=1`) — so a library that guarded a nullable and then rebound it
+failed its own gate on correct code.  It pre-dates loft#1450 on the scalar path and was reachable
+there; the heap narrowing above is what made it reachable for a struct or a vector, and what
+turned it up.
+
+### D-Opt-NoNull — CLOSED (2026-09-07, loft#1423, by RULE): `(N-Opt)` gains the precondition `has_null(τ)`; a tuple that arrives absent is a present tuple of null members
+
+Closed the same day by the owner's ruling rather than by code: *"the tuple type itself is not
+nullable, but if we read it as null we present it as a tuple that exists with all its members
+null"* — a tuple has no faithful document form anyway.  `(N-Opt)` now reads `τ wf, has_null(τ)
+⟹ τ? wf`, which is what it always meant (two formers were refused by name under it), and the
+representation of a tuple's absence is `tuples.md (T-Absent)`: `optional((τ₁, …, τₙ)) ≡
+(τ₁?, …, τₙ?)`, no `Optional(Tuple)` even in flight.  The stack-tag layout that would have
+made `(τ, τ)?` a type is declined in DESIGN_DECISIONS C119 on brittleness (ten-plus silent
+re-assertion sites for a one-clause rule).  The CODE half — `Type::optional` still wraps a
+tuple, so a generic `T?` at a tuple answers garbage / E0308 (loft#1451), `v[i].0` is refused
+where the rule types it `τ?`, and `t == null` has no tuple home — is `D-tup-10` in tuples.md.
+The entry as opened follows.
+
+#### As opened — OPEN (2026-09-07, @PLN153 phase 4 batch 8, loft#1423): `(N-Opt)` licenses `τ?` for every τ, and two types have no null to spend
+
+`(N-Opt)` is `τ wf ⟹ τ? wf` — *"`τ?` is a type for any τ"*.  Two types are refused at the
+declaration instead, and for the same reason: the null MODEL (the @PLN102 keystone, option B,
+frozen as C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
+or `(L-Null-Tag)`'s discriminant, which is for a STRUCT stored inline.  A `value struct` has
+neither (@PLN101, refused by name since then), and neither does a TUPLE: it is its members'
+bytes, and the synthetic `__tuple<…>` is a struct only where the tuple is STORED — a stack-backed
+tuple, which `(T-Ref-Rep)` says is what every-member-scalar gives, has nowhere to put a tag.
+
+Measured 2026-09-07: `(integer, integer)?` was not merely refused, it was not consumed.  The
+tuple branch of `parse_type_full` returned before `parse_type`'s postfix-`?` handling, so the
+`?` was left for whatever came next and every position reported a syntax cascade naming
+nothing — *"Expect token ;"* for a local, *"Expect token )"* for a parameter, *"Expect token >"*
+inside a `vector<…>`, *"unexpected '?'"* for a field or an alias.  A nullable MEMBER
+(`(integer?, integer)`) has always worked and is unaffected.
+
+**Mitigated, not closed.**  The refusal now names the tuple the author wrote and the two cures
+(make the members nullable, or wrap the tuple in a `struct`), beside the `value struct` case in
+the same function.  Closing it needs the design call loft#1423 carries: give a tuple
+`(L-Null-Tag)`'s treatment where it is stored — which would make one written type nullable in
+one position and not in another — or state the precondition in `(N-Opt)` itself, that τ must
+have a null to spend.  Guard: `tests/scripts/1423-a-nullable-tuple-type-is-refused-by-name.loft`
+(seven positions, each naming its own tuple so no two expectations share a substring), plus the
+nullable-member cell that proves the refusal is about the tuple TYPE.
+
+**The shape EXISTS, which is what makes the deviation more than a spelling.**  The walk's first
+reading was that the seven TUPLE tier-0 functions in `parser/mod.rs` are opaque to a shape no
+program can build.  Two routes build it anyway, and neither goes through the type parser:
+`(N-Index)` — `v[i]` on a `vector<(τ, τ)>` IS `(τ, τ)?` — and a generic `-> T?` instantiated at a
+tuple, whose own refusal names the type (*"No matching operator '==' on '(integer, integer)?' and
+'null'"*).  Measured on that shape, the same afternoon:
+
+- an undischarged member read had no answer and no message: `v[i].0` reported *"Expect a field
+  name"* — a message about a NAME, for a program that wrote a number, on a receiver whose real
+  problem is the `?`.  A nullable STRUCT receiver reads correctly through its absence
+  (`(L-Null-Which)`), which is what makes the tuple's silence read as a defect rather than a
+  rule.  Refused by name now, with the two discharges that work
+  (`tests/scripts/1423b-…`); a naive peel of the projection was built and measured first, and it
+  ICEs in codegen — the value has no representation, exactly as this entry says.
+- the `?` discharge answered NULL MEMBERS in a slot typed non-null — `(N-Default)` broken for a
+  tuple, while its struct twin was right — because `Data::has_default` recursed over the members
+  and `Parser::build_default` had no tuple arm, and the recovery for that disagreement was
+  silent.  Fixed (loft#1424): the tuple default is its members' defaults, the value the `??`
+  spelling hands over, and the recovery now REPORTS instead of typing an absent value non-null.
+
+So the seven functions are closed by their own measurement — a nullable tuple reaches none of
+them, because every route to one is refused or discharged before it gets that far — and the
+deviation stays open on the rule.
 
 ### D-Var-Enum — OPENED AND CLOSED (2026-09-06, loft#1390): an arm answering in the ENUM was asked to convert to its sibling's VARIANT, and the `match` join never widened
 
@@ -104,6 +261,58 @@ build refuses, so its compiling is the receipt.  The `&τ` parameter had never b
 (the `RefVar` peel carried the null in silence) and reports with the rest.  A documented refusal
 became a warning — `Contract: strained`; a program that compiled yesterday still compiles, and
 `x: integer = find(…)` now runs with a warning where it used to stop.
+
+### D-Null-Assign — OPENED AND CLOSED (2026-09-06, loft#1404): the ASSIGNMENT TARGET was the fifth position
+
+`(N-Store)` names the slots a bare `null` may not enter — *"a local, a field, a collection
+element, a tuple member, a call argument, a return, an INDEX"*.  `D-Null-Heap` above wired the
+heap half at four of them; the assignment target asked only for a SCALAR target, so two shapes
+answered WRONG in silence, on both backends:
+
+```loft
+s.rec = null;    // does not happen — `s.rec.n` still reads 5, where `S{rec: null}` reads 0
+v[i]  = null;    // a no-op — the element and the length are untouched
+```
+
+The same statement therefore meant one thing where `(N-Store)` was asked and another where it
+was not.
+
+**The filed scope was wrong, and the matrix is what corrected it.**  `x = null` at a heap
+target spells FIVE things, and three of them are not stores — so widening the ask to
+`is_dbref`, which is what the cause as filed implied, would have reported correct code.
+Measured at the lowering, all on both backends:
+
+| spelling | lowers to | what it is |
+|---|---|---|
+| `c[key] = null`, keyed | `OpHashRemove` | `(Col-Remove)`'s by-key DELETE |
+| `s.coll = null` | `OpClearVector` / `OpClearKeyed` | that field's CLEAR (@P307) |
+| `n.next = null`, `reference<T>` field | `OpSetDbRef(…, sentinel)` | a store that LANDS |
+| `s.rec = null` | `OpCopyRecord(null, …)` | the dropped write |
+| `v[i] = null` | `OpCopyRecord(null, …)` | the no-op |
+
+So the ask went to `Parser::copy_ref`, the one site that BUILDS the no-op: only the last two
+arrive there, and it needs no container test, no keyed test and no pointer-marker test.  A gate
+at the parse site needed all three and still got the POINTER field wrong, because #328's share
+marker is not on the resolved target type by then —
+`issues::issue_328_reference_field_pointer_semantics` is the cell that caught it, and it is the
+reason the chokepoint moved.
+
+**The VALUE is unchanged, and that is settled rather than deferred.**  A field declared
+`rec: E` is DENSE: `synth_nullable_struct_fields` gives a discriminant only to the `?` the
+author wrote, so a dense slot has nowhere to put "absent" and no store into it can make it hold
+null.  The cure the message already named — *declare it `E?`* — is therefore the real one; the
+`?` is what creates the room.
+
+What did change is the CONSEQUENCE clause, and only at this position.  *"The slot holds null"*
+is measured true for a scalar and for a record travelling as a HANDLE — a `null` argument
+arrives null, a `return null` reads back null — and false here, where nothing is written.  The
+four positions `D-Null-Heap` wired keep their wording to the byte, pinned by
+`heap_nstore::the_four_shipped_positions_keep_their_wording`; the clause now comes from the
+reporting position, which is the only thing that knows.
+
+`Contract: settled` — the rule already named the field and the collection element among its
+slots.  Guarded by six cells in `tests/heap_nstore.rs`, four of them negative controls, because
+the three sanctioned spellings above are correct code that must stay silent.
 
 ### D-Null-Heap — OPENED AND CLOSED (2026-09-03, loft#1313): `(N-Store)` was enforced for the SCALARS only
 

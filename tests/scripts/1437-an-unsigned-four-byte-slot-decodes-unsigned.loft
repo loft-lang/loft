@@ -1,0 +1,270 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Narrow — the storage WIDTH is decided by the range, and @FR-L-Null — absence is a
+// sentinel in the slot's own bytes.  Four bytes do not say which encoding they are: `u32`
+// runs past `i32::MAX`, so it is written unsigned with `u32::MAX` reserved for absence
+// (which is why `u32` is declared `limit(0, 4294967294)`), while `i32` is written signed
+// with `i32::MIN` reserved.  The two have the same width and different meanings for the
+// same bytes.
+//
+// The codegen has carried that split since `NarrowIntKind` gained `Int4Raw`/`Int4Full`;
+// the SCHEMA had one 4-byte `Parts` variant.  So a `u32` slot was written by
+// `OpSetInt4Raw` and read back through `Parts::Int`, which sign-extends — and every route
+// that reads through the schema rather than through the field's own op answered wrong,
+// while a direct field read stayed correct.  One record, two values for one field,
+// depending on which way you asked (loft#1437).
+//
+// The schema Part and the ops now come from ONE choice (`NarrowIntKind::part`), so a
+// SIXTH re-derivation of "which encoding is this width" cannot drift again — there were
+// five, and each was found only after the previous one was closed.  That is the same fix
+// @FR-L-Narrow already needed one width down, where a non-null `u16` read back off-by-one
+// for exactly this reason (loft#812).
+//
+// ⚠ The controls are the point of this file.  A cure that simply made every 4-byte slot
+// unsigned passes every cell above and fails `a_signed_four_byte_slot_stays_signed`.  A
+// cure that fixed the RENDER alone passes the render cells and fails every keyed one,
+// because a keyed lookup hashes and orders through a different reader.
+//
+// @falsified-at: 86f59034 — interpret exit 1 -> 0, 13 assertion failures -> 0 (5 fns still
+//   PASS on the control); native exit 1 -> 0, 1 assertion failure -> 0.
+//
+//   The two legs count differently and the reason is the harness, not this file: the native
+//   backend runs every fn in ONE binary and the first failed assertion ends it, so one real
+//   failure marks them all.  The interpreter runs them apart, which is why its split is the
+//   number that matters — the fns that still PASS on the BROKEN build are exactly the signed
+//   controls, which is what proves they are controls and not cells that happen to co-vary
+//   with the defect.
+
+// @PLN9: the binary-I/O cell below does cwd-relative file I/O.
+#cwd
+
+// ── The render route: the boundary is exactly i32::MAX + 1 ────────────────────────────
+
+struct R { a: u32, c: integer }
+
+fn a_u32_field_renders_its_own_value_past_the_signed_boundary() {
+  lo: vector<R> = [R { a: 2147483647, c: 9 }];
+  assert_eq("{lo[0]}", "{{a:2147483647,c:9}}", "the last value a signed read gets right");
+  hi: vector<R> = [R { a: 2147483648, c: 9 }];
+  assert_eq("{hi[0]}", "{{a:2147483648,c:9}}", "the first value it does not");
+  big: vector<R> = [R { a: 3000000000, c: 9 }];
+  assert_eq("{big[0]}", "{{a:3000000000,c:9}}", "a value well past the boundary");
+  top: vector<R> = [R { a: 4294967294, c: 9 }];
+  assert_eq("{top[0]}", "{{a:4294967294,c:9}}", "the type's declared maximum");
+}
+
+fn the_field_read_agrees_with_the_render() {
+  // The field read goes through `OpGetInt4Full` and was ALWAYS right; it is here so the
+  // file states the invariant that matters — one record answers ONE value for one field,
+  // whichever route asks.
+  v: vector<R> = [R { a: 3000000000, c: 9 }];
+  r: R = v[0];
+  assert_eq("{r.a}", "3000000000", "the direct field read");
+  assert_eq("{v[0]}", "{{a:3000000000,c:9}}", "and the schema-driven render, on one record");
+}
+
+fn a_u32_vector_element_renders_its_own_value() {
+  v: vector<u32> = [7, 2147483648, 3000000000, 4294967294];
+  assert_eq("{v}", "[7,2147483648,3000000000,4294967294]", "an element is a slot too");
+  assert_eq("{len(v)}", "4", "and the length is untouched by the encoding");
+}
+
+// ── Absence: the reserved code moves with the encoding ─────────────────────────────────
+
+struct N { a: u32?, c: integer }
+
+fn an_absent_u32_is_absent_and_not_minus_one() {
+  // Read as signed, the unsigned sentinel `u32::MAX` is the value -1 — so an ABSENT
+  // field rendered as a number, and a nullable field is the half a render can least
+  // afford to get wrong.
+  v: vector<N> = [N { a: null, c: 3 }];
+  assert_eq("{v[0]}", "{{c:3}}", "an absent field is omitted, as at every other width");
+  r: N = v[0];
+  assert_eq("{r.a ?? -1}", "-1", "and the field read still says absent");
+}
+
+fn a_present_u32_at_the_signed_null_code_is_present() {
+  // 2147483648 IS `i32::MIN`'s bit pattern.  Under the signed Part it was read as the
+  // NULL sentinel, so a present value made the whole field disappear from the record —
+  // a value silently becoming an absence.
+  v: vector<N> = [N { a: 2147483648, c: 1 }];
+  assert_eq("{v[0]}", "{{a:2147483648,c:1}}", "a present value at the signed null code");
+  r: N = v[0];
+  assert_eq("{r.a ?? -1}", "2147483648", "and it reads back as itself");
+  w: vector<N> = [N { a: 3000000000, c: 2 }];
+  assert_eq("{w[0]}", "{{a:3000000000,c:2}}", "a present value past the boundary");
+}
+
+// ── The keyed route: a lookup hashes and orders through its own readers ────────────────
+
+struct K { k: u32, v: integer }
+
+fn every_keyed_kind_finds_a_record_with_a_large_key() {
+  // The lookup answered `null` for a record the collection's own iteration yielded: the
+  // probe hashed 3000000000 and the record hashed -1294967296.  The small key is the
+  // control — it was always found, so a guard using only large keys cannot tell a broken
+  // lookup from a broken collection.
+  h: hash<K[k]> = [K { k: 3000000000, v: 77 }, K { k: 7, v: 1 }];
+  assert_eq("{h[3000000000]}", "{{k:3000000000,v:77}}", "hash finds a large key");
+  assert_eq("{h[7]}", "{{k:7,v:1}}", "and still finds a small one");
+  s: sorted<K[k]> = [K { k: 3000000000, v: 77 }, K { k: 7, v: 1 }];
+  assert_eq("{s[3000000000]}", "{{k:3000000000,v:77}}", "sorted finds a large key");
+  assert_eq("{s[7]}", "{{k:7,v:1}}", "and still finds a small one");
+  i: index<K[k]> = [K { k: 3000000000, v: 77 }, K { k: 7, v: 1 }];
+  assert_eq("{i[3000000000]}", "{{k:3000000000,v:77}}", "index finds a large key");
+  assert_eq("{i[7]}", "{{k:7,v:1}}", "and still finds a small one");
+}
+
+fn a_large_key_iterates_as_itself() {
+  h: hash<K[k]> = [K { k: 3000000000, v: 77 }];
+  total = 0;
+  for e in h { total = total + e.k; }
+  assert_eq("{total}", "3000000000", "iteration reads the key it stored");
+  assert_eq("{len(h)}", "1", "and one append is one record");
+}
+
+fn a_sorted_collection_orders_large_keys_above_small_ones() {
+  // Compared as `i32`, every key at or above 2147483648 sorts BELOW every key under it,
+  // so this order inverts under the defect while every single lookup still succeeds.
+  t: sorted<K[k]> = [K { k: 4294967294, v: 9 }, K { k: 2147483648, v: 8 }, K { k: 3, v: 7 }];
+  out = "";
+  for e in t { out = out + "{e.k},"; }
+  assert_eq(out, "3,2147483648,4294967294,", "unsigned order, smallest first");
+}
+
+struct P { x: u32, y: u32, n: text }
+
+fn a_spatial_index_places_a_large_coordinate() {
+  s: spatial<P[x,y]> = [P { x: 3000000000, y: 4000000000, n: "far" }, P { x: 3, y: 4, n: "near" }];
+  assert_eq("{s[3000000000,4000000000].n}", "far", "a large coordinate is found");
+  assert_eq("{s[3,4].n}", "near", "and a small one still is");
+}
+
+// ── Controls: the cure must not spread to the widths that were already right ───────────
+
+struct W { b: u8, s: u16, i: i32, u: u32, w: integer }
+
+fn every_other_width_is_unchanged() {
+  v: vector<W> = [W { b: 200, s: 60000, i: 2000000000, u: 3000000000, w: 5000000000 }];
+  assert_eq("{v[0]}", "{{b:200,s:60000,i:2000000000,u:3000000000,w:5000000000}}",
+            "one struct, five widths, one render");
+}
+
+fn a_signed_four_byte_slot_stays_signed() {
+  // THE control.  `i32` shares the width and must keep the signed decode: a cure that
+  // made four bytes unsigned reads -7 back as 4294967289 and passes every cell above.
+  n: vector<i32> = [-7, -2147483647, 0, 2147483647];
+  assert_eq("{n}", "[-7,-2147483647,0,2147483647]", "a signed 4-byte element keeps its sign");
+  assert_eq("{len(n)}", "4", "and its length");
+}
+
+struct S { i: i32?, c: integer }
+
+fn a_signed_four_byte_field_keeps_its_own_null_code() {
+  a: vector<S> = [S { i: null, c: 1 }];
+  assert_eq("{a[0]}", "{{c:1}}", "absent");
+  p: vector<S> = [S { i: -2147483647, c: 2 }];
+  assert_eq("{p[0]}", "{{i:-2147483647,c:2}}", "and a present value beside its sentinel");
+}
+
+struct KI { k: i32, v: integer }
+
+fn a_signed_key_still_orders_negatives_first() {
+  t: sorted<KI[k]> = [KI { k: 5, v: 1 }, KI { k: -5, v: 2 }, KI { k: 0, v: 3 }];
+  out = "";
+  for e in t { out = out + "{e.k},"; }
+  assert_eq(out, "-5,0,5,", "signed order, negatives first");
+  assert_eq("{t[-5].v}", "2", "and a negative key is findable");
+}
+
+fn a_nested_vector_of_u32_keeps_the_encoding_at_both_levels() {
+  // The element Part is derived recursively for a nested container, so the inner
+  // vector's element resolves through the same home a second time.
+  n: vector<vector<u32>> = [[7, 3000000000], [4294967294]];
+  assert_eq("{n[0]}", "[7,3000000000]", "the inner vector renders unsigned");
+  assert_eq("{n[1]}", "[4294967294]", "and so does the second one");
+  assert_eq("{len(n)}", "2", "outer length");
+  assert_eq("{len(n[0])}", "2", "inner length");
+}
+
+fn a_u32_survives_a_parameter_and_a_return() {
+  v: vector<R> = [R { a: 3000000000, c: 9 }];
+  assert_eq(render(v[0]), "{{a:3000000000,c:9}}", "through a parameter");
+  assert_eq("{minted()[0]}", "{{a:4294967294,c:1}}", "and out of a callee's return");
+}
+
+fn render(r: R) -> text { "{r}" }
+
+fn minted() -> vector<R> { [R { a: 4294967294, c: 1 }] }
+
+// ── The binary-I/O route: a file is a decode too ───────────────────────────────────────
+
+fn a_u32_survives_a_binary_file_round_trip() {
+  // `f += (v as u32)` and the typed read back dispatch on the same `Parts`, through their
+  // OWN mint site — a `size(4)` cast, not a struct field.  So this route kept the signed
+  // decode after the field and element routes were fixed, and a value written to a file did
+  // not survive its own round-trip: 3000000000 came back as -1294967296 with the byte count
+  // exactly right, which is the shape a size assertion cannot see.
+  delete("test_loft_1437_u32.bin");
+  {
+    f = file("test_loft_1437_u32.bin");
+    f#format = LittleEndian;
+    f.set_file_size(0);
+    f += (3000000000 as u32);
+    f += (7 as u32);
+    f += (2147483648 as u32);
+    f.sync();
+  }
+  {
+    g = file("test_loft_1437_u32.bin");
+    assert_eq("{g#size}", "12", "three 4-byte values, so the WIDTH was never the problem");
+    g#format = LittleEndian;
+    a: u32 = g#read;
+    b: u32 = g#read;
+    c: u32 = g#read;
+    assert_eq("{a}", "3000000000", "a large value round-trips");
+    assert_eq("{b}", "7", "and a small one still does");
+    assert_eq("{c}", "2147483648", "including the signed null code");
+  }
+  delete("test_loft_1437_u32.bin");
+}
+
+fn an_i32_binary_round_trip_keeps_its_sign() {
+  // The control for the route above.
+  delete("test_loft_1437_i32.bin");
+  {
+    f = file("test_loft_1437_i32.bin");
+    f#format = LittleEndian;
+    f.set_file_size(0);
+    f += (-7 as i32);
+    f.sync();
+  }
+  {
+    g = file("test_loft_1437_i32.bin");
+    g#format = LittleEndian;
+    v: i32 = g#read;
+    assert_eq("{v}", "-7", "a signed 4-byte value round-trips negative");
+  }
+  delete("test_loft_1437_i32.bin");
+}
+
+type UBig = integer limit(1000, 4000000000) size(4);
+
+struct Qt { x: UBig, y: UBig, n: text }
+
+fn a_spatial_axis_with_a_non_zero_minimum_is_still_unsigned() {
+  // The cell where this rule meets @FR-L-Narrow-Decode, which says the 1- and 2-byte widths
+  // store `value - start` and a reader must add `start` back.  At FOUR bytes the ops store the
+  // value RAW (`set_u32_raw` / `set_i32_raw`, no shift), so the key descriptor's shift is 0 and
+  // the bias must NOT be applied — a declared minimum here changes which width the range needs
+  // and nothing else.  Asserted because the two rules pull opposite ways at this width, and a
+  // reader adding the bias "for consistency" would break exactly this axis while every `u32`
+  // cell above (minimum 0, so the bias is nothing) stayed green.
+  t: spatial<Qt[x,y]> = [Qt { x: 3000000000, y: 3500000000, n: "hi" }, Qt { x: 1000, y: 2000, n: "lo" }];
+  assert_eq("{t[3000000000,3500000000].n}", "hi", "a large point on a biased-range axis");
+  assert_eq("{t[1000,2000].n}", "lo", "and a small one at the range's own minimum");
+  out = "";
+  for e in t { out = out + "{e.x},"; }
+  assert_eq(out, "1000,3000000000,", "unsigned order on a non-zero-minimum axis");
+}

@@ -101,10 +101,24 @@ Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md
 | `static` | IR tree and bytecode only (no execution) | Codegen bugs, wrong IR, wrong opcode selection |
 | `crash_tail:N` | Last N lines before panic | Crash triage when full output is too large |
 | `locks` | Every store-lock / store-unlock event with store_nr + rec | "Write to locked store at rec=N fld=M" panics — pinpoints which op acquired the lock |
-| `type_timeline:<varname>` | Every type-mutation event for a specific named variable (old → new + origin + the SOURCE LINE that wrote it; set `LOFT_TIMELINE_BT=1` for the stack behind it) | "Why is var X type T at this point?" — flip / change_var_type / depend / substitute_type traces.  A dep list is REPLACED, not merged (`Type::depending`), so "who wrote this dep last" is usually the whole question |
+| `type_timeline:<varname>` | Every type-mutation event for a specific named variable (old → new + origin + the SOURCE LINE that wrote it; set `LOFT_TIMELINE_BT=1` for the stack behind it) | "Why is var X type T at this point?" — flip / change_var_type / depend / substitute_type traces.  A dep list is REPLACED, not merged (`Type::depending`), so "who wrote this dep last" is usually the whole question.  ⚠ Matches by NAME across every parsed function including the stdlib — check `v_nr=` before believing an origin (below) |
 | `ir:<fn_name>` | IR tree dump for the named function only (no bytecode, no execution trace) | "What IR did the parser emit for fn X?" — focused codegen-bug diagnosis |
 | `slots:<fn_name>` | Slot-allocation summary for the named function — each var's final slot OR a reason why it was skipped | "Why is var X at slot 65535?" — `Incorrect var X[65535]` codegen panics |
 | `captures:<fn_name>` | Capture-pipeline summary for the named function + its lambdas — scalars_to_box, mutated_captures, closure_record attrs with auto-Reference status | "Why is closure-record attr X stored inline vs share-by-DbRef?" — closure-encoding diagnosis |
+
+⚠ **`type_timeline` matches by NAME, across every function the run parses — the whole
+stdlib included — so a common name makes it answer about a DIFFERENT variable.**  It filters
+on the name alone (`type_timeline_target()`), and one run reaching for a receiver named `v`
+was told its dep was lost by `make_independent` at `objects.rs:573`, the `(B-Copy)` arm, with
+a plausible before/after type beside it; a print inside that arm showed it never fires for
+that variable at all.  The trace was not wrong about what it saw — it saw another `v`.
+
+Every line carries `v_nr=N`, so **read the `v_nr` and confirm the function before believing
+an origin**, and when the name is common prefer a print at the suspected site over the trace.
+The general form is worth carrying past this instrument: *a tool that cannot say which
+function it is talking about will confidently answer about a different one* — the same shape
+as a guard whose fixture is below the quantum, and the reason two plausible-looking readings
+can cancel into what reads as a deliberate design.
 
 `LOFT_VAR_TABLE=<fn substring>` is the companion to the IR dump, and NOT a `LOFT_LOG`
 preset — it prints after `scopes::check` on every path:
@@ -415,6 +429,19 @@ control cell.  With `--baseline`, failing cells are labelled
 — keep a main-tip worktree built for this (`git worktree add` +
 `cargo build --release --bin loft` inside it).  Leak detection: interp
 reads the exit warning; native runs under `LOFT_NATIVE_LEAK_CHECK=1`.
+
+**The REPORT's axes are the reporter's, and the ones it holds fixed are where the rest of the
+defect lives.**  A matrix grown outward from the filed reproducer inherits its choices, and
+those choices are not a sample — they are whatever the reporter happened to run into first.
+Measured on loft#1443 (a closure written into a `&fn(…)` parameter, an ICE on both backends):
+the reproducer CAPTURES, and a capturing lambda already emits the fn-ref pair, so the first of
+three fixes made the filed program pass while a NON-capturing lambda, a bare fn name and a
+second write through the same link stayed broken on `--native` — one of them a silent prune
+that panicked `invalid fn-ref` at the call.  The issue even said which axes it was holding
+fixed (*"a capturing closure is not required either"*), and that sentence names the cells that
+had to be built.  So read the report for what it VARIES, then build the cells it does not: the
+fix is finished when those pass, not when the reproducer does.  The corollary for a large leg
+is that sampling should cross the held-fixed axes rather than the moving ones.
 
 **A missing WARNING is not a passing cell.**  The vacuous-cell rule above is about
 empty stdout, but the same trap has a second door: reading a cell through a
@@ -1110,6 +1137,45 @@ Two rules follow:
   control is only evidence if you know the environment it ran in — otherwise you
   have measured the symlink, not the code.
 
+### Compare the PASSING side, not just the failing one
+
+**A differentiator found by comparing the passing side is worth more than any number of
+hypotheses about the failing side.** A hypothesis about why the red job is red must be
+disproven one at a time and each costs a round trip; a job matrix where something passes hands
+you an axis for free, and one reading of it can retire a whole family at once.
+
+Worked example, loft#1406's macOS leg. Four hypotheses had been offered for
+`reclaim_spares_live_and_fresh_files` failing under the ASan gates — the sentinel pid reading
+as a live process GROUP, the byte accounting losing a removed file, the sanitizer changing the
+allocation shape, the temp directory differing — and reading the failing job could not separate
+them. The per-job conclusions could:
+
+| job | result |
+|---|---|
+| ASan interpreter leak gate (**ubuntu**) | ✅ |
+| ASan UAF/OOB sweep (**ubuntu**) | ✅ |
+| ASan interpreter leak gate (**macos**) | ❌ |
+| ASan UAF/OOB sweep (**macos**) | ❌ |
+
+ASan is on the PASSING side too, so the sanitizer is not the variable — the platform is. That
+one comparison retired every "the sanitizer changed X" hypothesis at once, including the two
+that were being actively worked, and it cost a single API call. The same reading also showed
+the failure is a plain ASSERTION with no sanitizer report at all, which the job NAMES had
+concealed.
+
+**The corollary is about instrumentation, not diagnosis.** When a leg cannot be reproduced
+locally, a round trip costs a day — so the unit to optimise is *does this run ANSWER the
+question*, not *does it narrow it*. Rather than a fifth hypothesis, make the failing assertion
+carry its own evidence: the decision INPUTS the code branched on, and the state it left behind.
+Then force the assertion to fire once locally, so you know the message is not vacuous — a
+diagnostic nobody has seen fire is a hypothesis about a diagnostic.
+
+⚠ **And read the per-JOB log, not the run.** `gh run view --log` / `--log-failed` returns empty
+for these runs; `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` works, and
+`gh run view <run> --json jobs` gives the per-job conclusions the table above is read from. A
+run that reads green overall can carry a red leg, and a job NAME can describe a gate rather
+than the failure it caught.
+
 ## Debugging store-ownership bugs (leaks, double-frees, non-determinism)
 
 The word-addressed `Store` arena (`Vec<u64>`) is **invisible to valgrind** —
@@ -1621,6 +1687,14 @@ Killing them made it pass in 3s.  So before bisecting one of these:
 ```bash
 pgrep -af "target/test-tmp/.loft/cache/eh_"      # stale servers from an earlier run
 ```
+
+⚠ **Run it AFTER a gate as well as before, because the reap is unconditional.**  Measured on
+both checkouts 2026-09-07: a gate that finished `ALL GATES PASSED` left `eh_s5_*` and `eh_s7_*`
+alive behind it, one pair still running 1h40m later.  Nothing reaps a server that outlived the
+run that started it — `make sweep-scratch` reclaims the artefacts, not the processes.  A GREEN
+run is exactly the case where nobody looks, and the orphan is then charged to whoever runs
+next.  Kill by PID after matching `readlink /proc/<pid>/cwd` against your own checkout; a
+`pkill -f` pattern took out a peer's own process group ([CODE.md](CODE.md)).
 
 **Identical timing across runs is the tell** — that is a deadline expiring, not logic
 failing.  Real logic bugs vary by a few ms; a deadline does not.

@@ -517,7 +517,22 @@ TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 # too, so a naive loop counts our own claim twice and halves the box for a gate that is
 # alone on it.  Measured while writing this — no claims answered 1, one live claim
 # answered 3.  `ci-guard`'s own sibling loop skips self the same way.
-CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f "$$f" ] || continue; d=$$(cd "$$(dirname "$$f")" 2>/dev/null && pwd -P) || continue; case " $$seen " in *" $$d "*) continue;; esac; seen="$$seen $$d"; kill -0 "$$(cat "$$f" 2>/dev/null)" 2>/dev/null && n=$$((n+1)); done; [ $$n -lt 1 ] && n=1; echo $$n )
+# `nproc` is Linux; macOS spells it `sysctl -n hw.ncpu` — a bare $(nproc) made the
+# recipe die with `nproc: command not found` on every Mac (same 2808e183 throttle).
+CI_NPROC = $$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4 )
+# A test/build thread costs roughly 0.7 GiB at peak (rustc for native fixtures,
+# the codegen units of the release build), so sizing by cores alone over-commits
+# a small-memory box into swap — measured on a 14 GiB laptop: 20 threads drove
+# swap use to 10 GiB mid-gate.  MemAvailable is the honest budget: it already
+# discounts what the browser / IDE / analyzer residency of a dev box eats.
+# Linux-only (`/proc/meminfo`); empty elsewhere, which the recipe reads as "no cap" so the
+# portable core count above still governs there.
+CI_MEM_JOBS = $$( awk '/MemAvailable/ { print int($$2 / 716800) }' /proc/meminfo 2>/dev/null )
+# The case pattern carries a leading `(` on purpose: macOS's /bin/sh is bash 3.2, which
+# cannot parse a pattern's bare `)` inside `$( )` command substitution — without it,
+# every `make ci` on a Mac died at the recipe with `syntax error near ';;'` (the
+# optional open-paren is POSIX and is what rebalances 3.2's parser).
+CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f "$$f" ] || continue; d=$$(cd "$$(dirname "$$f")" 2>/dev/null && pwd -P) || continue; case " $$seen " in (*" $$d "*) continue;; esac; seen="$$seen $$d"; kill -0 "$$(cat "$$f" 2>/dev/null)" 2>/dev/null && n=$$((n+1)); done; [ $$n -lt 1 ] && n=1; echo $$n )
 
 
 # Speed REPORT for the slow tests — never a gate.  `speed` measures the tests
@@ -881,7 +896,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -935,6 +950,14 @@ bug-review:  ## Monthly bug-review aid: which mechanism classes are still produc
 release-checklist:  ## Per-release checklist: what CI proved, and what is left for a human
 	@python3 scripts/release-checklist.py $(ARGS) || true
 
+# The liveness census (@PLN156): are the gates themselves still live?  Suppressions
+# justified by CLOSED issues, gate workflows that quietly stopped firing, checklist
+# items never run in any recorded cycle.  A REPORT, never a gate — the per-release
+# reader is the M-liveness checklist item; `ARGS="--no-network"` for the offline half.
+.PHONY: release-liveness
+release-liveness:  ## Census: stale suppressions, gates that stopped firing, steps never run
+	@python3 scripts/release-liveness.py $(ARGS)
+
 # Every nightly, run deliberately against THIS commit in one CI run that ends in one
 # verdict — the release evidence RELEASE.md § The nightlies asks for, on demand instead
 # of on GitHub's schedule (whose 03:00 daily has started anywhere from 03:34 to 14:45
@@ -957,6 +980,17 @@ release-gate:  ## Run every nightly against this commit in one CI run (the relea
 #   make reference-review ARGS="--done tests/docs/07-vector.loft"
 reference-review:  ## Which reference chapters owe a human read (and which have MOVED)
 	@python3 scripts/reference-review.py $(ARGS)
+
+# The same pass for the agent skills (.claude/skills/): a skill is loaded INSTEAD of
+# the canonical doc it paraphrases, and those docs move daily while the skill is only
+# edited when someone notices.  Mechanical half is outright (cited paths, make targets
+# and LOFT_* switches must resolve); the content/usability/conciseness read is by hand,
+# per skill, watermarked so it happens the week a skill's sources move — SKILLS_REVIEW.md.
+#   make skills-review                                # what owes a read
+#   make skills-review ARGS=--verbose                 # + the commits behind each
+#   make skills-review ARGS="--done loft-test"        # record one as validated
+skills-review:  ## Which agent skills owe a human read (and which moved under their sources)
+	@python3 scripts/skills-review.py $(ARGS)
 
 # RELEASE.md § 8, measured instead of grepped.  Every `#[allow(clippy::…)]` under
 # src/ becomes an `#[expect]` in a throwaway worktree and clippy runs the way CI
@@ -1931,9 +1965,25 @@ ci-guard:
 	    kill -0 "$$(cat "$$d/.ci-running" 2>/dev/null)" 2>/dev/null || continue; \
 	    echo "make ci: WARNING — a gate is also running in $$d (pid $$(cat "$$d/.ci-running"))."; \
 	    echo "  Not refused: separate target/ and result.txt, so neither result is fiction."; \
-	    echo "  But you are sharing $$(nproc) threads — expect a slower run, and treat any"; \
+	    echo "  But you are sharing $(CI_NPROC) threads — expect a slower run, and treat any"; \
 	    echo "  300s slow-timeout as 'the machine was busy' until it reproduces alone."; \
 	done
+
+# How many test failures a gate collects before it stops.  `make ci CI_MAX_FAIL=1` is the old
+# fail-fast behaviour; `all` runs the whole suite whatever happens.
+#
+# The default is 5 rather than 1 because of what a stop-at-one gate costs when a run has
+# SEVERAL independent failures: each ~20-minute gate reports exactly one, and you learn the
+# count only by fixing and re-running.  Measured 2026-09-08 on the two-checkout join — three
+# consecutive gates, each cancelled at a different first failure (a stale browser bundle, a
+# golden mismatch, then a whole-corpus keyed-store regression that had been there the entire
+# time).  The third was the serious one and it was invisible for two rounds.
+#
+# Not `all` by default either: a genuinely broken tree fails thousands of tests and the run
+# then takes its full wall clock to tell you what the first screenful already did.  Five is
+# enough to see whether a red is one defect or several, which is the question the count is
+# actually being asked.
+CI_MAX_FAIL ?= 5
 
 ci: ci-guard
 	@echo $$PPID > .ci-running
@@ -1970,12 +2020,12 @@ ci: ci-guard
 	#                       surfaced as downstream test failures)
 	#   3b. cache warm     → loft#1238: build the native artifacts this run is
 	#                       about to need, ONCE, before the parallel section.
-	#                       `native_artifact_cache_key` folds in a content hash
-	#                       of the loft build, so the rebuild above invalidates
-	#                       every cached cdylib and loft's own wasm runtime
-	#                       rlib — and the FIRST test to want each pays the
-	#                       full rebuild while the rest queue on the global
-	#                       build lock.  Measured: 25.6s for the wasm rlib,
+	#                       loft's own wasm runtime rlib is keyed on the rlib's
+	#                       content hash, so the rebuild above invalidates it
+	#                       (package cdylibs are keyed on the loft-ffi ABI +
+	#                       RUSTFLAGS and survive, @PLN159 C) — and the FIRST
+	#                       test to want a stale one pays the full rebuild
+	#                       while the rest queue on the global build lock.  Measured: 25.6s for the wasm rlib,
 	#                       63s for the `random` cdylib on a loaded box,
 	#                       against a 60s per-test budget that blew twice.
 	#                       Run with the RELEASE binary on purpose: the cdylib
@@ -2002,6 +2052,20 @@ ci: ci-guard
 	#
 	# Drift from what GH runs is the most common cause of "passed local,
 	# failed remote" — keep this list short and IDENTICAL to ci.yml.
+	#
+	# Two local-only additions, neither of which changes WHAT runs (@PLN159):
+	#   G. ONE gate at a time on this box.  Two `make ci` on sibling checkouts each
+	#      ran at half the threads and both took ~2x (CI_BUDGET.md: 10 -> 19 min),
+	#      and the load is what produced the OOM kills and the load flakes that cost a
+	#      whole rerun.  The chain below takes /tmp/loft-gate.lock before it computes
+	#      its thread count; a second gate QUEUES (result.txt says since when) and the
+	#      first runs at full width.  `LOFT_GATE_PARALLEL=1` opts back into running
+	#      beside another gate, throttled by CI_LIVE_GATES as before.
+	#   D. The diff's own subjects run FIRST.  The gate is fail-fast, so the order
+	#      decides when a red gate says so: scripts/nextest_priority.sh maps the
+	#      uncommitted diff to subjects (test_subjects.sh) and hands nextest a
+	#      `priority` override in a tool config file that layers under
+	#      .config/nextest.toml.  Coverage is untouched — it is an order.
 	# The `Browser build + probe` (gallery) job is intentionally not
 	# mirrored here: it requires wasm-pack + node + a clean network and
 	# is heavy enough that local devs run `make gallery` separately when
@@ -2010,9 +2074,16 @@ ci: ci-guard
 	mkdir -p $(TEST_SCRATCH) && \
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $$(nproc) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; \
+	{ if [ -n "$${LOFT_GATE_PARALLEL:-}" ]; then :; else \
+	    exec 9>/tmp/loft-gate.lock; \
+	    if ! flock -n 9; then \
+	      echo "make ci: QUEUED behind another gate on this box since $$(date -u +%TZ) — one gate at a time (LOFT_GATE_PARALLEL=1 to run beside it, throttled)" | tee -a result.txt; \
+	      flock 9; echo "make ci: gate lock acquired at $$(date -u +%TZ)" | tee -a result.txt; \
+	    fi; \
+	  fi; } && \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
-	{ [ "$${gates:-1}" -gt 1 ] && echo "make ci: THROTTLED to $$jobs of $$(nproc) threads — $$gates gates live on this box" || echo "make ci: $$jobs of $$(nproc) threads (sole gate)"; } | tee -a result.txt && \
+	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
 	$(MAKE) rebuild-native-cdylibs >> result.txt 2>&1 && \
 	cargo fmt -- --check >> result.txt 2>&1 && \
 	cargo clippy -- -D warnings >> result.txt 2>&1 && \
@@ -2029,9 +2100,9 @@ ci: ci-guard
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $$(nproc) / $${gates:-1} )); if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
-	echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live" >> result.txt && \
-	cargo nextest run --profile ci >> result.txt 2>&1 && \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
+	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the diff's subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
+	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	{ echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; }
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,
@@ -2179,6 +2250,14 @@ gtest:
 bench:
 	cargo build --release -q
 	bash bench/run_bench.sh --warmup
+
+# Per-routine loft-native vs plain-Rust ratios with asserted output hashes
+# (@PLN157 P0, loft#1426).  A REPORT by default; `--gate` (the plan's phases
+# and the release evidence) also fails ratios over bench/ratio_oracle.tsv's
+# bars.  Hash mismatches always fail.
+native-ratio:
+	cargo build --release -q
+	bash scripts/native_ratio.sh
 
 .PHONY: doc doc-packages
 # The whole doc site, the way the release builds it (@PLN149).

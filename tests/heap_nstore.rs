@@ -434,3 +434,220 @@ fn the_scalar_wording_is_unchanged() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// loft#1404 — the FIFTH position, which loft#1313's heap half did not reach.
+//
+// `(N-Store)` names the slots a bare `null` may not enter as *"a local, a field, a collection
+// element, a tuple member, a call argument, a return, an INDEX"*.  The four positions above
+// ask; the ASSIGNMENT TARGET asked only for a SCALAR target, so `s.rec = null` and
+// `v[i] = null` passed in silence — and they are the two that answer WRONG:
+//
+//   * `s.rec = null` does not happen.  `s.rec.n` still reads what it held, where the literal
+//     `S{rec: null}` reads the type's zero — the same statement meaning two things.
+//   * `v[i] = null` is a no-op: the element and the length are untouched.
+//
+// Three OTHER shapes reach the same site and are not stores at all, which is why the ask
+// could not simply be widened to `is_dbref`.  They are the negative controls below:
+// `c[key] = null` is `(Col-Remove)`'s by-key delete on the five keyed kinds, and
+// `s.coll = null` is that field's clear (@P307).  Both are documented operations that do
+// exactly what they say, and warning on them would be a false report on correct code.
+//
+// The message's CONSEQUENCE clause is this position's own.  The shared default — "the slot
+// holds null" — is measured true for a scalar, and for a record travelling as a HANDLE (a
+// `null` argument arrives null, a `return null` reads back null); it is false for a dense
+// INLINE slot, which has no discriminant to spend on absence, and false here, where nothing
+// is written at all.  The cure is unchanged and is the real one: the `?` is what creates the
+// room (`synth_nullable_struct_fields` gives a discriminant only to the `?` the author wrote).
+
+/// The assignment-target notice, keyed on its own consequence clause so it cannot be confused
+/// with the four positions that share the default one.
+fn assign_notices(err: &str) -> usize {
+    err.lines()
+        .filter(|l| {
+            l.contains("`null` is stored into the assignment target")
+                && l.contains("the store does not happen")
+        })
+        .count()
+}
+
+/// A dense RECORD field: the write is dropped, and that used to be silent.
+#[test]
+fn a_null_into_a_record_field_is_reported() {
+    let src = "struct E { n: integer }\n\
+               struct S { e: E }\n\
+               fn main() { s = S{e: E{n:5}}; s.e = null; print(\"{s.e.n}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, out, err) = run(src, backend, true, &format!("asg_rec_{}", &backend[2..]));
+        assert_eq!(
+            assign_notices(&err),
+            1,
+            "a dropped write must be reported ({backend})\n{err}"
+        );
+        assert!(ok, "the cell still runs on {backend}\n{err}");
+        assert!(
+            out.contains('5'),
+            "and the value is unchanged — the report is what was missing ({backend}): {out}"
+        );
+    }
+}
+
+/// A VECTOR element target: a no-op, and it used to be silent.  A vector is not keyed, so
+/// `v[i] = null` is neither `(Col-Remove)`'s delete nor a store that lands.
+#[test]
+fn a_null_into_a_vector_element_is_reported() {
+    let src = "struct E { n: integer }\n\
+               fn main() { w: vector<E> = [E{n:1}, E{n:2}]; w[0] = null;\n\
+               print(\"{len(w)} {w[0]?.n}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, out, err) = run(src, backend, true, &format!("asg_elem_{}", &backend[2..]));
+        assert_eq!(
+            assign_notices(&err),
+            1,
+            "a no-op element store must be reported ({backend})\n{err}"
+        );
+        assert!(ok, "the cell still runs on {backend}\n{err}");
+        assert!(
+            out.contains("2 1"),
+            "and neither the length nor the element moved ({backend}): {out}"
+        );
+    }
+}
+
+/// CONTROL — `c[key] = null` on a keyed collection is `(Col-Remove)`'s by-key DELETE, one of
+/// its four documented spellings.  Reporting it would be a false notice on correct code, and
+/// it is the shape that makes `is_dbref` the wrong gate: the slot type is the element record,
+/// exactly as the vector cell above.  Only the CONTAINER tells them apart.
+#[test]
+fn a_keyed_removal_is_not_a_store() {
+    for kind in ["hash", "sorted", "index"] {
+        let src = format!(
+            "struct K {{ id: integer, n: integer }}\n\
+             fn main() {{ h: {kind}<K[id]> = [K{{id:1,n:1}}, K{{id:2,n:2}}];\n\
+             h[1] = null; print(\"{{len(h)}} {{h[2]?.n}}\\n\"); }}\n"
+        );
+        for backend in BACKENDS {
+            let tag = format!("asg_keyed_{kind}_{}", &backend[2..]);
+            let (ok, out, err) = run(&src, backend, true, &tag);
+            assert_eq!(
+                assign_notices(&err),
+                0,
+                "a `{kind}` removal by key is not a store ({backend})\n{err}"
+            );
+            assert!(ok, "the {kind} control runs on {backend}\n{err}");
+            assert!(
+                out.contains("1 2"),
+                "and it removes exactly the keyed entry ({kind}, {backend}): {out}"
+            );
+        }
+    }
+}
+
+/// CONTROL — `s.coll = null` on a collection-typed FIELD is that field's clear, the same
+/// thing `s.coll = []` does.  The slot type is a collection rather than a record, which is
+/// the half of the gate the container test does not cover.
+#[test]
+fn a_collection_field_clear_is_not_a_store() {
+    let src = "struct K { id: integer, n: integer }\n\
+               struct S { v: vector<integer>, h: hash<K[id]> }\n\
+               fn main() { s = S{v: [1,2], h: [K{id:1,n:1}]};\n\
+               s.v = null; s.h = null; print(\"{len(s.v)} {len(s.h)}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, out, err) = run(src, backend, true, &format!("asg_clear_{}", &backend[2..]));
+        assert_eq!(
+            assign_notices(&err),
+            0,
+            "a collection field's clear is not a store ({backend})\n{err}"
+        );
+        assert!(ok, "the clear control runs on {backend}\n{err}");
+        assert!(
+            out.contains("0 0"),
+            "and it empties both collections ({backend}): {out}"
+        );
+    }
+}
+
+/// CONTROL — a `reference<T>` POINTER field (#328's share marker) is a 12-byte HANDLE slot,
+/// so `n.next = null` writes the sentinel: the store LANDS and `n.next == null` reads true.
+/// It is the shape that made the parse site the wrong home — by the time the target type is
+/// resolved there the marker is gone, so a gate written there reported a store that happens.
+/// Only the lowering separates them: a pointer field emits `OpSetDbRef`, a dense one
+/// `OpCopyRecord(null, …)`.
+#[test]
+fn a_pointer_field_store_lands_and_is_silent() {
+    let src = "struct Leaf { value: integer }\n\
+               struct Node { value: integer, next: reference<Leaf> }\n\
+               struct Dense { value: integer, inner: Leaf }\n\
+               fn main() { a = Leaf{value: 1}; n = Node{value: 0, next: a}; n.next = null;\n\
+               d = Dense{value: 0, inner: Leaf{value: 5}}; d.inner = null;\n\
+               print(\"{n.next == null} {d.inner.value}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, out, err) = run(src, backend, true, &format!("asg_ptr_{}", &backend[2..]));
+        assert_eq!(
+            assign_notices(&err),
+            1,
+            "only the DENSE field is a dropped write ({backend})\n{err}"
+        );
+        assert!(ok, "the pointer control runs on {backend}\n{err}");
+        assert!(
+            out.contains("true 5"),
+            "the pointer store lands and the dense one does not ({backend}): {out}"
+        );
+    }
+}
+
+/// CONTROL — the ordinary assignment of a PRESENT record stays silent.  If this warned the
+/// notice would be unusable whatever it said about the null cells.
+#[test]
+fn a_present_record_assignment_is_silent() {
+    let src = "struct E { n: integer }\n\
+               struct S { e: E }\n\
+               fn main() { s = S{e: E{n:5}}; s.e = E{n:9}; print(\"{s.e.n}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, out, err) = run(
+            src,
+            backend,
+            true,
+            &format!("asg_present_{}", &backend[2..]),
+        );
+        assert_eq!(
+            assign_notices(&err),
+            0,
+            "the ordinary record assignment must stay silent ({backend})\n{err}"
+        );
+        assert!(ok, "the present-record control runs on {backend}\n{err}");
+        assert!(out.contains('9'), "and it lands ({backend}): {out}");
+    }
+}
+
+/// The four positions loft#1313 wired keep the DEFAULT consequence clause, to the byte — the
+/// per-position clause is an addition, not a rewrite of the shared message.  Measured: an
+/// argument and a return really do hold null, so "the slot holds null" is true there.
+#[test]
+fn the_four_shipped_positions_keep_their_wording() {
+    let src = "struct E { n: integer }\n\
+               struct S { e: E }\n\
+               fn takes(p: E) -> integer { return p.n; }\n\
+               fn gives() -> E { return null; }\n\
+               fn main() { q = S{e: null}; ve: vector<E> = [null];\n\
+               print(\"{q.e.n} {takes(null)} {gives().n} {len(ve)}\\n\"); }\n";
+    for backend in BACKENDS {
+        let (ok, _out, err) = run(
+            src,
+            backend,
+            true,
+            &format!("asg_shipped_{}", &backend[2..]),
+        );
+        assert_eq!(
+            err.matches("the slot holds null").count(),
+            4,
+            "the four shipped positions keep the shared clause ({backend})\n{err}"
+        );
+        assert_eq!(
+            assign_notices(&err),
+            0,
+            "and none of them is an assignment target ({backend})\n{err}"
+        );
+        assert!(ok, "the shipped-wording cell runs on {backend}\n{err}");
+    }
+}

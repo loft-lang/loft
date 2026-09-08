@@ -1146,8 +1146,8 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "`break` value type {} does not match function return type {}",
-                        break_tp.name(&self.data),
-                        ret_tp.name(&self.data)
+                        break_tp.source_name(&self.data),
+                        ret_tp.source_name(&self.data)
                     );
                 }
                 *val = Value::Return(Box::new(break_val));
@@ -1526,9 +1526,12 @@ impl Parser {
             && let Some(d) = crate::parser::vectors::boxed_cell_def(self.vars.tp(v_nr), &self.data)
             && let Some(value_attr) = self.data.def(d).attributes().first()
             && value_attr.name == "value"
-            && (value_attr.typedef.is_equal(tp)
-                || (matches!(value_attr.typedef, Type::Integer(_))
-                    && matches!(tp, Type::Integer(_))))
+            // Compared through `.base()`: assigning a dense `Ï` into a `Ï?` cell is the
+            // scalar-into-boxed-scalar overwrite this guard exists for, and without the peel
+            // the flip is reverted on the first `x = â¦` in the body (loft#1408).
+            && (value_attr.typedef.base().is_equal(tp.base())
+                || (matches!(value_attr.typedef.base(), Type::Integer(_))
+                    && matches!(tp.base(), Type::Integer(_))))
         {
             return;
         }
@@ -2117,8 +2120,8 @@ use a separate collection or add after the loop"
         // deliberately not `is_equal`, and `convert` has no arm for the pair, so the
         // carve-out is named here rather than widened into either of them.
         if let Type::Vector(src_elem, _) = s_type
-            && crate::parser::vectors::is_keyed(f_type)
-            && f_type.content().is_equal(src_elem)
+            && crate::parser::vectors::keyed_kind(f_type)
+            && f_type.peel_link().content().is_equal(src_elem)
         {
             return false;
         }
@@ -2664,6 +2667,38 @@ use a separate collection or add after the loop"
         var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
+        // narrowing has nothing to say about it: the proof describes what the slot currently
+        // HOLDS and it dies at this write (`parse_assign_op_inner` drops it once the store is
+        // built).  The target was parsed as an expression, which peels a proven-non-null
+        // variable to its base — so a declared `τ?` slot answered `τ`, and writing a `τ?` into
+        // its own declared type was reported as a nullable reaching a non-null slot.  Restoring
+        // just the marker keeps the deps and the reference spelling the read derived.
+        let declared_face = match to.unspan() {
+            Value::Var(v_nr)
+                if self.vars.exists(*v_nr)
+                    && self.narrowed_non_null.contains(v_nr)
+                    && matches!(self.vars.tp(*v_nr), Type::Optional(_))
+                    && !matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(Type::Optional(Box::new(f_type.clone())))
+            }
+            // A keyed ELEMENT place answers the element's own type, never the receiver's `?`.
+            // `@FR-N-Domain` gives a keyed READ through an absent collection `τ?` (loft#1450),
+            // and that `?` describes the READ: `(Col-Insert-Absent)` makes the WRITE total — an
+            // absent keyed destination is materialised by the write itself (loft#1213), which
+            // is what makes the bare `h[k] = v` and the discharged `h?[k] = v` agree.  Carried
+            // into the place, the receiver's `?` left the target unrecognised as one and the
+            // write lowered to a READ, losing it in silence.
+            Value::Call(d_nr, _)
+                if self.data.def(*d_nr).name() == "OpGetRecord"
+                    && matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(f_type.base().clone())
+            }
+            _ => None,
+        };
+        let f_type = declared_face.as_ref().unwrap_or(f_type);
         let group_parent = parent_tp.clone();
         let group_to = to.clone();
         let already = std::mem::replace(&mut self.rebind_lowered, u16::MAX);
@@ -2787,6 +2822,41 @@ use a separate collection or add after the loop"
         // as that route's target-shape test and every shape it declines falls through
         // unchecked.  Two did.
         self.guard_const_write(var_nr, op);
+        // @PLN130 F4 — and ask the KEY-WRITE question here too, for exactly the reason the
+        // const guard above gives.  Whether `c.k = …` re-keys a record a keyed collection
+        // indexes is a property of the PLACE, not of the route that lowers the store, and
+        // this guard used to live inside ONE route: the `OpGet<T>` -> `OpSet<T>` seam in
+        // `call_to_set_op`.  Its own comment said "on a scalar field", which was honest and
+        // was the whole hole — `assign_text` builds `OpSetText` directly and never reaches
+        // that seam, so a `text` KEY was never asked about.
+        //
+        // Measured, silently, on both backends: `c = &h["aa"]; c.name = "zz"` on a
+        // `hash<Nm[name]>` left the record reachable by NO key (`h["aa"]` and `h["zz"]` both
+        // miss) while `len` still said 1; on a `sorted` the record moved but the tree order
+        // it is searched by did not.  `trie` is the kind that can only ever be hit, since a
+        // trie keys on exactly one `text` field.
+        //
+        // The extraction is the same `(base, offset)` the seam read, taken from `to` before
+        // any route claims it — so a route added later inherits the guard instead of having
+        // to remember it.
+        let key_field_write = if let Value::Call(d, args) = to.unspan() {
+            let is_getter = self.data.def(*d).name().starts_with("OpGet");
+            match (
+                is_getter,
+                args.first().map(Value::unspan),
+                args.get(1).map(Value::unspan),
+            ) {
+                (true, Some(Value::Var(base)), Some(Value::Int(off))) => {
+                    Some((*base, i64::from(*off)))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some((base, off)) = key_field_write {
+            self.note_key_field_write(base, off);
+        }
         // …and note a whole-value rebind of a CAPTURE here for the same reason: this is the
         // point that still knows the assignment replaces the whole binding.  By the time the
         // lambda closes, a vector rebind is a clear plus appends and the `Value::Set` that
@@ -2859,10 +2929,10 @@ use a separate collection or add after the loop"
             && self.is_captured_dbref(to);
         if op == "+="
             && (var_nr != u16::MAX || captured_keyed)
-            && crate::parser::vectors::is_keyed(f_type)
+            && crate::parser::vectors::keyed_kind(f_type)
             && self.lexer.peek_token("[")
         {
-            let elm_tp = f_type.content();
+            let elm_tp = f_type.peel_link().content();
             self.lexer.token("[");
             // Empty literal `+= []` — no-op append.
             if self.lexer.has_token("]") {
@@ -2932,8 +3002,8 @@ use a separate collection or add after the loop"
         //    do not correspond and the transparent-construction path owns that shape.
         if op == "+="
             && var_nr != u16::MAX
-            && crate::parser::vectors::is_keyed(f_type)
-            && let elm_tp = f_type.content()
+            && crate::parser::vectors::keyed_kind(f_type)
+            && let elm_tp = f_type.peel_link().content()
             && let Type::Reference(elm_d, _) = &elm_tp
             && !self.data.def(*elm_d).name.starts_with("__nullable<")
             && self.peek_literal_of(&self.data.def(*elm_d).name.clone())
@@ -3117,12 +3187,26 @@ use a separate collection or add after the loop"
         // test saw no vector, took the whole vector COPY lowering, and still left the
         // variable carrying the annotation's `RefVar` over a value — the interpreter then
         // read the vector's buffer as a stack ref and panicked (loft#1371).
-        let amp_vector_source = match &s_type {
+        let amp_source = match &s_type {
             Type::RefVar(inner) => inner.base(),
             other => other.base(),
         };
-        let amp_vector_bind =
-            op == "=" && self.amp_pending && matches!(amp_vector_source, Type::Vector(_, _));
+        // @FR-B-Ref-Alias is stated over ANY binding, so the set of sources whose `&` bind
+        // SHARES the handle is every store-backed collection — `vectors::is_collection`,
+        // which @FR-Col-Store already defines as the `is_keyed` set plus `Vector`.  Asked as
+        // `matches!(source, Type::Vector(_, _))` it was a set of ONE, and the five keyed
+        // kinds took the deep-copy path instead: `a = &h` gave `a` its own store and
+        // `OpReplaceKeyed`-copied `h` into it, so the two were independent from the bind on
+        // and a write through either was invisible to the other.  From an EMPTY collection
+        // that reads as "the alias drops every append" (loft#1433), which is what it was
+        // filed as; `len` through the ALIAS is what says the append landed somewhere.
+        let amp_collection_bind =
+            op == "=" && self.amp_pending && crate::parser::vectors::is_collection(amp_source);
+        // The VECTOR half needs one thing more, which is why it stays a separate fact: its
+        // whole-value write must clear the SHARED store in place (`OpClearVector`, driven by
+        // `amp_vector_locals`).  A keyed whole-value write already replaces contents rather
+        // than minting, so it needs no such registration.
+        let amp_vector_bind = amp_collection_bind && matches!(amp_source, Type::Vector(_, _));
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
         // source untouched with nothing said.  Name the local here so `create_vector` clears
@@ -3176,7 +3260,7 @@ use a separate collection or add after the loop"
         // B-View, so both spellings emit byte-identical IR and the `&` was dropped as
         // redundant.  It stopped being redundant when F2 made a view MATERIALISE on a
         // reshape — from then on `&` also says *"and do not silently copy it"*.
-        let mut amp_unlowered = op == "=" && self.amp_pending && !amp_vector_bind;
+        let mut amp_unlowered = op == "=" && self.amp_pending && !amp_collection_bind;
         // @PLN87 L1 / #2 — a local `&`-binding to a SCALAR lvalue (`b = &a` or
         // `b: &integer = a`) makes `b` a LIVE reference to the source's stack slot:
         // lower it to `b: &T = OpCreateStack(a)` — the SAME stack-ref mechanism a `&T`
@@ -3233,7 +3317,10 @@ use a separate collection or add after the loop"
                     if is_scalar(self.vars.tp(src))
                         || matches!(
                             self.vars.tp(src).base(),
-                            Type::Reference(..) | Type::Tuple(_) | Type::Text(_)
+                            Type::Reference(..)
+                                | Type::Tuple(_)
+                                | Type::Text(_)
+                                | Type::Function(_, _, _)
                         ) =>
                 {
                     Some(src)
@@ -3373,9 +3460,20 @@ use a separate collection or add after the loop"
         // indirection parameters use, paying on every access to carry a compile-time
         // fact, which is exactly what loft's own advice warns about for a redundant `&`
         // param.  INERT: nothing reads it yet (step 3, the refusal, is what will).
+        //
+        // Through `base()`: a `&` onto a KEYED point lookup (`c = &s[30]`) sources an
+        // `Optional(Reference(E))` once `@FR-Col-Lookup` gives the lookup its `?`
+        // (loft#1450), and the bare spelling answered no — so the marker was never set and
+        // every `is_amp_link` reader downgraded the link to a copy in silence.  Measured:
+        // `c = &s[30]; c.key = 5` fell from `B-Ref-Reshape`'s REFUSAL to the copy-out
+        // advice, which is @PLN130 F9's explicit "the alternative is not a lesser `&`, it
+        // is a SILENT one" — the write stopped reaching `s` and the `&` said nothing.  The
+        // marker is what the four reshape refusals gate on (`scopes.rs::is_amp_link`, the
+        // rekey arm in `note_key_field_write`), so ONE unpeeled test silenced all of them
+        // for keyed views while the vector views they are usually written against passed.
         if amp_unlowered
             && var_nr != u16::MAX
-            && matches!(s_type, Type::Reference(..) | Type::Enum(_, true, _))
+            && matches!(s_type.base(), Type::Reference(..) | Type::Enum(_, true, _))
         {
             self.vars.set_amp_link(var_nr);
         }
@@ -3445,7 +3543,9 @@ use a separate collection or add after the loop"
         // and not `spatial` or `trie`, so `g.sp = null` took the SCALAR sentinel path —
         // found when @FR-N-Store's one home started asking here (the drifted-deny-list
         // shape QUALITY.md § Design P8 records).  The store face asks the bare-null half
-        // for the scalar slot; a heap slot's `= null` is its clear, asked where it lowers.
+        // for the scalar slot; a HEAP slot's `= null` is asked where it LOWERS, which is the
+        // only place the five things that spelling can mean are told apart (loft#1404 —
+        // `Parser::copy_ref`).
         if s_type == Type::Null && op == "=" && !crate::data::is_dbref(f_type) {
             self.convert_store(code, &Type::Null, f_type, "the assignment target", None);
         }
@@ -3647,8 +3747,8 @@ use a separate collection or add after the loop"
         // the LHS type).  Strict rule: vector push MUST use `+= [elem]`
         // (explicit brackets).  Falls through to the diagnostic below
         // when the RHS doesn't match the concat shape.
-        if op == "+=" && var_nr != u16::MAX && crate::parser::vectors::is_keyed(f_type) {
-            let elm_tp = f_type.content();
+        if op == "+=" && var_nr != u16::MAX && crate::parser::vectors::keyed_kind(f_type) {
+            let elm_tp = f_type.peel_link().content();
             if !elm_tp.is_unknown() && elm_tp.is_equal(&s_type) {
                 if !self.first_pass {
                     let elm = self.unique_elm_var(f_type, &elm_tp, var_nr);
@@ -3707,15 +3807,23 @@ use a separate collection or add after the loop"
         // The two questions stay separate and both still reach the reader: this one says WRITE
         // THE BRACKETS, and `(N-Store)` below says the value may be null where a non-null is
         // expected.  The cure named here (`+= [n]`) earns that warning on its own.
+        // loft#1445 — and the destination is read through `peel_link` for the reason
+        // @PLN25 gives one paragraph up about `?`: the ambiguity is a fact about the
+        // SPELLING of the append, and `&τ` records how the vector is reached, never what
+        // it is.  Read through `base`, the `&vector<τ>` twin of this exact statement was
+        // told *"cannot change type from &vector<Row> to Row"* — a message about a type
+        // change nobody wrote, where the plain spelling is told to write the brackets.
+        // @FR-B-Ref-Uniform: a `&τ` variable is used exactly like a `τ` variable, and that
+        // has to include which diagnostic it earns.
         if op == "+="
-            && let Type::Vector(_, _) = f_type.base()
+            && let Type::Vector(_, _) = f_type.peel_link()
             && !s_type.is_unknown()
             && {
-                let content = f_type.base().content();
+                let content = f_type.peel_link().content();
                 let src = s_type.base().clone();
                 self.holds_element(&content, &src)
             }
-            && !s_type.base().is_equal(f_type.base())
+            && !s_type.base().is_equal(f_type.peel_link())
         {
             diagnostic!(
                 self.lexer,
@@ -3742,18 +3850,34 @@ use a separate collection or add after the loop"
         // The BASE has to be acceptable for this to be the null's fault rather than an
         // ordinary type error: a `text?` appended to a `vector<integer>` is a mismatch that
         // discharging does not fix, and it keeps the plain message it already had.
+        // @FR-B-Ref-Uniform — the destination is read through `peel_link`, not `base`.  Every
+        // question below is about WHAT the destination is (which kind, which element type),
+        // never about how it is reached, and `&τ` records only the route.  Read through
+        // `base` the link stayed on, so a `&hash<τ[k]>` was not a collection to any of these
+        // routes: `c += [rec]` fell past all of them to the generic assignment and was
+        // refused as *"cannot change type from &hash<Row,["id"]> to vector<Row>"*, naming a
+        // vector the program never wrote (loft#1445).
+        //
+        // ⚠ The peel belongs at the DESTINATION as well as at the predicate, and a build that
+        // does one without the other is worse than neither.  Teaching only `is_keyed` /
+        // `is_collection` to peel routes the statement here and then hands `append_source` a
+        // `RefVar` destination, which matches no arm: the `&vector<τ>` twin that had always
+        // worked started answering *"cannot append `vector<Row>` to `&vector<Row>`"* — a
+        // REGRESSION in the control, bought with the fix.  Measured, and it is why `dest`
+        // below reads the same way.
+        let f_shape = f_type.peel_link();
         let nullable_append_source = op == "+="
             && !self.first_pass
             && !s_type.is_unknown()
             && matches!(&s_type, Type::Optional(_))
-            && crate::parser::vectors::is_collection(f_type.base())
+            && crate::parser::vectors::is_collection(f_shape)
             && {
                 let base = s_type.base().clone();
-                base.is_equal(f_type.base())
-                    || matches!(f_type.base(), Type::Vector(elm, _) if (**elm).is_equal(&base))
+                base.is_equal(f_shape)
+                    || matches!(f_shape, Type::Vector(elm, _) if (**elm).is_equal(&base))
                     || matches!(&base, Type::Vector(elm, _)
-                        if crate::parser::vectors::is_keyed(f_type.base())
-                            && (**elm).is_equal(&f_type.base().content()))
+                        if crate::parser::vectors::keyed_kind(f_shape)
+                            && (**elm).is_equal(&f_shape.content()))
             };
         if nullable_append_source {
             // The rule decides the severity, and it is not a refusal.  `(N-Store)`'s split is
@@ -3816,9 +3940,9 @@ use a separate collection or add after the loop"
         if op == "+="
             && !self.first_pass
             && !matches!(s_type, Type::Null)
-            && crate::parser::vectors::is_collection(f_type.base())
+            && crate::parser::vectors::is_collection(f_type.peel_link())
         {
-            let dest = f_type.base().clone();
+            let dest = f_type.peel_link().clone();
             let kind = self.append_source(&dest, &s_type);
             // A keyed destination has no route for the WHOLE collection at any place kind, and
             // the two place kinds fail differently — which is why neither one alone settles it.
@@ -3857,7 +3981,7 @@ use a separate collection or add after the loop"
                 && !s_type.is_unknown()
                 && self.source_names_a_collection(code);
             if unroutable_whole {
-                let content = dest.content().name(&self.data);
+                let content = dest.content().source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -3878,13 +4002,13 @@ use a separate collection or add after the loop"
                 // KEYED destination: `d.h += other_h` between two `hash<E[k]>` is itself a
                 // silent drop, and a refusal whose cure is broken sends the reader to a dead
                 // end — that one is loft#1221, the routes that drop an ADMISSIBLE source.
-                let content = dest.content().name(&self.data);
+                let content = dest.content().source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "cannot append `{}` to `{}` — a `+=` source must be one `{}` element \
                      written `[…]`, or a `vector<{}>` of them",
-                    s_type.name(&self.data),
+                    s_type.source_name(&self.data),
                     dest.source_name(&self.data),
                     content,
                     content
@@ -4069,16 +4193,16 @@ use a separate collection or add after the loop"
                      function's identity and has no encoding for absence, so the slot \
                      cannot be cleared; assign another function, or keep the absent \
                      case in a separate field",
-                    f_type.name(&self.data),
+                    f_type.source_name(&self.data),
                 );
             } else {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                    s_type.name(&self.data),
-                    f_type.name(&self.data),
-                    f_type.name(&self.data),
+                    s_type.source_name(&self.data),
+                    f_type.source_name(&self.data),
+                    f_type.source_name(&self.data),
                 );
             }
         }
@@ -4210,11 +4334,11 @@ use a separate collection or add after the loop"
         // both passes.
         let keyed_local_fill = op == "+="
             && var_nr != u16::MAX
-            && crate::parser::vectors::is_keyed(f_type)
+            && crate::parser::vectors::keyed_kind(f_type)
             && !matches!(code, Value::Insert(_))
             && match s_type.base() {
                 Type::Vector(elm, _) => {
-                    let content = f_type.base().content();
+                    let content = f_type.peel_link().content();
                     let elm = (**elm).clone();
                     self.holds_element(&content, &elm)
                 }
@@ -4343,7 +4467,11 @@ use a separate collection or add after the loop"
         // logic doesn't apply to boxed-text locals — they're
         // already a Reference(__cell_text, _), not an argument
         // and not a plain text Var.
-        let is_boxed_text_lhs = matches!(f_type, Type::Text(_))
+        // `.base()`, matching the `+=` test six lines below: a boxed `text?` local is a
+        // boxed text local, and the text-special branch does not apply to either.  Spelled
+        // bare here, it sent a nullable one down that branch and emitted `Set(65535, â¦)` —
+        // loft#1206's ICE reached through the cell instead of through a field (loft#1408).
+        let is_boxed_text_lhs = matches!(f_type.base(), Type::Text(_))
             && self.extract_boxed_var_from_lhs(to).is_some_and(|v_nr| {
                 self.vars.exists(v_nr)
                     && crate::parser::vectors::boxed_cell_def(self.vars.tp(v_nr), &self.data)
@@ -4857,7 +4985,21 @@ use a separate collection or add after the loop"
         // Replaces the old @P295 "not yet supported" gate.  All five kinds come from
         // `keyed_type_id`, the one list, so this site and the FIELD site above cannot
         // drift apart again (loft#922).
-        let keyed_kt = if !self.first_pass && op == "=" && var_nr != u16::MAX {
+        // loft#1445 — and NOT through a `&`.  `keyed_type_id` answers the KIND question and
+        // peels the link, because the append routes need a `&hash<E[k]>` to resolve to the
+        // hash's id.  This site asks something else: may the destination's own contents be
+        // REPLACED in place.  A `&` parameter's whole-value assignment is loft#1287's rebind
+        // — it installs a store the callee minted and displaces the caller's binding, with a
+        // witness protecting the entry store — so replacing through it writes the callee's
+        // records into a collection two frames down.  Measured: `fn set(x: &hash<E[k]>) { x =
+        // mk(9); }` reached through a PLAIN forwarder left the caller's hash reading `9:9`
+        // where it must still read `1:1,2:2` (`1291-a-keyed-write-back-does-not-release-the-
+        // callers-store`).
+        let keyed_kt = if !self.first_pass
+            && op == "="
+            && var_nr != u16::MAX
+            && crate::parser::vectors::owns_keyed_store(f_type)
+        {
             self.keyed_type_id(f_type)
         } else {
             None
@@ -4874,8 +5016,49 @@ use a separate collection or add after the loop"
         //
         // The var-RHS branch below stays separate: `s = other` deep-copies via
         // `OpReplaceKeyed`, which clears as part of the copy.
-        if keyed_kt.is_some() && matches!(code, Value::Insert(ls) if !ls.is_empty()) {
-            let clear = v_set(var_nr, Value::Null);
+        if let Some(kt) = keyed_kt
+            && matches!(code, Value::Insert(ls) if !ls.is_empty())
+        {
+            // @FR-L-CapHeap (loft#1447) — a CAPTURED local's rebind MINTS a fresh store
+            // instead of clearing this one in place.  `(L-CapHeap)` says a reassignment is
+            // not a mutation-through: the closure keeps the `DbRef` it was built with and
+            // answers the BUILD-time value, which is what the vector and struct spellings
+            // already do.  `Set(v, Null)` reaches `gen_keyed_null(first = false)`, whose
+            // `OpDatabase` clears the store IN PLACE and reuses `store_nr` — so the record's
+            // own handle sees the rebind, and `h = [Row{k:1,v:9}]` after a build over `v: 5`
+            // answered 9 on `hash`, `sorted` and `index`, both backends.
+            //
+            // Emitted HERE rather than decided in codegen because the licence is POSITIONAL
+            // and only the parser knows the position: `is_captured` is a whole-FUNCTION fact
+            // (`set_captured` runs when the closure BODY is parsed), so it is true for
+            // assignments that PRECEDE the build as well.  This site is reached only by a
+            // NON-EMPTY keyed literal — `h = [Row{…}]`, loft#895's local replace — while a
+            // declaration's `= []` goes through `create_keyed`, so the two cannot be
+            // confused and the declaration keeps its in-place init.
+            let clear = if self.vars.rebind_must_mint(var_nr) {
+                // `OpInitRefSentinel` rather than `OpInitRef`: it nulls the slot to the
+                // sentinel, and `OpDatabase`'s `store_nr == u16::MAX` arm then allocates a
+                // FRESH store from it — the same pair `parse_object` emits for the dense
+                // param rebind.  `OpInitRef` has no native emitter (it is codegen-internal),
+                // so the generated Rust called a function that does not exist.
+                let init = self.cl("OpInitRefSentinel", &[Value::Var(var_nr)]);
+                let alloc = self.cl(
+                    "OpDatabase",
+                    &[Value::Var(var_nr), Value::Int(i32::from(kt))],
+                );
+                // The `Set(v, Null)` STAYS, after the mint rather than instead of it.
+                // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
+                // reassigned after its capture was built, and that fact is what turns OFF
+                // `capture_adoption_owns_free` so the frame frees the store the local now
+                // names.  Dropping the node minted a fresh store and then suppressed its
+                // free — the record kept the build-time store and the new one leaked
+                // (`1324-a-reassigned-capture-suppresses-the-store-the-record-holds`).
+                // Ordered mint-then-clear so the clear lands on the FRESH store: the other
+                // way round it would empty the store the record still holds.
+                Value::Insert(vec![init, alloc, v_set(var_nr, Value::Null)])
+            } else {
+                v_set(var_nr, Value::Null)
+            };
             if let Value::Insert(ls) = code {
                 ls.insert(0, clear);
             }
@@ -4884,6 +5067,11 @@ use a separate collection or add after the loop"
         if let Some(kt) = keyed_kt
             && crate::parser::vectors::is_keyed(&s_type)
             && !matches!(code, Value::Insert(_) | Value::Null)
+            // @FR-B-Ref-Alias — a `&` bind opts INTO aliasing, so it must NOT deep-copy:
+            // falling through leaves the plain `Set(var, src)` handle share, and the dep on
+            // the source survives (it is this branch's `make_independent` that strips it),
+            // which is exactly the non-owning shape the vector twin already has.
+            && !amp_collection_bind
         {
             // `s = s` self-assign — emit nothing rather than clear+recopy
             // off the same storage.
@@ -5093,8 +5281,8 @@ use a separate collection or add after the loop"
                     self.lexer,
                     Level::Error,
                     "vector `+= other_vec` requires equal types ({} != {})",
-                    f_type.base().name(&self.data),
-                    s_type.name(&self.data)
+                    f_type.base().source_name(&self.data),
+                    s_type.source_name(&self.data)
                 );
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
@@ -5338,9 +5526,9 @@ use a separate collection or add after the loop"
                 self.lexer,
                 Level::Error,
                 "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                s_type.name(&self.data),
-                f_type.name(&self.data),
-                f_type.name(&self.data),
+                s_type.source_name(&self.data),
+                f_type.source_name(&self.data),
+                f_type.source_name(&self.data),
             );
         }
         // A NULLABLE narrow target takes the implicit CHECKED narrowing instead of the
@@ -5534,14 +5722,22 @@ use a separate collection or add after the loop"
             {
                 return Type::optional(elem);
             }
-            // loft#1071 — a STRUCT-ENUM element (`vector<Shape?>`) rides the `Optional`
-            // marker for the same reason a scalar does: its slot is a four-byte record
-            // POINTER with an in-band absent value (`0`), so it needs no `__nullable<…>`
-            // tag and no extra storage — only for the type to keep saying it may be
-            // absent.  Without the marker the element typed as a bare `Shape`, so the `?`
-            // was lost at the declaration and a loop binding over it could not be asked
-            // `e == null` at all: the type no longer admitted the question.
-            if crate::keys::pln25_optional_enabled() && matches!(elem, Type::Enum(_, true, _)) {
+            // loft#1071 / loft#1416 — an ENUM element rides the `Optional` marker for the
+            // same reason a scalar does: absence already has a bit pattern in the bytes the
+            // slot occupies, so it needs no `__nullable<…>` tag and no extra storage — only
+            // for the TYPE to keep saying it may be absent.  Both enum kinds qualify, and
+            // each has its own reserved value: a STRUCT-enum slot is a four-byte record
+            // pointer whose in-band absent value is `0`, and a VALUE enum is one byte whose
+            // variants are numbered from 1 precisely because `0` and `255` are spent
+            // (`OpConvBoolFromEnum` reads `@v1 != 255 && @v1 != 0`).  `(L-Null)` covers
+            // every type that reserves a null value, and both do.
+            //
+            // Without the marker the `?` is lost AT THE DECLARATION: the element types as a
+            // bare `Shape` / `Color`, so the store refuses `null` while naming
+            // `vector<Color>` — a type the author did not write — and a loop binding over it
+            // cannot be asked `e == null` at all, because the type no longer admits the
+            // question.
+            if crate::keys::pln25_optional_enabled() && matches!(elem, Type::Enum(_, _, _)) {
                 return Type::optional(elem);
             }
             return elem;
@@ -6190,11 +6386,33 @@ use a separate collection or add after the loop"
                 }
                 *code = Value::Insert(steps);
             } else if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot destructure a non-tuple value"
-                );
+                // A NULLABLE tuple is a tuple, and saying it is not sends the author looking at
+                // the wrong half of their program: `(a, b) = v[i]` is `(N-Index)`'s `τ?`, which
+                // has no representation to destructure (`formal/types-history.md` D-Opt-NoNull),
+                // and the cure is the same discharge the member read names (loft#1423).
+                if let Some(elems) = self.nullable_tuple_elems(&rhs_type) {
+                    let spelled = rhs_type.source_name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot destructure `{spelled}` — the tuple may be absent, and an \
+                         absent tuple has no members; discharge it first (`(a, b) = t?`, or \
+                         `(a, b) = t ?? (…)`)"
+                    );
+                    // Bind the targets to the member types anyway, so the refusal is the ONLY
+                    // report: left undefined, every later use of a destructured name came back
+                    // as "Unknown variable", burying the reason under one error per name.
+                    for (v_nr, tp) in var_nrs.iter().zip(elems) {
+                        self.vars.set_type(*v_nr, tp);
+                        self.vars.defined(*v_nr);
+                    }
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot destructure a non-tuple value"
+                    );
+                }
             }
             return Type::Void;
         }
@@ -7285,12 +7503,16 @@ use a separate collection or add after the loop"
     /// boxed boolean local — this is the same op, read off that lowering rather
     /// than re-derived (the earlier "boolean needs a 4-arg `OpSetByte`" note
     /// described a different write path).
+    /// The `OpSet<T>` a boxed capture's `value` field is written through — the write half of
+    /// `@FR-L-CapWrite`, whose read half is `Parser::auto_deref_boxed_scalar`.
     fn cell_value_set_op(&self, cell_d_nr: u32) -> Option<u32> {
         let value_attr = self.data.def(cell_d_nr).attributes().first()?;
         if value_attr.name != "value" {
             return None;
         }
-        let op_set_name = match &value_attr.typedef {
+        // `.base()` for the same reason the read side peels: a nullable cell's `value` shares
+        // its dense twin's storage, so it takes the same WRITE op (loft#1408).
+        let op_set_name = match value_attr.typedef.base() {
             Type::Integer(_) => "OpSetInt",
             Type::Float => "OpSetFloat",
             Type::Single => "OpSetSingle",

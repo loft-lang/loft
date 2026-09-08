@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Col-Order — `for x in c` visits in a per-kind ORDER, and the same one on both backends.
+//
+// `collections.md` calls this "the divergence-prone rule (interp store-walk vs native emitted
+// loop) — the whole reason the area needs pinning", and its own conformance plan listed it as
+// still to pin.  Every cell here inserts in an order that is NOT the iteration order, so a
+// walk that simply returned insertion order would fail rather than pass by coincidence.
+//
+// The walk that added this file corrected the rule rather than the code: `(Col-Order)` read
+// "hash → UNSORTED bucket walk (no key order)", which is the opposite of what ships, of
+// `concurrency.md (C-Order)` that it cites as its source, and of LOFT.md and STDLIB.md.  The
+// hash cells below are what settles that, and the 50-key one is the cell that cannot pass by
+// luck.
+//
+// @falsified-at: none — a conformance pin, not a regression guard.  Every cell passes on
+// every build measured, which is the point: the DOC dissented and the code did not, so what
+// this file protects is the corrected rule against a future change to the walk.  The harness
+// was still shown able to fail it — expecting the other Morton interleave
+// ("0,1,2,3," for the unit square) fails exactly the cell that discriminates the two
+// conventions and leaves the other eight passing.
+
+struct Ent { id: integer, n: integer }
+struct Word { k: text, n: integer }
+struct Pt { x: integer, y: integer, lbl: integer }
+
+fn ints() -> vector<integer> { return [7, 2, 9, 4, 1, 10, 3, 8, 5, 6]; }
+fn words() -> vector<text> { return ["pear", "apple", "fig", "date", "cherry", "banana"]; }
+
+// A vector keeps INSERTION order — it is the one kind whose order is positional.
+fn a_vector_iterates_in_index_order() {
+  v: vector<integer> = [7, 2, 9, 4];
+  s = "";
+  for x in v { s = "{s}{x},"; }
+  assert(s == "7,2,9,4,", "vector: {s}");
+}
+
+// A hash iterates in KEY order.  Its `par` walk is the unsorted one (concurrency.md C-Order);
+// the sequential walk sorts through the ordered snapshot `parse_for` builds for it.
+fn a_hash_iterates_in_key_order() {
+  h: hash<Ent[id]> = [];
+  for k in ints() { h += [Ent { id: k, n: k * 10 }]; }
+  s = "";
+  for e in h { s = "{s}{e.id},"; }
+  assert(s == "1,2,3,4,5,6,7,8,9,10,", "hash: {s}");
+}
+
+// The same for a TEXT key, where "key order" is lexicographic rather than numeric.
+fn a_text_keyed_hash_iterates_lexicographically() {
+  h: hash<Word[k]> = [];
+  for w in words() { h += [Word { k: w, n: 1 }]; }
+  s = "";
+  for e in h { s = "{s}{e.k},"; }
+  assert(s == "apple,banana,cherry,date,fig,pear,", "hash text: {s}");
+}
+
+// Insertion strictly DESCENDING over enough keys that no bucket layout comes out ascending
+// by luck — this is the cell that tells key order from a walk that happens to look sorted.
+fn a_hash_filled_backwards_still_iterates_forwards() {
+  h: hash<Ent[id]> = [];
+  for k in 0..50 { h += [Ent { id: 49 - k, n: k }]; }
+  prev = -1;
+  ascending = true;
+  count = 0;
+  for e in h {
+    if e.id <= prev { ascending = false; }
+    prev = e.id;
+    count = count + 1;
+  }
+  assert(ascending, "hash 50 not ascending, stopped at {prev}");
+  assert(count == 50, "hash 50 count {count}");
+  assert(prev == 49, "hash 50 last {prev}");
+}
+
+fn a_sorted_iterates_in_key_order() {
+  c: sorted<Ent[id]> = [];
+  for k in ints() { c += [Ent { id: k, n: k * 10 }]; }
+  s = "";
+  for e in c { s = "{s}{e.id},"; }
+  assert(s == "1,2,3,4,5,6,7,8,9,10,", "sorted: {s}");
+}
+
+// An `index` is a tree AND a hash over one record set; iteration takes its tree side.
+fn an_index_iterates_in_key_order() {
+  c: index<Ent[id]> = [];
+  for k in ints() { c += [Ent { id: k, n: k * 10 }]; }
+  s = "";
+  for e in c { s = "{s}{e.id},"; }
+  assert(s == "1,2,3,4,5,6,7,8,9,10,", "index: {s}");
+}
+
+fn a_trie_iterates_in_lexicographic_key_order() {
+  c: trie<Word[k]> = [];
+  for w in words() { c += [Word { k: w, n: 1 }]; }
+  s = "";
+  for e in c { s = "{s}{e.k},"; }
+  assert(s == "apple,banana,cherry,date,fig,pear,", "trie: {s}");
+}
+
+// A spatial walks its Morton / Z-order curve, which is neither axis's own order.
+//
+// The interleave puts the SECOND axis in the low bit of each pair, so the first-declared axis
+// is the major one — read off the unit square below, where the two conventions disagree:
+//   y low  -> (0,0) (0,1) (1,0) (1,1)   labels 0 2 1 3   <- this is what ships
+//   x low  -> (0,0) (1,0) (0,1) (1,1)   labels 0 1 2 3
+fn a_spatial_iterates_in_morton_order() {
+  c: spatial<Pt[x, y]> = [];
+  c += [Pt { x: 1, y: 1, lbl: 3 }];
+  c += [Pt { x: 0, y: 1, lbl: 2 }];
+  c += [Pt { x: 1, y: 0, lbl: 1 }];
+  c += [Pt { x: 0, y: 0, lbl: 0 }];
+  s = "";
+  for p in c { s = "{s}{p.lbl},"; }
+  assert(s == "0,2,1,3,", "spatial unit square: {s}");
+}
+
+// The same curve over a 4x4 spread, where Morton order is not row-major either.  Codes, with
+// the convention above (x1 y1 x0 y0):
+//   (0,0)=0000=0   (1,2)=0110=6   (2,1)=1001=9   (3,0)=1010=10   (3,3)=1111=15
+// so the walk is 0, 6, 9, 10, 15 — labels 0, 2, 1, 9, 3.  Row-major (y then x) would give
+// (0,0) (3,0) (2,1) (1,2) (3,3) = 0, 9, 1, 2, 3, which is a different sequence.
+fn a_spatial_morton_order_is_not_row_major() {
+  c: spatial<Pt[x, y]> = [];
+  c += [Pt { x: 3, y: 3, lbl: 3 }];
+  c += [Pt { x: 1, y: 2, lbl: 2 }];
+  c += [Pt { x: 3, y: 0, lbl: 9 }];
+  c += [Pt { x: 2, y: 1, lbl: 1 }];
+  c += [Pt { x: 0, y: 0, lbl: 0 }];
+  s = "";
+  for p in c { s = "{s}{p.lbl},"; }
+  assert(s == "0,2,1,9,3,", "spatial 4x4: {s}");
+}

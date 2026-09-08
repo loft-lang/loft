@@ -14,6 +14,7 @@ Scalars	size=29	struct{b@28:boolean, c@16:character, s@20:single, f@0:float, i@8
 Shape	size=24	enum{Circle, Rect}
 SortedBag	size=4	struct{items@0:ordered<Item[ik]>}
 Tup	size=12	struct{pair@0:__tuple<integer,text>}
+Unsigned	size=12	struct{a@0:int_raw<0,false>, b@4:int_raw<0,true>, v@8:vector<int_raw<0,false>>}
 Vec1	size=4	struct{v@0:vector<integer>}
 VecNest	size=4	struct{vv@0:vector<vector<integer>>}
 VecNestNarrow	size=4	struct{vv@0:vector<vector<byte>>}
@@ -30,6 +31,8 @@ hash<Item[ik]>	size=4	hash<Item>(keys=[0],elem_size=17,placement=2)
 index<Item[ik]>	size=4	index<Item>(keys=[(0, true)],left=1,elem_size=17)
 int<-2147483647,false>	size=4	int4(start=-2147483647,null=false)
 int<0,false>	size=4	int4(start=0,null=false)
+int_raw<0,false>	size=4	int4raw(start=0,null=false)
+int_raw<0,true>	size=4	int4raw(start=0,null=true)
 integer	size=8	base
 ordered<Item[ik]>	size=4	ordered<Item>(keys=[(0, true)],elem_size=17)
 short_raw<-32768,false>	size=2	shortraw(start=-32768,null=false)
@@ -39,9 +42,10 @@ single	size=4	base
 text	size=4	base
 vector<byte<10,false>>	size=4	vector<byte<10,false>>(elem_size=1)
 vector<byte>	size=4	vector<byte>(elem_size=1)
+vector<int_raw<0,false>>	size=4	vector<int_raw<0,false>>(elem_size=4)
 vector<integer>	size=4	vector<integer>(elem_size=8)
 vector<text>	size=4	vector<text>(elem_size=4)
 vector<vector<byte>>	size=4	vector<vector<byte>>(elem_size=4)
 vector<vector<integer>>	size=4	vector<vector<integer>>(elem_size=4)
 === F9 nullability ===
-nn/1;NarrowRange:c;Nullable:f,n
+nn/1;NarrowRange:c;Nullable:f,n;Unsigned:b

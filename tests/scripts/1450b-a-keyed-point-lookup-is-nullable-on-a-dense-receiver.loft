@@ -1,0 +1,162 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-Col-Lookup` — a keyed POINT lookup answers `τ?`, because an absent key yields the null
+// record.  The rule has said so since it was written; what it lacked was a TYPE.
+//
+// Its own cited anchor was the `expr_not_null` LINT clear beside each lookup site — a citation
+// that RESOLVES and does not ENFORCE, which is how `collections.md` could read `OPEN: 0` over a
+// live gap.  A lookup that MISSED in a PRESENT collection bound into a non-null slot in silence,
+// on every keyed kind (`D-col-lookup`).
+//
+// ⚠ THE RECEIVER'S `?` IS NOT THE AXIS, and that is the half most likely to be re-derived
+// wrongly.  The filed issue reads as "the receiver's `?` is dropped", and the receiver-absent
+// half is a DIFFERENT deviation, closed separately as `D-Null-Recv`.  This one fires on a
+// plainly DENSE collection: `h: hash<E[k]> = []` and `h[i]` binds null into an `E` slot.  The
+// cells below are therefore all dense receivers — a nullable one would prove the other rule.
+//
+// Controls, each load-bearing:
+//   * a RANGE SLICE is NOT a point lookup and takes no `?`.  A spatial box and a trie prefix
+//     answer the COLLECTION for an enclosing `for`, and iterating one is total — there is no
+//     absence there to discharge, so wrapping them would demand a cure for a fault that cannot
+//     happen.  This is the cell that says the widening did not over-reach.
+//   * both DISCHARGES answer, and answer the right VALUES: a hit reads its element, a miss
+//     takes the default.  A message whose cure is untested advertises a dead end.
+//   * a keyed WRITE is unmoved.  `h[k] = v` parses its target through the same `parse_index`, so
+//     the receiver's `?` can land on an assignment TARGET and stop the write being recognised as
+//     one — it would then lower to a READ and lose the write in silence.  `(Col-Insert-Absent)`
+//     makes the write total; the peel that keeps it so is keyed on `OpGetRecord`.
+//
+// @falsified-at: 96b2d840f — MEASURED, both backends.  On that build every `miss_*` cell binds
+//   the null record into a non-null local with NO diagnostic, so the channel is the warning
+//   count rather than an assert: the VALUES below are what loft answers either way (C80 gives
+//   the null record), and what moves is whether anything says so.  The slice and write cells
+//   pass there unchanged, which is what makes them controls rather than cells.
+
+struct E1450 { k: integer, v: integer }
+struct W1450 { s: text, v: integer }
+struct P1450 { x: integer, y: integer, v: integer }
+
+struct Hh1450 { c: hash<E1450[k]> }
+struct Ss1450 { c: sorted<E1450[k]> }
+struct Xx1450 { c: index<E1450[k]> }
+struct Tt1450 { c: trie<W1450[s]> }
+struct Sp1450 { c: spatial<P1450[x, y]> }
+
+struct Kk1450 { a: integer, b: text, n: integer }
+struct Dd1450 { m: index<Kk1450[a, b]> }
+
+fn key1450() -> integer { 99 }
+
+fn main() {
+  h = Hh1450 { c: [] };
+  s = Ss1450 { c: [] };
+  x = Xx1450 { c: [] };
+  h.c += [E1450 { k: 1, v: 10 }];
+  s.c += [E1450 { k: 1, v: 20 }];
+  x.c += [E1450 { k: 1, v: 30 }];
+  miss = key1450();
+
+  // ---- the CELLS: a miss on a DENSE receiver is nullable and discharges ----
+  assert((h.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "a hash miss takes the default");
+  assert((s.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "a sorted miss takes the default");
+  assert((x.c[miss] ?? E1450 { k: 0, v: -1 }).v == -1, "an index miss takes the default");
+  // a CONSTANT key misses the same way — the fit elision is about a dense vector's index
+  assert((h.c[77] ?? E1450 { k: 0, v: -1 }).v == -1, "a constant-key miss takes the default too");
+
+  // ---- and a HIT still reads its element, which is what says the `?` cost nothing ----
+  assert((h.c[1] ?? E1450 { k: 0, v: -1 }).v == 10, "a hash hit reads its element");
+  assert((s.c[1] ?? E1450 { k: 0, v: -1 }).v == 20, "a sorted hit reads its element");
+  assert((x.c[1] ?? E1450 { k: 0, v: -1 }).v == 30, "an index hit reads its element");
+
+  // ---- the other discharge spelling ----
+  hit = h.c[1]?;
+  assert(hit.v == 10, "`?` discharges a hit to its element: {hit.v}");
+
+  // ---- control: a trie POINT lookup is a cell, its PREFIX slice is not ----
+  t = Tt1450 { c: [] };
+  t.c += [W1450 { s: "aa", v: 1 }];
+  t.c += [W1450 { s: "ab", v: 2 }];
+  t.c += [W1450 { s: "bb", v: 3 }];
+  assert((t.c["zz"] ?? W1450 { s: "", v: -1 }).v == -1, "a trie miss takes the default");
+  assert((t.c["aa"] ?? W1450 { s: "", v: -1 }).v == 1, "a trie hit reads its element");
+  pre = 0;
+  for w in t.c["a"..] { pre = pre + w.v; }
+  assert(pre == 3, "a trie PREFIX slice iterates with no discharge: {pre}");
+
+  // ---- control: a spatial RANGE slice iterates with no discharge ----
+  p = Sp1450 { c: [] };
+  p.c += [P1450 { x: 1, y: 1, v: 10 }];
+  p.c += [P1450 { x: 5, y: 5, v: 20 }];
+  box = 0;
+  for q in p.c[(0, 0)..(9, 9)] { box = box + q.v; }
+  assert(box == 30, "a spatial RANGE slice iterates with no discharge: {box}");
+
+  // ---- the SPATIAL point lookup, which is the FULL key and nothing else ----
+  //
+  // `spatial` is the kind whose point lookup is easiest to get wrong, because the spelling
+  // that looks like one is not one: `p.c[(1, 1)]` is refused outright ("a spatial slice needs
+  // a range"), since a `(` after the subscript routes to `parse_spatial_slice` before the
+  // point path can be reached.  A spatial point lookup is written with the axes BARE and all
+  // of them present — `p.c[1, 1]` — which is the form guarded here.
+  //
+  // ⚠ Deliberately NOT guarded: the UNDER-keyed `p.c[5]`, one integer where two axes are
+  // declared.  It compiles, and with this leg it types `P1450?` and answers `null` for every
+  // key — a lookup that cannot hit.  Its three sibling kinds refuse the same shape (`hash`
+  // says "Too few key fields"; `sorted`/`index` make it a partial-key iterator), so spatial is
+  // the one kind in neither list — loft#1457.  Asserting what it answers today would freeze
+  // that gap into the suite as intent, so this cell asserts the WORKING spelling and leaves
+  // the broken one to its own issue.
+  assert((p.c[1, 1] ?? P1450 { x: 0, y: 0, v: -1 }).v == 10, "a spatial full-key hit reads its element");
+  assert((p.c[7, 7] ?? P1450 { x: 0, y: 0, v: -1 }).v == -1, "a spatial full-key miss takes the default");
+
+  // and the spatial WRITE target is unmoved by the `?`, like every other kind's
+  p.c[3, 4] = P1450 { x: 3, y: 4, v: 30 };
+  assert(len(p.c) == 3, "a spatial keyed write still inserts: {len(p.c)}");
+  assert((p.c[3, 4] ?? P1450 { x: 0, y: 0, v: -1 }).v == 30, "and the written element reads back");
+
+  // ---- control: a PARTIAL key on a two-key `index` is an ITERATOR, and takes no `?` ----
+  //
+  // The `sorted`/`index` arm used to ASSERT that every arrival there is a point lookup
+  // ("no RANGE form here"), and that was false twice: `parse_key` builds a `Value::Iter`
+  // for a partial key (`m[1]` on a two-key index, rewritten `m[1..=1]`) and for the `..`
+  // range form, both INSIDE the call the arm had already made.  So the `?` landed on an
+  // iterator, which `(Col-Lookup)` explicitly forbids — a slice answers the COLLECTION for
+  // an enclosing `for`, and iterating one is total.
+  //
+  // What it cost is not visible from the read at all: `d.m[1] = null` lost its refusal
+  // ("Cannot assign null to a partial-key lookup") because the iterator arrived carrying a
+  // `?` the assignment router does not expect.  The partial-key READ was still named, so
+  // the file read as diagnosed while the statement it refused went through — which is why
+  // this cell iterates rather than asserting a type: the type was never the symptom.
+  d = Dd1450 { m: [] };
+  d.m += [Kk1450 { a: 1, b: "x", n: 10 }];
+  d.m += [Kk1450 { a: 1, b: "y", n: 20 }];
+  d.m += [Kk1450 { a: 2, b: "z", n: 30 }];
+  part = 0;
+  for e in d.m[1] { part = part + e.n; }
+  assert(part == 30, "a PARTIAL key iterates its matches with no discharge: {part}");
+  // and the FULL key beside it is still a point lookup, so it still takes the `?`
+  assert((d.m[1, "x"] ?? Kk1450 { a: 0, b: "", n: -1 }).n == 10, "a full key is still a point lookup");
+  assert((d.m[9, "q"] ?? Kk1450 { a: 0, b: "", n: -1 }).n == -1, "and still nullable on a miss");
+
+  // ---- and the `?` costs an `&` VIEW nothing: a NON-key field still writes THROUGH ----
+  //
+  // The receiving half of `@PLN130 F9`.  `c = &h.c[1]` sources `Optional(Reference(E1450))`
+  // once this leg lands, and the `&` marker is set from that source type — so this cell is
+  // the runnable twin of `parse_errors::b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error`:
+  // that one says the KEY write is refused, this one says the ordinary write still reaches the
+  // collection.  Without both, "refuse the key write" is satisfiable by refusing everything.
+  view = &h.c[1];
+  view.v = 99;
+  assert((h.c[1] ?? E1450 { k: 0, v: -1 }).v == 99, "a non-key write through a keyed `&` view reaches the collection: {(h.c[1] ?? E1450 { k: 0, v: -1 }).v}");
+
+  // ---- control: a keyed WRITE is unmoved, on every kind ----
+  h.c[2] = E1450 { k: 2, v: 40 };
+  s.c[2] = E1450 { k: 2, v: 50 };
+  x.c[2] = E1450 { k: 2, v: 60 };
+  assert(len(h.c) == 2 && len(s.c) == 2 && len(x.c) == 2, "a keyed write still inserts");
+  assert((h.c[2] ?? E1450 { k: 0, v: -1 }).v == 40, "and the written element reads back: {(h.c[2] ?? E1450 { k: 0, v: -1 }).v}");
+  h.c[2] = E1450 { k: 2, v: 41 };
+  assert(len(h.c) == 2, "an existing key OVERWRITES rather than appends: {len(h.c)}");
+}

@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-N-Coal — `e ?? d` discharges `t?` to `t`, and `coalesce_not_null` is the
+// per-representation *is null* that decides whether `d` is taken.  A TUPLE carries null in
+// its FIRST FIELD, which is what `OpGetVectorNullable` writes for an out-of-range read, so the
+// test recurses into member 0 and asks the same question of its type.
+//
+// The recursion could only ever fire ONCE.  `Value::TupleGet` addresses a VAR and an index, so
+// `x.0.0` has no spelling, and the recursive call handed a `TupleGet` back into a branch
+// guarded on `Value::Var` — which rejected it.  A member that is itself a tuple therefore fell
+// through to the generic path, which returns the operand unconverted: `if __ncc_1.0` with a
+// TUPLE where a boolean belongs.  `--native` refused the program it had just generated (E0308,
+// loft#1425) and the interpreter answered from raw bytes.  Binding the inner tuple to a temp
+// gives the recursion a `Var` to stand on, so the sentinel is found however deep it sits.
+//
+// The FLAT tuple is the control that says why this hid: its member 0 is a scalar, the
+// conversion is chosen, and `if OpConvBoolFromInt(__ncc.0)` compiles.  One level down is the
+// first shape with no scalar there.
+//
+// ⚠ The null test asks "is member 0 the NULL SENTINEL", not "is it zero" — so a present tuple
+// whose first member IS `0` must still be present.  That cell is here because the obvious
+// wrong cure (testing truthiness) passes every other cell in this file.
+//
+// @falsified-at: 6189b285 — interpret exit 1 -> 0 with 3 assertion failures -> 0, native
+//   exit 1 -> 0.  The two backends fail differently on the control and that is the defect's
+//   own shape: native refuses to COMPILE the file (E0308, so 0 assertions run), while the
+//   interpreter compiles it and answers wrong from raw bytes — three cells' worth.  A guard
+//   scored on native alone would have read this as a parse problem.
+
+fn a_nested_tuple_element_discharges_to_its_default() {
+  n: vector<((integer, integer), integer)> = [((1, 2), 3)];
+  j = 9;
+  d = n[j] ?? ((7, 8), 9);
+  assert_eq("{d.1}", "9", "an out-of-range read takes the default");
+  assert_eq("{d.0.0}", "7", "and the default's nested members come through");
+  assert_eq("{d.0.1}", "8", "both of them");
+}
+
+fn a_present_nested_tuple_element_is_not_discharged() {
+  n: vector<((integer, integer), integer)> = [((1, 2), 3)];
+  p = n[0] ?? ((7, 8), 9);
+  assert_eq("{p.1}", "3", "a present element keeps its own value");
+  assert_eq("{p.0.0}", "1", "and its nested members");
+  assert_eq("{p.0.1}", "2", "both of them");
+}
+
+// The sentinel, not truthiness: a present element whose first member is 0 is PRESENT.
+fn a_zero_first_member_is_present_not_absent() {
+  z: vector<((integer, integer), integer)> = [((0, 0), 0)];
+  q = z[0] ?? ((7, 8), 9);
+  assert_eq("{q.0.0}", "0", "a zero nested member is a value, not an absence");
+  assert_eq("{q.1}", "0", "and so is a zero outer member");
+
+  f: vector<(integer, integer)> = [(0, 5)];
+  r = f[0] ?? (7, 8);
+  assert_eq("{r.0}", "0", "the flat spelling agrees");
+  assert_eq("{r.1}", "5", "and keeps its second member");
+}
+
+// Controls: the flat tuple, which always worked, and a deeper nesting than the filed case.
+fn the_flat_tuple_is_unchanged() {
+  f: vector<(integer, integer)> = [(1, 2)];
+  j = 9;
+  e = f[j] ?? (7, 8);
+  assert_eq("{e.0}", "7", "out of range takes the default");
+  assert_eq("{e.1}", "8", "both members");
+  p = f[0] ?? (7, 8);
+  assert_eq("{p.0}", "1", "and a present element is kept");
+}
+
+fn a_twice_nested_tuple_discharges_too() {
+  t: vector<(((integer, integer), integer), integer)> = [(((1, 2), 3), 4)];
+  j = 9;
+  d = t[j] ?? (((7, 8), 9), 10);
+  assert_eq("{d.1}", "10", "the default is taken at two levels of nesting");
+  assert_eq("{d.0.0.0}", "7", "and the innermost member comes through");
+  p = t[0] ?? (((7, 8), 9), 10);
+  assert_eq("{p.0.0.1}", "2", "a present element keeps its innermost member");
+}

@@ -104,6 +104,67 @@ fn fires_native() {
     assert_fires("--native");
 }
 
+// ── loft#1413: a `&τ?` parameter is nullable, so the store it asks for must not be reported ──
+//
+// `τ?` has three spellings at this gate. Two were handled: `Type::Optional`, and the synthetic
+// `__nullable<S>` an inline slot holds (loft#1123). The third is a `&` parameter, which carries
+// its nullability INSIDE the reference — `&integer?` is `RefVar(Optional(Integer))` — so asking
+// `Type::Optional` of the outer type answered about the REFERENCE, not about the slot the store
+// lands in. Every correct call handing a `τ?` to a `&τ?` parameter warned that the value
+// "becomes null there" in "the non-null type `&integer?`", a message naming a nullable type
+// non-null. `warning` is the tier that gates library CI, so a library taking a `&τ?` parameter
+// failed its own CI on correct code.
+//
+// The pair is what carries the claim: the `&τ?` cases must be SILENT, and the `&τ` case must
+// still warn — a peel that silenced both would have removed the rule instead of spelling it.
+
+const REF_NULLABLE_PARAM: &str = "fn bump(n: &integer?) { n = (n ?? 0) + 1; }\n\
+fn main() {\n  x: integer? = 5;\n  bump(x);\n  print(\"x={x}\");\n}\n";
+const REF_NULLABLE_TEXT: &str = "fn setb(s: &text?) { s = \"b\"; }\n\
+fn main() {\n  t: text? = \"a\";\n  setb(t);\n  print(\"t={t}\");\n}\n";
+const REF_NONNULL_PARAM: &str = "fn bump(n: &integer) { n = n + 1; }\n\
+fn main() {\n  x = \"z\" as integer?;\n  bump(x);\n  print(\"x={x}\");\n}\n";
+
+#[test]
+fn a_nullable_argument_into_a_nullable_reference_parameter_is_silent() {
+    for backend in ["--interpret", "--native"] {
+        for (body, tag, want) in [
+            (REF_NULLABLE_PARAM, "ref_opt_int", "x=6"),
+            (REF_NULLABLE_TEXT, "ref_opt_text", "t=b"),
+        ] {
+            let (ok, warns, out) = run(body, backend, true, &format!("{tag}_{backend}"));
+            assert!(ok, "[{backend}] {tag}: a `&τ?` parameter must compile");
+            assert_eq!(
+                warns, 0,
+                "[{backend}] {tag}: a nullable argument into a `&τ?` parameter is the store the \
+                 signature asks for — it must not be reported (loft#1413)"
+            );
+            assert!(
+                out.contains(want),
+                "[{backend}] {tag}: expected {want:?}, got {out:?} — the write must still reach \
+                 the caller, so the silence is not bought by dropping the store"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_nullable_argument_into_a_non_null_reference_parameter_still_warns() {
+    for backend in ["--interpret", "--native"] {
+        let (_ok, warns, _out) = run(
+            REF_NONNULL_PARAM,
+            backend,
+            true,
+            &format!("ref_nonnull_{backend}"),
+        );
+        assert_eq!(
+            warns, 1,
+            "[{backend}] a nullable argument into a `&integer` parameter DOES become null there \
+             — peeling the `RefVar` must not silence the rule, only ask it of the pointee"
+        );
+    }
+}
+
 // ── Narrow param hard-errors (no room for a null sentinel) ────────────────────────────────────
 
 #[test]

@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Regression (loft#1431): a `spatial` point lookup answered `null` for a point it had
+// just been given, whenever the axis type's declared range does not start at zero.
+//
+// The narrow widths store `value - start` and the `Key` carries that `start` for the
+// decode to add back.  The VALUE-keyed decoders (`keys::compare_ref`, `keys::get_key`,
+// `keys::hash_key`) read it; `radix_db::axis_i64` and `paged_reader::axis_value` passed a
+// literal `0` instead, so a record's Morton code was computed from `value - start` while
+// the query's came from `value`.  `(Col-Spatial)` requires the axis to order by its own
+// signed value, which is a statement about the DECLARED value, not the stored word.
+//
+// The controls are the point: `u8` and `integer` are the two spellings whose bias IS
+// zero, so they were correct with the bias dropped and are correct with it restored.
+// Every "does spatial work?" check anyone writes reaches for one of them, which is why
+// this survived — the passing cells were right by accident, not by construction.
+//
+// `u32` above `i32::MAX` is a DIFFERENT defect (loft#1437, the 4-byte arm reading signed)
+// and is deliberately not exercised here.
+//
+// @falsified-at: e4b234774 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native
+// exit 1 -> 0, native 1 assertion failures -> 0
+//
+// Those 5 are the five non-control test functions, one failure each; `test_u8_axis_stays_correct`
+// and `test_integer_axis_stays_correct` PASS on the pre-fix build.  That split is the measurement
+// this guard exists to make — a version of it holding only the controls would have been green
+// throughout.
+
+struct B1 { const x: i8, const y: i8, n: integer }
+struct B2 { const x: i16, const y: i16, n: integer }
+struct B3 { const x: u16, const y: u16, n: integer }
+struct B4 { const x: integer limit(100, 200), const y: integer limit(100, 200), n: integer }
+struct C1 { const x: u8, const y: u8, n: integer }
+struct C2 { const x: integer, const y: integer, n: integer }
+
+// A signed 1-byte axis: `start` is -128, so every value's stored word differs from it.
+fn test_i8_axis_finds_its_own_point() {
+  s: spatial<B1[x, y]> = [B1 { x: 3, y: 5, n: 77 }, B1 { x: -120, y: -100, n: 88 }];
+
+  p = s[3, 5] ?? B1 { x: 0, y: 0, n: -1 };
+  assert(p.n == 77, "i8 positive point got n={p.n} want 77");
+
+  q = s[-120, -100] ?? B1 { x: 0, y: 0, n: -1 };
+  assert(q.n == 88, "i8 negative point got n={q.n} want 88");
+}
+
+// A signed 2-byte axis, the width the issue was filed against.
+fn test_i16_axis_finds_its_own_point() {
+  s: spatial<B2[x, y]> = [B2 { x: 3, y: 5, n: 77 }, B2 { x: -30000, y: -20000, n: 88 }];
+
+  p = s[3, 5] ?? B2 { x: 0, y: 0, n: -1 };
+  assert(p.n == 77, "i16 positive point got n={p.n} want 77");
+
+  q = s[-30000, -20000] ?? B2 { x: 0, y: 0, n: -1 };
+  assert(q.n == 88, "i16 negative point got n={q.n} want 88");
+}
+
+// An UNSIGNED 2-byte axis above the signed midpoint of its stored word.  Its bias is
+// zero, so this cell is not about the bias — it is the same decode read as signed, which
+// is correct below 32768 and wrong above it.  Both values are asserted so the boundary
+// cannot pass by testing only the half that always worked.
+fn test_u16_axis_finds_a_point_above_the_signed_midpoint() {
+  s: spatial<B3[x, y]> = [B3 { x: 300, y: 400, n: 77 }, B3 { x: 60000, y: 65000, n: 88 }];
+
+  p = s[300, 400] ?? B3 { x: 0, y: 0, n: -1 };
+  assert(p.n == 77, "u16 below midpoint got n={p.n} want 77");
+
+  q = s[60000, 65000] ?? B3 { x: 0, y: 0, n: -1 };
+  assert(q.n == 88, "u16 above midpoint got n={q.n} want 88");
+}
+
+// The general shape the named widths are only instances of: any declared range whose
+// minimum is not zero.  Nothing about this one is signed.
+fn test_a_limit_range_axis_finds_its_own_point() {
+  s: spatial<B4[x, y]> = [B4 { x: 150, y: 180, n: 77 }];
+
+  p = s[150, 180] ?? B4 { x: 100, y: 100, n: -1 };
+  assert(p.n == 77, "limit(100,200) point got n={p.n} want 77");
+}
+
+// The point lookup and the box slice must answer the same record set.  A box that finds
+// what the point misses is what made the collection look alive while it was not.
+fn test_the_box_agrees_with_the_point() {
+  s: spatial<B2[x, y]> = [B2 { x: -30000, y: -20000, n: 88 }];
+
+  p = s[-30000, -20000] ?? B2 { x: 0, y: 0, n: -1 };
+  assert(p.n == 88, "point got n={p.n} want 88");
+
+  b = "";
+  for e in s[(-32768, -32768)..(32767, 32767)] { b += "n{e.n} "; }
+  assert(b == "n88 ", "box got '{b}' want 'n88 '");
+}
+
+// CONTROL — `u8`'s declared range starts at zero, so its stored word IS its value.
+// Correct before the fix and after it.
+fn test_u8_axis_stays_correct() {
+  s: spatial<C1[x, y]> = [C1 { x: 3, y: 5, n: 77 }, C1 { x: 250, y: 255, n: 88 }];
+
+  p = s[3, 5] ?? C1 { x: 0, y: 0, n: -1 };
+  assert(p.n == 77, "u8 low point got n={p.n} want 77");
+
+  q = s[250, 255] ?? C1 { x: 0, y: 0, n: -1 };
+  assert(q.n == 88, "u8 top point got n={q.n} want 88");
+}
+
+// CONTROL — a full-width `integer` axis is read whole, bias never applies, and negative
+// coordinates ride `(Col-Spatial)`'s offset-binary.
+fn test_integer_axis_stays_correct() {
+  s: spatial<C2[x, y]> = [C2 { x: -3, y: -5, n: 77 }, C2 { x: 3, y: 5, n: 88 }];
+
+  p = s[-3, -5] ?? C2 { x: 0, y: 0, n: -1 };
+  assert(p.n == 77, "integer negative point got n={p.n} want 77");
+
+  q = s[3, 5] ?? C2 { x: 0, y: 0, n: -1 };
+  assert(q.n == 88, "integer positive point got n={q.n} want 88");
+}

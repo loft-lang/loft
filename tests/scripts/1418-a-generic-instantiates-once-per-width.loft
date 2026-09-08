@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono — ONE copy per DISTINCT instantiation.  A generic call is keyed by the concrete
+// type its first argument carries, and the key has to be that type's IDENTITY: two calls share
+// a monomorph exactly when they ask for the same thing.
+//
+// An integer's identity is not its type DEF — every width resolves to the one `integer` def —
+// so loft#1383 keyed integers on `Type::name`, which carries the RANGE.  That is still not the
+// whole of it, and `IntegerSpec`'s own doc says why: *"Test `forced_size` to tell an alias from
+// a template; the range alone cannot."*  `i32`'s range IS the signed-32 template's, so
+// `Type::name` spells both `integer`, the two collided, and the FIRST call bound the monomorph
+// for the program: a call at `i32` followed by one at plain `integer` refused the second as a
+// narrowing — in a function that may be nowhere near the one that bound it, with a cure
+// ("cast explicitly") that is wrong, because the value genuinely is an `integer` (loft#1418).
+//
+// The boundary is what names the cause: `u8`, `i8`, `u16`, `i16` and `u32` never collided,
+// because their bounds differ from the template's and the range alone already separated them.
+// Only `i32` shares a range while differing in width — so the five quiet widths are controls,
+// and `i32` is the cell that moves.  Every width is exercised in BOTH orders, because the
+// defect was order-dependent and a guard that only wrote one order would have passed on it.
+//
+// This file is also the shape the defect made unwritable: seven instantiations of one generic
+// in a single file.  Before the fix a regression guard covering more than one integer width
+// could not be expressed through `assert_eq` at all, which is how the bug was found.
+//
+// @falsified-at: da842061 — interpret exit 1 -> 0, native exit 1 -> 0, assertion column 0 on
+//   both sides.  Zero because the control build does not COMPILE the file:
+//   `i32_first_then_integer` is refused ("cannot implicitly narrow integer to i32"), so no
+//   cell runs to fail.  An exit-only move is the weaker falsification, which is why the value
+//   assertions are here — they are what makes a pass mean more than "it compiled".
+
+fn i32_first_then_integer() {
+  a: i32 = 7;
+  assert_eq(a, a, "an i32 instantiates the generic");
+  b: integer = 7;
+  assert_eq(b, b, "and a plain integer still reaches it afterwards");
+  assert_eq(b, 7, "with the value it actually holds");
+}
+
+fn integer_first_then_i32() {
+  b: integer = 9;
+  assert_eq(b, b, "a plain integer instantiates the generic");
+  a: i32 = 9;
+  assert_eq(a, a, "and an i32 still reaches it afterwards");
+  assert_eq(a, 9, "with the value it actually holds");
+}
+
+// The five widths that never collided: their bounds already differ from the template's, so the
+// range alone separated them.  They are here to say the cure did not simply stop keying on
+// range — a key that dropped it would collide `u8` with `u16`, which loft#1383 fixed.
+fn every_narrow_width_reaches_the_generic() {
+  u_8: u8 = 200;    assert_eq(u_8, 200, "u8 keeps its own value");
+  i_8: i8 = -100;   assert_eq(i_8, -100, "i8 keeps its own value");
+  u_16: u16 = 60000; assert_eq(u_16, 60000, "u16 keeps its own value");
+  i_16: i16 = -30000; assert_eq(i_16, -30000, "i16 keeps its own value");
+  u_32: u32 = 4000000000; assert_eq(u_32, 4000000000, "u32 keeps its own value");
+  i_32: i32 = -2000000000; assert_eq(i_32, -2000000000, "i32 keeps its own value");
+  n: integer = 5000000000; assert_eq(n, 5000000000, "and a wide integer keeps its own");
+}
+
+// Each value here is one the NEXT-NARROWER width truncates, so a monomorph shared across two
+// widths answers a different number rather than the same one.  A value like `7` fits every
+// width and would test none of them.
+fn a_width_answers_its_own_value_not_a_neighbours() {
+  a: u16 = 300;
+  b: u8 = 44;
+  c: u16 = 300;
+  assert_eq(a, c, "two u16 values agree");
+  assert_eq(a, 300, "and 300 survives at two bytes");
+  assert_eq(b, 44, "while the u8 beside it is untouched");
+  d: i32 = 70000;
+  e: i16 = 300;
+  assert_eq(d, 70000, "70000 survives at four bytes");
+  assert_eq(e, 300, "and 300 at two");
+}
+
+// A generic over a NON-integer keeps working beside all of the above: the key change is
+// confined to the integer arm.
+fn other_types_still_instantiate() {
+  s: text = "x";
+  assert_eq(s, "x", "text reaches the generic");
+  f: float = 1.5;
+  assert_eq(f, 1.5, "and so does float");
+  b: boolean = true;
+  assert(b, "and boolean");
+}

@@ -133,16 +133,26 @@ impl Parser {
     /// A captured collection is stored in the closure record as a `Reference` DbRef, so
     /// the body must recover its real (collection) type from `capture_context` to keep
     /// `h[key]` / iteration typed correctly.
-    /// loft#1071 — does this type BORROW a collection, directly or one link on?
+    /// loft#1071 — does this value view a collection ELEMENT SLOT that may be absent?
     ///
-    /// A `for e in v` loop variable is a sub-reference into `v`'s element slot, and that
-    /// is what its deps record — but the type at a USE site deps on the variable ITSELF,
-    /// and only the variable's DECLARED type deps on the collection. So the question
-    /// needs the chain followed, not the first link read.
+    /// A `for e in v` loop variable is a sub-reference INTO `v`'s element slot rather than
+    /// a handle of its own, so absence lives in the four-byte word at that slot and not in
+    /// a store-pointer sentinel.  The question has to follow the dep CHAIN rather than read
+    /// the first link, because a use-site type deps on the variable itself and only the
+    /// declaration deps on the collection.
+    ///
+    /// The reached collection's ELEMENT must be nullable, and that half is what makes this
+    /// a slot question instead of a borrow question.  An inline absent slot exists only
+    /// where an element is allowed to be absent: a value viewing a DENSE `vector<t>` is
+    /// necessarily a whole handle, and its absence is the store sentinel.  Asked without
+    /// it, a plain local bound from a view-returning call — `b = head(v)`, whose deps name
+    /// the caller's vector because that is what the return borrows — took the slot test,
+    /// read a discriminant through a null handle, and answered PRESENT for the value the
+    /// callee had just said was absent (loft#1421).
     ///
     /// Bounded, because a self-dep (`e` depending on `e`) is exactly the shape that makes
     /// the walk necessary and would otherwise make it loop.
-    pub(crate) fn views_a_collection(&self, tp: &Type) -> bool {
+    pub(crate) fn views_a_nullable_element_slot(&self, tp: &Type) -> bool {
         let mut deps: Vec<u16> = tp.depend();
         let mut seen: Vec<u16> = Vec::new();
         for _ in 0..3 {
@@ -154,7 +164,9 @@ impl Parser {
                 seen.push(d);
                 let dt = self.vars.tp(d);
                 if Self::is_collection_type(dt.base()) {
-                    return true;
+                    // The walk stops at the FIRST collection: that is the one this value
+                    // would be a slot of, and a dense one settles the question.
+                    return matches!(dt.base(), Type::Vector(elm, _) if matches!(**elm, Type::Optional(_)));
                 }
                 next.extend(dt.depend());
             }
@@ -561,7 +573,24 @@ impl Parser {
                 // both emitters copied — a copy nobody freed.  `Data::copies_as` admits the
                 // `(C-Var)` widening `c: E = s` with `s` a variant of `E` beside the
                 // same-def pair.
-                if let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
+                // @FR-B-Copy governs `v = obj`, and this arm decides it while reading the
+                // SOURCE NAME — before the postfix that would make the bind something else
+                // has been seen.  `v = obj.field(n)` is a PROJECTION (@FR-H-View: the local
+                // aliases the place, and freeing it is the owner's business), `v = obj[i]`
+                // and `v = obj#attr` likewise; none of them is a whole-value bind, so none
+                // is this arm's to make independent.
+                //
+                // Taking it anyway cost the receiver its dep: the arm returns the source's
+                // type WITHOUT deps, so a method call's receiver reached `call_dependencies`
+                // borrowing nothing and its declared `[self]` return resolved to an empty
+                // list — the result read as OWNED and the callee freed the CALLER's store
+                // (loft#1407).  It bit on pass 2 only, because on pass 1 the destination's
+                // type is still `Unknown` and `heap_def_nr()` answers `None`, so the arm
+                // never fired: the same bind, typed two ways, one pass apart.
+                if !(self.lexer.peek_token(".")
+                    || self.lexer.peek_token("[")
+                    || self.lexer.peek_token("#"))
+                    && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)
                 {
@@ -859,12 +888,18 @@ impl Parser {
         // `Type::Reference(enum)` (typed decl / reassignment / field init / call
         // arg / return).  emit_variant_value picks the right discriminant (and
         // the mixed-enum allocation form) for that enum.
-        } else if let Type::Enum(enr, _, _) = parent_tp
+        // Read through `base()`: whether the target may be ABSENT says nothing about
+        // which variants it can hold, so `v: vector<Color?> = [Green]` has to resolve
+        // `Green` exactly as the dense spelling beside it does.  Asked bare, a nullable
+        // element type fell past both arms and the bare variant was reported as having no
+        // type at all — the same peel `enum_context` already does to decide there IS an
+        // enum context here (loft#1065 one site over, loft#1416).
+        } else if let Type::Enum(enr, _, _) = parent_tp.base()
             && self.data.def(*enr).attr_names.contains_key(name)
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
-        } else if let Type::Reference(enr, _) = parent_tp
+        } else if let Type::Reference(enr, _) = parent_tp.base()
             && self.data.def_type(*enr) == DefType::Enum
             && self.data.def(*enr).attr_names.contains_key(name)
         {
@@ -1131,7 +1166,10 @@ impl Parser {
         }
         let value_tp = value_attr.typedef.clone();
         let pos = Value::Int(0);
-        let (op_name, is_bool) = match &value_tp {
+        // `.base()`: a nullable cell's `value` is stored in-band (C90), so the READ op is its
+        // dense twin's.  `value_tp` itself is returned unpeeled, so the expression keeps the
+        // `?` and the ordinary discharge rules apply to it (loft#1408).
+        let (op_name, is_bool) = match value_tp.base() {
             Type::Integer(_) => ("OpGetInt", false),
             Type::Float => ("OpGetFloat", false),
             Type::Single => ("OpGetSingle", false),
@@ -1247,13 +1285,17 @@ impl Parser {
                     // Post-2c: honor `as i32` by routing to Parts::Int (4B) when
                     // the alias has size(4).
                     let forced = self.data.forced_size(alias_nr);
-                    let id = if let Type::Integer(IntegerSpec { min, .. }) = &tp
+                    let id = if let Type::Integer(spec) = &tp
                         && forced == Some(4)
                     {
                         if self.first_pass {
                             u16::MAX
                         } else {
-                            self.database.int(*min, false)
+                            // @FR-L-Narrow-Enc — four bytes do not say how they decode, and a
+                            // binary read is a decode: through `Parts::Int` a `u32` above
+                            // `i32::MAX` came back sign-extended, so a value written to a file
+                            // did not survive its own round-trip.
+                            self.narrow_io_part(4, spec)
                         }
                     } else if let Type::Integer(IntegerSpec { min, .. }) = &tp
                         && forced == Some(1)
@@ -1344,10 +1386,11 @@ impl Parser {
                 };
                 let id = if self.first_pass {
                     u16::MAX
-                } else if let Type::Integer(IntegerSpec { min, .. }) = &hint
+                } else if let Type::Integer(spec) = &hint
                     && forced_width == Some(4)
                 {
-                    self.database.int(*min, false)
+                    // @FR-L-Narrow-Enc — as above: the sign is part of the encoding.
+                    self.narrow_io_part(4, spec)
                 } else if let Type::Integer(IntegerSpec { min, .. }) = &hint
                     && (forced_width == Some(1) || hint.size(false) == 1)
                 {
@@ -1491,11 +1534,21 @@ impl Parser {
     /// guards decided one question and only one of them peeled.
     pub(crate) fn is_file_var_type(&self, tp: &Type) -> bool {
         let file_def = self.data.def_nr("File");
-        let mut tp = tp.base();
-        while let Type::RefVar(inner) = tp {
-            tp = inner.base();
-        }
-        matches!(tp, Type::Reference(d, _) if *d == file_def)
+        matches!(tp.peel_link(), Type::Reference(d, _) if *d == file_def)
+    }
+
+    /// The schema type a binary-I/O slot of `width` bytes serialises through, for a value
+    /// whose declared range is `spec`.
+    ///
+    /// @FR-L-Narrow-Enc — a width does not say how its bytes decode, and `read_data` /
+    /// `write_data` dispatch on the `Parts` this returns.  The 1- and 2-byte widths already
+    /// zero-extend a non-negative range (their readers test `from < 0`), so only the 4-byte
+    /// width needed the choice made explicitly; it comes from the same `NarrowIntKind` the
+    /// field and element paths use, so a `u32` written to a file reads back as itself.
+    fn narrow_io_part(&mut self, width: u8, spec: &IntegerSpec) -> u16 {
+        crate::data::NarrowIntKind::of(width, false, false, spec.unsigned_wide())
+            .part(&mut self.database, spec.min, false)
+            .unwrap_or_else(|| self.database.name("integer"))
     }
 
     /// Ensure byte/short integer types used in file I/O are registered in the database.
@@ -1600,7 +1653,7 @@ impl Parser {
         if self.first_pass || db_tp != u16::MAX {
             return db_tp;
         }
-        let name = tp.name(&self.data);
+        let name = tp.source_name(&self.data);
         diagnostic!(
             self.lexer,
             Level::Error,
@@ -1635,16 +1688,19 @@ impl Parser {
         self.ensure_io_type(&val_type_clone);
         // Post-2c: if the value was written as `… as <alias>` and the alias
         // has size(N), narrow the serialisation to the alias's db type.
-        let db_tp = if let Type::Integer(IntegerSpec { min, .. }) = val_type
+        let db_tp = if let Type::Integer(spec) = val_type
             && let Some(n) = self.data.forced_size(cast_alias)
         {
+            let min = &spec.min;
             if self.first_pass {
                 u16::MAX
             } else {
                 match n {
                     1 => self.database.byte(*min, false),
                     2 => self.database.short(*min, false),
-                    4 => self.database.int(*min, false),
+                    // @FR-L-Narrow-Enc — the WRITE has to agree with the read above about
+                    // which four-byte encoding this is.
+                    4 => self.narrow_io_part(4, spec),
                     _ => self.get_type(val_type),
                 }
             }
@@ -2610,7 +2666,7 @@ impl Parser {
                                     self.lexer,
                                     Level::Error,
                                     "a format width must be a number, not {}",
-                                    w_tp.name(&self.data)
+                                    w_tp.source_name(&self.data)
                                 );
                             }
                         }
@@ -2752,7 +2808,7 @@ impl Parser {
                         Level::Error,
                         "a {} cannot be interpolated into a {} — a hole is a scalar or a value \
                          of a named type, handed to the type rather than rendered into it",
-                        tp.name(&self.data),
+                        tp.source_name(&self.data),
                         self.data.def(target).name()
                     );
                 }
@@ -2777,7 +2833,7 @@ impl Parser {
                     Level::Error,
                     "{nm} has no `fn hole_{kind}(self: {nm}, v: {})` — declare one to accept \
                      this hole",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
             }
             return;
@@ -3123,6 +3179,9 @@ impl Parser {
         // the `token(")")` below — leave that gated on `reverse`.
         let want_reverse = reverse || self.reverse_iterator;
         self.reverse_iterator = false;
+        // Set when the forward branch below picks the plain counter form; the
+        // init slot then carries `lo - 1` instead of the typed null.
+        let mut plain_counter_init: Option<Value> = None;
         let test = if want_reverse {
             if incl {
                 ls.push(v_set(
@@ -3164,20 +3223,43 @@ impl Parser {
                 till_tp,
             )
         } else {
-            ls.push(v_set(
-                ivar,
-                v_if(
-                    self.single_op("!", Value::Var(ivar), in_type.clone()),
-                    expr.clone(),
-                    self.conv_op(
-                        "+",
-                        Value::Var(ivar),
-                        Value::Int(1),
-                        in_type.clone(),
-                        I32.clone(),
+            // @PLN157 P3b — a forward loop over a literal non-negative `lo` needs no
+            // null-encoded "not started yet" state: the counter starts at `lo - 1`
+            // (folded here) and every iteration is one increment and one compare,
+            // instead of a null test choosing between init and increment.  The break
+            // test needs no proof — a null bound is i64::MIN, which sorts below every
+            // `lo` under the plain order exactly as under the sentinel-aware one, so
+            // both forms run such a loop zero times.  The null-init form stays for
+            // reverse loops, a computed `lo`, and any counter whose spec cannot hold
+            // `lo - 1` in range — a narrow unsigned counter's -1 IS its null sentinel.
+            let plain_init = match (expr.unspan(), &in_type) {
+                (Value::Int(lo), Type::Integer(spec))
+                    if *lo >= 0 && i64::from(spec.min) < i64::from(*lo) =>
+                {
+                    Some(lo - 1)
+                }
+                _ => None,
+            };
+            let step = self.conv_op(
+                "+",
+                Value::Var(ivar),
+                Value::Int(1),
+                in_type.clone(),
+                I32.clone(),
+            );
+            if let Some(init) = plain_init {
+                plain_counter_init = Some(Value::Int(init));
+                ls.push(v_set(ivar, step));
+            } else {
+                ls.push(v_set(
+                    ivar,
+                    v_if(
+                        self.single_op("!", Value::Var(ivar), in_type.clone()),
+                        expr.clone(),
+                        step,
                     ),
-                ),
-            ));
+                ));
+            }
             self.conv_op(
                 if incl { "<" } else { "<=" },
                 till,
@@ -3192,7 +3274,10 @@ impl Parser {
         // bound-clamp prelude (len/lo/hi temps) ahead of the iterator-var reset;
         // `iterator()` keeps this init slot (it drops only `extra_init`), so the
         // clamp is emitted on both the for-loop and the materialisation paths.
-        let init_ivar = v_set(ivar, self.null(&in_type));
+        let init_ivar = v_set(
+            ivar,
+            plain_counter_init.unwrap_or_else(|| self.null(&in_type)),
+        );
         let iter_init = if iter_prelude.is_empty() {
             init_ivar
         } else {
@@ -3259,11 +3344,26 @@ impl Parser {
                     // reverse_iterator stays set; consumed and reset by iterator()
                 } else if !matches!(in_type, Type::Null) {
                     self.reverse_iterator = false;
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "rev() on a non-range expression must wrap a sorted, index, or vector collection"
-                    );
+                    // A NULLABLE collection is refused — `@FR-I-NullSrc` draws the line
+                    // explicitly: a `nullref` (a runtime null of a NON-nullable type) iterates
+                    // zero times, while *"a source whose TYPE is `τ?` is a different question
+                    // and is REFUSED"*.  So the refusal is right and only its WORDING was
+                    // wrong: `rev()` on a `sorted<…>?` reported *"must wrap a sorted, index, or
+                    // vector collection"* about a receiver that IS one, and said nothing about
+                    // the `?` that is the actual problem.  Same shape as loft#1453 for `for` /
+                    // `map` / `filter`, and the same one home answers it.
+                    if !self.nullable_collection_refusal(
+                        &in_type,
+                        "reverse",
+                        "can be reversed",
+                        "zero iterations",
+                    ) {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "rev() on a non-range expression must wrap a sorted, index, or vector collection"
+                        );
+                    }
                 }
                 self.lexer.token(")");
             }
@@ -3632,7 +3732,17 @@ impl Parser {
             // no container VARIABLE to depend on, so a dep-only test read it as
             // owning.  `owns_store` is the one predicate that answers it, shared with
             // `generation::dispatch` so parser and codegen cannot drift (loft#664).
-            if self.vars.owns_store(*v_nr) && type_matches {
+            // @FR-L-CapHeap (loft#1447) — in-place reuse of the slot's store is licensed
+            // only while this local is the store's SOLE holder.  A closure record built
+            // over it is a second holder, and `(L-CapHeap)` says that record answers the
+            // value it was BUILT with — so re-minting the same store here would make it
+            // answer the rebind.  Asked as its own predicate rather than by widening
+            // `owns_store`, which answers the FREE question and is shared with
+            // `generation::dispatch`.  The `else if` below carries the same term, so a
+            // captured local ROUTES to the fresh-buffer arm instead of falling between the
+            // two — without it the field initialisers write into uninitialised storage,
+            // which is the failure that branch's own comment describes.
+            if self.vars.owns_store(*v_nr) && type_matches && !self.vars.rebind_must_mint(*v_nr) {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
                 // (see the hoist in parse_object_field and the splice after
@@ -3687,8 +3797,26 @@ impl Parser {
                     // buffer IS its purpose.
                     list.push(v_set(*v_nr, Value::Null));
                 }
-                list.push(self.cl("OpDatabase", &[Value::Var(*v_nr), Value::Int(tp)]));
+                let alloc = self.cl("OpDatabase", &[Value::Var(*v_nr), Value::Int(tp)]);
+                if !self.first_pass
+                    && crate::keys::append_in_place_enabled()
+                    && self.vars.is_argument(*v_nr)
+                    && self.is_hidden_param(*v_nr)
+                    && self.record_is_fully_written_by_a_literal(*v_nr)
+                {
+                    // @PLN157 § V-d — the promoted return buffer honours an OFFERED record
+                    // the way Route R's literal does: `OpDatabase` clears the whole store it
+                    // is handed, and a caller may now hand a vector ELEMENT's record (whose
+                    // store is the vector's).  Both spellings of absent still allocate.
+                    let is_null = self.cl("OpRefIsNull", &[Value::Var(*v_nr)]);
+                    let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(*v_nr)]);
+                    let offered = v_if(is_null, Value::Boolean(false), has_rec);
+                    list.push(v_if(offered, Value::Null, alloc));
+                } else {
+                    list.push(alloc);
+                }
             } else if (!type_matches
+                || self.vars.rebind_must_mint(*v_nr)
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
@@ -4478,7 +4606,7 @@ impl Parser {
                     && !self.data.def(*e).name.starts_with("__")
                     && !self.first_pass
                 {
-                    let tn = tp.name(&self.data);
+                    let tn = tp.source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,

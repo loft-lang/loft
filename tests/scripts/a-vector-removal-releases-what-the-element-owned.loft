@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `v.remove(i)` and the in-loop `e#remove` release what the removed element OWNED, so a
+// constant population costs a constant record count however many removals reach it (loft#1402).
+//
+//     for c in 0..n { v += [E{id:c, tags:[1,2,3]}]; v.remove(0); }   // the vector is EMPTY
+//                                                                   // at every turn
+//
+// `(Col-Remove)` is "delete one element" and LOFT.md says of `v#remove` that it "removes
+// exactly one element, releases what that element owned".  `Stores::remove_owned` — the
+// by-RECORD form a keyed `c[key] = null` reaches — did that; `Stores::remove_vector_at` — the
+// by-INDEX twin both vector spellings reach — did not, on its UNLINKED branch.  Its own doc
+// said why it thought it needn't: "a `vector`/`sorted` holds its elements INLINE, so a slot is
+// as wide as an element and there is no separate record to free".  True of the element's own
+// record and false of its CLAIMS — a `text`, a nested collection, a child struct each live in
+// a record of their own — so one record per removal was retained, without bound.
+//
+// ⚠ THE ORACLE IS FLATNESS, NOT A COUNT.  The absolute record count differs between the
+// backends (the interpreter and `--native` boot a different number of stores), so every cell
+// here runs the SAME workload at two sizes and asserts the two agree.  A cell that asserted a
+// literal would pin one backend and read vacuous on the other.
+//
+// ⚠ AND THE LEAK WAS LOAD-BEARING FOR loft#1401 — this could not land alone.  Releasing the
+// element's children while a `??`-discharged binding is still a live view of that element
+// empties a value the program is still reading:
+//
+//     cur = v[1] ?? E{…};   v.remove(1);   cur.label   // was "two"; with the release, null
+//
+// `445-generic-tree-walk` is the shipped cell that showed it.  loft#1401 makes such a binding
+// MATERIALISE, so it holds its own copy and the release cannot reach it — cell 9 below is that
+// interaction, pinned here so the two fixes cannot be separated by a later simplification.
+//
+// @falsified-at: 6609b01b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   6609b01b is loft#1401's fix, i.e. this guard's tree with only the release missing — the
+//   honest control, since at any earlier commit cell 9 would fail for the OTHER reason.
+
+struct E    { id: integer, tags: vector<integer> }
+struct T    { id: integer, label: text }
+struct Deep { id: integer, kids: vector<T> }
+struct Box  { items: vector<E> }
+struct L    { id: integer, tags: vector<integer> }
+
+// How many records the store table holds right now — the exact oracle, readable from loft on
+// both backends.  `collect_store_leaks` cannot see this leak at all: the records are retained
+// INSIDE a live store, so nothing is unfreed at exit.
+fn records() -> integer {
+  r = store_memory();
+  i = r.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  n = 0; p = i + 8;
+  while p < size(r) {
+    b = r.byte_at(p);
+    if b < 48 || b > 57 { break; }
+    n = n * 10 + (b - 48);
+    p += 1;
+  }
+  return n;
+}
+
+// 1 — `v.remove(i)` on an element with a nested collection.
+fn cycles_remove(n: integer) -> integer {
+  v: vector<E> = [];
+  for c in 0..n { v += [E{id:c, tags:[1,2,3]}]; v.remove(0); }
+  return records();
+}
+fn test_remove_by_index_is_flat() {
+  a = cycles_remove(20);
+  b = cycles_remove(200);
+  assert(a == b, "v.remove: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 2 — the in-loop cursor spelling reaches the same home.
+fn cycles_hash_remove(n: integer) -> integer {
+  v: vector<E> = [];
+  for c in 0..n { v += [E{id:c, tags:[1,2,3]}]; for e in v { e#remove; } }
+  return records();
+}
+fn test_remove_in_a_loop_is_flat() {
+  a = cycles_hash_remove(20);
+  b = cycles_hash_remove(200);
+  assert(a == b, "#remove: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 3 — a TEXT claim, which is the other thing an element owns.
+fn cycles_text(n: integer) -> integer {
+  v: vector<T> = [];
+  for c in 0..n { v += [T{id:c, label:"a distinctive label"}]; v.remove(0); }
+  return records();
+}
+fn test_a_text_claim_is_released() {
+  a = cycles_text(20);
+  b = cycles_text(200);
+  assert(a == b, "text claim: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 4 — claims NESTED two deep: the walk has to recurse, not just free one level.
+fn cycles_deep(n: integer) -> integer {
+  v: vector<Deep> = [];
+  for c in 0..n {
+    v += [Deep{id:c, kids:[T{id:1,label:"one"}, T{id:2,label:"two"}]}];
+    v.remove(0);
+  }
+  return records();
+}
+fn test_deep_claims_are_released() {
+  a = cycles_deep(20);
+  b = cycles_deep(200);
+  assert(a == b, "deep claims: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 5 — the container is a struct FIELD rather than a local.
+fn cycles_field(n: integer) -> integer {
+  bx = Box{items: []};
+  for c in 0..n { bx.items += [E{id:c, tags:[1,2,3]}]; bx.items.remove(0); }
+  return records();
+}
+fn test_a_field_container_is_flat() {
+  a = cycles_field(20);
+  b = cycles_field(200);
+  assert(a == b, "field container: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 6 — the LINKED layout (a keyed sibling over the element type) already released, and must
+// keep doing so.  This is the control that the new release did not disturb the other branch.
+fn cycles_linked(n: integer) -> integer {
+  v: vector<L> = [];
+  k: hash<L[id]> = [];
+  for c in 0..n { v += [L{id:c, tags:[1,2,3]}]; v.remove(0); }
+  return records() + len(k) * 0;
+}
+fn test_the_linked_layout_stays_flat() {
+  a = cycles_linked(20);
+  b = cycles_linked(200);
+  assert(a == b, "linked layout: {a} records at 20 cycles, {b} at 200 — should not grow");
+}
+
+// 7 — VALUES: the removal still removes exactly one element, at every index spelling.
+fn test_the_removal_still_removes_exactly_one() {
+  v: vector<T> = [T{id:0,label:"a"}, T{id:1,label:"b"}, T{id:2,label:"c"}, T{id:3,label:"d"}];
+  v.remove(1);
+  assert(len(v) == 3, "after remove(1): len {len(v)}, want 3");
+  assert((v[0] ?? T{id:-1,label:"x"}).label == "a", "index 0: {(v[0] ?? T{id:-1,label:"x"}).label}");
+  assert((v[1] ?? T{id:-1,label:"x"}).label == "c", "index 1: {(v[1] ?? T{id:-1,label:"x"}).label}");
+  assert((v[2] ?? T{id:-1,label:"x"}).label == "d", "index 2: {(v[2] ?? T{id:-1,label:"x"}).label}");
+  v.remove(-1);
+  assert(len(v) == 2, "after remove(-1): len {len(v)}, want 2");
+  assert((v[1] ?? T{id:-1,label:"x"}).label == "c", "after remove(-1), index 1: {(v[1] ?? T{id:-1,label:"x"}).label}");
+}
+
+// 8 — the indices that name NO element must release nothing and remove nothing.  The release
+// guard and the removal read one index→element map, so they cannot disagree about these.
+fn test_an_index_that_names_no_element_is_a_no_op() {
+  v: vector<T> = [T{id:0,label:"a"}, T{id:1,label:"b"}];
+  v.remove(9);
+  assert(len(v) == 2, "out of range: len {len(v)}, want 2");
+  v.remove(-9);
+  assert(len(v) == 2, "negative out of range: len {len(v)}, want 2");
+  assert((v[0] ?? T{id:-1,label:"x"}).label == "a", "survivor 0: {(v[0] ?? T{id:-1,label:"x"}).label}");
+  assert((v[1] ?? T{id:-1,label:"x"}).label == "b", "survivor 1: {(v[1] ?? T{id:-1,label:"x"}).label}");
+  e: vector<T> = [];
+  e.remove(0);
+  assert(len(e) == 0, "empty container: len {len(e)}, want 0");
+}
+
+// 9 — THE INTERACTION WITH loft#1401, and the reason this could not land first.  A binding
+// discharged out of the element being removed materialises, so the release cannot empty it.
+fn test_a_discharged_binding_keeps_the_children_it_read() {
+  v: vector<Deep> = [
+    Deep{id:1, kids:[T{id:1,label:"one"}]},
+    Deep{id:2, kids:[T{id:2,label:"two"}, T{id:3,label:"three"}]},
+  ];
+  cur = v[1] ?? Deep{id:0, kids:[]};
+  v.remove(1);
+  assert(cur.id == 2, "discharged binding, id: got {cur.id}, want 2");
+  assert(len(cur.kids) == 2, "discharged binding, children: got {len(cur.kids)}, want 2");
+  assert((cur.kids[0] ?? T{id:-1,label:"x"}).label == "two",
+         "discharged binding, child text: got {(cur.kids[0] ?? T{id:-1,label:"x"}).label}");
+}
+
+// 10 — the same walk-and-remove shape `445-generic-tree-walk` uses: a stack popped from the
+// end while a discharged binding of the popped element is still read.
+fn test_a_pop_while_the_popped_element_is_read() {
+  st: vector<T> = [T{id:1,label:"one"}, T{id:2,label:"two"}, T{id:3,label:"three"}];
+  seen = "";
+  while len(st) > 0 {
+    top = st[len(st) - 1] ?? T{id:0, label:"none"};
+    st.remove(len(st) - 1);
+    seen += "{top.label},";
+  }
+  assert(seen == "three,two,one,", "pop while read: got {seen}, want three,two,one,");
+}
+
+fn main() {
+  test_remove_by_index_is_flat();
+  test_remove_in_a_loop_is_flat();
+  test_a_text_claim_is_released();
+  test_deep_claims_are_released();
+  test_a_field_container_is_flat();
+  test_the_linked_layout_stays_flat();
+  test_the_removal_still_removes_exactly_one();
+  test_an_index_that_names_no_element_is_a_no_op();
+  test_a_discharged_binding_keeps_the_children_it_read();
+  test_a_pop_while_the_popped_element_is_read();
+}

@@ -35,6 +35,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## `CI-RESULT` measured only the TEST phase — cause found and FIXED (2026-09-01)
 
+**`CI_MAX_FAIL` — how many test failures a gate collects before it stops (default 5).**
+`make ci CI_MAX_FAIL=1` is the old fail-fast behaviour and `CI_MAX_FAIL=all` runs the whole
+suite whatever happens; the run's own header line in `result.txt` says which it used.
+
+The default moved off 1 because of what a stop-at-one gate costs when a tree has SEVERAL
+independent failures: each ~20-minute gate reports exactly one, and the count is learnable only
+by fixing and re-running. Measured 2026-09-08 across the two-checkout join — three consecutive
+gates, each cancelled at a different first failure: a stale `doc/pkg` browser bundle, then a
+golden mismatch, then a whole-corpus keyed-store regression that had been present the entire
+time and was the serious one. Two full gates bought no information about it.
+
+Not `all` by default either: a genuinely broken tree fails thousands of tests and then spends
+its full wall clock saying what the first screenful already said. Five answers the question the
+count is actually being asked — *is this red one defect or several?* — and a run that wants the
+complete list asks for it.
+
 **Measured, on two checkouts, after a full day of reading it as the verdict.** `result.txt`
 held all of these at once:
 
@@ -98,6 +114,49 @@ success while measuring nothing. It cost nothing on the day it was noticed becau
 were cosmetic — but nothing about the mechanism was limited to cosmetic lints, and for as long as
 it stood, a green `make ci` was evidence about the test suite and about nothing else.
 
+## The gate builds the test binaries TWICE — and the other structural minutes (@PLN159, 2026-09-08)
+
+Measured on the PR run `34055973906` (2026-09-06) and a local `make ci` of 2026-09-07, and
+recorded in full in [plans/159-gate-efficiency.md](plans/159-gate-efficiency.md).  The suite's
+isolated cost is seconds — `loft_suite` 5.8 s, `native_scripts` 6.1 s warm, one corpus program
+through `rustc` 0.20 s — and the gate's minutes were structural:
+
+| where | what | cost |
+|---|---|---|
+| every CI shard, every local gate | `[profile.test] debug = 1` differed from dev's default 2, so `cargo build --all-targets` and nextest built all 267 test binaries TWICE (cargo shares artifacts between profiles with equal VALUES, never by name) | 4m05s per shard, 1m13s locally |
+| the local loop | `find_problems.sh` ran `--release` while `make ci` and CI run the dev/test profile — a third build of the same binaries per source edit | one release test build per edit |
+| the heavy shard | `native_scripts` (219.6 s) in a single-slot group, plus the 3.7-min cache save, on the critical path | 29.3 min shard |
+| every commit | `native_artifact_cache_key` folded the git HEAD, so every commit rebuilt every hand-written package cdylib (`cdylibstale`) although none depends on the loft crate | one cold `cache warm` per commit |
+| two gates on one box | each at half the threads, both ~2×, plus the OOM and load-flake reruns | 10 → 19 min |
+| the iteration loop, every edit | `find_problems.sh` rebuilt the release rlib and both wasm rlibs — three NON-incremental whole-crate builds — before a `--subject parser` run that links none of them; the dev profile is incremental (a comment edit 3 s, a one-function edit 22 s) and the release profile is not (42–55 s, every edit) | 158 s ahead of 13 s of tests |
+
+One of these was a correctness hole, not only a cost: the loop's rebuild step refreshed the
+release LIB and never the release BINARY, so the 29 test binaries that spawn
+`target/release/loft` measured whatever `make ci` last built — a binary from an unrelated
+earlier run, or from a tree temporarily reverted for a falsification (loft-c1 hit the
+consumer-side twin the same morning: a 25-minute valgrind sweep whose binary a rebuild
+replaced under it).  Nothing tied the artefact to the source that was supposed to have
+produced it.
+
+What changed: `[profile.dev] debug = 1` (one build); `find_problems.sh` without `--release` (one
+profile); a `corpus` PR shard and per-shard cache saves; the package-cdylib key without the git
+HEAD; `make ci` takes `/tmp/loft-gate.lock` (one gate at a time, `LOFT_GATE_PARALLEL=1` opts out)
+and runs the diff's subjects first (`scripts/nextest_priority.sh`, an order, never a selection);
+`find_problems.sh --changed`; `find_problems.sh` rebuilding only what the selection links
+(the dev rlib always, the release binary and the wasm rlibs only for the binaries that use
+them); and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
+phase's proof — and the numbers the next PR run must confirm — are in the plan file.
+
+### Open work (from @PLN159, closed 2026-09-08)
+
+| item | what | trigger / size |
+|---|---|---|
+| **E — read the PR** | On the first real PR run after the split: the four shards' walls (`gh run view --json jobs`), the `Finished test profile` line inside `Test` (expected seconds, was 4m05s), and the run AFTER it restoring warm (`Build` shows deps Fresh, the corpus and build caches restored).  Record here; the projection was heavy 29.3 → ~18 min | the next PR; XS |
+| **F′ — a cache for the wasm builds** | `--html` / `--native-wasm` write `<dir>/.loft/<stem>.wasm` with no key and recompile every run (`html_embed` 60 s per test isolated).  A `<stem>-<hash>` entry keyed like the native cache (generated Rust ⊕ wasm rlib CONTENT ⊕ `wasm-opt --version` ⊕ flags); seam: a lookup after `prog.rs` is emitted at `src/main.rs` "Compile to wasm32-unknown-unknown cdylib", a publish after `wasm_bytes` is read before "Assemble HTML".  Pays only on a run whose wasm rlib did not move — a docs- or tests-only re-gate — never on a fix iteration; a `--native` probe needs no cache (0.3 s cold, and the emitted Rust embeds the script's path, so a content key is a per-name key) | when docs-only re-gates are measured to matter; S |
+| **G — the gate lock's default** | `make ci` queues behind another checkout's gate (`/tmp/loft-gate.lock`); `LOFT_GATE_PARALLEL=1` restores the throttle.  Queue finishes the first gate at 1× and the second at the same 2× the throttle gave both, and removes the OOM and load-flake reruns; an agent waiting on the lock is idle | the owner's call; XS to flip |
+| **Pin the artefact a long gate measures** | A sweep that consumes `target/release/loft` records its hash at start and fails loudly when it moves (or copies the binary aside); the gate lock is `make ci`-only and does not stop a `cargo build` beside a sweep | when the next sweep is contaminated; S |
+| **The crate split** | The 22 s a one-function edit costs is the 325 k-line crate's frontend; a workspace (parser · typing · store · runtime · codegen · cache/registry) gives cargo's crate-level "unchanged, not rebuilt" — the true analogue of a Makefile's per-file rule | H; a plan of its own |
+
 ## A LOCAL `make ci` is ~10 min, and it is two tests (2026-08-21)
 
 This document is about the CI runner. A developer's complaint is different — *a local
@@ -106,6 +165,16 @@ recorded separately rather than folded in.
 
 **Measured on 24 cores.** Full run: **572 s**, of which `cargo nextest` is ~478–572 s and the
 three builds ~130 s. So the test step is the whole question.
+
+**The thread count is capped by MEMORY as well as cores (2026-09-07).** `make ci` sizes its
+build and test parallelism as `nproc / live-gates`, floored at 2 — and now also capped at
+`MemAvailable / 0.7 GiB` (`CI_MEM_JOBS` in the Makefile): a thread's peak is roughly 0.7 GiB
+(rustc for native fixtures, the release build's codegen units), so sizing by cores alone
+over-commits a small-memory box into swap — measured on a 14 GiB laptop, 20 threads drove
+swap use from 7.6 to 10.3 GiB mid-gate while a browser and rust-analyzer held their usual
+residency. `MemAvailable` is read once at gate start and already discounts that residency;
+the gate's banner says when the cap bit (`memory-capped`). GH runners are RAM-rich per core,
+so CI itself never throttles.
 
 **When a gate DIES, ask who signalled it before asking why.** Two `make ci` runs ended on
 2026-09-04 with `make: *** [Makefile: ci] Terminated` — SIGTERM, so not the kernel OOM
@@ -117,7 +186,72 @@ a reason: it detaches the gate (`setsid nohup`), records the signal a wrapper re
 with `strace` on the PATH, runs `make` under a signals-only trace so the sender's pid, uid and
 `si_code` land in `target/gate-signals.log`, beside a process-table snapshot taken the moment
 `make` dies (`target/gate-killer-snapshot.txt`). `scripts/ci-run.sh status` then answers
-KILLED with the sender named, instead of a verdict-less `result.txt`.
+KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more instances
+2026-09-07 (one 5 s in, one 7 min in, both launched as agent-tool background tasks; kernel
+journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
+process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
+
+**The verdict line names the failing TEST and how many, not the first `error[` in the file.**
+`ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
+test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`
+reported `error[E0425] … generate_register_from_loft_with_bridges` — a registry package the
+branch had never touched, 1500 lines above the real failure (loft#1448).  Both agents on this box
+triaged that line and went looking at the cdylib.  **Read the failing test, not the captured
+detail**, and the verdict now says it: `FAILED 1 test(s) — loft::doc_hygiene::quality_optional…`.
+
+The COUNT is the other half, because it splits two reds that need opposite responses.  **FAILED
+with 0 test failures is the toolchain, the box or the target dir** — a stale `libloft.rlib`, a
+corrupt `target/debug/incremental`, a full disk — **and FAILED with a count is the code.**  That
+distinction was re-derived from error text three times in one evening before it went into the
+line.
+
+**Kill a background sweep by its PARENT, and the parent is not named after the work.**
+`scripts/valgrind-sweep.sh` runs its memchecks under `xargs -P N`, so killing every
+`valgrind.bin` just lets the `xargs` start the next batch, and a `pkill -f valgrind` never
+matches the process that owns the queue.  Worse, if the launching shell is gone the `xargs` is
+reparented to init, so it survives being aimed at through its own session.  Find it with
+`ps -eo pid,ppid,pgid,cmd | grep "[v]algrind"` and kill the PPID the children share.  The
+general shape: a name-based kill can only find processes whose name you already know, and a
+work queue's parent shares no name with its work.
+
+**A background gate whose SUBJECT keeps moving measures nothing, and nothing in the foreground
+says so.**  A valgrind sweep left running against `target/release/loft` while that binary was
+rebuilt five times for an unrelated fix produced 250 rows of results about no particular build.
+The rule — do not rebuild while a gate runs — is easy to hold for a foreground command and easy
+to forget for one that is already detached, which is exactly when it costs the most.  Pin a long
+sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
+main checkout stays free to iterate.
+
+**The verdict line names the failing TEST and how many, not the first `error[` in the file.**
+`ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
+test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`
+reported `error[E0425] … generate_register_from_loft_with_bridges` — a registry package the
+branch had never touched, 1500 lines above the real failure (loft#1448).  Both agents on this box
+triaged that line and went looking at the cdylib.  **Read the failing test, not the captured
+detail**, and the verdict now says it: `FAILED 1 test(s) — loft::doc_hygiene::quality_optional…`.
+
+The COUNT is the other half, because it splits two reds that need opposite responses.  **FAILED
+with 0 test failures is the toolchain, the box or the target dir** — a stale `libloft.rlib`, a
+corrupt `target/debug/incremental`, a full disk — **and FAILED with a count is the code.**  That
+distinction was re-derived from error text three times in one evening before it went into the
+line.
+
+**Kill a background sweep by its PARENT, and the parent is not named after the work.**
+`scripts/valgrind-sweep.sh` runs its memchecks under `xargs -P N`, so killing every
+`valgrind.bin` just lets the `xargs` start the next batch, and a `pkill -f valgrind` never
+matches the process that owns the queue.  Worse, if the launching shell is gone the `xargs` is
+reparented to init, so it survives being aimed at through its own session.  Find it with
+`ps -eo pid,ppid,pgid,cmd | grep "[v]algrind"` and kill the PPID the children share.  The
+general shape: a name-based kill can only find processes whose name you already know, and a
+work queue's parent shares no name with its work.
+
+**A background gate whose SUBJECT keeps moving measures nothing, and nothing in the foreground
+says so.**  A valgrind sweep left running against `target/release/loft` while that binary was
+rebuilt five times for an unrelated fix produced 250 rows of results about no particular build.
+The rule — do not rebuild while a gate runs — is easy to hold for a foreground command and easy
+to forget for one that is already detached, which is exactly when it costs the most.  Pin a long
+sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
+main checkout stays free to iterate.
 
 **And ask `df -h /` before a gate.**  A full disk fails the NATIVE corpus with `FAIL
 unknown-mode` after `low space` lines, which reads as a code fault; `make sweep-scratch`
@@ -426,6 +560,20 @@ Two measurements, both from `gh run list`, decided this:
   daily on twenty of twenty, and the reds were macOS/Windows-only tests plus a codegen
   invariant in the debug-assertions gate — deep-internals changes that pass the ubuntu
   PR gate and fail on the legs that only run after the merge.
+- **Measured 2026-09-07, three at once.** A local `make ci` returned `ALL GATES PASSED`
+  (796 s) on a tip whose nightly had THREE red gates: `LOFT_POISON` (a nested tuple's
+  copy freed the source's vector), `debug-assertions` (attribute indices tagged as frame
+  variables in `Definition.returned`) and `ASan UAF/OOB (macos-latest)` (`pid_alive` knew
+  only procfs, so nothing was provably dead off Linux).  All three were regressions from
+  one join, all three were green on `main` the morning before it, and none is in the
+  local gate's path.  **So a green `make ci` is not evidence about POISON, the
+  debug-assertions gate, or any macOS leg** — the same shape as the shipped libraries,
+  which `make ci` also says nothing about ([DEVELOPMENT.md](DEVELOPMENT.md) §
+  `revalidate_libs_local.sh`).  Two of the three needed a
+  config the box cannot run at all (macOS) or does not build by default
+  (`-C debug-assertions=on`, which `[profile.dev.package.loft]` strips), so the way to
+  ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the
+  FULL nightly set, wider than the push-triggered run that produced the reds.
 
 The **release gate** (`release-gate.yml`) is the deliberate counterpart: the six
 nightlies called as reusable workflows (`workflow_call`, the pattern
@@ -830,11 +978,18 @@ best ratio, because macOS duplicates ubuntu exactly and costs ~50 % more to do i
   definition, no drift. (Copying was the alternative and it is exactly the mistake
   the library-CI unification had just finished undoing.) On a PR the ASan job runs
   **macOS only** — `ci.yml` already gates every PR with an ubuntu ASan job.
-- **Phase 4** — `notify` now files an issue only for `miri / asan / poison /
-  stack-shadow / debug-asserts`, never from a PR; `daily-status` writes the single digest.
-  @PLN154's `stack-shadow` joined that list on the rule the job list states: a gate absent
-  from `needs` reads as green and AUTO-CLOSES the issue, so a gate whose finding means *the
-  language is broken* goes in with the gate.  It costs ~2x the in-process interpreter
+- **Phase 4** — `notify` files an issue only for the gates whose red means *the language
+  is broken*, never from a PR; `daily-status` writes the single digest.  Which gates those
+  are is **not repeated here**: each job in `miri.yml` carries `# @nightly-class:
+  unsound|report` as the first line of its block, and `notify.needs`, `daily-status.needs`
+  and the digest's closing sentence are all derived from it, with
+  `doc_hygiene::nightly_gate_classes_drive_every_list_that_reads_them` failing when they
+  disagree or when a job carries no class at all.  The rule that motivates the marker is
+  the one the job list always stated — a gate absent from `needs` reads as green and
+  AUTO-CLOSES the issue — and the marker exists because prose did not enforce it: `valgrind`
+  was in no list at all, so when memcheck went red on 2026-09-07 the filed issue named only
+  `poison,debug-asserts` and the next green run would have closed it with valgrind still
+  failing.  @PLN154's `stack-shadow` costs ~2x the in-process interpreter
   corpus (67-93 s against ~50 s for `loft_suite` locally, the spread being box contention), needs no sanitizer and no nightly
   toolchain, and covers the residence POISON cannot describe: poison needs the slot to hold
   a distinguishable byte pattern, and a recycled frame slot holds a plausible one.

@@ -45,7 +45,14 @@ struct Width {
     type_nr: i8,
     /// Byte offset of axis 1; axis 0 sits at 0.
     stride: u16,
-    /// The coordinate range the width can carry, as `(lo, hi)`.
+    /// The declared range MINIMUM, which is the bias the narrow encodings store against
+    /// (`value - start`) and the `Key::start` every decoder must add back.  A width whose
+    /// entries all carry `0` is a width whose bias is never exercised: `u8` is the only
+    /// one whose real spelling has a zero bias, so a table of zeroes tests one arm of the
+    /// decode and reports it as the whole.
+    start: i32,
+    /// The coordinate range the width can carry, as `(lo, hi)` — `lo` is `start`, and
+    /// `hi` is what the width's own `*_fits` predicate admits above it.
     span: (i64, i64),
     name: &'static str,
 }
@@ -54,39 +61,74 @@ const WIDTHS: &[Width] = &[
     Width {
         type_nr: 1,
         stride: 8,
+        start: 0,
         span: (-40_000, 40_000),
         name: "integer",
     },
     Width {
         type_nr: 2,
         stride: 8,
+        start: 0,
         span: (-40_000, 40_000),
         name: "long",
     },
     Width {
         type_nr: 8,
         stride: 4,
+        start: 0,
         span: (-40_000, 40_000),
         name: "int32",
     },
-    // `0` is the null sentinel, so the stored raw is `value + 1` and the value is
-    // never negative.
+    // `0` is the null sentinel, so the stored raw is `value - start + 1`.
     Width {
         type_nr: 9,
         stride: 2,
+        start: 0,
         span: (0, 60_000),
         name: "short",
     },
     Width {
+        type_nr: 9,
+        stride: 2,
+        start: 1_000,
+        span: (1_000, 61_000),
+        name: "short start=1000",
+    },
+    Width {
         type_nr: 10,
         stride: 1,
+        start: 0,
         span: (0, 255),
         name: "byte",
     },
     Width {
+        type_nr: 10,
+        stride: 1,
+        start: -128,
+        span: (-128, 127),
+        name: "i8",
+    },
+    Width {
+        type_nr: 10,
+        stride: 1,
+        start: 100,
+        span: (100, 355),
+        name: "byte start=100",
+    },
+    // Direct 2-byte: the whole 65536 round-trips, so `hi` sits well above the SIGNED
+    // midpoint of the stored word — the region a signed reinterpretation gets wrong.
+    Width {
         type_nr: 11,
         stride: 2,
-        span: (-30_000, 30_000),
+        start: 0,
+        span: (0, 65_535),
+        name: "u16",
+    },
+    Width {
+        type_nr: 11,
+        stride: 2,
+        start: -32_768,
+        span: (-32_768, 32_767),
         name: "i16",
     },
 ];
@@ -96,40 +138,49 @@ fn keys_for(w: &Width) -> Vec<Key> {
         Key {
             type_nr: w.type_nr,
             position: 0,
-            start: 0,
+            start: w.start,
         },
         Key {
             type_nr: w.type_nr,
             position: w.stride,
-            start: 0,
+            start: w.start,
         },
     ]
 }
 
-/// Write one axis, in whatever raw form its width stores — the mirror of the
-/// `axis_i64` arm that reads it back.
+/// Write one axis through the STORE's own setter — the same call a field write makes.
+///
+/// It is deliberately not a mirror of the `axis_i64` arm that reads it back: a writer
+/// written to match the reader shares whatever the reader gets wrong, so the round-trip
+/// agrees with itself and never asks the one party that decides what the bytes mean.
 fn write_axis(store: &mut Store, rec: u32, key: &Key, v: i64) {
     let p = PAYLOAD + u32::from(key.position);
-    match key.type_nr.unsigned_abs() {
+    let min = key.start;
+    let ok = match key.type_nr.unsigned_abs() {
         2 => {
             store.set_long(rec, p, v);
+            true
         }
         8 => {
             store.set_i32_raw(rec, p, v as i32);
+            true
         }
-        9 => {
-            store.set_short(rec, p, 0, v as i32);
-        }
-        10 => {
-            store.set_byte(rec, p, 0, v as i32);
-        }
-        11 => {
-            *store.addr_mut::<u16>(rec, p) = v as i16 as u16;
-        }
+        9 => store.set_short(rec, p, min, v as i32),
+        10 => store.set_byte(rec, p, min, v as i32),
+        11 => store.set_i16_raw(rec, p, min, v as i32),
         _ => {
             store.set_int(rec, p, v);
+            true
         }
-    }
+    };
+    // A refused write leaves the slot holding the type default, and the read that follows
+    // would then be scored against a value never stored — a cell that passes because
+    // nothing happened.  The spans are declared to fit; this is what keeps them honest.
+    assert!(
+        ok,
+        "write of {v} refused for type_nr {} min {min}",
+        key.type_nr
+    );
 }
 
 fn lcg(seed: &mut u64) -> i64 {

@@ -1,0 +1,50 @@
+# The acquisition chain as STANDING evidence (@PLN156 phase 2): the moment a release is
+# published, verify the whole path a user takes to it — real transport, the version the
+# binary claims, resolution against the signed index, the verify-self ANCHOR line, and
+# a program executing.
+#
+# Two triggers, two questions:
+#   release published — did THIS release ship acquirable?  The registry splice usually
+#     lands after Publish, so this run typically ends at the resolution step with the
+#     chain script's loudest failure ("the signed index resolves NOTHING") until the
+#     splice lands — re-run it then (workflow_dispatch) for the green that counts.  The
+#     checklist's A-acquisition item measures the same chain from the release box; this
+#     job is the copy that survives on the record.
+#   workflow_dispatch — re-verify any version by hand (`version` input), including the
+#     PREVIOUS release mid-cycle: the live chain staying acquirable is a stability
+#     property, not a release-day one.
+name: post-publish-verify
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "release version to verify (e.g. 2026.9.0); empty = latest tag"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  acquisition-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve the version under test
+        id: ver
+        run: |
+          v="${{ github.event.inputs.version }}"
+          if [ -z "$v" ] && [ "${{ github.event_name }}" = "release" ]; then
+            v="${{ github.event.release.tag_name }}"
+            v="${v#v}"
+          fi
+          if [ -z "$v" ]; then
+            v=$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//')
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "verifying loft $v"
+      - name: The acquisition chain, end to end
+        run: sh scripts/acquisition-chain.sh --version "${{ steps.ver.outputs.version }}"

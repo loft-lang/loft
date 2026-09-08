@@ -89,6 +89,10 @@ pub enum RuntimeErrorKind {
     NegativeIndex { idx: i64 },
     /// Field / method access through a null `DbRef`.
     NullDereference,
+    /// A write to a store the author locked with `d#lock = true`.  Only the USER lock
+    /// reaches here: the const store and a worker borrow share `Store::read_only` but
+    /// are the compiler's to get right, and keep their assert.
+    WriteToLockedStore { rec: u32, fld: u32 },
     /// Narrowing cast (e.g. `i64 -> i32`) overflowed the target range.
     NarrowCastOverflow { value: i64, target: &'static str },
     /// A `<<` / `>>` whose amount is outside `[0, 64)`, or whose result is the
@@ -140,6 +144,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::ShiftOutOfRange => "shift_out_of_range",
             RuntimeErrorKind::CastOutOfRange => "cast_out_of_range",
             RuntimeErrorKind::RangeDefaulted { .. } => "range_defaulted",
+            RuntimeErrorKind::WriteToLockedStore { .. } => "write_to_locked_store",
             RuntimeErrorKind::StackOverflow => "stack_overflow",
             RuntimeErrorKind::UserPanic { .. } => "user_panic",
             RuntimeErrorKind::AssertionFailed { .. } => "assertion_failed",
@@ -174,6 +179,10 @@ impl RuntimeErrorKind {
             }
             RuntimeErrorKind::CastOutOfRange => {
                 "cast value cannot be represented in the target type".to_string()
+            }
+            RuntimeErrorKind::WriteToLockedStore { .. } => {
+                "write to a locked store — unlock it with `#lock = false` before writing"
+                    .to_string()
             }
             RuntimeErrorKind::StackOverflow => format!(
                 "call stack overflow — exceeded {} stack frames",
@@ -404,6 +413,33 @@ impl RuntimeError {
     /// `assert`.  A definition's stored `position.pos` is the parser's cursor partway
     /// through the signature (after `->`), so a caret there lands on whitespace and
     /// points at nothing.
+    /// A write refused because the AUTHOR locked the store (`d#lock = true`).
+    ///
+    /// No `position`: `Store` knows the record and the field, not the source line, and a
+    /// wrong `-->` block is worse than none — the call chain the renderer adds is what
+    /// names the author's code.  `op_pc` is `u32::MAX` for the same reason
+    /// `stack_overflow` uses it: this is raised below the bytecode dispatch, on the path
+    /// both backends share.
+    #[must_use]
+    pub fn locked_store_write(rec: u32, fld: u32, origin: &str) -> Self {
+        // The lock ORIGIN is deliberately not in the message.  It spells an internal
+        // store number that differs between the backends for the same program
+        // (`store_nr=2` interpreted, `store_nr=0` native), so putting it here would make
+        // the two render different text for one event — the property `report_and_exit`
+        // exists to hold.  It is a debugging fact, and `LOFT_LOG=locks` is where it lives.
+        let _ = origin;
+        let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
+        let detail = kind.describe();
+        Self {
+            kind,
+            position: None,
+            op_pc: u32::MAX,
+            message: detail,
+            call_chain: Vec::new(),
+            crossed_placement: false,
+        }
+    }
+
     #[must_use]
     pub fn stack_overflow(file: String, line: u32) -> Self {
         let position = if file.is_empty() {
@@ -540,6 +576,7 @@ mod tests {
             RuntimeErrorKind::IndexOutOfBounds { idx: 5, len: 3 },
             RuntimeErrorKind::NegativeIndex { idx: -1 },
             RuntimeErrorKind::NullDereference,
+            RuntimeErrorKind::WriteToLockedStore { rec: 1, fld: 8 },
             RuntimeErrorKind::NarrowCastOverflow {
                 value: 99_999,
                 target: "i8",

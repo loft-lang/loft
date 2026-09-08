@@ -1085,6 +1085,15 @@ pub struct Parser {
     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
     pub(crate) narrowed_non_null: Vec<u16>,
+    /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
+    /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
+    ///
+    /// A separate list because the fact has a different LIFETIME: a name's proof dies at the
+    /// next write to that name, which the parser can see; a projection's dies at anything that
+    /// could touch any part of it, which it cannot.  So this one is cleared at every statement
+    /// boundary rather than tracked — the proof holds inside ONE expression, which is exactly
+    /// the shape the idiom needs (`else { db.map[k].val }`) and nothing wider.
+    pub(crate) narrowed_non_null_exprs: Vec<Value>,
     /// @PLN25 DN3 fault-op narrowing — local-var slots PROVEN non-zero by an enclosing
     /// `if v != 0 { … }` guard. A division/mod whose divisor is in this set (or a constant
     /// non-zero literal) is provably fit and types NON-null; otherwise it types `τ?`. Same
@@ -1477,6 +1486,7 @@ impl Parser {
             field_read_counts: std::collections::HashMap::new(),
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
+            narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,
@@ -2444,7 +2454,7 @@ impl Parser {
                 .iter()
                 .find(|e| !crate::data::ref_tuple_record_element_ok(e))
         {
-            let bad_name = bad.name(&self.data);
+            let bad_name = bad.source_name(&self.data);
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -4105,7 +4115,7 @@ impl Parser {
                 _ => {}
             }
         }
-        t.name(&self.data)
+        t.source_name(&self.data)
     }
 
     /// @PLAN48 P2: literal exemption — true when `code` is a constant integer that
@@ -4225,7 +4235,7 @@ impl Parser {
             Type::Reference(d, deps) if deps.is_pointer_marker() => {
                 format!("reference<{}>", self.data.def(*d).name())
             }
-            other => other.name(&self.data),
+            other => other.source_name(&self.data),
         }
     }
 
@@ -4314,6 +4324,27 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
+        self.nstore_null_report_as(target_tp, what, at, never_error, None)
+    }
+
+    /// [`Parser::nstore_null_report`] with the CONSEQUENCE clause supplied by the caller.
+    ///
+    /// The default clause — *"the slot holds null"* — is what a scalar slot does, and what a
+    /// record travelling as a HANDLE does: measured, a `null` argument arrives null and a
+    /// `return null` reads back null.  A dense INLINE slot does not, because it has no
+    /// discriminant to spend on absence (`synth_nullable_struct_fields`: a field with no `?`
+    /// "cannot be absent and stays dense"), and an assignment into one does not happen at all.
+    /// So the clause belongs to the POSITION, which only the caller knows, while the tier
+    /// split and the cure stay here.  Passing `None` keeps the wording those callers already
+    /// pin, to the byte.
+    fn nstore_null_report_as(
+        &mut self,
+        target_tp: &Type,
+        what: &str,
+        at: Option<&Position>,
+        never_error: bool,
+        consequence: Option<&str>,
+    ) -> bool {
         if self.first_pass {
             return false;
         }
@@ -4360,10 +4391,11 @@ impl Parser {
                 // drops, not a second message.  Two spellings of one diagnostic is how the
                 // fixtures that pin this text would start disagreeing with the rule behind it.
                 let kind = if heap_target { "" } else { "scalar " };
+                let effect = consequence.unwrap_or("the slot holds null");
                 let msg = diagnostic_format(
                     Level::Warning,
                     format_args!(
-                        "`null` is stored into {what} of the non-null {kind}type `{nm}` — the slot holds null; declare it `{nm}?` to make that explicit"
+                        "`null` is stored into {what} of the non-null {kind}type `{nm}` — {effect}; declare it `{nm}?` to make that explicit"
                     ),
                 );
                 self.nstore_diag(at, Level::Warning, &msg);
@@ -4397,22 +4429,37 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
+        // `τ?` has a THIRD spelling, and this gate has to ask all three of one face.
+        // A `&` parameter carries its nullability INSIDE the reference: `&integer?` is
+        // `RefVar(Optional(Integer))`, so asking `Type::Optional` of the OUTER type answers
+        // about the reference rather than about the slot the store lands in.  Read bare, every
+        // correct call handing a `τ?` to a `&τ?` parameter warned that it "becomes null there"
+        // in "the non-null type `&integer?`" — naming a nullable type non-null — and `warning`
+        // gates library CI, so a library taking a `&τ?` parameter failed on correct code
+        // (loft#1413).  The pointee is the slot, so the pointee is what this asks.
+        let null_face = match target_tp {
+            Type::RefVar(pointee) => pointee.as_ref(),
+            other => other,
+        };
         if self.first_pass
             || !crate::keys::pln25_dn3_enabled()
             || matches!(
-                target_tp,
+                null_face,
                 Type::Optional(_) | Type::Void | Type::Never | Type::Null
             )
-            // `τ?` has a second spelling: an INLINE slot holds an absent `S` as the synthetic
+            // The second spelling: an INLINE slot holds an absent `S` as the synthetic
             // `__nullable<S>` enum, which is not a `Type::Optional` and is exactly as nullable.
             // A tuple ELEMENT is such a slot, so recursing into a promoted tuple return reaches
             // one — and reading it as non-null made the check warn that a `W2?` becomes null in
             // `__nullable<W2>` (loft#1123).
-            || self.data.is_nullable_wrapper(target_tp)
+            || self.data.is_nullable_wrapper(null_face)
         {
             return false;
         }
-        let nm = inner.name(&self.data);
+        // The SOURCE spelling: this message names the type back to the author twice and
+        // `name` is the schema key, which re-spells a keyed payload (`hash<It,["k"]>` for
+        // what they wrote as `hash<It[k]>`).
+        let nm = inner.source_name(&self.data);
         // @FR-N-Decl — a DECLARED `x: τ` is a commitment, so a later nullable write is
         // @FR-N-Store's refusal; this split is where a declared slot's promise is kept.
         // @PLN102 (N-Store) Phase 1 — the warn/error split (types.md § Null-flow, (N-Store)).
@@ -4428,7 +4475,7 @@ impl Parser {
                 Level::Warning,
                 format_args!(
                     "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
-                    target_tp.name(&self.data)
+                    target_tp.source_name(&self.data)
                 ),
             );
             self.nstore_diag(at, Level::Warning, &msg);
@@ -4438,7 +4485,7 @@ impl Parser {
             Level::Error,
             format_args!(
                 "a nullable `{nm}?` cannot be stored into {what} of the non-null type `{}` — discharge it first with `?` (the type's default), `?? <default>`, or `match`",
-                target_tp.name(&self.data)
+                target_tp.source_name(&self.data)
             ),
         );
         self.nstore_diag(at, Level::Error, &msg);
@@ -4720,7 +4767,7 @@ impl Parser {
                 let (what, _, _) = self.store_slot();
                 eprintln!(
                     "[null] -> {} what={} at {}",
-                    should.name(&self.data),
+                    should.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`, not a user diagnostic
                     what.replace(' ', "_"),
                     std::panic::Location::caller()
                 );
@@ -4814,8 +4861,8 @@ impl Parser {
                     let (what, _, _) = self.store_slot();
                     eprintln!(
                         "[unwrap] {} -> {} admit={} what={} at {}",
-                        is_type.name(&self.data),
-                        should.name(&self.data),
+                        is_type.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`
+                        should.name(&self.data), // schema-key — a developer trace behind `LOFT_TRACE_UNWRAP`
                         self.admit_unwrap,
                         what.replace(' ', "_"),
                         std::panic::Location::caller()
@@ -5631,8 +5678,8 @@ impl Parser {
             // forced a mental flip and confused users new to the
             // language.  `pos` is the offending value's start, captured at
             // parse time — the lexer cursor has drifted to the `;` by now.
-            let want = should.name(&self.data);
-            let have = test_type.name(&self.data);
+            let want = should.source_name(&self.data);
+            let have = test_type.source_name(&self.data);
             // Two DIFFERENT definitions can render the same name — loft#1094: a package
             // declaring `Frame` while a module beside it wildcard-imports a dependency
             // that also has one.  Then "expected Frame, got Frame" names the two types
@@ -6700,7 +6747,36 @@ impl Parser {
         tv_nr != u32::MAX && t.contains_def(tv_nr)
     }
 
+    /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
+    ///
+    /// `-> T` spells it `Reference(tv)`; `-> T?` spells it `Optional(Reference(tv))`.  One
+    /// notion, two spellings — and reading only the first answered "no, this return is a
+    /// literal shape" for every `-> T?`, so the instantiation took the branch written for a
+    /// signature that does not mention `T` (loft#1451).  Both call sites compute this on the
+    /// PRE-substitution template return and must agree, which is why it is one function
+    /// rather than the same `matches!` written twice.
+    fn return_is_the_type_var(tmpl_returned: &Type, tv_nr: u32) -> bool {
+        matches!(tmpl_returned.base(), Type::Reference(d, _) if *d == tv_nr)
+    }
+
     fn tuple_return_rewrite(&mut self, returned: Type, from_type_var: bool) -> Type {
+        // `τ?` is a SECOND SPELLING of the shape this rewrites, and matching only the first
+        // is what loft#1451 was.  A `-> T?` instantiated at a tuple arrives as
+        // `Optional(Tuple(…))`, which is not a `Type::Tuple`, so it fell through unrewritten:
+        // the monomorph declared `(integer, integer)?` — a type the language refuses at every
+        // declaration and which has no layout — while its body still handed up the DbRef the
+        // template compiled `T` as.  The interpreter read that pointer's bits as member 0
+        // (`34359738371` is `(1 << 35) | 3`) and `--native` would not compile the function at
+        // all, one shape emitting two different wrong answers.
+        //
+        // Peel, decide on the tuple, re-wrap.  The nullability rides along and the boxed form
+        // `Optional(Reference(__tuple<…>))` is an ordinary nullable record reference — which
+        // is exactly the shape the NON-GENERIC `v[i]` spelling produces for the same element
+        // type, and that spelling is right on both backends.  Peeling also puts the bare tuple
+        // in front of the `wide` size test below, which is the type that test means.
+        if let Type::Optional(inner) = returned {
+            return Type::optional(self.tuple_return_rewrite(*inner, from_type_var));
+        }
         let Type::Tuple(elems) = &returned else {
             return returned;
         };
@@ -6772,7 +6848,7 @@ impl Parser {
             return Type::Unknown(0);
         }
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
-        let from_tv = matches!(&tmpl_returned, Type::Reference(d, _) if *d == tv_nr);
+        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
         let predicted = self.tuple_return_rewrite(
             Self::substitute_type(tmpl_returned, tv_nr, &concrete),
             from_tv,
@@ -6957,10 +7033,25 @@ impl Parser {
             //
             // Non-collection, non-integer concretes are unchanged: a struct's, a float's and
             // a text's type-def name IS their own name.
-            let base = if Self::is_collection_type(concrete.base())
-                || matches!(concrete.base(), Type::Integer(_))
-            {
-                concrete.name(&self.data)
+            //
+            // loft#1418 — the RANGE is not the whole of an integer's identity either, and
+            // `IntegerSpec`'s own doc says so: *"Test `forced_size` to tell an alias from a
+            // template; the range alone cannot."*  `i32`'s range IS the signed-32
+            // template's, so `Type::name` spells both `integer` and the two collided where
+            // `u8` and `u32` did not — a call at `i32` bound the monomorph and the next call
+            // at plain `integer` was checked against it and refused as a narrowing, in a
+            // function that may be nowhere near the one that bound it.  The declared WIDTH
+            // is part of which instantiation this is, so it belongs in the key.
+            let base = if Self::is_collection_type(concrete.base()) {
+                concrete.name(&self.data) // schema-key — the method-name IDENTITY `t_<LEN><Type>_`; @FR-G-Mono wants the range in it
+            } else if let Type::Integer(spec) = concrete.base() {
+                // schema-key — same identity; loft#1418's forced WIDTH is part of which
+                // instantiation this is, so the suffix stays and the two cannot collide.
+                let named = concrete.name(&self.data); // schema-key — the method-name identity, as above
+                match spec.forced_size {
+                    Some(n) => format!("{named}s{n}"),
+                    None => named,
+                }
             } else {
                 self.data.def(type_nr).name().to_string()
             };
@@ -7027,7 +7118,7 @@ impl Parser {
         // `from_tv` computed on the PRE-substitution template return, identically to
         // `predict_generic_return_type`, so the second-pass instantiated return type
         // matches the first-pass prediction (the cross-pass H5 contract).
-        let from_tv = matches!(&tmpl_returned, Type::Reference(d, _) if *d == tv_nr);
+        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
         let tmpl_ret_deps: Vec<u16> = tmpl_returned.depend();
         let mut new_returned =
             self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
@@ -7040,10 +7131,23 @@ impl Parser {
         // indices are frame-independent and the instance copies the template's parameters
         // in order, so re-attaching is exact; `expand_deferred_par` does the same for a
         // par worker's return.  A tuple carries no dep list of its own and is boxed below.
+        // ATTR space, all of them, and NOTHING the substitution dragged in.  The
+        // paragraph above says these entries are attribute indices, and
+        // `Definition.returned` is the DEF-space home `call_dependencies` reads with
+        // `as_attr_indices` — so `Type::depending`, which builds `Deps::frame1`, tagged
+        // them as caller frame variables.  It also REPLACES the list rather than
+        // appending, so a template returning more than one dep kept only the last.
+        //
+        // The unconditional write is the other half: `substitute_all` puts the CONCRETE
+        // type where the type variable was, and that type was read at the CALL SITE, so
+        // it arrives carrying the CALLER's frame deps.  Those name nothing in the
+        // callee's attribute space and must not survive into this home — a keyed
+        // monomorph reached `as_attr_indices` holding a caller local's frame number.
+        // Setting the list even when the template had none is what drops them; an empty
+        // ATTR list is the owned answer, and the `Own::Borrowed` block below re-derives
+        // any real borrow from the instance's own body.
         if !matches!(new_returned.base(), Type::Tuple(_)) {
-            for d in tmpl_ret_deps {
-                new_returned = new_returned.depending(d);
-            }
+            new_returned = new_returned.with_deps(&crate::data::Deps::attrs(tmpl_ret_deps));
         }
         // Register the new definition.
         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
@@ -7102,7 +7206,18 @@ impl Parser {
                 // Written directly: `set_returned` refuses a second write on purpose (a return
                 // type must not change), and this does not change it — it adds the deps the
                 // type was declared without.
-                let with_dep = self.data.def(d_nr).returned().clone().depending(base);
+                //
+                // ATTR space, not frame: `base` is an attribute index — the guard above tests
+                // it against `attributes().len()` — and `Definition.returned` is a DEF-space
+                // home, so `Deps::attrs` is what states it.  `Type::depending` builds
+                // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
+                // `call_dependencies` reads this list with `as_attr_indices`.
+                let with_dep = self
+                    .data
+                    .def(d_nr)
+                    .returned()
+                    .clone()
+                    .with_deps(&crate::data::Deps::attrs(vec![base]));
                 self.data.definitions[d_nr as usize].returned = with_dep;
             }
         }
@@ -7804,6 +7919,17 @@ impl Parser {
         // bound T — the type variable describes the data shape, not how
         // a particular argument got assembled.  Strip it before unifying.
         if let Type::Rewritten(inner) = concrete_tp {
+            return Self::resolve_type_var(template_tp, tv_nr, inner);
+        }
+        // A `&` link is the same category as the `Rewritten` marker above: it records how
+        // the argument is REACHED, not what it IS, and a type variable is bound to the data
+        // shape.  @FR-C-Ref says a `&τ` is accepted wherever a `τ` is, so `vector<T>` must
+        // unify with a `&vector<integer>` argument exactly as it does with a plain one —
+        // without this, `zip_children` pairs `Vector` against `RefVar` and answers "these
+        // two types do not relate", which surfaces as "Cannot resolve generic type
+        // parameter from argument type" for `sum` / `min_of` / `max_of` and for EVERY
+        // user-written generic over a collection.
+        if let Type::RefVar(inner) = concrete_tp {
             return Self::resolve_type_var(template_tp, tv_nr, inner);
         }
         match template_tp {
@@ -10243,11 +10369,35 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "Field access not supported on type {}",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
                 Value::Null
             }
         }
+    }
+
+    /// Write into a vector ELEMENT slot whose declared type is `elm_tp`.
+    ///
+    /// @FR-H-Stride — the element's width is the declared TYPE's, and the def it resolves to
+    /// cannot answer it, so the type is handed to the write path rather than re-derived from
+    /// `d_nr` (loft#1420).  The read half is `read_slice_elem`.
+    fn set_element(
+        &mut self,
+        elm_tp: &Type,
+        d_pos: u16,
+        ref_code: Value,
+        val_code: Value,
+    ) -> Value {
+        let d_nr = self.data.type_def_nr(elm_tp);
+        self.set_field_check(
+            d_nr,
+            usize::MAX,
+            d_pos,
+            ref_code,
+            val_code,
+            true,
+            Some(elm_tp),
+        )
     }
 
     fn set_field(
@@ -10258,7 +10408,7 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
     ) -> Value {
-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true)
+        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true, None)
     }
 
     /// @PLN130 F4 — writing a KEY field through an element view re-keys the element, and a
@@ -10307,7 +10457,15 @@ impl Parser {
     }
 
     pub(crate) fn note_key_field_write(&mut self, base: u16, offset: i64) {
-        if !matches!(self.vars.tp(base), Type::Reference(_, _)) {
+        // Through `base()`: a keyed element view is `Reference(E)` when the lookup types
+        // non-null and `Optional(Reference(E))` once `@FR-Col-Lookup` gives the lookup its `?`
+        // (loft#1450) — one notion, two spellings, and reading only the first skipped this
+        // whole analysis for every keyed binding.  Measured: `c = s[30]; c.key = 5` then left
+        // `s[30]` reachable by NO key and said nothing, which is the exact @PLN130 F4 defect
+        // this function exists to prevent, silently reintroduced by a nullability marker.
+        // `depend()` below is already `Optional`-transparent, so the deps arrive either way —
+        // it was only the SHAPE test that could not see through the `?`.
+        if !matches!(self.vars.tp(base).base(), Type::Reference(_, _)) {
             return;
         }
         let deps: Vec<u16> = self.vars.tp(base).depend().clone();
@@ -10315,7 +10473,14 @@ impl Parser {
             if dep == u16::MAX || dep == base {
                 continue;
             }
-            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep) {
+            // Through `base()`: the container a view depends on may itself be `τ?` — a
+            // `sorted<E[k]>?` field or local is `Optional(Sorted(…))`, and reading only the
+            // bare spelling dropped every such container to `_ => continue`.  A key write
+            // through a view of a NULLABLE keyed collection was then allowed in silence: the
+            // record was re-keyed, the collection never re-indexed, the element left reachable
+            // by no key, and the author told nothing — @PLN130 F4's defect, alive again behind
+            // one nullability marker.
+            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep).base() {
                 Type::Sorted(c, keys, _) | Type::Index(c, keys, _) => {
                     (*c, keys.iter().map(|(k, _)| k.clone()).collect())
                 }
@@ -10686,7 +10851,7 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Tuple struct field cannot contain element of type {}",
-                        elem_tp.name(&self.data)
+                        elem_tp.source_name(&self.data)
                     );
                 }
                 Value::Null
@@ -10703,7 +10868,7 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
     ) -> Value {
-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false)
+        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false, None)
     }
 
     /// @PLN25 single-payload — emit the steps that turn a `Some` record (`some_ref`, type
@@ -11037,6 +11202,10 @@ impl Parser {
         set_null
     }
 
+    // The field is addressed by `(d_nr, f_nr, d_pos)` and the write by `(ref_code, val_code)`;
+    // `emit_check` and `elm_override` are the two independent switches over that. Bundling them
+    // would name a struct after this one call site.
+    #[allow(clippy::too_many_arguments)]
     fn set_field_check(
         &mut self,
         d_nr: u32,
@@ -11045,8 +11214,18 @@ impl Parser {
         ref_code: Value,
         val_code: Value,
         emit_check: bool,
+        elm_override: Option<&Type>,
     ) -> Value {
-        let tp = self.data.attr_type(d_nr, f_nr);
+        // @FR-H-Stride — for a vector ELEMENT (`f_nr == usize::MAX`) `attr_type` answers
+        // `def.returned`, and a def cannot carry a width: the one `integer` def serves all
+        // seven, so the write op below was chosen 8 bytes wide however the vector was
+        // declared.  `insert(v, 0, 9)` into a `vector<u8>` then wrote eight bytes over a
+        // one-byte slot and zeroed the five elements after it (loft#1420).  A caller that
+        // holds the DECLARED element type passes it here instead.
+        let tp = match elm_override {
+            Some(t) => t.clone(),
+            None => self.data.attr_type(d_nr, f_nr),
+        };
         // @PLN25 slice (b): an `Optional(τ)` field writes exactly like its base — same
         // sentinel storage, same set-op. Peel the marker here so the whole emit path is
         // transparent to it (nullability is read separately via `attr_nullable`).
@@ -11436,7 +11615,7 @@ impl Parser {
                         Level::Error,
                         "Cannot assign to field '{}' of type {}",
                         self.data.attr_name(d_nr, f_nr),
-                        self.data.attr_type(d_nr, f_nr).name(&self.data)
+                        self.data.attr_type(d_nr, f_nr).source_name(&self.data)
                     );
                     Value::Null
                 }
@@ -11950,8 +12129,8 @@ impl Parser {
                 &self.lexer.peek(),
                 Level::Error,
                 "No matching operator '{spelled}' on '{}' and '{}'",
-                types[0].name(&self.data),
-                types[1].name(&self.data)
+                types[0].source_name(&self.data),
+                types[1].source_name(&self.data)
             );
         } else {
             specific!(
@@ -11959,7 +12138,7 @@ impl Parser {
                 &self.lexer.peek(),
                 Level::Error,
                 "No matching operator {spelled} on {}",
-                types[0].name(&self.data)
+                types[0].source_name(&self.data)
             );
         }
         Type::Unknown(0)
@@ -13023,7 +13202,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unexpected reference type {}",
-                            vtp.name(&self.data)
+                            vtp.source_name(&self.data)
                         );
                         0
                     };
@@ -17036,6 +17215,16 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name == "OpHashRemove"
         || name == "OpInsertVector"
         || name == "OpRemoveVector"
+        // Reordering ops rewrite every element of the collection they are given, which is a
+        // write to the first argument in exactly the sense `OpRemoveVector` above it is.
+        // They were missing while `insert` and `remove` were present, so a `&` parameter
+        // whose only mutation was a `reverse` or a `sort` was rejected as "never modified"
+        // — the shape a caller reaches for when the reordering is the function's whole job.
+        // `OpReserveVector` / `OpReserveHash` are deliberately NOT here: reserve is a
+        // capacity hint that changes neither the length nor the contents, so a `&` whose
+        // only use is a reserve really does serve no purpose.
+        || name == "OpReverseVector"
+        || name == "OpSortVector"
         // Delivers into its FIRST arg (`vector_replace(&r, &other, tp)`) — the NRVO return
         // buffer. Today every emit site also writes that slot another way (a
         // `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so the

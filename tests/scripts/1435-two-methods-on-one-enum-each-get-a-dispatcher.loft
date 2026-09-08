@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1435 — a dispatcher dispatches ONE method.
+//
+// The scan that decides which enums need a synthesised dispatcher (@F20) collected every
+// implementation of every method on an enum's variants into ONE bucket keyed by the enum, and
+// `create_enum_dispatch_fn` names the dispatcher after the first definition in it.  So an enum
+// with two methods per variant got a dispatcher for one of them; the other's call site was read
+// as a FIELD access (*"field 'per' of 'Ca' has no storage in that type's layout"*).  Where the
+// two lists' parameter shapes disagreed the shared bucket bailed and NEITHER was built —
+// `tests/scripts/05-enums.loft` has three `area` implementations and three `describe` ones and
+// had no dispatcher for either, which only stayed invisible because it calls both on concrete
+// variants.
+//
+// The same bucket fed the missing-implementation warning, so a variant implementing ONE method
+// silenced the warning for the other (e3).
+//
+// Axes this file MOVES:  how many methods the enum carries (two · three), whether every variant
+//                        implements every method (complete · partial), and the return kind
+//                        (`integer`, `float`, and a `text` pair whose bodies are symmetric —
+//                        loft#1430 is the asymmetric one and is not this file's).
+// Axes it HOLDS FIXED:   two variants, one integer payload field, all receivers dense: the
+//                        nullable receiver is loft#1427's file, and mixing them here would make
+//                        one guard answer for two questions.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, native exit 1 -> 0.  The control does not
+//   COMPILE, because `a.per()`, `a.third()` and `a.lab()` are all read as field accesses there
+//   (four such errors and the parse cascade after them).  Recorded through the exit channel on
+//   purpose — a dispatcher that does not exist cannot be measured by a value.
+
+// e1/e2 — two methods, every variant implementing both.
+enum Sh35 { Ca35 { r: integer }, Sb35 { s: integer } }
+fn ar35(self: Ca35) -> integer { self.r * 3 }
+fn ar35(self: Sb35) -> integer { self.s * self.s }
+fn per35(self: Ca35) -> integer { self.r * 2 }
+fn per35(self: Sb35) -> integer { self.s * 4 }
+
+// e3 — a THIRD method only one variant implements: its dispatcher has one arm, and the warning
+// names the variant that has none (`tests/parse_errors.rs` counts the reports; a `.loft` guard
+// cannot assert a warning's absence).
+fn third35(self: Ca35) -> integer { self.r + 7 }
+
+// e4 — a second enum whose two methods differ in RETURN kind, which is what made the shared
+// bucket bail rather than merely pick.
+enum Bd35 { Bx35 { v: integer }, By35 { v: integer } }
+fn size35(self: Bx35) -> integer { self.v }
+fn size35(self: By35) -> integer { self.v * 10 }
+fn ratio35(self: Bx35) -> float { 1.5 }
+fn ratio35(self: By35) -> float { 2.5 }
+
+// e5 — a text pair beside them, both bodies branching so neither carries an accumulator the
+// other lacks (loft#1430).
+fn name35(self: Bx35) -> text { if self.v > 0 { "bx" } else { "bx0" } }
+fn name35(self: By35) -> text { if self.v > 0 { "by" } else { "by0" } }
+
+fn main() {
+  a: Sh35 = Ca35 { r: 2 };
+  b: Sh35 = Sb35 { s: 4 };
+  assert(a.ar35() == 6 && b.ar35() == 16, "e1 the first method dispatches: {a.ar35()} {b.ar35()}");
+  assert(a.per35() == 4 && b.per35() == 16, "e2 and so does the second: {a.per35()} {b.per35()}");
+  assert(a.third35() == 9, "e3 a method only one variant implements still dispatches: {a.third35()}");
+
+  x: Bd35 = Bx35 { v: 3 };
+  y: Bd35 = By35 { v: 3 };
+  assert(x.size35() == 3 && y.size35() == 30, "e4 an integer method beside a float one: {x.size35()} {y.size35()}");
+  assert(x.ratio35() == 1.5 && y.ratio35() == 2.5, "e4b and the float one: {x.ratio35()} {y.ratio35()}");
+  assert(x.name35() == "bx" && y.name35() == "by", "e5 and the text one: {x.name35()} {y.name35()}");
+}

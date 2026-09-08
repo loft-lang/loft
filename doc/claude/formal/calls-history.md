@@ -6,11 +6,85 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
+
+### D-call-16 — OPENED AND CLOSED (2026-09-08, loft#1451): a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape
+
+`(F-Ret)` makes a returned value fresh and independent, and a heap-carrying tuple return earns
+that by being BOXED into the synthetic `__tuple<…>` record with a hidden `__retbuf` —
+`tuple_return_rewrite`, the chokepoint D-call-13 already routed the generic instance through.
+
+It matched `Type::Tuple` and nothing else.  A `-> T?` instantiated at a tuple is
+`Optional(Tuple(…))`, which is not that, so it fell through unrewritten: the monomorph declared
+`(integer, integer)?` — a type the language refuses at every declaration and which has no layout
+— while its body still handed up the DbRef the template compiled `T` as.  One shape, two
+different wrong answers: `--interpret` read the pointer's bits as member 0 and printed
+`34359738371` (`(1 << 35) | 3`) with no diagnostic, and `--native` would not compile the function
+(E0308).  The same blindness sat one line away in `from_tv`, which asked whether the template's
+return IS the type variable by matching `Reference(tv)` — so every `-> T?` answered no and took
+the branch written for a signature that does not mention `T`.
+
+**Closed by peeling in both places**, and the second question now has one home rather than the
+same `matches!` at two call sites that a comment already required to stay identical.  Removing
+the wrong ANSWER then uncovered two REFUSALS, which is the ordinary shape of this: with the
+return correctly boxed, `first(v) ?? (7, 7)` was refused (the value arrives boxed, the default
+is written in the stack spelling — the coalesce now takes the stack spelling when
+`unboxes_stored_tuple` says they are the same tuple), and `first(v)?` was refused naming a
+default *"of type `boolean`"* in a program with no boolean (`Reference(__tuple<…>)` is a struct
+to `def_type`, so the record default tried to sub-parse a name loft cannot spell; both tuple
+spellings answer "no default" now).
+
+⚠ **This does NOT settle whether `optional((τ₁, τ₂))` is `(τ₁?, τ₂?)`.**  That is the general
+question about what a tuple's absence IS, and closing it is several pieces in the member read,
+the store and the monomorph's return type.  What is closed here is narrower and independently
+true: the generic spelling of a read answers what the NON-GENERIC spelling of the same read
+answers.  The non-generic `v[i] ?? d` and `v[i]?` are right on both backends and were right
+throughout, which is what makes "agree with the plain read" an oracle rather than a guess — and
+it is what the guard asserts, cell by cell, instead of pinning numbers that would go stale the
+day the general rule moves.
+
+Guard: `tests/scripts/1451-a-generic-nullable-return-at-a-tuple-matches-the-plain-read.loft`.
+
+### D-call-15 — OPENED AND CLOSED (2026-09-08, loft#1432): the same two declarations were one method or two, depending on which was written first
+
+`(F-Recv)` makes `m(τ)` and `m(τ?)` two definitions — the def key carries the `?` — and says a
+call on an absent receiver reaches the nullable one with `self == null`.  Neither half held, and
+the rules doc had a closing paragraph disclaiming what its own gloss stated, which is the shape
+that lets the next reader derive whichever half they find first.  That paragraph is deleted and
+replaced by the sentence the rule lacked: the RESOLUTION ORDER.
+
+**Two spellings of one call disagreed, in opposite directions, and each direction hid the other.**
+With both overloads declared, `z.area()` on an absent receiver answered the DENSE body while
+`area(z)` beside it answered the nullable one — so the nullable overload was not merely
+unreachable but inert (deleting it changed nothing), and the author was warned that their
+receiver was undischarged in a program declaring the overload written for exactly that.  With
+ONLY the nullable overload declared it ran the other way: `d.area()` on a dense receiver answered
+and `area(d)` was refused as an unknown function.
+
+And the declaration ORDER decided which of two things the same two lines meant: dense-first was
+accepted with a dead overload, nullable-first was refused as a redefinition.  No reading of the
+rule defends that.
+
+**Closed at three sites, and the third is the one the design did not predict.**  The definition
+check keyed its collision on *"is the NEW one Optional"*, which is the order dependence itself; it
+now compares the two nullabilities, admits the pair either way, and gives the shared attribute
+slot to the DENSE definition, which is the one `one_implementation_per_variant` (loft#1427)
+prefers.  The method call spelling resolved through that slot — one routine per name — and now
+asks `find_fn`, the home the free spelling already used.  But `find_fn`'s own fallback list was
+`[sig, base]`: the receiver's own spelling then the dense one, which is a list with only one
+direction in it, so a DENSE receiver never tried `m(τ?)`.  Routing method calls into it without
+making the list symmetric would have turned the working `d.area()` cell into a refusal — the
+second direction above is only visible once the first is fixed, which is why the matrix was built
+before the fix and not after.
+
+Guard: `tests/scripts/1432-a-nullable-receiver-overload-resolves-in-either-order.loft` — four
+declaration orders {dense-first, nullable-first, dense-only, nullable-only} × three receivers
+{dense, present `τ?`, absent `τ?`} × both call spellings, with the `(N-Store)` warning count as
+its own assertion, on both backends.
 
 ### D-call-14 — OPENED AND CLOSED (2026-09-05): a vector parameter reassigned from a variable refilled the caller's store
 

@@ -9,10 +9,18 @@
 //! read it back and read THROUGH it, and neither ever wrote. A guard that only sets a flag
 //! passes on a build where the flag does nothing.
 //!
-//! It cannot be a `.loft` cell: the refusal is a process abort, not a diagnostic and not a
-//! catchable fault, so the only harness that can score it is one that runs the program and
-//! reads its exit. `@EXPECT_FAIL` is the nearest annotation and TOLERATES a panic rather
-//! than requiring one, so it passes just as happily on a build where the lock is inert.
+//! It cannot be a `.loft` cell: the refusal HALTS the program, so the only harness that can
+//! score it is one that runs the program and reads its exit. `@EXPECT_FAIL` is the nearest
+//! annotation and TOLERATES a halt rather than requiring one, so it passes just as happily
+//! on a build where the lock is inert.
+//!
+//! loft#1405 changed what the halt SAYS, not that it halts. The author's own `#lock` now
+//! reaches them as a rendered loft fault instead of `Store::addr_mut`'s `assert!` — the
+//! three refusal cells below are exactly the three user-reachable shapes, so they are this
+//! file's evidence for that change and were re-pointed at the new text with it. The
+//! properties the new fault owns and this file does not check — that it exits 1 rather
+//! than a panic's 101, that it names no `src/store.rs`, and that both backends render it
+//! identically — are guarded in `panic_halts_both_backends.rs` beside `panic` and `assert`.
 //!
 //! Every case is checked on BOTH backends. [`an_unlocked_store_takes_the_same_write`] is
 //! the control: without it, a lock that blocked writes by breaking writes in general would
@@ -66,8 +74,12 @@ fn assert_write_is_refused(tag: &str, body: &str) {
             "[{backend}/{tag}] a write to a locked store must stop the program\n{log}"
         );
         assert!(
-            log.contains("Write to read-only store"),
+            log.contains("locked store"),
             "[{backend}/{tag}] it must stop ON THE WRITE, naming the locked store\n{log}"
+        );
+        assert!(
+            !log.contains("src/store.rs"),
+            "[{backend}/{tag}] the author is being shown loft's internals (loft#1405)\n{log}"
         );
     }
 }
@@ -109,7 +121,7 @@ fn a_locked_vector_refuses_an_element_write() {
             "fn main() {\n  v = [1, 2, 3];\n  v#lock = true;\n  v[0] = 9;\n  print(\"{v[0]}\");\n}\n",
         );
         assert!(
-            !ok && log.contains("Write to read-only store"),
+            !ok && log.contains("locked store"),
             "[{backend}] a locked vector must refuse an element write\n{log}"
         );
     }

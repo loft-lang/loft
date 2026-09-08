@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The runnable half of `1457-a-short-key-is-refused-at-every-kind-that-cannot-iterate-one`,
+// which stops at its expected errors and so can assert nothing after them.
+//
+// A refusal is only as good as what it leaves alone.  loft#1457 widened the short-key check
+// from one kind (`hash`) to the COMPLEMENT of the two that iterate a partial key, and the way
+// that goes wrong is not the refusal failing to fire — it is the refusal firing where a real
+// operation used to be.  Two things are proven here and nowhere else:
+//
+//   * the FULL-arity lookup still answers at every kind, and a genuine miss still answers null
+//     — which is what says the widening did not catch the well-formed spelling;
+//   * `index` and `sorted` still ITERATE a partial key.  That is the control that matters, and
+//     it is stronger than re-asserting their refusal message: the message existing proves the
+//     old branch is still reached, while the ITERATION working proves the operation behind it
+//     survived.  Flattening them into `Too few key fields` would have kept the diagnostic
+//     honest and silently removed a feature.
+//
+// @falsified-at: none — INERT by construction, and measured rather than assumed.  Every cell
+//   answers identically on `61bfbd96` (the tree loft#1457's fix was written against):
+//   `scripts/falsify.sh` reports `0|0|none|none|0|-` on both trees and both backends.  That is
+//   correct and is the point of the file — it exists to fail on the day the refusal grows into
+//   one of these, not to have been red before it.  Its sibling `1457-…` carries the falsifying
+//   half; this one is the perimeter.
+
+struct P1457b { x: integer, y: integer, v: integer }
+struct H1457b { a: integer, b: integer, v: integer }
+
+fn main() {
+  // ---- full arity answers, and a miss is still a miss, at every kind ----
+  s: spatial<P1457b[x, y]> = [P1457b { x: 1, y: 2, v: 7 }];
+  assert((s[1, 2].v ?? -1) == 7, "spatial full-arity hit: {s[1, 2].v ?? -1}");
+  assert((s[9, 9].v ?? -1) == -1, "spatial miss is still null: {s[9, 9].v ?? -1}");
+
+  h: hash<H1457b[a, b]> = [H1457b { a: 1, b: 2, v: 7 }];
+  assert((h[1, 2].v ?? -1) == 7, "hash full-arity hit: {h[1, 2].v ?? -1}");
+  assert((h[9, 9].v ?? -1) == -1, "hash miss is still null: {h[9, 9].v ?? -1}");
+
+  d: sorted<H1457b[a, b]> = [H1457b { a: 1, b: 2, v: 7 }];
+  assert((d[1, 2].v ?? -1) == 7, "sorted full-arity hit: {d[1, 2].v ?? -1}");
+  i: index<H1457b[a, b]> = [H1457b { a: 1, b: 2, v: 7 }];
+  assert((i[1, 2].v ?? -1) == 7, "index full-arity hit: {i[1, 2].v ?? -1}");
+
+  // ---- the control: a partial key still ITERATES where that is a real operation ----
+  d2: sorted<H1457b[a, b]> = [H1457b { a: 1, b: 2, v: 7 }, H1457b { a: 1, b: 3, v: 8 },
+                              H1457b { a: 2, b: 4, v: 9 }];
+  o = "";
+  for e in d2[1] { o = o + "[{e.b}/{e.v}]"; }
+  assert(o == "[2/7][3/8]", "sorted partial key still iterates its group: {o}");
+
+  i2: index<H1457b[a, b]> = [H1457b { a: 1, b: 2, v: 7 }, H1457b { a: 1, b: 3, v: 8 },
+                             H1457b { a: 2, b: 4, v: 9 }];
+  n = 0;
+  for e in i2[1] { n = n + e.v; }
+  assert(n == 15, "index partial key still iterates its group: {n}");
+
+  // ---- a spatial still iterates whole, which the refusal must not have touched ----
+  s2: spatial<P1457b[x, y]> = [P1457b { x: 1, y: 2, v: 7 }, P1457b { x: 3, y: 4, v: 8 }];
+  t = 0;
+  for p in s2 { t = t + p.v; }
+  assert(t == 15, "spatial iterates every record: {t}");
+}

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Absent)` names `t == null` and `t ?? d` as ONE question — and only `??` had an answer.
+//
+// `t == null` fell past every gate in the comparison lowering (`vec_null`, `float_null`,
+// `enum_null`, `ref_null`, `senum_null` — no tuple among them) and was refused outright:
+// *"No matching operator '==' on '(integer?, integer?)' and 'null'"*, for a type whose `??`
+// beside it worked.  So the language had a null question a tuple could be asked one way and
+// not the other.
+//
+// The arm asks `coalesce_not_null` and negates it rather than restating the member walk: two
+// spellings of one question that each carried their own walk is exactly the drift `(T-Absent)`
+// forbids, and it is what let the first-member convention live in one of them unnoticed
+// (`1477`, the `??` half).
+//
+// Axes this file MOVES:  which member is absent (all · first-only · none), the operator
+//                        (`==` · `!=`), and how the tuple ARRIVES — a written literal, whose
+//                        type is `(τ?, τ?)`, and an INDEX MISS, whose type is the in-flight
+//                        `(τ, τ)?`.  Those are two different spellings of one type under
+//                        `(T-Absent)`'s equivalence and the gate matches on `base()` so both
+//                        reach the arm; a fix that named only the written spelling passes
+//                        every cell but the last two.
+// Axes it HOLDS FIXED:   the `??` spelling is `1477`'s.
+//
+// @falsified-at: 4f29a473 — the file does not COMPILE there: `--tests` reports
+//   `(parse errors)`, `1 failed; 0 passed`, so not one assertion runs.  That is the whole
+//   reason this is its own file: merged into `1477` it would have refused before a single `??`
+//   assertion executed, and the `??` half would have been falsified by a compile error instead
+//   of by its own wrong answers — a guard whose two halves fail on the same channel cannot say
+//   which of them the cure fixed
+
+// One test function per cell, so a `--tests` run names every broken one rather than halting.
+
+fn test_all_null_is_null() {
+  d: (integer?, integer?) = (null, null);
+  assert(d == null, "all-null is null");
+}
+
+fn test_a_present_member_makes_it_not_null() {
+  a: (integer?, integer?) = (null, 2);
+  assert(!(a == null), "first-null with a present member is NOT null");
+}
+
+fn test_wholly_present_is_not_null() {
+  c: (integer?, integer?) = (1, 2);
+  assert(!(c == null), "wholly present is not null");
+}
+
+fn test_not_equal_is_the_negation() {
+  a: (integer?, integer?) = (null, 2);
+  d: (integer?, integer?) = (null, null);
+  assert(a != null, "`!=` is the negation");
+  assert(!(d != null), "`!=` on an all-null tuple");
+}
+
+// The IN-FLIGHT spelling: an index miss types `(integer, integer)?`, which `(T-Absent)` makes
+// the same type as the written `(integer?, integer?)` above.  The gate matches on `base()` so
+// both reach the arm; a fix naming only the written spelling passes every cell but these.
+fn test_the_in_flight_spelling_answers_too() {
+  v: vector<(integer, integer)> = [(1, 2)];
+  miss = 5;
+  hit = 0;
+  assert(v[miss] == null, "an index miss is null");
+  assert(!(v[hit] == null), "an in-range read is not null");
+}

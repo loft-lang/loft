@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1410's refusal half, in its own file because a firing `@EXPECT_ERROR` stops the run.
+//
+// A slice pattern `[ … ]` is worn by a vector or by a CURSOR — a struct with a `vector<…>`
+// source and an integer `pos`.  A struct that is neither used to reach the STRUCT-pattern
+// parser, where `[` is "expect variant name": the first pass broke out silently and the run
+// died on a brace it had never reached, so the author was told "Expect token }" and never
+// which field disqualified the struct.  A `?` on `src` or on `pos` is the case worth naming,
+// because those two fields still read like a cursor's.
+//
+// The refusal STAYS rather than peeling: which field becomes the cursor source is decided by
+// "the first vector field", and admitting a nullable one would move that choice — pinned by
+// `153-a-cursor-match-over-a-nullable-subject-advances.loft`, whose CurFirst cell has a
+// `vector<Tok>?` ahead of the real source.  What was wrong is only what the author was told.
+//
+// The element-type refusals below are the same shape one layer down: a repetition or an
+// alternation needs a struct-enum element, and it now names the element type the AUTHOR wrote —
+// a `vector<S?>` element used to report *"'S' is not a variant of __nullable<S>"*, a type no
+// program can write.  Both also RECOVER through the closing `]` now: without that the refusal
+// was followed by a first-pass cascade that aborted the run before pass 2 printed it, which is
+// why the dense non-enum case has never had a readable message either.
+//
+// @falsified-at: d6e665ae — interpret expectations FAIL/5 -> 5/5 and native FAIL/5 -> 5/5
+//   (the suite's verdict, not a count of matches); exit 1 -> 0.  Each cell reports a
+//   first-pass "Expect token" cascade there instead of the reason.
+
+enum Tok { Fn { x: integer }, Id { x: integer } }
+struct S { a: integer }
+
+struct CurNullPos { src: vector<Tok>, pos: integer? }
+struct CurNullSrc { src: vector<Tok>?, pos: integer }
+struct NotACursor { n: integer, pos: integer }
+
+// @EXPECT_ERROR: its `pos` field is `integer?`, and a cursor's position must be an integer
+fn null_pos(c: CurNullPos) -> integer { match c { [Id { x }] => x, _ => -1 } }
+
+// @EXPECT_ERROR: its `src` field is `vector<Tok>?`, and a cursor reads from a plain `vector<…>`
+fn null_src(c: CurNullSrc) -> integer { match c { [Id { x }] => x, _ => -1 } }
+
+// @EXPECT_ERROR: it has no `vector<…>` field for the pattern to read
+fn no_source(c: NotACursor) -> integer { match c { [Id { x }] => x, _ => -1 } }
+
+// @EXPECT_ERROR: a repetition `( … )*` slice element needs a struct-enum element type, not `S?`
+fn tagged_repetition(p: vector<S?>) -> integer { match p { [(t: S)*] => 2, _ => -1 } }
+
+// @EXPECT_ERROR: an alternation `( … | … )` slice element needs a struct-enum element type, not `S`
+fn dense_alternation(p: vector<S>) -> integer { match p { [(S | S)] => 1, _ => -1 } }
+
+fn main() {
+  c1 = CurNullPos { src: [Id { x: 7 }], pos: 0 };
+  c2 = CurNullSrc { src: [Id { x: 7 }], pos: 0 };
+  c3 = NotACursor { n: 1, pos: 0 };
+  println("{null_pos(c1)} {null_src(c2)} {no_source(c3)} {tagged_repetition([])} {dense_alternation([])}");
+}

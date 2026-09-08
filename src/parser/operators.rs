@@ -727,6 +727,28 @@ impl Parser {
             } else {
                 self.cl("OpNot", &[valid])
             });
+        } else if matches!(tp.base(), Type::Tuple(_)) {
+            // @FR-T-Absent — a tuple's absence is "every member null", and the rule names
+            // `t == null` and `t ?? d` as ONE question.  So this asks the coalesce's own
+            // answer and negates it, rather than restating the fold: two spellings of one
+            // question that each carried their own member walk would be exactly the drift
+            // `(T-Absent)` says must not exist, and the members' sentinels are already
+            // `coalesce_not_null`'s to know.
+            //
+            // `coalesce_not_null` addresses members through `Value::TupleGet(var, i)`, so it
+            // needs a VAR: an operand that is already one is asked directly, and anything
+            // else (a call result, an index read) is bound first.  Without the bind it would
+            // fall through to its generic arm and test the tuple's raw bytes as a boolean.
+            let not_null = if let Value::Var(_) = operand.unspan() {
+                self.coalesce_not_null(operand.unspan(), tp.base())
+            } else {
+                let holder = self.create_unique("nulltest_t", tp.base());
+                self.vars.defined(holder);
+                let bind = v_set(holder, operand.clone());
+                let cond = self.coalesce_not_null(&Value::Var(holder), tp.base());
+                v_block(vec![bind, cond], Type::Boolean, "tuple null-test bind")
+            };
+            self.cl("OpNot", &[not_null])
         } else if self.is_value_enum(tp) {
             // A VALUE enum (`Color`, no payload variants) is a disc byte, and BOTH of
             // its absent bytes are asked for through the one predicate the coalesce and
@@ -761,7 +783,7 @@ impl Parser {
             } else if matches!(tp.base(), Type::Enum(d, true, _)
                     if !self.data.def(*d).name.starts_with("__nullable<"))
                 && matches!(operand.unspan(), Value::Var(_))
-                && self.views_a_collection(tp)
+                && self.views_a_nullable_element_slot(tp)
             {
                 // loft#1071 — a struct-enum bound FROM an inline element: the `for e in v`
                 // loop variable over a `vector<Shape?>`.  It is a sub-reference to the
@@ -888,6 +910,44 @@ impl Parser {
     }
 
     pub(crate) fn copy_ref(&mut self, to: &Value, code: &Value, f_type: &Type) -> Value {
+        // @FR-N-Store's fifth position (loft#1404).  `(N-Store)` names *"a field, a collection
+        // element"* among the slots a bare `null` may not enter, and the four positions
+        // loft#1313 wired all ask — the ASSIGNMENT TARGET asked only for a SCALAR target, so
+        // the heap half passed in silence.
+        //
+        // It is asked HERE and not at the parse site, because `x = null` at a heap target
+        // spells FIVE different things and only the lowering tells them apart.  Measured, all
+        // six on both backends:
+        //
+        //   * `c[key] = null` on a keyed collection  → `OpHashRemove` — `(Col-Remove)`'s
+        //     documented by-key delete;
+        //   * `s.coll = null` on a collection field  → `OpClearVector` / `OpClearKeyed` — that
+        //     field's clear, the same thing `s.coll = []` does (@P307);
+        //   * `n.next = null` on a `reference<T>` POINTER field (#328's share marker) →
+        //     `OpSetDbRef(…, OpNullRefSentinel())` — the store LANDS and the slot holds null;
+        //   * `s.rec = null` on a dense record field, and `v[i] = null` on a vector element →
+        //     `OpCopyRecord(null, …)`, which does nothing at all.
+        //
+        // Only the last reaches this function, so the ask needs no container test, no keyed
+        // test and no pointer-marker test — the four shapes that are not stores never arrive.
+        // Gating at the parse site instead needed all three and still got the pointer field
+        // wrong, because the marker is not on the resolved target type by then
+        // (`issues::issue_328_reference_field_pointer_semantics` is the cell that caught it).
+        //
+        // The CONSEQUENCE clause is this position's own: the shared default *"the slot holds
+        // null"* is measured true for a scalar and for a record travelling as a HANDLE (a
+        // `null` argument arrives null, a `return null` reads back null), and false here.  The
+        // cure is unchanged and is the real one — a dense field has no discriminant to spend
+        // on absence (`synth_nullable_struct_fields`), and the `?` is what creates the room.
+        if matches!(code.unspan(), Value::Null) {
+            self.nstore_null_report_as(
+                f_type,
+                "the assignment target",
+                None,
+                false,
+                Some("the store does not happen, so the slot keeps the value it had"),
+            );
+        }
         let d_nr = self.data.type_def_nr(f_type);
         let tp = self.data.def(d_nr).known_type();
         // When the source is a struct-returning function CALL, set the high
@@ -948,16 +1008,13 @@ impl Parser {
         code: Value,
         _op: &str,
     ) -> Value {
-        // @PLN130 F4 — every `c.field = …` on a scalar field arrives here as a getter name
-        // plus (base, byte-offset). If that field is a KEY of a collection `c` views, the
-        // write would re-key the record without re-indexing the collection, leaving the
-        // element reachable by no key at all. Materialise the view instead and say so.
-        if let (Some(Value::Var(base)), Some(Value::Int(off))) = (
-            args.first().map(Value::unspan),
-            args.get(1).map(Value::unspan),
-        ) {
-            self.note_key_field_write(*base, i64::from(*off));
-        }
+        // @PLN130 F4's key-write question used to be asked HERE, and that was the defect:
+        // this seam is one ROUTE, not the place a write is decided.  `assign_text` builds
+        // `OpSetText` without ever arriving, so a `text` key — the only kind of key a `trie`
+        // has — was never asked about and re-keyed a record in silence.  The question now
+        // lives once in `parse_assign_op_inner`, beside the const guard, which is the point
+        // every route still passes through.  Do NOT re-add it here: it would fire twice for
+        // every scalar field write.
         match name {
             "OpGetInt" => {
                 // f#next = pos: seek the file AND update the stored field.
@@ -1344,7 +1401,7 @@ impl Parser {
                             "cannot concatenate a nullable `{}` — discharge the `?` \
                              first (`(a ?? []) + (b ?? [])`), since a null operand has \
                              no defined result for a vector",
-                            current_type.name(&self.data)
+                            current_type.source_name(&self.data)
                         );
                         return current_type;
                     }
@@ -1486,8 +1543,24 @@ impl Parser {
             if self.lexer.has_token(".") {
                 wrap_chain = true;
                 *parent_tp = t.clone();
-                // T1.2: tuple element access — t.0, t.1, etc.
-                if let Type::Tuple(ref elems) = t {
+                // Through `base()`: a tuple reached with its `?` on — `v[i]` by a VARIABLE
+                // index, or `h[k].t` once `@FR-Col-Lookup` and `(N-Prop)` are both in — is
+                // `Optional(Tuple)`, and the bare spelling declined it.  `.0` then fell to the
+                // FIELD path, where `0` is not an identifier, and the author was told *"Expect
+                // a field name"* about a tuple index that is spelled correctly (loft#1461).
+                //
+                // The read WORKS rather than being refused, and that is `@FR-T-Absent`'s call,
+                // not a convenience: an absent tuple IS a present tuple of null members, so
+                // `t.i` has something to answer with.  A refusal here — even a well-worded one
+                // naming the discharges — was D-tup-10's own listed deviation, *"`v[i].0` is
+                // REFUSED by name where the rule types it `integer?`"*.
+                //
+                // ⚠ Half closed: the member comes back as `τ`, where the rule says `τᵢ?`.  The
+                // remaining half is the representation — `Type::optional` still mints an
+                // `Optional(Tuple)` the rule says cannot exist, so the members are bare inside
+                // it.  That is the rest of D-tup-10 and it is plan-sized (the flip removes the
+                // `Optional` that `?` and `??` syntactically trigger on).
+                if let Type::Tuple(ref elems) = *t.base() {
                     let elems = elems.clone();
                     if let Some(idx) = self.lexer.has_integer() {
                         let idx = idx as usize;
@@ -1845,6 +1918,33 @@ impl Parser {
     /// `Reference(__tuple<…>)` (a loop variable, a local bound from a heap-tuple return) or the
     /// same behind the `&` a `&(…)` with a heap element denotes (tuples.md T-Ref).  Both read
     /// and write their elements as that struct's fields.
+    /// The member types of a NULLABLE tuple — `(τ₁, …)?` in either of its two spellings, the
+    /// stack tuple and the `Reference(__tuple<…>)` a stored one names — or `None` when `t` is
+    /// not one.
+    ///
+    /// `(N-Index)` is the route that builds the type: `v[i]` on a `vector<(τ, τ)>` is
+    /// `(τ, τ)?`, which the type parser refuses to SPELL (`types-history.md` D-Opt-NoNull) and
+    /// the index produces anyway.  Every discharge of it works — `??`, `?`, and a chained
+    /// `t?.0` — and only the undischarged reads had no answer: a member read and a destructure,
+    /// which is why the members come back here rather than a bare yes/no (the destructure
+    /// binds its targets to them so its refusal does not cascade).
+    pub(crate) fn nullable_tuple_elems(&self, t: &Type) -> Option<Vec<Type>> {
+        if !matches!(t, Type::Optional(_)) {
+            return None;
+        }
+        match t.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            other => Self::record_tuple_def(&self.data, other).map(|d| {
+                self.data
+                    .def(d)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect()
+            }),
+        }
+    }
+
     fn record_tuple_def(data: &crate::data::Data, t: &Type) -> Option<u32> {
         let d = match t {
             Type::Reference(d, _) => *d,
@@ -2020,25 +2120,67 @@ impl Parser {
                 _ => None,
             }
         }
-        let outer_kind = match code.unspan() {
-            Value::Call(def_nr, args) => {
-                let outer_name = data.def(*def_nr).original_name();
-                let direct = classify(&outer_name);
-                if direct.is_some() {
-                    direct
-                } else if matches!(
-                    outer_name.as_str(),
-                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
-                ) && let Some(first) = args.first()
-                    && let Value::Call(inner_nr, _) = first.unspan()
-                {
-                    classify(&data.def(*inner_nr).original_name())
-                } else {
-                    None
+        // The OUTERMOST classifiable node ANYWHERE in the hole, not just at the top.
+        //
+        // Arming used to require the top node itself to be fault-prone, on the reasoning that
+        // *"inner faults have no renderer to feed the tag to"*.  That conflates the outermost
+        // OP with the HOLE: the hole always has a renderer, and an inner fault's null
+        // propagates to it.  So `{v[9] / 2}` reported `null(oob)` while `{v[9] + 1}` reported
+        // bare `null` — the same overrun, the same null, and a cause only when the arithmetic
+        // around it happened to be divisive.  Measured on both backends for `+`, `-`, `*`, a
+        // fault on the RIGHT operand, and two faults in one hole; `@FR-F-FaultSafe` says the
+        // render is *"'null' annotated with the fault cause"* without qualifying it by what
+        // encloses the fault.
+        //
+        // The KIND this returns is only the initial value: `note_format_fault` is a SET, so
+        // whichever op actually faults overwrites it, and a peer that did not fault leaves it
+        // alone.  That is why `{v[9] / z}` answers `oob` and not `/0` — the overrun is what
+        // produced the null.  Arming at all is the load-bearing half; the kind is a fallback.
+        fn outermost_kind(code: &Value, data: &crate::data::Data) -> Option<u8> {
+            fn classify_call(def_nr: u32, args: &[Value], data: &crate::data::Data) -> Option<u8> {
+                let name = data.def(def_nr).original_name();
+                if let Some(k) = classify(&name) {
+                    return Some(k);
                 }
+                // For an integer-vector read the IR is `OpGetInt(OpGetVector(v, 4, i), 0)`:
+                // the outer is the width accessor and the fault-prone op is the inner read.
+                if matches!(
+                    name.as_str(),
+                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
+                ) && let Some(Value::Call(inner_nr, _)) = args.first().map(Value::unspan)
+                {
+                    return classify(&data.def(*inner_nr).original_name());
+                }
+                None
             }
-            _ => None,
-        };
+            match code.unspan() {
+                Value::Call(def_nr, args) => classify_call(*def_nr, args, data)
+                    .or_else(|| args.iter().find_map(|a| outermost_kind(a, data))),
+                Value::CallRef(_, args)
+                | Value::Tuple(args)
+                | Value::Insert(args)
+                | Value::Parallel(args) => args.iter().find_map(|a| outermost_kind(a, data)),
+                Value::Block(b) | Value::Loop(b) => {
+                    b.operators.iter().find_map(|c| outermost_kind(c, data))
+                }
+                Value::If(cond, then_b, else_b) => outermost_kind(cond, data)
+                    .or_else(|| outermost_kind(then_b, data))
+                    .or_else(|| outermost_kind(else_b, data)),
+                Value::Set(_, src)
+                | Value::Return(src)
+                | Value::Drop(src)
+                | Value::Yield(src)
+                | Value::TuplePut(_, _, src) => outermost_kind(src, data),
+                Value::Iter(_, init, step, body) => outermost_kind(init, data)
+                    .or_else(|| outermost_kind(step, data))
+                    .or_else(|| outermost_kind(body, data)),
+                // Every other variant carries no nested fault-prone call — the same set
+                // `rewrite_subtree_to_nullable` below treats as leaves, so the two walks
+                // cover the same tree and a shape one reaches cannot be missed by the other.
+                _ => None,
+            }
+        }
+        let outer_kind = outermost_kind(code, data);
         Self::rewrite_subtree_to_nullable(code, data);
         outer_kind
     }
@@ -2321,25 +2463,82 @@ impl Parser {
         // and have no `.rec != 0` discriminant; testing the WHOLE tuple as a
         // DbRef (the default `convert(Tuple, Boolean)` path) produces wrong
         // codegen (native E0308: `expected bool, found tuple`) and silent
-        // corruption on interpret (treating bytes as a DbRef tag).  Convention:
-        // a tuple is null when its FIRST FIELD is its type's null sentinel —
-        // which matches what `OpGetVectorNullable` produces for OOB tuple reads
-        // (each field gets its own null sentinel).
+        // corruption on interpret (treating bytes as a DbRef tag).
+        //
+        // `@FR-T-Absent` says which members decide it: **a tuple is absent when EVERY
+        // member is null**, `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  So this is an OR of
+        // the members' own not-null answers, and it stops at the first present one.
+        //
+        // Reading only member 0 — the convention this used to carry — is the same test for
+        // an OOB read (`OpGetVectorNullable` nulls every member at once) and a DIFFERENT
+        // one for every tuple that is partly present, which is the case a program actually
+        // builds: `t: (integer?, integer?) = (null, 2)` was discharged WHOLLY, so
+        // `(t ?? (9, 9)).1` answered 9 and the present 2 was gone with no diagnostic.
         if let Type::Tuple(elems) = tp
             && !elems.is_empty()
             && let Value::Var(v) = src
         {
-            let first_tp = elems[0].clone();
-            // RECURSE rather than calling the generic `convert(first_tp, Boolean)`: the
-            // heap-DbRef branch below exists precisely because that generic path has no
-            // registered `OpConv*FromX -> Boolean` for a collection and hands back the
-            // bare Var, which the interpreter then tests as raw bytes.  Asking it here
-            // puts a `vector`-first tuple through exactly that hole: `v[0] ?? fb` then
-            // answers the FALLBACK for a PRESENT element, losing the scalar half with
-            // it, on `--interpret` only.  A `Reference` first element hides it: that one
-            // does have a generic path.  Recursion is also what keeps the two answers
-            // from drifting, which is the same reason `ref_tuple_element_ok` is one list.
-            self.coalesce_not_null(&Value::TupleGet(*v, 0), &first_tp)
+            let elems = elems.clone();
+            let mut prelude = Vec::new();
+            // Fold from the LAST member back, so the emitted form is
+            // `if m₀ { true } else { if m₁ { true } else { … } }` — short-circuit in source
+            // order, and a member is only read when every earlier one answered null.
+            let mut acc: Option<Value> = None;
+            for (i, elem_tp) in elems.iter().enumerate().rev() {
+                // RECURSE rather than calling the generic `convert(elem_tp, Boolean)`: the
+                // heap-DbRef branch below exists precisely because that generic path has no
+                // registered `OpConv*FromX -> Boolean` for a collection and hands back the
+                // bare Var, which the interpreter then tests as raw bytes.  Asking it here
+                // puts a `vector` member through exactly that hole: `v[0] ?? fb` then
+                // answers the FALLBACK for a PRESENT element, losing the scalar half with
+                // it, on `--interpret` only.  A `Reference` member hides it: that one does
+                // have a generic path.  Recursion is also what keeps the answers from
+                // drifting, which is the same reason `ref_tuple_element_ok` is one list.
+                //
+                // A member that is ITSELF a tuple cannot be reached by recursing on the
+                // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no
+                // spelling, and the recursion hands `TupleGet` back into this function
+                // where the `Value::Var` guard rejects it.  The question then fell through
+                // to the generic path, which returns the operand unconverted — `if __ncc_1.0`
+                // with a TUPLE where a boolean belongs, which native refuses (E0308) and the
+                // interpreter reads as raw bytes (loft#1425).  Bind the inner tuple and ask
+                // the same question of THAT, so the sentinel is found however deep it is.
+                //
+                // PEELED, and that is load-bearing: the arms below match some types in their
+                // BARE spelling only (`matches!(tp, Type::Boolean)`), because the top-level
+                // caller peels `Optional` before it ever gets here.  A member type arrives
+                // UNPEELED, so a `boolean?` member missed its arm and fell to the generic
+                // truthiness convert — where `false` reads as absent.  Measured: a tuple
+                // `(integer?, boolean?) = (null, false)` took the DEFAULT while the same tuple
+                // with a bare `boolean` member kept its value, and a direct `b: boolean? =
+                // false; b ?? true` was right all along, because that path peels.
+                let elem_tp = elem_tp.base();
+                let member = if matches!(elem_tp, Type::Tuple(_)) {
+                    let inner = self.create_unique("ncc_inner", elem_tp);
+                    self.vars.defined(inner);
+                    prelude.push(v_set(
+                        inner,
+                        Value::TupleGet(*v, u16::try_from(i).unwrap_or(0)),
+                    ));
+                    self.coalesce_not_null(&Value::Var(inner), elem_tp)
+                } else {
+                    self.coalesce_not_null(
+                        &Value::TupleGet(*v, u16::try_from(i).unwrap_or(0)),
+                        elem_tp,
+                    )
+                };
+                acc = Some(match acc {
+                    None => member,
+                    Some(rest) => v_if(member, Value::Boolean(true), rest),
+                });
+            }
+            let cond = acc.unwrap_or(Value::Boolean(true));
+            if prelude.is_empty() {
+                cond
+            } else {
+                prelude.push(cond);
+                v_block(prelude, Type::Boolean, "ncc tuple members")
+            }
         } else if let Type::Enum(syn, true, _) = tp
             && self.data.def(*syn).name.starts_with("__nullable<")
         {
@@ -2387,7 +2586,18 @@ impl Parser {
             self.cl("OpNeBool", &[src.clone(), null_b])
         } else {
             let mut nc = src.clone();
-            self.convert(&mut nc, tp, &Type::Boolean);
+            // @FR-N-Store admits a null TEST: this reads whether the value is absent, it
+            // does not store it anywhere, so the nullable→non-null store face must not
+            // ask.  Plain `convert` asked it and reported *"a nullable `integer?` is
+            // stored into a slot of the non-null type `boolean`"* — a warning naming a
+            // `boolean` slot the author never wrote, at the site of their own `??`, whose
+            // whole job is to discharge that null.  `null_test` reaches the same question
+            // through `convert_admitting` for the same reason; the two are one question
+            // (@FR-T-Absent says so for a tuple explicitly) and now admit alike.
+            //
+            // A tuple made it loud rather than new: the members are tested one by one, so
+            // the count of warnings became the ARITY of the tuple.
+            self.convert_admitting(&mut nc, tp, &Type::Boolean);
             nc
         }
     }
@@ -2782,6 +2992,20 @@ impl Parser {
             })
         } else if widen_ints {
             crate::data::I64.clone()
+        } else if self.unboxes_stored_tuple(lhs_type, &rhs_type) {
+            // A tuple is one loft type written two ways, and the coalesce is a place the two
+            // MEET: the value arrives boxed (`Reference(__tuple<…>)` — what a generic `-> T?`
+            // at a tuple returns, and what a vector element read delivers) while the default
+            // is written on the page as a literal `(7, 7)`, which is the stack spelling.
+            // Typing the result as the value's boxed spelling asks the default to convert into
+            // a DbRef, which is not a conversion the language has — so `first(v) ?? (7, 7)`
+            // was refused for a pair of types that are the same tuple (loft#1451).
+            //
+            // Take the STACK spelling: the default already has it, and the value unboxes
+            // through the path `unboxes_stored_tuple` names.  That is also the type the
+            // non-generic `v[i] ?? (7, 7)` produces for the same element type, so the two
+            // spellings of the read answer alike.
+            rhs_type.clone()
         } else {
             lhs_type.clone()
         };
@@ -2802,7 +3026,10 @@ impl Parser {
             // here in the parser closes ALL of that on BOTH backends. Falsified over the
             // whole corpus/scripts/libs: zero valid `??` fires this (widen-int, `float?`←int
             // widening, `?? null`, `?? []`, checked-narrow all `convert` cleanly above).
-            let (given, wanted) = (rhs_type.name(&self.data), result_type.name(&self.data));
+            let (given, wanted) = (
+                rhs_type.source_name(&self.data),
+                result_type.source_name(&self.data),
+            );
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -3093,8 +3320,20 @@ impl Parser {
             return;
         }
         let Some((default, default_tp)) = self.build_default(&base) else {
-            // `has_default` passed but the builder cannot form the value — recover as the
-            // non-null base so the cascade is bounded (should not happen in practice).
+            // `has_default` admitted the type and the builder cannot form its value — the two
+            // disagree, which is a compiler defect, but the SILENT recovery it used to take is
+            // the worse half: it typed the value as the non-null base and left the absent value
+            // in it, so `v[j]?` answered `null` from a slot typed `(integer, integer)`
+            // (loft#1424).  Report instead, and name the discharge that always works.
+            if !self.first_pass {
+                let spelled = base.source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`?` cannot build a default for `{spelled}` — discharge with \
+                     `?? <default>` instead"
+                );
+            }
             *ctp = base;
             return;
         };
@@ -3125,6 +3364,56 @@ impl Parser {
                 tp.clone(),
             )),
             Type::Text(_) => Some((Value::Text(String::new()), tp.clone())),
+            // A TUPLE defaults member-wise — the value a written `(0, "")` literal builds, which
+            // is what the `??` spelling of the same discharge hands over.  `has_default` has
+            // recursed over the members already; a member IT admits and this cannot build (a
+            // collection, which the caller parses in its own context) makes the whole tuple
+            // unbuildable, and the caller reports that rather than proceeding.  Without this arm
+            // the tuple fell to `_ => None` and the caller's "should not happen" recovery typed
+            // the ABSENT value as the non-null base: `v[j]?` on an out-of-range index answered
+            // `null` from a slot typed `(integer, integer)`, where the struct twin `s[j]?.a`
+            // answers its `0` (loft#1424, both backends).
+            Type::Tuple(elems) => {
+                let mut values = Vec::with_capacity(elems.len());
+                for e in elems.clone() {
+                    let (v, _) = self.build_default(&e)?;
+                    values.push(v);
+                }
+                Some((Value::Tuple(values), tp.clone()))
+            }
+            // The STORED spelling of the same tuple — `Reference(__tuple<…>)`, the boxed
+            // monomorph return a generic `-> T?` at a tuple delivers (loft#1451).  `(N-Default)`
+            // is stated on the TYPE, not on where it happens to live, so it defaults member-wise
+            // exactly as the stack form above does; the two are one notion, one spelling apart,
+            // and the coalesce already unboxes a stack default against a stored left-hand side.
+            //
+            // Without this arm the stored form fell to `_ => None` and the caller reported
+            // *"`?` cannot build a default for `__tuple<integer,integer>`"* — correct as far as
+            // it went, since loft#1424 replaced a SILENT recovery there with a report, but the
+            // answer is that this tuple has a default rather than that it has none.
+            //
+            // It cannot reach the record arm below instead: `def_type` sees a struct, but
+            // `__tuple<integer,integer>` is not a name any loft source can spell, so the
+            // `S {}` sub-parse builds nothing and hands back a value typed as neither — which
+            // surfaced as a default *"of type `boolean`"* for a program containing no boolean.
+            // Member-wise here is the answer `(N-Default)` gives, and it is the RULE that
+            // picks it, not agreement with the sibling spelling: an arm anchored on what the
+            // other spelling happens to answer moves when that one does.
+            Type::Reference(_, _) if Self::record_tuple_def(&self.data, tp).is_some() => {
+                let elems: Vec<Type> = self
+                    .data
+                    .def(Self::record_tuple_def(&self.data, tp)?)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect();
+                let mut values = Vec::with_capacity(elems.len());
+                for e in &elems {
+                    let (v, _) = self.build_default(e)?;
+                    values.push(v);
+                }
+                Some((Value::Tuple(values), Type::Tuple(elems)))
+            }
             // Collections are handled by the caller via `pending_default_src` (parsed
             // in-context), never here — see `handle_default_fallback`.
             // An enum defaults to its first-defined variant (a marked default variant
@@ -3174,6 +3463,27 @@ impl Parser {
                 self.cur_type_var_name = saved.1;
                 Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
+            // A tuple's TWO SPELLINGS must default alike.  `Reference(__tuple<…>)` is a
+            // struct as far as `def_type` is concerned, so it fell into the record arm below
+            // — but `__tuple<integer,integer>` is not a name any loft source can spell, so the
+            // `S {}` sub-parse could not build it and handed back a value whose type was
+            // neither: the coalesce then reported a default *"of type `boolean`"* for a
+            // program containing no boolean (loft#1451).
+            //
+            // ⚠ This arm keeps the two spellings AGREEING, and agreement is not the same as
+            // being right.  `@FR-N-Default` is stated on the TYPE, not on where the value
+            // lives, so a tuple of integers HAS a default under both spellings and the honest
+            // answer is to build it member-wise — which is what the boxed form does once
+            // `Type::Tuple` has a default arm of its own (loft#1424).  Here neither spelling
+            // has one, so both answer `None` and `v[i]?` routes to the recover-as-base path;
+            // the moment the stack form learns to build one, THIS arm becomes the
+            // disagreement.  Closed that way on the joined tree (loft#1451 + loft#1424).
+            //
+            // The general form, because it cost hours: reconciling two spellings by matching
+            // what the SIBLING answers anchors on a value that can move, and this one moved
+            // the same day.  Match the RULE instead — and where reconciling requires PICKING
+            // a behaviour, name the rule that picks it, here, at the site.
+            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => None,
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field
             // has a default).  Parsed from the synthetic `S {}` source so it reuses
@@ -3386,7 +3696,7 @@ impl Parser {
                             "cannot cast a possibly-null `{}` to the non-null `{tps}` — it may \
                              be null; use `as {tps}?` for a checked cast (value or null), or \
                              discharge first with `?` (the type's default) or `?? <default>`",
-                            ctp.name(&self.data),
+                            ctp.source_name(&self.data),
                         );
                     }
                     // Keep `tp` (the non-null target) as the result to bound the cascade.
@@ -3520,7 +3830,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unknown cast from {} to {tps}",
-                            &ctp.name(&self.data),
+                            &ctp.source_name(&self.data),
                         );
                     }
                 }
@@ -3839,6 +4149,16 @@ impl Parser {
             let senum_null = (operator == "==" || operator == "!=")
                 && ((opt_senum_l && second_type == Type::Null)
                     || (*ctp == Type::Null && opt_senum_r));
+            // @FR-T-Absent — a tuple has no `Optional` spelling and no sentinel of its own;
+            // its absence IS "every member null", and the rule names `t == null` and `t ?? d`
+            // as ONE question answered from one home.  Only `??` had an answer: `t == null`
+            // fell past every gate here and was refused outright (*"No matching operator '=='
+            // on '(integer?, integer?)' and 'null'"*) for a type whose `??` beside it worked.
+            // Matched on `base()`, so the in-flight `(integer, integer)?` an index miss
+            // produces asks what the member-nullable spelling asks.
+            let tuple_null = (operator == "==" || operator == "!=")
+                && ((matches!(ctp.base(), Type::Tuple(_)) && second_type == Type::Null)
+                    || (*ctp == Type::Null && matches!(second_type.base(), Type::Tuple(_))));
             // @PLN102 pre-freeze — a boolean and an integer are NOT comparable with `==`/`!=`.
             // The old path coerced the integer to boolean by "is non-null", so `true == 0` was
             // TRUE and `true == 2` was TRUE (nonsense) — while `bool < int` already errored.
@@ -3901,7 +4221,7 @@ impl Parser {
                     },
                 );
                 *ctp = Type::Boolean;
-            } else if vec_null || float_null || enum_null || ref_null || senum_null {
+            } else if vec_null || float_null || enum_null || ref_null || senum_null || tuple_null {
                 if !self.first_pass {
                     let (n_code, n_tp) = if *ctp == Type::Null {
                         (second_code, second_type.clone())

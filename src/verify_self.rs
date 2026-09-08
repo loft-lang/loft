@@ -88,6 +88,21 @@ pub fn parse_manifest(text: &str) -> (Vec<(String, String)>, Option<String>) {
     (entries, combined)
 }
 
+/// Does a manifest path reach outside the bundle it describes?
+///
+/// The ONE home of this rule — `check_manifest` (verification) and the updater's
+/// `owned_files` (what an update may replace) both read it, because the two carried
+/// separate copies and the copies disagreed by exactly the absolute-path shape:
+/// `check_manifest` guarded only `..`, and `root.join("/etc/x")` REPLACES the root, so
+/// a hostile manifest made verification read an attacker-named absolute path and
+/// disclose its existence in the report.  `..` anywhere is rejected even inside a
+/// legal name (`a..b`): a false refusal of a peculiar filename is recoverable, a path
+/// that escapes is not.
+#[must_use]
+pub fn manifest_path_escapes(rel: &str) -> bool {
+    rel.contains("..") || Path::new(rel).is_absolute()
+}
+
 /// Verify every `<digest>  <path>` entry of `manifest_text` against files under `root`.
 ///
 /// `label` names the manifest in the messages.  A missing file is a failure, not a
@@ -101,8 +116,9 @@ pub fn check_manifest(root: &Path, manifest_text: &str, label: &str) -> Check {
     let mut bad: Vec<String> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
     for (rel, want) in &entries {
-        // Never let a manifest path escape the bundle it describes.
-        if rel.contains("..") {
+        // Never let a manifest path escape the bundle it describes — refused before
+        // any filesystem access, so a hostile entry is never even probed.
+        if manifest_path_escapes(rel) {
             bad.push(format!("{rel} (rejected: path escapes the bundle)"));
             continue;
         }

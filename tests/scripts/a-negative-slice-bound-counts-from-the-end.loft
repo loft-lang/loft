@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Slice-Value — a value slice's bound is `size + bound` when it is NEGATIVE, floored at
+// the start, and the two kinds that take one (`vector<τ>` and `text`) answer the same shape
+// on both backends.  The rule is LOFT.md § Vectors ("negative slice bounds count from the
+// end", @P384) and STDLIB.md § text slice ("both ends clamp, a reversed range gives `""`,
+// and a negative bound counts from the end") — one rule, four surfaces: the scalar `v[-1]` /
+// `s[-1]`, the vector slice, the text slice, and `char_slice`.
+//
+// The VECTOR cells are the reference: they carry the rule's complete shape (count from the
+// end, floor below the start, clamp past the end, reversed ⇒ empty), and every text cell
+// below is the same bound against the same six elements, so a divergence between the two
+// halves of a row is the failure this file is for.
+//
+// The `from` end is the half that was missing on text: `s[-2..]` answered `""` while
+// `v[-2..]` answered the last two, on both backends, with `till` already counting from the
+// end beside it (`s[..-1]` was right).  A text slice is BYTE-indexed, so the count from the
+// end is in bytes and the boundary snap under it decides the character — which is what the
+// `héllo` cells measure, including a bound that lands INSIDE the two-byte character.
+//
+// @falsified-at: d7a2b158 (hand-measured against a pristine worktree build of that commit)
+//   — interpret exit 0 -> 1, native exit 0 -> 1, one assertion failure on each: `s[-1..]:
+//   got , want f`, the first cell of `text_from_end` (the run stops at its first failure).
+//   All nine negative-`from` text cells were measured `""` on that build in the probe matrix
+//   this file was cut from.  The vector cells, `char_slice` and every negative-`till` cell
+//   pass there unchanged, which is what makes this a guard for the from-end half rather than
+//   for slicing at large.  The nearest existing coverage, `issues.rs::inc28_negative_slice_
+//   counts_from_end`, is a negative TILL on a VECTOR — the one corner of the matrix that was
+//   never wrong.
+
+fn joined(v: vector<text>) -> text {
+  r = "";
+  for x in v { r = "{r}{x}"; }
+  return r;
+}
+
+fn six() -> vector<text> { return ["a", "b", "c", "d", "e", "f"]; }
+
+// The reference: a vector bound counts from the end, floors below the start, clamps past
+// the end, and a reversed range is empty.
+fn a_vector_bound_counts_from_the_end() {
+  v = six();
+  assert_eq(joined([for x in v[-1..] { x }]), "f", "v[-1..]");
+  assert_eq(joined([for x in v[-2..] { x }]), "ef", "v[-2..]");
+  assert_eq(joined([for x in v[-6..] { x }]), "abcdef", "v[-6..]");
+  assert_eq(joined([for x in v[-7..] { x }]), "abcdef", "v[-7..] floors at the start");
+  assert_eq(joined([for x in v[-2..6] { x }]), "ef", "v[-2..6]");
+  assert_eq(joined([for x in v[-2..-1] { x }]), "e", "v[-2..-1] both ends");
+  assert_eq(joined([for x in v[-4..-2] { x }]), "cd", "v[-4..-2]");
+  assert_eq(joined([for x in v[-2..=5] { x }]), "ef", "v[-2..=5] inclusive");
+  assert_eq(joined([for x in v[-2..2] { x }]), "", "v[-2..2] reversed");
+  assert_eq(joined([for x in v[..-1] { x }]), "abcde", "v[..-1]");
+  assert_eq(joined([for x in v[1..-1] { x }]), "bcde", "v[1..-1]");
+  assert_eq(joined([for x in v[2..9] { x }]), "cdef", "v[2..9] clamps past the end");
+}
+
+// The same bounds on `text`, over the same six elements as bytes.
+fn text_from_end() {
+  s = "abcdef";
+  assert_eq(s[-1..], "f", "s[-1..]");
+  assert_eq(s[-2..], "ef", "s[-2..]");
+  assert_eq(s[-6..], "abcdef", "s[-6..]");
+  assert_eq(s[-7..], "abcdef", "s[-7..] floors at the start");
+  assert_eq(s[-9..], "abcdef", "s[-9..] floors at the start");
+  assert_eq(s[-2..6], "ef", "s[-2..6]");
+  assert_eq(s[-2..-1], "e", "s[-2..-1] both ends");
+  assert_eq(s[-4..-2], "cd", "s[-4..-2]");
+  assert_eq(s[-2..=5], "ef", "s[-2..=5] inclusive");
+}
+
+// The cells that were already right, kept beside the ones that were not: a negative `till`,
+// and every bound that never goes negative.
+fn text_the_other_bounds_are_unchanged() {
+  s = "abcdef";
+  assert_eq(s[-2..2], "", "s[-2..2] reversed");
+  assert_eq(s[..-1], "abcde", "s[..-1]");
+  assert_eq(s[1..-1], "bcde", "s[1..-1]");
+  assert_eq(s[2..9], "cdef", "s[2..9] clamps past the end");
+  assert_eq(s[6..], "", "s[6..] starts past the end");
+  assert_eq(s[7..], "", "s[7..] starts past the end");
+  assert_eq(s[..-9], "", "s[..-9] ends before the start");
+  assert_eq(s[3..3], "", "s[3..3] empty range");
+}
+
+// A text bound is a BYTE offset, so the count from the end is in bytes; a bound landing
+// inside a character snaps to that character's start, exactly as a positive one does.
+fn text_from_the_end_is_bytes() {
+  u = "héllo";                 // 6 bytes, 5 characters: h é(2) l l o
+  assert_eq(size(u), 6, "size is the byte count");
+  assert_eq(len(u), 5, "len is the character count");
+  assert_eq(u[-2..], "lo", "u[-2..] is two BYTES from the end");
+  assert_eq(u[-5..], "éllo", "u[-5..] lands on the character start");
+  assert_eq(u[-4..], "éllo", "u[-4..] lands INSIDE the character and snaps back");
+}
+
+// The scalar index and `char_slice` are the same rule's other two surfaces; a slice of a
+// slice and a slice of a nested element keep it.
+fn the_other_surfaces_agree() {
+  s = "abcdef";
+  v = six();
+  assert_eq("{s[-1]}", "f", "s[-1] scalar");
+  assert_eq(v[-1], "f", "v[-1] scalar");
+  assert_eq(s.char_slice(-2, 6), "ef", "char_slice from the end");
+  assert_eq(s.char_slice(-2, -1), "e", "char_slice both ends");
+  assert_eq(s.char_slice(-9, 2), "ab", "char_slice floors at the start");
+  t = s[-4..];
+  assert_eq(t[-2..], "ef", "a slice of a slice");
+  vv: vector<vector<integer>> = [[1, 2], [3, 4, 5]];
+  r = "";
+  for x in vv[-1][-2..] { r = "{r}{x},"; }
+  assert_eq(r, "4,5,", "a slice of a nested element");
+}
+
+fn main() {
+  a_vector_bound_counts_from_the_end();
+  text_from_end();
+  text_the_other_bounds_are_unchanged();
+  text_from_the_end_is_bytes();
+  the_other_surfaces_agree();
+}

@@ -818,7 +818,16 @@ impl State {
                     return self.insert_types(elem_tp, code_pos, stack);
                 }
                 // T1.4: read element elem_idx from tuple variable var_nr.
-                let Type::Tuple(ref elems) = tuple_tp else {
+                //
+                // Through `base()`, for the same reason the parser's member read is
+                // (loft#1461): a local bound from a nullable read — `e = v[i]` — is typed
+                // `Optional(Tuple)`, and `@FR-T-Absent` says an absent tuple IS a present
+                // tuple of null members, so the member is there to read.  `Optional(τ)` shares
+                // τ's layout, so the offsets are the same and only the SPELLING differed.
+                // Matching bare here while the parser peels is worse than either alone: the
+                // parser accepts the read, emits `TupleGet`, and this panics — a clean refusal
+                // traded for an ICE.
+                let Type::Tuple(ref elems) = *tuple_tp.base() else {
                     panic!("TupleGet on non-tuple variable");
                 };
                 let idx = elem_idx as usize;
@@ -929,7 +938,10 @@ impl State {
                     return Type::Void;
                 }
                 // T1.4: write to element elem_idx of tuple variable var_nr.
-                let Type::Tuple(ref elems) = tuple_tp else {
+                // Peeled like its READ twin above — the two address the same slot and a
+                // spelling one accepts and the other panics on is the drift they exist as a
+                // pair to avoid.
+                let Type::Tuple(ref elems) = *tuple_tp.base() else {
                     panic!("TuplePut on non-tuple variable");
                 };
                 let idx = elem_idx as usize;
@@ -2123,7 +2135,9 @@ impl State {
             // `scan_set` no longer elides keyed `Set(v, Null)`.  Without this
             // arm it would fall to `set_var` → `gen_put_var` → panic (no keyed
             // OpPut* arm).
-            if crate::parser::vectors::is_keyed(stack.function.tp(v)) && *value == Value::Null {
+            if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
+                && *value == Value::Null
+            {
                 self.gen_keyed_null(stack, v, false);
                 return;
             }
@@ -2933,10 +2947,18 @@ impl State {
             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
             // through `c2`, loft#1319).
             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
+        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
             // the container-wide free described below; it emits no free of its own.
+            //
+            // Through `base()`: an element view is `Reference(E)` when the read types non-null
+            // and `Optional(Reference(E))` when it does not, and the `?` says nothing about
+            // whether `v` owns a store — @FR-L-Null makes `E?` the same record behind a
+            // nullability bit.  Read bare, a nullable-typed local never materialised: it kept
+            // the interior pointer, so a write through it reached the CONTAINER.  Measured on a
+            // keyed element view whose KEY field is written — @PLN130 F4's materialise silently
+            // stopped happening and the element was left reachable by no key (loft#1456).
             && stack.function.tp(v).depend().is_empty()
             // Not for a WITNESSED local (loft#1336, @FR-O-Witness): its deps are empty
             // here only because a later whole-value copy stripped them, and the
@@ -3102,7 +3124,9 @@ impl State {
             self.gen_set_first_nullable_collection_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Vector(_, _)) && *value == Value::Null {
             self.gen_set_first_vector_null(stack, v);
-        } else if crate::parser::vectors::is_keyed(stack.function.tp(v)) && *value == Value::Null {
+        } else if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
+            && *value == Value::Null
+        {
             self.gen_set_first_keyed_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Tuple(_)) && *value == Value::Null {
             self.gen_set_first_tuple_null(stack, v);
@@ -4489,7 +4513,9 @@ impl State {
             // through to the panic below, which is why @FR-B-Ref-Intro's `&τ` for every τ
             // had to be declined (D-bind-17).
             let tp = tp.base();
-            let txt = matches!(tp, Type::Text(_));
+            // A fn-ref reads like `text` in the one respect this cares about: its op takes no
+            // FIELD operand, because the blob sits at the link's own position.
+            let txt = matches!(tp, Type::Text(_) | Type::Function(_, _, _));
             match tp {
                 Type::Integer(_) => stack.add_op("OpGetInt", self),
                 Type::Character => stack.add_op("OpGetCharacter", self),
@@ -4504,16 +4530,47 @@ impl State {
                 Type::Boolean => stack.add_op("OpGetBoolean", self),
                 Type::Enum(_, false, _) => stack.add_op("OpGetByte", self),
                 Type::Text(_) => stack.add_op("OpGetStackText", self),
-                Type::Vector(_, _)
-                | Type::Reference(_, _)
-                | Type::Enum(_, true, _)
-                // @P305 — keyed collections passed by `&` are DbRef-backed
-                // just like vectors/references; referencing one (e.g. as the
-                // `coll` arg of `OpSetKeyed` for `h[k] = v` on a `&hash`
-                // param) needs the same stack-ref deref.
-                | Type::Sorted(_, _, _)
-                | Type::Hash(_, _, _)
-                | Type::Index(_, _, _) => {
+                // `@FR-B-Ref-Intro` — the READ twin of the `&fn(…)` write.  A fn-ref is 20
+                // bytes on the stack, so neither `OpGetStackRef` (12) nor `OpGetStackText`
+                // (16) can carry it; reading it as either put the closure half of the slot
+                // somewhere it did not belong.  Reaching this list at all needs the link to
+                // EXIST, which is why this site could only be found once loft#1454 installed
+                // it — the fix moved the failure one step later rather than causing it
+                // (loft#1455).
+                Type::Function(_, _, _) => {
+                    stack.add_op("OpGetStackFnRef", self);
+                    stack.position += stack.fnref_signature_gap();
+                }
+                // ⚠ The arm below is DERIVED from `vectors::is_collection` rather than
+                // listing the keyed kinds again.  loft#1455 arrived carrying the
+                // hand-spelled list (`Vector | Reference | Enum | Sorted | Hash | Index`),
+                // which is the form loft#1445's rework replaced precisely because `trie`
+                // and `spatial` were missing from it; taking it would have reopened that.
+                // @P305 — a keyed collection passed by `&` is DbRef-backed just like a
+                // vector or a reference; reaching one (e.g. as the `coll` argument of
+                // `OpSetKeyed` for `h[k] = v` on a `&hash` parameter) needs the same
+                // stack-ref deref.  @FR-Col-Store defines the store-backed set as
+                // `Vector` plus the five keyed kinds, so `vectors::is_collection` is the
+                // one home for that half and this arm derives from it rather than
+                // listing the kinds again — the list spelled out is exactly how `trie`
+                // and `spatial` came to be missing while their three siblings worked
+                // (loft#1445, the fourth instance of the class after loft#1291,
+                // loft#1292 and loft#1433).
+                //
+                // The `_ =>` below is a `panic!`, so a kind missing here is an ICE and
+                // not a lost optimisation: the cost of an omission is the whole program.
+                //
+                // ⚠ loft3-19 measured this on their branch before converging to the derived
+                // form, and it was not merely a stale spelling: `&trie` and `&spatial` were a
+                // LIVE ICE there while `&hash`, `&sorted` and `&index` worked.  The hand-written
+                // list two lines from a comment describing how such a list loses kinds still had
+                // two missing.  One predicate answers "is this a collection?" for every kind at
+                // once, and a kind added to the language reaches this site without anyone
+                // remembering to.
+                Type::Reference(_, _) | Type::Enum(_, true, _) => {
+                    stack.add_op("OpGetStackRef", self);
+                }
+                other if crate::parser::vectors::is_collection(other) => {
                     stack.add_op("OpGetStackRef", self);
                 }
                 _ => panic!("Unknown referenced variable type: {tp}"),
@@ -4859,6 +4916,32 @@ impl State {
             // (`pd = &d; pd = S { n: 2 }`) installed the fresh store through the link and
             // orphaned the one it displaced — a leak on the interpreter, and one more
             // reason the two backends answered this shape differently (loft#1371).
+            // `@FR-B-Ref-Intro` — `&τ` is a type for EVERY τ, with no τ excluded (D-bind-17,
+            // loft#1372), so a fn-typed link writes like any other.  It cannot go through the
+            // allow-list below: a fn-ref is TWENTY bytes on the stack (8 B `d_nr` + 12 B
+            // closure `DbRef`) where every op there moves at most twelve, and the value push
+            // has to be the PAIR — `self.generate` lowers a bare fn name to the lone `d_nr`
+            // and would leave the closure half of the slot garbage.  So it takes the same
+            // shape `&text` does, a deref-and-write op keyed on the link's frame slot
+            // (loft#1443).
+            // Every write THROUGH the link, whether the link came from a parameter or from a
+            // local `&` bind — `@FR-B-Ref-Uniform`: a `&τ` variable is used exactly like a τ
+            // variable, and how the link was INTRODUCED is not the question.  The one value
+            // excluded is the link INSTALL itself (`OpCreateStack(src)`), which gives the
+            // variable its link and is not a fn-ref reaching a slot through one (loft#1454).
+            let installs_link = matches!(value.unspan(), Value::Call(d, _)
+                if stack.data.def(*d).name() == "OpCreateStack");
+            if matches!(*tp, Type::Function(_, _, _)) && !installs_link {
+                self.gen_fn_ref_value_node(IrNode::Native(value), stack);
+                // AFTER the push: `var_pos` is relative to the current stack top, so the
+                // pair has to be on it already.  The runtime subtracts the popped span
+                // back off, the way every pos-taking op that pops first does.
+                let var_pos = stack.var_pos(var);
+                stack.add_op("OpSetStackFnRef", self);
+                self.code_add(var_pos);
+                stack.position -= stack.fnref_signature_gap();
+                return;
+            }
             let amp_owned_writeback = (matches!(
                 *tp,
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)

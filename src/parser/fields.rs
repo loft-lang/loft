@@ -20,8 +20,24 @@ impl Parser {
         // the right signal — `expr_not_null` alone is false even for a non-null
         // constructed struct, which would wrongly suppress genuine warnings, e.g.
         // p285.)
-        let receiver_nullable =
-            matches!(tp, Type::Optional(_)) || self.reads_a_collection_element(code);
+        // `τ?` reaches here under BOTH of its spellings: the `Type::Optional` marker, and the
+        // synthetic `__nullable<S>` enum an INLINE slot holds an absent `S` in
+        // (`@FR-L-Null-Tag`).  A method call dispatches on the receiver's nullability
+        // (`@FR-F-Recv`, below), so reading only the marker would send the tagged spelling to
+        // the dense overload — the same disagreement between two spellings of one notion that
+        // loft#1432 is about between two spellings of one call.
+        // …and a flow proof over the RECEIVER EXPRESSION clears it, the way a proof over a
+        // NAME does one door over.  `if !db.map[k] { … } else { db.map[k].val }` proves the
+        // lookup non-null in the else arm and there is no variable to record it against; the
+        // proof is compared by IR shape, which is what makes the two spellings of the same
+        // lookup one fact.
+        let receiver_optional = (matches!(tp, Type::Optional(_))
+            || self.data.is_nullable_wrapper(&tp))
+            && !self
+                .narrowed_non_null_exprs
+                .iter()
+                .any(|e| Self::same_projection(e, code));
+        let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction
             // (`p = Plyer { … }` with an unknown `Plyer`) assigns to its
@@ -407,7 +423,23 @@ impl Parser {
                     let has_free_hint = free_nr != u32::MAX
                         && !self.data.def(free_nr).attributes().is_empty()
                         && self.data.attr_type(free_nr, 0).is_equal(&t);
-                    if has_free_hint {
+                    // A NULLABLE COLLECTION receiver reaches here because the method
+                    // dispatch matched no `τ?` arm, and the struct-field fallback then names
+                    // the CONTENT def — *"Unknown field vector.remove"*, about a method that
+                    // plainly exists, on a receiver whose real problem is the `?`.  The
+                    // refusal itself is right (`@FR-N-Coal`: no implicit unwrap), so this is
+                    // the wording, and it is loft#1453's class one spelling further out —
+                    // `for` / `map` / `filter` were fixed there, a METHOD CALL was not.  One
+                    // home answers all of them.
+                    let recv = t.clone();
+                    if self.nullable_collection_refusal(
+                        &recv,
+                        &format!("call `.{field}` on"),
+                        "has that method",
+                        "the method's own answer for an empty one",
+                    ) {
+                        // reported; fall through to the recovery below
+                    } else if has_free_hint {
                         // loft#850 — only the stdlib can be blamed for the stdlib's
                         // choices; a `use`d package that declares `{field}` free-only
                         // is a different file to go and read.
@@ -496,6 +528,29 @@ impl Parser {
             }
         }
         if let Type::Routine(r_nr) = self.data.attr_type(dnr, fnr) {
+            // @FR-F-Recv — the attribute slot holds the method's NAME (membership, and what
+            // every enumeration site reads); WHICH of `m(τ)` / `m(τ?)` a call reaches is
+            // `find_fn`'s answer.  Asking it here is what gives `x.m()` and `m(x)` one
+            // resolution: taking the slot's routine sent an absent receiver to the dense
+            // overload written for a present one, and told the author their receiver was
+            // undischarged in a program declaring the overload for exactly that (loft#1432).
+            //
+            // `find_fn` falls through to a free `n_<name>` and to the built-in operator map
+            // when no method matches; those are not candidates here, because reaching this
+            // line means the receiver type DOES carry a method of this name.  So the answer
+            // is taken only when it is one (`t_` keys the method spellings), and the slot's
+            // routine stands otherwise.
+            let dispatch = if receiver_optional {
+                Type::optional(t.clone())
+            } else {
+                t.clone()
+            };
+            let found = self.data.find_fn(u16::MAX, &field, &dispatch);
+            let r_nr = if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+                found
+            } else {
+                r_nr
+            };
             if self.lexer.has_token("(") {
                 t = self.parse_method(code, r_nr, t.clone());
             } else {
@@ -594,9 +649,7 @@ impl Parser {
         }
         // A field of a NULLABLE receiver can itself be null (C80), regardless of the
         // field's declared non-nullness — so it is not "not null" for the redundant-
-        // check / redundant-coalesce lints.  (Only the lint signal is cleared; the
-        // returned type `t` is unchanged — widening it to `Optional` would force
-        // `?? d` on every nullable-receiver field read, a far broader change.)
+        // check / redundant-coalesce lints.
         if receiver_nullable && self.expr_not_null {
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
@@ -607,6 +660,41 @@ impl Parser {
 
     /// Consume remaining function call arguments after `(` has already been consumed.
     /// Handle `v.map(fn)` / `v.filter(fn)` / `v.reduce(fn)` method syntax.
+    /// `@FR-Col-Lookup` — a keyed POINT lookup answers `τ?`, because an absent key yields the
+    /// null record.  ONE home for the two arms that perform one (`hash`/`spatial`/`trie`, and
+    /// `sorted`/`index`), so a kind added to either cannot end up with the other's answer.
+    ///
+    /// The rule has said this since it was written; what it lacked was a TYPE.  Its own cited
+    /// anchor is the `expr_not_null` LINT clear beside each call site — a citation that
+    /// RESOLVES and does not ENFORCE, which is how `collections.md` could read `OPEN: 0` over a
+    /// live gap.  A lookup that missed in a PRESENT collection bound into a non-null slot in
+    /// silence, on all four keyed kinds, so the receiver's `?` was never the axis
+    /// (`D-col-lookup`; the receiver-absent half is `D-Null-Recv`, closed separately).
+    ///
+    /// `point_lookup` is false for a spatial or trie RANGE slice, which answers the COLLECTION
+    /// for an enclosing `for` to iterate — iterating one is total, and there is no absence
+    /// there to discharge.
+    ///
+    /// Both guards are the vector arm's and both are load-bearing: `pln25_dn1_enabled` is the
+    /// null model's switch, and `tagged_pointer_type` keeps a `__nullable<S>` element — already
+    /// the slot's own spelling of `S?` (`@FR-L-Null-Tag`) — from becoming the `τ??` that
+    /// `@FR-N-Idem` forbids, which `Type::optional` cannot see because the synthetic is an
+    /// `Enum` to it.
+    fn wrap_keyed_lookup_nullable(&mut self, elm_type: &mut Type, point_lookup: bool) {
+        // An UNRESOLVED element type takes no marker.  `Optional(Unknown)` is not a type the
+        // rest of the compiler can name — it surfaces as *"Unknown type unknown(730)?"* — and a
+        // first-pass lookup whose element has not been resolved yet is exactly that.  The
+        // nullability is a property of the LOOKUP and survives to the second pass, where the
+        // element type is known and this wraps it then.
+        if point_lookup
+            && !elm_type.is_unknown()
+            && crate::keys::pln25_dn1_enabled()
+            && self.tagged_pointer_type(elm_type).is_none()
+        {
+            *elm_type = Type::optional(elm_type.clone());
+        }
+    }
+
     fn parse_vector_method(&mut self, code: &mut Value, t: &Type, method: &str) -> Type {
         let mut list = vec![code.clone()];
         let mut types = vec![t.clone()];
@@ -938,6 +1026,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         vec_tp: &Type,
     ) -> bool {
         if field == "remove" {
+            // @FR-Col-RemoveDense — the successors slide down by ONE element, and the slide
+            // is measured in the ELEMENT's width (@FR-H-Stride).  This is where that width is decided: the
+            // element db type the vector's STORAGE was built with, not the one the DEF names.  Six integer widths share the one `integer` def, so a
+            // def carries no width: `remove_vector_at` took the element's stride from it
+            // and slid the tail eight bytes per element whatever the declaration said, so
+            // a `vector<u8>` read past its live data while `len` stayed right (loft#1412).
+            // `vector_element_type` is the one home the storage is registered through
+            // (`narrow_vector_content`), so the removal and the layout cannot disagree.
+            let e_tp = match vec_tp {
+                Type::Vector(content, _) => self
+                    .data
+                    .vector_element_type(content, &mut self.database)
+                    .map_or(e_tp, i32::from),
+                _ => e_tp,
+            };
             self.lexer.token("(");
             let (tps, ls) = self.parse_parameters();
             let mut cd = ls[0].clone();
@@ -981,6 +1084,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // peels (`s.starts_with(..)` works on a `text?`). Inert gate-OFF: no
         // `Optional` is ever constructed, so `.base()` is a no-op. A null-check
         // discharges the value; indexing the null sentinel behaves as gate-OFF.
+        // `@FR-N-Domain` (loft#1450, and the nullable-receiver half of loft#1434) — an element
+        // read cannot be more non-null than the collection it reads from, so the receiver's `?`
+        // has to outlive the peel on the next line and reach the RESULT type.  The peel is what
+        // makes `s: text?; s[i]` dispatch at all, and it discards exactly this fact.
+        let receiver_optional = matches!(t, Type::Optional(_));
         t = t.base().clone();
         let mut elm_type = self.index_type(&t);
         for on in t.depend() {
@@ -1031,8 +1139,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is an `Enum` to it — and a `vector<S?>` read by a variable index then typed
             // its local `S?` on one pass and `__nullable<S>?` on the other and refused the
             // program as a type change.
+            // `index_provably_fit` trusts the INDEX — the number the developer typed, a loop
+            // variable, a bounded computation (loft#1436) — and says nothing about whether the
+            // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
+            // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
+            // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
             if crate::keys::pln25_dn1_enabled()
-                && !self.last_index_fit
+                && (!self.last_index_fit || receiver_optional)
                 && self.tagged_pointer_type(&elm_type).is_none()
             {
                 elm_type = Type::optional(elm_type);
@@ -1069,8 +1182,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // ty, limit)` — the same scratch path as iteration — and returns the Radix
             // type so `parse_for` iterates the already-built scratch.  A `(` opens the
             // coordinate tuple.
+            // Only a POINT lookup answers an element, and only a point lookup is nullable.  A
+            // spatial or trie RANGE slice answers the COLLECTION type for the enclosing `for`
+            // to iterate, and iterating one is total — wrapping that in `Optional` would make
+            // every slice loop demand a discharge it has no absence to discharge.
+            let mut point_lookup = true;
             if matches!(t, Type::Radix(_, _, _)) && self.lexer.peek_token("(") {
                 elm_type = self.parse_spatial_slice(code, &t, &key_types);
+                point_lookup = false;
             } else if matches!(t, Type::Trie(_, _, _)) {
                 // A trie subscript is `t[k]` (exact) or `t[pre..]` (prefix) — which one
                 // is only known after the key expression is parsed, so both live in one
@@ -1079,6 +1198,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 let dep = self.container_dep(code, &t);
                 if let Some(slice) = self.parse_trie_slice(code, &t, &key_types) {
                     elm_type = slice;
+                    point_lookup = false;
                 } else if let Some(cv) = dep {
                     elm_type = elm_type.depending(cv);
                 }
@@ -1097,6 +1217,29 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // the key.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            // …and the same `Value::Iter` check as the `Sorted`/`Index` arm below, so the two
+            // arms answer "was this a point lookup?" the same way.  `point_lookup` is set by
+            // the SHAPE tests above (a spatial `(`, a trie prefix); this adds what only
+            // `parse_key` knows, and neither arm can now wrap an iterator.
+            let point_lookup = point_lookup && !matches!(code.unspan(), Value::Iter(..));
+            self.wrap_keyed_lookup_nullable(&mut elm_type, point_lookup);
+            // `@FR-N-Domain` — an ABSENT keyed collection has no entry to answer with, so the
+            // lookup is `τ?` whatever the key.  (The lookup's OWN nullability for a present
+            // collection with a missing key is `(Col-Lookup)`, still carried by the
+            // `expr_not_null` clear above rather than by the type.)
+            //
+            // DERIVED, not assumed: `parse_key` answers an ITERATOR for a PARTIAL key
+            // (`m[1]` on a two-key kind is `m[1..=1]`) and for the `..` range form, and an
+            // iterator is not a value `(Col-Lookup)` types `τ?`.  Wrapping one lost the
+            // *"Cannot assign null to a partial-key lookup"* refusal, because the assignment
+            // router does not expect an iterator carrying a `?` — while the partial-key READ
+            // stayed diagnosed, so the shape looked covered (loft2-27, on the sibling leg).
+            if receiver_optional
+                && self.tagged_pointer_type(&elm_type).is_none()
+                && !matches!(code.unspan(), Value::Iter(..))
+            {
+                elm_type = Type::optional(elm_type);
+            }
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
             let el = crate::typedef::key_bearing_def(&self.data, *el);
             let mut key_types = Vec::new();
@@ -1111,6 +1254,35 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // @P285 — see the Hash/Radix arm above; the lookup result is nullable.
             self.expr_not_null = false;
             self.expr_not_null_name.clear();
+            // Whether this arrival is a POINT lookup is DERIVED, never asserted.  The claim
+            // here used to be "`sorted` / `index` subscripting has no RANGE form here, so
+            // every arrival is a point lookup", and it is false twice over: `parse_key`
+            // builds a `Value::Iter` for a PARTIAL key (`idx[k1]` on a two-key index,
+            // rewritten `idx[k1..=k1]`) and for the `..` RANGE form, both inside the call
+            // just made.  Wrapping either in `Optional` is exactly what `(Col-Lookup)`
+            // forbids — a slice answers the COLLECTION for an enclosing `for`, and
+            // iterating one is total.
+            //
+            // Measured cost of the assertion: `db.pe_map[1] = null` on a two-key `index`
+            // lost its refusal ("Cannot assign null to a partial-key lookup"), because the
+            // iterator arrived carrying a `?` the assignment router does not expect.  The
+            // partial-key READ was still named, so the file looked diagnosed while the
+            // statement it refused went through.
+            //
+            // `Value::Iter` is the one observable that answers for both spellings, so ask
+            // the CODE what `parse_key` produced rather than predicting it from the type.
+            let answered_an_iterator = matches!(code.unspan(), Value::Iter(..));
+            self.wrap_keyed_lookup_nullable(&mut elm_type, !answered_an_iterator);
+            // `@FR-N-Domain` — see the Hash/Radix arm above; an absent collection has no
+            // entry to answer with whatever the key.
+            // The same derived fact gates `(N-Domain)`: an iterator is not a value that can
+            // be absent, so wrapping it here loses the refusal the same way the wrap above did.
+            if receiver_optional
+                && self.tagged_pointer_type(&elm_type).is_none()
+                && !answered_an_iterator
+            {
+                elm_type = Type::optional(elm_type);
+            }
         } else if self.user_index_op(&t) != u32::MAX {
             // @PLN125 arc C — `x[i]` on a library type is the call the type declared.
             // `OpIndex` takes the receiver and the indices, so the lowering is the
@@ -1532,13 +1704,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             td => td,
         };
         let known = self.data.def(elm_td).known_type();
-        // honour narrow vector-element stride when the
-        // content Type::Integer carries a forced_size AND Phase 2 would
-        // register a direct-encoded narrow type (see
-        // `IntegerSpec::vector_narrow_width` — currently 1 and 4 bytes).
-        // Shorts stay wide until Phase 4 aligns the `Parts::Short`
-        // encoding with raw-byte copies.  Falls back to the
-        // bounds-heuristic via `database.size(known_type)` otherwise.
+        // honour narrow vector-element stride when the content Type::Integer carries a
+        // forced_size that registers a direct-encoded narrow type (see
+        // `IntegerSpec::vector_narrow_width`, which accepts 1, 2 and 4 bytes).  Falls back
+        // to the bounds-heuristic via `database.size(known_type)` otherwise.  @FR-H-Stride:
+        // the width is the declared TYPE's, and `known` above cannot carry it — one
+        // `integer` def serves every width.
         let elm_size_raw = if let Type::Integer(spec) = etp
             && let Some(n) = spec.vector_narrow_width(false)
         {
@@ -2068,7 +2239,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 self.lexer,
                 Level::Error,
                 "Cannot index text with '{}' — an index must be an integer (`s[i]`, `s[i..]`, `s[i..j]`)",
-                index_t.name(&self.data)
+                index_t.source_name(&self.data)
             );
         }
         let mut other = Value::Null;
@@ -2113,7 +2284,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         self.lexer,
                         Level::Error,
                         "Cannot end a text slice at '{}' — a range end must be an integer (`s[i..j]`)",
-                        ot_type.name(&self.data)
+                        ot_type.source_name(&self.data)
                     );
                 }
                 // @PLN110 3a / loft#749 — `s[i..len(s)]` mixes units: a slice bound is a
@@ -2547,7 +2718,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         self.lexer,
                         Level::Error,
                         "this collection keys on {} — a {}-element tuple, but {} were given",
-                        key_types[0].name(&self.data),
+                        key_types[0].source_name(&self.data),
                         want.len(),
                         given.len()
                     );
@@ -2780,8 +2951,43 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 prelude.push(lookup);
                 v_block(prelude, elem_type, "keyed_tuple_lookup")
             };
-            if matches!(typedef, Type::Hash(_, _, _)) && nr < key_types.len() {
-                diagnostic!(self.lexer, Level::Error, "Too few key fields");
+            // @FR-Col-Spatial / @FR-Col-Trie (loft#1457) — a short key is refused at every
+            // keyed kind that has no partial-key ITERATION story, which is stated as the
+            // COMPLEMENT of the kinds that do rather than by naming the kinds that do not.
+            // Named the other way round this read `matches!(typedef, Type::Hash(…))`, and
+            // `spatial` fell through both branches: `s[5]` on a `spatial<P[x, y]>` built a
+            // complete lookup from a malformed key and answered null, indistinguishable from
+            // a genuine miss, on both backends.  A kind added to the language now refuses by
+            // default and someone has to argue it into the iterating set — which is the trade
+            // the right way round, since the cost of an omission here is a silent null.
+            //
+            // `Index` and `Sorted` are the exception because a partial key is a real
+            // operation there: it rewrites to `idx[k1..=k1]` and iterates, refused only in a
+            // VALUE position (the branch above).  `spatial` is NOT that case even though its
+            // Morton code has prefixes — a Z-order prefix is a quadrant, not a 1-D range, so
+            // routing it through the range path would iterate the wrong records rather than
+            // report.  And a raw Morton-code subscript is not a surface operation the rules
+            // admit: `(Col-Trie)` shows what it looks like when a kind's own operation IS
+            // admitted — *"a PREFIX slice — the operation the kind exists for"* — and
+            // `(Col-Spatial)` names axes and an internal representation, nothing more.
+            if nr < key_types.len()
+                && !matches!(typedef, Type::Index(_, _, _) | Type::Sorted(_, _, _))
+            {
+                // Name the collection and both counts.  *"Too few key fields"* alone does not
+                // say how many are wanted, which of several subscripts in a line is wrong, or
+                // on what — and it made a guard with two cells VACUOUS, because two cells
+                // expecting the identical string are satisfied by one error between them
+                // (loft#1457's own first draft; `1423-…` states the rule: each cell names what
+                // the author wrote, which is what keeps the cells from making each other
+                // vacuous).  `source_name` rather than `name`, per loft#1449.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Too few key fields for `{}` — {} given, {} declared",
+                    typedef.source_name(&self.data),
+                    nr,
+                    key_types.len()
+                );
             }
         }
     }

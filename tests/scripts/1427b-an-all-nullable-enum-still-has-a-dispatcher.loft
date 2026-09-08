@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1427's second half, in its own file because it does not COMPILE on the build it
+// falsifies against: with EVERY implementation declared on a nullable receiver there is no
+// dispatcher at all, so `t.side()` is read as a field access and the run dies with five errors
+// that never say "method".  A file that proves itself through the exit channel cannot also
+// prove the values in `1427`, which is why the two are apart.
+//
+// @falsified-at: e9f45817 — interpret exit 1 -> 0, native exit 1 -> 0.  The control dies on
+//   *"field 'side' of 'Tri' has no storage in that type's layout"*, *"Field access not supported
+//   on type fn t_4Tri?_side"* and the parse cascade after them — the exit channel, which is why
+//   this cell is not in `1427`.
+
+enum Deep { Tri { t: integer }, Quad { q: integer } }
+fn side(self: Tri?) -> integer { if self == null { -1 } else { self.t + 1 } }
+fn side(self: Quad?) -> integer { if self == null { -1 } else { self.q + 2 } }
+
+fn main() {
+  t: Deep = Tri { t: 5 };
+  q: Deep = Quad { q: 5 };
+  assert(t.side() == 6, "an all-nullable enum still has a dispatcher: {t.side()}");
+  assert(q.side() == 7, "and each variant reaches its own implementation: {q.side()}");
+}

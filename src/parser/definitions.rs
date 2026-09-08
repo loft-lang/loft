@@ -7,6 +7,21 @@ use super::{
     is_upper, rename, v_block, v_if,
 };
 
+/// What a synthesised dispatcher (@F20) hands to the arm it calls.
+///
+/// Two halves, because they reach different arms.  A VISIBLE parameter is one the author wrote
+/// and every implementation shares — the refusal in `create_enum_dispatch_fn` guarantees that —
+/// so every arm gets it.  A HIDDEN one is the compiler's own work buffer, given per
+/// IMPLEMENTATION to a body that needs somewhere to build its result, so only an arm that
+/// declares one may be handed it (loft#1430).
+#[derive(Default)]
+pub(crate) struct ForwardedArgs {
+    visible: Vec<Value>,
+    visible_types: Vec<Type>,
+    hidden: Vec<Value>,
+    hidden_types: Vec<Type>,
+}
+
 impl Parser {
     /// loft#799 — a keyed collection whose key field is the wrong TYPE for its kind
     /// is refused at DECLARATION, naming the kind that does key on it.
@@ -31,7 +46,39 @@ impl Parser {
             return; // an unknown field name is reported by the layout pass
         }
         let tp = self.data.attr_type(el, a_nr);
-        let is_text = matches!(tp, Type::Text(_));
+        // @FR-L-Null — the KIND question peels, because `text?` is a text in the same four
+        // bytes.  Asked bare it read as "not a text", which let a `text?` take a `spatial`
+        // AXIS' place: accepted, iterating its records, and answering null for a point just
+        // inserted (loft#1429).
+        let is_text = matches!(tp.base(), Type::Text(_));
+        // @FR-Col-Trie / @FR-Col-Spatial — and nullability is its own answer, because neither
+        // kind has a key for absence: a trie walks the BYTES of a text and an absent text has
+        // none, a spatial interleaves integer-NOT-NULL coordinates and an absent one has no
+        // position on the curve.  The three VALUE-keyed kinds hold an absent key like any
+        // other value, so they never ask this — which is what both messages name as the cure.
+        if matches!(tp, Type::Optional(_)) {
+            let shown = tp.source_name(&self.data);
+            if want_text {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a trie keys on the BYTES of a text field, and `{field}` is `{shown}` — an \
+                     absent text has no bytes to walk; declare the key `text`, or key on the \
+                     VALUE with `hash<{}[{field}]>`, which holds an absent key like any other",
+                    self.data.def(content).name()
+                );
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a spatial index interleaves its axes into a Morton code, and the axis \
+                     `{field}` is `{shown}` — an absent coordinate has no position on the \
+                     curve; declare it `integer`, or key on the VALUE with `sorted` / `index`, \
+                     which order an absent key before every present one"
+                );
+            }
+            return;
+        }
         if is_text == want_text {
             return;
         }
@@ -47,7 +94,7 @@ impl Parser {
                     "a trie keys on the BYTES of ONE text field, and `{field}` is {} — a \
                      tuple key needs `sorted<…>` / `index<…>` (ordered lexicographically, \
                      element by element) or `hash<…>` (exact lookup)",
-                    tp.name(&self.data)
+                    tp.source_name(&self.data)
                 );
                 return;
             }
@@ -57,7 +104,7 @@ impl Parser {
                 "a trie keys on the BYTES of a text field, and `{field}` is {} — use \
                  `spatial<…>` for coordinates, or `sorted<…>` / `index<…>` to order on a \
                  number",
-                tp.name(&self.data)
+                tp.source_name(&self.data)
             );
         } else {
             diagnostic!(
@@ -135,16 +182,14 @@ impl Parser {
     }
 
     pub(crate) fn warn_missing_enum_variants(&mut self, e_nr: u32, nrs: &[usize], name: &str) {
+        // @FR-F-Recv — which variant an implementation is FOR is `receiver_def_nr`'s answer,
+        // so a `self: V?` receiver counts as an implementation of `V`.  Asked bare, this
+        // reported "no implementation of 'area' for variant 'Square'" with one written five
+        // lines above it.
         let implemented: HashSet<u32> = nrs
             .iter()
-            .filter_map(|nr| {
-                if let Type::Reference(a_nr, _) = self.data.def(*nr as u32).attributes()[0].typedef
-                {
-                    Some(a_nr)
-                } else {
-                    None
-                }
-            })
+            .map(|nr| self.data.receiver_def_nr(*nr as u32))
+            .filter(|a_nr| *a_nr != u32::MAX)
             .collect();
         let missing: Vec<(String, Position)> = self
             .data
@@ -168,11 +213,28 @@ impl Parser {
     pub(crate) fn create_enum_dispatch_fn(&mut self, e_nr: u32, nrs: &[usize]) {
         let from_nr = nrs[0] as u32;
         let name = self.data.def(from_nr).original_name().clone();
-        let attrs = self.data.def(from_nr).attributes()[1..].to_vec();
+        // The parameters the arms must SHARE are the ones a caller writes.  A hidden
+        // attribute is the compiler's own — the `___acc_N` text accumulator a body that builds
+        // its result in a branch is given, and the return buffer — and it is per
+        // IMPLEMENTATION: an arm that needs one gets it from the call site like any other
+        // callee.  Counted among the shared parameters, one implementation having an
+        // accumulator its twin lacks drove `common` to 0 and the guard below then abandoned the
+        // dispatcher with no diagnostic at all, so the call site failed as a FIELD read
+        // (loft#1430).
+        let visible = |data: &crate::data::Data, nr: u32| -> Vec<crate::data::Attribute> {
+            data.def(nr)
+                .attributes()
+                .iter()
+                .skip(1)
+                .filter(|a| !a.hidden)
+                .cloned()
+                .collect()
+        };
+        let attrs = visible(&self.data, from_nr);
         let mut common = attrs.len();
         for nr in &nrs[1..] {
             let mut c = 0;
-            for a in &self.data.def(*nr as u32).attributes()[1..] {
+            for a in &visible(&self.data, *nr as u32) {
                 for o in &attrs {
                     if a.name == o.name && a.typedef == o.typedef {
                         c += 1;
@@ -184,9 +246,26 @@ impl Parser {
             }
         }
         for nr in nrs {
-            if self.data.def(*nr as u32).attributes().len() > common + 1 {
-                for a in &self.data.def(*nr as u32).attributes()[common + 1..] {
+            let extra = visible(&self.data, *nr as u32);
+            if extra.len() > common {
+                for a in &extra[common..] {
                     if a.value == Value::Null {
+                        // An implementation with a REQUIRED parameter the others do not share:
+                        // the dispatcher has nothing to pass for it, so there is no dispatcher
+                        // to build.  Say so where the enum is declared rather than leaving the
+                        // call site to fail as a field read (loft#1430).
+                        let at = self.data.def(*nr as u32).position().clone();
+                        diagnostic_at!(
+                            self.lexer,
+                            &at,
+                            Level::Error,
+                            "`{name}` cannot be dispatched on `{}`: this implementation takes \
+                             `{}`, which the other variants' implementations do not, so a call \
+                             through the enum has nothing to pass for it — give every \
+                             implementation the same parameters, or a default",
+                            self.data.def(e_nr).name(),
+                            a.name
+                        );
                         return;
                     }
                 }
@@ -212,6 +291,39 @@ impl Parser {
                 const_pos: (0, 0),
             });
         }
+        // …and the HIDDEN attributes of whichever implementation has them.  The dispatcher
+        // delivers the same return as its arms do, so it needs the same work buffers, and the
+        // arms are called with the dispatcher's own — a variant call must write into the
+        // buffer the caller allocated and not into a fresh work text with no stack slot.
+        // Taken from the first implementation that carries any rather than from `nrs[0]`,
+        // because a body that returns a LITERAL is given none while its branching twin is:
+        // reading only the first left the arm that needed a destination without one, which
+        // `--native` renders as `let _ret = ;` (loft#1430).
+        if let Some(hidden) = nrs
+            .iter()
+            .map(|nr| {
+                self.data
+                    .def(*nr as u32)
+                    .attributes()
+                    .iter()
+                    .skip(1)
+                    .filter(|a| a.hidden)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .find(|h| !h.is_empty())
+        {
+            for a in &hidden {
+                args.push(Argument {
+                    name: a.name.clone(),
+                    typedef: a.typedef.clone(),
+                    default: a.value.clone(),
+                    constant: false,
+                    ref_pos: (0, 0),
+                    const_pos: (0, 0),
+                });
+            }
+        }
         let fn_nr = self.data.add_fn(&mut self.lexer, &name, &args);
         // `add_fn` answers `u32::MAX` when it refused the definition, and it has already
         // said why. Indexing the definition table with that sentinel panicked the compiler
@@ -236,26 +348,29 @@ impl Parser {
         // Build forwarding args for extra (non-self) attributes (e.g. RefVar(Text) buffers).
         // Variant calls must write into the dispatcher's own text-buffer argument, not a
         // freshly-allocated work_text that has no stack slot yet.
-        let mut extra_call_args: Vec<Value> = Vec::new();
-        let mut extra_call_types: Vec<Type> = Vec::new();
+        // Split, because the two halves are forwarded to DIFFERENT arms: a visible parameter
+        // every implementation shares (the bail above guarantees it), a hidden buffer only to
+        // the implementations that declare one.  Forwarded to all, an implementation whose body
+        // returns a literal — and is therefore given no accumulator — is called with an
+        // argument it does not have: *"Too many parameters for We.lab3"* (loft#1430).
+        let mut forwarded = ForwardedArgs::default();
         for a in &args[1..] {
             let v = self.vars.var(&a.name);
-            if v != u16::MAX {
-                extra_call_args.push(Value::Var(v));
-                extra_call_types.push(a.typedef.clone());
+            if v == u16::MAX {
+                continue;
+            }
+            if a.name.starts_with("__") {
+                forwarded.hidden.push(Value::Var(v));
+                forwarded.hidden_types.push(a.typedef.clone());
+            } else {
+                forwarded.visible.push(Value::Var(v));
+                forwarded.visible_types.push(a.typedef.clone());
             }
         }
         let mut ls = Vec::new();
         let get_enum = self.cl("OpGetEnum", &[Value::Var(0), Value::Int(0)]);
         let get_int = self.cl("OpConvIntFromEnum", &[get_enum]);
-        self.enum_numbers(
-            nrs.to_vec(),
-            &name,
-            &mut ls,
-            &get_int,
-            &extra_call_args,
-            &extra_call_types,
-        );
+        self.enum_numbers(nrs.to_vec(), &name, &mut ls, &get_int, &forwarded);
         // No-variant-matched fallback: an explicit `return null`, not a bare
         // `Null` tail. As the tail of a value-typed (e.g. text) block the bare
         // Null was wrapped in `Str::new(<dispatch if>)` and emitted `Str::new(())`
@@ -277,14 +392,16 @@ impl Parser {
             if d.def_type != DefType::Function || d.attributes.is_empty() {
                 continue;
             }
-            if let Type::Reference(e_tp, _) = &d.attributes[0].typedef
-                && matches!(self.data.def(*e_tp).returned(), Type::Enum(_, true, _))
-                && self.data.find_fn(
-                    u16::MAX,
-                    &d.original_name(),
-                    self.data.def(*e_tp).returned(),
-                ) == u32::MAX
-                && let Type::Enum(e_nr, true, _) = self.data.def(*e_tp).returned()
+            // @FR-F-Recv — the receiver's base type names the variant, so both `self: V` and
+            // `self: V?` are implementations of `V` and both belong in the dispatcher.
+            let recv = self.data.receiver_def_nr(d_nr as u32);
+            if recv != u32::MAX
+                && matches!(self.data.def(recv).returned(), Type::Enum(_, true, _))
+                && self
+                    .data
+                    .find_fn(u16::MAX, &d.original_name(), self.data.def(recv).returned())
+                    == u32::MAX
+                && let Type::Enum(e_nr, true, _) = self.data.def(recv).returned()
                 // loft#850 — whether an enum already HAS this dispatcher is a fact about
                 // the enum, so ask the enum. The `find_fn` test above searches the source
                 // being parsed, while the scan it guards runs over EVERY definition in the
@@ -296,12 +413,56 @@ impl Parser {
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
             {
-                todo.entry(*e_nr).or_insert(vec![]).push(d_nr);
+                // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
+                // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
+                // alone, an enum with two methods per variant put both lists in one bucket, so
+                // one method got a dispatcher named after whichever definition came first and
+                // the other got none — its call site then failed as a FIELD read (*"field 'per'
+                // of 'Ca' has no storage in that type's layout"*), and where the two lists'
+                // attributes disagreed the shared bucket bailed and NEITHER was built
+                // (`tests/scripts/05-enums.loft` had three `area` and three `describe`
+                // implementations and no dispatcher for either).
+                todo.entry((*e_nr, d.original_name().clone()))
+                    .or_insert(vec![])
+                    .push(d_nr);
             }
         }
-        for (e_nr, nrs) in todo {
-            self.create_enum_dispatch_fn(e_nr, &nrs);
+        // Sorted, because a `HashMap`'s order is not stable across runs and the dispatchers are
+        // emitted in the order they are created: an unsorted walk makes the generated Rust
+        // differ between two builds of one program.
+        let mut keys: Vec<(u32, String)> = todo.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            let nrs = self.one_implementation_per_variant(&todo[&key]);
+            self.create_enum_dispatch_fn(key.0, &nrs);
         }
+    }
+
+    /// One implementation per VARIANT, the way a direct call picks one.
+    ///
+    /// A variant may carry two overloads of a method — `self: V` and `self: V?` — and a call
+    /// on a dense receiver takes the dense one (`find_fn`; the reverse declaration order is
+    /// refused outright as a redefinition).  The dispatcher's arm must answer what that call
+    /// answers, so the dense spelling wins here too, and the arm list keeps ONE def per
+    /// discriminant rather than an unreachable second `if` on the same tag (@FR-F-Recv).
+    fn one_implementation_per_variant(&self, nrs: &[usize]) -> Vec<usize> {
+        let mut kept: Vec<usize> = Vec::with_capacity(nrs.len());
+        for nr in nrs {
+            let variant = self.data.receiver_def_nr(*nr as u32);
+            let dense = !matches!(
+                self.data.def(*nr as u32).attributes()[0].typedef,
+                Type::Optional(_)
+            );
+            match kept
+                .iter()
+                .position(|k| self.data.receiver_def_nr(*k as u32) == variant)
+            {
+                Some(at) if dense => kept[at] = *nr,
+                Some(_) => {}
+                None => kept.push(*nr),
+            }
+        }
+        kept
     }
 
     pub(crate) fn enum_numbers(
@@ -310,15 +471,15 @@ impl Parser {
         name: &str,
         ls: &mut Vec<Value>,
         get_int: &Value,
-        extra_args: &[Value],
-        extra_types: &[Type],
+        forwarded: &ForwardedArgs,
     ) {
         for nr in nrs {
             let d_nr = nr as u32;
-            let a_nr = if let Type::Reference(nr, _) = self.data.def(d_nr).attributes()[0].typedef {
-                nr
-            } else {
-                0
+            // @FR-F-Recv — the arm's discriminant comes from the variant the receiver names,
+            // which a `self: V?` names exactly as `self: V` does.
+            let a_nr = match self.data.receiver_def_nr(d_nr) {
+                u32::MAX => 0,
+                nr => nr,
             };
             let e_nr = if let Value::Enum(nr, _) = self.data.def(a_nr).attributes()[0].value {
                 nr
@@ -327,9 +488,22 @@ impl Parser {
             };
             let self_type = self.data.def(d_nr).attributes()[0].typedef.clone();
             let mut call_args = vec![Value::Var(0)];
-            call_args.extend_from_slice(extra_args);
+            call_args.extend_from_slice(&forwarded.visible);
             let mut call_types = vec![self_type];
-            call_types.extend_from_slice(extra_types);
+            call_types.extend_from_slice(&forwarded.visible_types);
+            // The hidden buffers go only to an implementation that DECLARES them: a body
+            // returning a literal has none, and handing it one is "Too many parameters".
+            if self
+                .data
+                .def(d_nr)
+                .attributes()
+                .iter()
+                .skip(1)
+                .any(|a| a.hidden)
+            {
+                call_args.extend_from_slice(&forwarded.hidden);
+                call_types.extend_from_slice(&forwarded.hidden_types);
+            }
             let mut code = Value::Null;
             let name_pos = self.lexer.pos().clone();
             self.call(
@@ -977,7 +1151,7 @@ impl Parser {
                 if let Some(what) = unsupported {
                     refused_as_unbuildable = true;
                     let fn_name = id.to_lowercase();
-                    let tn = tp.base().name(&self.data);
+                    let tn = tp.base().source_name(&self.data);
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -2456,7 +2630,7 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "Expecting a clear type, found {}",
-                    typedef.name(&self.data)
+                    typedef.source_name(&self.data)
                 );
             }
             (*arguments).push(Argument {
@@ -2730,6 +2904,19 @@ impl Parser {
                     spec.forced_size = Some(nz);
                     tp = Type::Integer(spec);
                 }
+                // A `[param]` on the return type is this declaration's own borrow list, and
+                // this arm builds its type by CLONING the named def's — which carries the
+                // def's deps, not the declaration's.  Stamp the parsed list on, exactly as
+                // the two arms above do, so a signature that says it returns a view of a
+                // parameter says so in every type it can name.  Without this the annotation
+                // parses, resolves its parameter, and is dropped: `field(self: JsonValue, …)
+                // -> JsonValue[self]` read as an OWNED return, so the caller's local was
+                // freed at scope end and it was the caller's own store that went
+                // (@FR-H-View — a projection aliases the place, and freeing it is the
+                // owner's business, never the viewer's).
+                if !dep.is_empty() {
+                    tp = tp.with_deps(&crate::data::Deps::unknown(dep));
+                }
                 Some(tp)
             }
         } else {
@@ -2775,6 +2962,30 @@ impl Parser {
             // codegen needs the host field offset.  Mirrors the
             // `sub_type` tuple arm below.  Idempotent.
             self.data.tuple_def(&mut self.lexer, &types);
+            // A `?` after the closing paren.  `(N-Opt)` licenses `τ?` for every τ, but a tuple
+            // is the one type former with NO representation for absence: `(L-Null)`'s sentinel
+            // needs a value the type reserves and a tuple reserves none, and `(L-Null-Tag)`'s
+            // discriminant is for a STRUCT stored inline.  The `?` was left unconsumed here, so
+            // every position spelled it as a syntax cascade naming nothing — *"Expect token ;"*
+            // for a local, *"Expect token )"* for a parameter, *"Expect token >"* inside a
+            // `vector<…>`.  Consume it and name the refusal wherever the type is parsed, the
+            // way the `value struct` case five lines into `parse_type` does — the other type
+            // with no null to spend.  NOT gated on the second pass: a local's and a field's
+            // declared type reach this branch on pass 1 only, so a pass-2 gate reports for a
+            // parameter and stays silent for the two positions an author writes most often.
+            // A `?` after `)` is a syntactic fact, so no resolution can change the answer.
+            // `formal/types-history.md` D-Opt-NoNull; loft#1423 carries the design question of
+            // giving a tuple the tagged representation.
+            if self.lexer.has_token("?") {
+                let spelled = Type::Tuple(types.clone()).source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{spelled}?` is not allowed — a tuple is its members' bytes, with no \
+                     sentinel and no discriminant to spend on absence; make the MEMBERS nullable \
+                     (`(integer?, text?)`), or wrap the tuple in a `struct`, which can be `?`"
+                );
+            }
             Some(Type::Tuple(types))
         } else if self.lexer.has_token("fn") {
             Some(self.parse_fn_type(on_d))
@@ -3428,11 +3639,22 @@ impl Parser {
     /// answers, in the same order. A different key is a different type with its
     /// own link triple, so `index<E[k]> + index<E[n]>` is untouched and correct.
     fn reject_duplicate_index(&mut self, d_nr: u32, a_name: &str, a_type: &Type) {
-        let Type::Index(elem, keys, _) = a_type else {
+        // @FR-Col-Group — membership of a record set is not about whether a MEMBER is nullable,
+        // and two `index` members over one element type are refused because an index keeps its
+        // tree links in a field OF the record (DESIGN_DECISIONS.md, the two-index ruling).
+        //
+        // @FR-L-Null — `base()` on both sides: a `?` on a field is a compile-time bit over the
+        // same storage, so `index<E[k]>?` is the same tree over the same records as
+        // `index<E[k]>`.  Asked bare, a nullable spelling escaped this refusal on either side
+        // and the two indexes then overwrote each other's links in the one field the record
+        // has for them — a lookup answering null for a record its own `for` loop yields.
+        let Type::Index(elem, keys, _) = a_type.base() else {
             return;
         };
         for a_nr in 0..self.data.attributes(d_nr) {
-            let Type::Index(other_elem, other_keys, _) = self.data.attr_type(d_nr, a_nr) else {
+            let Type::Index(other_elem, other_keys, _) =
+                self.data.attr_type(d_nr, a_nr).base().clone()
+            else {
                 continue;
             };
             if other_elem != *elem || other_keys != *keys {
@@ -4748,7 +4970,7 @@ impl Parser {
                 self.lexer.revert(value_start);
                 *value = self.default_value_fn(&dflt_fn, &[], a_type, Vec::new());
             } else if !self.first_pass {
-                let tn = a_type.name(&self.data);
+                let tn = a_type.source_name(&self.data);
                 diagnostic!(
                     self.lexer,
                     Level::Error,

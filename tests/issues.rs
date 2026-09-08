@@ -1572,10 +1572,11 @@ fn run() -> integer {
     .result(loft::data::Value::Int(0));
 }
 
-/// C60 Step 9: `#remove` must be rejected on hash iteration — the
-/// iteration walks a pre-sorted snapshot, and `#remove` would not
-/// actually remove from the underlying hash.  Users should
-/// `h[key] = null` to remove.
+/// C60 Step 9: `#remove` must be rejected where the loop walks a SNAPSHOT — the
+/// iteration reads a pre-sorted copy of the records, so `#remove` would not reach
+/// the collection.  Three kinds take that substitution (`hash`, `trie`, `spatial`)
+/// and the refusal names whichever one the author wrote; removal is by key
+/// (`h[key] = null`).
 #[test]
 fn c60_hash_iter_remove_rejected() {
     // Parse error expected; format matches other parse-error tests.
@@ -1588,9 +1589,85 @@ fn test() {
 }"
     )
     .error(
-        "#remove is not supported on hash iteration — the iterated \
-         vector is a sorted snapshot; use `hash[key] = null` to \
-         remove from the hash at c60_hash_iter_remove_rejected:5:32",
+        "#remove is not supported when iterating a `hash` — the loop walks a \
+         snapshot of the records, so the removal would not reach the collection; \
+         remove by key instead (`hash[key] = null`) at \
+         c60_hash_iter_remove_rejected:5:32",
+    );
+}
+
+/// A NULLABLE collection is refused with the DISCHARGE, not with a list of kinds.
+///
+/// `(N-Coal)`/`(N-Default)` give an absent collection zero iterations — `for e in c?` and
+/// `for e in c ?? []` both run zero times — so the reader needs the one character, not the
+/// six kinds they already picked from correctly.  `Parser::for_type` peels `τ?` so this is
+/// the ONLY error the shape produces (@PLN25's dn1 audit named that site); before, the
+/// element-type resolver reported "Unknown in expression type" twice on top of it.
+#[test]
+fn a_nullable_collection_is_refused_with_its_discharge() {
+    code!(
+        "fn test() {
+    v: vector<integer>? = null;
+    for x in v { }
+}"
+    )
+    .error(
+        "cannot iterate over vector<integer>? because it is NULLABLE — a `vector<integer>` \
+         is iterable, but there is no implicit unwrap.  Discharge it first: add `?` (the \
+         type's default, an empty collection) or `?? []`; either spelling gives an absent \
+         collection zero iterations at \
+         a_nullable_collection_is_refused_with_its_discharge:3:17",
+    )
+    // The one that follows is the parser's generic recovery after a `for` whose source did
+    // not resolve — not part of this refusal, and asserted only because the harness matches
+    // the diagnostics EXACTLY.
+    //
+    // There were TWO.  *"Need an iterable expression in a for statement"* went with loft#1453:
+    // `collections::iterator` reports the refusal above and then returns `Value::Null`, which
+    // the caller could not tell from "no iterable at all", so it added its own line on top of
+    // a message that had already named the problem.  It now asks `Diagnostics::error_count()`
+    // and speaks only when nothing else did.  The remaining line is a different cause — the
+    // `for` bails without consuming its body — and is still open on loft#1453.
+    .error("Expect token ; at a_nullable_collection_is_refused_with_its_discharge:3:17");
+}
+
+/// loft#1403 — the refusal names the kind the AUTHOR wrote.
+///
+/// `hash`, `trie` and `spatial` all take the snapshot substitution and all reach the one
+/// scratch variable, so a message spelled for the hash told a `trie` author their loop was
+/// "hash iteration" and prescribed `hash[key] = null` for a collection they never wrote.
+/// A `spatial` is keyed by its coordinate axes, so it gets its own cure spelling too.
+#[test]
+fn remove_refusal_names_a_trie_not_a_hash() {
+    code!(
+        "struct Ent { k: text, v: integer }
+fn test() {
+    c: trie<Ent[k]> = [Ent{k:\"a\",v:1}];
+    for e in c { e#remove; }
+}"
+    )
+    .error(
+        "#remove is not supported when iterating a `trie` — the loop walks a \
+         snapshot of the records, so the removal would not reach the collection; \
+         remove by key instead (`trie[key] = null`) at \
+         remove_refusal_names_a_trie_not_a_hash:4:27",
+    );
+}
+
+#[test]
+fn remove_refusal_names_a_spatial_and_its_axes() {
+    code!(
+        "struct Ent { x: integer, y: integer, v: integer }
+fn test() {
+    c: spatial<Ent[x,y]> = [Ent{x:1,y:1,v:1}];
+    for e in c { e#remove; }
+}"
+    )
+    .error(
+        "#remove is not supported when iterating a `spatial` — the loop walks a \
+         snapshot of the records, so the removal would not reach the collection; \
+         remove by key instead (`spatial[x, y] = null`) at \
+         remove_refusal_names_a_spatial_and_its_axes:4:27",
     );
 }
 

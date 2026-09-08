@@ -9139,13 +9139,13 @@ pub fn json_errors() -> text
 Populates the runtime's per-call json\_errors state (read by json\_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.
 
 ```rust
-pub fn field(self: JsonValue, name: text) -> JsonValue
+pub fn field(self: JsonValue, name: text) -> JsonValue[self]
 ```
 
 Observes the runtime's json\_errors state populated by json\_parse.  No parent writes. JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field("a").field("b")` is safe — every intermediate missing produces `JNull`, never a trap.
 
 ```rust
-pub fn item(self: JsonValue, index: integer) -> JsonValue
+pub fn item(self: JsonValue, index: integer) -> JsonValue[self]
 ```
 
 JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.

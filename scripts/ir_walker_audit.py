@@ -844,9 +844,20 @@ TYPE_LET = re.compile(
     r"(?:^|\W)(?:if\s+let|while\s+let|let)\s+(?:Some\()?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)"
 )
 TYPE_MATCHES = re.compile(r"matches!\s*\([^;]{0,600}?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)", re.S)
-# The two spellings of the agnostic peel, plus the two return-side peels that answer
+# The spellings of the agnostic peel, plus the two return-side peels that answer
 # "which shapes peel" for their own callers.
-PEEL_CALL = re.compile(r"\.(?:base|peel_optional|ret_dep_shape|ret_promo_base|ret_promo_peels)\s*\(")
+#
+# `peel_link` belongs here because it IS `base()` and then some: its first line is
+# `let mut tp = self.base()`, and it goes on to strip every `&` link as well.  A site that
+# upgrades from `base()` to `peel_link()` therefore sees through the `τ?` wrapper at least as
+# well as it did before — but while this list named only `base`, that upgrade read as a
+# REGRESSION and moved the site from peeling to opaque.  Measured on loft#1445, which moved
+# three: `is_keyed`, `is_collection` and `keyed_known_type` all peel MORE than they used to and
+# all three scored worse for it.  An instrument that penalises the stronger peel argues against
+# the fix it exists to find.
+PEEL_CALL = re.compile(
+    r"\.(?:base|peel_link|peel_optional|ret_dep_shape|ret_promo_base|ret_promo_peels)\s*\("
+)
 TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def)\s*\(")
 
 
@@ -919,7 +930,7 @@ MATCHES_START = re.compile(r"(?<![A-Za-z0-9_])matches!\s*\(")
 # rebinding `let tp = tp.base().clone()`.
 PEEL_BIND = re.compile(
     r"(?<![A-Za-z0-9_])let\s+(?:mut\s+)?(?:\(([^)]{0,120})\)|([A-Za-z_][A-Za-z0-9_]*))"
-    r"\s*(?::[^=;]{0,80})?=\s*[^;]{0,240}?\.(?:base|peel_optional)\s*\(\s*\)"
+    r"\s*(?::[^=;]{0,80})?=\s*[^;]{0,240}?\.(?:base|peel_link|peel_optional)\s*\(\s*\)"
 )
 IDENT_ONLY = re.compile(r"^[&*\s(]*([A-Za-z_][A-Za-z0-9_]*)(?:\.clone\(\))?[\s)]*$")
 
@@ -1155,7 +1166,9 @@ def audit_optional():
     src = {p: code_only_positioned(open(p, encoding="utf-8").read()) for p in rust_files()}
     for verb, where in sorted(verbs.items()):
         peeled, bare = 0, []
-        call = re.compile(r"(?:(\.base\(\)|\.peel_optional\(\)\.0)\s*)?\.%s\s*\(" % verb)
+        call = re.compile(
+            r"(?:(\.base\(\)|\.peel_link\(\)|\.peel_optional\(\)\.0)\s*)?\.%s\s*\(" % verb
+        )
         own = re.compile(r"fn\s+%s\s*\(" % verb)
         free = re.compile(r"(?<!fn )(?<![A-Za-z0-9_.])%s\s*\(([^()]{0,80})\)" % verb)
         for p, code in src.items():
@@ -1167,7 +1180,11 @@ def audit_optional():
             for m in free.finditer(code):
                 if own.search(code, max(0, m.start() - 4), m.end()):
                     continue  # the definition, not a call
-                if ".base()" in m.group(1) or "peel_optional" in m.group(1):
+                if (
+                    ".base()" in m.group(1)
+                    or ".peel_link()" in m.group(1)
+                    or "peel_optional" in m.group(1)
+                ):
                     peeled += 1
                 else:
                     bare.append(f"{rel(p)}:{code[:m.start()].count(chr(10)) + 1}")

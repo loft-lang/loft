@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A member read THROUGH a tuple's `?` works, because `(T-Absent)` says an absent tuple is a
+// PRESENT tuple of null members — so `t.i` has something to answer with.
+//
+// This file used to pin the opposite.  It asserted a refusal, on the reading that the null
+// model has no representation for an absent tuple and a member read therefore has nothing to
+// return.  That reading is what `(T-Absent)`'s owner ruling settled the other way, and
+// D-tup-10 listed the refusal as its own deviation: *"`v[i].0` on a `vector<(integer,
+// integer)>` by a variable index is REFUSED by name where the rule types it `integer?`"*.  The
+// well-worded refusal that replaced *"Expect a field name"* was a better message for an answer
+// that should not have been a refusal at all.
+//
+// ⚠ **Two peels, and either one alone is worse than neither.**  The parser's member read and
+// `codegen`'s `TupleGet` address the same slot.  Peeling only the parser makes the read parse,
+// emit `TupleGet`, and then PANIC — `TupleGet on non-tuple variable`, an internal compiler
+// error where a clean refusal stood.  Measured: `e = v[i]; e.0` ICEd on both backends with the
+// parser peel alone.  `TuplePut` is peeled with them because a write addresses that same slot,
+// and a pair where one accepts a spelling the other panics on is the drift the pair exists to
+// avoid.
+//
+// Axes this file MOVES:  how the nullable tuple is REACHED (a variable index read inline, the
+//                        same read bound to a LOCAL first — the shape that needs the codegen
+//                        peel, and through a STRUCT FIELD's vector), the member's type
+//                        (integer · float · text), and whether the index HITS or MISSES.
+// Axes it HOLDS FIXED:   the access is a member READ.  The DESTRUCTURE spelling of the same
+//                        value is still refused, and cannot share this file: a refusal cell and
+//                        a value cell do not co-exist, because the refusal ends the run before
+//                        the value cells execute.  (The harness itself checks every
+//                        `@EXPECT_ERROR` and fails on each unmatched one — it is the COMPILER
+//                        that stops, not the annotation.)  Its refusal is deliberate rather than forgotten: the
+//                        rest of D-tup-10 is the representation, where `Type::optional` still
+//                        mints an `Optional(Tuple)` the rule says cannot exist.  The written
+//                        `(τ, τ)?` type also stays refused by name and is `1423`'s.
+//
+// The MISS cell is the one that says the rule is being followed rather than the refusal merely
+// deleted: an out-of-range read answers `null` — with its cause, since `(F-FaultSafe)` tags it
+// — rather than a value or a fault.
+//
+// @falsified-at: bab34be2 — `--tests`, interpret: 2 failed, 2 passed, native the same.  The two
+//   failures are the inline read and the local-bound one; on the build BEFORE loft2's parser
+//   peel they are refusals, and on the build with the parser peel and no codegen peel the
+//   local-bound one is an ICE instead — which is why that cell is in this file at all.
+
+struct Holder1423b { xs: vector<(integer, text)> }
+
+fn test_a_member_reads_through_the_index_nullable() {
+  v: vector<(integer, integer)> = [(1, 2), (3, 4)];
+  j = 1;
+  assert(v[j].0 == 3, "member 0 through a variable index: got {v[j].0}");
+  assert(v[j].1 == 4, "member 1 through a variable index: got {v[j].1}");
+}
+
+fn test_a_member_reads_through_a_local_bound_from_that_read() {
+  u: vector<(float, integer)> = [(1.5, 2)];
+  i = 0;
+  e = u[i];
+  assert(e.0 == 1.5, "member 0 of a local bound from v[i]: got {e.0}");
+  assert(e.1 == 2, "member 1 of that local: got {e.1}");
+}
+
+fn test_a_text_member_reads_the_same_way() {
+  w: vector<(text, integer)> = [("a", 7)];
+  k = 0;
+  assert(w[k].1 == 7, "the integer beside a text member: got {w[k].1}");
+  assert(w[k].0 == "a", "the text member itself: got {w[k].0}");
+}
+
+fn test_a_member_inside_a_struct_field_reads_too() {
+  h = Holder1423b { xs: [(5, "five")] };
+  i = 0;
+  assert(h.xs[i].0 == 5, "a member through a struct's vector: got {h.xs[i].0}");
+}
+
+// The MISS: `(T-Absent)` makes an absent tuple a tuple of null members, so the read answers
+// null — and `(F-FaultSafe)` says the interpolation carries the CAUSE.  A cure that merely
+// deleted the refusal would answer a value here.
+fn test_an_out_of_range_read_answers_null_with_its_cause() {
+  v: vector<(integer, integer)> = [(1, 2)];
+  m = 9;
+  assert("{v[m].0}" == "null(oob)", "an out-of-range member read: got {v[m].0}");
+}

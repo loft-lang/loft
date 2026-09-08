@@ -369,10 +369,37 @@ fn runtime_scratch_pid(name: &str) -> Option<u32> {
 
 /// Whether `pid` is a live process — `Some(true/false)` on Linux (procfs),
 /// `None` (unknown) elsewhere.
+// `Option` is the cross-platform contract, not a unix one: the unix arm can always
+// decide, and the non-unix arm never can.  Clippy sees only the arm it compiles.
+#[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
 fn pid_alive(pid: u32) -> Option<bool> {
-    if cfg!(target_os = "linux") {
-        Some(std::path::Path::new(&format!("/proc/{pid}")).exists())
-    } else {
+    #[cfg(unix)]
+    {
+        // A value that does not fit a POSITIVE `pid_t` names no process, and must never
+        // reach `kill`: the cast would make it negative, and a negative pid addresses a
+        // process GROUP — so `u32::MAX - 1` would ask about group 2 and could answer
+        // "alive" for a process that cannot exist.
+        let Ok(p) = i32::try_from(pid) else {
+            return Some(false);
+        };
+        if p <= 0 {
+            return Some(false);
+        }
+        // Signal 0 sends nothing; it only asks whether the pid exists.  ESRCH proves it
+        // does not, EPERM proves it does and belongs to someone else, success proves it
+        // does.  This is decidable on every unix, where `/proc` is Linux-only — so the
+        // dead-only sweep reclaims on macOS instead of falling through to the age
+        // fallback there.
+        // SAFETY: `kill` with signal 0 delivers nothing and touches no memory; `p` is a
+        // plain positive integer, and the call's only effect is its return value.
+        if unsafe { libc::kill(p, 0) } == 0 {
+            return Some(true);
+        }
+        Some(std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
         None
     }
 }
@@ -388,7 +415,7 @@ fn pid_alive(pid: u32) -> Option<bool> {
 ///   pressure every space-constrained compile destroyed itself ("couldn't
 ///   read loft_native_<pid>.rs") and could equally race a parallel test's
 ///   in-flight file;
-/// - when liveness is unknowable (no pid in the name, or no procfs), only
+/// - when liveness is unknowable (no pid in the name, or a non-unix host), only
 ///   files older than an hour are deleted.
 ///
 /// Those files ARE the binary cache, so this is called only when a path is
@@ -435,8 +462,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
             if !aged_too {
                 continue;
             }
-            // Liveness unknown (foreign pid without procfs, or no pid in the
-            // name) — fall back to age: anything under an hour old may be an
+            // Liveness unknown (no pid in the name, or a non-unix host where a pid
+            // cannot be probed) — fall back to age: anything under an hour old may be an
             // in-flight emission of a parallel process.
             if pid.is_some_and(|p| p == own_pid || pid_alive(p) == Some(true)) {
                 continue;
@@ -528,6 +555,37 @@ pub fn native_worker_count(
 mod reclaim_tests {
     use super::*;
 
+    /// `pid_alive` answers the same three ways on every unix, which is what makes the
+    /// dead-only sweep decidable off Linux.  The out-of-range case is the load-bearing
+    /// one: a value too large for a positive `pid_t` names no process and must answer
+    /// DEAD without reaching `kill`, where the cast would address a process group.
+    #[test]
+    fn pid_liveness_is_decidable_and_never_asks_about_a_group() {
+        assert_eq!(
+            pid_alive(std::process::id()),
+            Some(true),
+            "this process is alive"
+        );
+        assert_eq!(
+            pid_alive(u32::MAX - 1),
+            Some(false),
+            "a pid past pid_t names no process, and must not become group 2"
+        );
+        assert_eq!(
+            pid_alive(0),
+            Some(false),
+            "pid 0 addresses a group, not a process"
+        );
+        // pid 1 exists on every unix and is not ours: the EPERM arm, which must read
+        // ALIVE rather than dead.
+        #[cfg(unix)]
+        assert_eq!(
+            pid_alive(1),
+            Some(true),
+            "pid 1 exists whether or not we may signal it"
+        );
+    }
+
     #[test]
     fn reclaim_spares_live_and_fresh_files() {
         let dir = std::env::temp_dir().join(format!("loft_reclaim_test_{}", std::process::id()));
@@ -545,14 +603,46 @@ mod reclaim_tests {
         std::fs::write(&stem_named, "live source of a sibling worker").unwrap();
         // The dead-only sweep (every compile): the dead pid goes, the fresh no-pid entry
         // stays whatever its age — it is the test runner's cache, not a leftover.
+        //
+        // WHICH FILES GO is the sweep's contract; the byte count is a proxy for it, and the
+        // two fail for opposite reasons — so the contract is asserted first and the proxy
+        // carries the contract's answer in its message.  Asserted the other way round, a
+        // reclaim that WORKED and a reclaim that did nothing both read
+        // "the dead-only sweep must reclaim the dead-pid file", and the macOS ASan leg of
+        // loft#1406 has been failing on exactly that line with no way to tell which it is.
+        // A proxy can read 0 for a working sweep: `reclaim_native_scratch_by` takes the
+        // length from `entry.metadata()` BEFORE removing, and a failed `metadata()` removes
+        // the file and adds zero.
+        // loft#1406's macOS leg fails HERE and has never been reproduced off a CI runner, so
+        // each question costs a round trip of a day.  The assertions therefore carry their own
+        // evidence: the sweep's two DECISION INPUTS for the dead name, and what the directory
+        // actually holds afterwards.  Both are decidable by reading on Linux — `4294967294`
+        // parses, and `pid_alive` refuses it before `kill` because it would become a negative
+        // process-group id — so a macOS run that disagrees names its own cause instead of
+        // leaving the next reader another hypothesis.
+        let evidence = |freed: u64| {
+            let mut names: Vec<String> = std::fs::read_dir(&dir).map_or_else(
+                |e| vec![format!("<read_dir failed: {e}>")],
+                |es| {
+                    es.flatten()
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect()
+                },
+            );
+            names.sort();
+            format!(
+                "freed {freed} bytes; runtime_scratch_pid = {:?}, pid_alive = {:?}; {} holds [{}]",
+                runtime_scratch_pid("loft_native_4294967294.rs"),
+                pid_alive(4_294_967_294),
+                dir.display(),
+                names.join(", ")
+            )
+        };
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
-            dead_only > 0,
-            "the dead-only sweep must reclaim the dead-pid file"
-        );
-        assert!(
             !dead.exists(),
-            "dead-pid file must go in the dead-only sweep"
+            "dead-pid file must go in the dead-only sweep ({})",
+            evidence(dead_only)
         );
         assert!(
             own.exists() && fresh_no_pid.exists(),
@@ -562,6 +652,18 @@ mod reclaim_tests {
             stem_named.exists(),
             "a stem-named suite file survives the dead-only sweep"
         );
+        // The byte count is asserted where it is DETERMINATE, which is the same platform
+        // the exact-count assertion below already restricts itself to.  Reaching here with
+        // `dead_only == 0` on another platform means the file went and the accounting did
+        // not follow — a different defect from the file staying, and one this ordering
+        // now reports as itself.
+        if cfg!(target_os = "linux") {
+            assert!(
+                dead_only > 0,
+                "the dead-only sweep removed the dead-pid file but accounted no bytes for it ({})",
+                evidence(dead_only)
+            );
+        }
         std::fs::write(&dead, "stale").unwrap();
         let freed = reclaim_native_scratch(&dir);
         assert!(own.exists(), "own-pid file must survive the reclaim");

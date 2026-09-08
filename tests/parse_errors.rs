@@ -345,10 +345,19 @@ fn cross_type_ne_int_enum() {
 // element in a `vector<Color?>` literal stays rejected even though a nullable-enum
 // VARIABLE's `= null` now converts to the typed null (parse_errors is the guard so
 // the scalar fix doesn't silently enable the unwired vector form).
+//
+// ⚠ What this cell pins is the DENSE refusal, and the `?` in the snippet does not make it
+// nullable HERE.  `code!` parses against the cached stdlib `Data`, so the source is
+// `STD_SOURCE`, and `e2_rewrite_enabled` is `source != STD_SOURCE` — the nullable-element
+// rewrite is off for every harness snippet, exactly as it is off inside the stdlib itself
+// (whose `#rust` bodies write the dense ABI).  A USER file or a library gets the rewrite and
+// the same two lines run: loft#1416 wired the value-enum element, and
+// `tests/scripts/1416-a-value-enum-element-may-be-absent.loft` is where that behaviour is
+// pinned.  So this stays a refusal cell, and the cure line it pins is the one #1416 added.
 #[test]
 fn null_element_in_value_enum_vector_rejected() {
     code!("enum Color { Red, Green, Blue }\nfn test() { v: vector<Color?> = [Color.Red, null]; }")
-        .error("cannot store null elements in a vector<Color> (would lose precision); cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
+        .error("cannot store null elements in a vector<Color> (would lose precision); declare the element nullable (`vector<Color?>`), or cast each element explicitly with 'as Color' at null_element_in_value_enum_vector_rejected:2:50");
 }
 
 // @PLN102 arc-E E2 (B) — a STATICALLY out-of-range constant operation is a
@@ -518,6 +527,41 @@ fn missing_variant_impl() {
         "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { 1 + 1; }"
     )
     .warning("no implementation of 'area' for variant 'Rect' at missing_variant_impl:3:11");
+}
+
+#[test]
+fn nullable_receiver_implements_its_variant() {
+    // loft#1427 — a `self: Sq?` receiver IS an implementation of `Sq` (`@FR-F-Recv`), so the
+    // warning must name only the variant that has none.  Asked bare, the scan reported `Sq`
+    // too — a warning for an implementation written three lines above it — and this harness
+    // fails on any warning the fixture does not assert, so the extra one goes red here.
+    //
+    // Measured against e9f45817 in the cached falsify worktree: FAILS there with
+    // *"Found 'Warning: no implementation of 'ar' for variant 'Sq'' Expected ''"*.  Worth the
+    // check rather than assuming — a `code!` snippet parses as STDLIB source, so a feature
+    // gated on `source != STD_SOURCE` is inert inside one (TESTING.md § The `Test` struct).
+    // The dispatcher scan is not one of those, which is what this measurement establishes.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { 1 + 1; }"
+    )
+    .warning("no implementation of 'ar' for variant 'Tr' at nullable_receiver_implements_its_variant:4:9");
+}
+
+#[test]
+fn a_second_method_gets_its_own_missing_variant_warning() {
+    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so the
+    // missing-implementation warning is asked per method.  Keyed by the enum alone, `Sq`
+    // implementing `ar` silenced the warning about `per`, which it does not implement — and
+    // this harness fails on any warning the fixture does not assert, so a regression that
+    // brings the extra one back goes red here too.
+    //
+    // Measured against e9f45817: FAILS there with *"Found '' Expected 'Warning: no
+    // implementation of 'per' for variant 'Sq''"* — the warning this asserts is simply absent
+    // on that build.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { 1 + 1; }"
+    )
+    .warning("no implementation of 'per' for variant 'Sq' at a_second_method_gets_its_own_missing_variant_warning:3:9");
 }
 
 #[test]
@@ -2573,6 +2617,21 @@ fn keyed_partial_key_in_value_position_is_error() {
         .warning("Variable x is never read at keyed_partial_key_in_value_position_is_error:1:163");
 }
 
+// loft#1450 `(N-Domain)` — a NULLABLE keyed collection still refuses a partial-key removal.
+//
+// `parse_key` answers an ITERATOR for a partial key (`m[1]` on a two-key kind is `m[1..=1]`),
+// and the `(N-Domain)` widening must not wrap one: an iterator is not a value `(Col-Lookup)`
+// types `τ?`, and a `?` on it reaches an assignment router that does not expect one — which
+// silently dropped this refusal while the partial-key READ above stayed diagnosed, so the shape
+// looked covered.  The dense twin is `keyed_partial_key_in_value_position_is_error`; this cell
+// is the NULLABLE column, which nothing had.
+#[test]
+fn keyed_partial_key_removal_through_a_nullable_collection_is_error() {
+    code!("struct Kk { a: integer, b: integer, v: integer } struct D { m: index<Kk[a, b]>? } fn test() { d = D { m: [ Kk{a:1,b:2,v:7} ] }; d.m[1] = null; }")
+        .error("a keyed partial-key match is a `for`-loop iterator, not a value — iterate it directly (`for x in coll[key] { … }`) or give every key field for a single-record lookup at keyed_partial_key_removal_through_a_nullable_collection_is_error:1:135")
+        .error("Cannot assign null to a partial-key lookup — provide all key fields to remove a single entry at keyed_partial_key_removal_through_a_nullable_collection_is_error:1:143");
+}
+
 // @PLN35 Phase 2 (F6 / M-Total): a slice pattern is length-constrained, hence non-total.
 // A vector match is exhaustive only if its final arm is total (a `_` or a bare binding);
 // a slice-only match with no such arm must be a static error, not a silent typed-null.
@@ -3006,6 +3065,135 @@ fn b_ref_reshape_callee_removal_under_local_amp_link_is_error() {
     );
 }
 
+/// B-Ref-Reshape (g2) — the SAME refusal on every keyed kind, because the `&` marker that
+/// gates it is set from the SOURCE type and a keyed lookup now has two spellings.
+///
+/// `@FR-Col-Lookup` gives a keyed point lookup its `?` (loft#1450), so `c = &s[30]` sources
+/// `Optional(Reference(Elm))` where it used to source `Reference(Elm)`.  `set_amp_link` tested
+/// the bare spelling, answered no, and never set the marker — and the marker is what all FOUR
+/// reshape refusals read (`scopes.rs` for removal / reassign / callee-removal, and the rekey
+/// arm of `note_key_field_write`).  One unpeeled `matches!` therefore silenced the whole rule
+/// for keyed views while every existing cell — all written against a VECTOR view, which no
+/// widening touches — kept passing.  That is @PLN130 F9's own warning made real: *"the
+/// alternative is not a lesser `&`, it is a SILENT one"*.
+///
+/// So the axis these cells add is the RECEIVER KIND, not the message: the message is identical
+/// and deliberately so.  A widening that reaches only one kind would leave the others green.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: hash<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_a_hash_is_error:1:152",
+    );
+}
+
+/// B-Ref-Reshape (g3) — `index`, the kind that is BOTH a tree and a hash table.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_an_index_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: index<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_an_index_is_error:1:153",
+    );
+}
+
+/// B-Ref-Reshape (g4) — `spatial`, where the key is a COORDINATE AXIS and there are two of them.
+///
+/// Load-bearing beyond repetition: the message names the single axis written (`x`), so this cell
+/// says the refusal is per-key-field rather than per-collection, and it is the only cell whose
+/// receiver reaches the lookup through the `Radix` arm.
+#[test]
+fn b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error() {
+    code!(
+        "struct Pt { x: integer, y: integer, v: integer } \
+         fn test() { s: spatial<Pt[x, y]> = [Pt { x: 1, y: 2, v: 7 }]; \
+           c = &s[1, 2]; c.x = 9; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `x` through `c` — `x` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_coordinate_axis_through_amp_link_is_error:1:133",
+    );
+}
+
+/// B-Ref-Reshape (g4b) — the receiver's OWN `?`, which is a second column and not the same one.
+///
+/// `s: sorted<Elm[key]>?` reaches the marker through `@FR-N-Domain` rather than
+/// `@FR-Col-Lookup`: an ABSENT collection has no entry to answer with, so the lookup is `τ?`
+/// whatever the key.  Two different rules, the same `Optional(Reference(Elm))` source type, and
+/// so the same unpeeled `matches!` swallowed both — but this column was ALREADY silent before
+/// the `(Col-Lookup)` widening existed, because a nullable receiver has always produced the
+/// wrapped spelling.  Measured on a sibling tree with both keyed `receiver_optional` wraps
+/// disabled: still silent, so the widening did not cause it and could not have.
+///
+/// Kept as its own cell for that reason: the dense column and the nullable column broke at
+/// different times for different reasons and are only closed by the same line.  Sharing one
+/// cell would let a future narrowing of the peel close one and reopen the other in silence.
+#[test]
+fn b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: sorted<Elm[key]>? = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; c.key = 5; print(\"{len(s?)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
+         it would leave the element reachable by no key, so the write cannot reach `s`. \
+         Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error:1:155",
+    );
+}
+
+/// B-Ref-Reshape (g5) — the REMOVAL leg through a keyed `&` view, which the same marker gates.
+///
+/// `s[30] = null` is `(Col-RemoveKeyed)`.  The cell is here because the rekey arm and the
+/// removal arm read the marker from two different files, so a fix that restores one need not
+/// restore the other — and every removal cell in this file uses a vector.
+///
+/// ⚠ The receiver here is a `sorted` on purpose, because a `sorted` is the ONLY keyed kind
+/// that reaches this refusal.  `scopes.rs::reshaped_containers` collects a keyed removal just
+/// when the container variable is `Type::Sorted`, and says why beside itself: `sorted` is the
+/// INLINE keyed kind — its elements sit in key order in one dense array, so a removal shifts
+/// every later POSITION exactly as a vector's does — while `hash` / `index` / `spatial` /
+/// `trie` give each element its own record and leave every other key at the same address.
+///
+/// So the message ("a removal renumbers the remaining elements") is right here, and reading
+/// `(Col-RemoveKeyed)` as contradicting it is a category error: that rule is about which KEYS
+/// stay reachable, and a `&` view holds a POSITION.  Both hold at once.  Do not "fix" the
+/// wording to a keyed one — loft#1458 was filed on exactly that misreading and closed invalid.
+///
+/// What the misreading did turn up is loft#1460, and it is NOT this cell: the deliberate
+/// exclusion above was measured on a view of ANOTHER element (safe) and not on a view of the
+/// REMOVED one, which corrupts a later insert that reuses the freed slot.
+#[test]
+fn b_ref_reshape_keyed_removal_under_amp_link_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { s: sorted<Elm[key]> = [Elm { key: 10, tag: 111 }, Elm { key: 30, tag: 333 }]; \
+           c = &s[30]; s[30] = null; c.tag = 9; print(\"{len(s)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `s` while `c` references a place inside it — a removal renumbers \
+         the remaining elements, so a write through `c` would no longer reach the element it \
+         names. Move it after the last use of `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_keyed_removal_under_amp_link_is_error:1:1",
+    );
+}
+
 /// B-Ref-Reshape (g) — writing a KEY field through a `&` reference into a keyed collection.
 ///
 /// The third disturbance, and the odd one out: there is no liveness question (the key write IS
@@ -3023,7 +3211,7 @@ fn b_ref_reshape_rekey_through_amp_link_is_error() {
         "cannot write the key field `key` through `c` — `key` is one of `s`'s keys, and changing \
          it would leave the element reachable by no key, so the write cannot reach `s`. \
          Re-insert with `s[key] = value`, or bind without `&` to work on a copy at \
-         b_ref_reshape_rekey_through_amp_link_is_error:1:155",
+         b_ref_reshape_rekey_through_amp_link_is_error:1:154",
     );
 }
 
@@ -3191,9 +3379,23 @@ fn keyed_collection_unknown_key_field_lists_the_fields_when_it_cannot_suggest() 
 ///
 /// It used to have a second reason: `Type::name` rendered a keyed type's key list
 /// in the schema's debug spelling (`sorted<E,[("k", true)]>`) rather than the
-/// source's (`sorted<E[k]>`). That is fixed (loft#956 carries it, where the same
-/// string reached a `reduce` refusal), so the workaround is no longer load-bearing
-/// — the choice above is.
+/// source's (`sorted<E[k]>`). loft#956 fixed that by adding `Type::source_name`
+/// beside `name` rather than re-spelling `name` itself, which is right — `name` is
+/// the SCHEMA KEY, and re-spelling it re-identifies the type.
+///
+/// Splitting them into two match statements is what kept drifting, and never at a
+/// keyed arm: `source_name`'s catch-all assumed everything it did not list "already
+/// reads as the source writes it", which is true of a leaf and false of a
+/// CONSTRUCTOR, whose inner it rendered through `name`. Each pass added the
+/// constructor someone had a symptom for — `Optional` and `&` in loft#1434, so
+/// `hash<It[k]>?` read right while `fn(&hash<It[k]>)` did not.
+///
+/// loft#1449 closed the shape rather than the next instance: `name` and
+/// `source_name` are two flags on ONE body, the recursion carries the flag, and a
+/// leaf reads the same under both — so a constructor cannot be forgotten. What a
+/// diagnostic asks for is gated by `scripts/diagnostic_spelling.py`.
+/// `a_nullable_keyed_collection_is_refused_in_the_source_spelling` below is the
+/// wrapper cell.
 #[test]
 fn keyed_collection_as_a_vector_element_is_refused() {
     code!("struct Ent { k: integer, v: integer }\nfn test() { vh: vector<hash<Ent[k]>> = []; }")
@@ -3206,6 +3408,38 @@ fn keyed_collection_as_a_vector_element_is_refused() {
         );
 }
 
+/// loft#1434 / loft#1445 — a diagnostic names a keyed type as the SOURCE writes it, through a
+/// wrapper.
+///
+/// `Type::source_name` carried arms for the keyed collections and none for `Optional`,
+/// `RefVar` or `Rewritten`, so those fell to `_ => self.name(data)` — and `name`, the schema
+/// KEY, re-spells the payload they wrap.  The debug spelling leaked through the single
+/// character the author added: `&hash<Row[id]>` reached the reader as `&hash<Row,["id"]>`.
+///
+/// This cell is the `RefVar` arm; the `Optional` arm is
+/// `tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft`.  They are
+/// separate match arms and are scored separately.
+///
+/// The message itself is NOT what this pins — only how it spells the type.  It used to be
+/// loft#1445's refusal (a `&hash` parameter cannot take `+=`); that refusal is LIFTED, since
+/// `c += [Row{…}]` through a `&` link is the whole point of loft#1445's rework, so the cell
+/// moved to the next thing that names a `&`-wrapped keyed type — a whole-value assignment of
+/// the wrong type to the same parameter, which reaches the identical renderer.  Moving it
+/// rather than deleting it is what the previous note asked for: the `RefVar` arm has no other
+/// guard, and a lifted refusal must not take the spelling guard with it.
+#[test]
+fn a_reference_to_a_keyed_collection_is_named_as_written() {
+    code!(
+        "struct Row { id: integer, tag: text }\n\
+         fn one(c: &hash<Row[id]>) { v: vector<Row> = []; c = v; }"
+    )
+    .error(
+        "Variable 'c' cannot change type from &hash<Row[id]> to vector<Row>; use a new \
+         variable name or cast with 'as' at \
+         a_reference_to_a_keyed_collection_is_named_as_written:2:56",
+    );
+}
+
 /// loft#1275 — a NAMED method required at two arities by one bound set, which stays refused
 /// after the stub key gained the arity.
 ///
@@ -3214,6 +3448,63 @@ fn keyed_collection_as_a_vector_element_is_refused() {
 /// A method call cannot: it resolves its RECEIVER before its arguments are parsed, so
 /// `x.sizer()` has no arity to ask with. Refusing at the declaration names both arities and
 /// the cure; letting it through would resolve one of them by accident.
+/// loft#1434 — the refusal names the `?` and the discharge, and spells the keyed type
+/// the way the author wrote it.
+///
+/// Both halves matter and they fail independently: a message that renders
+/// `hash<Ent,["k"]>?` is telling an author about a type they did not write, and one that
+/// only lists the iterable kinds never says the `?` is the problem. The keys carry their
+/// DIRECTION too — `sorted<E[-k]>` — which the debug spelling rendered as `("k", false)`.
+#[test]
+fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
+    code!(
+        "struct Ent { k: integer, v: integer }\nfn test() { h: hash<Ent[k]>? = []; for e in h { } }"
+    )
+    .error(
+        "cannot iterate over hash<Ent[k]>? because it is NULLABLE — a `hash<Ent[k]>` is \
+             iterable, but there is no implicit unwrap.  Discharge it first: add `?` (the \
+             type's default, an empty collection) or `?? []`; either spelling gives an absent \
+             collection zero iterations at \
+             a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
+    )
+    // The one below is CASCADE, not a finding: the refusal above bails out of the `for`
+    // without consuming its body, so the statement parse fails once more at the same
+    // position.  It is asserted because the harness matches the whole list, and named here
+    // so that collapsing it to the one real error reads as the fix it is rather than as a
+    // broken test.
+    //
+    // There were TWO.  *"Need an iterable expression in a for statement"* went with
+    // loft#1453: `collections::iterator` reports the refusal above and then returns
+    // `Value::Null`, which the caller could not tell from "no iterable at all", so it added
+    // its own line on top.  It now asks `Diagnostics::error_count()` first and speaks only
+    // when nothing else did — the fallback itself stays, because the case its own comment
+    // names reports nothing of its own.
+    .error("Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48");
+}
+
+/// loft#1449 — a keyed collection nested inside a FUNCTION type is spelled as its author
+/// wrote it too.
+///
+/// This is the cell the wrapper fix above could not reach.  `source_name` grew an arm per
+/// wrapper someone had a symptom for — `Optional` and `&` — while every other CONSTRUCTOR
+/// still fell to a catch-all that rendered its inner through `name`, the schema key.  So a
+/// `hash<Ent[k]>?` read correctly and a `fn(&hash<Ent[k]>)` did not, in the same build.
+///
+/// The two spellings are one body now, and its recursion carries which job it is doing, so
+/// what this pins is not the function arm in particular: it is that a type is spelled ONE
+/// way all the way down.  A rendering added for a new constructor is covered by construction.
+#[test]
+fn a_keyed_collection_inside_a_function_type_keeps_the_source_spelling() {
+    code!(
+        "struct Ent { k: integer, v: integer }\nfn keyed(x: &hash<Ent[k]>) -> integer { 1 }\nfn test() { b: integer = keyed; }"
+    )
+    .error(
+        "Variable 'b' cannot change type from integer to fn(&hash<Ent[k]>) -> integer; \
+         use a new variable name or cast with 'as' at \
+         a_keyed_collection_inside_a_function_type_keeps_the_source_spelling:3:32",
+    );
+}
+
 #[test]
 fn one_bound_set_cannot_require_two_signatures_of_one_method() {
     code!(
@@ -3624,4 +3915,203 @@ fn a_closure_cannot_replace_a_captured_heap_parameter() {
          fn f(p: S) { g = fn() { p = S { n: 9 }; }; g(); }\nfn run() -> integer { 1 }"
     )
     .error(&msg("2:13"));
+}
+
+/// B-Ref-Reshape (g6) — a TEXT key, which never reached the guard at all.
+///
+/// The key-write question used to be asked inside ONE lowering route: the `OpGet<T>` ->
+/// `OpSet<T>` seam in `call_to_set_op`, whose own comment said *"every `c.field = …` on a
+/// SCALAR field arrives here"*.  That word was the hole.  `assign_text` builds `OpSetText`
+/// directly and never arrives, so a `text` KEY was never asked about — and `trie` keys on
+/// exactly one `text` field, so it was the kind that could only ever be hit.
+///
+/// What it cost, silently, on both backends: `c = &h["aa"]; c.name = "zz"` on a
+/// `hash<Nm[name]>` left the record reachable by NO key (`h["aa"]` and `h["zz"]` both miss)
+/// while `len(h)` still answered 1.  On a `sorted` the record was still findable but the
+/// tree order it is searched by was not re-established.  Two kinds, two different wrong
+/// answers, no diagnostic either way.
+///
+/// The question now lives once in `parse_assign_op_inner`, beside the const guard, which
+/// that function already documents as the reason: *"a guard held inside a route is only as
+/// complete as that route's target-shape test and every shape it declines falls through
+/// unchecked.  Two did."*  A third did.
+#[test]
+fn b_ref_reshape_rekey_a_text_key_through_amp_link_is_error() {
+    code!(
+        "struct Nm { name: text, v: integer } \
+         fn test() { h: hash<Nm[name]> = [Nm { name: \"aa\", v: 1 }]; \
+           c = &h[\"aa\"]; c.name = \"zz\"; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `name` through `c` — `name` is one of `h`'s keys, and \
+         changing it would leave the element reachable by no key, so the write cannot reach \
+         `h`. Re-insert with `h[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_text_key_through_amp_link_is_error:1:124",
+    );
+}
+
+/// B-Ref-Reshape (g7) — the same text key on a `trie`, the kind that has no other sort.
+///
+/// Load-bearing rather than repetition: a `trie` keys on ONE `text` field by definition, so
+/// before the guard moved there was no spelling of a trie rekey that could be caught.  This
+/// is the cell that says the rule reaches the kind it could never reach.
+#[test]
+fn b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error() {
+    code!(
+        "struct Nm { name: text, v: integer } \
+         fn test() { h: trie<Nm[name]> = [Nm { name: \"aa\", v: 1 }]; \
+           c = &h[\"aa\"]; c.name = \"zz\"; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot write the key field `name` through `c` — `name` is one of `h`'s keys, and \
+         changing it would leave the element reachable by no key, so the write cannot reach \
+         `h`. Re-insert with `h[key] = value`, or bind without `&` to work on a copy at \
+         b_ref_reshape_rekey_a_trie_key_through_amp_link_is_error:1:124",
+    );
+}
+
+/// B-Ref-Reshape (h) — a `&` view of the key a removal REMOVES, on a record-per-element kind.
+///
+/// `scopes.rs::reshaped_containers` collected a keyed removal only for `Type::Sorted`, and the
+/// exclusion of the other four was deliberate with a measurement beside it: *"`hash`, `index`,
+/// `spatial` and `trie` give each element a record of its own, so removing one leaves every
+/// other key reachable AT THE SAME ADDRESS"*.  That is true, reproduces, and is not what the
+/// exclusion was used for — it was measured on a view of ANOTHER element and applied to a view
+/// of the REMOVED one (loft#1460).  The cost was silent on both backends:
+///
+/// ```text
+/// c = &h[30];  h[30] = null;  h[70] = Elm{key:70, tag:7};  c.tag = 999;
+///   → k70 reads 999, because the insert reused the freed record
+/// ```
+///
+/// ⚠ The fix is NOT "collect the other four as well".  That was built and measured, and it
+/// materialises four deliberate corpus controls whose names state the proposition
+/// (`test_a_hash_removal_is_not_a_reshape`) — a PLAIN view stops aliasing and its write lands
+/// on a copy, trading one silent-wrong for another.  What ends a place on these kinds is not
+/// the container but ONE record, so the removal's key and the view's key are compared and a
+/// view of a different literal key is spared.  The twin below is that half.
+#[test]
+fn b_ref_reshape_removing_the_very_key_a_view_names_is_error() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn test() { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; h[30] = null; c.tag = 9; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `h` while `c` references a place inside it — a removal frees the \
+         record its key names, and a later insert can reuse it, so a write through `c` may \
+         land on a different element than the one it names. Move it after the last use of \
+         `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_removing_the_very_key_a_view_names_is_error:1:1",
+    );
+}
+
+/// The other half of loft#1460, and the one that says the fix is not the strict version:
+/// removing a DIFFERENT literal key leaves the view alone, on the same kind and the same
+/// spelling.  Without this cell, collecting the whole container passes the cell above.
+#[test]
+fn b_ref_reshape_removing_another_key_leaves_a_view_alone() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn check() -> integer { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, \
+           Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; h[10] = null; c.tag = 9; (h[30] ?? Elm { key: 0, tag: 0 }).tag }"
+    )
+    .expr("check()")
+    .result(Value::Int(9));
+}
+
+/// …and the CONSERVATIVE fallback, in both directions.  A key the compiler cannot read is
+/// "could be the same record", never "is a different one" — getting that backwards is how a
+/// conservative rule becomes a silent one.  Here the REMOVAL's key is computed.
+#[test]
+fn b_ref_reshape_a_computed_removal_key_is_still_refused() {
+    code!(
+        "struct Elm { key: integer, tag: integer } \
+         fn pick() -> integer { 30 } \
+         fn test() { h: hash<Elm[key]> = [Elm { key: 10, tag: 1 }, Elm { key: 30, tag: 3 }]; \
+           c = &h[30]; k = pick(); h[k] = null; c.tag = 9; print(\"{len(h)}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `h` while `c` references a place inside it — a removal frees the \
+         record its key names, and a later insert can reuse it, so a write through `c` may \
+         land on a different element than the one it names. Move it after the last use of \
+         `c`, or bind without `&` to work on a copy at \
+         b_ref_reshape_a_computed_removal_key_is_still_refused:1:1",
+    );
+}
+
+/// @PLN25 DN3 — a null guard over a PROJECTION narrows it, the way one over a NAME does.
+///
+/// `narrowing_from_condition` answers for a variable, and `if !db.map[k] { … } else { … }` has
+/// no variable to answer about: `@FR-Col-Lookup` makes the lookup `τ?` and the guard cleared
+/// nothing, so the else arm still saw a nullable receiver.  The proof is now recorded over the
+/// projection's IR and compared shape-wise, because the two spellings of one lookup sit at
+/// different source positions and a plain `==` sees `Span`s, not shapes.
+///
+/// What it is observable through TODAY is the redundant-coalesce lint: a field read through a
+/// nullable receiver clears `expr_not_null` (a field of a nullable receiver can itself be
+/// null), so `?? 0` on it is never called redundant.  Under the guard the receiver is proven
+/// non-null, the clear does not fire, and the `??` is correctly named as dead.
+///
+/// ⚠ The UNGUARDED twin in the same file is the load-bearing half: it must stay quiet, because
+/// there the `??` really can be used.  A narrowing that fired unconditionally would pass a cell
+/// that only checked the guarded line, and would be a silent wrong answer rather than a noisy
+/// one — the direction that matters for a proof.
+///
+/// This is also the prerequisite for `(N-Prop)` (loft#1450): with the widening on, this idiom
+/// is the shape that warns on correct code, and every documented cure (`?`, `??`,
+/// `if x != null`) was already clean.
+#[test]
+fn a_null_guard_over_a_projection_narrows_it() {
+    code!(
+        "struct Elm { key: integer, val: integer } \
+         struct Db { map: sorted<Elm[key]> } \
+         fn guarded(db: Db, k: integer) -> integer { \
+           if !db.map[k] { -1 } else { db.map[k].val ?? 0 } } \
+         fn unguarded(db: Db, k: integer) -> integer { db.map[k].val ?? 0 } \
+         fn check() -> integer { d = Db { map: [Elm { key: 1, val: 10 }] }; \
+           guarded(d, 1) + unguarded(d, 1) }"
+    )
+    .warning(
+        "Redundant null coalescing — 'val' is 'not null', default is never used at \
+         a_null_guard_over_a_projection_narrows_it:1:169",
+    )
+    .expr("check()")
+    .result(Value::Int(20));
+}
+
+/// loft#1461 — a tuple element read through a VARIABLE vector index parses.
+///
+/// `operators.rs`'s tuple-element branch tested the receiver in its bare spelling, so a
+/// CONSTANT index (which takes the fit elision and stays `Type::Tuple`) worked while a
+/// VARIABLE one — `τ?` under `(N-Index)`, so `Optional(Tuple)` — declined and fell through
+/// to the FIELD path, where `0` is not an identifier.  The author was told *"Expect a field
+/// name"* about a tuple index that is spelled correctly: the diagnostic named the wrong
+/// thing entirely, mentioning neither nullability nor the index.
+///
+/// The constant cell beside it is the control that says which half was broken — without it,
+/// a fix that made neither work would still look like progress on the one that did.
+///
+/// ⚠ And the LOCAL-BOUND cell is why this has a codegen half.  Peeling only the parser makes
+/// the read parse and then panic — `e = v[i]; e.0` reached `TupleGet` with an
+/// `Optional(Tuple)` and tripped *"TupleGet on non-tuple variable"*, an ICE on both backends
+/// where the refusal had been clean.  That is the same shape as loft#1455 half 1 and it is
+/// the reason a parser peel is never the whole fix: the sites that CONSUME the accepted
+/// shape have to accept it too.  `TuplePut` is peeled with its read twin rather than after
+/// it — they address one slot, and a pair where one accepts what the other panics on is the
+/// drift the pair exists to avoid.
+#[test]
+fn a_tuple_element_reads_through_a_variable_vector_index() {
+    code!(
+        "fn check() -> integer { \
+           v: vector<(integer, integer)> = [(1, 2), (3, 4)]; \
+           i = 1; \
+           e = v[i]; \
+           w = v[i]; \
+           w.0 = 9; \
+           v[i].0 * 100000 + e.0 * 10000 + w.0 * 1000 + v[i].1 * 100 + v[0].0 * 10 + v[0].1 }"
+    )
+    .expr("check()")
+    .result(Value::Int(339412));
 }

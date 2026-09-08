@@ -80,7 +80,7 @@ fn rq_double(rq_x: integer) -> integer {
 
 // The Hash chapter promises `e#remove` is "rejected at compile time" -- a claim about the
 // REJECTION rather than a quoted string, so what is pinned here is that it still refuses.
-// @EXPECT_ERROR: not supported on hash iteration
+// @EXPECT_ERROR: not supported when iterating a `hash`
 fn rq_hash_remove_is_refused() {
   rq_c = RQCounting { };
   rq_c.entries = [ {t: "One", v: 1} ];

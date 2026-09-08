@@ -31,6 +31,14 @@
 #                         This is the agent-safe confirmation: it replaces the
 #                         typed 'yes' with a check, and it is stricter than the
 #                         prompt it replaces (a 'yes' verifies nothing).
+#     --expect-yank P@V   sign a YANK and only that — repeatable.  The diff must
+#                         add exactly the named versions to those packages'
+#                         `yanked` arrays, add or change NO version, un-yank
+#                         nothing, and leave every other field of every package
+#                         alone.  A yank adds no version, so plain --expect can
+#                         never describe one: it refuses for "asked for but
+#                         ABSENT from the diff" while the yank itself reads as
+#                         untouchable metadata drift.  The two combine.
 #     --yes               skip the confirm prompt (scripted use).  Prefer
 #                         --expect: --yes asserts nothing about WHAT is signed.
 #
@@ -69,7 +77,7 @@
 # at the prompt.  Needs: python3, gh (for notes), and target/release/loft-keygen.
 set -euo pipefail
 
-REG_DIR="$PWD"; REG_GIVEN=0; PR=""; SINCE=""; NOTES=0; DOWNLOAD=1; YES=0; PUSH=1; MSG=""; EXPECT=""
+REG_DIR="$PWD"; REG_GIVEN=0; PR=""; SINCE=""; NOTES=0; DOWNLOAD=1; YES=0; PUSH=1; MSG=""; EXPECT=""; EXPECT_YANK=""
 KEY="${LOFT_REGISTRY_KEY:-$HOME/.loft/trust-root/registry-signing-key.bin}"
 YUBIKEY=0; [ "${LOFT_REGISTRY_SIGNER:-}" = yubikey ] && YUBIKEY=1  # set -e safe: file/unset/other => 0 (local-key path)
 while [ $# -gt 0 ]; do
@@ -84,6 +92,7 @@ while [ $# -gt 0 ]; do
         --no-push)      PUSH=0;;
         --message)      MSG="$2"; shift;;
         --expect)       EXPECT="${EXPECT:+$EXPECT }$2"; shift;;
+        --expect-yank)  EXPECT_YANK="${EXPECT_YANK:+$EXPECT_YANK }$2"; shift;;
         --yes)          YES=1;;
         -h|--help)      sed -n '2,33p' "$0"; exit 0;;
         *) echo "unknown argument: $1" >&2; exit 2;;
@@ -243,7 +252,7 @@ git -C "$REG_DIR" rev-parse "$SINCE" >/dev/null 2>&1 || SINCE=""   # no such ref
 # to have changed FROM.  With no diff base every version reads as new, and the
 # check would either refuse everything or — worse — be satisfied by an index that
 # happens to hold only the expected package.  Refuse instead of guessing.
-if [ -n "$EXPECT" ] && [ -z "$SINCE" ]; then
+if [ -n "$EXPECT$EXPECT_YANK" ] && [ -z "$SINCE" ]; then
     echo "!! --expect needs a diff base, and this checkout has no usable git history." >&2
     echo "   Pass --since <ref>, or sign without --expect." >&2
     exit 2
@@ -273,7 +282,7 @@ else
 fi
 
 set +e
-NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" python3 - "$PREV" "$INDEX" <<'PY'
+NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" EXPECT_YANK="$EXPECT_YANK" python3 - "$PREV" "$INDEX" <<'PY'
 import json, sys, os, re, hashlib, shutil, tempfile, time, urllib.request, urllib.error, subprocess
 def load(p):
     try:
@@ -390,22 +399,55 @@ if not changes:
 # So the check is deliberately wider than "is my package here": the diff must
 # introduce exactly the named versions, remove nothing, and leave every other
 # package byte-for-byte alone.
+# `--expect-yank` is the same bargain for the OTHER maintenance write.  A yank
+# adds no version, so it lands entirely in `yanked` — which the check above reads
+# as untouchable drift, and which no `--expect` argument can name.  Without a
+# bound form the only route left is `--yes`, and `--yes` asserts nothing about
+# what is signed, which is exactly what this whole block exists to replace.
 expect = set((os.environ.get("EXPECT") or "").split())
-if expect:
+expect_yank = set((os.environ.get("EXPECT_YANK") or "").split())
+if expect or expect_yank:
     got = {f"{n}@{v}" for n, v, _, _ in changes}
     removed_pkgs = sorted(set(pp) - set(cp))
     removed_vers = sorted(
         f"{n}@{v}" for n in set(pp) & set(cp)
         for v in (pp[n].get("versions") or {}) if v not in (cp[n].get("versions") or {}))
-    drift = sorted(
-        n for n in set(pp) & set(cp)
-        if {k: x for k, x in pp[n].items() if k != "versions"}
-        != {k: x for k, x in cp[n].items() if k != "versions"})
+    # Yanks the diff actually makes, and un-yanks — a version LEAVING a `yanked`
+    # array withdraws a warning consumers are already relying on, so it is never
+    # implicit and has no `--expect` spelling at all.
+    yank_got = {f"{n}@{v}" for n in set(pp) & set(cp)
+                for v in set(cp[n].get("yanked") or []) - set(pp[n].get("yanked") or [])}
+    unyanked = sorted(f"{n}@{v}" for n in set(pp) & set(cp)
+                      for v in set(pp[n].get("yanked") or []) - set(cp[n].get("yanked") or []))
+    # A package named in --expect-yank is allowed to differ in `yanked` and in
+    # nothing else; every other package still has to match byte-for-byte.
+    yank_pkgs = {s.split("@")[0] for s in expect_yank}
+
+    def meta(d, name):
+        skip = ("versions", "yanked") if name in yank_pkgs else ("versions",)
+        return {k: x for k, x in d[name].items() if k not in skip}
+
+    drift = sorted(n for n in set(pp) & set(cp) if meta(pp, n) != meta(cp, n))
+    # A yank of a version the index does not list is a typo, not a yank: it would
+    # sign a marker pointing at nothing (PKG_REGISTRY.md § Yanking — the `web`
+    # 0.2.2 loss is what that promise is made of).
+    phantom = sorted(s for s in expect_yank
+                     if s.split("@")[0] not in cp
+                     or s.split("@", 1)[1] not in (cp[s.split("@")[0]].get("versions") or {}))
     problems = []
     if got - expect:
         problems.append(("not asked for", sorted(got - expect)))
     if expect - got:
         problems.append(("asked for but ABSENT from the diff", sorted(expect - got)))
+    if yank_got - expect_yank:
+        problems.append(("YANKED but not asked for", sorted(yank_got - expect_yank)))
+    if expect_yank - yank_got:
+        problems.append(("yank asked for but ABSENT from the diff",
+                         sorted(expect_yank - yank_got)))
+    if unyanked:
+        problems.append(("versions UN-yanked (a warning withdrawn)", unyanked))
+    if phantom:
+        problems.append(("yank names a version the index does not list", phantom))
     if removed_pkgs:
         problems.append(("packages REMOVED", removed_pkgs))
     if removed_vers:
@@ -416,7 +458,8 @@ if expect:
     print("----  scope  ----")
     if problems:
         print("!!  --expect MISMATCH — NOT signing.")
-        print(f"    asked to sign: {', '.join(sorted(expect)) or '(nothing)'}")
+        asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)])
+        print(f"    asked to sign: {asked or '(nothing)'}")
         for label, items in problems:
             print(f"      {label}:")
             for it in items:
@@ -425,7 +468,8 @@ if expect:
         print("    Nothing was signed.  Either the index carries more than the publish")
         print("    you asked for, or --expect names the wrong version.")
         sys.exit(1)
-    print(f"  exactly {', '.join(sorted(expect))} — nothing else added, removed or altered")
+    asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)])
+    print(f"  exactly {asked} — nothing else added, removed or altered")
     print()
 failures = []  # (name, ver, reason) — collected so the end-of-run summary names each
 for name, ver, meta, is_new in changes:
@@ -567,11 +611,11 @@ if [ "$USE_CARD" = 1 ]; then
     fi
 fi
 if [ -z "$SIGNED_VIA" ]; then
-    if [ -n "$EXPECT" ]; then
+    if [ -n "$EXPECT$EXPECT_YANK" ]; then
         # The review block above already refused anything but the named versions,
         # so the decision this would prompt for has been made and CHECKED.  Not a
         # skipped confirmation — a mechanical one.
-        echo "  --expect satisfied: signing exactly $EXPECT with $(basename "$KEY")."
+        echo "  --expect satisfied: signing exactly ${EXPECT:-}${EXPECT:+ }${EXPECT_YANK:+yank }${EXPECT_YANK:-} with $(basename "$KEY")."
     elif [ "$YES" != 1 ]; then
         printf "  sign with the local key %s? type 'yes': " "$(basename "$KEY")"
         read -r ans

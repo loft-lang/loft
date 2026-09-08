@@ -347,6 +347,11 @@ impl Output<'_> {
                             | Type::Boolean
                             | Type::Character
                             | Type::Text(_)
+                            // loft#1455 — a local `&fn(…)` link holds `*mut (u32, DbRef)` and
+                            // reads as the PAIR behind it.  Left out, the pointer itself was
+                            // handed to a `fn(…)` parameter — rustc E0308, `expected
+                            // (u32, DbRef), found *mut (u32, DbRef)`.
+                            | Type::Function(_, _, _)
                     )
                 {
                     // @PLN87 L1 — a local scalar `&`-link holds `*mut T` (raw); deref

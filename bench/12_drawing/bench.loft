@@ -1,0 +1,618 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Benchmark 12: Drawing hot loops — the seeded hash and the brush-lock raster
+//
+// The standalone reproduction of loft#1426 (@PLN157): the `drawing` library's
+// `noise.loft` + `brush.loft` concatenated, no `use`, running two of the pass's
+// judged rows — `hash` (100 000 calls of the 4-line seed hash: the per-call
+// cost, M1/M3) and `lock` (a straight 360×180 lock-of-hair raster, ~22 080 px:
+// the per-element store cost, M2).  The arithmetic is expression-for-expression
+// the library's; the FNV-1a-32 output hashes are asserted, so a run that got
+// faster by computing something else fails instead of winning.
+//
+// Rows print as: name, iters, total µs, ns/op, output px, ns/px, hash.  The
+// trailing "time: Xms" line is what bench/run_bench.sh parses; per-row numbers
+// are what scripts/native_ratio.sh joins against bench/ratio_oracle.tsv.
+
+
+/// A reproducible pseudo-random float in [-1, 1) from three small non-negative
+/// integers.
+///
+/// ⚠ NOT a PRNG, and deliberately not the `random` package. `draw.py` says so in
+/// its own docstring — *"never random()/hash() (those break reproducible
+/// renders)"* — and the corpus is defined by THIS hash: swap in PCG-64 and every
+/// jittered frond moves, so the substitution fails the gate it was meant to help
+/// pass.
+///
+/// Three details are load-bearing. The masking is 32-bit throughout, and the
+/// widest product it forms (`0xFFFFFFFF * 1274126177`) is 5.47e18 — inside i64 by
+/// a hair, so this needs no widening but has none to spare. And the final divide
+/// is a REAL division: `x / 0xFFFFFFFF` in integer arithmetic is 0 for every input
+/// and would give a perfectly smooth, entirely wrong field.
+/// @FR-Seed-Hash
+pub fn seed_hash(hseed: integer, hidx: integer, hsalt: integer) -> float {
+  hx = ((hseed * 73856093) ^ (hidx * 19349663) ^ (hsalt * 83492791)) & 0xFFFFFFFF;
+  hx = (hx ^ (hx >> 13)) & 0xFFFFFFFF;
+  hx = (hx * 1274126177) & 0xFFFFFFFF;
+  ((hx as float) / 4294967295.0 ?? 0.0) * 2.0 - 1.0
+}
+
+/// A smooth low-frequency wave over [0,1], two harmonics with seed-derived phases.
+///
+/// Smooth in `u` is the point: neighbouring fronds see nearby values, so they
+/// CLUMP and leave gaps. White noise would scatter them evenly, which reads as
+/// man-made — the opposite of what this is for.  Periodic in `u`, which is what
+/// lets a brush footprint tile along a stroke without a seam.
+/// @FR-Seed-NonUniform — the field an array clumps on.
+pub fn seed_wave(lseed: integer, lu: float) -> float {
+  lp1 = seed_hash(lseed, 0, 11) * PI;
+  lp2 = seed_hash(lseed, 0, 22) * PI;
+  0.6 * sin(2.0 * PI * lu + lp1) + 0.4 * sin(4.0 * PI * lu + lp2)
+}
+
+// ── graphics.loft's packed-colour helpers (0xAARRGGBB) ──────────────
+
+fn rgba(r: integer, g: integer, b: integer, a: integer) -> integer {
+  (a << 24) | (r << 16) | (g << 8) | b
+}
+fn color_r(c: integer) -> integer { (c >> 16) & 255 }
+fn color_g(c: integer) -> integer { (c >> 8) & 255 }
+fn color_b(c: integer) -> integer { c & 255 }
+
+// ── brush.loft (the lock subset; load_brush and composite_layer are not in
+//    this workload, `scaled` is bench-side unused) ───────────────────
+/// A footprint: `bw` columns across the stroke, `bh` rows along it, packed
+/// 0xAARRGGBB, tiled every `period` canvas px along the stroke.  Column 0 lands on
+/// the stroke's RIGHT side walking root→tip (`flip` mirrors it).
+pub struct Brush {
+  bname: text = "",
+  bw: integer = 0,
+  bh: integer = 0,
+  period: float = 0.0,
+  img: vector<integer>,
+}
+
+/// Everything a `Lock` line says past its points.  Widths and `period` are in
+/// canvas px here and scaled to the supersampled canvas by `scaled` at the raster
+/// call, like every other mark.
+pub struct LockStyle {
+  w0: float = 2.0,
+  w: float = 10.0,
+  swell: float = 0.3,
+  body: float = 0.8,
+  tips: integer = 3,
+  tipvar: float = 0.35,
+  spread: float = 8.0,
+  seed: integer = 1,
+  period: float = 48.0,
+  /// The transverse colour ramp, packed: underside, crest, lit flank.
+  dark: integer = 0,
+  base: integer = 0,
+  lit: integer = 0,
+  /// The light's direction; `lz` points out of the paper.
+  lx: float = -0.5,
+  ly: float = -0.8,
+  lz: float = 0.6,
+  alpha: float = 1.0,
+  flip: boolean = false,
+}
+
+/// A stroke as a layer over the canvas: `px` is `lw × lh` packed 0xAARRGGBB placed
+/// at `(x0, y0)`; `lw == 0` means the stroke painted nothing.
+pub struct Layer {
+  x0: integer = 0,
+  y0: integer = 0,
+  lw: integer = 0,
+  lh: integer = 0,
+  px: vector<integer>,
+}
+/// `floor` on the truncating cast, correct on both sides of zero.
+fn floor_i(v: float) -> integer {
+  fi_i = v as integer;
+  if (fi_i as float) > v { fi_i - 1 } else { fi_i }
+}
+
+fn clampf(v: float, lo: float, hi: float) -> float {
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+
+fn clampi(v: integer, lo: integer, hi: integer) -> integer {
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+
+/// The built-in split-bristle footprint.  Columns group into channels 1..3 px
+/// wide, each a bristle with its own value; a `gap` fraction are thin translucent
+/// strands that FADE OUT along the run (the broken parallel streaks a worn brush
+/// lays); the outermost columns are soft so the silhouette frays.  Greyscale
+/// value × alpha — the stroke's colour ramp multiplies in at resolve time.
+/// @FR-Brush-Image — the built-in footprint.
+pub fn hair_brush(bw: integer, bh: integer, seed: integer, gap: float) -> vector<integer> {
+  hb_img = [for _i in 0..bw * bh { 0 }];
+  hb_x = 0;
+  hb_ci = 0;
+  while hb_x < bw {
+    hb_cw = 1 + ((2.99 * (seed_hash(seed, hb_ci, 7) + 1.0) * 0.5) as integer);
+    hb_val = 0.72 + 0.28 * (seed_hash(seed, hb_ci, 8) + 1.0) * 0.5;
+    hb_split = (seed_hash(seed, hb_ci, 9) + 1.0) * 0.5 < gap;
+    for k in 0..hb_cw {
+      hb_xx = hb_x + k;
+      if hb_xx >= bw { break }
+      hb_edge = if hb_xx == 0 || hb_xx == bw - 1 { 0.6 } else { 1.0 };
+      for y in 0..bh {
+        hb_u = ((y as float) / (bh as float)) ?? 0.0;
+        hb_v = hb_val * (1.0 - 0.12 * (1.0 + seed_wave(seed * 3 + hb_ci, hb_u)) * 0.5);
+        hb_a = hb_edge;
+        if hb_split {
+          hb_a = 0.35 * hb_edge
+                 * clampf((seed_wave(seed * 7 + hb_ci, hb_u) + 0.6) / 0.6, 0.0, 1.0);
+        }
+        hb_g = (255.0 * hb_v + 0.5) as integer;
+        hb_ai = (255.0 * hb_a + 0.5) as integer;
+        hb_img[y * bw + hb_xx] = (hb_ai << 24) | (hb_g << 16) | (hb_g << 8) | hb_g;
+      }
+    }
+    hb_x += hb_cw;
+    hb_ci += 1;
+  }
+  hb_img
+}
+// ── The lock's geometry ─────────────────────────────────────────────
+
+/// A point on the path with the unit tangent there.
+struct PathPt {
+  x: float = 0.0,
+  y: float = 0.0,
+  tx: float = 0.0,
+  ty: float = 0.0,
+}
+
+/// The path at arc length `dist`, extrapolated past its end along the last
+/// segment — the spikes run on past where the path stops.
+fn path_at(px: const vector<float>, py: const vector<float>, cum: const vector<float>,
+           dist: float) -> PathPt {
+  pa_n = len(px);
+  pa_k = pa_n - 2;
+  for i in 0..(pa_n - 1) {
+    if dist <= cum[i + 1]? { pa_k = i; break }
+  }
+  pa_seg = cum[pa_k + 1]? - cum[pa_k]?;
+  pa_u = ((dist - cum[pa_k]?) / pa_seg) ?? 0.0;
+  pa_dx = px[pa_k + 1]? - px[pa_k]?;
+  pa_dy = py[pa_k + 1]? - py[pa_k]?;
+  PathPt { x: px[pa_k]? + pa_u * pa_dx, y: py[pa_k]? + pa_u * pa_dy,
+           tx: (pa_dx / pa_seg) ?? 0.0, ty: (pa_dy / pa_seg) ?? 0.0 }
+}
+
+/// The body's width at fraction `t`: `w0` at the root, `w` from `swell` on, a
+/// sine ease between — the hairs gain their freedom quickly once off the skin.
+fn lock_width(t: float, w0: float, w: float, swell: float) -> float {
+  if swell <= 0.000000001 || t >= swell { return w }
+  w0 + (w - w0) * sin((0.5 * PI * t / swell) ?? 0.0)
+}
+
+/// A sampled centreline with a half-width, an arc position and a spike fraction
+/// per sample, plus the slice `[slo, shi]` of the body's across axis it carries:
+/// the body is `[-1, 1]`, a spike keeps its share, so the bristle streaks run on
+/// from the body into the spike.
+struct Ribbon {
+  rx: vector<float>,
+  ry: vector<float>,
+  rhw: vector<float>,
+  ral: vector<float>,
+  rmx: vector<float>,
+  slo: float = -1.0,
+  shi: float = 1.0,
+}
+
+/// The lock as ribbons: the body first, then one per spike.
+/// @FR-Lock-Profile · @FR-Lock-Streak (the `[slo, shi]` slice each ribbon carries)
+fn lock_ribbons(xs: const vector<float>, ys: const vector<float>, st: const LockStyle)
+    -> vector<Ribbon> {
+  lr_px: vector<float> = [xs[0]?];
+  lr_py: vector<float> = [ys[0]?];
+  lr_cum: vector<float> = [0.0];
+  for i in 1..len(xs) {
+    lr_ddx = xs[i]? - lr_px[len(lr_px) - 1]?;
+    lr_ddy = ys[i]? - lr_py[len(lr_py) - 1]?;
+    lr_d = sqrt(lr_ddx * lr_ddx + lr_ddy * lr_ddy) ?? 0.0;
+    if lr_d > 0.000001 {
+      lr_px += [xs[i]?];
+      lr_py += [ys[i]?];
+      lr_cum += [lr_cum[len(lr_cum) - 1]? + lr_d];
+    }
+  }
+  lr_out: vector<Ribbon> = [];
+  if len(lr_px) < 2 { return lr_out }
+  lr_len = lr_cum[len(lr_cum) - 1]?;
+  lr_body = clampf(st.body, 0.05, 1.0);
+  lr_swell = clampf(st.swell, 0.0, lr_body);
+  lr_ds = clampf(0.5 * st.w, 2.0, 6.0);
+  lr_nb = -floor_i(-((lr_body * lr_len / lr_ds) ?? 0.0));
+  if lr_nb < 2 { lr_nb = 2; }
+  lr_nb += 1;
+  lr_bx: vector<float> = [];
+  lr_by: vector<float> = [];
+  lr_bhw: vector<float> = [];
+  lr_bal: vector<float> = [];
+  lr_bmx: vector<float> = [];
+  for j in 0..lr_nb {
+    lr_t = (lr_body * (j as float) / ((lr_nb - 1) as float)) ?? 0.0;
+    lr_dist = lr_t * lr_len;
+    lr_q = path_at(lr_px, lr_py, lr_cum, lr_dist);
+    lr_bx += [lr_q.x];
+    lr_by += [lr_q.y];
+    lr_bhw += [0.5 * lock_width(lr_t, st.w0, st.w, lr_swell)];
+    lr_bal += [lr_dist];
+    lr_bmx += [0.0];
+  }
+  lr_out += [Ribbon { rx: lr_bx, ry: lr_by, rhw: lr_bhw, ral: lr_bal, rmx: lr_bmx,
+                      slo: -1.0, shi: 1.0 }];
+  lr_hwb = 0.5 * lock_width(lr_body, st.w0, st.w, lr_swell);
+  lr_tail = (1.0 - lr_body) * lr_len;
+  if st.tips <= 0 || lr_tail < 1.0 || lr_hwb < 0.3 { return lr_out }
+  // The body's end is shared out between the spikes unevenly, and each spike
+  // continues the path's own curve at its offset, drifts by its own angle, ends
+  // at its own length, and keeps full width leaving the body — `1 - u²` — so no
+  // notch opens at the base and the end is still a point.
+  lr_raw: vector<float> = [];
+  lr_tot = 0.0;
+  for i in 0..st.tips {
+    lr_r = 1.0 + 0.5 * seed_hash(st.seed, i, 41);
+    lr_raw += [lr_r];
+    lr_tot += lr_r;
+  }
+  lr_a1 = -1.0;
+  for i in 0..st.tips {
+    lr_a0 = lr_a1;
+    lr_a1 = lr_a0 + ((2.0 * lr_raw[i]? / lr_tot) ?? 0.0);
+    lr_c = 0.5 * (lr_a0 + lr_a1);
+    lr_hs = 0.5 * (lr_a1 - lr_a0);
+    lr_ell = lr_tail * (1.0 + st.tipvar * seed_hash(st.seed, i, 42));
+    if lr_ell < 0.15 * lr_tail { lr_ell = 0.15 * lr_tail; }
+    lr_th = st.spread * seed_hash(st.seed, i, 43) * (PI / 180.0);
+    lr_m = -floor_i(-((lr_ell / lr_ds) ?? 0.0));
+    if lr_m < 2 { lr_m = 2; }
+    lr_m += 1;
+    lr_sx: vector<float> = [];
+    lr_sy: vector<float> = [];
+    lr_shw: vector<float> = [];
+    lr_sal: vector<float> = [];
+    lr_smx: vector<float> = [];
+    for j in 0..lr_m {
+      lr_u = ((j as float) / ((lr_m - 1) as float)) ?? 0.0;
+      lr_sd = lr_body * lr_len + lr_u * lr_ell * cos(lr_th);
+      lr_sq = path_at(lr_px, lr_py, lr_cum, lr_sd);
+      lr_off = lr_c * lr_hwb + lr_u * lr_ell * sin(lr_th);
+      lr_sx += [lr_sq.x + lr_sq.ty * lr_off];
+      lr_sy += [lr_sq.y - lr_sq.tx * lr_off];
+      lr_shw += [lr_hs * lr_hwb * (1.0 - lr_u * lr_u)];
+      lr_sal += [lr_sd];
+      lr_smx += [lr_u];
+    }
+    lr_out += [Ribbon { rx: lr_sx, ry: lr_sy, rhw: lr_shw, ral: lr_sal, rmx: lr_smx,
+                        slo: lr_a0, shi: lr_a1 }];
+  }
+  lr_out
+}
+// ── Rasterising into a layer ────────────────────────────────────────
+
+/// The stroke while it is being built: per layer pixel, the best `|s|` so far and
+/// the sample that set it — the body across-coordinate `sb`, the ribbon's own
+/// `sl`, the arc position `al`, how far into a spike `mx`, and the ribbon's left
+/// normal.
+struct Lay {
+  x0: integer = 0,
+  y0: integer = 0,
+  lw: integer = 0,
+  lh: integer = 0,
+  best: vector<float>,
+  sb: vector<float>,
+  sl: vector<float>,
+  al: vector<float>,
+  mx: vector<float>,
+  nx: vector<float>,
+  ny: vector<float>,
+}
+
+/// One ribbon segment into the layer: every pixel centre within the local
+/// half-width of its projection onto the segment (round joins for free — the
+/// projection clamps to the endpoints).  A pixel keeps the sample with the
+/// SMALLEST `|s|`, from the centreline it is transversally closest to; that is
+/// what makes the union of body and spikes seamless whatever order they are laid
+/// in.  `mx` is how far the sample is into a spike (0 on the body): the shading
+/// blends from the lock's cylinder to the spike's own by it.
+/// @FR-Brush-Layer
+fn raster_segment(lay: Lay, ax: float, ay: float, bx: float, by: float, hwa: float, hwb: float,
+                  ala: float, alb: float, mxa: float, mxb: float, slo: float, shi: float) {
+  rs_dx = bx - ax;
+  rs_dy = by - ay;
+  rs_l2 = rs_dx * rs_dx + rs_dy * rs_dy;
+  if rs_l2 < 0.000000001 { return }
+  rs_ln = sqrt(rs_l2) ?? 0.0;
+  rs_nx = (rs_dy / rs_ln) ?? 0.0;
+  rs_ny = (-rs_dx / rs_ln) ?? 0.0;
+  rs_hm = if hwa > hwb { hwa } else { hwb };
+  rs_x0 = floor_i((if ax < bx { ax } else { bx }) - rs_hm);
+  if rs_x0 < lay.x0 { rs_x0 = lay.x0; }
+  rs_x1 = -floor_i(-((if ax > bx { ax } else { bx }) + rs_hm));
+  if rs_x1 > lay.x0 + lay.lw - 1 { rs_x1 = lay.x0 + lay.lw - 1; }
+  rs_y0 = floor_i((if ay < by { ay } else { by }) - rs_hm);
+  if rs_y0 < lay.y0 { rs_y0 = lay.y0; }
+  rs_y1 = -floor_i(-((if ay > by { ay } else { by }) + rs_hm));
+  if rs_y1 > lay.y0 + lay.lh - 1 { rs_y1 = lay.y0 + lay.lh - 1; }
+  if rs_x1 < rs_x0 || rs_y1 < rs_y0 { return }
+  // Hoisted: a struct field read costs a store lookup per pixel in the native build, and
+  // nothing hoists it for us (loft#1426).
+  rs_ly0 = lay.y0;
+  rs_llw = lay.lw;
+  rs_lx0 = lay.x0;
+  for yy in rs_y0..(rs_y1 + 1) {
+    rs_cy = (yy as float) + 0.5;
+    for xx in rs_x0..(rs_x1 + 1) {
+      rs_cx = (xx as float) + 0.5;
+      rs_u = (((rs_cx - ax) * rs_dx + (rs_cy - ay) * rs_dy) / rs_l2) ?? 0.0;
+      if rs_u < 0.0 { rs_u = 0.0; } else if rs_u > 1.0 { rs_u = 1.0; }   // clampf, inlined: a call per pixel costs ~7 ns of entry instrumentation
+      rs_hw = hwa + (hwb - hwa) * rs_u;
+      if rs_hw <= 0.01 { continue }
+      rs_dist = (rs_cx - ax - rs_u * rs_dx) * rs_nx + (rs_cy - ay - rs_u * rs_dy) * rs_ny;
+      rs_s = (rs_dist / rs_hw) ?? 0.0;
+      rs_a = if rs_s >= 0.0 { rs_s } else { -rs_s };
+      if rs_a > 1.0 { continue }
+      rs_idx = (yy - rs_ly0) * rs_llw + (xx - rs_lx0);
+      if rs_a < lay.best[rs_idx]? {
+        lay.best[rs_idx] = rs_a;
+        lay.sl[rs_idx] = rs_s;
+        lay.sb[rs_idx] = slo + (rs_s + 1.0) * 0.5 * (shi - slo);
+        lay.al[rs_idx] = ala + (alb - ala) * rs_u;
+        lay.mx[rs_idx] = mxa + (mxb - mxa) * rs_u;
+        lay.nx[rs_idx] = rs_nx;
+        lay.ny[rs_idx] = rs_ny;
+      }
+    }
+  }
+}
+
+/// A bilinear RGBA sample of the footprint, each channel 0..255 as a float.
+struct Smp {
+  a: float = 0.0,
+  r: float = 0.0,
+  g: float = 0.0,
+  b: float = 0.0,
+}
+
+fn chan(c: integer, sh: integer) -> float { ((c >> sh) & 255) as float }
+
+/// Bilinear: clamp across (`fu`), wrap along (`fv`, already non-negative).
+/// @FR-Brush-Image — the sampling half.
+fn brush_sample(img: const vector<integer>, bw: integer, bh: integer, fu: float, fv: float) -> Smp {
+  bs_iu = floor_i(fu);
+  bs_tu = fu - (bs_iu as float);
+  bs_iv = fv as integer;
+  bs_tv = fv - (bs_iv as float);
+  bs_u0 = clampi(bs_iu, 0, bw - 1);
+  bs_u1 = clampi(bs_iu + 1, 0, bw - 1);
+  bs_v0 = (bs_iv % bh) ?? 0;
+  bs_v1 = ((bs_iv + 1) % bh) ?? 0;
+  bs_c00 = img[bs_v0 * bw + bs_u0]?;
+  bs_c10 = img[bs_v0 * bw + bs_u1]?;
+  bs_c01 = img[bs_v1 * bw + bs_u0]?;
+  bs_c11 = img[bs_v1 * bw + bs_u1]?;
+  bs_w00 = (1.0 - bs_tu) * (1.0 - bs_tv);
+  bs_w10 = bs_tu * (1.0 - bs_tv);
+  bs_w01 = (1.0 - bs_tu) * bs_tv;
+  bs_w11 = bs_tu * bs_tv;
+  Smp { a: chan(bs_c00, 24) * bs_w00 + chan(bs_c10, 24) * bs_w10 + chan(bs_c01, 24) * bs_w01 + chan(bs_c11, 24) * bs_w11,
+        r: chan(bs_c00, 16) * bs_w00 + chan(bs_c10, 16) * bs_w10 + chan(bs_c01, 16) * bs_w01 + chan(bs_c11, 16) * bs_w11,
+        g: chan(bs_c00, 8) * bs_w00 + chan(bs_c10, 8) * bs_w10 + chan(bs_c01, 8) * bs_w01 + chan(bs_c11, 8) * bs_w11,
+        b: chan(bs_c00, 0) * bs_w00 + chan(bs_c10, 0) * bs_w10 + chan(bs_c01, 0) * bs_w01 + chan(bs_c11, 0) * bs_w11 }
+}
+
+/// One channel of the ramp `c0 → c1` at `f`, times the footprint's value `v`.
+fn ramp(c0: integer, c1: integer, f: float, v: float) -> integer {
+  (((c0 as float) + ((c1 - c0) as float) * f) * v / 255.0 + 0.5) as integer
+}
+
+/// Drag brush `br` along the pixel path (`xs`, `ys`) as a lock styled by `st`
+/// (pixel units), answering the stroke as a layer clipped to the `cw × ch`
+/// canvas — `lw == 0` when it paints nothing.
+/// @FR-Brush-Ramp (the resolve) · @FR-Oracle-Order (expression for expression the oracle's)
+pub fn lock_layer(xs: const vector<float>, ys: const vector<float>, cw: integer, ch: integer,
+                  br: const Brush, st: const LockStyle) -> Layer {
+  ll_none = Layer { x0: 0, y0: 0, lw: 0, lh: 0, px: [] };
+  ll_rib = lock_ribbons(xs, ys, st);
+  if len(ll_rib) == 0 { return ll_none }
+  ll_minx = 1000000000000000000.0;
+  ll_miny = 1000000000000000000.0;
+  ll_maxx = -1000000000000000000.0;
+  ll_maxy = -1000000000000000000.0;
+  for r in ll_rib {
+    for i in 0..len(r.rx) {
+      ll_x = r.rx[i]?;
+      ll_y = r.ry[i]?;
+      ll_h = r.rhw[i]?;
+      if ll_x - ll_h < ll_minx { ll_minx = ll_x - ll_h; }
+      if ll_x + ll_h > ll_maxx { ll_maxx = ll_x + ll_h; }
+      if ll_y - ll_h < ll_miny { ll_miny = ll_y - ll_h; }
+      if ll_y + ll_h > ll_maxy { ll_maxy = ll_y + ll_h; }
+    }
+  }
+  ll_x0 = floor_i(ll_minx) - 1;
+  if ll_x0 < 0 { ll_x0 = 0; }
+  ll_y0 = floor_i(ll_miny) - 1;
+  if ll_y0 < 0 { ll_y0 = 0; }
+  ll_x1 = floor_i(ll_maxx) + 1;
+  if ll_x1 > cw - 1 { ll_x1 = cw - 1; }
+  ll_y1 = floor_i(ll_maxy) + 1;
+  if ll_y1 > ch - 1 { ll_y1 = ch - 1; }
+  if ll_x1 < ll_x0 || ll_y1 < ll_y0 { return ll_none }
+  ll_lw = ll_x1 - ll_x0 + 1;
+  ll_lh = ll_y1 - ll_y0 + 1;
+  ll_n = ll_lw * ll_lh;
+  ll_lay = Lay { x0: ll_x0, y0: ll_y0, lw: ll_lw, lh: ll_lh,
+                 best: [for _i in 0..ll_n { 2.0 }], sb: [for _i in 0..ll_n { 0.0 }],
+                 sl: [for _i in 0..ll_n { 0.0 }], al: [for _i in 0..ll_n { 0.0 }],
+                 mx: [for _i in 0..ll_n { 0.0 }], nx: [for _i in 0..ll_n { 0.0 }],
+                 ny: [for _i in 0..ll_n { 0.0 }] };
+  for r in ll_rib {
+    for i in 0..(len(r.rx) - 1) {
+      raster_segment(ll_lay, r.rx[i]?, r.ry[i]?, r.rx[i + 1]?, r.ry[i + 1]?,
+                     r.rhw[i]?, r.rhw[i + 1]?, r.ral[i]?, r.ral[i + 1]?,
+                     r.rmx[i]?, r.rmx[i + 1]?, r.slo, r.shi);
+    }
+  }
+  // Resolve: the footprint sample, then the half-cylinder against the light.
+  ll_lx = st.lx;
+  ll_ly = st.ly;
+  ll_lz = st.lz;
+  ll_ll = sqrt(ll_lx * ll_lx + ll_ly * ll_ly + ll_lz * ll_lz) ?? 0.0;
+  if ll_ll < 0.000000001 { ll_lx = 0.0; ll_ly = 0.0; ll_lz = 1.0; ll_ll = 1.0; }
+  ll_lx = (ll_lx / ll_ll) ?? 0.0;
+  ll_ly = (ll_ly / ll_ll) ?? 0.0;
+  ll_lz = (ll_lz / ll_ll) ?? 0.0;
+  ll_crest = clampf(ll_lz, 0.05, 0.95);
+  ll_period = if st.period > 0.000001 { st.period } else { 1.0 };
+  // Where along the tile this lock starts, so two locks do not share a pattern.
+  ll_phase = (seed_hash(st.seed, 0, 44) + 1.0) * 0.5 * ll_period;
+  ll_bw = br.bw as float;
+  ll_bh = br.bh as float;
+  ll_out = [for _i in 0..ll_n { 0 }];
+  for idx in 0..ll_n {
+    if ll_lay.best[idx]? > 1.5 { continue }
+    ll_s = ll_lay.sb[idx]?;
+    ll_uu = (ll_s + 1.0) * 0.5;
+    if st.flip { ll_uu = 1.0 - ll_uu; }
+    ll_smp = brush_sample(br.img, br.bw, br.bh, ll_uu * ll_bw - 0.5,
+                          (((ll_lay.al[idx]? + ll_phase) / ll_period) ?? 0.0) * ll_bh - 0.5
+                          + ll_bh * 4096.0);
+    ll_ia = ll_smp.a * st.alpha;
+    if ll_ia < 0.5 { continue }
+    // A spike shades as its own cylinder the further it is from the body.
+    ll_s = ll_s + (ll_lay.sl[idx]? - ll_s) * ll_lay.mx[idx]?;
+    ll_nz2 = 1.0 - ll_s * ll_s;
+    ll_nz = sqrt(if ll_nz2 > 0.0 { ll_nz2 } else { 0.0 }) ?? 0.0;
+    ll_lit = clampf(ll_s * ll_lay.nx[idx]? * ll_lx + ll_s * ll_lay.ny[idx]? * ll_ly + ll_nz * ll_lz,
+                    0.0, 1.0);
+    ll_c0 = st.dark;
+    ll_c1 = st.base;
+    ll_f = 0.0;
+    if ll_lit < ll_crest {
+      ll_f = (ll_lit / ll_crest) ?? 0.0;
+    } else {
+      ll_f = ((ll_lit - ll_crest) / (1.0 - ll_crest)) ?? 0.0;
+      ll_c0 = st.base;
+      ll_c1 = st.lit;
+    }
+    ll_r = ramp(color_r(ll_c0), color_r(ll_c1), ll_f, ll_smp.r);
+    ll_g = ramp(color_g(ll_c0), color_g(ll_c1), ll_f, ll_smp.g);
+    ll_b = ramp(color_b(ll_c0), color_b(ll_c1), ll_f, ll_smp.b);
+    ll_out[idx] = (((ll_ia + 0.5) as integer) << 24) | (clampi(ll_r, 0, 255) << 16)
+                  | (clampi(ll_g, 0, 255) << 8) | clampi(ll_b, 0, 255);
+  }
+  Layer { x0: ll_x0, y0: ll_y0, lw: ll_lw, lh: ll_lh, px: ll_out }
+}
+
+// ── The harness (bench/bench.loft's rows, hashes asserted) ──────────
+
+const FNV_OFFSET = 2166136261;
+const FNV_PRIME = 16777619;
+// Pinned on 2026-09-07 from the interpreter, the native build and the Rust
+// reference agreeing (loft#1426's like-for-like precondition).
+const HASH_EXPECT = 0x7698ffff;
+const LOCK_EXPECT = 0x33e56005;
+
+/// FNV-1a-32 over the low 32 bits of each integer, high byte first.
+fn fnv(h0: integer, v: const vector<integer>) -> integer {
+  fv_h = h0;
+  for x in v {
+    fv_w = x & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 24) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 16) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 8) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ (fv_w & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+  }
+  fv_h
+}
+
+struct Row {
+  name: text = "",
+  iters: integer = 0,
+  us: integer = 0,
+  px: integer = 0,
+  hash: integer = 0,
+  sink: integer = 0,
+}
+
+fn print_row(r: const Row) {
+  pr_ns = ((r.us * 1000) / r.iters) ?? 0;
+  pr_px = if r.px > 0 { (((r.us * 1000) as float) / ((r.iters * r.px) as float)) ?? 0.0 }
+          else { 0.0 };
+  println("{r.name}\t{r.iters}\t{r.us}\t{pr_ns}\t{r.px}\t{pr_px:.3}\t{r.hash:x}");
+}
+
+fn bench_hash(n: integer) -> Row {
+  bh_t0 = ticks();
+  bh_acc = 0.0;
+  for _r in 0..n {
+    for i in 0..100000 { bh_acc += seed_hash(1, i, 7); }
+  }
+  bh_us = ticks() - bh_t0;
+  bh_one = 0.0;
+  for i in 0..100000 { bh_one += seed_hash(1, i, 7); }
+  bh_v: vector<integer> = [(bh_one * 1000000.0) as integer];
+  Row { name: "hash", iters: n, us: bh_us, px: 100000, hash: fnv(FNV_OFFSET, bh_v),
+        sink: (bh_acc * 1000.0) as integer }
+}
+
+fn hair() -> Brush {
+  Brush { bname: "hair", bw: 12, bh: 48, period: 48.0, img: hair_brush(12, 48, 1, 0.35) }
+}
+
+fn lock_style(w: float, tips: integer, seed: integer) -> LockStyle {
+  LockStyle { w0: 6.0, w: w, swell: 0.3, body: 0.8, tips: tips, tipvar: 0.35,
+              spread: 8.0, seed: seed, period: 144.0,
+              dark: rgba(60, 40, 20, 255),
+              base: rgba(120, 80, 40, 255),
+              lit: rgba(167, 141, 115, 255),
+              lx: -0.5, ly: -0.8, lz: 0.6, alpha: 1.0, flip: false }
+}
+
+fn bench_lock(n: integer) -> Row {
+  bl_br = hair();
+  bl_st = lock_style(60.0, 3, 1);
+  bl_xs: vector<float> = [18.0, 342.0];
+  bl_ys: vector<float> = [90.0, 90.0];
+  bl_t0 = ticks();
+  bl_sink = 0;
+  for _r in 0..n {
+    bl_lay = lock_layer(bl_xs, bl_ys, 360, 180, bl_br, bl_st);
+    bl_sink += bl_lay.lw;
+  }
+  bl_us = ticks() - bl_t0;
+  bl_one = lock_layer(bl_xs, bl_ys, 360, 180, bl_br, bl_st);
+  Row { name: "lock", iters: n, us: bl_us, px: bl_one.lw * bl_one.lh,
+        hash: fnv(FNV_OFFSET, bl_one.px), sink: bl_sink }
+}
+
+fn main() {
+  mn_t0 = ticks();
+  mn_n = 5;
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  if mn_n < 1 { mn_n = 1; }
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  mn_h = bench_hash(mn_n);
+  print_row(mn_h);
+  mn_l = bench_lock(mn_n);
+  print_row(mn_l);
+  assert(mn_h.hash == HASH_EXPECT, "hash row: got {mn_h.hash:x}, want {HASH_EXPECT:x}");
+  assert(mn_l.hash == LOCK_EXPECT, "lock row: got {mn_l.hash:x}, want {LOCK_EXPECT:x}");
+  println("time: {(ticks() - mn_t0) / 1000}ms");
+}

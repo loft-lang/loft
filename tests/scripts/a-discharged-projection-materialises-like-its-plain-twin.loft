@@ -1,0 +1,218 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A projection discharged with `??` is the same view its plain spelling is, so it materialises
+// where the plain one does and keeps aliasing where the plain one does (loft#1401).
+//
+//     c = v[1] ?? Box{n:0};
+//     v.remove(0);
+//     c.n                       // 2 — the element it was bound to, not the 3 that shifted in
+//
+// `(N-Index)` types `v[i]` as `τ?`, so `??` is the discharge the language REQUIRES to get a
+// non-null binding: this is the ordinary spelling of an element read, not an exotic one.  It
+// escaped `(B-View)` / `(H-Materialise)` in two independent places, and both halves had to
+// land together — naming without a copy makes the advice assert a guarantee the emitters do
+// not deliver, which is the measured reason the issue's second candidate cure was backed out.
+//
+//   * NAMING — a `??` lowers to a value BLOCK that hoists its subject into a temp and hands
+//     that temp back from the tail.  `value_view_place` read the tail at face value, so the
+//     arm was a bare `Var` naming nothing and the binding viewed no container at all.  It now
+//     resolves a tail through the block's OWN bindings, which covers `??`, `?? return` and a
+//     `match` subject in one step.  A `?? return` needed `is_value_branch` widened too: its
+//     absent path leaves by an early return, so the tail is an unconditional `Var` rather than
+//     an `if`, and read as "not a branch" it never reached the copy.
+//   * COPY — supplied per ARM, as loft#1396/#1399 supply it for a branch-valued binding:
+//     `arm_bind` gives the discharge hoist its own `__lift_N`, gated on the walk having NAMED
+//     the binding.  Ungated it would copy every discharge and lose writes that land today,
+//     which cells 11-13 pin.
+//   * SPELLING — a discharged `v[i]` arrives as `OpGetVectorNullable`, which is `v[i]` with a
+//     null answer for an out-of-range index and is a projection by every structural test.  It
+//     is deliberately off `is_projection_op` because the deps PROXY strands a store on it, so
+//     `view_source_place` is the reading for a walk that only NAMES a place.
+//
+// ⚠ THE CONTROLS ARE THE HALF THAT CONSTRAINS THE FIX.  Over-materialising is not a smaller
+// error than under-materialising — it silently LOSES a write that lands today.  Cell 11 (no
+// disturbance), cell 12 (last use before the disturbance) and cell 13 (a different member of
+// the same container disturbed) must all keep aliasing.  Cell 13 would prove nothing on its
+// own — the walk could simply never have named it — so cell 14 is the same shape with the
+// WHOLE container reassigned, and it must materialise.  Cell 13 passing while cell 14 fails
+// means the place test went blind, not that it got precise.
+//
+// @falsified-at: 2f471b15 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   One failure, not four, because `assert` stops the run: cells 1, 2, 6 and 9 each read
+//   another element or wrote through to the container at that commit, and cell 1 is simply the
+//   one reached first.  Measured apart, the `?? return` (6) and multi-assigned (9) cells are
+//   the two that needed more than the naming half.  The three alias controls and cell 14 are
+//   unmoved there, which is what makes them controls rather than cells.
+
+struct Box  { n: integer }
+struct Kid  { id: integer, label: text, tags: vector<integer> }
+struct Pair { va: vector<Box>, vb: vector<Box> }
+struct Hold { inner: Box? }
+
+// 1 — THE DEFECT: a read after a reshape must answer the element it was bound to.
+fn test_read_after_a_removal() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}, Box{n:4}];
+  c = v[1] ?? Box{n:0};
+  v.remove(0);
+  assert(c.n == 2, "read after remove: got {c.n}, want the 2 its element held");
+}
+
+// 2 — the write face: the binding has its own store, so the write must NOT reach `v`.
+fn test_write_after_a_removal_does_not_reach_the_container() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}];
+  c = v[0] ?? Box{n:0};
+  v.remove(2);
+  c.n = 99;
+  assert(c.n == 99, "write after remove, binding: got {c.n}, want 99");
+  assert((v[0] ?? Box{n:0}).n == 1, "write after remove, container: got {(v[0] ?? Box{n:0}).n}, want 1");
+}
+
+// 3 — the two spellings of one read must agree.  This is the whole claim.
+fn test_the_plain_twin_agrees() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}, Box{n:4}];
+  p = v[1];
+  v.remove(0);
+  d: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}, Box{n:4}];
+  q = d[1] ?? Box{n:0};
+  d.remove(0);
+  assert(p?.n == 2, "plain spelling: got {p?.n}, want 2");
+  assert(q.n == 2, "discharged spelling: got {q.n}, want 2");
+}
+
+// 4 — GROW is the other reshape: outgrowing the allocation moves every element.
+fn test_a_grown_container() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}];
+  c = v[1] ?? Box{n:0};
+  v += [Box{n:3}, Box{n:4}, Box{n:5}, Box{n:6}];
+  assert(c.n == 2, "grown container: got {c.n}, want 2");
+}
+
+// 5 — the container VARIABLE is reassigned, so the store the view named is gone.
+fn test_a_reassigned_container() {
+  h = Hold{inner: Box{n:7}};
+  c = h.inner ?? Box{n:0};
+  h = Hold{inner: Box{n:42}};
+  assert(c.n == 7, "reassigned container: got {c.n}, want 7");
+}
+
+// 6 — the `?? return` spelling: one surviving arm, no join in the IR.
+fn discharged_or_return(v: vector<Box>, k: integer) -> integer {
+  c = v[k] ?? return -1;
+  v.remove(0);
+  return c.n;
+}
+fn test_the_return_discharge() {
+  got = discharged_or_return([Box{n:1}, Box{n:2}, Box{n:3}, Box{n:4}], 1);
+  assert(got == 2, "?? return: got {got}, want 2");
+  absent = discharged_or_return([Box{n:1}], 9);
+  assert(absent == -1, "?? return, absent: got {absent}, want -1");
+}
+
+// 7 — the element owns CHILDREN: the copy is deep, so text and nested vector survive.
+fn test_an_element_with_children() {
+  v: vector<Kid> = [Kid{id:1,label:"one",tags:[1]}, Kid{id:2,label:"two",tags:[2,2]}];
+  c = v[1] ?? Kid{id:0,label:"z",tags:[]};
+  v.remove(0);
+  assert(c.id == 2, "children, id: got {c.id}, want 2");
+  assert(c.label == "two", "children, text: got {c.label}, want two");
+  assert(len(c.tags) == 2, "children, nested vector: got {len(c.tags)}, want 2");
+}
+
+// 8 — the container is a PARAMETER, which outlives the frame the view is bound in.
+fn discharged_from_a_parameter(v: vector<Box>) -> integer {
+  c = v[1] ?? Box{n:0};
+  v.remove(0);
+  return c.n;
+}
+fn test_a_parameter_container() {
+  got = discharged_from_a_parameter([Box{n:1}, Box{n:2}, Box{n:3}]);
+  assert(got == 2, "parameter container: got {got}, want 2");
+}
+
+// 9 — the binding is assigned MORE THAN ONCE.  The fact belongs to THIS assignment
+// (`@FR-O-Latest`), so the arm gets its store while the other Sets keep what they had.
+fn test_a_binding_assigned_twice() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}];
+  c = Box{n:5};
+  assert(c.n == 5, "assigned twice, first bind: got {c.n}, want 5");
+  c = v[1] ?? Box{n:0};
+  v.remove(0);
+  assert(c.n == 2, "assigned twice: got {c.n}, want 2");
+}
+
+// 10 — the discharge RE-RUNS.  A copy per turn must be one store reused, not one per turn.
+fn test_the_discharge_in_a_loop() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}, Box{n:4}];
+  tot = 0;
+  for k in 0..3 {
+    c = v[1] ?? Box{n:0};
+    v.remove(0);
+    tot += c.n + k * 0;
+  }
+  assert(tot == 9, "loop rebind: got {tot}, want 2+3+4");
+}
+
+// 11 — CONTROL: nothing is disturbed, so the discharge stays an ALIAS and the write lands.
+fn test_an_undisturbed_discharge_still_aliases() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}];
+  c = v[1] ?? Box{n:0};
+  c.n = 99;
+  assert((v[1] ?? Box{n:0}).n == 99, "undisturbed alias: got {(v[1] ?? Box{n:0}).n}, want 99");
+}
+
+// 12 — CONTROL: the last use PRECEDES the disturbance, so the write must reach the container.
+fn test_a_use_before_the_disturbance_still_writes_through() {
+  v: vector<Box> = [Box{n:1}, Box{n:2}, Box{n:3}];
+  c = v[1] ?? Box{n:0};
+  c.n = 77;
+  v.remove(0);
+  assert((v[0] ?? Box{n:0}).n == 77, "use before disturbance: got {(v[0] ?? Box{n:0}).n}, want 77");
+}
+
+// 13 — CONTROL: a DIFFERENT member of the same container is disturbed.  `va` is untouched, so
+// the view of its element keeps aliasing.  Read cell 14 with this one.
+fn test_a_disturbance_of_another_member_leaves_the_view_alone() {
+  t = Pair{va: [Box{n:1}, Box{n:2}], vb: [Box{n:3}, Box{n:4}]};
+  c = t.va[0] ?? Box{n:0};
+  t.vb.remove(0);
+  c.n = 55;
+  assert((t.va[0] ?? Box{n:0}).n == 55, "other member: got {(t.va[0] ?? Box{n:0}).n}, want 55");
+}
+
+// 14 — cell 13's channel, proven live: the WHOLE container is reassigned, so the place matches
+// and the view must materialise.  If this read 55 the place test would be inert.
+fn test_the_whole_container_reassigned_does_materialise() {
+  t = Pair{va: [Box{n:1}, Box{n:2}], vb: [Box{n:3}]};
+  c = t.va[0] ?? Box{n:0};
+  t = Pair{va: [Box{n:9}], vb: []};
+  c.n = 55;
+  assert(c.n == 55, "whole container, binding: got {c.n}, want 55");
+  assert((t.va[0] ?? Box{n:0}).n == 9, "whole container, new value: got {(t.va[0] ?? Box{n:0}).n}, want 9");
+}
+
+// 15 — the DEFAULT arm is taken, so nothing was ever viewed and the default stands.
+fn test_the_default_arm_is_not_a_view() {
+  v: vector<Box> = [Box{n:1}];
+  c = v[5] ?? Box{n:88};
+  v.remove(0);
+  assert(c.n == 88, "default arm: got {c.n}, want 88");
+}
+
+fn main() {
+  test_read_after_a_removal();
+  test_write_after_a_removal_does_not_reach_the_container();
+  test_the_plain_twin_agrees();
+  test_a_grown_container();
+  test_a_reassigned_container();
+  test_the_return_discharge();
+  test_an_element_with_children();
+  test_a_parameter_container();
+  test_a_binding_assigned_twice();
+  test_the_discharge_in_a_loop();
+  test_an_undisturbed_discharge_still_aliases();
+  test_a_use_before_the_disturbance_still_writes_through();
+  test_a_disturbance_of_another_member_leaves_the_view_alone();
+  test_the_whole_container_reassigned_does_materialise();
+  test_the_default_arm_is_not_a_view();
+}

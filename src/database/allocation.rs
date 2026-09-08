@@ -1921,6 +1921,7 @@ impl Stores {
         }
     }
 
+    #[inline]
     pub fn store_mut(&mut self, r: &DbRef) -> &mut Store {
         // @PLN130 F8 — see `store`. A write through a dead reference is the worse half:
         // with slot reuse it lands in whatever now owns the memory.
@@ -1966,6 +1967,10 @@ impl Stores {
             );
             let origin = format!("lock_store(store_nr={}, rec={})", r.store_nr, r.rec);
             self.allocations[r.store_nr as usize].lock_with_origin(origin);
+            // This is the ONLY user route to the lock — `n_set_store_lock`, which both
+            // backends call for `d#lock = true` — so it is where the author's lock is
+            // told apart from the const store and a worker borrow (loft#1405).
+            self.allocations[r.store_nr as usize].user_locked = true;
         }
     }
 
@@ -2547,6 +2552,7 @@ impl Stores {
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
             | Parts::ShortRaw(_, _)
             | Parts::Base => {}
         }
@@ -3114,7 +3120,8 @@ impl Stores {
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::ShortRaw(_, _)
-            | Parts::Int(_, _) => {}
+            | Parts::Int(_, _)
+            | Parts::IntRaw(_, _) => {}
             // A stored 12-byte `DbRef` — the closure half of a `fn(…)` struct field — is
             // deliberately NOT re-pointed: the copy keeps the source's pointer and ALIASES
             // its closure record, which is why a bound fn-ref field read is marked
@@ -4055,6 +4062,7 @@ impl Stores {
             Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_)
             | Parts::DbRef => false,
@@ -4161,6 +4169,7 @@ impl Stores {
             | Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_)
             | Parts::DbRef => false,
@@ -4298,6 +4307,7 @@ impl Stores {
             | Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
+            | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::Enum(_) => true,
             // A stored DbRef names another store, and this rebuild only moves

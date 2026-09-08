@@ -223,6 +223,54 @@ collection handed the argument up while its concrete twin copied — measured on
 independence matrix the sentence above states, 13 generic cells wrong on both backends and every
 concrete one right (D-call-13, QUALITY.md B7t).  The concrete twin is the oracle for the instance.
 
+### A method belongs to a type, and a `?` is not part of that name
+
+```
+  (F-Recv)   a method's RECEIVER type may carry `?`, and the two spellings are TWO
+             DEFINITIONS: the def key carries the `?` (@PLN25), so `m(τ)` and `m(τ?)` may both
+             be declared, in either order.  A call reaches the one spelled for its receiver's
+             own nullability when that one is declared, and the other one otherwise — a `τ?`
+             receiver reaching `m(τ)` is (N-Store)'s case and warns, a `τ` receiver reaching
+             `m(τ?)` is (N-Intro) and is free.  A call on an absent receiver reaches `m(τ?)`
+             with `self == null`, which is the whole point of the spelling.  The two call
+             SPELLINGS, `x.m(…)` and `m(x, …)`, resolve identically.
+```
+
+**In words.** `m(τ)` and `m(τ?)` are one method with two bodies, and which body runs is decided
+by the receiver you have, not by the order you wrote them in. Declaring only one is the ordinary
+case and it answers every receiver: the dense body takes a nullable receiver with a warning, the
+nullable body takes a dense receiver for nothing.
+
+**The last sentence is the one that carries the weight**, because two spellings of one call are
+two different pieces of code in the compiler and they disagreed in BOTH directions (loft#1432).
+`x.m()` resolved through the type's ATTRIBUTE TABLE, which holds one routine per name — so with
+both overloads declared, an absent receiver ran the DENSE body while `m(x)` beside it ran the
+nullable one, and the nullable overload was not merely unreachable but inert. With only the
+nullable overload declared it ran the other way: `x.m()` answered and `m(x)` was refused as an
+unknown function, because the fallback list named the nullable receiver's direction and not the
+dense one's.
+
+So the attribute slot carries a method's NAME — membership, and what every enumeration site
+reads — and never the choice between its overloads. That choice has one home, and both call
+spellings ask it.
+
+The site this rule is about is the one that ENUMERATES: the synthesised variant dispatcher
+(@F20) walks the implementations of an enum's variants, and asked for a bare
+`Type::Reference(v)` it saw none of the `τ?` ones. The dispatch then fell to the
+no-variant-matched tail and answered another variant's bytes on `--interpret` and `0` on
+`--native`, while the DIRECT call on the same variant was right — and the
+"no implementation of `area` for variant `Square`" warning named an implementation written
+five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
+
+*Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
+`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `warn_missing_enum_variants`) and
+`one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
+declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receiver-implements-its-variant.loft`,
+`1427b-…`, and the warning half in `tests/parse_errors.rs`
+(`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
+cannot see.
+
+
 ---
 
 ## Deviations

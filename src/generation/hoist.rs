@@ -41,7 +41,7 @@ pub const ELEMENT_ADDRESS_OPS: [&str; 2] = ["OpGetVector", "OpGetVectorNullable"
 /// reaches state through the frame (`OpParallelJoin`), and the signature cannot tell them
 /// apart. `OpConvIntFromNull` is the one that matters in practice — it initialises the
 /// index of a `for` loop, so a nested loop carries it inside its parent's body.
-const PURE_NULLARY_OPS: [&str; 13] = [
+const PURE_NULLARY_OPS: [&str; 15] = [
     "OpConvIntFromNull",
     "OpConvBoolFromNull",
     "OpConvCharacterFromNull",
@@ -55,6 +55,13 @@ const PURE_NULLARY_OPS: [&str; 13] = [
     "OpConstFalse",
     "OpMathPiFloat",
     "OpMathEFloat",
+    // The libm dispatchers (@PLN157 P4a): pure scalar math whose `const` first
+    // parameter is a FUNCTION SELECTOR (`9` = sqrt), not a slot or type id — the
+    // one const-param shape the signature rule's rationale does not cover.  Left
+    // off this list they read as writers, and a loop calling `sin`/`sqrt`
+    // through `seed_wave`-style helpers never hoisted at all.
+    "OpMathFuncFloat",
+    "OpMathFuncSingle",
 ];
 
 /// Ops that take a collection or a reference and only READ it.
@@ -63,7 +70,12 @@ const PURE_NULLARY_OPS: [&str; 13] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 20] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 23] = [
+    // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
+    // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body)
+    "OpRefIsNull",
+    "OpConvBoolFromRef",
+    "OpDistinctStore",
     // element address + length: the vector reads themselves
     "OpGetVector",
     "OpGetVectorNullable",
@@ -88,28 +100,93 @@ const READ_ONLY_COLLECTION_OPS: [&str; 20] = [
     "OpGetDbRef",
 ];
 
-/// The vector variables whose header `body` may derive once up front.
+/// The scalar in-place setters (@PLN157 P4a): each writes one fixed-width value through
+/// an address it is GIVEN — the `set_*` family in `Store` — and cannot resize, insert,
+/// remove or re-key anything.  No record moves and no collection's length changes, so
+/// every hoisted [`crate::vector::VecHeader`] stays valid across one, aliased or not: an
+/// in-place write moves nothing, so there is nothing an alias could observe stale.
+/// (Hoisted scalar VALUES would be a different question — offset-keyed invalidation —
+/// but this pass hoists headers only.)  Deliberately scalar-only: `OpSetRef`/`OpSetDbRef`
+/// hand records to owners, `OpSetText` re-allocates, `OpSetKeyed` re-keys — excluded,
+/// and the allow-list doctrine holds: an op missing here costs the hoist, never
+/// correctness.
+pub const IN_PLACE_SET_OPS: [&str; 12] = [
+    "OpSetBoolean",
+    "OpSetInt",
+    "OpSetInt4",
+    "OpSetInt4Raw",
+    "OpSetCharacter",
+    "OpSetSingle",
+    "OpSetFloat",
+    "OpSetByte",
+    "OpSetByteNullable",
+    "OpSetShort",
+    "OpSetShortRaw",
+    "OpSetEnum",
+];
+
+/// A hoist key (@PLN157 P4d): a vector reached from a local through zero or more CONST
+/// field offsets — `v` is `(var, [])`, `lay.best` is `(var, [8])`.  Pure by
+/// construction (`OpGetField` is a reader), so the prelude may evaluate the path once
+/// and a fused fallback may re-emit it; the bare-`Var` restriction this lifts only ever
+/// guarded IMPURE operands, which cannot form a path.
+pub type PathKey = (u16, Vec<i64>);
+
+/// The path for a vector operand, or `None` when it is not a `Var` or a
+/// `OpGetField(path, const fld, const tp)` chain over one.
+#[must_use]
+pub fn vector_path(data: &Data, v: &Value) -> Option<PathKey> {
+    match v.unspan() {
+        Value::Var(var) => Some((*var, Vec::new())),
+        Value::Call(d, args)
+            if args.len() == 3
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpGetField" =>
+        {
+            let Value::Int(off) = args[1].unspan() else {
+                return None;
+            };
+            let (root, mut offs) = vector_path(data, &args[0])?;
+            offs.push(i64::from(*off));
+            Some((root, offs))
+        }
+        _ => None,
+    }
+}
+
+/// The vector paths whose header `body` may derive once up front, each with a clone of
+/// the operand expression the prelude evaluates.
 ///
-/// Empty when anything in the loop could write a store, when the body rebinds the
-/// variable, or when nothing indexes a vector at all. Order is the order the reads appear
-/// in, so the generated prelude is stable across runs.
+/// Empty when anything in the loop could write a store — except, when `allow_in_place`
+/// (the @PLN157 P4a tier, off under `LOFT_NO_WRITE_HOIST=1`), the [`IN_PLACE_SET_OPS`],
+/// which cannot invalidate a header — when the body rebinds the path's ROOT variable, or
+/// when nothing indexes a vector at all. Order is the order the accesses appear in, so
+/// the generated prelude is stable across runs.
 pub fn hoistable_vectors(
     body: &Block,
     data: &Data,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
-) -> Vec<u16> {
-    if body
-        .operators
-        .iter()
-        .any(|op| writes_store(op, data, cache, &mut HashSet::new()))
-    {
+    allow_in_place: bool,
+) -> Vec<(PathKey, Value)> {
+    if body.operators.iter().any(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            cache,
+            &mut HashSet::new(),
+            allow_in_place,
+            Some(data.def(def_nr).variables()),
+        )
+    }) {
         return Vec::new();
     }
     // A rebind (`v = other`) leaves the store untouched and still invalidates the header,
-    // because the header describes the vector the variable named on the way in.
+    // because the header describes the vector the variable named on the way in — and for
+    // a field path, the record the ROOT named.  (Repointing the field itself would be an
+    // `OpSetRef`, which is not in [`IN_PLACE_SET_OPS`] and blocks the hoist outright.)
     let mut rebound: HashSet<u16> = HashSet::new();
-    let mut found: Vec<u16> = Vec::new();
+    let mut found: Vec<(PathKey, Value)> = Vec::new();
     let vars = data.def(def_nr).variables();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -118,11 +195,15 @@ pub fn hoistable_vectors(
                     rebound.insert(*v);
                 }
                 Value::Call(d, args) if args.len() == 3 && is_element_address(data, *d) => {
-                    if let Value::Var(v) = args[0].unspan()
-                        && matches!(vars.tp(*v).base(), Type::Vector(_, _))
-                        && !found.contains(v)
-                    {
-                        found.push(*v);
+                    if let Some(path) = vector_path(data, &args[0]) {
+                        // A bare var must TYPE as a vector (an odd non-vector shape
+                        // stays out); a field path is shape-trusted — it is the first
+                        // argument of an element-address op, which takes a vector.
+                        let vector_typed = !path.1.is_empty()
+                            || matches!(vars.tp(path.0).base(), Type::Vector(_, _));
+                        if vector_typed && !found.iter().any(|(p, _)| *p == path) {
+                            found.push((path, args[0].clone()));
+                        }
                     }
                 }
                 _ => {}
@@ -130,7 +211,7 @@ pub fn hoistable_vectors(
             false
         });
     }
-    found.retain(|v| !rebound.contains(v));
+    found.retain(|(p, _)| !rebound.contains(&p.0));
     found
 }
 
@@ -150,9 +231,10 @@ const FUSABLE_GETTERS: [(&str, &str, &str); 3] = [
 /// An element read the emitter can collapse into ONE load: a scalar getter reading field
 /// `fld` out of `vector[index]`, where the vector is a plain variable.
 pub struct FusedRead<'a> {
-    /// The vector operand — always a `Value::Var`, so it re-emits without side effects.
+    /// The vector operand — a `Var` or a pure `OpGetField` chain over one, so it
+    /// re-emits without side effects.
     pub vector: &'a Value,
-    pub var: u16,
+    pub path: PathKey,
     pub size: &'a Value,
     pub index: &'a Value,
     pub fld: &'a Value,
@@ -190,17 +272,77 @@ pub fn fused_element_read<'a>(
     let [vector, size, index] = &elem_args[..] else {
         return None;
     };
-    let Value::Var(var) = vector.unspan() else {
-        return None;
-    };
+    let path = vector_path(data, vector)?;
     Some(FusedRead {
         vector,
-        var: *var,
+        path,
         size,
         index,
         fld,
         rust_type,
         absent,
+    })
+}
+
+/// The typed setters an element write can be fused INTO (@PLN157 P4b), with the Rust
+/// type each stores.  The write twins of [`FUSABLE_GETTERS`], excluded for the same
+/// reasons: a setter that re-bases (`OpSetByte`/`OpSetShort`), masks or translates
+/// keeps the unfused emission.
+const FUSABLE_SETTERS: [(&str, &str); 3] = [
+    ("OpSetInt", "i64"),
+    ("OpSetSingle", "f32"),
+    ("OpSetFloat", "f64"),
+];
+
+/// An element write the emitter can collapse into ONE store: a scalar setter writing
+/// field `fld` of `vector[index]`, where the vector is a plain variable.
+pub struct FusedWrite<'a> {
+    /// The vector operand — a `Var` or a pure `OpGetField` chain over one, so it
+    /// re-emits without side effects.
+    pub vector: &'a Value,
+    pub path: PathKey,
+    pub size: &'a Value,
+    pub index: &'a Value,
+    pub fld: &'a Value,
+    pub val: &'a Value,
+    /// Rust type of the store, e.g. `"f64"`.
+    pub rust_type: &'static str,
+}
+
+/// Recognise `OpSet<scalar>(OpGetVector*(Var(v), size, index), fld, val)`, given the
+/// setter's op NAME — the write twin of [`fused_element_read`], and like it the ONE
+/// definition of the fused shape: the emitter and the pre-eval collector both ask here,
+/// so the pre-eval cannot lift an inner element address the emitter then folds away
+/// (which would resolve the element twice).
+///
+/// The caller still has to confirm the vector HAS a hoisted header; this only reports
+/// shape.
+#[must_use]
+pub fn fused_element_write<'a>(
+    data: &Data,
+    setter: &str,
+    args: &'a [Value],
+) -> Option<FusedWrite<'a>> {
+    let [inner, fld, val] = args else { return None };
+    let (_, rust_type) = FUSABLE_SETTERS.iter().find(|(name, _)| *name == setter)?;
+    let Value::Call(elem_op, elem_args) = inner.unspan() else {
+        return None;
+    };
+    if !is_element_address(data, *elem_op) {
+        return None;
+    }
+    let [vector, size, index] = &elem_args[..] else {
+        return None;
+    };
+    let path = vector_path(data, vector)?;
+    Some(FusedWrite {
+        vector,
+        path,
+        size,
+        index,
+        fld,
+        val,
+        rust_type,
     })
 }
 
@@ -235,7 +377,7 @@ pub fn is_element_address(data: &Data, d_nr: u32) -> bool {
 /// and is still sound to reuse (it only declines a hoist); a `false` cannot have, because
 /// a cycle contributes `true` and any caller of it answers `true` too.
 pub fn may_write_store(node: &Value, data: &Data, cache: &mut HashMap<u32, bool>) -> bool {
-    writes_store(node, data, cache, &mut HashSet::new())
+    writes_store(node, data, cache, &mut HashSet::new(), None)
 }
 
 fn writes_store(
@@ -243,9 +385,58 @@ fn writes_store(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    blocks_header_hoist(node, data, cache, active, false, vars)
+}
+
+/// @PLN157 § V-c — the frees whose operand is a RECORD variable of the enclosing body.
+///
+/// A free releases exactly one store and moves no other, and the store a hoisted header
+/// describes belongs to a loop-invariant vector that is live across the loop — so a
+/// record's release cannot be it.  The operand's TYPE is what carries the argument: a
+/// vector-typed operand (a per-iteration vector local, or a vector work-ref paired by
+/// loft#1201) keeps the writer verdict, and so does a free whose body this cannot see
+/// (`vars == None`).  `OpFreeRefIfDistinct(v, w)` compares `v` against a witness and
+/// releases `v` alone, so only its first operand is the question.
+const RECORD_FREE_OPS: [&str; 2] = ["OpFreeRef", "OpFreeRefIfDistinct"];
+
+fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    let Some(vars) = vars else { return false };
+    RECORD_FREE_OPS.contains(&name)
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(v))
+            if *v < vars.count()
+                && matches!(vars.tp(*v).base(), Type::Reference(_, _) | Type::Enum(_, true, _)))
+}
+
+/// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
+/// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
+/// not blocking (its target and value subtrees still walk, so a growing op INSIDE
+/// either of them blocks on its own).  A user CALL that writes stays blocking even
+/// when its writes happen to be in-place — interprocedural in-place classification
+/// is not worth its soundness surface here.
+fn blocks_header_hoist(
+    node: &Value,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+    allow_in_place: bool,
+    vars: Option<&crate::variables::Function>,
 ) -> bool {
     node.any_node(&mut |n| match n {
-        Value::Call(d, _) => call_writes_store(*d, data, cache, active),
+        Value::Call(d, args) => {
+            let known = (*d as usize) < data.definitions.len();
+            let in_place_setter =
+                known && allow_in_place && IN_PLACE_SET_OPS.contains(&data.def(*d).name());
+            let record_free = known
+                && crate::keys::retbuf_hoist_enabled()
+                && frees_a_record(data.def(*d).name(), args, vars);
+            if in_place_setter || record_free {
+                false
+            } else {
+                call_writes_store(*d, data, cache, active)
+            }
+        }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
         _ => false,
     })
@@ -267,7 +458,12 @@ fn call_writes_store(
     let writes = if matches!(def.code(), Value::Null) {
         !native_op_is_store_free(def)
     } else if active.insert(d_nr) {
-        let inner = writes_store(def.code(), data, cache, active);
+        let inner = writes_store(def.code(), data, cache, active, Some(def.variables()));
+        // @PLN157 § V-c — a body whose only writes land in its own scalar return
+        // buffer moves no header a caller could have hoisted.
+        let inner = inner
+            && !(crate::keys::retbuf_hoist_enabled()
+                && retbuf_only_writer(d_nr, data, cache, active));
         active.remove(&d_nr);
         inner
     } else {
@@ -277,6 +473,66 @@ fn call_writes_store(
     // have come from the branch above, since a cycle contributes `true` to every caller.
     cache.insert(d_nr, writes);
     writes
+}
+
+/// @PLN157 § V-c — does this def write nothing but fixed-width scalars into its own
+/// hidden return buffer?
+///
+/// Such a call cannot invalidate a header a caller hoisted: a scalar set through an
+/// address moves nothing and changes no length (the `IN_PLACE_SET_OPS` argument, one call
+/// deep); `OpDatabase` on the buffer allocates from a null slot or clears the buffer's
+/// OWN store, and a store is its own allocation; and the buffer's store hosts no hoisted
+/// header, because the record is ALL-SCALAR — no collection, text or reference field —
+/// and a loop never names its buffer variable.  Every miss keeps the writer verdict: a
+/// record with a vector field (it grows), a write to any other place (a parameter, a
+/// local), a native op that is neither store-free nor one of those setters, a user call
+/// that writes, and a `CallRef` / `Parallel` / `Yield` (what runs is not this body).
+fn retbuf_only_writer(
+    d_nr: u32,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let def = data.def(d_nr);
+    let Some(attr) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    let Some(record) = def.attributes()[attr].typedef.heap_def_nr() else {
+        return false;
+    };
+    if !data
+        .def(record)
+        .attributes()
+        .iter()
+        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
+    {
+        return false;
+    }
+    let buf = def.variables().var(&def.attributes()[attr].name);
+    if buf == u16::MAX {
+        return false;
+    }
+    !def.code().any_node(&mut |n| match n {
+        Value::Call(op, args) => {
+            if (*op as usize) >= data.definitions.len() {
+                return true;
+            }
+            let callee = data.def(*op);
+            if matches!(callee.code(), Value::Null) {
+                if native_op_is_store_free(callee) {
+                    return false;
+                }
+                let name = callee.name();
+                let into_buffer =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
+                !(into_buffer && (name == "OpDatabase" || IN_PLACE_SET_OPS.contains(&name)))
+            } else {
+                call_writes_store(*op, data, cache, active)
+            }
+        }
+        Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
+        _ => false,
+    })
 }
 
 /// Can this native op be ruled out as a writer?
