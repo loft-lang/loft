@@ -1344,6 +1344,90 @@ on both backends under `LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_
 that consumes it, both backends — and is ranked below the allocation items whose ceilings
 are of the same size at S each.  The cells stay as its guard.
 
+## V-k — the append path's bookkeeping (2026-09-09)
+
+**Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append
+machinery was **40 % of the row** — `vector_append` 12.7 %, `record_new` 5.7 %,
+`nullable_field_parent` 3.6 %, `set_default_value_nullable` 3.1 %, `insert_record` 2.9 %,
+`record_finish` 2.7 %, `vector_finish` 2.3 %, `OpNewRecord` 2.3 %, `Store::resize` 2.0 %,
+`sub_record_type` 1.8 %, and a `Parts::clone` at 1.5 %.  `lock_layer` appends scalars to
+the layer's vector FIELDS (`OpNewRecord(<field ref>, vector<float>, u16::MAX)`), so every
+one of those was overhead around one inline slot.
+
+**Four cuts, all runtime, both backends (the IR is unchanged):**
+
+1. `record_new` — a top-level append (`field == u16::MAX`) to a `Parts::Vector` returns
+   `vector_append` at once, before the three lookups (`nullable_field_parent`,
+   `sub_record_type`, `field_ref`, which answer the identity for that shape) and the
+   general dispatch.  The default fill stays on the caller's side of it (`OpNewRecord`).
+2. `record_finish` — the twin: a plain vector's finish is the length bump; no sibling
+   link, no key placement, no `shares_records` field walk.
+3. `insert_record` — matched on `self.types[tp].parts.clone()`, a clone of the WHOLE
+   `Parts` (a `Struct`'s field list included) per insert, so the arms could borrow `self`
+   mutably.  `InsertKind::of(&parts)` copies the two words the arms read.  The same clone
+   sits on the keyed lookup paths (`search.rs`, three sites) and the serialisers — the
+   drawing pass has no keyed row, so they are left for a row that shows them.
+4. `vector_append` — called `Store::resize` on EVERY append, which re-read the header,
+   bumped the store generation and answered the same record whenever the element fit;
+   the call is now the growth step only (the ~2× ladder kept).
+
+**Measured** (shipped tier, hashes exact on both backends, the twelve V-j cells clean under
+warn/leak on both):
+
+| row | before | after |
+|---|---:|---:|
+| `fronds` standalone | 794–801k | **707–734k** (−10 %) |
+| `smooth` standalone | 6.5–6.6k | **5.5–5.6k** (−16 %) |
+| `lock` gate row | 4.4× | **3.4×** |
+
+Consumer lane (best of 3, every hash agreeing): `lock` 6.61× → **5.22×** (10.25M → 8.02M),
+`lock_curved` 9.93× → **6.95×** (13.19M → 9.16M), `fronds` 15.5× → **13.8×**, `hash` 2.6× →
+2.2×, `smooth` 6.82k → 6.12k ns (16.1× against a reference that moved with it), `wide_line`
+6.6× → 6.3×, the fills 3.9× / 4.0×; the unjudged rows `render_lock` 46.6M → 37.8M,
+`render_marks` 20.7M → 17.0M, `resize` 306M → 254M.  `composite` alone did not move
+(7.4×): its appends are already in place and its time is elsewhere.
+
+**What it corrects in the model.**  § The floor read `smooth`'s remaining half as its
+interpolation arithmetic; a third of that half was this bookkeeping, which no emitter
+change could reach and no profile without callers could name.
+
+**What is left on the append, measured after the cuts** (`lock_curved`, `--only`, callers):
+`vector_append` 16.4 %, `vector_finish` 4.3 %, `record_new` 4.2 %, `set_default_value_nullable`
+3.5 %, `OpNewRecord` 3.4 %, `record_finish` 2.6 %, `store_mut` 2.6 % — **~35 % of the row
+in FIVE runtime calls per scalar element**, each resolving the store and re-reading the
+headers the previous one read (`vector_append` reads the owner header and the vector
+header for the two loft#810 asserts and the capacity, `vector_finish` reads the handle and
+the length again to bump it), and a default fill the `OpSet*` on the next op overwrites.
+The IR emits `OpPreAllocVector · OpNewRecord · OpSetX · OpFinishRecord` for `v += [x]`;
+one fused `OpAppend<Scalar>(v, x)` — a typed op per scalar kind, as the setters are —
+would be one resolution, one capacity test, one write, one bump, on both backends (the
+interpreter's dispatch count drops with it).  That is the M-sized unit this path has
+left; the S step inside it — skipping the default fill for a scalar element — needs the
+audit that every scalar append writes its element before any read.
+
+**The other row, and a different limiter.**  `composite` (7.5×, unmoved by § V-k) spends
+36 % in `n_composite_layer` itself and the rest in the unhoisted path: every `lay.lw` /
+`lay.x0` field read resolves the store per pixel, `lay.px[…]` goes through
+`vec_get_or_raise_runtime` (`length_vector` + `get_vector` 17 %), `len()` per iteration
+(`t_6vector_len` 5.6 %), and the two pixel methods 20 %.  The loop is NOT hoisted because
+it calls `cv.set_pixel(…)`, and `blocks_header_hoist` keeps a writing user call blocking by
+decision (*"interprocedural in-place classification is not worth its soundness surface
+here"*).  `set_pixel`'s whole body is three scalar field reads, one element address and
+one `set_int` through it — an IN-PLACE-ONLY WRITER, the exact shape `IN_PLACE_SET_OPS`
+admits one call deep.  § V-c already carries the interprocedural precedent
+(`retbuf_only_writer`: a callee whose only writes land in its own scalar retbuf), computed
+once per def and memoised in the same cache; an `in_place_only_writer` beside it — a body
+whose store writes are all `IN_PLACE_SET_OPS` on element or field addresses, no growth,
+no free, no `OpDatabase`, every callee itself store-free or in-place-only — is the S–M
+unit that unblocks `composite`'s loop (and any raster loop calling a pixel setter), with
+`LOFT_HOIST_VERIFY=1` as its falsifier and a switch of its own.
+
+**Also seen** (the unjudged `resize` row, the all-rows profile): `get_elem_hoisted::<i64,
+false>` at 21 % as its OWN symbol — `#[inline]`, yet compiled out of line in
+`t_6Canvas_resample`'s loop, with `offset_in_bounds` a third of it.  A V-h-class item
+(`scripts/native_call_census.py` on the emitted bench names it) worth one A/B with
+`#[inline(always)]` on that reader alone.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

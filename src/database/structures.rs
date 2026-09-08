@@ -46,6 +46,38 @@ pub(super) struct WalkErr {
     pub path: Vec<String>,
 }
 
+/// The part of a collection's `Parts` that `insert_record` dispatches on, copied out so the
+/// arms can borrow `self` mutably without cloning a `Struct`'s field list per insert
+/// (@PLN157 § V-k).
+#[derive(Clone, Copy)]
+enum InsertKind {
+    Vector,
+    Sorted(u16),
+    Array,
+    Hash(u16),
+    Index(u16),
+    Ordered,
+    Trie,
+    Radix,
+    Other,
+}
+
+impl InsertKind {
+    fn of(parts: &Parts) -> Self {
+        match parts {
+            Parts::Vector(_) => Self::Vector,
+            Parts::Sorted(c, _) => Self::Sorted(*c),
+            Parts::Array(_) => Self::Array,
+            Parts::Hash(c, _) => Self::Hash(*c),
+            Parts::Index(c, _, _) => Self::Index(*c),
+            Parts::Ordered(_, _) => Self::Ordered,
+            Parts::Trie(_, _) => Self::Trie,
+            Parts::Radix(_, _) => Self::Radix,
+            _ => Self::Other,
+        }
+    }
+}
+
 impl Stores {
     /**
     # Panics
@@ -106,6 +138,16 @@ impl Stores {
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
+        // @PLN157 § V-k — the commonest shape, `v += [x]` on a plain vector: `field` is
+        // `u16::MAX`, so the three lookups below answer the identity, and the element is
+        // an inline slot `vector_append` claims.  Taking it here, before the general
+        // dispatch, is the difference the `lock` row measured (the append machinery was
+        // 40 % of it); `set_default_value` still runs on the caller's side of this.
+        if field == u16::MAX
+            && let Parts::Vector(c) = self.types[parent_tp as usize].parts
+        {
+            return vector::vector_append(data, u32::from(self.size(c)), &mut self.allocations);
+        }
         // @PLN25 single-payload: when creating a sub-record for a FIELD inside a
         // `__nullable<S>` element (a nested collection/struct), the field lives in the inline
         // `payload` (dense S), not at the enum's top level (field 0 there is the discriminant,
@@ -198,6 +240,12 @@ impl Stores {
     When the implementation is not yet written
     */
     pub fn record_finish(&mut self, data: &DbRef, rec: &DbRef, parent_tp: u16, field: u16) {
+        // @PLN157 § V-k — the twin of `record_new`'s short path: a plain vector's finish is
+        // the length bump and nothing else (no siblings to link, no key to place).
+        if field == u16::MAX && matches!(self.types[parent_tp as usize].parts, Parts::Vector(_)) {
+            vector::vector_finish(data, &mut self.allocations);
+            return;
+        }
         // @PLN25 single-payload: mirror `record_new`'s nullable-field redirect so the
         // create + finalize halves agree on the type/offset (a FIELD inside a `__nullable<S>`
         // element resolves on the payload's dense `S`, not the enum top level).
@@ -507,38 +555,16 @@ impl Stores {
     }
 
     pub(super) fn insert_record(&mut self, data: &DbRef, rec: &DbRef, tp: u16, secondary: bool) {
-        // WHICH collection kind, plus the one `Copy` payload the arms below use.  Read under a
-        // borrow that ends here, so the `&mut self` calls can follow — a `Parts` CLONE on this
-        // path allocates and memcpys the type's field/variant `Vec`s on EVERY inserted element,
-        // and the commonest arm (`Vector`) never reads what it cloned.  Measured on the drawing
-        // library's bench (loft#1426): `insert_record` was 3.5 % of the run with the clone in it.
-        enum Kind {
-            Vector,
-            Sorted(u16),
-            Array,
-            Hash(u16),
-            Index(u16),
-            Ordered,
-            Trie,
-            Radix,
-            Other,
-        }
-        let kind = match &self.types[tp as usize].parts {
-            Parts::Vector(_) => Kind::Vector,
-            Parts::Sorted(c, _) => Kind::Sorted(*c),
-            Parts::Array(_) => Kind::Array,
-            Parts::Hash(c, _) => Kind::Hash(*c),
-            Parts::Index(c, _, _) => Kind::Index(*c),
-            Parts::Ordered(_, _) => Kind::Ordered,
-            Parts::Trie(_, _) => Kind::Trie,
-            Parts::Radix(_, _) => Kind::Radix,
-            _ => Kind::Other,
-        };
+        // The kind and its content id are two words; cloning the whole `Parts` (a
+        // `Struct`'s field list included) per insert was 1.5 % of the `lock` row
+        // (@PLN157 § V-k).  The arms borrow `self` mutably, so the match is on a copy of
+        // exactly what they read.
+        let kind = InsertKind::of(&self.types[tp as usize].parts);
         match kind {
-            Kind::Vector => {
+            InsertKind::Vector => {
                 vector::vector_finish(data, &mut self.allocations);
             }
-            Kind::Sorted(c) => {
+            InsertKind::Sorted(c) => {
                 let size = u32::from(self.size(c));
                 vector::sorted_finish(
                     data,
@@ -547,19 +573,19 @@ impl Stores {
                     &mut self.allocations,
                 );
             }
-            Kind::Array => {
+            InsertKind::Array => {
                 let reference = vector::vector_append(data, 4, &mut self.allocations);
                 self.store_mut(data)
                     .set_u32_raw(reference.rec, reference.pos, rec.rec);
                 vector::vector_finish(data, &mut self.allocations);
             }
-            Kind::Hash(c) => {
+            InsertKind::Hash(c) => {
                 // @P306 — replace any existing record with this key (dedup).
                 self.dedup_keyed(data, rec, tp, c, secondary);
                 let keys = self.types[tp as usize].keys.clone();
                 hash::add(data, rec, &mut self.allocations, &keys);
             }
-            Kind::Index(c) => {
+            InsertKind::Index(c) => {
                 // @P306 — replace any existing record with this key (dedup);
                 // tree::add otherwise rejects the duplicate and keeps the old.
                 self.dedup_keyed(data, rec, tp, c, secondary);
@@ -567,7 +593,7 @@ impl Stores {
                 let keys = self.types[tp as usize].keys.clone();
                 tree::add(data, rec, left, &mut self.allocations, &keys);
             }
-            Kind::Ordered => {
+            InsertKind::Ordered => {
                 vector::ordered_finish(
                     data,
                     rec,
@@ -575,20 +601,20 @@ impl Stores {
                     &mut self.allocations,
                 );
             }
-            Kind::Trie => {
+            InsertKind::Trie => {
                 // Same no-dedup contract as the spatial side: two records may share a
                 // key, differing in the id suffix, and land adjacent (`r8b`).
                 let keys = self.types[tp as usize].keys.clone();
                 crate::trie_db::add(data, rec, &mut self.allocations, &keys);
             }
-            Kind::Radix => {
+            InsertKind::Radix => {
                 // @PLN48 S2 — no dedup: two records may share a cell (they differ in
                 // the id suffix and land adjacent), which is what a spatial index
                 // needs.  A future `radix<T[k]>` map surface can layer dedup on top.
                 let keys = self.types[tp as usize].keys.clone();
                 crate::radix_db::add(data, rec, &mut self.allocations, &keys);
             }
-            Kind::Other => (),
+            InsertKind::Other => (),
         }
     }
 

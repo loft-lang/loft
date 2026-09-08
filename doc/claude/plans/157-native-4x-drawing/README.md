@@ -14,11 +14,11 @@ SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
-`hash` 10.9× → **2.6×** consumer / 2.4× gate row (under the bar); `hair` 4.3×
-→ **2.1×** (under the bar); `lock` 30× → **6.7×** (4.4× gate row); `smooth`
-262× → **16×**; `fronds` 49× → **15.5×**; `composite` 26× → **7.4×**; the fills
-17× → **4.0×** (at the bar); `wide_line` 17× → 6.5×; `lock_curved` 10.1×
-(2026-09-08 evening, after § V-i).
+`hash` 10.9× → **2.2×** consumer / 1.3–2.4× gate row (under the bar); `hair`
+4.3× → **2.1×** (under the bar); `lock` 30× → **5.2×** (3.4× gate row);
+`smooth` 262× → **16×**; `fronds` 49× → **13.8×**; `composite` 26× → **7.5×**;
+the fills 17× → **3.9–4.0×** (at the bar); `wide_line` 17× → 6.3×;
+`lock_curved` 11.9× → **7.0×** (2026-09-09, after § V-k).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -94,9 +94,25 @@ took the walk out of the deep copy (`fronds` −7 %); what the class still costs
 is allocation, and DESIGN.md § V-i writes the move design's cells.  **Item 4's ceiling is now measured** (DESIGN.md
 § V-j: the move −8 %, the shared arena +7 % through a `coalesce_free` cliff)
 and the fresh-destination clear it exposed shipped as § V-j; the move itself
-is ranked below 4b and 5.  So the next unit is **4b** (the builders built in
-the element, the sides literal hoisted, the sub-spec reused — S each, −9 %
-ceiling) or **5** (frame-local record temporaries), then the move.
+is ranked below 4b and 5.  **§ V-k came from profiling `lock` WITH CALLERS on
+the § V-j runtime** rather than from the queue: the append path's bookkeeping
+was 40 % of that row and reached every row that appends (`lock` 6.6× → 5.2×,
+`lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×) — so the next step is the
+same instrument on the rows still over the bar, starting with `composite`
+(7.5×, the one row § V-k did not move) and `lock`'s remaining raster
+arithmetic (`n_lock_layer` 30 % self, `n_raster_segment` inlined into it),
+before the queue's 4b / 5 / the move.  Both are now measured (DESIGN.md
+§ V-k, its last three paragraphs): **the fused scalar append** (`v += [x]` is
+five runtime calls per element, ~35 % of `lock_curved` — one typed
+`OpAppend<Scalar>` op on both backends, M) and **the in-place-only writer**
+(`composite`'s loop loses its hoist to `cv.set_pixel(…)`, whose body is three
+field reads and one `set_int` through an element address — the sibling of
+§ V-c's `retbuf_only_writer`, S–M, `LOFT_HOIST_VERIFY=1` the falsifier).  The
+scratch clone's `bench/bench.loft` carries a `--only <routine>` switch (scratch
+only, never the consumer's tree): `scripts/profile.sh --engine --calls --
+--native-release <clone>/drawing/bench/bench.loft --n 4000 --only composite`
+is how each row was ranked; an all-rows run is dominated by the unjudged
+`resize`.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -175,6 +191,7 @@ unless said otherwise.
 | **V-h** — the out-of-line calls: a runtime helper the emitted code calls per op crosses the rlib boundary as a real call unless it is `#[inline]`, so `note_format_fault` (after every float division), the two per-frame guards and `length_vector` split into an inline test and a `#[cold]` body; `scripts/native_call_census.py` ranks what still crosses | [DESIGN.md § The out-of-line calls](DESIGN.md) | the census names a fast-path symbol; `hash` above its plain-arithmetic floor | **Shipped 2026-09-08** — `hash` row 330–407k → 219–287k ns/op against a 225–272k floor with every check kept; consumer `hash` 6.5× → 2.6×, `composite` 8.9× → 7.5×, `wide_line` 9.0× → 6.5×, fills at the bar; 14/14 hashes agree |
 | **V-i** — the element walk of a no-heap vector: the ownership keystone enumerated every inline element of a `vector<float>` / `vector<Pt>` for the copy and the free to visit and find nothing; the walk now yields no children when the element type owns no heap (§ V-f's fact, placed once so every consumer inherits it) | [DESIGN.md § V-i](DESIGN.md) | `fronds` not moved; a leak or a hash change on either backend | **Shipped 2026-09-08** — `fronds` 902–907k → 838–840k ns/op (−7 %) standalone, 18.1× → **15.5×** in the consumer lane (933k → 844k), hash unchanged both backends, leak checks clean, store + runtime suites green locally, codegen on the GitHub gate |
 | **V-j** — the copy into a fresh element: `v += [f]` cleared a destination `OpNewRecord` had just defaulted, a walk allocating child lists to find nothing; the parser marks the copy's destination fresh (`COPY_FRESH_DEST`) and both runtimes skip the clear.  The move-append's ceiling was measured on the way (−8 %, P1) and the shared-arena variant found a runtime cliff (`coalesce_free` 29.5 %, P2) | [DESIGN.md § V-j](DESIGN.md) | a cell leaks or answers wrong on either backend | **Shipped 2026-09-09** — `fronds` 838–845k → 794–801k ns/op (−5.5 %), interpreter −7 %, hashes exact; 12 cells clean under warn/leak/poison |
+| **V-k** — the append path's bookkeeping: a top-level append to a plain vector took three type lookups, the general dispatch, a `Parts::clone` per insert and a `resize` call per element (40 % of `lock`); short paths in `record_new` / `record_finish`, a copied insert kind, and `resize` on the growth step only | [DESIGN.md § V-k](DESIGN.md) | a cell leaks or answers wrong on either backend; the gate rows' hashes | **Shipped 2026-09-09** — `lock` gate row 4.4× → 3.4×; consumer `lock` 6.6× → 5.2×, `lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×, `smooth` −10 %; 14/14 hashes agree |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

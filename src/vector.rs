@@ -281,15 +281,16 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         );
         let cur_words = cur_words_signed as u32;
         let cur_cap = cur_words.saturating_mul(8).saturating_sub(8) / size;
-        let target = if needed <= cur_cap {
-            needed
-        } else {
-            needed.saturating_mul(2)
-        };
-        let new_vec = store.resize(vec_rec, checked_vec_cap(target, size));
-        if new_vec != vec_rec {
-            store.set_u32_raw(db.rec, db.pos, new_vec);
-            vec_rec = new_vec;
+        // An element that fits needs no `resize`: that call re-read the header, bumped
+        // the store generation and answered the same record on every append that was
+        // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step
+        // keeps the ~2x ladder.
+        if needed > cur_cap {
+            let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), size));
+            if new_vec != vec_rec {
+                store.set_u32_raw(db.rec, db.pos, new_vec);
+                vec_rec = new_vec;
+            }
         }
         length
     };
