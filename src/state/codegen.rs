@@ -4489,7 +4489,9 @@ impl State {
             // through to the panic below, which is why @FR-B-Ref-Intro's `&τ` for every τ
             // had to be declined (D-bind-17).
             let tp = tp.base();
-            let txt = matches!(tp, Type::Text(_));
+            // A fn-ref reads like `text` in the one respect this cares about: its op takes no
+            // FIELD operand, because the blob sits at the link's own position.
+            let txt = matches!(tp, Type::Text(_) | Type::Function(_, _, _));
             match tp {
                 Type::Integer(_) => stack.add_op("OpGetInt", self),
                 Type::Character => stack.add_op("OpGetCharacter", self),
@@ -4504,6 +4506,17 @@ impl State {
                 Type::Boolean => stack.add_op("OpGetBoolean", self),
                 Type::Enum(_, false, _) => stack.add_op("OpGetByte", self),
                 Type::Text(_) => stack.add_op("OpGetStackText", self),
+                // `@FR-B-Ref-Intro` — the READ twin of the `&fn(…)` write.  A fn-ref is 20
+                // bytes on the stack, so neither `OpGetStackRef` (12) nor `OpGetStackText`
+                // (16) can carry it; reading it as either put the closure half of the slot
+                // somewhere it did not belong.  Reaching this list at all needs the link to
+                // EXIST, which is why this site could only be found once loft#1454 installed
+                // it — the fix moved the failure one step later rather than causing it
+                // (loft#1455).
+                Type::Function(_, _, _) => {
+                    stack.add_op("OpGetStackFnRef", self);
+                    stack.position += stack.fnref_signature_gap();
+                }
                 Type::Vector(_, _)
                 | Type::Reference(_, _)
                 | Type::Enum(_, true, _)
