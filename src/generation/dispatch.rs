@@ -422,6 +422,13 @@ impl Output<'_> {
                     | Type::Character
                     | Type::Tuple(_)
                     | Type::Text(_)
+                    // loft#1454 — a fn-ref local link.  A fn-ref lives in the frame as a
+                    // 20-byte value exactly as a tuple does, so it takes the same `*mut T`
+                    // shape and the same `addr_of_mut!` bind.  Left out, it reproduced the
+                    // `Optional` symptom the paragraph above records verbatim: no arm
+                    // matched, the bind emitted no right-hand side (`let mut var_pd: … =
+                    // as …;`) and rustc reported that instead of the missing case.
+                    | Type::Function(_, _, _)
             )
         {
             let name = sanitize(variables.name(var));
@@ -500,6 +507,11 @@ impl Output<'_> {
                 // A text RHS yields a `&str` or a `String`; the slot is a `String`.  The
                 // same coercion the `&text` PARAMETER write-back carries.
                 let text_link = matches!(inner.base(), Type::Text(_));
+                // The fn-ref half of the same family: the slot is the `(u32, DbRef)` PAIR,
+                // while a bare fn name or a non-capturing lambda carries only the d_nr.
+                // Asked through `fn_ref_context` like the parameter write-back, so an
+                // if-VALUED source builds the pair inside each arm (loft#1454).
+                let fn_link = matches!(inner.base(), Type::Function(_, _, _));
                 write!(w, "unsafe {{ *var_{name} = ")?;
                 if bool_link {
                     write!(w, "u8::from(")?;
@@ -507,7 +519,12 @@ impl Output<'_> {
                 if text_link {
                     write!(w, "(")?;
                 }
+                let prev_fn_ref_ctx = self.fn_ref_context;
+                if fn_link {
+                    self.fn_ref_context = true;
+                }
                 self.output_code_inner(w, to)?;
+                self.fn_ref_context = prev_fn_ref_ctx;
                 if bool_link {
                     write!(w, ")")?;
                 }

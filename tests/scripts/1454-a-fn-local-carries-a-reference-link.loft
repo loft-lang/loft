@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1454 — a `&fn(…)` LOCAL bind.  The sibling of loft#1443, which fixed the same ICE for a
+// `&fn(…)` PARAMETER; this is the spelling that was deliberately left out of that fix because
+// its unsound step is one site upstream and admitting it there fixed only one backend.
+//
+// `@FR-B-Ref-Intro` gives `&τ` for every τ, and `@FR-B-Ref-Uniform` adds the half this defect
+// sat on: a `&τ` variable is used exactly like a τ variable, and how the link was INTRODUCED
+// is not the question.  The `&` local-bind lowering asked it anyway — it admitted its source
+// as `Reference | Tuple | Text` plus the scalars, and a `fn(…)` source matched none, so the
+// bind never lowered to `OpCreateStack(src)` and the link was simply never installed:
+//
+//     &S   bind →  pd:&ref(S)["d"] = OpCreateStack(d);   // link installed
+//     &fn  bind →  pd:&function(…)  = g;                  // no link, a bare Set
+//
+// With no link, the bind and a write THROUGH the link are the same shape, which is why
+// loft#1443 could not close this spelling: its write-back case had to be gated on
+// `is_argument` so a local kept a clean ICE rather than writing against a link that does not
+// exist.  Installing the link is what makes the two distinguishable, and the write-back's
+// exclusion is now the value that INSTALLS the link rather than the kind of variable.
+//
+// The same omission cost three arms, each asking one notion in a different place — the bind's
+// admitted sources, the native local-link's own type list (whose comment records the identical
+// symptom for `Optional`, loft#1372: "no arm matched, the bind emitted no right-hand side"),
+// and the native write-through's value coercion, where a fn-ref slot is the `(u32, DbRef)`
+// PAIR and a bare fn name carries only the d_nr.
+//
+// Axes this file MOVES:  what the closure captures (a struct · nothing · a scalar), whether the
+//                        source is a bare fn NAME or a lambda, the number of writes through one
+//                        link, and whether the source is an if-VALUED expression.
+// Axes it HOLDS FIXED:   the link is READ only by reading its SOURCE.  CALLING through the link
+//                        (`pd()`) is refused — "Unknown function pd" — on both backends, before
+//                        this fix and after it, unchanged: an indirect call whose callee sits
+//                        behind a link is a separate path that was never built.  It is a clean
+//                        REFUSAL rather than a crash or a wrong answer, and by
+//                        `@FR-B-Ref-Uniform` it ought to work, so it is a deviation of its own
+//                        and not this one.  NOT asserted here: it is a compile refusal, and a
+//                        file cannot both be refused and run its other cells — it is recorded
+//                        on loft#1454 with its measurement instead.
+//
+// @falsified-at: 126114af2 — interpret exit 1 -> 0, native exit 101 -> 0.  On the control every
+//   write cell is the ICE `Unknown reference variable type`, so the file cannot reach an
+//   assertion there.  Each value is hand-computed; the two backends agreeing is not the test.
+
+struct S1454 { a: integer }
+
+fn nine1454() -> integer { 9 }
+fn one1454() -> integer { 1 }
+fn two1454() -> integer { 2 }
+
+// ---------------------------------------------------- a write through a local `&fn(…)` link
+
+fn test_a_capturing_closure_reaches_the_linked_local() {
+  d: S1454 = S1454 { a: 7 };
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pd = fn() -> integer { d.a };
+  assert(g() == 7, "the source local answers the closure written through its link");
+}
+
+// A NON-capturing lambda carries only the d_nr where a capturing one already carries the pair
+// — the axis that separated the two backends in loft#1443 and does so here too.
+fn test_a_non_capturing_closure_reaches_the_linked_local() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pd = fn() -> integer { 42 };
+  assert(g() == 42, "a closure with an empty environment is written whole");
+}
+
+fn test_a_bare_fn_name_reaches_the_linked_local() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pd = nine1454;
+  assert(g() == 9, "a fn-ref written through a link is still reachable");
+}
+
+fn test_a_scalar_capture_reaches_the_linked_local() {
+  n: integer = 3;
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pd = fn() -> integer { n + 1 };
+  assert(g() == 4, "a scalar capture is written like any other");
+}
+
+fn test_the_last_write_through_a_local_link_wins() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pd = fn() -> integer { 1 };
+  pd = fn() -> integer { 2 };
+  assert(g() == 2, "a link written twice leaves the second closure in the source");
+}
+
+// The pair has to be built inside EACH arm: a wrap around the whole `if` leaves both bare.
+fn test_an_if_valued_source_through_a_local_link() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  pd: &fn() -> integer = &g;
+  pick = false;
+  pd = if pick { one1454 } else { two1454 };
+  assert(g() == 2, "the chosen arm's fn-ref reaches the source");
+}
+
+// ------------------------------------------------------------------- the controls
+
+// `@FR-B-Ref-Intro` is about the LINK, so the same write with no link is untouched by all of
+// this — the cell that says the fix did not reach past its own shape.
+fn test_a_plain_fn_local_assignment_is_unchanged() {
+  d: integer = 7;
+  g: fn() -> integer = fn() -> integer { 0 };
+  g = fn() -> integer { d };
+  assert(g() == 7, "a fn local without a link keeps taking its own path");
+}
+
+// The PARAMETER spelling loft#1443 fixed, beside its local twin: both write through a link and
+// they must not drift, since the write-back's exclusion now turns on the VALUE rather than on
+// whether the variable is an argument.
+fn give1454(out: &fn() -> integer) { out = fn() -> integer { 5 }; }
+
+fn test_the_parameter_spelling_still_works() {
+  g: fn() -> integer = fn() -> integer { 0 };
+  give1454(g);
+  assert(g() == 5, "a `&fn(…)` parameter is unaffected by the local bind's lowering");
+}
