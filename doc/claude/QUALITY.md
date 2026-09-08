@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 427 | 403 | **24** |
+| 428 | 404 | **24** |
 
 
 
@@ -2559,6 +2559,20 @@ neither branch's numbers survived it, as at every join so far.**  This checkout 
 The KEYSTONE column moved `5 → 6` from the sibling's side (@PLN157 adds a walker that descends
 via the `Type` keystone rather than naming variants), and the opaque column is the one that did
 NOT move — three functions joined the classifier and every one of them peels.
+
+**2026-09-08, loft#1450's `(N-Domain)` half: unspan row `425 · 401 · 24` → `428 · 404 · 24`.**
+Three functions joined the classifier and all three SEE THROUGH — `collect_guard_pairs_negated`,
+`ge_guard_pair` and `len_arg_vec_key` in `parser/operators.rs`, the fall-through reading of a
+bounds guard.  The `neither` column did not move, which is the direction that matters: each one
+was written with `unspan` from its first line, because it walks a CONDITION and a condition
+arrives wrapped in a `Span` wherever the source had a position to report.
+
+⚠ Worth the line, because it is the audit's own subject arriving in new code: the first version
+of `ge_guard_pair` matched `GeInt(idx, len(v))` and found NOTHING.  `idx >= v.len()` is
+normalised by the parser to `LeInt(len(v), idx)` — swapped operands and the other comparison —
+so a predicate written from the SOURCE spelling rather than the emitted IR was dead on arrival.
+That is `spellings` (B6g) one level down: not two spellings of a notion, but the source's
+spelling and the IR's, and only the second is what a walker sees.
 
 **2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
 function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which

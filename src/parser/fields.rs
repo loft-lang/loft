@@ -1511,8 +1511,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // NOT thread the `i < len(v)` guard through arithmetic — that proof is specific to
             // `v[i]` and does not survive `v[i*2]` — so `index_arith_trusted` reads only the two
             // by-contract leaves, never `index_bounded`.
-            _ => self.index_arith_trusted(index),
+            _ => self.index_arith_trusted(
+                index,
+                crate::parser::operators::vec_key(vec, &self.data).as_ref(),
+            ),
         }
+    }
+
+    /// Is `op` a `len` on a collection — the method spelling (`t_6vector_len`) or the free one?
+    ///
+    /// Named rather than matched inline because the answer decides a TRUST, and the method
+    /// spelling carries the receiver type's name inside it (`t_<LEN><Type>_len`), so a literal
+    /// list would have to grow with every collection kind.
+    fn is_len_call(&self, op: u32) -> bool {
+        let n = self.data.def(op).name.as_str();
+        n == "n_len" || (n.starts_with("t_") && n.ends_with("_len"))
     }
 
     /// @PLN102 D1 — is `index` an integer-arithmetic expression built purely from trusted leaves
@@ -1521,14 +1534,37 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// A leaf is a constant (`const_int`) or an active loop var; a node is one of the integer
     /// arithmetic ops. Any other var (a plain local, a guard-bounded var) or non-arithmetic call
     /// (`len(w)`, `f(i)`) breaks the chain → `false`, keeping the read `τ?`.
-    fn index_arith_trusted(&self, index: &Value) -> bool {
+    fn index_arith_trusted(
+        &self,
+        index: &Value,
+        vec: Option<&crate::parser::operators::VecKey>,
+    ) -> bool {
         if self.const_int(index).is_some() {
             return true;
         }
         match index.unspan() {
             Value::Var(v) => self.vars.is_active_loop_var(*v),
             Value::Call(op, args) if self.is_index_arith_op(*op) => {
-                args.iter().all(|a| self.index_arith_trusted(a))
+                args.iter().all(|a| self.index_arith_trusted(a, vec))
+            }
+            // `@FR-N-Domain` — the LAST-ELEMENT idiom, `v[len(v) - 1]`.  `len` OF THE VECTOR
+            // BEING INDEXED is a trusted leaf for the same reason the arm above trusts a
+            // constant: it is the developer's explicit contract, and a genuine overrun still
+            // raises the recoverable OOB fault (C80).  `v[-1]` — the same element, spelled
+            // negatively — has been trusted here since loft#1436; spelling it with `len` is not
+            // a weaker claim, and the rule's own elision names a GUARD, which `if len(v) >= 2`
+            // is.  Published `web` 0.3.0 writes exactly this and stopped compiling when
+            // `(N-Chain)` began carrying the `?` out of the index and into `as integer`.
+            //
+            // ⚠ The vector IDENTITY is the whole guard.  `for i in 0..len(v) { w[i] }` is
+            // `LOFT_LINT_STRICT_INDEX`'s subject and must stay untrusted — the length of ONE
+            // collection says nothing about the domain of ANOTHER.  So the leaf is admitted
+            // only when its argument's `VecKey` is the indexed vector's, and an unkeyable
+            // receiver (`None`) admits nothing.
+            Value::Call(op, args) if args.len() == 1 && self.is_len_call(*op) => {
+                vec.is_some_and(|k| {
+                    crate::parser::operators::vec_key(&args[0], &self.data).as_ref() == Some(k)
+                })
             }
             _ => false,
         }

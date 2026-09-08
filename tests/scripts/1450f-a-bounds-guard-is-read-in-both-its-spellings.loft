@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Domain`'s elision names a GUARD, and a guard has two canonical spellings.
+//
+// The rule elides its `τ?` when the index is "PROVABLY in-domain (constant / range / GUARD)".
+// One spelling puts the good case in the branch:
+//
+//     if idx < len(v) { … v[idx] … }
+//
+// The other states the BAD case and leaves, which is the guard-clause idiom the whole language
+// encourages elsewhere:
+//
+//     if idx < 0 or idx >= len(v) { return 0; }
+//     … v[idx] …
+//
+// Only the first was read.  So whether the rule's promise held depended on which way the author
+// wrote the test — and the second is what published `stage` 0.18.1 writes (`frame_of`).  The
+// null model already had this exact machinery for its own guards (loft#585: a fall-through
+// proof holds for the rest of THIS block); the index bound never got the twin.
+//
+// ⚠ Nothing observed the gap while a projection dropped the receiver's `?`.  The read was
+// `τ?`, the field read through it answered `τ`, and the nullability died one step later.
+// `(N-Chain)` carries it instead, and the first thing it reached was a CAST — which is a
+// refusal, so a too-CONSERVATIVE type surfaced as a compile error in code that was always
+// correct.  The lesson is the direction: widening one rule audited another, and what it found
+// was strictness the rules never asked for.
+//
+// Axes this file MOVES:  the guard's spelling (positive branch · early return · early return
+//                        with a lower-bound disjunct), whether the guarded body DIVERGES, and
+//                        whether the guarded collection is the INDEXED one.
+// Axes it HOLDS FIXED:   the index is a plain parameter and the element a scalar, so what is
+//                        asserted is the index's domain and never the element's nullability.
+//
+// @falsified-at: 75adecbbd — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED both backends.
+//
+//   ⚠ As in `1450e`, the EXIT channel moves on ONE cell — `cast_through_guard` — and the rest
+//   are inert against this control by construction.  They assert values that were always right;
+//   what was wrong was the type, and only a cast reads it.
+
+struct Holder1450f { xs: vector<integer> }
+
+// The spelling that already worked — the control that says the fix did not trade one for the other.
+fn positive(v: vector<integer>, i: integer) -> integer {
+  if i < v.len() { return v[i]; }
+  -1
+}
+
+// The guard-clause spelling, with the lower bound too — `stage`'s shape verbatim.
+fn early_full(v: vector<integer>, i: integer) -> integer {
+  if i < 0 or i >= v.len() { return -1; }
+  v[i]
+}
+
+// …and without it, so the OR-recursion is not what carries the proof.
+fn early_simple(v: vector<integer>, i: integer) -> integer {
+  if i >= v.len() { return -1; }
+  v[i]
+}
+
+// A struct FIELD keys differently from a local; the guard must reach it the same way.
+fn early_field(h: Holder1450f, i: integer) -> integer {
+  if i < 0 or i >= h.xs.len() { return -1; }
+  h.xs[i]
+}
+
+// The cell that carries the FALSIFICATION, and it is `stage` 0.18.1's shape.  Every assertion
+// below asserts a VALUE, and the values were always right — the defect was a too-conservative
+// TYPE, invisible until something downstream reads it.  A CAST reads it: `(N-Cast)` is an
+// assertion and refuses a possibly-null subject, so this function is a hard ERROR before the fix
+// and the whole file fails to compile.
+fn cast_through_guard(v: vector<integer>, i: integer) -> integer {
+  if i < 0 or i >= v.len() { return -1; }
+  ((v[i] as float) * 2.0) as integer
+}
+
+fn main() {
+  v = [10, 20, 30];
+  assert(positive(v, 1) == 20, "the positive spelling reads its element");
+  assert(early_full(v, 1) == 20, "the guard-clause spelling reads its element");
+  assert(early_simple(v, 1) == 20, "…without a lower-bound disjunct too");
+  assert(early_field(Holder1450f { xs: [4, 5, 6] }, 2) == 6, "…through a struct field");
+
+  // ---- the guards still REFUSE what they guard against, so the elision did not become a lie ----
+  assert(positive(v, 9) == -1, "the positive guard still turns an overrun away");
+  assert(early_full(v, 9) == -1, "the guard clause still turns an overrun away");
+  assert(early_full(v, -1) == -1, "…and the lower bound still rejects a negative index");
+  assert(early_simple(v, 9) == -1, "the simple guard clause still turns an overrun away");
+
+  assert(cast_through_guard(v, 1) == 40, "a cast through a guarded index compiles and answers");
+
+  println("1450f ok");
+}

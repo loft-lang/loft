@@ -726,6 +726,11 @@ impl Parser {
         // sibling blocks / later functions (whose var slots collide), silently suppressing real
         // `(N-Store)` warnings.
         let nn_base = self.narrowed_non_null.len();
+        // …and the same discipline for the INDEX in-bounds proofs a fall-through guard
+        // establishes (`@FR-N-Domain`'s "guard" elision).  Same reason as above: a pair pushed
+        // by a guard clause inside this block holds only for the rest of THIS block, and var
+        // slots collide across functions, so leaking it would elide a `τ?` somewhere unrelated.
+        let ib_base = self.index_bounded.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
         loop {
@@ -953,6 +958,27 @@ impl Parser {
                 && !self.narrowed_non_null.contains(&v)
             {
                 self.narrowed_non_null.push(v);
+            }
+            // The INDEX twin of the guard clause above, on the same three conditions — no else,
+            // an unconditionally divergent body, and a condition that proves the fact on the
+            // FALL-THROUGH.  `if idx < 0 or idx >= len(v) { return … }` states the bad case and
+            // leaves, so the rest of this block has `v[idx]` in-bounds; `@FR-N-Domain` names a
+            // GUARD among its elisions and this is one, but only the `if idx < len(v) { … }`
+            // spelling was ever read, so the promise depended on which way the test was written
+            // (published `stage` 0.18.1 `frame_of` writes the second).
+            if let Value::If(test, true_code, false_code) = n.unspan()
+                && matches!(false_code.unspan(), Value::Null)
+                && let Value::Block(bl) = true_code.unspan()
+                && is_block_divergent(&bl.operators)
+            {
+                let caps = std::collections::HashMap::new();
+                for pair in
+                    crate::parser::operators::collect_guard_pairs_negated(test, &self.data, &caps)
+                {
+                    if !self.index_bounded.contains(&pair) {
+                        self.index_bounded.push(pair);
+                    }
+                }
             }
             if let Value::Insert(ls) = n {
                 Self::move_insert_elements(&mut l, ls);
@@ -1475,6 +1501,7 @@ impl Parser {
         // @PLN25/#585: drop any guard-clause fall-through narrowing this block introduced — the
         // proof does not escape the block (see `nn_base` above).
         self.narrowed_non_null.truncate(nn_base);
+        self.index_bounded.truncate(ib_base);
         *val = v_block(l, t.clone(), "block");
         t
     }
