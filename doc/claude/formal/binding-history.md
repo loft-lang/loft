@@ -135,11 +135,23 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > Uniform, so the rule holds; the whole-collection append is a decided surface limit and not
 > this entry's business.
 >
-> ⚠ **One residual, and it is a DIAGNOSTIC defect rather than a rule one.**  The two refusals
-> are not the same message: the dense one names the authored type and both cures, while the `&`
-> one says *"No matching operator 'Add' on '&hash<Row,[\"k\"]>'"* — the SCHEMA spelling of the
-> type, which no source ever wrote, and no cure.  That is loft#1449 (`Type::name` where
-> `source_name` is meant), and this is a live instance of it.
+> ⚠ **The removal cell's receiver is a `sorted`, and only a `sorted` reaches that refusal at
+> all.** `reshaped_containers` collects a keyed removal ONLY when the container variable is
+> `Type::Sorted` — deliberately, with the reason written beside it: `sorted` is the INLINE keyed
+> kind, its elements sit in key order in one dense array, so a removal shifts every later
+> POSITION exactly as a vector's does, while `hash` / `index` / `spatial` / `trie` give each
+> element its own record and leave every other key at the same address.
+>
+> So the message ("a removal renumbers the remaining elements") is CORRECT there, and reading
+> `(Col-RemoveKeyed)` as contradicting it is a category error this register made and is
+> correcting: that rule is about which KEYS stay reachable, and a `&` view holds a POSITION.
+> Both are true at once. [loft#1458](https://github.com/loft-lang/loft/issues/1458) was filed on
+> that misreading and is closed as invalid.
+>
+> What the same reading DID turn up is real and is [loft#1460](https://github.com/loft-lang/loft/issues/1460):
+> the deliberate exclusion was measured on a view of ANOTHER element, which is safe, and not on a
+> view of the REMOVED one, which is not — `c = &h[30]; h[30] = null; h[70] = …; c.tag = 999`
+> corrupts the record that reused the freed slot, silently, on both backends.
 
 > **D-bind-25, D-bind-26, D-bind-27 — OPENED AND CLOSED (2026-09-07) — three places
 > `(B-Disturb)` names that the walk could not see.**  All three came out of loft#1401's

@@ -3164,15 +3164,21 @@ fn b_ref_reshape_rekey_through_amp_link_on_a_nullable_receiver_is_error() {
 /// removal arm read the marker from two different files, so a fix that restores one need not
 /// restore the other — and every removal cell in this file uses a vector.
 ///
-/// ⚠ The refusal is deliberately COARSER than `(Col-RemoveKeyed)` needs.  That rule promises
-/// every other key stays reachable and unchanged, so removing key 10 cannot disturb a view of
-/// key 30 — yet this refuses on ANY removal from the container, because which key a removal
-/// names is a runtime value and the compiler cannot tell 10 from 30.  Refusing the safe case
-/// is sound; missing the unsafe one is not, and COMPATIBILITY.md's pre-freeze rule is to be
-/// strict now.  This is also the behaviour that shipped before the widening, not a new
-/// tightening.  (The message it prints is a vector's reason — "a removal renumbers the
-/// remaining elements" — given to someone holding a keyed collection, which is wrong wording
-/// for a right verdict and is tracked apart from this cell.)
+/// ⚠ The receiver here is a `sorted` on purpose, because a `sorted` is the ONLY keyed kind
+/// that reaches this refusal.  `scopes.rs::reshaped_containers` collects a keyed removal just
+/// when the container variable is `Type::Sorted`, and says why beside itself: `sorted` is the
+/// INLINE keyed kind — its elements sit in key order in one dense array, so a removal shifts
+/// every later POSITION exactly as a vector's does — while `hash` / `index` / `spatial` /
+/// `trie` give each element its own record and leave every other key at the same address.
+///
+/// So the message ("a removal renumbers the remaining elements") is right here, and reading
+/// `(Col-RemoveKeyed)` as contradicting it is a category error: that rule is about which KEYS
+/// stay reachable, and a `&` view holds a POSITION.  Both hold at once.  Do not "fix" the
+/// wording to a keyed one — loft#1458 was filed on exactly that misreading and closed invalid.
+///
+/// What the misreading did turn up is loft#1460, and it is NOT this cell: the deliberate
+/// exclusion above was measured on a view of ANOTHER element (safe) and not on a view of the
+/// REMOVED one, which corrupts a later insert that reuses the freed slot.
 #[test]
 fn b_ref_reshape_keyed_removal_under_amp_link_is_error() {
     code!(
