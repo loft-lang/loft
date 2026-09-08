@@ -1256,7 +1256,7 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
             && func.tp(v).base().heap_dep().is_some()
             && func.tp(v).depend().is_empty()
             && !func.is_argument(v)
-            && !func.skip_free(v)
+            && !func.is_skip_free(v)
             && !freed.contains(&v)
             && !closed.contains(&v)
             // A local the closure record ADOPTS is transferred to it and reclaimed by

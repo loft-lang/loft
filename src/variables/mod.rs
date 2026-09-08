@@ -3775,6 +3775,41 @@ impl Function {
         self.variables[v as usize].skip_free
     }
 
+    /// Does the deps PROXY say `v` owns its store, with the never-free veto discharged?
+    ///
+    /// The two obligations @FR-O-Proxy names, travelling together — which is the only way
+    /// that rule permits the proxy to be read at a site that frees. `tp(v).depend().is_empty()`
+    /// is the cheap stand-in for *"this binding owns its store"* and is unsound alone: a
+    /// borrow whose dep list was never populated reads empty too, and answers "owner" for a
+    /// borrower (loft#723). [`Self::is_skip_free`] is the veto that makes it safe, and its
+    /// contract is *no ownership-derived free, in any spelling, for this binding*.
+    ///
+    /// **One home because the conjunction was written out at six free sites** — the arm's
+    /// backing-store release in `parser/control.rs`, three ownership-TRANSITION frees and the
+    /// drop-cascade hook in `scopes.rs`, and the move-elision shortcut in `state/codegen.rs`
+    /// — each of which had to be found and taught the veto separately. That is how the
+    /// pre-`Set` free in a loop body came to read the proxy without it, landing on the next
+    /// iteration's store (@PLN155 phase 1).
+    ///
+    /// ⚠ This is the PROXY, not the oracle. @FR-O-Oracle's independent derivation is
+    /// `use_analysis::ownership_of`, which never consults `deps` — so the two can disagree,
+    /// and 8.0 % of emitted frees rest on this predicate with the oracle having nothing to
+    /// say (`make licence-census`, @PLN155 phase 0).
+    ///
+    /// ⚠ Three sites that free on `deps` do NOT ask this question, and each is marked at its
+    /// own site. `Scopes::tuple_owned_elem_frees` reads the proxy off a tuple ELEMENT's type
+    /// and the veto off the CONTAINER binding — two subjects, which no predicate over one
+    /// `v` can express. The two dep-STRIPPING sites in `Scopes::scan_set` read
+    /// `!depend().is_empty()` as *"is there a dep list to strip"* rather than as an
+    /// ownership answer; only their veto is this rule's obligation. Merging those onto this
+    /// predicate would couple three questions that must stay free to differ.
+    #[must_use]
+    pub fn proxy_says_owned(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — this IS the free question, and @FR-O-Override is the
+        // conjunct beside it, which is the whole point of the predicate.
+        self.tp(v).depend().is_empty() && !self.is_skip_free(v)
+    }
+
     /// Is `v` a text temp that STAGES a value across the statement or the return that reads
     /// it — a `??` coalesce subject (`__ncc_N`) or a return-delivery stage (`__ret_N`,
     /// `__ret_text_N`)?
@@ -3823,13 +3858,6 @@ impl Function {
             );
         }
         self.variables[v as usize].skip_free = true;
-    }
-
-    /// Is `v` marked `skip_free`? Match-arm field bindings (`_mv_<field> =
-    /// OpGetField(subject,…)`) are, being borrowed views of the match subject.
-    #[must_use]
-    pub fn skip_free(&self, v: u16) -> bool {
-        self.variables[v as usize].skip_free
     }
 
     /// Mark a variable as captured by a closure.

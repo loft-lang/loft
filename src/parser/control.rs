@@ -4599,7 +4599,7 @@ impl Parser {
         // BORROW, and the answer chooses whether to build the owned `mvcopy`.  It authorises
         // no free: the copy is a fresh binding, and the borrow keeps its own owner.
         if v >= self.vars.count()
-            || !self.vars.skip_free(v)
+            || !self.vars.is_skip_free(v)
             || !matches!(self.vars.tp(v), Type::Vector(_, _))
             || self.vars.tp(v).depend().is_empty()
         {
@@ -13847,13 +13847,14 @@ impl Parser {
                 // `_mv_items_1 = OpGetField(e,…)`) that does NOT own its backing store
                 // (it aliases the subject `e`); freeing its deps would over-free `e`
                 // (@PLN85 match_return). The append already copied its elements into `w`.
-                if !self.vars.skip_free(local) {
-                    // @FR-O-Proxy asks free — the arm's own backing store is released here.
-                    // @FR-O-Override is consulted by the enclosing test, which is where the
-                    // borrowed-view case (a `_mv_` match-field binding) is turned away; the
-                    // veto has to be read for a free on the proxy, and reading it once for
-                    // the whole block is what that test is.
-                    if deps.is_empty()
+                if !self.vars.is_skip_free(local) {
+                    // @FR-O-Proxy asks free — the arm's own backing store is released here,
+                    // and the proxy is asked WITH its @FR-O-Override veto as one question
+                    // ([`Function::proxy_says_owned`]) rather than leaning on the enclosing
+                    // test.  The enclosing test stays because the `else` arm below frees the
+                    // deps and needs the same veto; what changes is that this free states its
+                    // own obligation instead of inheriting one from a block boundary.
+                    if self.vars.proxy_says_owned(local)
                         && self.vars.is_work_ref(local)
                         && !self.vars.is_argument(local)
                     {
@@ -14791,7 +14792,7 @@ impl Parser {
                 .filter(|&v| {
                     v < self.vars.count()
                         && v != buf_var
-                        && self.vars.skip_free(v)
+                        && self.vars.is_skip_free(v)
                         && matches!(self.vars.tp(v), Type::Vector(_, _))
                         && !self.vars.tp(v).depend().is_empty()
                 })

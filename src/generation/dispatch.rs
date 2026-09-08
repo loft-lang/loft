@@ -918,7 +918,7 @@ impl Output<'_> {
                     // return alone.
                     // A WITNESSED local (loft#1336) is never-free for a different reason — its
                     // witness releases its stores — and it is copied into like its owned twin.
-                    None if is_borrowed_view && variables.skip_free(var) && !witnessed => {
+                    None if is_borrowed_view && variables.is_skip_free(var) && !witnessed => {
                         "true".to_string()
                     }
                     None => PASSTHROUGH.to_string(),

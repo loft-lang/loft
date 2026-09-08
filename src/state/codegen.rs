@@ -3354,16 +3354,16 @@ impl State {
         // @PLN90's `use_analysis::move_elidable_source` states the same rule for the
         // move plans it builds — "never a view/projection, which owns no store to move".
         // This is the shortcut that predates it.
+        // @FR-O-Proxy asks free, so @FR-O-Override applies, and the two are asked as one
+        // ([`Function::proxy_says_owned`]).  A move is a free decision made one binding away:
+        // `v` takes `src`'s store and `v`'s scope-exit `OpFreeRef` releases it.  If the proxy
+        // was wrong about `src` that release lands on a store someone else owns — the same
+        // shape as the view this arm already refuses, reached through the flag instead of
+        // through the deps.
         if stack.function.uses(src) == 1
-            && stack.function.tp(src).depend().is_empty()
+            && stack.function.proxy_says_owned(src)
             && !stack.function.is_argument(src)
             && !stack.function.is_captured(src)
-            // @FR-O-Proxy asks free, so @FR-O-Override applies.  A move is a free
-            // decision made one binding away: `v` takes `src`'s store and `v`'s scope-exit
-            // `OpFreeRef` releases it.  If the proxy was wrong about `src` that release lands
-            // on a store someone else owns — the same shape as the view this arm already
-            // refuses, reached through the flag instead of through the deps.
-            && !stack.function.is_skip_free(src)
         {
             let src_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);

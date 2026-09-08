@@ -11,9 +11,9 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 **Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
 phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: phase 1** — one home for *may this
-binding's store be freed here* — which phase 0 has now sized (2478 sites, two-thirds of them
-`__ref_N` return buffers).  The ownership MODEL is not reopened
+same day, so the sequencing hold is lifted.  **Next: phase 2** — fail closed on
+`Own::Unknown`, which phase 0 sized (2478 proxy-alone sites, two-thirds of them `__ref_N`
+return buffers) and phase 1 gave a single home to ask from.  The ownership MODEL is not reopened
 here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
 carried fact.  What this plan changes is **who is allowed to free**: today that is derived
 four different ways, concluded in one function and emitted in another, and the derivation
@@ -79,7 +79,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-08 (arc A + phase 0 landed).
+- **Last touched:** 2026-09-08 (arc A, phase 0, phase 1 landed).
 
 ## Why this family, measured
 
@@ -115,7 +115,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 |---|---|---|---|
 | **A** — the reassessment instrument: the four campaign gates as a command | § Arc A | reproduces the 2026-09-07 ranking from measurements alone; fed the pre-2026-08 bands it must NOT name generic/monomorph (whose keystone paid off) | ✅ **done** — `scripts/campaign_review.py`, `make campaign-review`.  Control: `--control` PASSES (no class is named a PLAN on the pre-2026-08 population), and it FAILS when a gate is mis-wired — proved by making gates 3 and 4 pass on an unmeasured reading, which named generic/monomorph and tuple |
 | **0** — probe: how many frees are licensed by the PROXY alone? | § Phase 0 | its own control — an injected proxy-only free (`LOFT_OWN_INJECT_FACT_OWNED` precedent) moves the count; a category reading 0 is shown reachable before it is believed | ✅ **done — 8.0 %, the plan is NOT killed.**  `LOFT_OWN_ORACLE=census` + `make licence-census`.  Both controls PASS, in the two directions a bucket can move; no category reads 0, so nothing had to be shown reachable |
-| **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | Open |
+| **1** — one home for *may this binding's store be freed here* | `Scopes::owns_freeable_store` | `scripts/introspect_diff.sh` byte-identical over the corpus; `o_proxy_check.py`'s `N of M reach a free` control does not collapse | ✅ **done — the narrow-widths outcome: one PAIR, four questions.**  `Function::proxy_says_owned` folds six sites; three are shown to ask a different question and stay apart.  `introspect_diff.sh` **IDENTICAL 1412/1412**; the control went 9 of 29 → 9 of 30 after the check was taught the folded spelling — it read 3 of 23 first, which is the collapse the verify exists to catch |
 | **2** — fail closed: `Own::Unknown` | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | Open |
 | **3** — the refusal at the free, on a `report → deny` ladder | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | Open |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | Open |
@@ -190,6 +190,56 @@ it is the drop direction: `LOFT_OWN_INJECT_DROP_FREE=__ref_1` takes `proxy-alone
 
 `report` first (default, one release), then `deny`.  The terminal behaviour is a design call,
 not an implementation detail — see question 3.
+
+## Phase 1 — one home for the PAIR, and the three questions that are not it (2026-09-08)
+
+The plan offered two outcomes — *"either it grows to every free spelling or the spellings are
+shown to ask different questions (the narrow-widths outcome: one type list, three questions)"*.
+The answer is both, and the split is where the value is.
+
+**The census.**  `o_proxy_check.py -v` names nine sites that conclude ownership on the proxy
+AND reach a free.  Read side by side, six spell the identical conjunction —
+`tp(v).depend().is_empty() && !is_skip_free(v)` — the two obligations @FR-O-Proxy says must
+never travel apart:
+
+| site | what it frees |
+|---|---|
+| `parser/control.rs` arm-return | the match arm's own backing store |
+| `scopes.rs` ×3 (`scan_set`) | the ownership-TRANSITION free, plain · `??`-hoist · witness-guarded |
+| `scopes.rs` drop hook | the `__disp_N` drop-cascade lift |
+| `state/codegen.rs` move-elision | `src`'s store, moved into `v` and released by `v`'s sweep |
+
+They are now one predicate, `Function::proxy_says_owned` — on `Function` rather than on
+`Scopes`, because that is what every one of the six has: the parser holds `self.vars`, the
+interpreter's codegen holds `stack.function`, and `Scopes` is handed one.
+`Scopes::owns_freeable_store` becomes that pair plus the obligation that IS its own — the
+sweep frees a frame's bindings, so a user parameter belongs to the caller.
+
+**The three that stay apart, and why.**  Each is marked at its own site, because a reader who
+lands there is the person who needs to know:
+
+- `tuple_owned_elem_frees` reads the proxy off a tuple **ELEMENT's** type and the veto off the
+  **CONTAINER** binding.  Two subjects, where a predicate over one `v` has one.  Folding it
+  would have to invent a dep list for the element, which is exactly what a tuple does not have.
+- The two dep-**STRIPPING** sites in `scan_set` read `!depend().is_empty() && !is_skip_free(v)`.
+  That is not the pair negated (`!(empty && !veto)` is `!empty || veto`) — it is a different
+  conjunction, and its first half is not an ownership answer at all: it asks *"is there a dep
+  list left to strip"*, a question about WORK TO DO.  Only the veto is this rule's obligation
+  there, which is why it is read on its own.
+
+**A second spelling of the veto, deleted.**  `Function` exposed the never-free flag as both
+`is_skip_free` and a bare `skip_free`, with five callers on the second — and @FR-O-Override's
+contract is written in a doc block on the first only, so a reader of the second never met it.
+One reader now.
+
+**What the control caught, which is the reason it is in the verify.**  Folding six textual
+proxy reads into one predicate took `o_proxy_check.py` from **9 of 29 reach a free** to **3 of
+23**.  That reads like an improvement and is a BLINDING: the check's job is *a site that frees
+on the proxy consults the veto*, and a site that has discharged the obligation by construction
+is still such a site — one the check had simply stopped seeing.  Teaching it that
+`proxy_says_owned(v)` IS a proxy read (and discharges the veto) restores the population to
+**9 of 30**, one more than before, which is the predicate itself.  A fold that shrinks its own
+instrument's population has not been verified; it has removed the verifier.
 
 ## Phase ordering
 

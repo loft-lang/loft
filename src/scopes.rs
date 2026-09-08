@@ -2411,6 +2411,12 @@ fn tuple_owned_elem_frees(
         // and the site concludes ownership exactly as a positive test would.  Reading the
         // `!` as "this asks whether it is a borrow" is what kept this site out of
         // `scripts/o_proxy_check.py`'s obligation set entirely.
+        //
+        // ⚠ NOT [`crate::variables::Function::proxy_says_owned`], and it cannot be: the proxy
+        // is read off a tuple ELEMENT's type and the veto off the CONTAINER binding `v`, so
+        // the question has TWO subjects where that predicate has one (@PLN155 phase 1).
+        // Folding it would have to invent a dep list for the element, which is the very thing
+        // a tuple does not have.
         if function.is_skip_free(v)
             || !elems[idx].depend().is_empty()
             || matches!(elems[idx].base(), Type::Text(_))
@@ -7292,11 +7298,9 @@ impl Scopes<'_> {
             && was_in_scope
             && matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
             // @FR-O-Proxy asks free — the ownership-TRANSITION free, releasing the store `v`
-            // is about to stop naming.
-            && function.tp(v).depend().is_empty()
-            // @FR-O-Proxy is unsound alone — a free taken on the empty dep list
-            // must consult @FR-O-Override.
-            && !function.is_skip_free(v)
+            // is about to stop naming.  The proxy is unsound alone, so it is asked with its
+            // @FR-O-Override veto as one question and never separately.
+            && function.proxy_says_owned(v)
             && self.owned_refs.get(&v) == Some(&self.loops.len())
             && displaces_owned_through_fresh_callee(value, v, ov, data)
         {
@@ -7315,14 +7319,13 @@ impl Scopes<'_> {
             && function.name(v).starts_with("__ncc_")
             // @FR-O-Override, consulted first: a hoist the parser marked never-free (a
             // projection subject) releases nothing here.
-            && !function.is_skip_free(v)
             && matches!(
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
             // @FR-O-Proxy asks free — the ownership-TRANSITION free of the store the hoist
-            // is about to stop naming.
-            && function.tp(v).depend().is_empty()
+            // is about to stop naming, with its @FR-O-Override veto as one question.
+            && function.proxy_says_owned(v)
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }
@@ -7345,8 +7348,7 @@ impl Scopes<'_> {
             )
             // @FR-O-Proxy asks free — the same transition free, emitted GUARDED on the
             // runtime witness where the static fact is sound but incomplete.
-            && function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+            && function.proxy_says_owned(v)
             && displaces_owned_through_fresh_callee(value, v, ov, data)
         {
             transition_free = Some(v_if(
@@ -7564,9 +7566,14 @@ impl Scopes<'_> {
                 // @FR-O-Proxy asks free.  @FR-O-Override vetoes it at every site that frees
                 // on it, and stripping the deps IS such a site: `get_free_vars` reads the dep list, so
                 // emptying it here is what makes the scope-exit sweep emit `OpFreeRef(v)`.
-                // The proxy is read negated — "this still looks like a borrow" — which does
-                // not change the conclusion the strip acts on, only its spelling.  A binding
-                // the parser marked never-free keeps its deps and its store.
+                // A binding the parser marked never-free keeps its deps and its store.
+                //
+                // ⚠ NOT [`crate::variables::Function::proxy_says_owned`], and the difference is
+                // the whole reason it stays apart (@PLN155 phase 1): that predicate is
+                // `empty && !veto`, while this is `!empty && !veto`.  The negated proxy here is
+                // not an ownership answer at all — it asks *"is there a dep list left to
+                // strip"*, which is a question about WORK TO DO.  Only the veto is this rule's
+                // obligation, and it is read on its own for that reason.
                 && !function.is_skip_free(v)
             {
                 let deps: Vec<u16> = function.tp(v).depend().clone();
@@ -8164,6 +8171,10 @@ impl Scopes<'_> {
             // @FR-O-Proxy asks free — read negated, *"this still looks like a borrow"*:
             // stripping the deps is what makes `get_free_vars` emit the free, so the site is
             // a free site and consults @FR-O-Override like every other.
+            //
+            // ⚠ NOT [`crate::variables::Function::proxy_says_owned`] — the sibling strip site
+            // above carries the reason: `!empty && !veto` asks whether there is a dep list to
+            // strip, not whether the binding owns its store (@PLN155 phase 1).
             && !function.tp(v).depend().is_empty()
             && !function.is_skip_free(v)
             // loft#1333 — and NOT for a MIXED binding, one another path assigns a borrow.
@@ -8419,14 +8430,13 @@ impl Scopes<'_> {
             Some(depth) => *depth == self.loops.len() || rhs_owned,
             None => false,
         };
-        // @FR-O-Proxy asks free — the hook is a release, and it follows only where the
-        // empty dep list says `v` OWNS the record; @FR-O-Override (`is_skip_free`) is
-        // consulted right after it, as every free on the proxy must.
+        // @FR-O-Proxy asks free — the hook is a release, and it follows only where the empty
+        // dep list says `v` OWNS the record; the proxy carries its @FR-O-Override veto as one
+        // question, so this reads the pair negated rather than two separate escape clauses.
         if !owned_here
             || function.is_argument(v)
             || function.is_captured(v)
-            || !function.tp(v).depend().is_empty()
-            || function.is_skip_free(v)
+            || !function.proxy_says_owned(v)
             || self.drop_transferred.contains(&v)
             || self.owner_witness.contains_key(&v)
         {
@@ -8973,8 +8983,11 @@ impl Scopes<'_> {
         data: &Data,
         v: u16,
     ) -> bool {
-        function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+        // The proxy and its veto are ONE question and are asked as one
+        // ([`crate::variables::Function::proxy_says_owned`], @PLN155 phase 1); what this
+        // adds is the third obligation, which is this site's alone — the sweep frees a
+        // FRAME's bindings, and a user parameter belongs to the caller.
+        function.proxy_says_owned(v)
             && (!function.is_argument(v) || self.is_promoted_ret_buffer(function, data, v))
     }
 

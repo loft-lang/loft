@@ -102,7 +102,13 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROXY = re.compile(r"depend\(\)\.is_empty\(\)")
+# The proxy read, in its two spellings: written out, and asked through the one home that asks
+# it WITH its veto (@PLN155 phase 1).  Both are counted, because folding sites onto a predicate
+# must not remove them from this check's population — a site whose obligation is discharged by
+# construction is still a site that frees on the proxy, and a check that stops seeing it stops
+# saying anything about it.  Measured: the fold took `9 of 29 reach a free` to `3 of 23` before
+# this line was added, which reads like an improvement and is a blinding.
+PROXY = re.compile(r"depend\(\)\.is_empty\(\)|proxy_says_owned\s*\(")
 # The same read, one statement apart: `let deps = <…>.depend();` and a later `deps.is_empty()`.
 # The one-expression spelling is the common one, and reading only it left this check blind to a
 # form the tree already uses twice (`ownership_cfg.rs`'s Check B, `control.rs`'s arm-return
@@ -118,11 +124,16 @@ FREE_EMIT = re.compile(r"OpFree|free_ref|emit_free")
 FREE_MANUF = re.compile(r"\b(?:make_independent|without_deps|set_skip_free)\s*\(\s*([^,)]*)")
 # Discrimination 5 — the proxy read has to hang off a variable for the veto to be consultable,
 # and discrimination 7 needs to know WHICH variable, so capture it.
-BINDING = re.compile(r"\.tp\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*(?:\.base\(\))?\.depend\(\)")
-# The obligation is discharged by the veto — `Function` exposes it as both `is_skip_free` and
-# the bare `skip_free`, and `jo_copy_borrowed_arm_yield` uses the second — or by the one home
-# that asks it for you.
-DISCHARGE = re.compile(r"skip_free|owns_freeable_store")
+BINDING = re.compile(
+    r"\.tp\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*(?:\.base\(\))?\.depend\(\)"
+    r"|proxy_says_owned\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+)
+# The obligation is discharged by the veto (`Function::is_skip_free`) or by one of the two
+# homes that ask the proxy WITH it: `Function::proxy_says_owned` is the pair itself, and
+# `Scopes::owns_freeable_store` is that pair plus the scope-exit sweep's parameter carve-out.
+# A site calling either has discharged @FR-O-Override by construction rather than by
+# remembering to.
+DISCHARGE = re.compile(r"skip_free|proxy_says_owned|owns_freeable_store")
 # Discrimination 8 — every positive site DECLARES which of the four facts it reads.
 #
 # The obligation the rest of this check enforces is decidable only where a free is lexically
@@ -351,7 +362,13 @@ for path in sorted(glob.glob(os.path.join(ROOT, "src", "**", "*.rs"), recursive=
             stmt, decl, region = gated_region(lines, n, fn_end, decl_floor=last_proxy + 1)
             last_proxy = n
             bm = BINDING.search(code_only(line), max(0, m.start() - 90))
-            binding = bm.group(1) if bm is not None and bm.end() >= m.start() else None
+            # Either alternative of BINDING: the written-out `tp(v).…depend()` or the folded
+            # `proxy_says_owned(v)`.  Both name the variable the veto must be consulted on.
+            binding = (
+                (bm.group(1) or bm.group(2))
+                if bm is not None and bm.end() >= m.start()
+                else None
+            )
             if negated(line, m.start()):
                 # Discrimination 4: an early-exit guard inverts the sense, so the site
                 # concludes ownership on what it FALLS THROUGH to.  Resolved BEFORE
