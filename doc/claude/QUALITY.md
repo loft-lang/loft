@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 418 | 394 | **24** |
+| 413 | 389 | **24** |
 
 Joining the `@FR-O-Owner` walk onto the loft#1389/#1390/#1392 tree re-measures it once more:
 **408 · 384 · 24** — neither side's number, as every join so far.  Joining @PLN154 (the stack
@@ -2522,7 +2522,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 743 | 395 | 5 | **343** |
+| 735 | 377 | 5 | **353** |
 
 *This row is a property of the TREE and moves on almost any commit that adds, removes or
 re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather
