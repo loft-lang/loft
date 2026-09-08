@@ -5023,6 +5023,42 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     for l in steps {
                         ls.push(l.clone());
                     }
+                } else if !self.first_pass
+                    && crate::keys::append_in_place_enabled()
+                    && let Some((fn_nr, buf_idx, args)) = self.element_call_takes_record_buffer(p)
+                {
+                    // @PLN157 § V-d — the element's record exists before the call, so the
+                    // call builds INTO it: its hidden buffer argument becomes the element
+                    // itself, and the callee's reuse-or-allocate `OpDatabase` (the R1 guard)
+                    // writes the fields where they live.  The answer is bound to a
+                    // never-free temp and compared at run time: a callee that minted its
+                    // own store on some path, or returned a parameter's record, answers a
+                    // different store and takes today's copy — the free-source bit then
+                    // releases exactly what it releases today, a store nobody else names.
+                    // In place there is no copy and nothing to release.
+                    let mut args = args;
+                    args[buf_idx] = Value::Var(elm);
+                    let ret = self.data.def(fn_nr).returned().base().clone();
+                    let r = self.vars.work_refs_p2(&ret, &mut self.lexer);
+                    self.vars.set_skip_free(r);
+                    ls.push(v_set(r, Value::Call(fn_nr, args)));
+                    // A callee that hands back a VISIBLE argument's record (`fn id(p: S)
+                    // -> S { p }`) answers a store the caller still owns: the copy must not
+                    // release it.  Today's path is protected by the lift's private copy;
+                    // here the answer is read directly, so the callee's own fact decides.
+                    let free_source_bit: i32 = if self.is_struct_returning_call(p)
+                        && !self.data.def(fn_nr).returns_borrowed_view()
+                    {
+                        0x8000
+                    } else {
+                        0
+                    };
+                    let type_nr = Value::Int(
+                        i32::from(self.data.def(inner_nr).known_type()) | free_source_bit,
+                    );
+                    let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(elm)]);
+                    let copy = self.cl("OpCopyRecord", &[Value::Var(r), Value::Var(elm), type_nr]);
+                    ls.push(v_if(distinct, copy, Value::Null));
                 } else {
                     // Source is a variable, field access, or function call — the bytes
                     // must be explicitly copied into the new element slot.
@@ -7940,5 +7976,60 @@ mod plan22_phase02d_iii_d_alloc_prepend_tests {
         } else {
             panic!("expected Insert with OpDatabase op[1]");
         }
+    }
+}
+
+/// @PLN157 § V-d — is this vector-literal element a call whose hidden RECORD buffer may be
+/// the element itself?  Answers the callee, the buffer's argument index and the call's
+/// arguments; `None` keeps today's copy.
+///
+/// The set is deliberately the one Route R proved: a loft-defined callee with a hidden
+/// buffer whose record is non-nullable and ALL-SCALAR (no collection, text or reference
+/// field — a reused record is not zeroed, and only a literal that writes every field is
+/// sound over one; the synthetic-nullable exclusion is
+/// `record_is_fully_written_by_a_literal`'s), and the argument in the buffer's position
+/// is the buffer the caller minted for this call (`caller_hidden_buf`), so substituting
+/// it changes only where the answer is built.  A projection of a call, a nullable
+/// return, a call through a fn-ref, and a record with a vector field all answer `None`.
+impl Parser {
+    pub(crate) fn element_call_takes_record_buffer(
+        &self,
+        p: &Value,
+    ) -> Option<(u32, usize, Vec<Value>)> {
+        let Value::Call(fn_nr, args) = p.unspan() else {
+            return None;
+        };
+        let def = self.data.def(*fn_nr);
+        if !def.name().starts_with("n_") || *def.code() == Value::Null {
+            return None;
+        }
+        let Type::Reference(td, _) = def.returned() else {
+            return None;
+        };
+        // The caller must ADOPT the answer raw: a return that names its hidden buffer
+        // (`S["t"]`, the NRVO shape) takes the copy dispatch at the temp's `Set`, which
+        // `OpDatabase`s into the temp's previous store — the one the copy's free bit
+        // released a turn earlier — and the recycled number corrupts the vector.  Only a
+        // dep-free return (Route R's own shape) reaches the element.
+        if !def.return_adopts_fresh_store() {
+            return None;
+        }
+        let buf_idx = def.hidden_return_buffer_attr()?;
+        if def.attributes()[buf_idx].typedef.heap_def_nr() != Some(*td) {
+            return None;
+        }
+        let Some(Value::Var(buf)) = args.get(buf_idx).map(Value::unspan) else {
+            return None;
+        };
+        if !self.vars.is_caller_hidden_buf(*buf) || !self.record_is_fully_written_by_a_literal(*buf)
+        {
+            return None;
+        }
+        let all_scalar = self.data.def(*td).attributes().iter().all(|a| {
+            a.constant
+                || matches!(a.typedef, Type::Routine(_))
+                || crate::data::is_scalar(&a.typedef)
+        });
+        all_scalar.then(|| (*fn_nr, buf_idx, args.clone()))
     }
 }

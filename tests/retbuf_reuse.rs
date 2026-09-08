@@ -51,11 +51,18 @@ fn main() {
 }
 ";
 
+/// Both directions run with the § V-d append-in-place lowering OFF: that lowering builds
+/// `keep += [mk(i)]`'s element in place — no lift temp, no buffer, nothing to free — so
+/// with it on the escaping shape has no use-after-free to report under the control and
+/// the gate would read as inert.  What this test pins is the LIFT path, which V-d leaves
+/// to every element it does not qualify (an NRVO callee, a nullable return, a record
+/// with a collection field).
 fn run(src: &std::path::Path, ungated: bool) -> String {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(src)
         .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_NO_APPEND_IN_PLACE", "1")
         .env("LOFT_TIMEOUT", "60");
     if ungated {
         cmd.env("LOFT_NO_RETBUF_WITNESS_GATE", "1");

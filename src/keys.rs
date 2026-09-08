@@ -1032,6 +1032,17 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
+/// element's record, and a promoted return buffer honours an offered record — **DEFAULT
+/// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary
+/// (`smooth(20000)` 15.2M → 3.2M ns/op, the consumer's `smooth` row −48 %), and the first bisect step for a wrong
+/// element out of `v += [f(…)]` or a vector that lost its elements after such an append.
+#[must_use]
+pub fn append_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_IN_PLACE"))
+}
+
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
 /// dead-after owned source directly into its destination field/element instead of copy-then-free,
 /// for every proven-safe shape (Record `v[i]=e`/`o.f=src`; Construct field-append, fresh

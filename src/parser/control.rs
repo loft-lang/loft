@@ -2887,7 +2887,7 @@ impl Parser {
     /// synthetic `__nullable<S>` field is SKIPPED there because "absent" is discriminant 0
     /// and it relies on the fresh record being zeroed.  Refuse those; the record form they
     /// have today is correct.
-    fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
+    pub(crate) fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
         let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
             return false;
         };

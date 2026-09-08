@@ -595,6 +595,138 @@ surface (element construction that neither allocates a temp record nor
 copies it into the vector — the append-in-place twin of Route R), and it is
 now the lever for the two worst rows.  Re-ranked in the README.
 
+## V-d — append in place: the element record as the retbuf (design 2026-09-08)
+
+**The shape** (from the consumer source, not inferred): `sp_out += [raster::pt(x, y)]`
+in `smooth_pts`' inner loop, `fd_pts += [raster::pt(…), raster::pt(…), raster::pt(…)]`
+in `fronds` — a vector literal whose ELEMENT is a call returning a struct through
+a buffer.  Thirteen such sites in the library (`raster` 3, `drawing` 10).  What
+the IR emits per element today:
+
+```
+OpPreAllocVector(out, 1, 16);
+_elm_1 = OpNewRecord(out, Pt, …);          // the element's record, claimed in out's store
+__lift_1 = n_pt(a, b, __ref_1);            // a FRESH store per call — the lift shape declines the buffer
+OpCopyRecord(__lift_1, _elm_1, 0x8000|Pt); // 16 bytes copied into the element, the source freed
+OpFinishRecord(out, _elm_1, Pt, …);
+OpFreeRef(__lift_1);
+```
+
+The element record exists BEFORE the call.  The twin of Route R is to hand it to
+the callee as its `__retbuf`: R1's guard (*the buffer addresses a record → write
+the fields straight into it*) already does the rest.
+
+**Invariant** — the same one as Route R, one place further: *a record built for
+a place is built in that place.*  Route R made the place a local's buffer; this
+makes it a vector element (and, by the identical lowering at
+`objects.rs`'s field-init copy, a struct field: `Box { s: mk(3) }`).
+
+**Measured ceiling (2026-09-08, hand-patched native emit, the Route R method):**
+`smooth(20000)` — 20 000 appends of `pt(t², 1−t)`, hash of the result asserted
+equal — **12.57M → 2.24M ns/op (−82 %, 5.6×)**, 628 → 112 ns per element, medians
+of 7 alternating runs, hashes exact.  The patch was exactly `n_pt(…, _elm)` in
+place of the lift + copy + free.
+
+**Two mechanisms, and the first is a contract change:**
+
+1. *Every record-returning callee must treat an offered record as
+   reuse-or-allocate — never clear its store.*  R1's `BuildIntoBuffer` does (the
+   guarded `OpDatabase`); the NRVO `Rename` path does NOT — a promoted local's
+   literal emits a bare `OpDatabase(t)` (the in-place arm of `parse_object` for a
+   compiler-generated destination: *"writing the caller's buffer IS its
+   purpose"*), and `OpDatabase` clears the whole STORE it is handed.  With an
+   element record offered, that clears the vector.  So the same guard lands on
+   that arm for a hidden-buffer destination (one site), which also makes the
+   R2 buffer reuse sound for NRVO callees.  The same all-scalar-record
+   exclusion applies (a synthetic-nullable field relies on the zeroed record).
+2. *The element lowering* (`vectors.rs`, the call-element arm that sets the
+   free-source bit; and the field-init twin in `objects.rs`): for an element
+   that is a call carrying a hidden record buffer whose record is all-scalar,
+   emit `_elm = OpNewRecord(v); r = call(…, _elm); if OpDistinctStore(r, _elm)
+   { OpCopyRecord(r, _elm, 0x8000|tp) }; OpFinishRecord(v, _elm)`.  The runtime
+   test is what keeps every callee shape correct: a callee that minted its own
+   store on some path (the 1128 chain), or returned a parameter's record, takes
+   the copy — and the free-source bit stays exactly where `is_struct_returning_call`
+   puts it today (never on a borrowed return).  `r` is a parser-minted temp
+   marked never-free (the copy's bit releases a foreign store; in place there
+   is nothing to release), so `scopes` neither lifts the call again nor frees
+   the element's store through it.
+
+**Qualifying set:** the callee has a hidden RECORD buffer whose type is
+all-scalar (`Pt` yes; `Frond` no — but `fronds`' hot loop appends `Pt`s); the
+return is non-nullable AND dep-free (`return_adopts_fresh_store`, Route R's
+own shape — the matrix's A2/A4 showed why: a return naming its hidden buffer
+sends the temp's `Set` down the copy dispatch, whose `OpDatabase` re-claims
+the store the copy's free bit released a turn earlier); the element
+expression is the call itself (not a projection of it).  Every miss keeps
+today's copy.
+
+**Matrix before code** (each hand-computed, both backends, `LOFT_STRICT_STORES` +
+`LOFT_POISON` + leak, and `LOFT_HOIST_VERIFY` where a loop hoists):
+- A1 the R1 callee (`pt`) in a loop — the target;
+- A2 an NRVO callee (`t = S{…}; t.b = 1.0; t`) — mechanism 1's cell: without the
+  guard the vector's store is cleared, so this cell is the falsifier for it;
+- A3 a callee returning its PARAMETER (`fn id(p: S) -> S { p }`) — copy path,
+  and the free bit must NOT fire on the borrowed return;
+- A4 the 1128 chain (early `return r` then a minting tail) — copy path;
+- A5 a multi-element literal `[pt(a), pt(b), pt(c)]` — three elements, three
+  records, one `OpPreAllocVector`;
+- A6 the struct-field twin `Box { s: mk(3) }`;
+- A7 an element that is a PROJECTION of a call (`[mk(3).inner]`) — excluded,
+  today's lowering;
+- A8 a nullable callee (`-> S?`) — excluded;
+- A9 the element vector reached through a field (`b.pts += [pt(…)]`) and a
+  captured one (a closure appending) — the place is a field DbRef;
+- A10 the appended vector read back after the loop, and appended to again
+  after a read — the element records are live and finished.
+
+**Predicted:** the standalone probe reaches the hand-patched 2.24M; the
+consumer `smooth` row moves from 200× toward the interpolation arithmetic's
+own floor (the append was ~5/6 of its per-element cost), `fronds` from 53×
+by its inner-loop share; `lock` unchanged; hashes exact.  **Red:** A2 wiping
+a vector on either backend is the contract change's failure, and every other
+cell is a copy-path or exclusion check.  **Effort:** M.
+
+**SHIPPED 2026-09-08.**  Both mechanisms, both backends, all ten cells clean
+under `LOFT_STRICT_STORES` / `LOFT_POISON` / leak; the older guards and the
+bench hashes unchanged.  The matrix earned its keep three times over:
+
+- **A3** — the design's own fear: read directly instead of through the lift's
+  private copy, the copy's free-source bit released the PARAMETER's store
+  (native answered garbage; the interpreter's free-protection bracket hid it).
+  The bit now follows the callee's fact: off for a `returns_borrowed_view`.
+- **A2 / A4** — one mechanism, on the CALLER side: `nrvo` and `chain` return
+  `S["<hidden buffer>"]`, so `return_adopts_fresh_store` is false and the
+  temp's `Set` takes the copy dispatch, whose `OpDatabase` re-claims the store
+  the copy's free bit released a turn earlier — the recycled number was the
+  vector's (native: `vector_append: … the record in this slot is not the one
+  the field offset was computed for`; interpreter: the vector store read after
+  its free).  The scope is therefore Route R's own: only a callee whose
+  return the caller ADOPTS raw (dep-free) receives the element.  The NRVO
+  callee keeps today's copy — and joins the § V-b type-level item, since it is
+  the same missing fact (a hidden-buffer dep the adopt lowering accepts).
+- The NRVO guard (mechanism 1) stays: it makes the callee contract uniform
+  and the R2 reuse sound for NRVO callees, at no cost.
+
+*Measured.*  Standalone probe (`smooth(20000)`, native, hashes exact): 15.2M
+→ **3.2M** ns/op (the hand-patched ceiling 2.24M; the rest is the temp's
+`Set` and the `OpDistinctStore` test); interpreter 29.5M → 14.4M.  Consumer
+table, hashes agreeing on every row:
+
+| routine | before | after § V-d |
+|---|---:|---:|
+| smooth | 200× (75.8 µs) | **104×** (39.6 µs) |
+| fronds | 53× (2.75 ms) | **37×** (1.90 ms) |
+| lock / lock_curved | 9.2× / 11.9× | 9.3× / 11.9× |
+
+`smooth`'s remaining half is its interpolation arithmetic, the non-call
+appends (`sp_out += [p]`, `+= [pts[0]?]` — a copy from a live record, not this
+lever) and `half_chord`; the next decomposition is a `make profile` on the
+consumer bench.  Switch: `LOFT_NO_APPEND_IN_PLACE`.  Guard:
+`tests/scripts/157-a-vector-element-is-built-in-place.loft` (c1–c10) and
+`tests/append_in_place.rs`, which pins the EMITTED shape (element claimed,
+called with the element, `OpDistinctStore`, no lift) and the NRVO exclusion.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can

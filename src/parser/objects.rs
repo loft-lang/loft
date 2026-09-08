@@ -3782,7 +3782,24 @@ impl Parser {
                     // buffer IS its purpose.
                     list.push(v_set(*v_nr, Value::Null));
                 }
-                list.push(self.cl("OpDatabase", &[Value::Var(*v_nr), Value::Int(tp)]));
+                let alloc = self.cl("OpDatabase", &[Value::Var(*v_nr), Value::Int(tp)]);
+                if !self.first_pass
+                    && crate::keys::append_in_place_enabled()
+                    && self.vars.is_argument(*v_nr)
+                    && self.is_hidden_param(*v_nr)
+                    && self.record_is_fully_written_by_a_literal(*v_nr)
+                {
+                    // @PLN157 § V-d — the promoted return buffer honours an OFFERED record
+                    // the way Route R's literal does: `OpDatabase` clears the whole store it
+                    // is handed, and a caller may now hand a vector ELEMENT's record (whose
+                    // store is the vector's).  Both spellings of absent still allocate.
+                    let is_null = self.cl("OpRefIsNull", &[Value::Var(*v_nr)]);
+                    let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(*v_nr)]);
+                    let offered = v_if(is_null, Value::Boolean(false), has_rec);
+                    list.push(v_if(offered, Value::Null, alloc));
+                } else {
+                    list.push(alloc);
+                }
             } else if (!type_matches
                 || self.vars.rebind_must_mint(*v_nr)
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))

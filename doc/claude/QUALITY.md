@@ -512,6 +512,8 @@ above, which is neither branch's number, as every join so far.  The `@FR-O-Compl
 added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
 construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
+@PLN157 § V-d adds one peeling site — **420 · 396 · 24** — `vectors::element_call_takes_record_buffer` reads a vector-literal element through its `Span` to ask whether it is a buffer-returning call.
+
 @PLN157 § V (the value-return delivery) adds three peeling sites and no blind one — **419 · 395 · 24**: `control::tail_fresh_object_workref` and `guard_literal_alloc` read a body tail's `Return` and `"Object"` block through their `Span`, and `scopes::reuse_record_buffers` finds a buffer's preamble null-init through its.
 
 `doc_hygiene::quality_unspan_table_matches_the_audit` fails if this row and the tool disagree.
@@ -2657,6 +2659,8 @@ than by the audit.
 
 
 
+
+@PLN157 § V-d adds one on the OPAQUE side on purpose — **733 · 367 · 6 · 360** — `vectors::element_call_takes_record_buffer` matches the callee's return type bare, because a NULLABLE record return is excluded from building into a vector element (its buffer carries a different delivery); the audit counting it opaque is the exclusion made visible.
 
 @PLN157 § V-c adds two in the hoist gate — **732 · 367 · 6 · 359** — `hoist::frees_a_record` reads the freed operand's type through `base()` (a nullable record local's free is a record free too), and `hoist::retbuf_only_writer` asks the record's attributes through the keystone.
 

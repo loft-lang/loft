@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN157 § V-d (loft#1426) — a vector-literal element that is a buffer-returning call is
+// built IN the element's record: `v += [pt(x, y)]` hands `pt` the record `OpNewRecord`
+// just claimed in `v`'s store as its `__retbuf`, so the element is written where it lives
+// — no temporary store, no `OpCopyRecord`, no free.  A callee that answers a different
+// store (it minted its own on some path, or handed back a parameter's record) takes
+// today's copy through a run-time `OpDistinctStore` test.
+//
+// The values are the same either way — the delivery changes, not the answer — which is
+// why this is a LOCK over the shapes reuse can break.  Every cell is hand-computed:
+//
+//   c1  the target: a Route R callee (`pt`-shaped: a struct literal at return position)
+//       in a loop, then the vector read back
+//   c2  an NRVO callee (`t = S{…}; t.b = …; t`) — its return names its buffer, so it
+//       is EXCLUDED (the caller must adopt the answer raw) and keeps today's copy
+//   c3  a callee returning its PARAMETER — the copy path, and the copy must not release
+//       the parameter's store (the free-source bit stays off for a borrowed return)
+//   c4  the loft#1128 chain (an early `return r` then a minting tail) — the copy path
+//   c5  a three-element literal — three records, one `OpPreAllocVector`
+//   c6  the struct-field twin `Box { s: mk(i) }` — today's lowering, a control
+//   c7  an element that is a PROJECTION of a call — excluded
+//   c8  a nullable callee reached through `??` — excluded
+//   c9  the vector reached through a struct field — the place is a field DbRef
+//   c10 the vector read back, then appended to again — the elements are live and finished
+//
+// @falsified-at: none — no cell can change value on an earlier build; both forms answer
+// the same numbers, and that IS the claim.  The evidence that the delivery moved is the
+// A/B on one binary (`LOFT_NO_APPEND_IN_PLACE=1`, `smooth(20000)` 15.2M → 3.2M ns/op on
+// native, hashes equal) and `tests/append_in_place.rs`, which pins the emitted shape.
+struct S { a: integer, b: integer }
+struct Box { s: S }
+struct Holder { items: vector<S> = [] }
+struct Inner { i: integer }
+struct Outer { inner: Inner }
+fn mk(u: integer) -> S { S { a: u, b: u * 2 } }
+fn nrvo(u: integer) -> S { t = S { a: u, b: 0 }; t.b = u + 1; t }
+fn ident(p: S) -> S { p }
+fn chain(c: integer) -> S { if c > 0 { r = mk(1); if r.a > 99 { return r; } } mk(3) }
+fn maybe(u: integer) -> S? { if u < 0 { null } else { S { a: u, b: u } } }
+fn outer(u: integer) -> Outer { Outer { inner: Inner { i: u } } }
+fn sum_a(v: const vector<S>) -> integer { s = 0; for i in 0..len(v) { s += v[i]?.a; } s }
+fn a1() -> integer { v: vector<S> = []; for i in 0..5 { v += [mk(i)]; } s = 0; for i in 0..len(v) { s += v[i]?.a * 10 + v[i]?.b; } s }
+fn a2() -> integer { v: vector<S> = []; for i in 0..5 { v += [nrvo(i)]; } s = 0; for i in 0..len(v) { s += v[i]?.a * 10 + v[i]?.b; } s }
+fn a3() -> integer { p = S { a: 7, b: 9 }; v: vector<S> = []; for i in 0..3 { v += [ident(p)]; } p.a = 1; sum_a(v) + p.a }
+fn a4() -> integer { v: vector<S> = []; for i in 0..4 { v += [chain(i)]; } sum_a(v) }
+fn a5() -> integer { v: vector<S> = []; for i in 0..3 { v += [mk(i), mk(i + 10), mk(i + 20)]; } sum_a(v) + len(v) * 1000 }
+fn a6() -> integer { s = 0; for i in 0..4 { b = Box { s: mk(i) }; s += b.s.b; } s }
+fn a7() -> integer { v: vector<Inner> = []; for i in 0..3 { v += [outer(i).inner]; } s = 0; for i in 0..len(v) { s += v[i]?.i; } s }
+fn a8() -> integer { v: vector<S> = []; for i in 0..3 { m = maybe(i); v += [m ?? mk(99)]; } sum_a(v) }
+fn a9() -> integer { h = Holder {}; for i in 0..4 { h.items += [mk(i)]; } sum_a(h.items) }
+fn a10() -> integer { v: vector<S> = []; for i in 0..3 { v += [mk(i)]; } s = v[0]?.a + v[2]?.b; for i in 3..6 { v += [mk(i)]; } s + v[5]?.a + len(v) }
+pub fn test() {
+  assert(a1() == 120, "c1 the target: {a1()}");
+  assert(a2() == 115, "c2 an NRVO callee keeps the copy: {a2()}");
+  assert(a3() == 22, "c3 a parameter-returning callee: {a3()}");
+  assert(a4() == 12, "c4 the 1128 chain: {a4()}");
+  assert(a5() == 9099, "c5 a three-element literal: {a5()}");
+  assert(a6() == 12, "c6 the struct-field twin: {a6()}");
+  assert(a7() == 3, "c7 a projection element: {a7()}");
+  assert(a8() == 3, "c8 a nullable callee through ??: {a8()}");
+  assert(a9() == 6, "c9 a field-reached vector: {a9()}");
+  assert(a10() == 15, "c10 read back then appended again: {a10()}");
+}
+
+fn main() { test(); }
