@@ -2522,99 +2522,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 736 | 380 | 5 | **351** |
-
-*loft#1460 added `scopes.rs`'s keyed-removal reader and moved all three rows by one: a new
-function that discriminates on `Value` variants (`get_record_literal_keys`), one that resolves an
-op argument to a place (`named_place`), and a `peel_link` at the message split.  All three rows
-counting the same commit is the normal shape for a walker added whole — it is one site in three
-censuses, not three sites.*
-
-*loft#1459 moved one out of the opaque column, and it is the cheapest kind of move: the
-debugger's `render_frame_local` matched bare `Type` variants and let every `Optional` fall to
-`other => format!("<{}>", …)`, so a nullable local printed its TYPE where every other local
-prints a value.  The arm that fixes it is the peel, so the count and the fix are the same
-edit — which is what this row is for.*
-
-*loft#1456 moved one out of the opaque column by peeling: `@FR-O-Proxy`'s materialise gate now
-reads the element view through `base()`, because the `?` on a nullable element view says nothing
-about whether the local owns a store.  Its NATIVE twin peels too, but through `heap_def_nr`
-rather than a `match`, so the audit does not count it — a reminder that this row measures one
-SHAPE of the question and not the question.*
-
-*This row is a property of the TREE and moves on almost any commit that adds, removes or
-re-shapes a `match Type` site, so it is taken from one `ir_walker_audit.py optional` run rather
-than adjusted by hand — the total is the other three columns summed, and a number measured
-before a later commit cannot survive it.*
-
-*loft#1451 moved two out of the opaque column by PEELING: `tuple_return_rewrite` now peels
-`Optional` before deciding whether a return is a tuple, which is the fix itself — it matched
-`Type::Tuple` while the shape it had to catch was `Optional(Tuple(…))`.*
-
-*loft#1449 removed one from each of the first two columns, by MERGING rather than by peeling.*
-`Type::name` and `Type::source_name` were two match statements over the same variants, kept
-apart so the second could spell a keyed collection the way its author wrote it.  Held apart
-they drifted three times, and never at a keyed arm — always at a CONSTRUCTOR the second had
-not learned to recurse through.  They are now one body, `Type::render`, with a flag for which
-of the two jobs it is doing; the arms are exhaustive, so a constructor cannot be forgotten.
-Both entered as PEELING (each had an `Optional` arm), so the opaque count is unmoved.
-
-*loft#1445 added a site to each of the first two columns, and it is a SPLIT rather than a new site.*
-`vectors::owns_keyed_store` is the ownership half of a question `is_keyed` was answering
-twice — *which kind of collection is this*, where a `&` link must peel, and *does this
-variable own a store*, where it must not.  It discriminates on `Type::RefVar` through
-`base()`, so it enters as PEELING; its sibling `keyed_kind` is a one-line forward to
-`is_keyed(tp.peel_link())` with no `matches!` of its own and is therefore not counted at all.
-The opaque column does not move: nothing left it, and the entry that joined already peels.
-
-⚠ The ordinals above are the JOINED tree's, re-measured with `./scripts/ir_walker_audit.py
-optional` after the pick.  loft#1445 was authored against a tree where the same two entries
-were the 734th and the 373rd, and its own commit says so — a count is a property of the tree
-it was taken on, so a merged row is re-measured rather than chosen between.
-
-⚠ **The 368 → 372 / 360 → 356 move is the INSTRUMENT, not the code.**  `PEEL_CALL` and
-`PEEL_BIND` named `base` and `peel_optional` and not `peel_link` — so a site that peels MORE
-scored as though it peeled less.  `Type::peel_link`'s first line is `let mut tp = self.base()`
-and it then strips every `&` link as well, so it sees through `τ?` at least as well as `base()`
-does at every site that calls it; the audit read the upgrade as a regression and moved the site
-into the opaque backlog.
-
-Eight entries were mis-scored, and they are exactly the population the `peel_link` doc was
-written for: `parse_sort`, `parse_insert`, `parse_reserve` (twice) and `parse_reverse` — the
-`&File` family from loft#753 — plus `is_file_var_type`, which the paragraph below already
-records as having "swapped a hand-rolled `while let Type::RefVar(..)` loop for `Type::peel_link`
-… without changing either total".  That note was right about the totals and wrong about why:
-the site did not move because the instrument could not see either state, and it sat in the
-opaque column the whole time.
-
-The four numbers therefore decompose cleanly, measured on both source trees with both
-instruments:
-
-| | old instrument | fixed instrument |
-|---|---|---|
-| before loft#1445 | 368 / 360 | **372 / 356** |
-| after loft#1445 | 365 / 363 | **372 / 356** |
-
-(Both rows above are measured on loft2's source tree, whose totals differ from this one's; the
-row at the top of this section is THIS tree, re-measured with the fixed instrument after the
-join — `740 · 390 · 5 · 345`, where the same tree read `740 · 386 · 5 · 349` under the old one.
-Four entries moved here against eight there, because the two trees do not carry the same peel
-sites; the DIRECTION is what transfers, never the count.)
-
-loft#1445's own three sites — `is_keyed`, `is_collection`, `keyed_known_type` — read the same in
-both columns of the bottom row because they already peeled `τ?` through `base()` and the change
-only added the `&` peel on top.  The old instrument's 365/363 is the reading to distrust: it
-reports a fix that strictly widened three peels as three new opaque entries.  **An instrument
-that penalises the stronger peel argues against the fix it exists to find**, which is why this
-was fixed in the audit rather than absorbed as a row update.
-
-@PLN157 P3's non-sentinel pass adds one function on the seeing-through side —
-`non_sentinel::collect_escapes` asks whether a callee parameter is by-reference
-via `at.typedef.base()`, so an `Optional`-wrapped `RefVar` still escapes the
-argument it can write (the conservative answer; a bare match would have silently
-trusted it).  loft#1450 adds two more discriminating sites on the seeing-through side —
-`control::heap_null_test` and `parse_assign_op`'s question of whether a target is declared
-`Optional`.
+| 737 | 383 | 5 | **349** |
 
 Batch 10's follow-on (loft#1430 / loft#1440 / loft#1444) adds ONE function to the opaque column
 — `returned_closure_records`, which asks whether a return source is a fn-ref or a closure record
@@ -2631,6 +2539,12 @@ loft#1446 adds the second such function, `escaping_record_holds_buffer`, on the 
 for the same reason: it names `Type::Reference` to reach the closure record behind a record
 LOCAL, and that local is a compiler-minted `___clos_N` which no source can spell `?`.  Opaque is
 the answer, not the omission; on the joined tree it is the 346th opaque entry.
+
+loft#1455's `control::fn_slot_type` adds one more on the seeing-through side — 736 -> 737
+discriminating, 382 -> 383 seeing through, opaque unmoved.  It is the `&`-link twin of the
+wrapper question: it asks whether a variable's type is a `RefVar` and answers with the pointee's
+base, so both indirect-call sites read one home rather than each peeling for itself.  The
+accessor exists because three sites answered that question three ways.
 
 loft#1450 adds one to the SEEING-THROUGH side, and it is the first addition there whose whole
 job is the wrapper: `parse_assign_op` now asks whether an assignment's target is declared
