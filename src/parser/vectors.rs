@@ -5053,8 +5053,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     } else {
                         0
                     };
+                    // The element record was created just above: a fresh destination
+                    // (`COPY_FRESH_DEST`, the flag's doc in `keys.rs`).
                     let type_nr = Value::Int(
-                        i32::from(self.data.def(inner_nr).known_type()) | free_source_bit,
+                        i32::from(self.data.def(inner_nr).known_type())
+                            | free_source_bit
+                            | i32::from(crate::keys::COPY_FRESH_DEST),
                     );
                     let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(elm)]);
                     let copy = self.cl("OpCopyRecord", &[Value::Var(r), Value::Var(elm), type_nr]);
@@ -5105,7 +5109,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     };
                     // @P380 handle-zero is now hoisted above (after the element
                     // is created), covering this copy path AND the literal/`Insert`
-                    // path; `remove_claims` here sees the already-zeroed handle.
+                    // path — so the destination is FRESH and the copy's own clear has
+                    // nothing to release: `COPY_FRESH_DEST` (its doc in `keys.rs`) skips
+                    // it.  Pass 1 carries the `u16::MAX` placeholder unflagged.
+                    let type_nr = match type_nr {
+                        Value::Int(n) if !self.first_pass => {
+                            debug_assert!(
+                                (n & i32::from(crate::keys::COPY_TP_MASK)) == (n & 0x7FFF),
+                                "type id {n} collides with the OpCopyRecord flag bits"
+                            );
+                            Value::Int(n | i32::from(crate::keys::COPY_FRESH_DEST))
+                        }
+                        other => other,
+                    };
                     ls.push(self.cl("OpCopyRecord", &[p.clone(), Value::Var(elm), type_nr]));
                 }
             } else if let Value::Tuple(values) = p {

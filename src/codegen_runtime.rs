@@ -954,8 +954,9 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // uses to free the destination's nested vectors/strings so a
     // reassignment doesn't double-free on scope exit.
     let raw_tp = tp as u16;
-    let free_source = raw_tp & 0x8000 != 0;
-    let tp = raw_tp & 0x7FFF;
+    let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+    let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
+    let tp = raw_tp & crate::keys::COPY_TP_MASK;
     let size = u32::from(stores.size(tp));
     if crate::keys::trace_copy() {
         crate::loft_eprintln!(
@@ -968,7 +969,9 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
             to.pos,
         );
     }
-    stores.remove_claims(&to, tp);
+    if !fresh_dest {
+        stores.remove_claims(&to, tp);
+    }
     stores.copy_block(&data, &to, size);
     stores.copy_claims(&data, &to, tp);
     // @P317 — LOFT_LOG=copy_check (native): warn on nested-length divergence.

@@ -984,6 +984,25 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// The two flag bits `OpCopyRecord` carries in its `tp` operand beside the type id, so
+/// a type id is at most `0x3FFF` (16 383 types — `debug_assert`ed where the parser sets a
+/// bit).  Every decoder masks with [`COPY_TP_MASK`]; a decoder that masks only one bit
+/// indexes the type table with the other still set.
+///
+/// [`COPY_FREE_SOURCE`] (#120): free the SOURCE store after the copy — the source is a
+/// callee's fresh temporary nobody else frees.
+///
+/// [`COPY_FRESH_DEST`] (@PLN157 § V-j): the DESTINATION was created by the `OpNewRecord`
+/// just before — its handles are zero, so the `remove_claims` a copy performs on its
+/// destination has nothing to release and is skipped.  Not an optimisation of the walk:
+/// the walk allocated a child list per record and per owned field to find nothing, a
+/// quarter of `fronds`' append cost (DESIGN.md § V-j).  Set only where the destination is
+/// provably fresh — the vector-literal element arms of `new_record` — never on a
+/// reassignment, whose old value is exactly what the clear releases.
+pub const COPY_FREE_SOURCE: u16 = 0x8000;
+pub const COPY_FRESH_DEST: u16 = 0x4000;
+pub const COPY_TP_MASK: u16 = 0x3FFF;
+
 /// @PLN157 § V (Route R, caller half): a call's hidden RECORD buffer is allocated once —
 /// **DEFAULT ON**.  Opt OUT with `LOFT_NO_RETBUF_REUSE`.
 ///

@@ -333,8 +333,12 @@ impl OpEmitter for OpCopyRecordEmitter {
             // literal — the two diverge in native at 3+ nesting depth.  The
             // type-id is encoded `tp = id | (0x8000 free-source bit)`.
             if let Value::Int(n) = tp_val {
-                let free_bit = n & 0x8000;
-                let known = u16::try_from(n & 0x7FFF).unwrap_or(u16::MAX);
+                // Both flag bits travel with the id (`keys::COPY_FREE_SOURCE`,
+                // `keys::COPY_FRESH_DEST`); the runtime decodes them.
+                let free_bit =
+                    n & i32::from(crate::keys::COPY_FREE_SOURCE | crate::keys::COPY_FRESH_DEST);
+                let known =
+                    u16::try_from(n & i32::from(crate::keys::COPY_TP_MASK)).unwrap_or(u16::MAX);
                 // Only the 2+-deep chains diverge; depth 0/1 keep the literal
                 // (the shallow `vector<base>` id is parser↔runtime stable).
                 if let Some((depth, base)) = ctx.output.vector_runtime_id_chain(known)

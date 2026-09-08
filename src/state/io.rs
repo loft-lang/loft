@@ -1629,9 +1629,11 @@ impl State {
     /// frees the source store after the copy (#120).  Factored so the nullable
     /// struct-return ABI-B path (`copy_ref_or_null`) reuses the non-null branch.
     fn do_copy_record(&mut self, data: DbRef, to: DbRef, raw_tp: u16) {
-        // Issue #120: high bit of tp signals "free source store after copy".
-        let free_source = raw_tp & 0x8000 != 0;
-        let tp = raw_tp & 0x7FFF;
+        // Issue #120: high bit of tp signals "free source store after copy"; the next bit
+        // says the destination is fresh (`keys::COPY_FRESH_DEST`).
+        let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+        let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
         // @PLAN51 Cluster II — true alias copy is a no-op.  When data
         // and to refer to the SAME slot (full DbRef equality), the
         // remove_claims + copy_block + copy_claims sequence would
@@ -1806,7 +1808,9 @@ impl State {
         // free any nested vectors/strings already owned by the destination
         // before overwriting it, to prevent double-free and leaks when a struct
         // field containing a nested vector is reassigned.
-        self.database.remove_claims(&to, tp);
+        if !fresh_dest {
+            self.database.remove_claims(&to, tp);
+        }
         self.database.copy_block(&data, &to, size);
         self.database.copy_claims(&data, &to, tp);
         // LOFT_WATCH_STORE (cluster-462 write-watch) — name the copy that leaves a garbage

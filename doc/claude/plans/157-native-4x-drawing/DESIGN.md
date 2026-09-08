@@ -1288,6 +1288,62 @@ is therefore silent on c1 and fires on c2/c3/c7/c8 for the wrong reason (a later
 could not have moved anyway).  The temporary itself (`__ref_1`) is freed at SCOPE EXIT,
 not after the loop, so a move-append does not shorten any lifetime the rules name.
 
+## V-j — the copy into a fresh element, and the move's ceiling (2026-09-09)
+
+**The ceilings first**, by hand-patching the emitted Rust of `vr_fronds` (the Route R
+method; three runtime helpers written for the probe and removed after it — `record_in`
+claims a root-shaped record inside another value's store, `move_record` block-copies and
+zeroes its source when both share a store, `free_record_in` releases such a record):
+
+| variant | `fronds` ns/op | hash |
+|---|---:|---|
+| baseline (the § V-i runtime) | 838–845k | exact |
+| P1 — the recursive call's `__ref_6` placed as a record in `fd_out`'s store, the loop's `OpCopyRecord` a move, the buffer freed as a record | 773–776k (**−8 %**) | exact |
+| P2 — P1 and `fd_out` IS the retbuf (no return copy: the callee builds straight into the placed buffer) | 891–906k (**+7 %**) | exact |
+| probe — `OpCopyRecord` without its destination clear | 779–786k (**−7 %**) | exact |
+
+Three findings, and the third is the one shipped.
+
+1. **The move is worth 8 %, not the quarter the profile charged.**  The parent's copy of
+   each `Frond` is a claim per inner vector plus a block copy; what the profile called
+   the deep-copy class was mostly the CLAIMS, and the move only relocates them.
+2. **A shared arena is slower than fresh stores, and the reason is a runtime cliff.**  P2
+   removed the second copy entirely and lost 7 %: with every level building into one
+   store, `Store::coalesce_free` — the O(blocks) sweep `claim` runs when it would
+   otherwise grow the store, because `delete` coalesces forward only in the header-only
+   layout — took **29.5 %** of the row, and the store's growth another 20 % in page-fault
+   `memset`.  A fresh per-call store never sees either: it grows once and dies whole.  Two
+   consequences.  For this plan: the NRVO rename of `fd_out` at every return site (the
+   classifier refuses a mid-body vector return — `classify_ret_promotion_inner`'s
+   `MidReturn` rule — so `fronds` copies its whole level into the retbuf at both exits)
+   is NOT the win it looks like under this allocator.  For the runtime: a long-lived
+   store with churn — a game's state store — pays that sweep today; the fix is a footer
+   on FREE blocks so `delete` coalesces backward in O(1) and the sweep goes, a store-format
+   item for its own plan (the footer lives in free space, so a persisted store is read
+   as before and re-footed on open).
+3. **The copy into a fresh element clears a destination that holds nothing.**  Every
+   `v += [f]` lowers to `OpNewRecord` (defaults the slot) then `OpCopyRecord`, and the copy
+   begins with `remove_claims(to)` — a walk that allocates a child list per record and per
+   owned field to find zero handles: `cfree` 4.4 %, part of `owned_walk` and the memsets.
+   The probe measured it at 7 % of `fronds`; `smooth` unmoved (its appends are § V-d's
+   in-place calls, no copy).
+
+**Shipped: `COPY_FRESH_DEST` (`keys.rs`, `0x4000`).**  The parser's two vector-literal
+element arms in `new_record` — the only sites where the destination was created by the
+`OpNewRecord` just before — OR the bit into `OpCopyRecord`'s `tp` beside #120's
+`COPY_FREE_SOURCE`; both runtimes (`codegen_runtime::OpCopyRecord`, `State::do_copy_record`)
+skip the destination clear when it is set; every decoder masks with `COPY_TP_MASK`, and the
+native emitter's runtime-id chain (`ref_ops.rs`) carries both bits through.  A reassignment
+never gets the bit — its old value is exactly what the clear releases.  Measured on the
+shipped tier through the `loft` binary: `fronds` 838–845k → **794–801k (−5.5 %)**, the
+interpreter 6.31M → 5.84M (−7 %); hashes exact on both backends; the twelve V-j cells match
+on both backends under `LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_POISON=1`.
+
+**What this settles for the queue.**  Item 4's move (P1) stays designed and unbuilt at
+−8 % for M+ effort — three new ops, an IR rewrite pairing a call's buffer with the loop
+that consumes it, both backends — and is ranked below the allocation items whose ceilings
+are of the same size at S each.  The cells stay as its guard.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
