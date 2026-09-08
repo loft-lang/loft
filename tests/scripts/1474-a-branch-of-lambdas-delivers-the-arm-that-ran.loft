@@ -1,0 +1,254 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1473 / loft#1474 — a RETURN whose value is a branch of capturing lambdas.
+//
+// `@FR-L-CapOwn`: a captured heap store is freed once, by whichever of the record and the frame
+// outlives the other.  Where the return delivers the record, the frame owes it no free.  The
+// frame decides that from the return's own value, and the decoder it consults —
+// `collect_return_sources` — collects the VARIABLES a return hands back.  A capturing lambda is
+// not a variable: it is a `FnRef` naming its `___clos_N`.  So a branch of lambdas contributed
+// NOTHING to that set, `ret_var` was `u16::MAX` because the arms unify onto no var, and the
+// frame freed every arm's record under the fn-ref the caller had just been handed.
+//
+// The same question already had two other decoders — `returned_closure_records` for a `return`
+// and the link-write walk for `&fn(…)` — and BOTH of them read a `FnRef`.  The one the sweep
+// consulted was the one that did not.  They are one walk now
+// (`closure_records_yielded_by`), and the sweep's `return_delivered` is its third caller,
+// sitting beside the `link_delivered` term it mirrors.
+//
+// What the freed record does downstream is decided by what it HELD, which is why one defect was
+// filed as two: a captured RECORD reads back an invalid `DbRef` and the call answers `null`
+// (loft#1473's face), while a captured scalar or text reads back the arena bytes still sitting
+// there — the NEXT arm's capture — and the call answers a plausible wrong number
+// (loft#1474's `104`, and `a-two` for text).  Same free, two symptoms, and the second is the
+// one no instrument reports.
+//
+// Axes this file MOVES:  the branch SPELLING (`if` · `match` · nested · an explicit `return`
+//                        per arm) · arm COUNT (2 · 3 · 4) · whether the arms capture the SAME
+//                        local or DIFFERENT ones · WHICH arm captures (all · the middle one
+//                        only · one of two) · the capture's TYPE (a heap record · text · a
+//                        scalar), which is what decides the symptom · the capture's ORIGIN (a
+//                        frame local · a parameter; the REASSIGNED-between-builds origin is cut,
+//                        see e10) ·
+//                        the lambda's own type (`fn() -> integer` · `fn(integer) -> integer` ·
+//                        `fn() -> text`) · and what the CALLER does with the result (calls it ·
+//                        calls it twice · never calls it).
+// Axes it HOLDS FIXED:   one capture per lambda; the frame always builds its lambdas inline.
+//
+// The controls are `ctl_bound_local` and `ctl_inline` — the two shapes that were already right,
+// because a hand-written `g: fn(…) = if …` gives the join a NAME whose type deps carry both
+// records, which is the route `backs_return_source` already reached.  They pin that the cure
+// did not come from disturbing them.
+//
+// @falsified-at: 0dd1ad660, WITH THE INSTRUMENTS ARMED — `LOFT_STRICT_STORES=1 LOFT_POISON=1
+//   make falsify`: interpret exit 101 -> 0 and panicked -> clean, native exit 1 -> 0 and
+//   panicked -> clean.  That commit carries the
+//   loft#1469/loft#1470 fn-ref WIDTH fix and nothing after it, which is the ref this file needs:
+//   WITHOUT the width fix the same cells die earlier on `fn_call_ref: d_nr=… out of range`, a
+//   different defect masking this one.  On the control the record face is
+//   `e1 if/2 arms/different: null 204`, alongside `e11 text: a-two b-two` and
+//   `e12 scalar: 104 204` — the same free showing three different symptoms by capture type,
+//   which is this file's sharpest axis and one my own loft#1474 guard does not carry.
+//
+// Written by the `loft2-1b` session against its own branch and taken over here, where the fixes
+// live; a guard only means something on a tree that passes it.
+
+struct E74 { a: integer }
+enum W74 { Ax, Bx, Cx }
+
+// e1 — the filed shape: two `if` arms over two DIFFERENT locals, the fn-ref returned.
+fn if_two_different(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + d.a } }
+}
+
+// e2 — the SAME local captured by both arms.  Only one store exists, so nothing can read a
+// sibling's capture; the free is still one too many and the answer is `null`.
+fn if_two_same(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  if p { fn() -> integer { 3 + e.a } } else { fn() -> integer { 5 + e.a } }
+}
+
+// e3 — three `match` arms over three locals, captured in DECLARATION order.
+fn match_three(p: integer) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  match p { 0 => fn() -> integer { 100 + x.a },
+            1 => fn() -> integer { 200 + y.a },
+            _ => fn() -> integer { 300 + z.a } }
+}
+
+// e4 — the same three arms with the captures REVERSED, so the last arm takes the FIRST-declared
+// local.  It separates "the last arm's record" from "the last-declared local": the pre-fix
+// readings were `103 203 303` here and `101 201 301` in e3, which is the arm and not the local.
+fn match_three_reversed(p: integer) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  match p { 0 => fn() -> integer { 100 + z.a },
+            1 => fn() -> integer { 200 + y.a },
+            _ => fn() -> integer { 300 + x.a } }
+}
+
+// e5 — four arms: the arm count is an axis because the sweep walks a chain, not a pair.
+fn match_four(p: integer) -> fn() -> integer {
+  w: E74 = E74 { a: 1 };
+  x: E74 = E74 { a: 2 };
+  y: E74 = E74 { a: 3 };
+  z: E74 = E74 { a: 4 };
+  match p { 0 => fn() -> integer { 100 + w.a },
+            1 => fn() -> integer { 200 + x.a },
+            2 => fn() -> integer { 300 + y.a },
+            _ => fn() -> integer { 400 + z.a } }
+}
+
+// e6 — the delivering arm two levels down: the walk has to descend both `if`s, not just the
+// outer one.
+fn nested_two_deep(p: integer) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  if p == 0 { fn() -> integer { 100 + x.a } }
+  else { if p == 1 { fn() -> integer { 200 + y.a } } else { fn() -> integer { 300 + z.a } } }
+}
+
+// e7 — an explicit `return` in each arm rather than a tail expression.  A different leg of the
+// walk (the `Return` pre-pass), and it was wrong on the merge-base too.
+fn explicit_returns(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  if p { return fn() -> integer { 100 + e.a }; }
+  return fn() -> integer { 200 + d.a };
+}
+
+// e8 — only the MIDDLE arm captures.  The two bare arms deliver no record at all, so the set
+// the sweep builds has one entry where the chain has three.
+fn only_middle_captures(p: integer) -> fn() -> integer {
+  y: E74 = E74 { a: 2 };
+  match p { 0 => fn() -> integer { 1 },
+            1 => fn() -> integer { 200 + y.a },
+            _ => fn() -> integer { 3 } }
+}
+
+// e9 — the arms capture a PARAMETER, whose store is the caller's.  The frame never owned it, so
+// the suppression must not be what keeps it alive.
+fn capture_parameter(p: boolean, e: E74) -> fn() -> integer {
+  if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + e.a } }
+}
+
+// e10 — CUT.  The captured local REASSIGNED between two straight-line builds is loft#1476,
+// which is OPEN: both records are built on every run, so "which one was built" cannot say which
+// one the frame may free, and the witness that could — the delivered fn-ref's closure half — is
+// a value the IR cannot currently spell.  It leaks `E×2` + one of each record, byte-identical on
+// `9720dfd06` and on every branch measured, so it is not this file's to carry.  A guard holding
+// a known leak teaches the next reader that the file is flaky; the cell comes back when loft#1476
+// closes.
+
+// e11 — TEXT captures.  The symptom face that no instrument reports: the freed record's bytes
+// are still readable, so the wrong arm's text comes back and the program answers `a-two`.
+fn capture_text(p: boolean) -> fn() -> text {
+  s: text = "one";
+  t: text = "two";
+  if p { fn() -> text { "a-" + s } } else { fn() -> text { "b-" + t } }
+}
+
+// e12 — SCALAR captures, the other stale-bytes face: `104` is `100 + d`, the second arm's
+// capture read through the first arm's freed record.
+fn capture_scalar(p: boolean) -> fn() -> integer {
+  e: integer = 2;
+  d: integer = 4;
+  if p { fn() -> integer { 100 + e } } else { fn() -> integer { 200 + d } }
+}
+
+// e13 — the lambda takes an ARGUMENT, so the fn-ref is not nullary.
+fn lambda_with_parameter(p: boolean) -> fn(integer) -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  if p { fn(k: integer) -> integer { 100 + e.a + k } } else { fn(k: integer) -> integer { 200 + d.a + k } }
+}
+
+// e14 — an ENUM subject, which reaches a different chain builder from the scalar one.
+fn enum_subject(p: W74) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  match p { Ax => fn() -> integer { 100 + x.a },
+            Bx => fn() -> integer { 200 + y.a },
+            Cx => fn() -> integer { 300 + z.a } }
+}
+
+// c1 — CONTROL: the branch bound to a hand-written LOCAL, then the local returned.  The join
+// has a NAME whose type deps carry both records, which `backs_return_source` already reached,
+// so this was right before the fix and must stay right after it.
+fn ctl_bound_local(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  g: fn() -> integer = if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + d.a } };
+  g
+}
+
+// c2 — CONTROL: the same branch never leaves the frame.  Nothing is delivered, so every record
+// is the frame's to free and the suppression must not fire at all.
+fn ctl_inline(p: boolean) -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  g: fn() -> integer = if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + d.a } };
+  g()
+}
+
+fn main() {
+  assert(if_two_different(true)() == 102, "e1 if/2 arms/different, first: {if_two_different(true)()}");
+  assert(if_two_different(false)() == 204, "e1b if/2 arms/different, second: {if_two_different(false)()}");
+  assert(if_two_same(true)() == 5, "e2 if/2 arms/same local, first: {if_two_same(true)()}");
+  assert(if_two_same(false)() == 7, "e2b if/2 arms/same local, second: {if_two_same(false)()}");
+
+  assert(match_three(0)() == 101, "e3 match/3 arms, first: {match_three(0)()}");
+  assert(match_three(1)() == 202, "e3b match/3 arms, middle: {match_three(1)()}");
+  assert(match_three(2)() == 303, "e3c match/3 arms, last: {match_three(2)()}");
+  assert(match_three_reversed(0)() == 103, "e4 reversed captures, first: {match_three_reversed(0)()}");
+  assert(match_three_reversed(1)() == 202, "e4b reversed captures, middle: {match_three_reversed(1)()}");
+  assert(match_three_reversed(2)() == 301, "e4c reversed captures, last: {match_three_reversed(2)()}");
+
+  assert(match_four(0)() == 101, "e5 match/4 arms, first: {match_four(0)()}");
+  assert(match_four(1)() == 202, "e5b match/4 arms, second: {match_four(1)()}");
+  assert(match_four(2)() == 303, "e5c match/4 arms, third: {match_four(2)()}");
+  assert(match_four(3)() == 404, "e5d match/4 arms, last: {match_four(3)()}");
+
+  assert(nested_two_deep(0)() == 101, "e6 nested, outer arm: {nested_two_deep(0)()}");
+  assert(nested_two_deep(1)() == 202, "e6b nested, inner first: {nested_two_deep(1)()}");
+  assert(nested_two_deep(2)() == 303, "e6c nested, inner second: {nested_two_deep(2)()}");
+
+  assert(explicit_returns(true)() == 102, "e7 explicit return, first: {explicit_returns(true)()}");
+  assert(explicit_returns(false)() == 204, "e7b explicit return, second: {explicit_returns(false)()}");
+
+  assert(only_middle_captures(0)() == 1, "e8 only middle captures, bare first: {only_middle_captures(0)()}");
+  assert(only_middle_captures(1)() == 202, "e8b only middle captures, the capturing arm: {only_middle_captures(1)()}");
+  assert(only_middle_captures(2)() == 3, "e8c only middle captures, bare last: {only_middle_captures(2)()}");
+
+  s9: E74 = E74 { a: 5 };
+  assert(capture_parameter(true, s9)() == 105, "e9 parameter capture, first: {capture_parameter(true, s9)()}");
+  assert(capture_parameter(false, s9)() == 205, "e9b parameter capture, second: {capture_parameter(false, s9)()}");
+
+
+  assert(capture_text(true)() == "a-one", "e11 text capture, first: {capture_text(true)()}");
+  assert(capture_text(false)() == "b-two", "e11b text capture, second: {capture_text(false)()}");
+  assert(capture_scalar(true)() == 102, "e12 scalar capture, first: {capture_scalar(true)()}");
+  assert(capture_scalar(false)() == 204, "e12b scalar capture, second: {capture_scalar(false)()}");
+
+  assert(lambda_with_parameter(true)(10) == 112, "e13 lambda with a parameter, first: {lambda_with_parameter(true)(10)}");
+  assert(lambda_with_parameter(false)(20) == 224, "e13b lambda with a parameter, second: {lambda_with_parameter(false)(20)}");
+
+  assert(enum_subject(W74.Ax)() == 101, "e14 enum subject, first: {enum_subject(W74.Ax)()}");
+  assert(enum_subject(W74.Bx)() == 202, "e14b enum subject, middle: {enum_subject(W74.Bx)()}");
+  assert(enum_subject(W74.Cx)() == 303, "e14c enum subject, last: {enum_subject(W74.Cx)()}");
+
+  assert(ctl_bound_local(true)() == 102, "c1 control, bound to a local, first: {ctl_bound_local(true)()}");
+  assert(ctl_bound_local(false)() == 204, "c1b control, bound to a local, second: {ctl_bound_local(false)()}");
+  assert(ctl_inline(true) == 102, "c2 control, never leaves the frame, first: {ctl_inline(true)}");
+  assert(ctl_inline(false) == 204, "c2b control, never leaves the frame, second: {ctl_inline(false)}");
+
+  println("1474-a-branch-of-lambdas-delivers-the-arm-that-ran ok");
+}

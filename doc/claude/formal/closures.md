@@ -198,6 +198,17 @@ with the closure's environment in scope.
 
 **OPEN: 1.**
 
+- **D-clo-32** *(closed 2026-09-09, found while taking loft#1474's matrix over)* — the walk that
+  decides which captures are built CONDITIONALLY recognised `if`/`match` arms and loop bodies,
+  and read a build standing after them as straight-line.  An early `return` takes everything
+  after it off that line: `if p { return |…| e.a; } return |…| d.a;` builds the second closure at
+  the block's top level, so the frame gave its release away to a record the early-return run
+  never made and the capture leaked, one store per call.  Closed by walking a statement SEQUENCE
+  in order and treating everything after an operator containing a `return` as conditional — the
+  same bound `(L-CapOne)`'s terminating-arm clause draws from the other side.  Over-approximating
+  on purpose, which is what this walk's own contract asks: it costs a run-time test, while
+  under-approximating strands the store.  Cell `explicit_returns` in
+  `1474-a-branch-of-lambdas-delivers-the-arm-that-ran.loft`.
 - **D-clo-31** *(closed 2026-09-08, loft#1477)* — `returned_closure_records` decides which
   closure records a return DELIVERS, and it had two decoders: the tail walks a stack that reads
   a `Value::FnRef`, while every `Value::Return` routed through `collect_return_sources`, whose

@@ -13592,6 +13592,33 @@ fn captures_built_conditionally(
             captures_built_conditionally(then, set_dbref, true, out);
             captures_built_conditionally(alt, set_dbref, true, out);
         }
+        // A statement SEQUENCE is walked in order, because an early `return` earlier in it
+        // takes everything after it off the straight line.  `if p { return … } return …;`
+        // builds the second closure at the block's top level — inside no arm, so the walk read
+        // it as unconditional — while the arm's return is exactly what skips it.  The frame had
+        // then given its release away to a record that run never built, and the capture leaked
+        // (one store per call).  This is the same bound `@FR-L-CapOne`'s terminating-arm clause
+        // draws from the other side: an arm that returns is exclusive with what follows it.
+        //
+        // Keyed on a `Return` appearing ANYWHERE in a preceding operator, which over-
+        // approximates — a `return` inside a nested lambda's body would count, and a run-time
+        // test would be emitted where a static suppression would have done.  That is the
+        // direction this walk's own contract asks for: over-approximating costs a test,
+        // under-approximating strands the store.
+        Value::Block(bl) => {
+            let mut br = branched;
+            for op in &bl.operators {
+                captures_built_conditionally(op, set_dbref, br, out);
+                br = br || subtree_has_return(op);
+            }
+        }
+        Value::Insert(ops) => {
+            let mut br = branched;
+            for op in ops {
+                captures_built_conditionally(op, set_dbref, br, out);
+                br = br || subtree_has_return(op);
+            }
+        }
         other => other.for_each_child(&mut |ch| {
             captures_built_conditionally(
                 ch,
@@ -13601,6 +13628,22 @@ fn captures_built_conditionally(
             );
         }),
     }
+}
+
+/// Does `node` contain a `return` anywhere within it?
+///
+/// The signal that everything AFTER `node` in a statement sequence is conditional: a run that
+/// takes that return never reaches them.  Answers about the whole subtree rather than its tail,
+/// because the return that matters here is the one inside a branch arm — a tail return would end
+/// the sequence anyway.
+fn subtree_has_return(node: &Value) -> bool {
+    let mut found = false;
+    node.walk(&mut |n| {
+        if matches!(n.unspan(), Value::Return(_)) {
+            found = true;
+        }
+    });
+    found
 }
 
 fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &mut HashSet<u16>) {
