@@ -1216,14 +1216,22 @@ impl Output<'_> {
         }
         // Look up the closure work-var for this fn-ref variable (if any).
         let closure_var_nr = self.data.def(self.def_nr).variables().closure_var_of(v_nr);
-        let closure_expr: String = if let Some(clos_nr) = closure_var_nr {
-            // Same-scope closure: pass the local ___clos_N variable.
-            let clos_name = sanitize(self.data.def(self.def_nr).variables().name(clos_nr));
-            format!("var_{clos_name}")
-        } else {
-            // Cross-scope closure — pass .1 from the fn-ref tuple.
-            format!("var_{var_name}.1")
-        };
+        // `@FR-B-Ref-Uniform` — the environment comes from the SLOT, always.  `var_<slot>.1` is
+        // where the mint put it (`var_g = (dnr, var____clos_1)` writes the local straight into
+        // it) and it is also where a later rebind puts a different one, so reading the slot is
+        // never staler than reading the local and is sometimes fresher.
+        //
+        // The same-scope form used to prefer the caller's own `___clos_N`, which re-derives
+        // "which environment does this slot hold" from the MINT SITE — a non-local fact — and
+        // is right only while nothing else can write the slot.  A `&fn(…) -> τ` link is exactly
+        // the thing that can: `inner(g)` wrote a new closure through `&mut var_g`, the dispatch
+        // kept calling the caller's original environment, and `g()` answered the old value with
+        // no diagnostic.  It reproduced only when the caller's slot started out CAPTURING,
+        // because that is the only shape where a `___clos_N` exists to prefer — which is why
+        // loft#1443's ten cells, all pinned to a non-capturing initial value, never moved it
+        // (`D-bind-29`).
+        let _ = closure_var_nr;
+        let closure_expr: String = format!("var_{var_name}.1");
         let work_buf_expr: String = if let Some(idx) = work_buf_idx {
             format!("_farg_{idx}")
         } else {
