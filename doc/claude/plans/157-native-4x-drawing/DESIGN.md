@@ -1090,8 +1090,13 @@ shipped tier.  Per iteration that loop does, beside Rust's four ALU ops:
    runtime call through the store table, on every iteration, in a loop whose HEADER was
    hoisted one line above (`__vh_1 = vec_header(…)`, `get_elem_hoisted` for the read).
 2. `ops::op_logical_and_int`, `op_mul_int`, `op_exclusive_or_int` — each tests both
-   operands for `i64::MIN`, because `h0: integer`'s non-nullness does not cross the call
-   into the callee's body (P3's open half, interprocedural param facts).
+   operands for `i64::MIN`.  Not because a fact failed to cross the call: the owner's
+   ruling (2026-09-08) is that null is MADE by ordinary arithmetic — `a/b`, `sqrt(a)`,
+   `a+b` and `a*b` on overflow — so `h0: integer` is non-null at entry and nowhere
+   else by declaration, and a check per op is the semantics of a language that never
+   halts.  What licenses eliding one is a proof about the value: here `& 0xFFFFFFFF`
+   bounds every operand, and a bounded operand cannot overflow.  Range propagation
+   over the P3 facts, which already refuse arithmetic for exactly this reason.
 3. A `(0..64).contains(&_v_v2)` range test on `x >> 8`, whose amount is a literal.
 
 None of the three is the store model.  What IS the design, and stays:
@@ -1100,9 +1105,11 @@ None of the three is the store model.  What IS the design, and stays:
   indirection through a store base plus a bounds test; Rust reads a stack offset.  With
   headers hoisted the per-access cost is one load, one add, one compare — the price of
   serialisation, live editing, shared stores and the never-crash goal (GOALS.md).
-- **A nullable scalar carries a sentinel**, and a check per op is the semantics where the
-  source IS nullable (`?`, `??`, a `float?` field).  Where the value is provably non-null
-  the check is a missing fact, which is finding 2 above.
+- **Every scalar op can make a null, so every op checks** — `a/b`, `sqrt(a)`, `a+b`
+  and `a*b` on overflow produce the sentinel, which is how loft never halts on
+  arithmetic.  A declaration says nothing past the entry; only a proof about the VALUE
+  (a bound, a mask, a non-zero finite divisor) can retire a check, and that proof is
+  finding 2 above.
 
 What is NOT the design, each with its queue item (README § Phase ordering):
 

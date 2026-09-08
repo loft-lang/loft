@@ -61,19 +61,19 @@ CI_BUDGET.md § When the local gate is unreliable); codegen, scopes, store and
 runtime subject suites were green on the rebased tree locally, `packages` was
 stopped before its verdict to free the box and is covered by the dispatch.
 
-**The next unit is the loop's own overhead — queue items 1–3** (§ Phase
-ordering): the loop bound read through the runtime per iteration, the range
-check on a constant shift, and the sentinel checks on a non-nullable
-parameter's arithmetic.  The evidence is one emitted function, `n_fnv` in the
-standalone `smooth` row (`loft --native-emit --lean`), and the instrument is
-the same: emit, read the loop, count the calls per iteration, then the P0
-`hash` row and the consumer table.  Item 1 is S and touches
-`src/generation/hoist.rs`'s bound emission; item 3 is P3's open half
-(`generation::non_sentinel`, the leaf-trust set: a parameter declared
-non-nullable IS non-null, and that fact has to reach the callee's body).  Then
-`fronds`' class (item 4) from its labelled census — the census is done
-(DESIGN.md § V-g residual), the design is not — and the frame-local record
-temporaries (item 5), whose ceiling § V-g's scalar probe measured.
+**Item 1 shipped** (the hoisted loop bound) with the leaf guard elision beside
+it.  **The next unit is `fronds`' deep-copy class** (item 4, DESIGN.md
+§ fronds): the sub-call's result Fronds are copied one by one into the parent
+with their inner vectors and the source freed — a quarter of the row.  Design
+first: the source is a temporary whose elements die after the loop, so the
+append should MOVE the records and adopt their inner vectors, or the callee
+should build into the caller's vector; write the cells before the code, as
+§ V-g did.  Beside it, item 3 as re-stated: sentinel elision by RANGE proof —
+`n_seed_hash`'s `& 0xFFFFFFFF` bounds every operand, and a bounded operand
+cannot overflow; the owner ruled that null is made by ordinary arithmetic, so
+the declaration is never the fact, the range is.  Then item 5 (frame-local
+record temporaries, ceiling measured) and the small emitter items of `fronds`'
+allocation class (4b, ceiling −9 %).
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -189,7 +189,7 @@ What remains, ranked by measured value per unit of work:
 |---|---|---|---|---|
 | 1 | **bound-via-header** — the loop bound re-reads the vector length through the runtime on every iteration even where the header was hoisted (`length_vector` beside `get_elem_hoisted` in `n_fnv`) | every `for` over a vector | `hash` and every element loop | S |
 | 2 | **constant shift amounts need no range check** — `x >> 8` emits a `(0..64).contains` test on a literal | `n_fnv` | XS, folds into 1 | XS |
-| 3 | **interprocedural non-null facts** — every integer op over a non-nullable parameter is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`) because `h0`'s non-nullness does not cross the call; P3's open half | `n_fnv`, and every leaf that takes scalars | `hash` 9× → a few ×; every scalar-heavy leaf | M |
+| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null; the checks are a third of the row (553–584k → 370–396k ns/op) | `hash` and every masked-arithmetic loop | M–L |
 | 4 | **`fronds`' deep-copy class** — the sub-call's result Fronds are copied one by one into the parent with their inner vectors, then the source freed: a quarter of the row (`copy_claims`, `owned_walk`, `copy_block`, `memmove`); move the records of a dying temporary, or build into the caller's vector | the standalone row's profile (DESIGN.md § fronds) | `fronds` 18× → ~13× | M–L |
 | 4b | **`fronds`' allocation class** — the sides literal, the two builders, the per-sub-array spec; CEILING MEASURED at −9 % by a source-level variant (−64 % stores, hash exact) — small emitter items, not the half the census suggested | DESIGN.md § fronds | `fronds` −9 % | S each |
 | 5 | **frame-local record temporaries** — 12 of `smooth`'s 14 remaining stores are `pt(…)` results bound to locals; the scalar-tangent probe gained 11 % while DOUBLING the helper calls, so a temporary that lives in the frame takes at least that | § V-g's ceiling probe | `smooth` 19× → ~14×; the same class in every routine that names a struct temporary | M–L |
