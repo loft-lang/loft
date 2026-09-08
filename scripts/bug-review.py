@@ -54,7 +54,24 @@ KEYSTONES = [
     ("IntegerSpec::range_to_width",  "narrow-int/width",  700),
     ("Stores::for_each_owned_child", "keyed collections", 715),
     ("Value::for_each_child",        "traversal/reach",   700),
+    # @PLN153 phase 3: the `(N-Store)` refusal folded onto ONE body at `convert`'s
+    # `τ? ⤳ τ` arm — the generics-precedent shape, a refusal at the point every
+    # escape ends up.  Landed 2026-09-05 with the #1366 guards.
+    ("Parser::nstore_unwrap_report", "null/sentinel",    1366, "PLN153"),
 ]
+
+# ⚠ **The fourth trap, and it is the one that reads as a verdict.**  A keystone whose plan
+# also ran a SCREEN for its own class cannot be judged on the raw share, because the screen
+# FILES that class's bugs into the very window that scores it.  Measured on @PLN153: 21 of
+# the 36 null/sentinel bugs after its watermark are its own phase-4 finds, and the share
+# reads 37.3 % with them and 20.8 % without — the difference between "re-open the premise"
+# and "the first fall this class has had".
+#
+# Neither number is the verdict, which is why both are printed.  The raw line is what the
+# earlier passes were scored on and stays the headline; the split line says how much of it
+# is the screen looking at itself.  An issue counts as the plan's own find when its BODY
+# names the plan — the convention every batch already follows when it files.
+PLAN_TAG = re.compile(r"@?PLN(\d+)")
 
 # Child-bearing IR variants — the set `IrNode::for_each_child` is exhaustive over.
 CHILD_BEARING = ["Call", "CallRef", "Insert", "Tuple", "Parallel", "Block", "Loop",
@@ -68,7 +85,7 @@ def load(cache):
         return json.loads(pathlib.Path(cache).read_text())
     out = subprocess.run(
         ["gh", "issue", "list", "--state", "all", "--limit", "1200",
-         "--json", "number,title,labels,state,closedAt,createdAt"],
+         "--json", "number,title,labels,state,closedAt,createdAt,body"],
         capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"gh failed: {out.stderr.strip()}\n"
@@ -278,14 +295,20 @@ def main():
         print(f"  {name:<20}{cells}   {mark} {delta:+.1f}pp vs peak {peak:.1f}%")
 
     print(f"\n=== 3. Payoff check — did each landed keystone move its class? ===")
-    for keystone, cls, landed in KEYSTONES:
+    for keystone, cls, landed, *plan in KEYSTONES:
         if cls not in counts:
             print(f"  {keystone:<32} {cls}: no class signature — add one to CLASSES")
             continue
         before = [b for b in bands if b[1] <= landed]
         after = [b for b in bands if b[0] >= landed]
         if not before or not after:
-            print(f"  {keystone:<32} landed at #{landed}: not enough bands either side yet")
+            # Bands are equal-WIDTH in issue number, so a keystone landing inside the last
+            # band has no band starting above it and cannot be judged.  Say what to do about
+            # it rather than only that it happened: a finer slicing may reach it, and if it
+            # does not, the honest answer is that the window has not passed yet.
+            print(f"  {keystone:<32} landed at #{landed}: no band starts above it — "
+                  f'try `make bug-review ARGS="--bands {max(a.bands * 2, 14)}"`, '
+                  f"or wait for the next cycle")
             continue
         nb = sum(counts[cls][b] for b in before)
         sb = 100 * nb / max(1, sum(tot[b] for b in before))
@@ -301,6 +324,21 @@ def main():
         else:
             verdict = "NO EFFECT — re-open the premise"
         print(f"  {keystone:<32} {cls:<18} {sb:5.1f}% -> {sa:5.1f}%   {verdict}")
+        if plan and plan[0]:
+            tag = plan[0]
+            own = {i["number"] for i in bugs if tag in (i.get("body") or "")}
+            cls_nums = {i["number"] for i in hits.get(cls, [])}
+
+            def share(bs, own=own, cls_nums=cls_nums):
+                inb = [i["number"] for i in bugs
+                       if any(b[0] <= i["number"] < b[1] for b in bs)
+                       and i["number"] not in own]
+                return 100 * sum(1 for n in inb if n in cls_nums) / max(1, len(inb))
+
+            removed = sum(1 for n in own if any(b[0] <= n < b[1] for b in after))
+            label = f"minus {tag}'s finds"
+            print(f"  {'':<32} {label:<18} {share(before):5.1f}% -> {share(after):5.1f}%   "
+                  f"({removed} of its own finds removed from the after window)")
 
     present, total = walker_omissions()
     print(f"\n=== 4. Enumeration exposure ({total} partial walkers scanned) ===")

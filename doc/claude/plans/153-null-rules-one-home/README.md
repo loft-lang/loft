@@ -9,7 +9,29 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 ## Status
 
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and ELEVEN batches landed, the audit row moving DOWN four times (359 → 354 → 351 → 347 → 338, 2026-09-08) and batch 11 converting the phase's own mechanism into a rule + a ratchet; phase 5 opened by loft#1374 and its first two batches landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Status — CLOSED 2026-09-08.**  All six phases ran.  Phase 6 re-measured the class and the
+answer is **NO EFFECT** — null/sentinel 14.1 % → 37.3 % (→ 25.9 % with this plan's own screen
+finds removed; it rose either way), the third consecutive no-effect verdict for this class.  The
+Done criterion is met in its SECOND form: the residual names a mechanism this plan did not touch
+— *the nullable spelling reaches the store machinery by a different road from its dense twin* —
+and it is filed as **@PLN160**.
+
+What shipped: the null rules have one home each (phases 1–2), the `(N-Store)` refusal sits at one
+point (phase 3, `Parser::nstore_unwrap_report`, now a registered keystone in
+`scripts/bug-review.py`), and `@FR-N-Shape` plus its ratchet (phase 4 batch 11) turned the
+1520-site walk into standing enforcement instead of an unfinishable queue.
+
+What was DECLINED rather than finished: **phase 5's citation-convergence tail**.  Converging
+`@FR-L-Null`'s citations is the same activity the bug review has now scored NO EFFECT three
+times — *"a rule gains nothing by being pointed at from more places"* — so the remaining 42
+citations are not work this plan hands on.  Phase 4's function-by-function tail is likewise
+closed by CONVERSION, not by completion.
+
+One open debt, tracked as an issue and not as a phase: **loft#1450**'s remaining leg (a
+projection through a nullable receiver drops the `?`), re-measured at 115 sites and written up in
+[batch11-shape-rule.md](batch11-shape-rule.md).
+
+The null MODEL is decided and was not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -85,9 +107,9 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 11 batches landed; the row moved DOWN four times (359 → 354 → 351 → 347 → 338).  Batch 11 re-scoped the REST: the walk is 1520 opaque TESTS, not 338 functions, so it is now gated by a ratchet rather than finished by hand |
-| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
-| **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **CLOSED by CONVERSION** — 11 batches, the row 359 → 338; batch 11 measured the real population (1520 TESTS, not 338 functions), wrote `@FR-N-Shape` and put a ratchet on it.  The remaining sites are gated, not queued |
+| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **DECLINED** after 2 batches — the bug review has scored citation-convergence NO EFFECT three times; the remaining 42 are not work this plan hands on |
+| **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | **DONE** 2026-09-08 — NO EFFECT (14.1 % → 37.3 %, → 25.9 % net of this plan's own finds); residual characterised and routed to @PLN160 |
 
 ## Phase 0 — result (2026-09-05)
 
@@ -1141,6 +1163,54 @@ view survives a source realloc"*, rested on a guard cell that appends to the INN
 nested one and never measured the realloc of the container the view names.  Recorded as
 D-bind-18; the collection-typed twin is loft#1377, filed rather than bundled because admitting
 its type makes the advice fire over a copy the materialise arm does not make.
+
+## Phase 6 — re-measured: the class did NOT fall, and a third of it is not null (2026-09-08)
+
+**The verdict, by the project's own instrument.**  `Parser::nstore_unwrap_report` is registered
+in `scripts/bug-review.py`'s `KEYSTONES` as phase 3's chokepoint, landed at #1366, so the payoff
+check judges it rather than a hand-rolled regex.  It reads **NO EFFECT — re-open the premise**:
+null/sentinel **14.1 % → 37.3 %**.  Section 2 agrees from the other direction — `RISING +10.4pp
+vs peak 17.5 %`, the largest class in the newest band.  That is the THIRD consecutive no-effect
+verdict for this class, after the 2026-08 collapse-×5 and the citation walk.
+
+⚠ **The check abstains at the default band width and has to be pushed to 14 bands to speak**,
+because bands are equal-width in issue NUMBER and none starts above #1366 until then.  Recorded
+because the abstention is the honest reading of a three-day window: the pass is monthly for a
+reason, and this number should be re-read next cycle before anything is built on it.
+
+**The bias phase 6 found in the instrument, and fixed.**  A keystone whose plan also ran a SCREEN
+for its own class cannot be judged on the raw share — the screen FILES that class's bugs into the
+window that scores it.  Of the 35 null/sentinel bugs at #1366+, **21 are phase 4's own finds**.
+The payoff check now prints both lines when a keystone names its plan: `14.1 % → 37.3 %` raw and
+`14.1 % → 25.9 %` with @PLN153's own finds removed.  **It rose either way**, which is what makes
+this a correction to the instrument rather than a rescue of the verdict — and it is now the fourth
+entry in BUG_REVIEW.md's list of traps that produced a wrong answer first.
+
+**The residual, read by hand — the fourteen the plan did not file.**
+
+- **Five are null × STORE LIFETIME, and that is the mechanism this plan did not touch**
+  (loft#1421, #1422, #1447, #1456, #1466).  Each is the same sentence: *the nullable spelling
+  takes a different LOWERING from its dense twin, so every ownership decision downstream is posed
+  a second time and answered once.*  A nullable heap local mints through a work-ref the dense one
+  has no need of; a nullable element binding publishes a borrow on pass 1 and materialises on
+  pass 2; a nullable capture keeps its build-time value where the dense twin reads its rebind.
+  This plan gave the null RULES one home each.  It never asked the two SPELLINGS to share a
+  lowering, and that is where the class still lives.  Filed as **@PLN160**.
+- **Three are not null defects at all** (loft#1437, #1438, #1457): a `u32` above `i32::MAX`
+  decoding negative, a narrow field's raw byte read through reflection, a `spatial` accepting a
+  one-key subscript.  In each the ANSWER is null and the CAUSE is width or key arity.  The
+  classifier is a title regex, so any bug whose symptom is *"answers null"* lands in this class —
+  the share is therefore an over-count of unknown size, and reading the titles is the only way to
+  see it.  **That alone is enough to say the 37.3 % should not be acted on as a magnitude.**
+- **Two are holes in this plan's OWN payload** (loft#1404, #1450): the chokepoint is not asked at
+  the assignment target, and a projection through a nullable receiver drops the `?` before the
+  gate can see it.  #1404 is fixed; #1450's remaining leg is measured at 115 sites and is the
+  plan's one open debt.
+- Two are diagnostics rather than values (loft#1453, #1459) and two are other mechanisms
+  (loft#1385, #1386).
+
+**So the Done criterion is met in its second form**, not its first: the class did not fall, and
+the residual names a mechanism this plan did not touch, with a follow-on plan filed for it.
 
 ## Phase ordering
 
