@@ -184,12 +184,12 @@ command -v perf >/dev/null 2>&1 || {
 # perf needs permission to sample. Report the exact fix rather than the kernel's
 # bare 'Permission denied', which names neither the knob nor the value.
 PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 4)
-if [ "$PARANOID" -gt 1 ] 2>/dev/null; then
-  echo "profile.sh: perf_event_paranoid is $PARANOID — sampling a user process needs <= 1." >&2
+if [ "$PARANOID" -gt 2 ] 2>/dev/null; then
+  echo "profile.sh: perf_event_paranoid is $PARANOID — sampling a user process needs <= 2." >&2
   echo "  One-time, persists across reboots:" >&2
-  echo "    echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf.conf" >&2
+  echo "    echo 'kernel.perf_event_paranoid = 2' | sudo tee /etc/sysctl.d/99-perf.conf" >&2
   echo "    sudo sysctl --system" >&2
-  echo "  Or for this boot only:  sudo sysctl -w kernel.perf_event_paranoid=1" >&2
+  echo "  Or for this boot only:  sudo sysctl -w kernel.perf_event_paranoid=2" >&2
   exit 1
 fi
 
@@ -229,7 +229,10 @@ if [ "$NATIVE" = 1 ]; then
 fi
 
 echo "── recording (perf, ${FREQ}Hz) ──" >&2
-perf record -F "$FREQ" --call-graph=fp -o "$DATA" -- "$BIN" "$@" >/dev/null
+# `cpu-clock:u` — a USER-SPACE software clock: it needs only `perf_event_paranoid <= 2`
+# (level 1 is what kernel frames need, and self time in loft's own Rust never wants
+# them), and it exists on every box, including VMs without hardware counters.
+perf record -e cpu-clock:u -F "$FREQ" --call-graph=fp -o "$DATA" -- "$BIN" "$@" >/dev/null
 rc=$?
 if [ ! -s "$DATA" ]; then
   echo "profile.sh: perf wrote no samples (exit $rc) — the run may have been too short to sample." >&2

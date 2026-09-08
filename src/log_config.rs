@@ -164,7 +164,11 @@ pub struct LogConfig {
 /// the variable is unset or doesn't equal "locks".
 #[must_use]
 pub fn lock_trace_enabled() -> bool {
-    std::env::var("LOFT_LOG").as_deref() == Ok("locks")
+    // One cached read: this is asked on EVERY free-protect bracket — every call with a
+    // `const` collection parameter — and an uncached `getenv` there was ~20 % of an
+    // allocation-heavy row's time (@PLN157 § V-e, measured with perf on `smooth`).
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_LOG").as_deref() == Ok("locks"))
 }
 
 /// Plan-22 02d-vii follow-up — `LOFT_LOG=type_timeline:<varname>`

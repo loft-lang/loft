@@ -333,7 +333,7 @@ pub struct Store {
     /// Surfaced in panic messages from `addr_mut` / `claim` / `delete`
     /// so a "Write to read-only store" failure points directly at the
     /// locker rather than requiring `LOFT_LOG=locks` to re-trace.
-    pub lock_origin: String,
+    pub lock_origin: std::borrow::Cow<'static, str>,
     /// P259 — type-id of the loft type whose root record lives at
     /// `(rec=1, pos=8)` of this store.  `u16::MAX` when unknown
     /// (raw stores not allocated through `database_named`).
@@ -793,7 +793,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -915,7 +915,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: Some(std::path::PathBuf::from(path)),
@@ -994,7 +994,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -1093,7 +1093,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -1863,7 +1863,7 @@ impl Store {
     /// The origin string surfaces in panic messages from `addr_mut` / `claim`
     /// / `delete` so a "Write to read-only store" failure points directly at the
     /// locker rather than requiring `LOFT_LOG=locks` to re-trace.
-    pub fn lock_with_origin(&mut self, origin: impl Into<String>) {
+    pub fn lock_with_origin(&mut self, origin: impl Into<std::borrow::Cow<'static, str>>) {
         let origin = origin.into();
         // Plan-22 02d-vii follow-up — `LOFT_LOG=locks` trace.
         // Caught here (the lowest-level lock site) so direct
@@ -1885,7 +1885,7 @@ impl Store {
         }
         self.read_only = false;
         self.user_locked = false;
-        self.lock_origin.clear();
+        self.lock_origin = std::borrow::Cow::Borrowed("");
     }
 
     /// @P290 — mark the store as PROTECTED-FROM-FREE for the duration
@@ -1895,7 +1895,7 @@ impl Store {
     /// blocked here too until loft#760 — wider than the marker's job, and
     /// it aborted on a container releasing its own block as it regrew.
     /// Cleared by `clear_free_protected()`.
-    pub fn set_free_protected(&mut self, origin: impl Into<String>) {
+    pub fn set_free_protected(&mut self, origin: impl Into<std::borrow::Cow<'static, str>>) {
         let origin = origin.into();
         if self.free_protect_depth == 0 && crate::log_config::lock_trace_enabled() {
             crate::loft_eprintln!("[locks] FREE_PROTECT origin={origin:?}");
@@ -1917,7 +1917,7 @@ impl Store {
         // Clear lock_origin only if the hard read_only lock isn't also
         // holding it (it shouldn't be — but be defensive).
         if !self.read_only {
-            self.lock_origin.clear();
+            self.lock_origin = std::borrow::Cow::Borrowed("");
         }
     }
 
@@ -2067,7 +2067,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
-            lock_origin: "clone_locked".to_string(),
+            lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,
@@ -2112,7 +2112,7 @@ impl Store {
             recording: None,
             tag: self.tag,
             pinned: self.pinned,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,
@@ -2154,7 +2154,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
-            lock_origin: "borrow_locked_for_light_worker".to_string(),
+            lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,

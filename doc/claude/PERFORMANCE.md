@@ -283,11 +283,11 @@ fewer than ~50 samples and says why. A short run wants a higher `--freq`, or mor
 
 ### One-time setup
 
-Sampling a user process needs `perf_event_paranoid <= 1`; the script refuses with the exact
+Sampling a user process needs `perf_event_paranoid <= 2`; the script refuses with the exact
 command when it is higher.
 
 ```bash
-echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf.conf
+echo 'kernel.perf_event_paranoid = 2' | sudo tee /etc/sysctl.d/99-perf.conf
 sudo sysctl --system
 ```
 

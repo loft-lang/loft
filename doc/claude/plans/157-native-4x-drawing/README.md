@@ -10,8 +10,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Open — P0–P4d, § V (Route R) and § V-c (the hoist unblock) SHIPPED (see
 Sub-arcs) and § V-d (append in place) SHIPPED; the queue is re-ranked below.
 Scoreboard vs the issue baseline: `hash` 10.9× → 4.5× gate-row / 2.3× at the
-leaf; `hair` 4.3× → ~3.6× (under the bar); `lock` 30× → **5.3×** shipped;
-`smooth` 262× → **104×**; `fronds` 49× → **37×**.
+leaf; `hair` 4.3× → 3.3× (under the bar); `lock` 30× → **5.3×** shipped (9.0× in
+the consumer lane); `smooth` 262× → **44×**; `fronds` 49× → **24×**; `composite`
+26× → 19×; the fills 17× → 6–7×.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -38,7 +39,7 @@ hash unchanged.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-08 (§ V-d)
+- **Last touched:** 2026-09-08 (§ V-e)
 
 ## Composition matrix — Stage A
 
@@ -67,6 +68,7 @@ unless said otherwise.
 | **V** — value-struct returns, Route R: a return-position struct literal builds into the caller's `__retbuf`, and the caller allocates that buffer once (loft#1426 M2's allocation half) | [DESIGN.md § V](DESIGN.md) | `lock` not ≤ ~17M on P4d's quiet-box scale; a § V matrix cell answers differently than the record form; `tests/retbuf_reuse.rs`'s positive control goes quiet | **Shipped 2026-09-08** — `lock` 25.6M → 17.9M (−30 %, the § V prediction; quiet box), hashes exact; P0 instrument `lock` 6.2× (bar 16 → 10); gated on `witness_buffer` + a single-assigned result local (the free-guard matrix found the reassignment hole the day after), controls falsified on both backends; the guard-the-free widening (§ V-b) was built and falsified the same day — the fact belongs in the return type (M–L, separate item); open: the hoist-unblock fact |
 | **V-c** — the hoist unblock: a callee whose only store writes are scalars into its own retbuf, and a record's guarded free, no longer decline a header hoist (loft#1426 M2's last per-pixel piece) | [DESIGN.md § V-c](DESIGN.md) | `LOFT_HOIST_VERIFY=1` panics; a hash moves; the resolve loop's hoist count drops below 9 | **Shipped 2026-09-08** — `lock` 18.6M → 15.7M (−16 %, on the prediction), P0 `lock` 5.3× (bar 10 → 8), `hash` 4.5×; pinned both directions in `tests/hoist_gate.rs` |
 | **V-d** — append in place: a vector-literal element that is a buffer-returning call is built IN the element's record (the twin of Route R for `v += [pt(…)]`, the two worst rows' allocation class) | [DESIGN.md § V-d](DESIGN.md) | a c1–c10 cell moves; `tests/append_in_place.rs` no longer sees the in-place shape; a consumer hash disagrees | **Shipped 2026-09-08** — `smooth` 200× → 104×, `fronds` 53× → 37× (consumer lane, hashes agree); standalone 15.2M → 3.2M ns/op; scoped to adopting callees (A2/A4 named why); the free bit follows `returns_borrowed_view` (A3) |
+| **V-e** — the runtime's per-allocation overhead, found by `perf` once it could run: three uncached env reads per allocation/free, a scan of every type per allocation, field-list clones per copy, a formatted `String` per protected call | [DESIGN.md § V-e](DESIGN.md) | any consumer hash disagrees; `LOFT_STORES=log` stops reporting; the profile's `getenv` line returns | **Shipped 2026-09-08** — standalone `smooth` −50 %; consumer `smooth` 104× → 44×, `fronds` 37× → 24×, every allocation-heavy row moved; behaviour-preserving (hashes exact, both backends) |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)
@@ -117,9 +119,13 @@ remains, ranked by measured value:
    `OpNewRecord` + writes + `OpFinishRecord` per element) — **SHIPPED the same
    day as § V-d** (`smooth` −48 %, `fronds` −31 %).  What it leaves: NRVO-shaped
    constructors keep the copy (the same missing type-level fact as § V-b), the
-   struct-field twin (`Box { s: mk(i) }`) is untouched, and `smooth`'s other
-   half is arithmetic plus record-copy appends — the next decomposition is a
-   `make profile` on the consumer bench, which is the head now.
+   struct-field twin (`Box { s: mk(i) }`) is untouched.  `smooth`'s other half
+   turned out to be the RUNTIME's per-allocation overhead, not arithmetic —
+   **§ V-e shipped the same day** (perf, five chokepoint fixes, `smooth` 104× →
+   44×).  The head now is what the profile leaves: the claims bookkeeping
+   (~16 %, a hasher and an iteration-order check), the per-field walks on
+   all-scalar records (~15 %), and the allocation COUNT (borrow-copies of live
+   elements, the tangent joins) — DESIGN.md § V-e's residual list, in order.
 3. **P4c record scalars** (S–M, ~5–10 % pixel rows) · **bound-via-header**
    (`h.len` is the bound where P4 fired; S) · **P2 thin-LTO probe** (the
    lean tier's 8.5→6.4 ns gap — the `hash`/`smooth` gate rows carry it).

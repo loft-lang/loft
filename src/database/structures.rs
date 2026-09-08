@@ -1370,21 +1370,6 @@ impl Stores {
         }
     }
 
-    /// The declared field at `field` of struct `rec_tp`, when the question applies — a
-    /// top-level or array-element target carries `field == u16::MAX` and a non-struct
-    /// `rec_tp` has no fields.  The companion of [`Self::field_declared_nullable`].
-    fn declared_field(&self, rec_tp: u16, field: u16) -> Option<Field> {
-        if rec_tp == u16::MAX || field == u16::MAX {
-            return None;
-        }
-        match &self.types[rec_tp as usize].parts {
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                fields.get(field as usize).cloned()
-            }
-            _ => None,
-        }
-    }
-
     /// loft#876 — write a field's DECLARED default into `slot`, answering whether there
     /// was one.  `false` means the caller writes the type's absent value as before.
     ///
@@ -1394,21 +1379,41 @@ impl Stores {
     /// interning, the `Parts` dispatch) is handled in one place rather than restated
     /// here.  A default whose literal does not fit the field's type writes nothing and
     /// answers `false`, so the absent value stays what it was.
-    fn write_declared_default(&mut self, f: &Field, rec_tp: u16, field: u16, slot: &DbRef) -> bool {
-        let Some(c) = f.default.clone() else {
+    fn write_declared_default(&mut self, rec_tp: u16, field: u16, slot: &DbRef) -> bool {
+        // A top-level or array-element target carries `field == u16::MAX` (and a bare value
+        // `rec_tp == u16::MAX`): neither names a declared field, and the second is not an
+        // index into `types` at all.  The companion of [`Self::field_declared_nullable`],
+        // which asks the same question of the same two sentinels; the field is read in
+        // place rather than cloned out, because this runs on every absent field of every
+        // parsed record (@PLN157 § V-e).
+        if rec_tp == u16::MAX || field == u16::MAX {
             return false;
+        }
+        let (c, content) = {
+            let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                &self.types[rec_tp as usize].parts
+            else {
+                return false;
+            };
+            let Some(f) = fields.get(field as usize) else {
+                return false;
+            };
+            let Some(c) = f.default.clone() else {
+                return false;
+            };
+            (c, f.content)
         };
         let parsed = match c {
             // A boolean field is content type 4, whose walker arm accepts only
             // `Parsed::Bool`; every other numeric field reads the integer spelling.
-            crate::keys::Content::Long(n) if f.content == 4 => crate::json::Parsed::Bool(n != 0),
+            crate::keys::Content::Long(n) if content == 4 => crate::json::Parsed::Bool(n != 0),
             crate::keys::Content::Long(n) => crate::json::Parsed::Int(n),
             crate::keys::Content::Float(v) => crate::json::Parsed::Number(v),
             crate::keys::Content::Single(v) => crate::json::Parsed::Number(f64::from(v)),
             crate::keys::Content::Str(s) => crate::json::Parsed::Str(s.str().to_string()),
         };
         let mut path = Vec::new();
-        self.walk_parsed_into(&parsed, f.content, rec_tp, field, slot, &mut path, 0)
+        self.walk_parsed_into(&parsed, content, rec_tp, field, slot, &mut path, 0)
             .is_ok()
     }
 
@@ -1437,9 +1442,7 @@ impl Stores {
     ///
     /// [`formal/layout.md`]: ../../../doc/claude/formal/layout.md
     pub fn write_absent_value(&mut self, tp: u16, rec_tp: u16, field: u16, slot: &DbRef) {
-        if let Some(f) = self.declared_field(rec_tp, field)
-            && self.write_declared_default(&f, rec_tp, field, slot)
-        {
+        if self.write_declared_default(rec_tp, field, slot) {
             return;
         }
         let nullable = self.field_declared_nullable(rec_tp, field);
@@ -1630,27 +1633,48 @@ impl Stores {
             }
             return;
         }
-        match self.types[tp as usize].parts.clone() {
-            Parts::Enum(_) => {
+        // Read the row's shape into a few numbers first, so the writes below borrow `self`
+        // mutably without a clone of `Parts` — which carried the whole field list, on every
+        // record allocation (@PLN157 § V-e: ~5 % of the `smooth` row).
+        enum Shape {
+            Enum,
+            Byte(bool),
+            Short(bool),
+            ShortRaw(i32, bool),
+            Int(bool),
+            IntRaw(bool),
+            Record(usize),
+            DbRef,
+            ChildRec,
+            Base,
+            Other,
+        }
+        let shape = match &self.types[tp as usize].parts {
+            Parts::Enum(_) => Shape::Enum,
+            Parts::Byte(_, null) => Shape::Byte(*null),
+            Parts::Short(_, null) => Shape::Short(*null),
+            Parts::ShortRaw(from, null) => Shape::ShortRaw(*from, *null),
+            Parts::Int(_, null) => Shape::Int(*null),
+            Parts::IntRaw(_, null) => Shape::IntRaw(*null),
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => Shape::Record(fields.len()),
+            Parts::DbRef => Shape::DbRef,
+            Parts::ChildRec(_) => Shape::ChildRec,
+            Parts::Base => Shape::Base,
+            _ => Shape::Other,
+        };
+        match shape {
+            Shape::Enum => {
                 self.store_mut(rec).set_byte(rec.rec, rec.pos, 0, 0);
             }
-            Parts::Byte(_, null) => {
+            Shape::Byte(null) => {
                 self.store_mut(rec)
                     .set_byte(rec.rec, rec.pos, 0, if null { 255 } else { 0 });
             }
-            Parts::Short(_, null) => {
-                // The null goes in through the SETTER's own sentinel path (`i32::MIN`),
-                // not as the value `65535`.  `Parts::Short` encodes `val - min + 1` and
-                // reserves the raw code 0 for null, so 65535 does not fit the encoding at
-                // all: the setter took its out-of-range branch and stored the DEFAULT
-                // (raw 1) instead.  An absent nullable 2-byte field therefore read back as
-                // its lowest value rather than null — `u16?` answered `0` and `i16?`
-                // answered `-32767`, on both backends, with nothing reported.  Every other
-                // width already spells its null this way.
+            Shape::Short(null) => {
                 self.store_mut(rec)
                     .set_short(rec.rec, rec.pos, 0, if null { i32::MIN } else { 0 });
             }
-            Parts::ShortRaw(from, null) => {
+            Shape::ShortRaw(from, null) => {
                 self.store_mut(rec).set_i16_raw(
                     rec.rec,
                     rec.pos,
@@ -1658,19 +1682,33 @@ impl Stores {
                     if null { i32::MIN } else { from },
                 );
             }
-            Parts::Int(_, null) => {
+            Shape::Int(null) => {
                 self.store_mut(rec)
                     .set_i32_raw(rec.rec, rec.pos, if null { i32::MIN } else { 0 });
             }
             // The unsigned twin's absence is the TOP code; `i32::MIN` is a legal value
             // of this encoding, so writing it here would store 2147483648 as the null.
-            Parts::IntRaw(_, null) => {
+            Shape::IntRaw(null) => {
                 self.store_mut(rec)
                     .set_u32_raw(rec.rec, rec.pos, if null { u32::MAX } else { 0 });
             }
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                for (f_nr, f) in fields.iter().enumerate() {
-                    if f.name == "type" && f.position == 0 {
+            Shape::Record(n_fields) => {
+                for f_nr in 0..n_fields {
+                    let (position, content, nullable, is_type_tag) = {
+                        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                            &self.types[tp as usize].parts
+                        else {
+                            unreachable!()
+                        };
+                        let f = &fields[f_nr];
+                        (
+                            f.position,
+                            f.content,
+                            f.nullable,
+                            f.name == "type" && f.position == 0,
+                        )
+                    };
+                    if is_type_tag {
                         self.store_mut(rec)
                             .set_short(rec.rec, rec.pos, 0, i32::from(tp));
                         continue;
@@ -1678,31 +1716,15 @@ impl Stores {
                     let slot = DbRef {
                         store_nr: rec.store_nr,
                         rec: rec.rec,
-                        pos: rec.pos + u32::from(f.position),
+                        pos: rec.pos + u32::from(position),
                     };
-                    // loft#876 — a DECLARED default is the value that STAYS, so it is
-                    // written only for `Final`.  A `Prefill` is overwritten by the
-                    // literal or walker that follows, and honouring a default there
-                    // would pay the same per-record cost the text interning was split
-                    // out to avoid (see [`Absent`]).
-                    if why == Absent::Final
-                        && self.write_declared_default(f, tp, f_nr as u16, &slot)
-                    {
+                    if why == Absent::Final && self.write_declared_default(tp, f_nr as u16, &slot) {
                         continue;
                     }
-                    // The field, not the enclosing record, decides: a non-null field of a
-                    // record reached through a nullable one is still non-null.
-                    self.set_default_value_nullable(f.content, f.nullable, why, &slot);
+                    self.set_default_value_nullable(content, nullable, why, &slot);
                 }
             }
-            Parts::Sorted(_, _)
-            | Parts::Ordered(_, _)
-            | Parts::Radix(_, _)
-            | Parts::Trie(_, _)
-            | Parts::Hash(_, _)
-            | Parts::Index(_, _, _)
-            | Parts::Array(_)
-            | Parts::Vector(_) => {
+            Shape::Other => {
                 // Zero is the EMPTY collection, which is the right absent value for a
                 // field that cannot be null — but it is the WRONG one for a field
                 // declared `?`, and this arm was the only one in the match that did not
@@ -1730,7 +1752,7 @@ impl Stores {
             // u32 is 0xFFFF, BUT for "not initialised" we want the
             // sentinel pattern; write all zeros and let the read
             // path treat rec=0 as null).
-            Parts::DbRef => {
+            Shape::DbRef => {
                 let s = self.store_mut(rec);
                 s.set_u32_raw(rec.rec, rec.pos, 0);
                 s.set_u32_raw(rec.rec, rec.pos + 4, 0);
@@ -1738,10 +1760,10 @@ impl Stores {
             }
             // P213: default child-record pointer = 0 (null sentinel /
             // empty / non-capturing).
-            Parts::ChildRec(_) => {
+            Shape::ChildRec => {
                 self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
             }
-            Parts::Base => {
+            Shape::Base => {
                 panic!(
                     "not implemented default {:?}",
                     self.types[tp as usize].parts

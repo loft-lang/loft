@@ -1411,9 +1411,9 @@ build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in 
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
 sentinel, or a doomed loop condition is visible directly.
 
-Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) and
-`perf` (`perf_event_paranoid=4`) are both blocked in this sandbox, so you cannot
-backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
+Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) is
+blocked in this sandbox, and `perf` needs `perf_event_paranoid <= 2` (the default is 4;
+`make profile` names the sysctl) — without it you cannot backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
 (§ above) — is the substitute.
 
 Worked example (#401): an `iterator<float>` for-loop hung the interpreter at codegen.

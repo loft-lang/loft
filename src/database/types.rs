@@ -2982,6 +2982,23 @@ impl Stores {
             _ => true,
         }
     }
+    /// The scan [`Self::enum_parent_size`] replaced, kept as its debug-build oracle: the
+    /// `parents` index is derived and rebuilt on load, and a divergence here means a
+    /// variant was registered without its enum being written to it.  Compiled in every
+    /// build (a `debug_assert_eq!` still type-checks its expression), dead in release.
+    fn enum_parent_size_by_scan(&self, tp: u16, own_size: u16) -> u16 {
+        for t in &self.types {
+            if let Parts::Enum(variants) = &t.parts {
+                for (v_tp, _) in variants {
+                    if *v_tp == tp && t.size > own_size {
+                        return t.size;
+                    }
+                }
+            }
+        }
+        own_size
+    }
+
     /// For EnumValue types, return the parent enum's size (which covers
     /// the largest variant).  For all other types, return their own size.
     /// B2-runtime: unit enum variants may have a smaller type size than
@@ -3038,15 +3055,22 @@ impl Stores {
         let own_size = self.types[tp as usize].size;
         // Check if any type in the system is an Enum whose variants include tp.
         // If so, use the Enum's size (which is the max of all variants).
-        for t in &self.types {
-            if let Parts::Enum(variants) = &t.parts {
-                for (v_tp, _) in variants {
-                    if *v_tp == tp && t.size > own_size {
-                        return t.size;
-                    }
-                }
+        // The variant's row already names its enum in `parents` (written where the
+        // variant is registered), so the answer is a lookup over that small set — not a
+        // scan of every type, which every record allocation paid (@PLN157 § V-e: 5.7 % of
+        // the `smooth` row, and growing with the program).  `parents` is a `BTreeSet`, so
+        // the walk is in type order, exactly as the scan was.
+        for &p in &self.types[tp as usize].parents {
+            let t = &self.types[p as usize];
+            if let Parts::Enum(variants) = &t.parts
+                && variants.iter().any(|(v_tp, _)| *v_tp == tp)
+                && t.size > own_size
+            {
+                debug_assert_eq!(t.size, self.enum_parent_size_by_scan(tp, own_size));
+                return t.size;
             }
         }
+        debug_assert_eq!(own_size, self.enum_parent_size_by_scan(tp, own_size));
         own_size
     }
 

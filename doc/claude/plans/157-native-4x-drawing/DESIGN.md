@@ -727,6 +727,87 @@ consumer bench.  Switch: `LOFT_NO_APPEND_IN_PLACE`.  Guard:
 `tests/append_in_place.rs`, which pins the EMITTED shape (element claimed,
 called with the element, `OpDistinctStore`, no lift) and the NRVO exclusion.
 
+## V-e — the remaining half of `smooth` is the runtime's per-allocation overhead (2026-09-08)
+
+**Instrument.** `perf` became usable on this box (`kernel.perf_event_paranoid` 4 → 2;
+the binary was already installed), and the engine profile answered in one run what
+the subtraction method would have taken a day of variants to reach.  On a
+standalone copy of the consumer's `smooth` row (6-point petal outline, 61 output
+points, the same FNV hash), self time by symbol:
+
+| symbol | share | what it is |
+|---|---:|---|
+| `Vec<Field>::clone` | 7.5 % | the type's field list cloned on every record copy / free walk |
+| `getenv` + `strncmp` + `getenv::{closure}` | **~20 %** | `LOFT_STORES` read on every allocation AND every free (`database_named`, `free_named`); `LOFT_LOG=locks` on every free-protect bracket; `LOFT_TRACE_COPY` on every `OpCopyRecord` |
+| `enum_parent_size` | 5.7 % | a scan of EVERY type on every record allocation |
+| `set_default_value_nullable` | 3.6 % | `Parts` (with its field list) cloned per allocation |
+| `set_free_protected` + `format` + `String::clone` + malloc/free | ~5 % | a formatted origin `String` per call with a `const` collection argument |
+| `HashMap<u32,()>::insert` + `hash_one` + `Store::valid` + `owned_walk` + `remove_claims_mode` | ~11 % | the claims bookkeeping, SipHash per claim |
+| `n_smooth_pts` + `n_pt` + `n_half_chord` | **8 %** | the program |
+
+The program was 8 % of its own row.  The allocations come from `half_chord`'s
+borrow-copies (`hc_a = ctrl(…)`, 4 per segment) and the two tangent joins per
+segment — ~36 stores per call — and each paid the table above.
+
+**Five behaviour-preserving fixes, each a chokepoint:**
+
+1. `keys::stores_mode()` — `LOFT_STORES` read once (`OnceLock`), matched at both
+   sites; `log_config::lock_trace_enabled()` cached; `keys::trace_copy()` cached.
+   The policy this file already states — *one cached env read* — applied to the
+   three readers that had escaped it.
+2. `Stores::enum_parent_size` — the variant row's own `parents` index (a
+   `BTreeSet`, written where the variant is registered) instead of a scan of every
+   type; the scan stays as the debug-build oracle (`enum_parent_size_by_scan`).
+3. The four per-field walks (`copy_claims`, `owned_walk`, the copy-compare and
+   size walks) iterate by index through `Stores::field_at`, which yields the two
+   numbers a walk reads (position, content) — no list clone, no `Field` clone (a
+   `Field` owns its name).
+4. `set_default_value_nullable` reads the row's shape into a small `Shape` first
+   and matches on that, so the writes borrow `self` mutably without cloning
+   `Parts`; `write_declared_default` looks its field up by `(type, index)`.
+   The gate caught the inlining dropping a guard: a top-level or array-element
+   JSON target carries `field == u16::MAX` and `rec_tp == u16::MAX`, and the
+   former `declared_field` refused those BEFORE indexing `types` — inlined, the
+   lookup indexed `types[65535]` (`json-walker-absent-field`, 3 of 7 functions,
+   both backends).  The sentinel test now sits in `write_declared_default`
+   itself, beside `field_declared_nullable`, which asks the same question.
+5. `Store::lock_origin` is a `Cow<'static, str>`: the free-protect bracket passes
+   `"call_bracket"` borrowed and formats the store/record only under
+   `LOFT_LOG=locks`, where someone reads it.
+
+**Measured** (hashes exact everywhere; the fp build of the standalone, medians of
+3): 36.5–40k → **18.6–19.4k ns/op** (−50 %); after it `n_smooth_pts` is the largest
+line at 13.5 %.  Consumer table, every row's hash agreeing:
+
+| routine | before | after § V-e |
+|---|---:|---:|
+| smooth | 104× (39.6 µs) | **44×** (16.8 µs) |
+| fronds | 37× (1.90 ms) | **24×** (1.23 ms) |
+| composite | 23.6× | 19.3× |
+| fill_circle / fill_star | 7.2× / 8.0× | 6.0× / 6.9× |
+| wide_line | 14.2× | 12.1× |
+| lock / lock_curved | 9.3× / 11.9× | 9.0× / 11.6× |
+| hair | 3.3× | 3.3× |
+
+**Residual, in profile order** (the next unit's queue): the claims bookkeeping —
+`claims: HashSet<u32>` with `RandomState` per claim (`insert` 5.5 %, `hash_one`
+4.0 %, `Sip13` 1.6 %), `Store::valid` 3.7 %, `owned_walk` 3.5 %,
+`remove_claims_mode` 3.2 % — a faster hasher is one line IF nothing iterates the
+set in an order that matters (to be checked, not assumed); the per-field
+recursion of `copy_claims` (8.3 %) and `set_default_value_nullable` (6.9 %) on
+an ALL-SCALAR record, where a per-type "owns no heap" fact would skip the walk;
+`keys::strict_stores()` at 1.6 % per store access (a `OnceLock` read that could
+be an `AtomicBool`); and the allocation COUNT itself — the borrow-copies
+(`hc_a = ctrl(…)`, a copy of a live element only ever read: the @PLN102
+link-widen shape, measured ~0 before and worth ~24 stores per call here) and
+the tangent joins.
+
+**Tooling note:** `scripts/profile.sh` refused `perf_event_paranoid = 2`, while
+`perf record -e cpu-clock:u -g` on a `-Cforce-frame-pointers=yes -g` native build
+works there — the script's check was stricter than user-space sampling needs.
+Fixed in this unit: the script accepts `<= 2`, samples `cpu-clock:u` with
+`--call-graph=fp`, and PERFORMANCE.md / DEBUG.md state the same bound.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can

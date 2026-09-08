@@ -1043,6 +1043,15 @@ pub fn append_in_place_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_IN_PLACE"))
 }
 
+/// `LOFT_TRACE_COPY=1` — print every native `OpCopyRecord` with its source, destination,
+/// type and whether the source is released.  Off by default; ONE cached read, because the
+/// op runs per element copy and an uncached `getenv` there is measurable (@PLN157 § V-e).
+#[must_use]
+pub fn trace_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COPY"))
+}
+
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
 /// dead-after owned source directly into its destination field/element instead of copy-then-free,
 /// for every proven-safe shape (Record `v[i]=e`/`o.f=src`; Construct field-append, fresh
@@ -1496,6 +1505,17 @@ pub fn no_slot_reuse() -> bool {
 pub fn alloc_init_ref() -> bool {
     static AIR: OnceLock<bool> = OnceLock::new();
     *AIR.get_or_init(|| env_set("LOFT_ALLOC_INIT_REF"))
+}
+
+/// `LOFT_STORES=warn|error|…` — the store-lifetime report mode, read ONCE.  It is
+/// consulted on every allocation and every free (`Stores::database_named`,
+/// `Stores::free_named`), and an uncached `getenv` there was ~13 % of an
+/// allocation-heavy row's time (@PLN157 § V-e, measured with perf on `smooth`).
+#[must_use]
+pub fn stores_mode() -> Option<&'static str> {
+    static MODE: OnceLock<Option<String>> = OnceLock::new();
+    MODE.get_or_init(|| std::env::var("LOFT_STORES").ok())
+        .as_deref()
 }
 
 pub fn trace_db() -> bool {

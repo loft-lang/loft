@@ -968,7 +968,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     let free_source = raw_tp & 0x8000 != 0;
     let tp = raw_tp & 0x7FFF;
     let size = u32::from(stores.size(tp));
-    if std::env::var("LOFT_TRACE_COPY").is_ok() {
+    if crate::keys::trace_copy() {
         crate::loft_eprintln!(
             "[copy] OpCopyRecord src=#{}@{},{} dst=#{}@{},{} tp={tp} size={size} free_src={free_source}",
             data.store_nr,
@@ -3420,7 +3420,17 @@ pub fn n_set_store_lock(cell: &std::cell::UnsafeCell<Stores>, r: DbRef, locked: 
 pub fn n_protect_store_frees(cell: &std::cell::UnsafeCell<Stores>, r: DbRef) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     if r.rec != 0 && (r.store_nr as usize) < stores.allocations.len() {
-        let origin = format!("call_bracket(store_nr={}, rec={})", r.store_nr, r.rec);
+        // The origin names the bracket in a refusal or a `LOFT_LOG=locks` trace; it is
+        // formatted only when someone will read it — this runs on every call with a
+        // `const` collection argument (@PLN157 § V-e).
+        let origin: std::borrow::Cow<'static, str> = if crate::log_config::lock_trace_enabled() {
+            std::borrow::Cow::Owned(format!(
+                "call_bracket(store_nr={}, rec={})",
+                r.store_nr, r.rec
+            ))
+        } else {
+            std::borrow::Cow::Borrowed("call_bracket")
+        };
         stores.allocations[r.store_nr as usize].set_free_protected(origin);
     }
 }
