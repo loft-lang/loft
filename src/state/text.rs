@@ -349,6 +349,21 @@ impl State {
         self.put_stack(Str::new(t));
     }
 
+    /// Read a fn-ref through a `&fn(…)` link (`@FR-B-Ref-Intro` — `&τ` for every τ).
+    ///
+    /// The read twin of [`Self::set_stack_fn_ref`], and the same shape as
+    /// [`Self::get_stack_text`] one width over: the pushed reference names the link's slot and
+    /// the 20-byte STACK blob (8 B `d_nr` + 12 B closure `DbRef`) lives where it points.
+    #[inline]
+    pub fn get_stack_fn_ref(&mut self) {
+        let r = *self.get_stack::<DbRef>();
+        let v = *self
+            .database
+            .store(&r)
+            .addr::<[std::mem::MaybeUninit<u8>; 20]>(r.rec, r.pos);
+        self.put_stack(v);
+    }
+
     #[inline]
     pub fn get_stack_ref(&mut self) {
         let fld = self.code::<u16>();
