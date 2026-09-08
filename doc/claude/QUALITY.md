@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 428 | 404 | **24** |
+| 430 | 406 | **24** |
 
 
 
@@ -2603,7 +2603,7 @@ RETURN type, which this site never asks about.  The unspan site peels, which is 
 column's `neither` did not move.
 
 **2026-09-08, the debug-assertions gate's last hard failure: the unspan row `425 · 401 · 24`
-→ `427 · 403 · 24`.**  One function joined the classifier and it peels —
+→ `430 · 406 · 24`.**  One function joined the classifier and it peels —
 `state::codegen::ir_reads_var`, the first-assignment self-reference guard, which now asks
 whether a `Var(v)` mention is a READ or the place a free RELEASES.  Its predecessor was
 `Value::any_node`, which peels `Span` for it; asking the question about a specific argument
