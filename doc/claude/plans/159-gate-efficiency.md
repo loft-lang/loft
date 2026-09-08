@@ -98,6 +98,31 @@ between the three checkouts sharing `~/.loft/build-cache`.  The comment at `src/
 describing a content hash was wrong either way.  Phase C therefore drops `BUILD_ID` from the
 key instead of adding a dirty hash to it; the value category falls from S to Q.
 
+**What one edit costs rustc, per profile (2026-09-08, load 20–40 on the shared box).**  The
+owner asked how rustc compares with a C compiler's per-file `.o` model.  Rust's unit is the
+CRATE: one `rustc` parses, resolves, type-checks and borrow-checks all 325 k lines of `loft`
+on every build, then splits codegen into codegen units.  The dev profile is *incremental*
+(the default): it keeps a query graph and the units' object files under
+`target/debug/incremental/` and re-runs only what an edit invalidates — the `.o` model, at
+codegen-unit rather than file granularity, and with a wider blast radius because a generic
+or `#[inline]`/MIR-inlined function is compiled into every unit that instantiates it
+(opt-level 1 inlines).  The release profile is *not* incremental: every edit is the whole
+crate.
+
+| edit | dev (incremental) | release (non-incremental) |
+|---|---|---|
+| touch only, same bytes, leaf `src/registry.rs` | 5.0 s | 55.0 s |
+| comment-only edit in `src/lexer.rs` | 3.0 s | 41.5 s |
+| one function body edited in `src/lexer.rs` | 21.6 s | 41.9 s |
+
+So the C-like behaviour exists and the loop was not using it: every `find_problems` run
+rebuilt the release rlib (that is the 55 s column, on every edit, for an rlib only 29 test
+binaries link through `target/release/loft`) and both wasm rlibs (two more non-incremental
+crate builds).  Phase I keeps the loop on the incremental column.  The remaining 22 s for a
+real edit is the crate's size: the structural cure is a workspace split (parser · typing ·
+store · runtime · codegen · cache/registry), so cargo's crate-level "unchanged, not rebuilt"
+applies — the true analogue of a Makefile's per-file rule — sized H and out of this plan.
+
 ## Sub-arcs
 
 `Verify` names the comparison that goes RED if the phase is done wrong.  Every phase also
@@ -112,7 +137,7 @@ same number before and after.
 | **D** — diff-first: `find_problems.sh --changed` from `SUBJECT_PATHS`; `make ci` passes a generated `--tool-config-file` with nextest `priority` overrides for the diff's binaries | `scripts/test_subjects.sh` (`SUBJECT_PATHS` is defined and read by nothing), `.config/nextest.toml` | a planted failure in a diff-touched binary is reported inside the first minute of nextest (today: whenever the pool reaches it, ≥ 5 min); `--changed` on a diff under `src/parser/` prints the `parser` filter | S | Implemented 2026-09-08; the planted-failure timing is owed |
 | **E1** — the native corpus as its own shard: `binary(native) & test(native_scripts)`, heavy = serial groups minus it | `scripts/ci_test_filter.py`, `ci.yml` `changes` job | the four shards are an exact partition (counts sum to the unsharded count, zero overlap — the discipline the existing split records); the real PR run's heavy job under 20 min | S | Implemented 2026-09-08; partition proven (120 + 1 + 1457 + 3130 = 4708, zero duplicates); the wall clock is owed to the PR run |
 | **E2** — the cache save off the long pole | `ci.yml` `Save cargo cache` (`shard == 'heavy'`) | measured, not assumed: one run saving from `rest-a` and the run after it — `Build` shows deps Fresh and `~/.loft/build-cache` warm; if heavy-only artifacts go cold, split the save (target from `rest-a`, build-cache from heavy) | XS | Implemented 2026-09-08 as the split: `target` from `rest-a`, the corpus binaries from `corpus`, the build cache from `heavy`, all three restored everywhere; the run-after read is owed |
-| **I** — the iteration loop builds only what the selection needs (added 2026-09-08 when the owner ranked this box's agents above the PR clock).  Measured in B's proof: after a one-file edit, `--subject parser` spent 158 s in `rebuild_native_cdylibs` — the release rlib (158 s) and the two wasm rlibs (99 s, in parallel) — before 13 s of tests, and a parser test uses none of them: the loft the tests spawn is the test-profile binary (`CARGO_BIN_EXE_loft`, 152 binaries), which resolves its rlib beside itself; the release rlib serves only the 29 binaries that spawn `target/release/loft`, and the wasm rlibs only the html/wasm suites.  So: always `cargo build --lib` (dev, ~1 s, the uplift beside the debug loft); the release lib AND `--bin loft` only when a selected binary spawns the release loft (today's loop rebuilt the release lib but never the binary those 29 spawn — a stale-binary verdict in the loop); the wasm rlibs only when a selected binary is a wasm/html one; curated and full keep everything | `scripts/find_problems.sh` `rebuild_native_cdylibs`, `scripts/test_subjects.sh` | after `touch src/lexer.rs`: `--subject parser`'s timing summary shows no release or wasm row and its wall is the dev lib compile plus the tests; `--subject wasm` still rebuilds both wasm rlibs and advances `target/release/loft`'s mtime; the curated run is unchanged | S | Open — next |
+| **I** — the iteration loop builds only what the selection needs (added 2026-09-08 when the owner ranked this box's agents above the PR clock).  Measured in B's proof: after a one-file edit, `--subject parser` spent 158 s in `rebuild_native_cdylibs` — the release rlib (158 s) and the two wasm rlibs (99 s, in parallel) — before 13 s of tests, and a parser test uses none of them: the loft the tests spawn is the test-profile binary (`CARGO_BIN_EXE_loft`, 152 binaries), which resolves its rlib beside itself; the release rlib serves only the 29 binaries that spawn `target/release/loft`, and the wasm rlibs only the html/wasm suites.  So: always `cargo build --lib` (dev, ~1 s, the uplift beside the debug loft); the release lib AND `--bin loft` only when a selected binary spawns the release loft (today's loop rebuilt the release lib but never the binary those 29 spawn — a stale-binary verdict in the loop); the wasm rlibs only when a selected binary is a wasm/html one; curated and full keep everything | `scripts/find_problems.sh` `rebuild_native_cdylibs`, `scripts/test_subjects.sh` | after `touch src/lexer.rs`: `--subject parser`'s timing summary shows no release or wasm row and its wall is the dev lib compile plus the tests; `--subject wasm` still rebuilds both wasm rlibs and advances `target/release/loft`'s mtime; the curated run is unchanged | S | Shipped 2026-09-08: after `touch src/lexer.rs`, `--subject parser` rebuilt for 4.3 s (dev rlib 4.2 s; the two skip rows printed) instead of 158 s, 782 tests, 65 s wall, `target/release/loft` untouched; `--subject scopes` rebuilt the release rlib + binary (94.9 s, needed by one test) and advanced its mtime, 368 tests green |
 | **F** — a content cache for the compile-spawning tests.  Surveyed 2026-09-08: the tests spawn the loft CLI (`--native` / `--html`), not `rustc` — `store_persist_loft` 44 sites, `native` 36, `exit_codes` 7, `html_wasm` 8, `html_embed` 4; direct `rustc` only in `n3_use_native` (11) and `native` (3).  So the lever is loft's own program cache, whose entry is keyed on the script's PATH plus the lib dirs (`program_cache_paths`, loft#930): every probe gets a fresh temp name, so every run is a miss and the cache only grows (TESTING.md § Scratch hygiene: 13 GB in one test's dir).  F1: key the bundle on the script's CONTENT hash + its directory + the lib dirs, so a byte-identical probe hits under any name while the manifest still catches sibling drift.  F2: the direct `rustc` sites through the corpus runner's `native_cache_key` | `src/cache.rs` (`program_cache_paths`), `tests/n3_use_native.rs`, `tests/native.rs` | F1: two back-to-back runs of `exit_codes` with no source change — the second run's `[loft-timing]` shows program-cache HITS and its JUnit wall drops to run cost; then a one-byte `src/` edit — every probe rebuilds (build signature moved); and the loft#930 cell stays red (two lib trees, one script, two bundles).  F2: spawn count = artifact count via `LOFT_TIMING`, then zero on the re-run | M | Open |
 | **G** — gate queue across checkouts: `ci-run.sh start` takes a box-wide flock; `CI_LIVE_GATES` throttle stays as fallback | `scripts/ci-run.sh`, `Makefile:520` | two gates started 5 s apart on two checkouts: the second's `result.txt` header records the wait, the first runs at 24 threads, peak load ≤ a solo gate's | XS | Implemented 2026-09-08 as a queue by default (`/tmp/loft-gate.lock` in `make ci`), `LOFT_GATE_PARALLEL=1` for the old throttle — open question 1 stands for the owner |
 | **H** — subject-coverage guard + growth rule | `scripts/test_subjects.sh` (`unmatched_binaries` is printed, never checked), `TESTING.md` | a `doc_hygiene` test that `unmatched_binaries` is empty goes red on a synthetic `tests/zz_probe.rs`; TESTING.md states the rule (guards to the corpus; new Rust tests join an existing binary; a compile-spawning test shares its binary's fixture) | S | Implemented 2026-09-08: 80 of 261 binaries matched no subject, the map now reaches all 261, the guard is strict |
@@ -159,6 +184,13 @@ E2; a docs-only local re-gate from ~10 min to under 1 min after A + F.
 - **The flake-rerun multiplier.**  One branch on 09-01 needed 6 CI runs, the 09-02 join PR
   4.  Out of scope here (the flake list is its own work), but it multiplies every minute
   this plan saves.
+- **Pin the artefact a long gate measures** (from loft-c1's morning, 2026-09-08).  A
+  25-minute valgrind sweep ran `target/release/loft` per file while a rebuild replaced that
+  binary under it, and a `--subject parser` run rebuilt it again against a temporarily
+  reverted tree — two of three measurements were about a tree that no longer existed and
+  neither said so.  A gate that consumes a build artefact should record its hash at start
+  and fail loudly when it moves (or copy the binary aside); the gate lock is `make ci`-only
+  and does not stop a `cargo build` beside a sweep.  Sized S; not started.
 - **`cargo check` for the `--no-default-features` compile gate** (27 s locally): the
   defect class it exists for is a resolution error `check` reports, but `check` misses link
   errors; not worth the risk for 27 s.

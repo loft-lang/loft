@@ -44,7 +44,12 @@ fn run(backend: &str) -> String {
     // The program cache is keyed on the source, not on the binary's ownership analysis, so
     // a tree that has run this fixture before would answer from the cache and the assertion
     // below would be reading a previous binary's result.
-    let mut cmd = Command::new(root.join("target/release/loft"));
+    // The test-profile `loft` (what every other spawning test runs): this fixture needs
+    // the binary built from THIS tree, not the release one `make ci` last built — and
+    // under the iteration loop the release binary is rebuilt only for the suites that
+    // spawn it (@PLN159 I), so spawning it here cost `--subject scopes` a 95 s
+    // non-incremental build for one test.
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
     if !backend.is_empty() {
         cmd.arg(backend);
     }

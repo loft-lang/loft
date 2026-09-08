@@ -71,7 +71,7 @@ SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs ho
 subject_patterns() {
   case "$1" in
     (parser)    echo '~pars ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14' ;;
-    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
+    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
     (codegen)   echo '~codegen ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io' ;;

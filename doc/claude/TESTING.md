@@ -1303,6 +1303,18 @@ flag to ask for rather than a flag to avoid.
 
 Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`.
 
+**The rebuild step is selection-aware (@PLN159 I).**  Before the tests, `find_problems.sh`
+refreshes the artifacts they link: the sibling and fixture cdylibs, the dev `libloft.rlib`
+beside the test-profile `loft` the tests spawn (~1 s: the same compile nextest is about to do,
+plus the uplift), and — only when a selected binary needs them — the release `libloft.rlib`
++ `target/release/loft` (the 29 binaries that spawn the release binary; the html, browser and
+engine_host suites and a few CLI ones) and the two wasm rlibs (the wasm/html suites, and any
+binary driving `--html` / `--native-wasm`).  It decides by READING the selected sources, not
+by the subject's name; the curated and full runs need everything.  Measured before this: a
+one-file edit followed by `--subject parser` spent 158 s rebuilding the release and wasm rlibs
+(non-incremental, whole-crate builds) ahead of 13 s of tests.  The timing summary names what
+it skipped and why.
+
 ### Why it curates by EXCLUSION
 
 Because inclusion does not work, and there is a measurement rather than an

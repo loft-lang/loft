@@ -238,6 +238,33 @@ rebuild_one() {
     > "$timing_file"
 }
 
+# @PLN159 phase I — what the current selection needs beyond the dev build.
+# Sets NEED_RELEASE (a selected binary spawns `target/release/loft`) and NEED_WASM
+# (a selected binary is a wasm/html one, or drives `--html` / `--native-wasm`).
+# The curated and full runs select those binaries, so they need everything; only a
+# `--subject` / `--changed` selection can skip, and it skips by READING the selected
+# sources, not by guessing from the subject's name.
+NEED_RELEASE=1
+NEED_WASM=1
+selection_needs() {
+  NEED_RELEASE=1; NEED_WASM=1
+  case "${SELECT_LABEL:-curated}" in subject:*|changed:*) ;; *) return 0 ;; esac
+  local b src
+  NEED_RELEASE=0; NEED_WASM=0
+  for b in $(grep -oE 'binary\([a-z0-9_]+\)' <<<"${TEST_SELECT:-}" | sed -E 's/binary\((.*)\)/\1/' | sort -u); do
+    src="$REPO_ROOT/tests/$b.rs"
+    [[ -f "$src" ]] || { NEED_RELEASE=1; NEED_WASM=1; return 0; }
+    # A SPAWN of the release binary — `join("target/release/loft")` or a
+    # `Command::new(…release/loft…)` on a non-comment line.  `parse_errors`,
+    # `testing` and `exit_codes` only NAME the path in a comment or a string.
+    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|Command::new\([^)]*release/loft' && NEED_RELEASE=1
+    if [[ "$b" =~ wasm|html|deliver|browser|gl_|android ]] || grep -qE -- '"--html"|"--native-wasm"|wasm32|"--deliver"' "$src"; then
+      NEED_WASM=1
+    fi
+  done
+  return 0
+}
+
 rebuild_native_cdylibs() {
   local repo_root
   repo_root=$(cd "$(dirname "$0")/.." && pwd)
@@ -291,11 +318,25 @@ rebuild_native_cdylibs() {
     schedule "cdylib $rel" "$dir" "cd '$dir' && cargo build --release -q"
   done < <(find "$repo_root/tests" -name Cargo.toml -not -path '*/target/*' 2>/dev/null)
 
+  # @PLN159 phase I — build only what the SELECTION needs.  Measured: after a
+  # one-file edit, `--subject parser` spent 158 s here (the release rlib, and the
+  # two wasm rlibs in parallel) before 13 s of tests, and a parser test uses none
+  # of them.  The loft the tests spawn is the test-profile binary
+  # (`CARGO_BIN_EXE_loft`), which resolves its rlib beside itself in target/debug;
+  # the release rlib serves only the binaries that spawn `target/release/loft`,
+  # and the wasm rlibs only the html/wasm suites.  `selection_needs` reads the
+  # selected binaries' sources for exactly those two facts; the curated and full
+  # runs keep everything.
+  selection_needs
+
   # 3. The wasm32-unknown-unknown rlib used by the html_wasm suite.
   #    Only rebuild if the target directory already exists — the very
   #    first run lets the --html driver build it so we don't impose a
   #    wasm-target install on developers who never touch the HTML gate.
-  if [[ -d "$repo_root/target/wasm32-unknown-unknown" ]]; then
+  if [[ "$NEED_WASM" == 0 ]]; then
+    printf '  %-44s %s\n' "wasm rlibs" "skipped — no wasm/html binary in the selection" >&2
+  fi
+  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/wasm32-unknown-unknown" ]]; then
     echo "== rebuild wasm32-unknown-unknown rlib ==" >> "$log"
     schedule "wasm32 rlib" "$repo_root" \
       "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random -q"
@@ -308,19 +349,35 @@ rebuild_native_cdylibs() {
   #     looks like a real regression and disappears on a re-run.  Same guard as above:
   #     only rebuild when the target dir already exists, so a developer who never
   #     touches the wasm gate is not made to install the target.
-  if [[ -d "$repo_root/target/wasm32-wasip2" ]]; then
+  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/wasm32-wasip2" ]]; then
     echo "== rebuild wasm32-wasip2 rlib ==" >> "$log"
     schedule "wasip2 rlib" "$repo_root" \
       "cd '$repo_root' && cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random -q"
   fi
 
-  # 4. target/release/libloft.rlib — linked by `--native` and the cdylib
-  #    tests.  Unconditional: it is the host target, so unlike 3/3b there
-  #    is no toolchain to impose on anyone.  Incremental, so it is ~free
-  #    when current and is exactly the cycle it saves when it is not.
-  echo "== rebuild native libloft.rlib ==" >> "$log"
-  schedule "native rlib" "$repo_root" \
-    "cd '$repo_root' && cargo build --release --lib -q"
+  # 4. The rlib beside the loft the tests spawn.  The test-profile `loft` in
+  #    target/debug resolves `target/debug/libloft.rlib`, the UPLIFTED copy only a
+  #    `--lib` build writes — and since `[profile.dev]` and `[profile.test]` share
+  #    artifacts (@PLN159 phase A) this is the same compile nextest is about to do,
+  #    so it costs the compile once and the uplift after that (~1 s when current).
+  echo "== rebuild dev libloft.rlib ==" >> "$log"
+  schedule "dev rlib" "$repo_root" \
+    "cd '$repo_root' && cargo build --lib -q"
+
+  # 4b. target/release/libloft.rlib AND target/release/loft — only for a selection
+  #     that spawns the release binary (29 binaries: the html/browser/engine_host
+  #     suites and a few CLI ones).  Both, because the old step rebuilt the release
+  #     LIB and never the BINARY those tests run, so under the loop they measured
+  #     whatever `make ci` last built — a stale-binary verdict nothing reported.
+  #     The release profile is not incremental: this is the 90–160 s step the
+  #     selection now skips when it can.
+  if [[ "$NEED_RELEASE" == 1 ]]; then
+    echo "== rebuild release libloft.rlib + loft ==" >> "$log"
+    schedule "release rlib + loft binary" "$repo_root" \
+      "cd '$repo_root' && cargo build --release --lib --bin loft -q"
+  else
+    printf '  %-44s %s\n' "release rlib + loft binary" "skipped — no selected binary spawns target/release/loft" >&2
+  fi
 
   # Wait for all parallel rebuilds; `wait` exits after the slowest.
   for pid in "${jobs[@]}"; do wait "$pid"; done

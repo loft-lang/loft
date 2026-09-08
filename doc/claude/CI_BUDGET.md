@@ -112,12 +112,15 @@ through `rustc` 0.20 s — and the gate's minutes were structural:
 | the heavy shard | `native_scripts` (219.6 s) in a single-slot group, plus the 3.7-min cache save, on the critical path | 29.3 min shard |
 | every commit | `native_artifact_cache_key` folded the git HEAD, so every commit rebuilt every hand-written package cdylib (`cdylibstale`) although none depends on the loft crate | one cold `cache warm` per commit |
 | two gates on one box | each at half the threads, both ~2×, plus the OOM and load-flake reruns | 10 → 19 min |
+| the iteration loop, every edit | `find_problems.sh` rebuilt the release rlib and both wasm rlibs — three NON-incremental whole-crate builds — before a `--subject parser` run that links none of them; the dev profile is incremental (a comment edit 3 s, a one-function edit 22 s) and the release profile is not (42–55 s, every edit) | 158 s ahead of 13 s of tests |
 
 What changed: `[profile.dev] debug = 1` (one build); `find_problems.sh` without `--release` (one
 profile); a `corpus` PR shard and per-shard cache saves; the package-cdylib key without the git
 HEAD; `make ci` takes `/tmp/loft-gate.lock` (one gate at a time, `LOFT_GATE_PARALLEL=1` opts out)
 and runs the diff's subjects first (`scripts/nextest_priority.sh`, an order, never a selection);
-`find_problems.sh --changed`; and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
+`find_problems.sh --changed`; `find_problems.sh` rebuilding only what the selection links
+(the dev rlib always, the release binary and the wasm rlibs only for the binaries that use
+them); and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
 phase's proof — and the numbers the next PR run must confirm — are in the plan file.
 
 ## A LOCAL `make ci` is ~10 min, and it is two tests (2026-08-21)
