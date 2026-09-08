@@ -1384,6 +1384,17 @@ pub fn lift_join_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_JOIN_WITNESS"))
 }
 
+/// @PLN157 § V-g — a read-only record local bound from a call whose return borrows a
+/// value-const argument keeps the VIEW instead of taking the copy `(O-Move)` asks for,
+/// because no program can observe the difference there; the callee's per-execution
+/// minted store is released by identity at scope exit.  `LOFT_NO_VIEW_ELISION=1`
+/// restores the copy — the control for the elision's own guard.
+#[must_use]
+pub fn view_elision_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
+}
+
 #[must_use]
 pub fn join_own_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

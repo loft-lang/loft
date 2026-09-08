@@ -2374,6 +2374,9 @@ impl State {
                 // `generation/dispatch.rs` never reaches a bare-Var RHS either.)
                 && !matches!(value.unspan(), Value::Var(_))
                 && crate::keys::join_own_enabled()
+                // @PLN157 § V-g — an elided bind keeps the view; its minted arm is
+                // released by identity at scope exit, so nothing is materialised here.
+                && !stack.function.is_view_elided(v)
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
                 && base != u16::MAX
@@ -2490,6 +2493,10 @@ impl State {
                     // callee's argument field on this backend alone — `--native` copies
                     // through its own arm (loft#1346, @FR-O-NoDiverge).
                     && !(rhs_reads_v && stack.data.def(fn_nr).returns_borrowed_view())
+                    // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
+                    // the view, and `scopes` registered the identity free for the
+                    // minted arm.
+                    && !stack.function.is_view_elided(v)
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     // Plan-04 Phase B.3.f: allocate fresh store directly
@@ -3098,12 +3105,18 @@ impl State {
             // same `OpBindOrCopy` store-identity guard the REASSIGNMENT path uses.
             if crate::keys::join_own_enabled()
                 && let Type::Reference(join_d_nr, _) = stack.function.tp(v).clone()
+                // @PLN157 § V-g — an elided bind keeps the view and takes the plain
+                // `OpPutRef` below; `scopes` registered the identity free for the
+                // minted arm, so the join guard is not needed here.
+                && !stack.function.is_view_elided(v)
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
                 && base != u16::MAX
             {
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
-            } else if stack.data.def(fn_nr).return_adopts_fresh_store() {
+            } else if stack.data.def(fn_nr).return_adopts_fresh_store()
+                || stack.function.is_view_elided(v)
+            {
                 // runtime tolerates double-free as a no-op so leaving
                 // __ref_N to be freed by scopes.rs's is_work_ref gate at
                 // scope exit is safe in both adoption and orphan cases.

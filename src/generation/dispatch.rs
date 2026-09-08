@@ -731,10 +731,18 @@ impl Output<'_> {
             if first_bind {
                 self.declared.insert(var);
                 let tp_str = rust_type(variables.tp(var), &Context::Variable);
-                writeln!(
-                    w,
-                    "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
-                )?;
+                // @PLN157 § V-g — an elided local aliases the call's result and never
+                // copies into a slot store of its own, so the `null_named` pre-allocation
+                // (a store minted for the copy to land in) would only be minted to be
+                // freed as displaced by the adopt arm; it starts as the null sentinel.
+                if variables.is_view_elided(var) {
+                    writeln!(w, "let mut var_{name}: {tp_str} = DbRef::NULL;")?;
+                } else {
+                    writeln!(
+                        w,
+                        "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
+                    )?;
+                }
                 self.indent(w)?;
             }
             // @P298 / @P297 (native half) — free the callee's return store
@@ -861,52 +869,60 @@ impl Output<'_> {
             // and not a second opinion — writing it twice is how the witnessed form came to
             // omit it.
             const PASSTHROUGH: &str = "_src.store_nr == u16::MAX || _src.store_nr == _dst.store_nr";
-            let adopt = match &join_witness {
-                // @FR-O-Move — the caller COPIES only to obtain its OWN store.  When `_src`
-                // already lives in the destination's own store the caller HAS that store, so
-                // the rule asks for nothing and the copy is not merely redundant but
-                // destructive: the COPY arm clears `_dst` in place via `OpDatabase`, which
-                // wipes the record `_src` names before `OpCopyRecord` reads it.  That is the
-                // same-store passthrough the `None` arm below carries and the @P290 comment
-                // above requires ("clearing that store would wipe the very data we copy, so
-                // pass the reference through unchanged"); the witnessed form REPLACED the
-                // whole condition instead of refining it and so dropped it.  Measured:
-                // `c = cond(c, 3)` where `cond` returns its argument on one path answered
-                // `x = 0` on `--native` against `2` on the interpreter, silently, on the
-                // shipped 2026.8.0 release.  Guard
-                // `tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft`.
-                //
-                // It is a strict widening of the ADOPT arm: the extra disjunct fires only
-                // where the destination's old store and the returned value are one store, so
-                // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
-                // false there and nothing is freed — the assignment becomes the no-op it
-                // always was.
-                Some(witness) => {
-                    format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+            // @PLN157 § V-g — an elided bind ALIASES the result whichever arm the callee
+            // took: the view is what the local keeps, and the minted arm's store is
+            // released by identity at scope exit (`scopes` registered the witness).  The
+            // interpreter binds it with a bare `PutRef` for the same reason.
+            let adopt = if variables.is_view_elided(var) {
+                "true".to_string()
+            } else {
+                match &join_witness {
+                    // @FR-O-Move — the caller COPIES only to obtain its OWN store.  When `_src`
+                    // already lives in the destination's own store the caller HAS that store, so
+                    // the rule asks for nothing and the copy is not merely redundant but
+                    // destructive: the COPY arm clears `_dst` in place via `OpDatabase`, which
+                    // wipes the record `_src` names before `OpCopyRecord` reads it.  That is the
+                    // same-store passthrough the `None` arm below carries and the @P290 comment
+                    // above requires ("clearing that store would wipe the very data we copy, so
+                    // pass the reference through unchanged"); the witnessed form REPLACED the
+                    // whole condition instead of refining it and so dropped it.  Measured:
+                    // `c = cond(c, 3)` where `cond` returns its argument on one path answered
+                    // `x = 0` on `--native` against `2` on the interpreter, silently, on the
+                    // shipped 2026.8.0 release.  Guard
+                    // `tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft`.
+                    //
+                    // It is a strict widening of the ADOPT arm: the extra disjunct fires only
+                    // where the destination's old store and the returned value are one store, so
+                    // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
+                    // false there and nothing is freed — the assignment becomes the no-op it
+                    // always was.
+                    Some(witness) => {
+                        format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+                    }
+                    // loft#974 — a callee that returns a VIEW hands back a pointer into a
+                    // store the CALLER already owns, so the destination ALIASES it: that is
+                    // what the borrow in the signature means, and it is what the interpreter
+                    // emits here (a bare `PutRef`).  Copying instead mints a store the IR —
+                    // which types such a destination as a borrow and therefore emits no
+                    // `OpFreeRef` — never frees: one leaked record per call, measured.  It
+                    // also made the two backends disagree about what a view IS, so a write
+                    // through the result would land on one and be lost on the other.
+                    //
+                    // BOTH halves are required, and the destination is the half loft#677's
+                    // guard proved: a lifted call temporary (`__lift_1`) takes a borrowed
+                    // return too, and its own type carries NO deps — the IR calls it an owner
+                    // and frees it at scope exit.  Aliasing there hands that free the
+                    // CALLER's store (`USE AFTER FREE (write) … killed by the free of
+                    // var___lift_1`, native-only, the interpreter's own copy path unaffected).
+                    // So the alias follows the destination's ownership, not the callee's
+                    // return alone.
+                    // A WITNESSED local (loft#1336) is never-free for a different reason — its
+                    // witness releases its stores — and it is copied into like its owned twin.
+                    None if is_borrowed_view && variables.skip_free(var) && !witnessed => {
+                        "true".to_string()
+                    }
+                    None => PASSTHROUGH.to_string(),
                 }
-                // loft#974 — a callee that returns a VIEW hands back a pointer into a
-                // store the CALLER already owns, so the destination ALIASES it: that is
-                // what the borrow in the signature means, and it is what the interpreter
-                // emits here (a bare `PutRef`).  Copying instead mints a store the IR —
-                // which types such a destination as a borrow and therefore emits no
-                // `OpFreeRef` — never frees: one leaked record per call, measured.  It
-                // also made the two backends disagree about what a view IS, so a write
-                // through the result would land on one and be lost on the other.
-                //
-                // BOTH halves are required, and the destination is the half loft#677's
-                // guard proved: a lifted call temporary (`__lift_1`) takes a borrowed
-                // return too, and its own type carries NO deps — the IR calls it an owner
-                // and frees it at scope exit.  Aliasing there hands that free the
-                // CALLER's store (`USE AFTER FREE (write) … killed by the free of
-                // var___lift_1`, native-only, the interpreter's own copy path unaffected).
-                // So the alias follows the destination's ownership, not the callee's
-                // return alone.
-                // A WITNESSED local (loft#1336) is never-free for a different reason — its
-                // witness releases its stores — and it is copied into like its owned twin.
-                None if is_borrowed_view && variables.skip_free(var) && !witnessed => {
-                    "true".to_string()
-                }
-                None => PASSTHROUGH.to_string(),
             };
             // @PLN85 (the adopt-arm placeholder leak) — the ADOPT arm replaces
             // `var_{name}`'s slot with `_src`, orphaning `_dst` when it is a

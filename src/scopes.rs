@@ -103,6 +103,13 @@ struct Scopes<'s> {
     /// Set by `callref_owned_return` on that path, consumed by the next `new_lift_var`.
     /// `u16::MAX` = none.
     pending_join_witness: std::cell::Cell<u16>,
+    /// @PLN157 § V-g — the record locals this function only ever READS, off the raw body
+    /// (`use_analysis::read_only_record_locals`); one input of `view_elision_bind`.
+    read_only_locals: Vec<bool>,
+    /// Variables assigned ANYWHERE in this function ([`assigned_in`]).  A parameter in this
+    /// set is rebound after entry, so it cannot stand witness for a store it named at a
+    /// bind: `view_elision_bind` declines it, and the collection join takes its snapshot.
+    assigned: HashSet<u16>,
     /// Variables assigned at MORE THAN ONE site in this function.  The identity route
     /// (`lift_join_witness`) compares a local's store against the variable its dep names at
     /// scope exit; a base reassigned while the local is live could by then name a store that
@@ -2581,6 +2588,12 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        assigned: assigned_in(orig_code),
+        read_only_locals: crate::use_analysis::read_only_record_locals(
+            orig_code,
+            orig_vars.var_count(),
+            data,
+        ),
         capture_build_backing: capture_build_backings(data, orig_vars, orig_code),
         lift_decl_depth: HashMap::new(),
         callref_join_bases: callref_join_bases_in(orig_code, data, d_nr),
@@ -3347,6 +3360,23 @@ fn callref_join_bases_in(node: &Value, data: &Data, d_nr: u32) -> HashMap<u16, H
     }
     let mut out = HashMap::new();
     walk(node, data, d_nr, &mut out);
+    out
+}
+
+/// Variables that are the target of ANY `Set` node in `node`.  For a PARAMETER this is the
+/// rebind test: its own bind is the call, so a single `Set` already means it stops naming
+/// the caller's store (`v = other` on a value-const vector copies into a fresh buffer and
+/// re-points the slot), and a witness compared against it afterwards names the wrong
+/// store — @PLN157 § V-g's c11 freed the caller's vector that way.
+pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
+    fn collect(node: &Value, out: &mut HashSet<u16>) {
+        if let Value::Set(v, _) = node.unspan() {
+            out.insert(*v);
+        }
+        node.for_each_child(&mut |c| collect(c, out));
+    }
+    let mut out = HashSet::new();
+    collect(node, &mut out);
     out
 }
 
@@ -7257,17 +7287,50 @@ impl Scopes<'_> {
                 }
             }
             if record_shaped && !adopts_fresh_store && !publishes_through_ref {
-                // codegen will take gen_set_first_ref_call_copy —
-                // OpConvRefFromNull +
-                // OpDatabase + lock-args + OpCopyRecord deep-copy into a
-                // FRESH store owned by `v`.  Strip v's declared deps so
-                // get_free_vars emits OpFreeRef at scope exit; otherwise
-                // the parser's "borrows from arg N" inference suppresses
-                // emission and the deep-copied store leaks (the
-                // `dep_empty=false` path in scopes.rs:906).
-                let deps: Vec<u16> = function.tp(v).depend().clone();
-                for d in deps {
-                    function.make_independent(v, d);
+                if let Some(base) = crate::use_analysis::view_elision_bind(
+                    data,
+                    self.d_nr,
+                    function,
+                    v,
+                    unspanned_value,
+                    &crate::use_analysis::BodyFacts {
+                        read_only: &self.read_only_locals,
+                        multi_assigned: &self.multi_assigned,
+                        assigned: &self.assigned,
+                    },
+                ) {
+                    // @PLN157 § V-g — the copy is unobservable here, so the dep STAYS (a
+                    // view) and the local takes the COLLECTION join's route: `get_free_vars`
+                    // releases the callee's per-execution minted store by identity against
+                    // the argument at scope exit, and a re-Set in scope releases the store
+                    // it displaces the same way.  Both backends read the mark and deliver
+                    // the result directly instead of copying.
+                    function.mark_view_elided(v);
+                    let w = function.rebind_orig(base).unwrap_or(base);
+                    self.lift_join_witness.insert(v, w);
+                    let slot_live = match self.lift_decl_depth.get(&v) {
+                        Some(&depth) => depth < self.loops.len(),
+                        None => true,
+                    };
+                    if was_in_scope && transition_free.is_none() && slot_live {
+                        transition_free = Some(Value::Call(
+                            data.def_nr("OpFreeRefIfDistinct"),
+                            vec![Value::Var(v), Value::Var(w)],
+                        ));
+                    }
+                } else {
+                    // codegen will take gen_set_first_ref_call_copy —
+                    // OpConvRefFromNull +
+                    // OpDatabase + lock-args + OpCopyRecord deep-copy into a
+                    // FRESH store owned by `v`.  Strip v's declared deps so
+                    // get_free_vars emits OpFreeRef at scope exit; otherwise
+                    // the parser's "borrows from arg N" inference suppresses
+                    // emission and the deep-copied store leaks (the
+                    // `dep_empty=false` path in scopes.rs:906).
+                    let deps: Vec<u16> = function.tp(v).depend().clone();
+                    for d in deps {
+                        function.make_independent(v, d);
+                    }
                 }
             }
             // `adopts_fresh_store == true` call whose result is assigned
@@ -7780,7 +7843,11 @@ impl Scopes<'_> {
             // on the other site's arm (sum 4034 for 12500), and against a base already
             // re-pointed it could free whatever store reused the slot; comparing against the
             // snapshot, two stale numbers still agree and decline.
+            // A parameter with any `Set` is rebound after entry (its bind is the call), so
+            // it cannot stand witness for the store it named at the bind.
+            let base_rebound = function.is_argument(base) && self.assigned.contains(&base);
             let stable = !self.multi_assigned.contains(&base)
+                && !base_rebound
                 && self.callref_join_bases.get(&v).is_none_or(|b| b.len() <= 1);
             let w = if stable {
                 function.rebind_orig(base).unwrap_or(base)

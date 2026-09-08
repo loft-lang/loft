@@ -1,0 +1,17 @@
+struct Pt { ptx: float, pty: float }
+fn view_a(pts: const vector<Pt>, i: integer) -> Pt { pts[i]? }
+fn view_nc(pts: vector<Pt>, i: integer) -> Pt { pts[i]? }
+// the projection written inline: the hand-correct form of "view or fresh default"
+fn use_inline(pts: const vector<Pt>) -> float { a = pts[1]?; a.ptx + a.pty }
+// the same through a call, const parameter
+fn use_call(pts: const vector<Pt>) -> float { a = view_a(pts, 1); a.ptx + a.pty }
+// through a call, NON-const parameter on both sides
+fn use_nc(pts: vector<Pt>) -> float { a = view_nc(pts, 1); a.ptx + a.pty }
+// through a call, the vector is a LOCAL of the caller
+fn use_local() -> float { w: vector<Pt> = [Pt{ptx: 2.0, pty: 3.0}]; a = view_a(w, 0); a.ptx + a.pty }
+// out of range: the fresh-default arm
+fn use_oor(pts: const vector<Pt>) -> float { a = view_a(pts, 9); a.ptx + a.pty }
+fn main() {
+  v: vector<Pt> = [Pt{ptx: 1.0, pty: 2.0}, Pt{ptx: 3.0, pty: 5.0}, Pt{ptx: 7.0, pty: 11.0}];
+  println("{use_inline(v)} {use_call(v)} {use_nc(v)} {use_local()} {use_oor(v)}");
+}

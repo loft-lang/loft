@@ -134,6 +134,8 @@ pub(crate) struct VarSnapshot<'a> {
     pub skip_free: bool,
     pub captured: bool,
     pub caller_hidden_buf: bool,
+    /// @PLN157 § V-g — the copy from a borrowing call is elided; read by both emitters.
+    pub view_elided: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -151,6 +153,7 @@ pub(crate) struct RestoredVar {
     pub skip_free: bool,
     pub captured: bool,
     pub caller_hidden_buf: bool,
+    pub view_elided: bool,
     pub owner_witness: u16,
 }
 
@@ -178,6 +181,11 @@ pub struct Variable {
     /// element, field, nested) is rejected, but a rebind (`=`) that re-points the
     /// slot is allowed.  The sibling of the `&T` mutable borrow.  @PLN40 phase 1.
     value_const: bool,
+    /// @PLN157 § V-g — bound from a call whose return borrows an argument, and only ever
+    /// read: the copy `(O-Move)` asks for is unobservable, so the local keeps the VIEW and
+    /// releases only the callee's per-execution minted store, by identity at scope exit.
+    /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
+    view_elided: bool,
     /// @PLN130 F9 — this binding was spelled with `&` at a STRUCT-typed projection
     /// (`c = &v[0]`, `c = &o.inner`).  Such a projection is already a VIEW under B-View,
     /// so both spellings lower to byte-identical IR and the `&` used to be dropped as
@@ -587,6 +595,7 @@ impl Function {
             skip_free: v.skip_free,
             captured: v.captured,
             caller_hidden_buf: v.caller_hidden_buf,
+            view_elided: v.view_elided,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -645,6 +654,7 @@ impl Function {
                 skip_free: r.skip_free,
                 captured: r.captured,
                 caller_hidden_buf: r.caller_hidden_buf,
+                view_elided: r.view_elided,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -2065,6 +2075,7 @@ impl Function {
             defined: false,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2097,6 +2108,7 @@ impl Function {
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
+            view_elided: false,
             amp_link: self.variables[var as usize].amp_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2132,6 +2144,7 @@ impl Function {
             defined: false,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2164,6 +2177,7 @@ impl Function {
             defined: true,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2776,6 +2790,22 @@ impl Function {
     /// field, nested) is rejected; a rebind (`=`) that re-points the slot is allowed.
     pub fn is_value_const(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].value_const
+    }
+
+    /// @PLN157 § V-g — mark `var_nr` as a read-only local bound from a borrowing call whose
+    /// copy is elided: it keeps its dep (a view) and both backends deliver the call's
+    /// result to it directly.  Decided once, in `scopes::scan_set`
+    /// (`use_analysis::view_elision_bind`), so the strip and the two copy arms name the
+    /// same binds.
+    pub fn mark_view_elided(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].view_elided = true;
+    }
+
+    /// Whether `var_nr`'s copy from its borrowing call is elided — see
+    /// [`Self::mark_view_elided`].
+    #[must_use]
+    pub fn is_view_elided(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].view_elided
     }
 
     /// Mark `var_nr` as bound with an explicit `&` at a struct-typed projection —

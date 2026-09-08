@@ -242,6 +242,18 @@ copy arm and wrote a copy INTO the record the local was viewing.  `__own_<name>`
 tenth stored variable field, and the cache format version is bumped so a stale bundle is not
 read (loft#1336 follow-up, QUALITY.md B7v).
 
+**And the copy `O-Move` asks for is ELIDED where no program can observe it** (@PLN157
+§ V-g).  A record local bound once from a call whose return borrows a value-const,
+never-rebound ARGUMENT, and read only through projections, keeps the view —
+`use_analysis::view_elision_bind`, one predicate for `scan_set`'s strip and both
+backends' copy arms — and releases the callee's per-execution minted store by identity
+against that argument at scope exit, the collection join's route (loft#1257).  The rule
+is unchanged: a written local, an escaping one (a call argument, a literal element, a
+return, a capture), a nullable one, a rebound or non-const base, all still copy.  The mark
+(`view_elided`) is the eleventh stored variable field, for the reason `__own_<name>` is the
+tenth — measured before it was stored: a warm `LOFT_PROGRAM_CACHE=1` run re-emitted the
+copy beside the stored identity free.
+
 ⚠ **`(O-Oracle)`'s interprocedural half has a failure mode of its own: it can lose the
 callee's answer on the way back to the caller.** The summary is stated in the CALLEE's
 parameter space, and delivering it means naming the caller value the returned store may lie

@@ -52,7 +52,11 @@ use sha2::{Digest, Sha256};
 /// 4 — the `Data` root carries the two import tables (`imports`, `use_names`)
 /// a warm load replays into `def_names`, which grew the root from 16 to
 /// 20 bytes (loft#1359).
-const CACHE_FORMAT_VERSION: u8 = 5;
+///
+/// 6 — `Variable` carries `view_elided`, the eleventh codegen-read field
+/// (stride 37 → 38): a warm load at the old stride emitted the copy the
+/// elision removes (@PLN157 § V-g).
+const CACHE_FORMAT_VERSION: u8 = 6;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

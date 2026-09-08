@@ -337,7 +337,7 @@ fn purity_code(p: Purity) -> i64 {
     }
 }
 
-/// Write the ten codegen-read fields of one `Variable` (a `VarSnapshot`) into
+/// Write the eleven codegen-read fields of one `Variable` (a `VarSnapshot`) into
 /// the already-allocated record `r`.
 fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_str(stores, ds::VAR_NAME, v.name);
@@ -349,6 +349,7 @@ fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_bool(stores, ds::VAR_SKIP_FREE, v.skip_free);
     r.set_field_bool(stores, ds::VAR_CAPTURED, v.captured);
     r.set_field_bool(stores, ds::VAR_CALLER_HIDDEN_BUF, v.caller_hidden_buf);
+    r.set_field_bool(stores, ds::VAR_VIEW_ELIDED, v.view_elided);
     r.set_field_int(stores, ds::VAR_OWNER_WITNESS, i64::from(v.owner_witness));
 }
 

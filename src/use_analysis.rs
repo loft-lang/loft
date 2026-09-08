@@ -3380,6 +3380,235 @@ pub fn callref_join_first_bind(
     Some((*rec, base))
 }
 
+/// @PLN157 § V-g — the record locals of `body` that are only ever READ: every occurrence of
+/// the variable outside its one defining `Set` sits at arg 0 of a scalar getter
+/// (`OpGetFloat`, `OpGetInt`, …, a `len`) or of a PROJECTION chain that itself ends in a
+/// read.  Indexed by variable number.  Computed off the RAW body before the scan, like
+/// `multi_assigned_in`, because the answer is positional and the variable table carries
+/// only the last assignment.
+///
+/// The fallback is the conservative one, and it is the whole point: an occurrence in ANY
+/// position not named here removes the variable from the set — a call argument (a
+/// by-value struct parameter is written through, loft#894), a setter's target root
+/// (through any depth of projection), a bare copy source (`b = a`), a literal element
+/// (`out += [a]` carries the append's source-free bit), a return, a fn-ref, a loop or
+/// iteration subject, a tuple put.  So the set can only SHRINK on a shape the walk does not
+/// understand, never grow, and a variable that never occurs at all is read-only vacuously
+/// (its bind is then the only thing that happens to it).
+pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) -> Vec<bool> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Pos {
+        /// A pure read: the value is observed and nothing can reach the record.
+        Read,
+        /// The root of a setter, or a projection handed to something that may write.
+        Reach,
+    }
+    fn is_scalar_getter(name: &str) -> bool {
+        matches!(
+            name,
+            "OpGetBoolean"
+                | "OpGetByte"
+                | "OpGetByteNullable"
+                | "OpGetCharacter"
+                | "OpGetEnum"
+                | "OpGetFloat"
+                | "OpGetInt"
+                | "OpGetShort"
+                | "OpGetShortFull"
+                | "OpGetShortRaw"
+                | "OpGetSingle"
+                | "OpGetText"
+                | "OpGetTextSub"
+                | "OpGetStackText"
+                | "OpLengthVector"
+                | "t_6vector_len"
+        )
+    }
+    struct Cx<'a> {
+        data: &'a Data,
+        ok: Vec<bool>,
+        sets: Vec<u32>,
+    }
+    fn deny(cx: &mut Cx, v: u16) {
+        if let Some(slot) = cx.ok.get_mut(v as usize) {
+            *slot = false;
+        }
+    }
+    /// `arg` is an argument of the op whose classification gave it `pos`.
+    fn arg(cx: &mut Cx, arg: &Value, pos: Pos, under_getter: bool) {
+        match arg.unspan() {
+            Value::Var(v) => {
+                if !(under_getter && pos == Pos::Read) {
+                    deny(cx, *v);
+                }
+            }
+            other => walk(cx, other, pos),
+        }
+    }
+    fn walk(cx: &mut Cx, node: &Value, pos: Pos) {
+        match node.unspan() {
+            Value::Call(op, args) => {
+                let name = cx.data.def(*op).name().to_string();
+                let writer = is_first_arg_write_name(&name);
+                let scalar = is_scalar_getter(&name);
+                let projection = (!scalar && name.starts_with("OpGet"))
+                    || matches!(name.as_str(), "OpVectorRef" | "OpVectorRefNullable");
+                for (i, a) in args.iter().enumerate() {
+                    if i == 0 && writer {
+                        arg(cx, a, Pos::Reach, false);
+                    } else if i == 0 && scalar {
+                        arg(cx, a, Pos::Read, true);
+                    } else if i == 0 && projection {
+                        // A projection hands its result on: a read stays a read, a reach
+                        // (the root of a setter, an argument) reaches the record.
+                        arg(cx, a, pos, pos == Pos::Read);
+                    } else {
+                        // Any other argument position — including a user call's — may
+                        // write through what it is given.
+                        arg(cx, a, Pos::Reach, false);
+                    }
+                }
+            }
+            Value::Set(v, rhs) => {
+                if let Some(n) = cx.sets.get_mut(*v as usize) {
+                    *n += 1;
+                }
+                arg(cx, rhs, Pos::Reach, false);
+            }
+            Value::Var(v) => deny(cx, *v),
+            Value::Iter(v, a, b, c) => {
+                deny(cx, *v);
+                for x in [a, b, c] {
+                    arg(cx, x, Pos::Reach, false);
+                }
+            }
+            Value::TupleGet(v, _) | Value::FnRefDnr(v) => deny(cx, *v),
+            Value::TuplePut(v, _, val) => {
+                deny(cx, *v);
+                arg(cx, val, Pos::Reach, false);
+            }
+            Value::CallRef(v, args) => {
+                deny(cx, *v);
+                for a in args {
+                    arg(cx, a, Pos::Reach, false);
+                }
+            }
+            Value::Return(x) | Value::Drop(x) | Value::Yield(x) => arg(cx, x, Pos::Reach, false),
+            Value::Insert(items) | Value::Tuple(items) | Value::Parallel(items) => {
+                for a in items {
+                    arg(cx, a, Pos::Reach, false);
+                }
+            }
+            Value::If(c, t, e) => {
+                arg(cx, c, Pos::Reach, false);
+                walk(cx, t, Pos::Read);
+                walk(cx, e, Pos::Read);
+            }
+            // Blocks, loops, spans: every child is a statement in read position; a bare
+            // `Var` there is denied by the `Var` arm above.
+            _ => node.for_each_child(&mut |c| walk(cx, c, Pos::Read)),
+        }
+    }
+    let mut cx = Cx {
+        data,
+        ok: vec![true; n_vars],
+        sets: vec![0; n_vars],
+    };
+    walk(&mut cx, body, Pos::Read);
+    for (v, ok) in cx.ok.iter_mut().enumerate() {
+        if cx.sets[v] != 1 {
+            *ok = false;
+        }
+    }
+    cx.ok
+}
+
+/// @PLN157 § V-g — the three facts about a function BODY that [`view_elision_bind`] reads,
+/// each computed once off the raw body before the scan (`scopes` holds them).
+#[derive(Clone, Copy)]
+pub struct BodyFacts<'a> {
+    /// `read_only_record_locals`: the record locals only ever read, by variable number.
+    pub read_only: &'a [bool],
+    /// `scopes::multi_assigned_in`: variables with two or more `Set`s.
+    pub multi_assigned: &'a HashSet<u16>,
+    /// `scopes::assigned_in`: variables with any `Set` — a parameter's rebind test.
+    pub assigned: &'a HashSet<u16>,
+}
+
+/// @PLN157 § V-g — is `v = value` a record bind whose copy can be ELIDED: the callee's
+/// return borrows a nameable argument (`Own::Borrowed` / `Own::Join`), that argument is
+/// value-const and bound once (so it names the same store at every later free), and `v`
+/// is a dense record local bound once, never captured, and only ever read
+/// (`read_only_record_locals`)?  Then `(O-Move)`'s copy is unobservable: `v` keeps the
+/// dep — a view — and the join's per-execution minted store is released by identity
+/// against the base at scope exit, the route a COLLECTION join already takes
+/// (loft#1257).  Answers the base to witness against.
+///
+/// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` decides
+/// and marks the variable (`Function::mark_view_elided`); the two backends' copy arms
+/// read the mark.  A `CallRef` is not admitted — a closure's join has its own route
+/// (`callref_join_first_bind`) and its witness is not the argument's store.
+///
+/// The rule it keeps is @FR-O-Move — *the caller COPIES to obtain its own store* — as an
+/// elision of the copy where no program can observe it, and @FR-O-Borrow for what the
+/// local then is: a value aliasing the argument, carrying it in its deps, skip-free.
+#[must_use]
+pub fn view_elision_bind(
+    data: &Data,
+    d_nr: u32,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+    facts: &BodyFacts<'_>,
+) -> Option<u16> {
+    let BodyFacts {
+        read_only,
+        multi_assigned,
+        assigned,
+    } = *facts;
+    if !crate::keys::view_elision_enabled() {
+        return None;
+    }
+    // Bare, not `base()`: a nullable local's slot may hold the sentinel and takes the
+    // nullable join's own copy (`nullable_join_first_bind`).
+    if !matches!(function.tp(v), Type::Reference(_, _)) {
+        return None;
+    }
+    if function.is_argument(v)
+        || function.is_skip_free(v)
+        || function.is_captured(v)
+        || multi_assigned.contains(&v)
+        || !read_only.get(v as usize).copied().unwrap_or(false)
+    {
+        return None;
+    }
+    let Value::Call(fn_nr, _) = value.unspan() else {
+        return None;
+    };
+    if !data.def(*fn_nr).is_loft_defined() {
+        return None;
+    }
+    let base = match ownership_of(data, d_nr, value) {
+        Own::Borrowed { base } | Own::Join { base } => base,
+        Own::Owned => return None,
+    };
+    // An ARGUMENT outlives every local of the frame, so it can stand witness at the
+    // local's scope exit; a value-const one is never written through in this frame
+    // (`Const-Value`), so the view reads what the copy would have.  One that is
+    // ASSIGNED at all is rebound after entry — its only bind is the call — and would
+    // name a different store at the free (`v = other` copies into a fresh buffer), so
+    // it is declined outright rather than snapshotted.
+    if base == u16::MAX
+        || !function.is_argument(base)
+        || !function.is_value_const(base)
+        || multi_assigned.contains(&base)
+        || assigned.contains(&base)
+    {
+        return None;
+    }
+    Some(base)
+}
+
 /// The caller variable a fn-ref's COLLECTION `??` return may still be aliasing — the base a
 /// bind of that call frees by store IDENTITY against (loft#1257, loft#1320).
 ///

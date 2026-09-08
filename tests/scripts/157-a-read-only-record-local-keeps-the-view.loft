@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN157 § V-g (loft#1426) — a record local bound from a call whose return BORROWS a
+// value-const argument (`a = ctrl(pts, i)` where `ctrl` answers `pts[i]?`), and which is
+// only ever READ, keeps the VIEW instead of the copy `(O-Move)` asks for: the copy is
+// unobservable there, so it is elided, and the callee's per-execution minted store (the
+// `?` fallback) is released by store identity against the argument at scope exit — the
+// route a COLLECTION join already takes (loft#1257).  Every other shape keeps the copy.
+//
+// The values are the same either way — the delivery changes, not the answer — so this is
+// a LOCK: the cells that MUST copy carry a write through the local and re-read the source,
+// which is exactly what would change if the elision over-fired.  Every cell is
+// hand-computed over v = [Pt(1,2), Pt(3,5), Pt(7,11)]:
+//
+//   c1  the consumer shape: a const-param source, one read-only local, in range
+//   c2  out of range — the callee mints the default, the caller releases it
+//   c3  two locals from one source
+//   c4  a loop re-binding the local, one turn out of range
+//   c5  CONTROL: the local is WRITTEN — a copy; the source reads unchanged after
+//   c6  CONTROL: the local is passed to a callee that writes its parameter — a copy
+//   c7  CONTROL: the local is appended to a vector — a copy
+//   c8  CONTROL: the local is returned — a copy
+//   c9  CONTROL: the local is captured by a closure — a copy
+//   c10 CONTROL: a non-const source — a copy
+//   c11 CONTROL: the base is reassigned after the bind — a copy (a parameter's rebind
+//       re-points it at a fresh store, so it could not stand witness: the first build of
+//       this elision freed the caller's vector here)
+//   c12 a field-projection return (`o.p` off a const parameter) — a pure borrow
+//   c13 CONTROL: a nullable local — the nullable join's own copy
+//   c14 a text-holding element (the source is a local, so a copy in v1)
+//   c15 the bind inside an if-arm — the block's exit frees by identity
+//   c16 CONTROL: a call-result argument (its lift temp is not an argument) — a copy
+//   c17 a field-reached source (`o.pts` off a const parameter)
+//
+// The store counts are what changed (`tests/view_elision.rs` pins the emitted shape); the
+// values here cannot change on an earlier build, so:
+// @falsified-at: none — a LOCK over the shapes the elision must not touch; the emitted
+// shape is falsified by `tests/view_elision.rs` (red on the build before the elision).
+struct Pt { ptx: float, pty: float }
+struct O { p: Pt, k: integer }
+// the consumer's helper: a clamped index with an early return on one branch
+fn ctrl(pts: const vector<Pt>, i: integer, closed: boolean) -> Pt {
+  cn = len(pts);
+  if closed { return pts[i.floor_mod(cn) ?? 0]? }
+  ci = i;
+  if ci < 0 { ci = 0; }
+  if ci > cn - 1 { ci = cn - 1; }
+  pts[ci]?
+}
+fn ctrl_plain(pts: const vector<Pt>, i: integer) -> Pt { pts[i]? }
+fn ctrl_nc(pts: vector<Pt>, i: integer) -> Pt { pts[i]? }
+fn inner(o: const O) -> Pt { o.p }
+fn bump(p: Pt) -> float { p.ptx = p.ptx + 100.0; p.ptx }
+fn pick(v: const vector<Pt>) -> Pt { a = ctrl(v, 2, false); a }
+fn three() -> vector<Pt> { [Pt{ptx: 1.0, pty: 2.0}, Pt{ptx: 3.0, pty: 5.0}, Pt{ptx: 7.0, pty: 11.0}] }
+fn c1(v: const vector<Pt>) -> float { a = ctrl(v, 1, false); a.ptx + a.pty }
+fn c2(v: const vector<Pt>) -> float { a = ctrl_plain(v, 9); a.ptx + a.pty }
+fn c3(v: const vector<Pt>) -> float { a = ctrl(v, 0, false); b = ctrl(v, 2, false); (b.ptx - a.ptx) * 0.5 + (b.pty - a.pty) }
+fn c4(v: const vector<Pt>) -> float { s = 0.0; for i in [0, 9, 2] { a = ctrl_plain(v, i); s += a.ptx; } s }
+fn c5(v: const vector<Pt>) -> float { a = ctrl(v, 1, false); a.ptx = 9.0; a.ptx + v[1]?.ptx }
+fn c6(v: const vector<Pt>) -> float { a = ctrl(v, 1, false); x = bump(a); x + v[1]?.ptx }
+fn c7(v: const vector<Pt>) -> float { out: vector<Pt> = []; a = ctrl(v, 1, false); out += [a]; out[0]?.ptx + a.pty + v[1]?.pty }
+fn c8(v: const vector<Pt>) -> float { p = pick(v); p.ptx = 1.0; p.ptx + v[2]?.ptx }
+fn c9(v: const vector<Pt>) -> float { a = ctrl(v, 1, false); f = fn() -> float { a.ptx * 2.0 }; f() }
+fn c10(v: vector<Pt>) -> float { a = ctrl_nc(v, 1); a.ptx + a.pty }
+fn c11(v: const vector<Pt>, other: const vector<Pt>) -> float { a = ctrl(v, 1, false); v = other; a.ptx + v[0]?.ptx }
+fn c12(o: const O) -> float { a = inner(o); a.ptx * a.pty }
+fn c13(v: const vector<Pt>) -> float { a: Pt? = ctrl(v, 1, false); (a.ptx ?? 0.0) + (a.pty ?? 0.0) }
+struct Named { name: text, x: float }
+struct O2 { pts: vector<Pt>, tag: integer }
+fn pick_named(ns: const vector<Named>, i: integer) -> Named { ns[i]? }
+fn c14() -> float { ns: vector<Named> = [Named{name: "alpha", x: 1.5}, Named{name: "beta", x: 2.5}]; a = pick_named(ns, 1); a.x + len(a.name) as float }
+fn c15(v: const vector<Pt>, on: boolean) -> float { r = 0.0; if on { a = ctrl(v, 2, false); r = a.ptx - a.pty; } r }
+fn c16() -> float { a = ctrl(three(), 1, false); a.ptx + a.pty }
+fn c17(o: const O2) -> float { a = ctrl(o.pts, 1, false); a.ptx * a.pty + o.tag as float }
+fn main() {
+  v = three();
+  w: vector<Pt> = [Pt{ptx: 20.0, pty: 30.0}];
+  assert(c1(v) == 8.0, "c1 the consumer shape: {c1(v)}");
+  assert(c2(v) == 0.0, "c2 out of range mints the default: {c2(v)}");
+  assert(c3(v) == 12.0, "c3 two locals from one source: {c3(v)}");
+  assert(c4(v) == 8.0, "c4 a loop with one out-of-range turn: {c4(v)}");
+  assert(c5(v) == 12.0, "c5 CONTROL a written local is a copy: {c5(v)}");
+  assert(c6(v) == 106.0, "c6 CONTROL a local passed to a writer is a copy: {c6(v)}");
+  assert(c7(v) == 13.0, "c7 CONTROL an appended local: {c7(v)}");
+  assert(c8(v) == 8.0, "c8 CONTROL a returned local: {c8(v)}");
+  assert(c9(v) == 6.0, "c9 CONTROL a captured local: {c9(v)}");
+  assert(c10(v) == 8.0, "c10 CONTROL a non-const source: {c10(v)}");
+  assert(c11(v, w) == 23.0, "c11 CONTROL the base reassigned after the bind: {c11(v, w)}");
+  o = O { p: Pt { ptx: 4.0, pty: 6.0 }, k: 1 };
+  assert(c12(o) == 24.0, "c12 a field-projection return: {c12(o)}");
+  assert(c13(v) == 8.0, "c13 CONTROL a nullable local: {c13(v)}");
+  assert(c14() == 6.5, "c14 a text-holding element: {c14()}");
+  assert(c15(v, true) == -4.0, "c15 a bind inside an if-arm: {c15(v, true)}");
+  assert(c16() == 8.0, "c16 CONTROL a call-result argument: {c16()}");
+  o2 = O2 { pts: three(), tag: 4 };
+  assert(c17(o2) == 19.0, "c17 a field-reached source: {c17(o2)}");
+  assert(v[1]?.ptx == 3.0 && v[2]?.ptx == 7.0, "the source is intact after every cell");
+  println("ok");
+}

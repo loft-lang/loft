@@ -652,6 +652,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "skip_free", t4);
     db.field(t77, "captured", t4);
     db.field(t77, "caller_hidden_buf", t4);
+    db.field(t77, "view_elided", t4);
     db.field(t77, "owner_witness", 0);
     db.field(t78, "name", t5);
     db.field(t78, "file", t5);

@@ -908,6 +908,144 @@ are; a ratchet reads several runs.
 - `Parts::clone` 1.7 % — one more per-allocation clone of a row's parts, not
   yet attributed.
 
+## V-g — read-only view elision at a record join (design 2026-09-08)
+
+**The count.**  After § V-f a `smooth` call makes 38 stores: 24 are `hc_a = ctrl(pts,
+i - 1, closed)` / `hc_b` — a `Pt` returned by value out of a `const vector<Pt>` parameter,
+bound to a local that is only ever READ (`hc_a.ptx`, `hc_a.pty`) — 12 are the tangent-join
+retbufs, 2 the vector-literal buffers.  Probed (`bc_probe*.loft`, both backends): the
+callee's return type already carries the borrow (`-> Pt["pts"]`, `returns_borrowed_view`),
+the ownership oracle already answers `Own::Join { base: pts }` (the `?` fallback mints a
+default `Pt` on the out-of-range arm, so the return is a view OR a fresh store per
+execution), and the caller's `OpBindOrCopy` MATERIALISES the view arm into an owned store —
+that store is the borrow-copy.  The same projection written inline (`a = pts[1]?`) is a
+VIEW local with a hidden owner for the minted arm and allocates nothing in range: the
+working form exists, one call boundary away.
+
+**The rule, and why this is an elision rather than a change.**  `(O-Move)`: *if the
+return borrows a parameter, the caller COPIES to obtain its own store* — a record bind is
+independent, and a write through it must not reach the source.  That stays the
+semantics.  Where the local is never written, never escapes, and its source cannot be
+written while it is live, no program can observe whether it holds the copy or the view;
+the copy is then dead work and is ELIDED under a static proof — the same move as a
+compiler's copy elision, admissible without touching the rule.  The delivery it elides
+to is one the language already performs for a COLLECTION join (loft#1257 / loft#1320,
+D-own-16's route): keep the dep, and release the minted arm by STORE IDENTITY
+(`OpFreeRefIfDistinct(v, base)`) at scope exit and at a re-Set, per `(O-Detach)`.
+
+**Invariant.**  A record local bound once from a call whose return borrows a nameable,
+value-const, single-assigned caller variable, and read only through projections until
+scope exit, observes exactly the values a copy would; so it keeps the dep (a view) and owns
+nothing but the per-execution minted arm, which store identity releases.
+
+**One predicate, three readers** (`use_analysis::read_only_view_bind`, the loft#810
+discipline — the strip in `scan_set` and both backends' delivery must name the same
+binds):
+
+1. the bind is `v = call(…)` on a loft-defined callee with a non-nullable record return,
+   and `ownership_of` answers `Borrowed { base }` or `Join { base }` with a nameable base;
+2. `base` is VALUE-CONST at the caller (`v: const T` — `Const-Value`: no write through it
+   in this frame) and single-assigned (`multi_assigned`), so it names the same store at
+   every later free (the collection twin's `stable` test; a snapshot witness is the
+   widening, not v1);
+3. `v` is assigned once, is not a parameter, not never-free, and every other occurrence
+   of `Var(v)` is a pure read: arg 0 of a projection or value-reader op.  NOT admitted, each
+   a control cell: a call argument (a by-value struct parameter is written through,
+   loft#894), a Set-target root, a literal element (`out += [v]` carries the append's
+   source-free bit), a return, a closure capture, a `&` bind, a `match` subject, a nullable
+   local;
+4. `LOFT_NO_VIEW_ELISION=1` restores the copy (the control's name).
+
+**Lowering.**  `scan_set` (the `record_shaped && !adopts_fresh_store` strip): an
+elidable bind keeps its deps and registers `lift_join_witness[v] = base` — the transition
+free at a re-Set and the scope-exit `OpFreeRefIfDistinct(v, base)` then come from the
+collection twin unchanged.  `codegen.rs`'s Call arm and `generation/dispatch.rs` deliver the
+result directly (`OpPutRef` / `let var_v = call(…)`) instead of `OpBindOrCopy` /
+`OpCopyRecord`.  Nothing new at scope exit.
+
+**Cells — written before the first is worked** (store counts via `LOFT_STORES=log`
+labels; value + leak + strict-stores on BOTH backends; c1/c3/c12 must allocate again under
+the switch, or the elision is not what moved):
+
+| cell | shape | expected |
+|---|---|---|
+| c1 | const-param source, one read-only local, in range (the consumer shape) | 0 stores, value exact |
+| c2 | out of range — the minted default | value 0, 1 store, freed (no leak) |
+| c3 | two locals from one source (`hc_a`/`hc_b`) | 0 stores |
+| c4 | a loop re-binding the local, one iteration out of range | identity transition free; no leak, no double free |
+| c5 | CONTROL: local written (`a.ptx = 9.0`) | copies; the source reads unchanged after |
+| c6 | CONTROL: local passed to a callee | copies |
+| c7 | CONTROL: local appended (`out += [a]`) | copies |
+| c8 | CONTROL: local returned | copies |
+| c9 | CONTROL: local captured by a closure | copies |
+| c10 | CONTROL: non-const source (`pts: vector<Pt>`) | copies (v1) |
+| c11 | CONTROL: base reassigned after the bind | copies (`multi_assigned`) |
+| c12 | `Borrowed`: a field projection return (`fn inner(o: const O) -> Pt { o.p }`) | 0 stores; the identity free a no-op |
+| c13 | CONTROL: nullable local (`a: Pt? = …`) | copies |
+
+**Built and measured (2026-09-08).**  The predicate (`use_analysis::view_elision_bind`,
+one home), the strip's keep-and-register branch in `scan_set`, the two backends' copy arms
+gated on the mark, `LOFT_NO_VIEW_ELISION`, and the mark as a STORED variable field (finding
+3).  Store count per run (interpreter / native), elision on → off; every cell's value exact
+on both backends under `LOFT_STRICT_STORES=1 LOFT_POISON=1 LOFT_NATIVE_LEAK_CHECK=1`:
+
+| cell | on | off | what moved |
+|---|---:|---:|---|
+| c1 the consumer shape | 3 / 3 | 4 / 4 | −1: the copy's store |
+| c2 out of range | 4 / 4 | 4 / 5 | the minted default kept, then freed |
+| c3 two locals | 3 / 3 | 5 / 5 | −2 |
+| c4 the loop, one turn out of range | 5 / 5 | 7 / 8 | one minted turn, freed at the block's exit |
+| c5–c11, c13, c16 (controls) | = | = | every control still copies |
+| c12 a field-projection return (`Borrowed`) | 4 / 4 | 5 / 5 | −1; the identity free a no-op |
+| c14 a text element off a LOCAL source | 4 / 4 | 4 / 4 | declined in v1 (the base is not an argument) |
+| c15 a bind inside an if-arm | 3 / 3 | 4 / 4 | −1 |
+| c17 a field-reached source | 4 / 4 | 5 / 5 | −1 |
+
+**Three findings the matrix produced, each a cell now:**
+
+1. **c11 — a parameter's rebind is not "multi-assigned".**  `v = other` on a value-const
+   vector parameter lowers as a copy into a fresh vector buffer that re-points the slot,
+   and a parameter has no `Set` of its own, so one rebind leaves it single-assigned.  The
+   first build witnessed against the LIVE `v` and freed the CALLER's vector through the
+   identity free — invisible in the cell alone (nothing read the vector afterwards) and
+   fatal the moment the next cell allocated: the c11;c13 pair under `LOFT_POISON` read
+   `0xDEADBEEF` out of main's vector store, found by a prefix-then-pair bisect of the
+   guard.  The predicate now declines an argument base with ANY `Set` (`assigned_in`),
+   and the collection twin's `stable` reads the same fact — it snapshotted only a
+   multi-assigned base, the same hole one mechanism over.
+2. **The store the census counted was never the copy's.**  Native pre-allocates a
+   `null_named` slot store for every record local bound from a borrowing call (the copy
+   lands in it), and the interpreter's `OpDatabase` at the slot does the same; with the
+   copy elided the pre-allocation was minted only to be freed as displaced by the adopt
+   arm, and the count did not move until the elided local was made to start as the null
+   sentinel.  Read off the labelled `LOFT_STORES=log`, not the totals.
+3. **The mark is a fact the EMITTERS read, so it must survive the program cache** —
+   ownership.md's `__own_<name>` lesson, re-measured before trusting it: under
+   `LOFT_PROGRAM_CACHE=1` (a `target/` binary skips the cache otherwise, which made the
+   first warm probe vacuous) the warm run re-emitted `OpBindOrCopy` beside the stored
+   identity free — correct, and the copy back.  `view_elided` is the eleventh stored
+   variable field (`VARIABLE_STRIDE` 37 → 38, `CACHE_FORMAT_VERSION` 5 → 6); the forced
+   warm runs then hold at 3 / 3.
+
+**Measured.**  Standalone `smooth` 9.7–10.7k → **7.0–7.8k ns/op** (−28 %); stores per run
+82 → 34 — 38 → 14 per call, the prediction.  Consumer (best of 3, every hash agreeing):
+`smooth` 25.5× → **20.8×** (10.2 → 7.5 µs); `fronds` 18.9× → 18.9× — UNMOVED, so its
+allocations are not this class and the next unit starts from its own census; `lock`
+8.0× / 8.2×, `composite` 12.1× / 12.9×, fills 4.5× / 5.2×, `wide_line` 9.5× / 9.4×,
+`hair` 3.2× / 3.3× — noise.  Verify: the corpus guard
+`tests/scripts/157-a-read-only-record-local-keeps-the-view.loft` (17 cells, a LOCK) and
+`tests/view_elision.rs` (the emitted shape on both backends; RED under
+`LOFT_NO_VIEW_ELISION=1`, falsified).  `bytecode-comparisons/V-g-read-only-view.md` holds
+the before/after IR beside the inline twin.
+
+**Residual.**  `fronds`' class (a census with labels first); the v1 exclusions, each a
+widening with its own cell: a LOCAL base bound once and outliving the view (the
+collection twin's snapshot-witness route — c14), a non-const source proven undisturbed
+between the bind and the last read, a `CallRef` callee (its join has its own witness); and
+the callee's `__retbuf` for a projection-returning callee, which is threaded but never
+adopted (not a store today — the labelled log showed none per `ctrl` call — so a
+signature question, not an allocation one).
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can
