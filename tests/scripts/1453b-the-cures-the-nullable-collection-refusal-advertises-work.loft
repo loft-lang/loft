@@ -15,6 +15,16 @@
 //
 // The absent receiver is the cell that makes "an empty result" a value rather than a phrase:
 // `map(absent?, …)` is zero elements, not one and not a fault.
+//
+// @falsified-at: none — INERT by construction, and measured rather than assumed.
+//   `scripts/falsify.sh … c965234d` (the parent of this file's own fix) reports
+//   `0|0|none|none|0|-` on both trees and both backends: NOT falsified.
+//   That is correct here and is the point of the file. loft#1453's fix changed a
+//   DIAGNOSTIC; the cures it advertises — `?` and `?? []` — already compiled and already
+//   answered these values before it, so nothing this file asserts could have been red on
+//   the control. Its job is the opposite direction: to fail on the day one of the
+//   advertised cures stops working, which would leave the refusal in `1453-…` pointing at
+//   a dead end. A companion to a refusal file, not a regression guard for the fix.
 
 struct It1453b { k: integer, v: integer }
 
