@@ -1546,7 +1546,11 @@ pub fn strict_stores() -> bool {
     // relaxed load: 0 = not read yet, 1 = off, 2 = on.
     static SS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
     let v = SS.load(std::sync::atomic::Ordering::Relaxed);
-    if v == 0 { strict_stores_init(&SS) } else { v == 2 }
+    if v == 0 {
+        strict_stores_init(&SS)
+    } else {
+        v == 2
+    }
 }
 
 #[cold]

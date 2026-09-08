@@ -923,6 +923,32 @@ impl Stores {
         self.free_named(displaced, "");
     }
 
+    /// Close the OS handle a `File` record owns, at the moment its store is
+    /// freed — the one point where the runtime sees the record go.  Both
+    /// backends' free ops call this before [`Self::free_named`].
+    ///
+    /// The record's stored type tag names the row, so the test is that row's
+    /// NAME rather than a resolution of `"File"` through the name map: the
+    /// same identity, without a string hash on every free (@PLN157 § V-e).
+    #[cfg(not(host_fs))]
+    pub fn close_file_handle(&mut self, db: &DbRef) {
+        if db.store_nr == u16::MAX
+            || (db.store_nr as usize) >= self.allocations.len()
+            || self.allocations[db.store_nr as usize].free
+            || db.rec == 0
+        {
+            return;
+        }
+        let stored_type = self.store(db).get_u32_raw(db.rec, 4) as usize;
+        if self.types.get(stored_type).is_none_or(|t| t.name != "File") {
+            return;
+        }
+        let file_ref = self.store(db).get_i32_raw(db.rec, db.pos + 28);
+        if file_ref != i32::MIN && (file_ref as usize) < self.files.len() {
+            self.files[file_ref as usize] = None;
+        }
+    }
+
     /**
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.

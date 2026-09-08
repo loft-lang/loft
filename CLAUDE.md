@@ -37,7 +37,11 @@ loft debug prog.loft:12 [--lib dir]      # STOP at line 12: read/edit the live f
                                          #   (pipe commands on stdin; `--rpc` = scripted NDJSON)
                                          #   reach for this INSTEAD of adding println — DEBUG.md
 cargo run --bin gendoc                   # regenerate doc/*.html
-make ci                                  # fmt → clippy → test (full local gate)
+make ci                                  # fmt → clippy → test (full local gate).  Unreliable
+                                         #   here (memory, a sibling gate)?  Run the SAME gate
+                                         #   on GitHub, no PR needed: `gh workflow run ci.yml
+                                         #   --ref <branch> -f os=ubuntu-latest` — CI_BUDGET.md
+                                         #   § When the local gate is unreliable
 make test                                # clippy + test → result.txt
 make check-rlib                          # 1s pre-flight: is libloft.rlib current? RUN IT
                                          #   BEFORE a bare `cargo test` — `cargo build

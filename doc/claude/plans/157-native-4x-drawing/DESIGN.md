@@ -808,6 +808,93 @@ works there — the script's check was stricter than user-space sampling needs.
 Fixed in this unit: the script accepts `<= 2`, samples `cpu-clock:u` with
 `--call-graph=fp`, and PERFORMANCE.md / DEBUG.md state the same bound.
 
+## V-f — the runtime's per-record bookkeeping (2026-09-08)
+
+The head of § V-e's residual queue, worked in profile order on the same
+standalone `smooth` row (perf, `cpu-clock:u`, 100 000 reps; timings are
+`--native-release` medians of 3 at 4 000 reps).  Every step is
+behaviour-preserving: hash `1a36fee4` exact, every consumer hash agreeing.
+
+**1. The claims set is a bitset** (residual 1).  `Store::claims` was a
+`HashSet<u32>` under `RandomState`: SipHash per claim and per free and a
+hashbrown table per store — `insert` 5.6 %, `hash_one` 4.2 %, Sip13 2.0 %.
+The precondition held (nothing iterates the set; a release build reads only
+its count), so it is one bit per word position plus a live counter: membership
+is a shift and a mask, the set grows on demand to the highest position claimed
+(a mapped image this process never allocates into keeps no bits; a fresh
+100-word store keeps two words), and the count is kept rather than walked.  The
+debug asserts and `fl_validate` read the same `contains`.  18.3–20.7k →
+16.1–17.9k ns/op (−10 %); the three hashing symbols left the profile.
+
+**2. Per-type heap facts** (residual 2, and 3).  A record of scalars paid a
+per-field descent three times per life: `copy_claims` recursed into every
+field to claim nothing, `remove_claims_mode` built an `OwnedChild` per field to
+free nothing, and `set_default_value_nullable` wrote each field's zero one call
+at a time, after a string compare per field for the variant tag — ~20 % of the
+row.  `Stores::heap_facts` derives two facts from `parts` once per type and
+caches them on the row (`Type::facts`, an atomic byte — derived, so it takes no
+part in equality or the stored form, and `rollback_types_to` forgets it):
+
+- *owns_heap* — can a value own a heap record (text, reference, a collection,
+  a child record, a struct or enum variant holding one)?  The two walks return
+  at once when not.
+- *zero_default* — is the default all zero bytes under every `Absent` mode (no
+  nullable field, no declared default, no text, no variant tag, recursively)?
+  Then the fill is one `zero_range`.
+
+The match is exhaustive over `Parts` with no catch-all.  It subsumes loft#730's
+`type_owns_heap`, which answered `false` for every `Parts::Enum` — a
+struct-enum whose variant holds a collection now answers `true`, as
+`owned_walk` already walked it.  The memo hit had to be INLINED: as a
+recursive function `derive_facts` cost 3 % on its own (a `Vec::new()` and a
+call per ask); `heap_facts` now inlines the load and calls it only on a miss.
+Beside it: `keys::strict_stores` (read on every store access, 1.8 %) is one
+relaxed atomic load with a cold init; `database_named` took its live-store
+count — a scan of EVERY slot — on every allocation while only the `LOFT_STORES`
+modes read it; and `OpFreeRef` / the interpreter's free resolved `"File"`
+through the name map on every free (`hash_one::<&str>`, 1.8–3.7 %) to close a
+file handle — both backends now call one `Stores::close_file_handle`, which
+tests the stored type's NAME instead.  16.1–17.9k → **12.2–13.8k ns/op**.
+
+**Measured.**  Standalone 18.3–20.7k → 12.2–13.8k ns/op (−35 %); after it the
+program (`n_smooth_pts` 15.8 %) is the largest line again.  Consumer table
+(best of 3, every hash agreeing):
+
+| routine | after § V-e | after § V-f |
+|---|---:|---:|
+| smooth | 44× (16.8 µs) | **29×** (11.0 µs) |
+| fronds | 24× (1.23 ms) | **19×** (1.00 ms) |
+| composite | 19.3× | 17.8× |
+| fill_circle / fill_star | 6.0× / 6.9× | 5.2× / 6.0× |
+| wide_line | 12.1× | 11.1× |
+| lock / lock_curved | 9.0× / 11.6× | 8.7× / 11.2× |
+| hair | 3.3× | 3.3× |
+
+**An instrument note.**  The P0 gate read `lock` at 4.4×–7.8× across four
+back-to-back runs while loft's own number held at 14.0–15.2M ns/op (the
+recorded 15.7M): the swing is the Rust REFERENCE lane (1.9M–3.2M) on a laptop
+whose clock moves, so a single gate run is not a measurement of loft — the
+consumer lane's best-of-3 is (`lock` 9.0× → 8.7×).  The bars stay where they
+are; a ratchet reads several runs.
+
+**Residual, in profile order** (what the profile leaves after § V-f):
+
+- **The allocation COUNT** (the largest class now): `database_named` 3.7 %,
+  `Store::init` 2.3 %, `claim_block` 2.6 %, `free_named` 2.6 %, `OpFreeRef`
+  3.3 %, `OpDatabase` — per-STORE work for ~36 stores per `smooth` call, most of
+  them the borrow-copies (`hc_a = ctrl(…)`, the @PLN102 link-widen shape) and
+  the tangent joins.  A copy of a live element that is only ever read needs no
+  store at all; that is a compiler fact, not a runtime one.
+- `Store::valid` 4.8 % — in release a bounds test plus a header read per raw
+  accessor, not inlined across the rlib; P2 declined two `#[inline]` candidates
+  for duplicating cold raise paths, so this is a measured probe, not a default.
+- The vector path: `vector_append` 4.2 %, `length_vector` 3.2 %, `get_vector`
+  2.7 %, `vector_finish` 1.8 % — the per-element append machinery § V-d left.
+- `set_default_value_nullable` 3.9 % — now the `zero_range` and its call; a
+  literal that writes every field could skip the fill (an emitter fact).
+- `Parts::clone` 1.7 % — one more per-allocation clone of a row's parts, not
+  yet attributed.
+
 ## V — value-struct returns (the queue's head after P4)
 
 **Invariant:** *a qualifying return has no identity — no consumer can

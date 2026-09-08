@@ -741,20 +741,7 @@ impl State {
         // Plan-57 Phase C: single-ownership (ref-count removed) — close the OS file
         // handle whenever its File store is freed (free_named frees unconditionally).
         #[cfg(not(host_fs))]
-        if db.store_nr != u16::MAX
-            && (db.store_nr as usize) < self.database.allocations.len()
-            && !self.database.allocations[db.store_nr as usize].free
-            && db.rec != 0
-            && let Some(&file_type) = self.database.names.get("File")
-        {
-            let stored_type = self.database.store(&db).get_u32_raw(db.rec, 4) as u16;
-            if stored_type == file_type {
-                let file_ref = self.database.store(&db).get_i32_raw(db.rec, db.pos + 28);
-                if file_ref != i32::MIN && (file_ref as usize) < self.database.files.len() {
-                    self.database.files[file_ref as usize] = None;
-                }
-            }
-        }
+        self.database.close_file_handle(&db);
         self.database.free(&db);
     }
 

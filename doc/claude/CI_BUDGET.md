@@ -373,6 +373,37 @@ Against 572 s that is noise, and it re-opens the starvation flake the group exis
 ⚠ 2 and 3 are not equivalent: 2 reduces what is checked, 3 does not. Prefer 3 if the
 serialiser turns out to be the cost, and measure it before choosing.
 
+### When the local gate is unreliable, run the same gate on GitHub (2026-09-08)
+
+A local `make ci` is one process tree on a shared laptop.  On 2026-09-08 the waiter for
+one was killed for memory while the gate ran on at 10 of 14 GiB used, and a gate under that
+pressure can die the same way (SIGKILL, no verdict) — a run that ends without a verdict is
+not a gate, however far it got.  The owner's rule: **do not fight the box; the identical
+gate runs on GitHub against the pushed commit.**  `ci.yml` carries a `workflow_dispatch`
+trigger, so a branch needs no PR to be gated:
+
+```bash
+git push origin <branch>                    # a dispatch runs the commit GitHub holds
+gh workflow run ci.yml --ref <branch> -f os=ubuntu-latest
+gh run list --workflow ci.yml --branch <branch> --limit 1      # its run id
+gh run watch <run-id> --exit-status         # or poll: gh run view <run-id>
+```
+
+`os=ubuntu-latest` is the local gate's twin: the PR matrix is Linux-only (macOS and
+Windows are placeholders there), and so is `make ci`.  A dispatch takes the push-to-main
+path rather than the PR path, so it also runs the non-PR extras (the stdlib round-trip, the
+differential oracle) — strictly more than `make ci`, in ~20 min.  `os=all` adds macOS and
+the ~30-min Windows leg; reach for it when the change touches a platform seam.  `make
+release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
+release evidence, not a branch gate.
+
+What a GitHub run cannot do: measure a ratio (`make native-ratio`, `make speed` — reports,
+never gates, and they stay local) or read this box's scratch.  What it does that a local
+run cannot: run cold, on a machine nobody else is using, and leave a verdict that
+`release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
+`find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
+`make ci`.
+
 ## Where the 31 minutes actually are (2026-08-10) — measured, and one axis untried
 
 Per-job wall-clock on the last green PR run (`31359676983`). **One job is the whole

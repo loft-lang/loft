@@ -398,18 +398,7 @@ pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     // Plan-57 Phase C: single-ownership (ref-count removed) — close the file
     // handle whenever its File store is freed.
     #[cfg(not(host_fs))]
-    if !stores.allocations[db.store_nr as usize].free
-        && db.rec != 0
-        && let Some(&file_type) = stores.names.get("File")
-    {
-        let stored_type = stores.store(&db).get_u32_raw(db.rec, 4) as u16;
-        if stored_type == file_type {
-            let file_ref = stores.store(&db).get_i32_raw(db.rec, db.pos + 28);
-            if file_ref != i32::MIN && (file_ref as usize) < stores.files.len() {
-                stores.files[file_ref as usize] = None;
-            }
-        }
-    }
+    stores.close_file_handle(&db);
     stores.free_named(&db, name);
 }
 
