@@ -6,7 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) CLOSED 2026-09-07: three
+OPEN: **0** — D-bind-29 OPENED AND CLOSED 2026-09-08: `B-Ref-Reshape`'s re-key arm was
+enforced for ONE key type and ONE source spelling — a `text` key never reached the guard at
+all, and a keyed lookup's `?` hid the `&` marker from all four refusals (below).
+D-bind-28 (the COLLECTION half of `(B-Ref-Uniform)`) CLOSED 2026-09-07: three
 independent mechanisms broke it and all three are closed — the vector surface, the keyed BIND
 (loft#1433), and the keyed PARAMETER (loft#1445), whose first fix was reverted and whose
 rework closes it by SPLITTING the predicate rather than widening it (part four, below).  D-bind-27 OPENED AND CLOSED 2026-09-07: a value branch whose arms view
@@ -43,6 +46,20 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > dropped — it lands in the alias's own store, and `len(a)` says so.  That distinction decides
 > what a guard must assert: reading only the source would pass a cure that made the alias
 > unwritable rather than one that made it a link, so every cell reads BOTH names.
+
+> **D-bind-29 — OPENED AND CLOSED (2026-09-08) — `B-Ref-Reshape`'s re-key arm was enforced
+> for ONE key type and ONE source spelling, and D-bind-9's own closing sentence says why.**
+>
+> (Numbered 29, not 28: D-bind-28 is the `(B-Ref-Uniform)` collection deviation on the sibling
+> branch — four parts, loft#1433 / loft#1445 — and this register does not carry its entries even
+> though `binding.md` here carries its header.  A register whose numbers are handed out on two
+> trees needs the number checked against BOTH, which is a cheap grep and was not done.)
+>
+> D-bind-9 closed with *"a rule with more than one producer needs a sweep, not a cell"*, and
+> its sweep was 14 shapes of `&` — whole struct, whole vector, element, field, nested, keyed
+> non-key, keyed key, and so on. Every one of those axes is a shape of the REFERENCE. None is
+> a shape of the KEY, and none is a shape of the type the lookup ANSWERS. Two holes sat in the
+> axes the sweep did not have:
 >
 > The set now comes from `vectors::is_collection` — the `is_keyed` set plus `Vector`, which is
 > exactly `(Col-Store)`'s store-backed set — and the keyed deep-copy branch is skipped for a
