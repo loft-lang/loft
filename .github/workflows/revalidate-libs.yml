@@ -272,7 +272,13 @@ jobs:
       # red at the change that did it.  Accepting a new one is a deliberate re-pin, in the
       # same commit, where a reviewer sees it.
       - name: Warning dashboard + ratchet
-        run: python3 scripts/lib_warning_scan.py collect warn | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          # ⚠ `set -o pipefail` is the whole gate.  GitHub's default shell is `bash -e {0}`
+          # WITHOUT pipefail, so `python3 … | tee` would carry TEE's exit status — always 0
+          # — and the ratchet would report a new dirty library and pass anyway.  That is the
+          # same mistake, one level up, as the report this step exists to fix.
+          set -o pipefail
+          python3 scripts/lib_warning_scan.py collect warn | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verdict
         run: |
