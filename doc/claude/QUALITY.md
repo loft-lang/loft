@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 440 | 416 | **24** |
+| 440 | 417 | **23** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 763 | 418 | 6 | **339** |
+| 764 | 419 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -7296,7 +7296,7 @@ uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs a
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
 
-**Re-measured on the joined tree after the rebase onto `main` (e4c7db58, 2026-09-09): 440 · 416 · 24, 51 · 12 · 39, 763 · 418 · 6 · 339** — the four @PLN157 units below plus main's own sites; the per-unit lines keep the numbers each measured on the branch.
+**Re-measured on the joined tree after the rebase onto `main` (e4c7db58, 2026-09-09): 440 · 416 · 24, 51 · 12 · 39, 763 · 418 · 6 · 339** — the four @PLN157 units below plus main's own sites; the per-unit lines keep the numbers each measured on the branch.  **After § V-p (2026-09-09): 440 · 417 · 23 and 764 · 419 · 6 · 339** — `hoist::callee_inputs_inner` discriminates on `Value` variants through `unspan` and asks a parameter's type through `peel_link`, so both new sites land on the aware side.
 @PLN157 § V-o adds one peeling site and one see-through site — **432 · 408 · 24**, **755 · 407 · 6 · 342** — `Output::wrapper_op` reads each argument through its `Span` to admit only leaves, and `hoist::one_op_wrapper` asks a parameter's shape through `base()` to keep text-typed wrappers as calls.
 @PLN157 § V-n adds one see-through site — **754 · 406 · 6 · 342** — `hoist::view_def_header` asks the bound variable's shape through `peel_link` (a `&`-bound view is a vector whatever route names it).
 @PLN157 P4c adds three peeling sites, one name-keyed site and two see-through sites, all in `generation::hoist` — **430 · 406 · 24**, **51 · 12 · 39**, **753 · 405 · 6 · 342**: `scalar_read`, `setter_target` and `body_writes` read a getter's or setter's operands through their `Span` before typing them; `element_target` names `OpGetField` because it reads the schema type the projection CARRIES (a `TupleGet` carries none, and a tuple member is not a vector an element address names); and `plain_record_type` matches `Optional` by arm on purpose — a nullable record's payload offsets are a layout question the `(record type, offset)` key does not model, so it is neither hoisted nor classified as a write target.
