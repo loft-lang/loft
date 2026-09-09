@@ -485,10 +485,11 @@ frees (phase 3's ladder) and onto phase 1's question, asked exhaustively.
 | `vec_copy_needs_db`, `vector_needs_db` | alloc | param + proxy — **identical facts, identical question, two functions** |
 | `materialises_element`, `frame_owns_capture_store` | ? | proxy + witness / param + proxy |
 
-**Inline: 35 free-construction sites in 13 distinct fact-sets**, 7 of those sets used at more
-than one site.  The healthy shape is visible in the largest group: **9 constructions share ONE
-derivation** — the scope-exit sweep's `emit`, computed once from `capture + proxy + transferred
-+ veto + witness + work-ref` and read by all nine.  That is what "a limited amount of code"
+**Inline: 37 free-construction sites in 13 distinct fact-sets**, 7 of those sets used at more
+than one site.  (A DERIVED row: it read 35 on the branch that made it and 37 on the tree
+that holds all three streams — re-measure with `make free-licences`, never carry it.)  The healthy shape is visible in the largest group: **9 constructions share ONE
+derivation** — the scope-exit sweep's `emit`, computed once from `capture + proxy+veto +
+transferred + veto + witness + work-ref` and read by all nine.  That is what "a limited amount of code"
 looks like when it works.
 
 ### What the comparison exposes
