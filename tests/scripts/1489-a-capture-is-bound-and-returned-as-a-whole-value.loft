@@ -34,10 +34,15 @@
 // `(B-View)` projection this is not.
 //
 // @falsified-at: 503798969 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
-//   exit 1 -> 0, native 1 assertion failures -> 0.  The VALUE channel is the only one that
-//   moves — the leak channel is clean on BOTH builds, which is why every store instrument in
-//   the tree was silent on this for as long as it stood.  The count reads 1 because the run
-//   stops at the first failing cell; the file is ordered so that cell is the bind.
+//   exit 1 -> 0, native 1 assertion failures -> 0.
+//   CHANNEL: value — exit and the assertion count.  The count reads 1 because the run stops at
+//   the first failing cell; the file is ordered so that cell is the bind.
+//   WITNESS: `bind_append_1489` answers 22 where 21 is right — the append through the copy
+//   reached the captured vector, so the outer length reads 2.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and `falsify`
+//   requires HERE to be clean, so each is clean on both.  That equality is the interesting
+//   half: an ALIAS costs no store, which is why every instrument in the tree was silent on
+//   this for as long as it stood, and why a sweep scored on leaks would learn nothing.
 
 struct S1489 { a: integer }
 struct C1489 { a: integer }
@@ -85,6 +90,17 @@ fn bind_nullable_1489() -> integer {
 
 // Both variants declare `r`, so the read is the one shared slot and says nothing about which
 // variant is held — the question here is the BIND, not variant dispatch.
+// An ABSENT nullable capture.  `@FR-N-Shape` sends `τ?` down the same road as `τ`, so this bind
+// copies too — but there is nothing to copy, and `OpCopyRecord` of an absent source leaves an
+// allocated EMPTY record: presence standing in for absence.  The copy therefore runs under the
+// same guard the return side has carried since loft#1337.  Found by `make optional-ratchet`
+// refusing a shape test written on a bare `Type::Reference`, not by any value cell.
+fn bind_absent_1489() -> integer {
+  c: N1489? = null;
+  g = fn() -> integer { e = c; e.a ?? -1 };
+  g()
+}
+
 enum Sh1489 { Circle1489 { r: integer }, Square1489 { r: integer, s: integer } }
 fn bind_enum_1489() -> integer {
   c: Sh1489 = Circle1489 { r: 7 };
@@ -201,6 +217,7 @@ fn main() {
   assert(bind_record_1489() == 9907, "a bind out of a captured struct copies: got {bind_record_1489()}");
   assert(bind_nullable_1489() == 9907, "…and out of a nullable one: got {bind_nullable_1489()}");
   assert(bind_enum_1489() == 9907, "…and out of a struct enum: got {bind_enum_1489()}");
+  assert(bind_absent_1489() == -1, "an absent capture stays absent through the copy: got {bind_absent_1489()}");
   assert(bind_relayed_1489() == 9907, "…and out of a relayed capture: got {bind_relayed_1489()}");
   assert(return_bound_1489() == 12, "the bound return is fresh: got {return_bound_1489()}");
   assert(return_bare_1489() == 12, "the bare-capture return is fresh: got {return_bare_1489()}");

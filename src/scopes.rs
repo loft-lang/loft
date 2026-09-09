@@ -6641,9 +6641,12 @@ fn capture_attr_is_cascade_relevant(data: &Data, record: u32, a: usize) -> bool 
 /// frame outlives the other.  A store no capture reaches is not in that trade at all, so
 /// naming it here takes away the frame's release without giving the cascade anything.
 fn bind_views_root(function: &Function, v: u16, rhs: &Value, root: u16) -> bool {
+    // `@FR-N-Shape` — through `base()`, because "is this destination a `&` LINK" is a shape
+    // question and a `&τ?` links exactly as its dense twin does.
+    let dest = function.tp(v).base();
     root != v
         && !function.is_argument(root)
-        && (!rhs_is_a_bare_local_read(rhs) || matches!(function.tp(v), Type::RefVar(_)))
+        && (!rhs_is_a_bare_local_read(rhs) || matches!(dest, Type::RefVar(_)))
 }
 
 /// Is this right-hand side a bare read of another local — the `(B-Copy)` shape, as opposed

@@ -4551,13 +4551,22 @@ use a separate collection or add after the loop"
         // "own" store is the CAPTURE's, and the frame's release then kills it under the
         // closure (`USE AFTER FREE … type=S` on both backends).
         //
-        // Dense records only.  A NULLABLE source may hold nothing, and `OpCopyRecord` of an
-        // absent source leaves the destination an allocated EMPTY record — presence standing in
-        // for absence, the trade loft#1337 records at the return site.
+        // `@FR-N-Shape` — `τ` and `τ?` take the same road, so the scrutinee is PEELED and a
+        // nullable capture copies exactly as its dense twin does.  What the `?` changes is that
+        // the source may hold NOTHING, and `OpCopyRecord` of an absent source leaves the
+        // destination an allocated EMPTY record: presence standing in for absence.  So the copy
+        // runs under the same guard `materialize_view_arms` uses at a return (loft#1337) — an
+        // absent source hands on the null sentinel and allocates nothing.  Measured: without it
+        // `c: S? = null; e = c; e.a ?? -1` inside a closure answered 0 where the same two lines
+        // outside one answer -1, on both backends.
+        //
+        // The capture read is `OpGetDbRef(__closure, off)`, a pure read of a record field, so
+        // evaluating it in the test and again in the copy is a duplicate load and nothing else.
+        let capture_src_shape = s_type.base().clone();
         if op == "="
             && var_nr != u16::MAX
             && self.reads_a_capture_whole(code)
-            && let Type::Reference(td, _) = s_type.clone()
+            && let Type::Reference(td, _) = capture_src_shape
         {
             let kt = self.data.def(td).known_type();
             let w = self
@@ -4566,17 +4575,25 @@ use a separate collection or add after the loop"
             let copy_d = self.data.def_nr("OpCopyRecord");
             let db = self.cl("OpDatabase", &[Value::Var(w), Value::Int(i32::from(kt))]);
             let src = std::mem::replace(code, Value::Null);
-            s_type = Type::Reference(td, Deps::frame1(w));
-            *code = crate::data::v_block(
+            let test = self.cl("OpRefIsNull", std::slice::from_ref(&src));
+            let sentinel = self.cl("OpNullRefSentinel", &[]);
+            let copied = Type::Reference(td, Deps::frame1(w));
+            let copy = crate::data::v_block(
                 vec![
                     crate::data::v_set(w, Value::Null),
                     db,
                     Value::Call(copy_d, vec![src, Value::Var(w), Value::Int(i32::from(kt))]),
                     Value::Var(w),
                 ],
-                s_type.clone(),
+                copied.clone(),
                 "materialized_capture_bind",
             );
+            s_type = if matches!(s_type, Type::Optional(_)) {
+                Type::optional(copied)
+            } else {
+                copied
+            };
+            *code = crate::data::v_if(test, sentinel, copy);
         }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
