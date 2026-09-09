@@ -27,6 +27,9 @@
 // exit is the only channel that can move: the compiler never reaches a cell to fail an assertion
 // in.  That is also why the value assertions above matter — a fix that merely stopped the abort
 // passes the exit channel and still answers a zeroed record.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Holder { xs: vector<integer>, p: Payload }
 struct Payload { n: integer }

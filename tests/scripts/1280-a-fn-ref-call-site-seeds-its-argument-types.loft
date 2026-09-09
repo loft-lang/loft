@@ -45,6 +45,9 @@
 //   backends because the refusal is the parser's, which both share.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum D1280 { North, South }
 

@@ -41,6 +41,11 @@
 // both builds because the values were never wrong.  The moving channel is the diagnostic one,
 // and it is falsified in the Rust gate: with the suppression disabled, both backends fail on
 // `copy of Stamp`.
+//   WITNESS: with the suppression disabled both backends fail in the Rust gate; the value
+//   cells pass on both builds because the values were never wrong.
+//   HOLDS: every value channel is equal on both trees — INERT here by construction. The
+//   moving channel is the DIAGNOSTIC one and it is falsified in the Rust gate, not by a
+//   corpus signature, so re-validate there rather than by re-running this file.
 
 value struct Stamp { ms: integer, tick: integer }
 value struct Wrapped { at: Stamp, id: integer }

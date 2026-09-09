@@ -37,6 +37,11 @@
 // there.  `make falsify` reports the whole run as NOT falsified for that reason; the
 // interpret row is the one that scores it, and native's row is the control that says the two
 // backends now agree.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: exit, assertions, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct P { n: integer }
 struct Q { xs: vector<integer> }
