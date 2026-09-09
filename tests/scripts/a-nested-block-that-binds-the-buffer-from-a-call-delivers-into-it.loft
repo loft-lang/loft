@@ -33,9 +33,9 @@
 // LITERAL has no call to redirect, the same statements with no block are the green shape, and a
 // bare-call tail (`{ head(n) }`) is handed the buffer directly and always was one store.
 //
-// @falsified-at: a7783d16f — interpret leaked kt=84 main_vector<integer(0, 255)>×15, kt=85
-//   main_vector<ElmB>×5 -> clean, native the same -> clean.  Twenty records for twenty calls
-//   across four leaking cells, in the two element types those cells use.
+// @falsified-at: a7783d16f — interpret leaked kt=84 main_vector<integer(0, 255)>×20, kt=85
+//   main_vector<ElmB>×5 -> clean, native the same -> clean.  Twenty-five records for twenty-five
+//   calls across the five leaking cells, in the two element types those cells use.
 // @falsified-by: tests/falsified/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.patch
 //   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
 //   CHANNEL: LEAK, and only leak.  Every value, length and exit is equal on both trees — the
@@ -44,10 +44,10 @@
 //   ARMED: `LOFT_NATIVE_LEAK_CHECK=1` for the native side (`falsify.sh` arms it); the
 //     interpreter reports at program exit unaided.  An unarmed native run reads CLEAN on both
 //     trees and the guard looks inert.
-//   WITNESS: the store SHAPES on the control — `main_vector<integer(0, 255)>×15` from the three
-//     `vector<u8>` cells and `main_vector<ElmB>×5` from the record-element one, twenty records
-//     for twenty-five calls.  The `kt=` numbers shift with the type table between builds; the shapes
-//     and the COUNTS are the identity, and the COUNT is what says "per call" rather than "one
+//   WITNESS: the store SHAPES on the control — `main_vector<integer(0, 255)>×20` from the four
+//     `vector<u8>` cells and `main_vector<ElmB>×5` from the record-element one, twenty-five
+//     records for twenty-five calls.  The `kt=` numbers shift with the type table between
+//     builds; the shapes and the COUNTS are the identity, and the COUNT is what says "per call" rather than "one
 //     tolerated store".
 //   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
 
