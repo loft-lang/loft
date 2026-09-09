@@ -1,0 +1,25 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index f130482c0..d91d913fd 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3975,20 +3975,6 @@ use #count instead"
+                 // vector in 4-byte increments matching `OpSetInt4`'s
+                 // narrow writes.
+                 4
+-            } else if matches!(elem_tp, Type::Vector(_, _)) {
+-                // A nested VECTOR element is stored as a 4-byte record index, not as the
+-                // inner element type it holds.  `type_elm` resolves `vector<integer>` to
+-                // `integer`, whose db size is 8, so par strode TWICE per row: over four rows
+-                // a worker saw rows 0 and 2 and then read past the end, answering the
+-                // element's default — `null` for a value, `0` for a length — with no
+-                // diagnostic, on both backends.  `vector<text>` was the one inner type that
+-                // worked, and only because `text`'s db size is 4 by coincidence (loft#1033).
+-                //
+-                // VECTOR and not `is_collection`: a `vector<hash<T[k]>>` cannot be built at
+-                // all today — the construction panics the interpreter before any stride
+-                // question arises (loft#1298) — so a keyed element's stride is unmeasured,
+-                // and a number nothing can check is not a fact to write down.
+-                4
+             } else {
+                 let known = self.data.def(elm_td).known_type();
+                 let db_size = i32::from(self.database.size(known));

@@ -32,6 +32,11 @@
 //   `5,-32768,-32768,-32768,` (i16), `5,0,0,0,` (u16) and `3,4,5,0,` (i32 and u32), every one
 //   of them with `len` still 4; the boolean / single / character controls pass on that build
 //   exactly as they do here.
+// @falsified-by: tests/falsified/a-narrow-vector-element-slides-by-its-declared-width.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 struct Holder { data: vector<u8>, tag: integer }
 

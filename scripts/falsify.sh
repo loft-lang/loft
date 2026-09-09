@@ -49,13 +49,27 @@ set -uo pipefail
 
 usage() {
   echo "usage: scripts/falsify.sh <guard.loft> <control-ref>" >&2
+  echo "       scripts/falsify.sh <guard.loft> --patch <file>  # control = HEAD + the patch" >&2
   echo "       scripts/falsify.sh --bulk <listfile>   # <guard>TAB<control-ref> per line" >&2
   exit 2
 }
 BULK=""
+REF=""
+PATCHFILE=""
+PATCH_ABS=""
 if [ "${1:-}" = "--bulk" ]; then
   [ $# -eq 2 ] || usage
   BULK="$2"; [ -f "$BULK" ] || { echo "no such list: $BULK" >&2; exit 2; }
+elif [ "${2:-}" = "--patch" ]; then
+  # The control as a PATCH rather than a ref, for a guard whose control commit no longer
+  # exists anywhere.  The patch reintroduces the defect on top of HEAD, so the receipt carries
+  # the defect itself instead of a pointer to a build that once had it — nothing outside the
+  # file has to survive for it to be re-run.
+  [ $# -eq 3 ] || usage
+  GUARD="$1"; PATCHFILE="$3"
+  [ -f "$GUARD" ] || { echo "no such guard: $GUARD" >&2; exit 2; }
+  [ -f "$PATCHFILE" ] || { echo "no such patch: $PATCHFILE" >&2; exit 2; }
+  PATCH_ABS="$(cd "$(dirname "$PATCHFILE")" && pwd)/$(basename "$PATCHFILE")"
 else
   [ $# -eq 2 ] || usage
   GUARD="$1"; REF="$2"
@@ -111,7 +125,12 @@ resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is u
   echo "  GitHub retaining refs/pull/*; it is not durable.  TESTING.md § falsification receipt." >&2
   return 0
 }
-if [ -z "$BULK" ]; then
+if [ -n "$PATCHFILE" ]; then
+  # Cache the control build against the patch's CONTENT, so editing the patch rebuilds and
+  # re-running an unchanged one does not.
+  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)"
+  WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
+elif [ -z "$BULK" ]; then
   resolve_control "$REF" || {
     echo "unknown ref: $REF" >&2
     echo "  The control is on no branch of this remote and under no refs/pull/*/head, so NO" >&2
@@ -324,9 +343,25 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 if [ ! -x "$TGT/debug/loft" ]; then
-  [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
-    echo "cannot create a worktree at $SHA" >&2; exit 1; }
-  echo "building the control at $SHA (cached at $TGT) …" >&2
+  if [ -n "$PATCHFILE" ]; then
+    [ -d "$WT" ] || {
+      git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
+        echo "cannot create a worktree at HEAD" >&2; exit 1; }
+      # A patch receipt is checked before it is trusted.  One records the fix as it was, so it
+      # applies to the tree it was cut against and drifts out as that tree moves — refusing here
+      # is the receipt telling you it has gone stale, which a dangling sha never gets to do.
+      ( cd "$WT" && git apply "$PATCH_ABS" ) || {
+        echo "the recorded patch no longer applies to HEAD: $PATCHFILE" >&2
+        echo "  The receipt still RECORDS the defect, but it can no longer be re-run here." >&2
+        echo "  Re-derive it against a tree it applies to, or score the guard by hand." >&2
+        git worktree remove --force "$WT" >/dev/null 2>&1; exit 3; }
+    }
+    echo "building the control from $PATCHFILE (cached at $TGT) …" >&2
+  else
+    [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
+      echo "cannot create a worktree at $SHA" >&2; exit 1; }
+    echo "building the control at $SHA (cached at $TGT) …" >&2
+  fi
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
 fi
 CONTROL="$TGT/debug/loft"
@@ -424,7 +459,11 @@ elif [ $falsified_any -eq 1 ]; then
   [ -n "$INERT_SIDES" ] && CHANNELS="$CHANNELS; $INERT_SIDES INERT (expected for a
   backend-divergence guard — only one side can move)"
   echo "Paste this into $GUARD:"
-  echo "// @falsified-at: $SHA — $CHANNELS"
+  if [ -n "$PATCHFILE" ]; then
+    echo "// @falsified-by: $PATCHFILE — $CHANNELS"
+  else
+    echo "// @falsified-at: $SHA — $CHANNELS"
+  fi
   exit 0
 else
   echo "NOT falsified.  A guard that answers the same on the build it was written for is"

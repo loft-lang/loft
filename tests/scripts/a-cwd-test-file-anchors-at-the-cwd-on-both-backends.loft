@@ -20,6 +20,11 @@
 // @falsified-at: 48c808b7d — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT
 //   (expected for a backend-divergence guard — only one side can move, and the interpreter side
 //   was the one already right).
+// @falsified-by: tests/falsified/a-cwd-test-file-anchors-at-the-cwd-on-both-backends.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 #cwd
 

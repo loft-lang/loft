@@ -1,0 +1,109 @@
+diff --git a/src/data.rs b/src/data.rs
+index c3bff5d31..81084b66f 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -5307,15 +5307,15 @@ impl Data {
+ 
+     /// map a vector's content `Type` to a narrow
+     /// database element type-nr when the content is a `Type::Integer`
+-    /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)
+     /// with a `forced_size` annotation that [`IntegerSpec::vector_narrow_width`]
+-    /// accepts — 1, 2 and 4 bytes, so every narrow alias (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`)
+-    /// is direct-encoded.
++    /// accepts (currently 1 and 4 bytes; 2 opens in Phase 4b).
+     ///
+     /// Returns `None` for:
+     /// - non-Integer content (structs, enums, nested vectors, …);
+     /// - `Type::Integer` without `forced_size` (plain `integer`,
+-    ///   `integer limit(...)`), which keeps the wide 8-byte slot.
++    ///   `integer limit(...)`);
++    /// - `forced_size` values outside the narrow gate (today `Some(2)`
++    ///   and larger).
+     ///
+     /// The caller falls back to the default wide storage (the
+     /// content's own `known_type`, or the plain-`integer` slot) when
+@@ -5400,10 +5400,6 @@ impl Data {
+     /// renderer read two 2-byte elements as one 8-byte slot (loft#624 nested,
+     /// the named remainder of the plan-58 / loft#437 / #457 / #483 family —
+     /// `doc/claude/plans/nested-narrow-width/`).
+-    /// The db element type a vector's storage is registered with — the ONE home for
+-    /// @FR-H-Stride on the vector side.  A site that derives the element from a DEFINITION
+-    /// instead loses the declared width of every narrow integer, because one `integer` def
+-    /// serves seven widths (loft#1378 the write, loft#1412 the removal).
+     pub fn vector_element_type(
+         &self,
+         content: &Type,
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 150fc986d..583be452e 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -609,18 +609,11 @@ impl Parser {
+                     // own counter: `e#remove` reads it to decide which way to rewind
+                     // the cursor, and without it a `rev()` loop rewound FORWARD and
+                     // skipped the next element (loft#903).
+-                    // @FR-Col-RemoveDense, the `e#remove` half — `OpRemove` reads this back
+-                    // as its element type and takes the tail's stride (@FR-H-Stride) from it.  The element DEF cannot
+-                    // carry a width — six integer widths share the one `integer` def — so
+-                    // recording it slid a narrow element's tail eight bytes per element
+-                    // (loft#1412, the `e#remove` spelling of the same fault the explicit
+-                    // `v.remove(i)` had).  Ask the same home the storage was built through.
+-                    let loop_db_tp = match self.data.vector_element_type(vtp, &mut self.database) {
+-                        Some(elem) => elem,
+-                        None => self.data.def(vec_tp).known_type(),
+-                    };
+-                    self.vars
+-                        .set_loop(if reverse { 64 } else { 0 }, loop_db_tp, code);
++                    self.vars.set_loop(
++                        if reverse { 64 } else { 0 },
++                        self.data.def(vec_tp).known_type(),
++                        code,
++                    );
+                     if reverse {
+                         // Start at length; the first step gives len-1 (last element).
+                         *code = v_set(
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index f21fbcfa9..f9ce8604f 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -938,21 +938,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         vec_tp: &Type,
+     ) -> bool {
+         if field == "remove" {
+-            // @FR-Col-RemoveDense — the successors slide down by ONE element, and the slide
+-            // is measured in the ELEMENT's width (@FR-H-Stride).  This is where that width is decided: the
+-            // element db type the vector's STORAGE was built with, not the one the DEF names.  Six integer widths share the one `integer` def, so a
+-            // def carries no width: `remove_vector_at` took the element's stride from it
+-            // and slid the tail eight bytes per element whatever the declaration said, so
+-            // a `vector<u8>` read past its live data while `len` stayed right (loft#1412).
+-            // `vector_element_type` is the one home the storage is registered through
+-            // (`narrow_vector_content`), so the removal and the layout cannot disagree.
+-            let e_tp = match vec_tp {
+-                Type::Vector(content, _) => self
+-                    .data
+-                    .vector_element_type(content, &mut self.database)
+-                    .map_or(e_tp, i32::from),
+-                _ => e_tp,
+-            };
+             self.lexer.token("(");
+             let (tps, ls) = self.parse_parameters();
+             let mut cd = ls[0].clone();
+@@ -1547,12 +1532,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+             td => td,
+         };
+         let known = self.data.def(elm_td).known_type();
+-        // honour narrow vector-element stride when the content Type::Integer carries a
+-        // forced_size that registers a direct-encoded narrow type (see
+-        // `IntegerSpec::vector_narrow_width`, which accepts 1, 2 and 4 bytes).  Falls back
+-        // to the bounds-heuristic via `database.size(known_type)` otherwise.  @FR-H-Stride:
+-        // the width is the declared TYPE's, and `known` above cannot carry it — one
+-        // `integer` def serves every width.
++        // honour narrow vector-element stride when the
++        // content Type::Integer carries a forced_size AND Phase 2 would
++        // register a direct-encoded narrow type (see
++        // `IntegerSpec::vector_narrow_width` — currently 1 and 4 bytes).
++        // Shorts stay wide until Phase 4 aligns the `Parts::Short`
++        // encoding with raw-byte copies.  Falls back to the
++        // bounds-heuristic via `database.size(known_type)` otherwise.
+         let elm_size_raw = if let Type::Integer(spec) = etp
+             && let Some(n) = spec.vector_narrow_width(false)
+         {

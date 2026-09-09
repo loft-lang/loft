@@ -24,6 +24,11 @@
 // `test_a_nullable_narrow_field_still_reads_null` PASSES on the pre-fix build.  That split is the
 // measurement: the sentinel test gained a `nullable` condition, and the half that must NOT move is
 // a nullable field that really is null.
+// @falsified-by: tests/falsified/1438-reflection-reads-a-narrow-field-value.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 struct N { p: i8, q: integer limit(100, 200), r: i16, s: u8 }
 struct M { a: i8, b: u8 }

@@ -1,0 +1,59 @@
+diff --git a/src/data.rs b/src/data.rs
+index 8f6afc394..5124b2499 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -305,36 +305,6 @@ impl IntegerSpec {
+     /// `i32::MIN`/`i64::MIN` for null, outside this narrow mechanism; an
+     /// un-annotated `limit(...)` whose range does not fill the width already has a
+     /// spare code and needs no sacrifice.)
+-    /// Can a NON-nullable slot of this spec hold a value that reads back as null?
+-    ///
+-    /// Two conditions, and both are about storage rather than about the `?`:
+-    ///
+-    /// 1. the declared range must not FILL the fixed width, or there is no spare code —
+-    ///    `u8`/`i8`/`u16`/`i16` use all 256 / 65 536 of theirs, while `i32` is
+-    ///    `i32::MIN + 1 ..= i32::MAX` and `u32` is `0 ..= u32::MAX - 1`, which is why
+-    ///    `i32 = -2147483648` is refused as out of range in either spelling;
+-    /// 2. the spare code must be the one a NON-null read already reports as null, which is
+-    ///    the BOTTOM code — the same `i32::MIN` / `i64::MIN` plain `integer` uses.  An
+-    ///    unsigned spec's spare code is the TOP one, and no non-null read tests for it: a
+-    ///    `u32` field holding it renders `4294967295`, a value outside the type's own
+-    ///    declared range, which is worse than the in-range answer it replaces.
+-    ///
+-    /// So this is exactly the specs for which `formal/types.md` C85 — *"on overflow they
+-    /// write the reserved sentinel into that non-null slot, which then reads as null"* — has
+-    /// a sentinel to write (loft#1296).
+-    #[must_use]
+-    pub fn reserves_sentinel_unconditionally(&self) -> bool {
+-        let Some(size) = self.forced_size.map(NonZeroU8::get) else {
+-            return false;
+-        };
+-        // A wider `forced_size` never reaches here — the wide template is excluded before
+-        // the range questions are asked — and `1 << 64` would not be a shift.
+-        if size >= 8 {
+-            return false;
+-        }
+-        self.min < 0 && self.range() < (1_i64 << (8 * i64::from(size)))
+-    }
+-
+     fn reserves_narrow_sentinel(&self, nullable: bool) -> bool {
+         if !nullable {
+             return false;
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 1c355f250..787f306f5 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -108,12 +108,7 @@ pub(crate) fn target_holds_null(target: &Type, parent: &Type) -> bool {
+ }
+ 
+ fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 {
+-    // C85 says an overflow writes the RESERVED sentinel into a non-null slot, which then
+-    // reads as null — so a non-null slot answers null exactly when its type kept a code back
+-    // for one.  `i32` is `i32::MIN + 1 ..= i32::MAX` and `u32` is `0 ..= u32::MAX - 1`
+-    // whatever the `?`, so both have that code; `u8`/`i8`/`u16`/`i16` fill their width and
+-    // have none (loft#1296).
+-    if nullable || spec.reserves_sentinel_unconditionally() {
++    if nullable {
+         i64::MIN
+     } else {
+         spec.default_value()

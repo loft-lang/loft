@@ -698,9 +698,39 @@ authority, and nothing in the guard file tells a reader which one they are in.
 The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
 `src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
 ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
-fail, with nothing recording when it stopped being checkable.  What a receipt should BE (gate
-on resolvability, a durable tag per control, or the reintroducing PATCH recorded inline) is an
-open design call and the owner's to make; it is stated here as measurement, not as a decision.
+fail, with nothing recording when it stopped being checkable.  Gating on resolvability is the
+move that looks right and is not: it reddens the 124 immediately, and reddens MORE in a fresh
+clone than in a warm one, so CI would fail on a clean checkout while passing locally.
+
+#### The patch receipt — `@falsified-by:`
+
+The durable form carries the defect instead of pointing at it.
+**`// @falsified-by: tests/falsified/<guard>.patch`** names a patch that reintroduces the fault
+on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactly as a ref
+control is scored.  Nothing outside the repository has to survive for it to be re-run, which is
+the one property no ref-shaped receipt can have.
+
+Deriving one is mechanical, because a control is not an arbitrary commit: it is the PARENT of
+the commit that added the guard, so the reintroducing patch is that commit's own source diff,
+reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for
+**101**; the other 32 were falsified against something else and need the patch by hand.
+
+⚠ **A patch receipt degrades too, and differently — measure before promising it.**  Of the 41
+publicly-unreachable guards whose channel is a WRONG ANSWER rather than a crash, only **8** have
+a patch that still applies to today's tree, and of those **7** produce a control that compiles;
+the eighth applies and then fails to build, because the code the fix introduced has been built
+on since.  So a patch stops being runnable in two ways where a ref stops in one.  The difference
+is that both are DETECTED: `falsify.sh` exits 3 saying the patch no longer applies, where a
+dangling sha reports nothing at all.  A patch that no longer applies still RECORDS the defect in
+full, which a dead sha does not.
+
+⚠ **A patch control is not the same experiment as a ref control.**  A ref rebuilds the whole
+tree as it was; a patch reverts one fix on the tree as it is.  That isolates the defect more
+cleanly, and it is a different measurement — so each patch receipt is RE-SCORED rather than
+inheriting the channel text of the ref it replaces.  All seven reproduce their control's exact
+channel signature, which is what says the patch reintroduces THAT defect rather than a
+neighbouring one; the same check answers the chaining hazard above, where a guard whose control
+is the previous fix in a series moves a channel for the earlier defect's reason.
 
 ⚠ **A method note that cost one of the two counts its first answer:** `git rev-parse
 "<sha>^{commit}"` exits non-zero for a missing object but still PRINTS its argument to stdout,

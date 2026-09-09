@@ -41,6 +41,15 @@ const QUALITY: &str = "doc/claude/QUALITY.md";
 /// // @falsified-at: 3ca5ec79 — interpret leaked kt=78 Sk×156 -> clean, native leaked … -> clean
 /// ```
 ///
+/// `// @falsified-by: tests/falsified/<guard>.patch` is the same receipt carrying the
+/// defect instead of pointing at it — the patch reintroduces the fault on top of HEAD, so
+/// nothing outside the repository has to survive for the guard to be re-run.  It is the
+/// form for a control that no longer exists anywhere: a squash-merge keeps no branch
+/// pointing at the commit a guard was falsified against, and 124 of the 359 receipts on
+/// `main` name a build no clone can rebuild (TESTING.md).  `scripts/falsify.sh <guard>
+/// --patch <file>` scores one, and refuses when the patch has drifted out of applying —
+/// which is the receipt reporting its own staleness, something a dangling sha cannot do.
+///
 /// `// @falsified-at: none — <reason>` is the honest opt-out for a file that genuinely
 /// cannot fail on any earlier build (a corpus that predates what it exercises, a
 /// refusal-only file).  Stating the reason is the point: the failure this gate exists to
@@ -74,7 +83,7 @@ fn every_new_guard_records_its_control() {
             .expect("non-utf8 script name")
             .to_string();
         let src = fs::read_to_string(&path).unwrap_or_default();
-        let records = src.contains("@falsified-at:");
+        let records = src.contains("@falsified-at:") || src.contains("@falsified-by:");
         if records && baseline.contains(name.as_str()) {
             // Retrofitted: the baseline line is now the stale half.
             missing.push(format!(

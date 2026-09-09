@@ -48,6 +48,11 @@
 //
 // @falsified-at: 174e55be — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1296-an-i32-overflow-reads-as-null.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 struct S1296 { a: i32, b: u32, c: u8 }
 
