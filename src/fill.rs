@@ -2262,14 +2262,14 @@ fn append_vector(s: &mut State) {
 }
 
 fn push_int(s: &mut State) {
-    let v_val = *s.get_stack::<i64>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<i64>();
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_i64(&v_r, v_val);
 }
 
 fn push_int4(s: &mut State) {
-    let v_val = *s.get_stack::<i64>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<i64>();
+    let v_r = s.get_stack::<DbRef>();
     {
         let v = if v_val == i64::MIN {
             i32::MIN
@@ -2281,32 +2281,32 @@ fn push_int4(s: &mut State) {
 }
 
 fn push_float(s: &mut State) {
-    let v_val = *s.get_stack::<f64>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<f64>();
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_f64(&v_r, v_val);
 }
 
 fn push_single(s: &mut State) {
-    let v_val = *s.get_stack::<f32>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<f32>();
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_f32(&v_r, v_val);
 }
 
 fn push_boolean(s: &mut State) {
-    let v_val = *s.get_stack::<u8>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<u8>();
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_byte(&v_r, i32::from(v_val));
 }
 
 fn push_enum(s: &mut State) {
-    let v_val = *s.get_stack::<u8>();
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = s.get_stack::<u8>();
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_byte(&v_r, i32::from(v_val));
 }
 
 fn push_character(s: &mut State) {
-    let v_val = char::from_u32(*s.get_stack::<u32>()).unwrap_or('\0');
-    let v_r = *s.get_stack::<DbRef>();
+    let v_val = char::from_u32(s.get_stack::<u32>()).unwrap_or('\0');
+    let v_r = s.get_stack::<DbRef>();
     s.database.append_u32(&v_r, v_val as u32);
 }
 
