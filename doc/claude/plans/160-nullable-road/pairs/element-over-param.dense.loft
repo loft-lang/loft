@@ -1,0 +1,4 @@
+// loft#1466 shape — an element binding over a PARAMETER, in a loop.  Dense.
+struct S { a: integer }
+fn head(p: vector<S>) -> integer { match p { [a, ..] => a.a, _ => 0 } }
+fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { t = t + head(q); i = i + 1; } println("{t}"); }

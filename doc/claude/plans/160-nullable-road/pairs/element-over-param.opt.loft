@@ -1,0 +1,5 @@
+// loft#1466 shape — an element binding over a PARAMETER, in a loop.  Nullable: the arm hands
+// back the ELEMENT as `S?`.
+struct S { a: integer }
+fn head(p: vector<S>) -> S? { match p { [a, ..] => a, _ => null } }
+fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { t = t + (head(q).a ?? 0); i = i + 1; } println("{t}"); }

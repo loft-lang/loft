@@ -1,0 +1,4 @@
+// loft#1447 shape — a captured struct local REBOUND after the closure is built.  Nullable:
+// the captured LOCAL carries `?`.
+struct S { a: integer }
+fn main() { x: S? = S { a: 1 }; g = fn() -> integer { x.a ?? -1 }; x = S { a: 2 }; println("{g()}"); }

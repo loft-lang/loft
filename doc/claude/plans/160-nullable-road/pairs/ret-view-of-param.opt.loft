@@ -1,0 +1,4 @@
+// loft#1421 shape — a return that VIEWS a parameter.  Nullable half: the RETURN carries `?`.
+struct S { a: integer }
+fn first(p: vector<S>) -> S? { p[0] }
+fn main() { q: vector<S> = [S { a: 7 }]; t = first(q); println("{t.a ?? -1}"); }
