@@ -2741,6 +2741,51 @@ fact — they unify when ownership is carried as one typed `deps` fact end-to-en
   future lifetime check until `Deps` is carried type-wide (the D-own-1/D-own-2
   completion).
 
+### loft#1491 — CLOSED (2026-09-09): an arm that BINDS the buffer from a call kept two
+
+The `arm_bind` table above answers what an arm's tail IS.  This is the statement BEFORE that
+tail, and it had no answer.  An arm whose tail is a bare call is handed the function's own
+return buffer and there is one store; the same arm written `{ buf = head(n); buf }` gave the
+call its own `__ref_N` and rebound `buf` to it, so the callee filled one store, the caller
+handed in another, and the one the caller never adopts was orphaned — **one leaked store per
+call, both backends, scaling exactly with the call count.**
+
+The value was never wrong, which is why only a leak channel could see it.  `cbor::encode`
+writes the bound spelling in its `CText` / `CBytes` / `CArray` / `CMap` arms and the direct
+one in `CBool` / `CInt`, so a CBOR MAP leaked one record per KEY (1, 2, 4, 8 entries → 1, 2,
+4, 8 records) while its bytes round-tripped correctly.
+
+**Closed by asking an existing question one block down, not by a new rule.**
+`nrvo_collapse_tail_set` already redirects a `Set(cv, Call(…))` whose callee takes a hidden
+return buffer to deliver into `cv` itself, and its own comment names this failure —
+*"else its `__ref_N` buffer is allocated, orphaned, and leaks one store per call"*.  It was
+reached only at the FUNCTION tail.  `materialize_vector_arms_collect` now asks it of each
+block it walks; that function's step (1) declines every block whose tail is not `Var(w)`, so
+passing `[w]` gates it to exactly this arm and nothing else.
+
+⚠ **The cheap way to have found this earlier was the top-level twin.** `fn f(n) { buf =
+head(n); buf }` — the same three lines with no `match` around them — already emitted the
+one-buffer form.  The working bytecode was one file away the whole time, which is what the
+codegen gate asks for before touching a generator and is what made the fix a translation.
+
+Blast radius, measured: `introspect_diff.sh` over the corpus reads **DIFFERENT 1 of 1437**,
+and the one file is `437-nrvo-return-aliasing.loft`, whose single changed line is the same
+redirect with values and exit unchanged on both backends.
+
+Three controls say it is a DELIVERY change and not a value one, all answering exactly what
+they answered before: a literal-built arm (no call to redirect), a twice-assigned local (the
+redirect declines — the first call's store is not what the tail yields), and a bind the arm
+then appends to (the redirect fires and the appends still land).
+
+Guard: `tests/scripts/1491-an-arm-that-binds-the-buffer-from-a-call-delivers-into-it.loft`,
+falsified at `656caffcc` — 18 leaked records → clean on both backends.
+
+⚠ **Its probe file surfaced a separate defect this does NOT fix, loft#1493:** a match arm
+yielding a field of a struct it just built (`{ b = B { items: head(n) }; b.items }`) answers
+an EMPTY collection, silently, on both backends, with no diagnostic.  Measured identical
+before and after.  The materialiser has a PROJECTION arm for that family (loft#1345), and
+this shape reaches it as a field of a LOCAL the arm itself built rather than of an argument.
+
 ## Carried by ownership.md until 2026-09-04
 
 The rules doc used to carry these beside its `OPEN` line — closure summaries, and notes on
