@@ -4037,6 +4037,17 @@ region; a correct program never observes the sentinel, because definite assignme
 slot before it is read.  So a hit there is a claim about ASSIGNMENT, and a hit in the arena half
 is a claim about LIFETIME.
 
+**The leak line carries TWO counts, and reading the wrong one turns an unbounded leak into a
+bounded note.**  `[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=81 C×2` says
+one STORE and, after the type, **two RECORDS**.  A leak that reuses its slot — `OpDatabase` on a
+non-null slot appends rather than minting — holds the store count at 1 however far it grows, so a
+reader who takes the store count sees a constant and reports "bounded".  Measured on loft#1483: the
+records are `C×(n-1)` per call and accumulate across calls (50 calls × 3 iterations → `C×100`),
+and the first published table called it *"1 — bounded, does not accumulate"* off the same output
+that carried the real number.  **Scale the shape before believing either count** — run the loop at
+2, 3, 5, 9 iterations and the function at 1 and 50 calls; a leak that is genuinely bounded stays
+flat on both axes (loft#1487 does: `P×1` at 1, 4, 20 and 50).
+
 **A control that cannot DISCRIMINATE reads exactly like a control that passes.**  The entries
 above are about a vacuous ASSERTION — the value cannot witness the defect.  This is its twin one
 level out: the assertion is fine, the cell is green, and the green means nothing because the cell

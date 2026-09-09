@@ -258,7 +258,10 @@ peel turns it RED at its `built_in_loop` cell.  Measured on the dense twin of th
 | nullable `s: C? = …`, the same | 0 | **leaks 1** |
 
 **The dense half already leaked, on both backends, with or without my change** — filed as
-**loft#1483**.  The nullable spelling was accidentally leak-free *because* it declined the hint:
+**loft#1483**.  ⚠ My first reading called that leak *bounded at one store*; it is not.  The
+store count is 1 because the slot is reused, and the RECORD count — printed on the same line —
+is `C×(n-1)` per call and accumulates across calls (50 calls × 3 iterations → `C×100`).  See
+`capheap-boundary/README.md`.  The nullable spelling was accidentally leak-free *because* it declined the hint:
 the work-ref road it was pushed onto frees correctly.  Converging the two inherits the dense road's
 defect, so the `@FR-N-Shape` fix is blocked on loft#1483 and the peel is recorded at the site
 rather than applied.  Cells: `capheap-boundary/`.
