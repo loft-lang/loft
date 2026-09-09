@@ -9,6 +9,49 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A branch arm that binds the return buffer from a call now delivers into it (2026-09-09)
+
+An arm whose tail is a bare call (`{ head(n) }`) is handed the function's own return buffer
+and there is ONE store.  The same arm written with a bind first (`{ buf = head(n); buf }`)
+gave the call its own `__ref_N` and rebound `buf` to that, so the callee filled one store,
+the caller handed in another, and the one the caller never adopts was orphaned — **one
+leaked store per call, both backends, scaling with the call count** (loft#1491).
+
+The values were right the whole time, so only a leak channel could see it.  `cbor::encode`
+writes the bound spelling in four of its six arms, which is why a CBOR map leaked one record
+per KEY while its bytes round-tripped correctly; every `pluginabi` protocol frame is such a
+map.
+
+The cure already existed one level up: `nrvo_collapse_tail_set` redirects a `Set(cv,
+Call(…))` whose callee takes a hidden return buffer to deliver into `cv` itself, and its own
+comment named this exact failure.  It was reached only at the FUNCTION tail; the arm
+materialiser now asks it of each block it walks, gated by that function's own step (1) —
+which declines every block whose tail is not `Var(w)` — so no new rule was needed.  Emission
+becomes the one-buffer form the bare-call arm already had, and the top-level spelling of the
+same three lines already produced.
+
+Blast radius over the corpus: **DIFFERENT 1 of 1437**, and that one file is the NRVO test,
+whose single changed line is the same redirect.  Guard:
+`tests/scripts/1491-an-arm-that-binds-the-buffer-from-a-call-delivers-into-it.loft`,
+falsified at `656caffcc`.  Detail in `formal/ownership-history.md`.
+
+### `library-ci` asked for a token scope its callers had not lent (2026-09-09)
+
+Every `loft-lang/loft-libs-*` repo's `library-ci` ended in `startup_failure` — no job, no
+annotation, no log — from 2026-09-04, when the reusable gained a top-level `pull-requests:
+read` for its new `unreleased work` job.  A CALLED workflow can only REDUCE what the caller
+lends it; those repos default to `read` (contents + packages and nothing else), so the
+request exceeded the grant and GitHub refused the run before starting it (loft#1492).
+
+The scope moved to the caller, where the decision belongs: `scripts/deploy-library-ci.sh`
+writes a `permissions:` block into each stub and all eight repos carry it.
+
+⚠ **A push-triggered fleet gate looks healthy for exactly as long as nobody pushes.**  Four
+of the eight repos still showed a green `library-ci` from a run that predates the change, so
+the actions tab said the fleet was fine for five days.  Turning it back on revealed what it
+had been hiding: nine packages failing `Interpret` on accumulated warnings under
+`LOFT_DENY_WARNINGS=1`, and six repos red on the `unreleased work` job that had never run.
+
 ### `@FR-E-Uncomp-Seen`: a fit-failure into a narrow slot is testable where it happened (2026-09-09)
 
 @PLN152 step 5, the arc-B half of *"a fit-failure the author can choose, and can see"*.
