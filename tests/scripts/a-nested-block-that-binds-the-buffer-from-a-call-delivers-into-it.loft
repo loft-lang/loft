@@ -47,7 +47,8 @@
 //   WITNESS: the store SHAPES on the control — `main_vector<integer(0, 255)>×20` from the four
 //     `vector<u8>` cells and `main_vector<ElmB>×5` from the record-element one, twenty-five
 //     records for twenty-five calls.  The `kt=` numbers shift with the type table between
-//     builds; the shapes and the COUNTS are the identity, and the COUNT is what says "per call" rather than "one
+//     builds; the shapes and the COUNTS are the identity, and the COUNT is what says "per
+//     call" rather than "one
 //     tolerated store".
 //   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
 

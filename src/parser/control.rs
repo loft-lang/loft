@@ -12520,9 +12520,32 @@ impl Parser {
     fn void_dropped_statement_arms(v: &mut Value) {
         match v {
             Value::Span(b) => Self::void_dropped_statement_arms(&mut b.1),
+            // Only the ARMS of a branch, and only reached THROUGH the branch.  A bare `Block`
+            // in statement position must never be touched: a keyed literal through a CAPTURE
+            // arrives as exactly that — a block whose ops build STRAIGHT INTO the destination
+            // (@PLN93 build-into-target, loft#1326) — so dropping its tail and voiding its type
+            // destroys the build and the collection reads as `0xDEADBEEF` under `LOFT_POISON=1`.
+            // The defect this cures is a BRANCH's arms disagreeing with themselves, and nothing
+            // wider.
             Value::If(_, t, f) => {
-                Self::void_dropped_statement_arms(t);
-                Self::void_dropped_statement_arms(f);
+                Self::void_statement_arm(t);
+                Self::void_statement_arm(f);
+            }
+            _ => {}
+        }
+    }
+
+    /// One arm of a branch already known to be in STATEMENT position: make it discard in the
+    /// BODY and in the TYPE alike.
+    ///
+    /// Recurses through an `else if` chain, whose arms are nested `If` values rather than
+    /// blocks, so a value-carrying middle arm is reached too.
+    fn void_statement_arm(v: &mut Value) {
+        match v {
+            Value::Span(b) => Self::void_statement_arm(&mut b.1),
+            Value::If(_, t, f) => {
+                Self::void_statement_arm(t);
+                Self::void_statement_arm(f);
             }
             Value::Block(bl) => {
                 if matches!(bl.result, Type::Void | Type::Never) {
