@@ -611,6 +611,27 @@ Two measurements, both from `gh run list`, decided this:
   ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the
   FULL nightly set, wider than the push-triggered run that produced the reds.
 
+- ⚠ **Two of those gates need no dispatch at all — they are a MINUTE each on this box**, and
+  not knowing that is what makes the round-trip look like the only option.  Both are plain
+  `nextest` runs of the ordinary corpus with one env var, and the nightly's own recipe is the
+  whole of it:
+
+  ```bash
+  LOFT_POISON=1       cargo nextest run --release --lib --test issues --test wrap                         --test strings --test frame_vars -E 'not test(library_suite)'
+  LOFT_VERIFY_STACK=1 cargo nextest run --release --lib --test issues --test wrap                         --test strings --test frame_vars -E 'not test(library_suite)'
+  ```
+
+  Measured 2026-09-09: **57 s** and **69 s**, 2011 tests each.  Run BOTH before pushing a change
+  to shared store-lifetime or codegen machinery, because `make ci` arms neither and
+  `find_problems --changed` arms neither — the class they cover is a freed store that is READ,
+  which no ordinary run reports, and a frame slot nobody wrote.  A same-session regression was
+  caught exactly here on the sibling branch: a per-arm capture release destroyed a record
+  handed to the caller through a `&fn(…)` LINK, which no arm can witness, and `1443` read
+  `0xBEEF` under poison while every other gate was green.
+
+  The two that genuinely need CI are the macOS legs and the debug-assertions gate, for the
+  reasons above — a config this box cannot run, and one it does not build by default.
+
 The **release gate** (`release-gate.yml`) is the deliberate counterpart: the six
 nightlies called as reusable workflows (`workflow_call`, the pattern
 `library-ci-reusable.yml` already uses) against one commit, with a `verdict` job that
