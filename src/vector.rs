@@ -743,14 +743,14 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
                 "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
             );
         }
-        return *stores[h.store_nr as usize]
-            .addr::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
+        return stores[h.store_nr as usize]
+            .read::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
     }
     let elem = get_vector(db, size, from, stores);
     if elem.rec == 0 {
         absent
     } else {
-        *keys::store(&elem, stores).addr::<T>(elem.rec, elem.pos + fld)
+        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
     }
 }
 

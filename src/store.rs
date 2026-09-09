@@ -2997,19 +2997,37 @@ impl Store {
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
         }
-        // `offset_in_bounds` has just proved `at` addresses a byte of this store's live
-        // allocation, so the pointer cannot be null and the `Option` `as_mut` returns can only
-        // ever be `Some` — a branch and a panic path on the hottest read in the language
-        // (`get_elem_hoisted` is 15 % of the drawing library's bench, loft#1426).  Take the
-        // shared reference directly.
-        //
-        // It is also the better-formed borrow: `as_mut()` mints a `&mut T` inside a `&self`
-        // method and hands it out as `&T`, which Stacked Borrows is right to object to — this
-        // is the read path, and the `&mut` twin below is a `&mut self` method where it is fine.
+        // ⚠ **Not `&*off`.**  A store is word-addressed in FOUR-byte units, so an eight-byte
+        // field sitting at an odd word is 4-aligned and no more, and a reference to a
+        // misaligned address is undefined behaviour whatever spelling mints it.  `as_mut()`
+        // derefs inside `core`, which is precompiled without the check, so the same UB simply
+        // goes unreported there; writing the deref here instead makes `-C debug-assertions=on`
+        // abort on it (`Store::addr::<i64>` under `iter_frame_variables_at`, measured
+        // 2026-09-09).  The report is right and the ACCESS is the bug, so the cure is not to
+        // move the deref back out of sight: [`Store::read`] is the sound form for the callers
+        // that immediately copy the value out, which is nearly all of them, and the remaining
+        // `&String` / `&Str` callers want a layout ruling.  Until those are migrated this keeps
+        // the spelling `main` has always had.
         unsafe {
             let off = self.ptr.offset(at).cast::<T>();
-            &*off
+            off.as_mut().expect("Reference")
         }
+    }
+
+    /// Read a `Copy` field OUT of the store, rather than borrowing it in place.
+    ///
+    /// The sound counterpart to [`Store::addr`] for every caller that immediately writes
+    /// `*store.addr::<T>(…)`.  A store is word-addressed in four-byte units, so an `i64` or an
+    /// `f64` at an odd word is only 4-aligned, and taking a `&T` there is undefined behaviour
+    /// even though x86 loads it happily.  `read_unaligned` states the alignment the data
+    /// actually has and lowers to the same single `mov` on this target, so the soundness costs
+    /// nothing — and it drops `as_mut()`'s null test and panic path, which is what made `addr`
+    /// expensive on the hottest read in the language (`get_elem_hoisted` is 15 % of the drawing
+    /// library's bench, loft#1426).
+    #[inline]
+    pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
+        let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
     }
 
     /// `@FR-H-WriteLocked`'s user half: refuse the write as a loft fault.
