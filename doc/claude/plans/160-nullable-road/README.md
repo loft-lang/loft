@@ -60,32 +60,79 @@ corpus's own proof that the instrument can report agreement.
 
 ## The first measurement (2026-09-09)
 
-| pair | issue shape | verdict | machinery in the surviving diff |
-|---|---|---|---|
-| `keyed-view-write` | loft#1456 — a write through a view of a keyed collection | **same** | — |
-| `local-rebound-by-mint` | loft#1422 — a local bound from a parameter, rebound from a minting call | diverges +75 −38 | `OpFreeRef` 7 · `__ref_` 12 · `OpDatabase` 2 · `OpCopyRecord` 2 |
-| `ret-view-of-param` | loft#1421 — a return that views a parameter | diverges +78 −85 | **`__retbuf` 7** · `__ref_` 13 · `OpFreeRef` 4 · `OpCopyRecord` 2 |
-| `element-over-param` | loft#1466 — an element binding over a parameter, in a loop | diverges +176 −112 | `__ref_` 20 · `OpFreeRef` 6 · **materialise 4** |
-| `captured-local-rebind` | loft#1447 — a captured local rebound after the closure is built | diverges +131 −108 | **`__ref_` 56** · `OpDatabase` 8 · `OpFreeRef` 6 |
+The first reading was a whole-diff verdict per pair — *does anything survive normalisation* —
+and it is superseded by the per-channel table below, which is what classification needs.  It is
+recorded because of what it cost to make honest, not for its numbers:
 
-**The clearest single divergence, and the one to read first**, is `ret-view-of-param`: the dense
-half gets a return BUFFER and the nullable half gets none —
+**it reported 5 of 5 diverging, and the smallest was entirely the script's own noise** (above),
+and then its own control showed the verdict too coarse to use — `ret-view-of-param-vector`
+diverges by 188 lines while the channel the question is about is symmetric.  A verdict that
+cannot separate the `??` operator's lowering from a delivery difference answers a question
+nobody asked.
+
+⚠ **One confound, named rather than removed.**  A nullable twin must handle absence somewhere,
+so most diffs carry `__ncc_` lines belonging to `??` and not to the nullable TYPE.  It cannot be
+edited out — there is no way to read a `τ?` field without handling absence — so the report
+DISCOUNTS the `ncc(??)` channel rather than the corpus being made cleaner.
+
+## The first classification — `ret-view-of-param` is an ACCIDENT (2026-09-09)
+
+The whole-diff verdict turned out to be too coarse to classify with, and its own control said
+so: `ret-view-of-param-vector` diverges by 188 lines while its return BUFFER is symmetric.  So
+the report counts per MACHINERY CHANNEL now — retbuf, materialise, copy-record, free-ref, mint,
+work-ref — and discounts `ncc(??)`, which is the confound a nullable twin cannot avoid writing.
+
+**The contrast that settles the first divergence:**
+
+| pair | return type | retbuf | work-ref |
+|---|---|---|---|
+| `ret-view-of-param` | `S` vs `S?` — a STRUCT | dense 51, nullable 43 (**−8**) | dense 24, nullable 7 (**−17**) |
+| `ret-view-of-param-vector` | `vector<S>` vs `vector<S>?` — a COLLECTION | dense 49, nullable 48 (−1) | symmetric |
 
 ```
 dense     fn n_first(p: vector<ref(S)>, __retbuf: S) -> S["p"]
-nullable  fn n_first(p: vector<ref(S)>)              -> S["p"]
+nullable  fn n_first(p: vector<ref(S)>)              -> S["p"]?      ← no buffer
+
+dense     fn n_dv(p: …, __retbuf: vector<ref(S)>) -> vector<ref(S)>["??"]
+nullable  fn n_ov(p: …, __retbuf: vector<ref(S)>) -> vector<ref(S)>["??"]?   ← buffer KEPT
 ```
 
-so the dense return materialises through the caller's buffer and the nullable return hands the
-parameter's view back raw.  That is the mechanism behind loft#1468, closed by a sibling
-checkout during @PLN155, and it is a road the `?` cannot require: C90 makes the marker
-compile-time, with `Optional(τ)` sharing `τ`'s storage.
+**Verdict: an accident of the site, not a consequence of the `?`.**  Three measurements say so:
 
-⚠ **One confound, named rather than removed.**  A nullable twin must handle absence somewhere,
-so three of the four diffs carry ~8 lines of `__ncc_` — the `??` operator's own lowering, not
-the nullable TYPE's.  It cannot be edited out (there is no way to read a `τ?` field without
-handling absence), so the classification below has to discount it per hunk rather than the
-corpus being made cleaner.
+1. **Nullability does not require withholding the buffer** — the collection case keeps it, on
+   the default path.  So the `?` is not what removes it; the payload's SHAPE is.
+2. **The reason recorded at the gate does not fit the shape that lacks it.**
+   `keys::nullable_ret_buffer`'s doc explains the narrowness as *"a delivery that COPIES the tail
+   into the buffer and answers the buffer … would turn a `null` answer into an empty
+   collection"*.  That is a COLLECTION-shaped worry, and collections are exactly the case that
+   HAS the buffer.
+3. **The delivery it defers to is not present.**  `Type::ret_promo_base` peels `Optional(Vector)`
+   only, on the stated grounds that a nullable STRUCT return has loft#896's `__nullable<S>`
+   delivery and a second one would leak.  Measured: `__nullable` appears **zero** times in the
+   emitted IR of a nullable struct return — for a VIEW-returning one and for a MINTING one
+   alike.  The struct case gets neither delivery.
+
+This is the mechanism behind loft#1421 and loft#1468, and it is the plan's first entry in the
+queue: a road the nullable spelling takes only because a peel was written narrowly.
+
+⚠ **Not fixed here, deliberately.**  Widening `ret_promo_base` is a delivery change and needs
+its own before/after — the value channel does not score it (@PLN153 batch 10), so it wants a
+dense/nullable pair under `LOFT_STRICT_STORES=1` on both backends, which is this plan's stated
+verify.
+
+## The other three, enumerated but NOT yet classified
+
+Their channels are named and no two share a root — the retbuf asymmetry is unique to
+`ret-view-of-param`, so there is no single mechanism behind all four:
+
+| pair | asymmetric channels |
+|---|---|
+| `element-over-param` (loft#1466) | work-ref +24, free-ref +6, **materialise +4**, mint +2, copy-record +2 |
+| `captured-local-rebind` (loft#1447) | work-ref +23, free-ref +2 |
+| `local-rebound-by-mint` (loft#1422) | free-ref +3, work-ref −1 |
+
+`element-over-param` is the one to read next: it is the only pair where the nullable half
+MATERIALISES at all, which is a road with no dense counterpart.
 
 ## Next
 

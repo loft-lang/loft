@@ -130,6 +130,33 @@ def diff_of(name):
     return list(difflib.unified_diff(d, o, "dense", "nullable", n=1, lineterm=""))
 
 
+# The MACHINERY channels a divergence can be made of.  A whole-diff verdict is too coarse to
+# classify with — measured: `ret-view-of-param-vector` diverges by 188 lines while its return
+# BUFFER is perfectly symmetric, so "diverges" said nothing about the question being asked.
+# Counting per channel separates the road from the noise: a `__ncc_` asymmetry is the `??`
+# operator a nullable twin cannot avoid writing, and a `__retbuf` asymmetry is a delivery one
+# spelling gets and the other does not.
+CHANNELS = {
+    "retbuf": r"__retbuf",
+    "ncc(??)": r"__ncc_",
+    "materialise": r"materiali[sz]",
+    "copy-record": r"OpCopyRecord",
+    "free-ref": r"OpFreeRef",
+    "mint": r"OpDatabase",
+    "work-ref": r"__ref_",
+}
+
+
+def channels(name):
+    """Per-channel counts in each half, and the ones that DIFFER."""
+    out = {}
+    for half in ("dense", "opt"):
+        text = introspect(os.path.join(PAIRS, f"{name}.{half}.loft"))
+        out[half] = {k: len(re.findall(v, text)) for k, v in CHANNELS.items()}
+    return {k: (out["dense"][k], out["opt"][k])
+            for k in CHANNELS if out["dense"][k] != out["opt"][k]}
+
+
 def headline(name):
     """The first line of the pair's own `//` header — what shape it is."""
     p = os.path.join(PAIRS, f"{name}.dense.loft")
@@ -192,13 +219,23 @@ def main():
     diverge = 0
     for n in names:
         d = diff_of(n)
+        ch = channels(n)
+        # `??` is the confound: a nullable twin MUST handle absence somewhere, so an `ncc`
+        # asymmetry is the operator's own lowering and not the nullable type's road.
+        road = {k: v for k, v in ch.items() if k != "ncc(??)"}
         if d:
             diverge += 1
             adds = sum(1 for l in d if l.startswith("+") and not l.startswith("+++"))
             dels = sum(1 for l in d if l.startswith("-") and not l.startswith("---"))
-            print(f"  DIVERGES  {n:<34} +{adds} -{dels}   {headline(n)}")
+            mark = "DIVERGES" if road else "  ??-only"
+            print(f"  {mark}  {n:<32} +{adds} -{dels}")
+            for k, (a, b) in sorted(road.items()):
+                print(f"      {k:<14} dense {a:4d}   nullable {b:4d}   ({b - a:+d})")
+            if not road:
+                print("      every asymmetric channel is `??`'s own lowering — no road differs")
         else:
-            print(f"  same      {n:<34}        {headline(n)}")
+            print(f"  same      {n:<32}")
+        print(f"      {headline(n)}")
     print(f"\n  {diverge} of {len(names)} pairs diverge after the `?` itself is normalised away.")
     print("  `--diff <name>` for one.  Each divergence is a question: does C90 REQUIRE it —")
     print("  the `?` is a compile-time marker, so most cannot — or is it an accident of the")
