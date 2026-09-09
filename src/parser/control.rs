@@ -14663,7 +14663,15 @@ impl Parser {
         // already made the tail's local an argument, so its `return_views_an_argument` reads
         // a fact the delivery itself created.  Refusing the rename is what stops that fact
         // from existing.
-        let views_argument = self.var_views_an_argument(v);
+        //
+        // SUBORDINATE to the `LOFT_JOIN_OWN` pre-pass, which answers this same question for a
+        // marked vector borrow — a `_mv_` match-field binding — by copying each arm into a
+        // buffer of its own.  With that pre-pass ON those candidates are in `jo_arm_skip` and
+        // never reach here; with `LOFT_NO_JOIN_OWN` the caller has asked for the PRE-pre-pass
+        // emission, and a second leg stripping the same borrow would leave that switch unable
+        // to show it — a bisect control that cannot fire.  `is_marked_vector_borrow` is the one
+        // home for which bindings are the pre-pass's.
+        let views_argument = self.var_views_an_argument(v) && !self.vars.is_marked_vector_borrow(v);
         let allow_rename = !(bound_already
             || reassigned
             || returns_own_field
@@ -14962,6 +14970,7 @@ impl Parser {
                     .copied()
                     .filter(|&v| {
                         self.var_views_an_argument(v)
+                            && !self.vars.is_marked_vector_borrow(v)
                             && self.return_buffer().is_some_and(|(_, buf)| buf != v)
                     })
                     .collect()
