@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_recover source</h1>
 <article>
-<p><a href="lib-hex_recover.html">← hex_recover</a> · <a href="lib-hex_recover-api.html">API reference</a> · version 0.1.1</p>
-<p class="lib-legend">5 file(s), 1414 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_recover.html">← hex_recover</a> · <a href="lib-hex_recover-api.html">API reference</a> · version 0.1.2</p>
+<p class="lib-legend">5 file(s), 1416 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -40,7 +40,7 @@
 <tr><td><code>turns_cyclic_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L198">198</a></td><td><a href="#tests-02-worked-examples-loft-L358">HXV-006</a></td><td><a href="#src-formcensus-loft-L331">331</a> <a href="#tests-02-worked-examples-loft-L368">368</a> <a href="#tests-02-worked-examples-loft-L370">370</a> <a href="#tests-02-worked-examples-loft-L372">372</a> <a href="#tests-02-worked-examples-loft-L376">376</a> <a href="#tests-02-worked-examples-loft-L378">378</a> … (7 total)</td></tr>
 <tr><td><code>field_exact</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L227">227</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L239">239</a> <a href="#tests-02-worked-examples-loft-L89">89</a> <a href="#tests-02-worked-examples-loft-L90">90</a></td></tr>
 <tr><td><code>field_exact_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L239">239</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L83">83</a> <a href="#tests-02-worked-examples-loft-L84">84</a></td></tr>
-<tr><td><code>field_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L255">255</a> <a href="#src-formfit-loft-L151">151</a> <a href="#src-formfit-loft-L159">159</a> <a href="#src-formfit-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L92">92</a> … (12 total)</td></tr>
+<tr><td><code>field_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L255">255</a> <a href="#src-formfit-loft-L151">151</a> <a href="#src-formfit-loft-L159">159</a> <a href="#src-formfit-loft-L439">439</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L92">92</a> … (12 total)</td></tr>
 <tr><td><code>field_norm_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L255">255</a></td><td>—</td><td><a href="#src-formfit-loft-L213">213</a> <a href="#src-formfit-loft-L232">232</a> <a href="#src-formfit-loft-L252">252</a></td></tr>
 <tr><td><code>form_maxlen</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L267">267</a></td><td>—</td><td><a href="#src-formcensus-loft-L312">312</a> <a href="#tests-02-worked-examples-loft-L499">499</a></td></tr>
 <tr><td><code>forms_upto</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L276">276</a></td><td><a href="#tests-02-worked-examples-loft-L462">HXV-009</a></td><td><a href="#src-formcensus-loft-L308">308</a> <a href="#src-formfit-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L162">162</a> <a href="#tests-02-worked-examples-loft-L476">476</a> <a href="#tests-02-worked-examples-loft-L477">477</a> <a href="#tests-02-worked-examples-loft-L478">478</a></td></tr>
@@ -48,9 +48,9 @@
 <tr><td><code>turns_reverse_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L325">325</a></td><td><a href="#tests-02-worked-examples-loft-L382">HXV-007</a></td><td><a href="#tests-02-worked-examples-loft-L402">402</a> <a href="#tests-02-worked-examples-loft-L411">411</a> <a href="#tests-02-worked-examples-loft-L413">413</a></td></tr>
 <tr><td><code>forms_sides</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L350">350</a></td><td>—</td><td><a href="#src-formcensus-loft-L396">396</a></td></tr>
 <tr><td><code>forms_a3</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L393">393</a></td><td>—</td><td><a href="#src-formfit-loft-L97">97</a></td></tr>
-<tr><td><code>fit_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L47">47</a></td><td><a href="#tests-02-worked-examples-loft-L187">HXV-003</a></td><td><a href="#src-formfit-loft-L157">157</a> <a href="#src-formfit-loft-L229">229</a> <a href="#src-formfit-loft-L435">435</a> <a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
+<tr><td><code>fit_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L47">47</a></td><td><a href="#tests-02-worked-examples-loft-L187">HXV-003</a></td><td><a href="#src-formfit-loft-L157">157</a> <a href="#src-formfit-loft-L229">229</a> <a href="#src-formfit-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
 <tr><td><code>REGIME_R1</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L71">71</a></td><td>—</td><td><a href="#src-formfit-loft-L75">75</a> <a href="#src-formfit-loft-L168">168</a> <a href="#src-formfit-loft-L180">180</a> <a href="#src-formfit-loft-L188">188</a> <a href="#src-formfit-loft-L254">254</a> <a href="#src-formfit-loft-L264">264</a> … (18 total)</td></tr>
-<tr><td><code>REGIME_R2</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L72">72</a></td><td>—</td><td><a href="#src-formfit-loft-L75">75</a> <a href="#src-formfit-loft-L173">173</a> <a href="#src-formfit-loft-L401">401</a> <a href="#src-formfit-loft-L420">420</a> <a href="#src-formfit-loft-L431">431</a> <a href="#src-formfit-loft-L441">441</a> … (11 total)</td></tr>
+<tr><td><code>REGIME_R2</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L72">72</a></td><td>—</td><td><a href="#src-formfit-loft-L75">75</a> <a href="#src-formfit-loft-L173">173</a> <a href="#src-formfit-loft-L401">401</a> <a href="#src-formfit-loft-L422">422</a> <a href="#src-formfit-loft-L433">433</a> <a href="#src-formfit-loft-L443">443</a> … (11 total)</td></tr>
 <tr><td><code>Rebuilt</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L74">74</a></td><td>—</td><td><a href="#src-formfit-loft-L147">147</a> <a href="#src-formfit-loft-L150">150</a> <a href="#src-formfit-loft-L168">168</a> <a href="#src-formfit-loft-L173">173</a> <a href="#src-formfit-loft-L251">251</a> <a href="#src-formfit-loft-L254">254</a> … (12 total)</td></tr>
 <tr><td><code>LEVEL</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L87">87</a></td><td>—</td><td><a href="#src-formfit-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L128">128</a></td></tr>
 <tr><td><code>candidate_forms</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L95">95</a></td><td><a href="#tests-02-worked-examples-loft-L281">HXV-004</a></td><td><a href="#src-formfit-loft-L147">147</a> <a href="#tests-01-hex-recover-loft-L13">13</a> <a href="#tests-02-worked-examples-loft-L60">60</a> <a href="#tests-02-worked-examples-loft-L126">126</a> <a href="#tests-02-worked-examples-loft-L430">430</a></td></tr>
@@ -65,10 +65,10 @@
 <tr><td><code>rebuild_indexed</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L417">HXV-008</a></td><td><a href="#src-formfit-loft-L263">263</a> <a href="#tests-02-worked-examples-loft-L438">438</a> <a href="#tests-02-worked-examples-loft-L447">447</a></td></tr>
 <tr><td><code>rebuild_indexed_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L261">261</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L457">457</a> <a href="#tests-02-worked-examples-loft-L459">459</a></td></tr>
 <tr><td><code>hull_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L330">330</a></td><td>—</td><td><a href="#src-formfit-loft-L398">398</a></td></tr>
-<tr><td><code>side_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L370">370</a></td><td>—</td><td><a href="#src-formfit-loft-L412">412</a></td></tr>
-<tr><td><code>side_len</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L387">387</a></td><td>—</td><td><a href="#src-formfit-loft-L416">416</a></td></tr>
-<tr><td><code>rebuild_construct</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L397">397</a></td><td><a href="#tests-02-worked-examples-loft-L281">HXV-004</a></td><td><a href="#src-formfit-loft-L447">447</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L230">230</a> <a href="#tests-02-worked-examples-loft-L238">238</a> <a href="#tests-02-worked-examples-loft-L246">246</a> … (13 total)</td></tr>
-<tr><td><code>rebuild_construct_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L446">446</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L314">314</a></td></tr>
+<tr><td><code>side_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L370">370</a></td><td>—</td><td><a href="#src-formfit-loft-L414">414</a></td></tr>
+<tr><td><code>side_len</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L387">387</a></td><td>—</td><td><a href="#src-formfit-loft-L418">418</a></td></tr>
+<tr><td><code>rebuild_construct</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L397">397</a></td><td><a href="#tests-02-worked-examples-loft-L281">HXV-004</a></td><td><a href="#src-formfit-loft-L449">449</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L230">230</a> <a href="#tests-02-worked-examples-loft-L238">238</a> <a href="#tests-02-worked-examples-loft-L246">246</a> … (13 total)</td></tr>
+<tr><td><code>rebuild_construct_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L448">448</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L314">314</a></td></tr>
 </table>
 <h2 id="src-formcensus-loft">src/formcensus.loft</h2>
 <pre class="src"><code><span id="src-formcensus-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -882,47 +882,49 @@
 <span id="src-formfit-loft-L407">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
 <span id="src-formfit-loft-L408">    ak = <span class="fn-call">pk_k</span>(hk[ci] ?? <span class="nm">0</span>);</span>
 <span id="src-formfit-loft-L409">    am = <span class="fn-call">pk_m</span>(hk[ci] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L410">    bk = <span class="fn-call">pk_k</span>(hk[(ci + <span class="nm">1</span>) % nh] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L411">    bm = <span class="fn-call">pk_m</span>(hk[(ci + <span class="nm">1</span>) % nh] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L412">    sh = <span class="fn-call">side_heading</span>(bk - ak, bm - am);</span>
-<span id="src-formfit-loft-L413">    <span class="kw">if</span> sh &lt; <span class="nm">0</span> { bad = <span class="kw">true</span>; }</span>
-<span id="src-formfit-loft-L414">    <span class="kw">else</span> {</span>
-<span id="src-formfit-loft-L415">      hs += [sh];</span>
-<span id="src-formfit-loft-L416">      lens += [<span class="fn-call">side_len</span>(bk - ak, bm - am, sh)];</span>
-<span id="src-formfit-loft-L417">    }</span>
-<span id="src-formfit-loft-L418">  }</span>
-<span id="src-formfit-loft-L419">  <span class="kw">if</span> bad || <span class="bi"><a href="stdlib-text.html">len</a></span>(hs) != nh {</span>
-<span id="src-formfit-loft-L420">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
-<span id="src-formfit-loft-L421">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L422">  }</span>
-<span id="src-formfit-loft-L423">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L424">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
-<span id="src-formfit-loft-L425">    d = <span class="fn-call">head_norm</span>((hs[(ti + <span class="nm">1</span>) % nh] ?? <span class="nm">0</span>) - (hs[ti] ?? <span class="nm">0</span>));</span>
-<span id="src-formfit-loft-L426">    <span class="kw">if</span> d == <span class="nm">0</span> { d = <span class="nm">12</span>; }</span>
-<span id="src-formfit-loft-L427">    turns += [d];</span>
-<span id="src-formfit-loft-L428">  }</span>
-<span id="src-formfit-loft-L429">  cf = <span class="fn-call">form_canon</span>(<span class="fn-call">form_new</span>(hs[<span class="nm">0</span>] ?? <span class="nm">0</span>, lens, turns));</span>
-<span id="src-formfit-loft-L430">  <span class="kw">if</span> !<span class="fn-call">form_closes</span>(cf) {</span>
-<span id="src-formfit-loft-L431">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
-<span id="src-formfit-loft-L432">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L433">  }</span>
-<span id="src-formfit-loft-L434">  <span class="cm">// VERIFY by re-drawing. The construction proposes; this confirms, so `rho = 0` stays measured.</span></span>
-<span id="src-formfit-loft-L435">  chk = <span class="fn-call">fit_chunk</span>(cf);</span>
-<span id="src-formfit-loft-L436">  <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, chk);</span>
-<span id="src-formfit-loft-L437">  d2 = <span class="fn-call">sym_diff</span>(<span class="fn-call">field_norm</span>(cells), <span class="fn-call">field_norm</span>(chk));</span>
-<span id="src-formfit-loft-L438">  <span class="kw">if</span> d2 == <span class="nm">0</span> {</span>
-<span id="src-formfit-loft-L439">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: cf, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
-<span id="src-formfit-loft-L440">  }</span>
-<span id="src-formfit-loft-L441">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: cf, rb_rho: d2, rb_matches: <span class="nm">0</span> }</span>
-<span id="src-formfit-loft-L442">}</span>
-<span id="src-formfit-loft-L443"></span>
-<span id="src-formfit-loft-L444"><span class="cm">// Recover by CONSTRUCTION rather than by search, as text.  Answers "" on refusal like its</span></span>
-<span id="src-formfit-loft-L445"><span class="cm">// siblings, so all three recovery routes are read the same way.</span></span>
-<span id="src-formfit-loft-L446"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formfit-loft-L447">  r = <span class="fn-call">rebuild_construct</span>(cells);</span>
-<span id="src-formfit-loft-L448">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-formfit-loft-L449">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
-<span id="src-formfit-loft-L450">}</span>
+<span id="src-formfit-loft-L410">    <span class="cm">// `% nh` types nullable (a zero divisor answers null); `nh &gt;= 3` is checked above,</span></span>
+<span id="src-formfit-loft-L411">    <span class="cm">// so `?? 0` names an unreachable index rather than a chosen one.</span></span>
+<span id="src-formfit-loft-L412">    bk = <span class="fn-call">pk_k</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L413">    bm = <span class="fn-call">pk_m</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L414">    sh = <span class="fn-call">side_heading</span>(bk - ak, bm - am);</span>
+<span id="src-formfit-loft-L415">    <span class="kw">if</span> sh &lt; <span class="nm">0</span> { bad = <span class="kw">true</span>; }</span>
+<span id="src-formfit-loft-L416">    <span class="kw">else</span> {</span>
+<span id="src-formfit-loft-L417">      hs += [sh];</span>
+<span id="src-formfit-loft-L418">      lens += [<span class="fn-call">side_len</span>(bk - ak, bm - am, sh)];</span>
+<span id="src-formfit-loft-L419">    }</span>
+<span id="src-formfit-loft-L420">  }</span>
+<span id="src-formfit-loft-L421">  <span class="kw">if</span> bad || <span class="bi"><a href="stdlib-text.html">len</a></span>(hs) != nh {</span>
+<span id="src-formfit-loft-L422">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
+<span id="src-formfit-loft-L423">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L424">  }</span>
+<span id="src-formfit-loft-L425">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L426">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
+<span id="src-formfit-loft-L427">    d = <span class="fn-call">head_norm</span>((hs[(ti + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>) - (hs[ti] ?? <span class="nm">0</span>));</span>
+<span id="src-formfit-loft-L428">    <span class="kw">if</span> d == <span class="nm">0</span> { d = <span class="nm">12</span>; }</span>
+<span id="src-formfit-loft-L429">    turns += [d];</span>
+<span id="src-formfit-loft-L430">  }</span>
+<span id="src-formfit-loft-L431">  cf = <span class="fn-call">form_canon</span>(<span class="fn-call">form_new</span>(hs[<span class="nm">0</span>] ?? <span class="nm">0</span>, lens, turns));</span>
+<span id="src-formfit-loft-L432">  <span class="kw">if</span> !<span class="fn-call">form_closes</span>(cf) {</span>
+<span id="src-formfit-loft-L433">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
+<span id="src-formfit-loft-L434">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L435">  }</span>
+<span id="src-formfit-loft-L436">  <span class="cm">// VERIFY by re-drawing. The construction proposes; this confirms, so `rho = 0` stays measured.</span></span>
+<span id="src-formfit-loft-L437">  chk = <span class="fn-call">fit_chunk</span>(cf);</span>
+<span id="src-formfit-loft-L438">  <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, chk);</span>
+<span id="src-formfit-loft-L439">  d2 = <span class="fn-call">sym_diff</span>(<span class="fn-call">field_norm</span>(cells), <span class="fn-call">field_norm</span>(chk));</span>
+<span id="src-formfit-loft-L440">  <span class="kw">if</span> d2 == <span class="nm">0</span> {</span>
+<span id="src-formfit-loft-L441">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: cf, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
+<span id="src-formfit-loft-L442">  }</span>
+<span id="src-formfit-loft-L443">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: cf, rb_rho: d2, rb_matches: <span class="nm">0</span> }</span>
+<span id="src-formfit-loft-L444">}</span>
+<span id="src-formfit-loft-L445"></span>
+<span id="src-formfit-loft-L446"><span class="cm">// Recover by CONSTRUCTION rather than by search, as text.  Answers "" on refusal like its</span></span>
+<span id="src-formfit-loft-L447"><span class="cm">// siblings, so all three recovery routes are read the same way.</span></span>
+<span id="src-formfit-loft-L448"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formfit-loft-L449">  r = <span class="fn-call">rebuild_construct</span>(cells);</span>
+<span id="src-formfit-loft-L450">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-formfit-loft-L451">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
+<span id="src-formfit-loft-L452">}</span>
 </code></pre>
 <h2 id="src-hex-recover-loft">src/hex_recover.loft</h2>
 <pre class="src"><code><span id="src-hex-recover-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

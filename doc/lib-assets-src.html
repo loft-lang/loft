@@ -23,39 +23,39 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>assets source</h1>
 <article>
-<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.2.0</p>
-<p class="lib-legend">5 file(s), 932 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.2.1</p>
+<p class="lib-legend">5 file(s), 945 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
 <tr><td><code>BlobKind</code> <span class="search-kind">enum</span></td><td><a href="#src-assets-loft-L30">30</a></td><td>—</td><td><a href="#src-assets-loft-L44">44</a> <a href="#src-assets-loft-L198">198</a></td></tr>
 <tr><td><code>DefKind</code> <span class="search-kind">enum</span></td><td><a href="#src-assets-loft-L34">34</a></td><td>—</td><td><a href="#src-assets-loft-L100">100</a></td></tr>
-<tr><td><code>Blob</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L42">42</a></td><td>—</td><td><a href="#src-assets-loft-L198">198</a> <a href="#src-assets-loft-L200">200</a> <a href="#src-assets-loft-L210">210</a> <a href="#src-assets-loft-L283">283</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> … (16 total)</td></tr>
-<tr><td><code>PageInfo</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L54">54</a></td><td>—</td><td><a href="#src-assets-loft-L158">158</a> <a href="#src-assets-loft-L335">335</a> <a href="#src-assets-loft-L361">361</a> <a href="#src-assets-loft-L416">416</a> <a href="#src-assets-loft-L441">441</a> <a href="#src-assets-loft-L469">469</a> … (13 total)</td></tr>
-<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L68">68</a></td><td>—</td><td><a href="#src-assets-loft-L159">159</a> <a href="#src-assets-loft-L336">336</a> <a href="#src-assets-loft-L361">361</a> <a href="#src-assets-loft-L417">417</a> <a href="#src-assets-loft-L441">441</a> <a href="#src-assets-loft-L469">469</a> … (13 total)</td></tr>
-<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
-<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a></td></tr>
-<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a></td></tr>
-<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a></td></tr>
-<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L469">469</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (8 total)</td></tr>
+<tr><td><code>Blob</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L42">42</a></td><td>—</td><td><a href="#src-assets-loft-L198">198</a> <a href="#src-assets-loft-L200">200</a> <a href="#src-assets-loft-L210">210</a> <a href="#src-assets-loft-L283">283</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> … (16 total)</td></tr>
+<tr><td><code>PageInfo</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L54">54</a></td><td>—</td><td><a href="#src-assets-loft-L158">158</a> <a href="#src-assets-loft-L335">335</a> <a href="#src-assets-loft-L361">361</a> <a href="#src-assets-loft-L418">418</a> <a href="#src-assets-loft-L443">443</a> <a href="#src-assets-loft-L471">471</a> … (13 total)</td></tr>
+<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L68">68</a></td><td>—</td><td><a href="#src-assets-loft-L159">159</a> <a href="#src-assets-loft-L336">336</a> <a href="#src-assets-loft-L361">361</a> <a href="#src-assets-loft-L419">419</a> <a href="#src-assets-loft-L443">443</a> <a href="#src-assets-loft-L471">471</a> … (13 total)</td></tr>
+<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
+<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a></td></tr>
+<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a></td></tr>
+<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a></td></tr>
+<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L471">471</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (8 total)</td></tr>
 <tr><td><code>Pack</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L157">157</a></td><td>—</td><td><a href="#src-assets-loft-L173">173</a> <a href="#src-assets-loft-L174">174</a> <a href="#src-assets-loft-L210">210</a> <a href="#src-assets-loft-L227">227</a> <a href="#src-assets-loft-L240">240</a> <a href="#src-assets-loft-L253">253</a> … (10 total)</td></tr>
-<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L81">81</a> <a href="#tests-pack-loft-L106">106</a> <a href="#tests-pack-loft-L121">121</a> <a href="#tests-pack-loft-L135">135</a> … (10 total)</td></tr>
-<tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L212">212</a> <a href="#src-assets-loft-L228">228</a> <a href="#src-assets-loft-L229">229</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L157">157</a> … (7 total)</td></tr>
-<tr><td><code>blobs_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L186">186</a></td><td>—</td><td><a href="#src-assets-loft-L213">213</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L67">67</a> <a href="#tests-pack-loft-L90">90</a> <a href="#tests-pack-loft-L99">99</a> … (10 total)</td></tr>
+<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L88">88</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L128">128</a> <a href="#tests-pack-loft-L142">142</a> … (10 total)</td></tr>
+<tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L212">212</a> <a href="#src-assets-loft-L228">228</a> <a href="#src-assets-loft-L229">229</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L165">165</a> … (7 total)</td></tr>
+<tr><td><code>blobs_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L186">186</a></td><td>—</td><td><a href="#src-assets-loft-L213">213</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L67">67</a> <a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> … (10 total)</td></tr>
 <tr><td><code>blob_put</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L198">198</a></td><td>—</td><td><a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L32">32</a> <a href="#tests-pack-loft-L33">33</a></td></tr>
-<tr><td><code>pack_write</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L210">210</a></td><td>—</td><td><a href="#tests-pack-loft-L55">55</a> <a href="#tests-pack-loft-L84">84</a> <a href="#tests-pack-loft-L109">109</a> <a href="#tests-pack-loft-L124">124</a> <a href="#tests-pack-loft-L154">154</a></td></tr>
-<tr><td><code>pack_read</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L227">227</a></td><td>—</td><td><a href="#tests-pack-loft-L58">58</a> <a href="#tests-pack-loft-L136">136</a></td></tr>
+<tr><td><code>pack_write</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L210">210</a></td><td>—</td><td><a href="#tests-pack-loft-L55">55</a> <a href="#tests-pack-loft-L91">91</a> <a href="#tests-pack-loft-L116">116</a> <a href="#tests-pack-loft-L131">131</a> <a href="#tests-pack-loft-L162">162</a></td></tr>
+<tr><td><code>pack_read</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L227">227</a></td><td>—</td><td><a href="#tests-pack-loft-L58">58</a> <a href="#tests-pack-loft-L143">143</a></td></tr>
 <tr><td><code>anim_of</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L240">240</a></td><td>—</td><td><a href="#tests-scene-loft-L46">46</a> <a href="#tests-scene-loft-L47">47</a> <a href="#tests-scene-loft-L50">50</a> <a href="#tests-scene-loft-L51">51</a> <a href="#tests-scene-loft-L52">52</a></td></tr>
 <tr><td><code>keys_near</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L253">253</a></td><td>—</td><td><a href="#tests-scene-loft-L58">58</a> <a href="#tests-scene-loft-L65">65</a> <a href="#tests-scene-loft-L70">70</a> <a href="#tests-scene-loft-L71">71</a> <a href="#tests-scene-loft-L83">83</a></td></tr>
-<tr><td><code>prefetch</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L283">283</a></td><td>—</td><td><a href="#tests-pack-loft-L90">90</a> <a href="#tests-pack-loft-L99">99</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L140">140</a></td></tr>
-<tr><td><code>PROXY_ALPHA_ON</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L309">309</a></td><td>—</td><td><a href="#src-assets-loft-L345">345</a> <a href="#src-assets-loft-L385">385</a> <a href="#src-assets-loft-L421">421</a></td></tr>
-<tr><td><code>PROXY_BANDS</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L318">318</a></td><td>—</td><td><a href="#src-assets-loft-L442">442</a></td></tr>
-<tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L416">416</a></td><td>—</td><td><a href="#tests-proxy-loft-L73">73</a> <a href="#tests-proxy-loft-L91">91</a> <a href="#tests-proxy-loft-L109">109</a> <a href="#tests-proxy-loft-L124">124</a></td></tr>
-<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L441">441</a></td><td>—</td><td><a href="#tests-proxy-loft-L58">58</a> <a href="#tests-proxy-loft-L76">76</a> <a href="#tests-proxy-loft-L92">92</a> <a href="#tests-proxy-loft-L110">110</a> <a href="#tests-proxy-loft-L125">125</a></td></tr>
-<tr><td><code>proxy_overshoot</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L455">455</a></td><td>—</td><td><a href="#tests-proxy-loft-L77">77</a> <a href="#tests-proxy-loft-L82">82</a> <a href="#tests-proxy-loft-L97">97</a> <a href="#tests-proxy-loft-L127">127</a></td></tr>
-<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L467">467</a></td><td>—</td><td><a href="#src-assets-loft-L491">491</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
-<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L489">489</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
+<tr><td><code>prefetch</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L283">283</a></td><td>—</td><td><a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> <a href="#tests-pack-loft-L120">120</a> <a href="#tests-pack-loft-L147">147</a></td></tr>
+<tr><td><code>PROXY_ALPHA_ON</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L309">309</a></td><td>—</td><td><a href="#src-assets-loft-L345">345</a> <a href="#src-assets-loft-L387">387</a> <a href="#src-assets-loft-L423">423</a></td></tr>
+<tr><td><code>PROXY_BANDS</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L318">318</a></td><td>—</td><td><a href="#src-assets-loft-L444">444</a></td></tr>
+<tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L418">418</a></td><td>—</td><td><a href="#tests-proxy-loft-L76">76</a> <a href="#tests-proxy-loft-L94">94</a> <a href="#tests-proxy-loft-L112">112</a> <a href="#tests-proxy-loft-L127">127</a></td></tr>
+<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L443">443</a></td><td>—</td><td><a href="#tests-proxy-loft-L61">61</a> <a href="#tests-proxy-loft-L79">79</a> <a href="#tests-proxy-loft-L95">95</a> <a href="#tests-proxy-loft-L113">113</a> <a href="#tests-proxy-loft-L128">128</a></td></tr>
+<tr><td><code>proxy_overshoot</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L457">457</a></td><td>—</td><td><a href="#tests-proxy-loft-L80">80</a> <a href="#tests-proxy-loft-L85">85</a> <a href="#tests-proxy-loft-L100">100</a> <a href="#tests-proxy-loft-L130">130</a></td></tr>
+<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L469">469</a></td><td>—</td><td><a href="#src-assets-loft-L493">493</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
+<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L491">491</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
 </table>
 <h2 id="src-assets-loft">src/assets.loft</h2>
 <pre class="src"><code><span id="src-assets-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -437,123 +437,125 @@
 <span id="src-assets-loft-L377">    bmin_u += [-<span class="nm">1</span>]; bmax_u += [-<span class="nm">1</span>]; bmin_v += [-<span class="nm">1</span>]; bmax_v += [-<span class="nm">1</span>];</span>
 <span id="src-assets-loft-L378">  }</span>
 <span id="src-assets-loft-L379">  <span class="kw">for</span> v <span class="kw">in</span> bb_lo..=bb_hi {</span>
-<span id="src-assets-loft-L380">    bb_band = ((v - bb_lo) * bb_k) / bb_span;</span>
-<span id="src-assets-loft-L381">    <span class="kw">if</span> bb_band &gt; bb_k - <span class="nm">1</span> { bb_band = bb_k - <span class="nm">1</span>; }</span>
-<span id="src-assets-loft-L382">    <span class="kw">for</span> u <span class="kw">in</span> <span class="nm">0..</span>bb_un {</span>
-<span id="src-assets-loft-L383">      bb_ax = bb_c.ce_x + (<span class="kw">if</span> bb_swap { v } <span class="kw">else</span> { u });</span>
-<span id="src-assets-loft-L384">      bb_ay = bb_c.ce_y + (<span class="kw">if</span> bb_swap { u } <span class="kw">else</span> { v });</span>
-<span id="src-assets-loft-L385">      <span class="kw">if</span> <span class="fn-call">texel_alpha</span>(bb_px, bb_page.pi_w, bb_ax, bb_ay) &lt;= <span class="en">PROXY_ALPHA_ON</span> { <span class="kw">continue</span> }</span>
-<span id="src-assets-loft-L386">      <span class="kw">if</span> bmin_u[bb_band]? &lt; <span class="nm">0</span> || u &lt; bmin_u[bb_band]? { bmin_u[bb_band] = u; }</span>
-<span id="src-assets-loft-L387">      <span class="kw">if</span> u &gt; bmax_u[bb_band]? { bmax_u[bb_band] = u; }</span>
-<span id="src-assets-loft-L388">      <span class="kw">if</span> bmin_v[bb_band]? &lt; <span class="nm">0</span> || v &lt; bmin_v[bb_band]? { bmin_v[bb_band] = v; }</span>
-<span id="src-assets-loft-L389">      <span class="kw">if</span> v &gt; bmax_v[bb_band]? { bmax_v[bb_band] = v; }</span>
-<span id="src-assets-loft-L390">    }</span>
-<span id="src-assets-loft-L391">  }</span>
-<span id="src-assets-loft-L392">  <span class="kw">for</span> b <span class="kw">in</span> <span class="nm">0..</span>bb_k {</span>
-<span id="src-assets-loft-L393">    <span class="kw">if</span> bmin_u[b]? &lt; <span class="nm">0</span> { <span class="kw">continue</span> }</span>
-<span id="src-assets-loft-L394">    bb_uu = bmin_u[b]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
-<span id="src-assets-loft-L395">    bb_vv = bmin_v[b]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
-<span id="src-assets-loft-L396">    bb_uw = (bmax_u[b]? - bmin_u[b]? + <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
-<span id="src-assets-loft-L397">    bb_vh = (bmax_v[b]? - bmin_v[b]? + <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
-<span id="src-assets-loft-L398">    <span class="kw">if</span> bb_swap {</span>
-<span id="src-assets-loft-L399">      bb_out += [shapes::<span class="en">Rect</span>{rx: bb_vv, ry: bb_uu, rw: bb_vh, rh: bb_uw}];</span>
-<span id="src-assets-loft-L400">    } <span class="kw">else</span> {</span>
-<span id="src-assets-loft-L401">      bb_out += [shapes::<span class="en">Rect</span>{rx: bb_uu, ry: bb_vv, rw: bb_uw, rh: bb_vh}];</span>
-<span id="src-assets-loft-L402">    }</span>
-<span id="src-assets-loft-L403">  }</span>
-<span id="src-assets-loft-L404">  bb_out</span>
-<span id="src-assets-loft-L405">}</span>
-<span id="src-assets-loft-L406"></span>
-<span id="src-assets-loft-L407"><span class="cm">/// Total area of a box set — the numerator of the overshoot the packer gates on.</span></span>
-<span id="src-assets-loft-L408"><span class="kw">fn</span> <span class="fn-call">boxes_area</span>(ba: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-assets-loft-L409">  ba_t = <span class="nm">0.0</span>;</span>
-<span id="src-assets-loft-L410">  <span class="kw">for</span> r <span class="kw">in</span> ba { ba_t += r.rw * r.rh; }</span>
-<span id="src-assets-loft-L411">  ba_t</span>
-<span id="src-assets-loft-L412">}</span>
-<span id="src-assets-loft-L413"></span>
-<span id="src-assets-loft-L414"><span class="cm">/// How many texels of this cell are opaque — the thing a proxy stands for, and the</span></span>
-<span id="src-assets-loft-L415"><span class="cm">/// denominator of `proxy_overshoot`.</span></span>
-<span id="src-assets-loft-L416"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">opaque_texels</span>(ot_px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, ot_page: const <span class="en">PageInfo</span>,</span>
-<span id="src-assets-loft-L417">                     ot_c: const <span class="en">Cell</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-assets-loft-L418">  ot_n = <span class="nm">0</span>;</span>
-<span id="src-assets-loft-L419">  <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">0..</span>ot_c.ce_h {</span>
-<span id="src-assets-loft-L420">    <span class="kw">for</span> x <span class="kw">in</span> <span class="nm">0..</span>ot_c.ce_w {</span>
-<span id="src-assets-loft-L421">      <span class="kw">if</span> <span class="fn-call">texel_alpha</span>(ot_px, ot_page.pi_w, ot_c.ce_x + x, ot_c.ce_y + y) &gt; <span class="en">PROXY_ALPHA_ON</span> {</span>
-<span id="src-assets-loft-L422">        ot_n += <span class="nm">1</span>;</span>
-<span id="src-assets-loft-L423">      }</span>
-<span id="src-assets-loft-L424">    }</span>
-<span id="src-assets-loft-L425">  }</span>
-<span id="src-assets-loft-L426">  ot_n</span>
-<span id="src-assets-loft-L427">}</span>
-<span id="src-assets-loft-L428"></span>
-<span id="src-assets-loft-L429"><span class="cm">/// Derive `c`'s collision proxy from the page's own alpha, in cell-local</span></span>
-<span id="src-assets-loft-L430"><span class="cm">/// coordinates.</span></span>
-<span id="src-assets-loft-L431"><span class="cm">///</span></span>
-<span id="src-assets-loft-L432"><span class="cm">/// Banded on the TIGHTER axis: the derivation runs both ways and keeps the smaller</span></span>
-<span id="src-assets-loft-L433"><span class="cm">/// total area. 17 of the 36 corpus sprites band better by column than by row, so</span></span>
-<span id="src-assets-loft-L434"><span class="cm">/// choosing per sprite rather than fixing an axis takes the median overshoot from</span></span>
-<span id="src-assets-loft-L435"><span class="cm">/// +29.2 % to +22.8 % — for the cost of running a pass twice at pack time, which</span></span>
-<span id="src-assets-loft-L436"><span class="cm">/// is a cost nothing at runtime pays.</span></span>
-<span id="src-assets-loft-L437"><span class="cm">///</span></span>
-<span id="src-assets-loft-L438"><span class="cm">/// A cell with no opaque texels derives an EMPTY proxy, and an empty proxy hits</span></span>
-<span id="src-assets-loft-L439"><span class="cm">/// nothing. That is the answer a fully transparent cell should give; a single box</span></span>
-<span id="src-assets-loft-L440"><span class="cm">/// around it would collide with whatever stood there.</span></span>
-<span id="src-assets-loft-L441"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_proxy</span>(c: const <span class="en">Cell</span>, page: const <span class="en">PageInfo</span>, px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
-<span id="src-assets-loft-L442">                  bands: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="en">PROXY_BANDS</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; {</span>
-<span id="src-assets-loft-L443">  rows = <span class="fn-call">band_boxes</span>(px, page, c, bands, <span class="kw">false</span>);</span>
-<span id="src-assets-loft-L444">  cols = <span class="fn-call">band_boxes</span>(px, page, c, bands, <span class="kw">true</span>);</span>
-<span id="src-assets-loft-L445">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(cols) &gt; <span class="nm">0</span> &amp;&amp; <span class="fn-call">boxes_area</span>(cols) &lt; <span class="fn-call">boxes_area</span>(rows) { <span class="kw">return</span> cols }</span>
-<span id="src-assets-loft-L446">  rows</span>
-<span id="src-assets-loft-L447">}</span>
-<span id="src-assets-loft-L448"></span>
-<span id="src-assets-loft-L449"><span class="cm">/// How much bigger a derived proxy is than the art it stands for.</span></span>
-<span id="src-assets-loft-L450"><span class="cm">///</span></span>
-<span id="src-assets-loft-L451"><span class="cm">/// The number F7 gates on: `&lt;= 1.0` is at most twice the art. Reported per sprite</span></span>
-<span id="src-assets-loft-L452"><span class="cm">/// rather than asserted in aggregate, because one adversarial shape — three thin</span></span>
-<span id="src-assets-loft-L453"><span class="cm">/// diagonal arrows — misses the bound at every band count, and a bound nothing can</span></span>
-<span id="src-assets-loft-L454"><span class="cm">/// violate is not a bound.</span></span>
-<span id="src-assets-loft-L455"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">proxy_overshoot</span>(po_boxes: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, po_solid: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-assets-loft-L456">  <span class="kw">if</span> po_solid &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span> }</span>
-<span id="src-assets-loft-L457">  ((<span class="fn-call">boxes_area</span>(po_boxes) - (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) / (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>))?</span>
-<span id="src-assets-loft-L458">}</span>
-<span id="src-assets-loft-L459"></span>
-<span id="src-assets-loft-L460"><span class="cm">// --- Checking the layout before anything reads a pack ---</span></span>
+<span id="src-assets-loft-L380">    <span class="cm">// `/` types nullable (a zero divisor answers null); `bb_span` is `bb_hi - bb_lo + 1`</span></span>
+<span id="src-assets-loft-L381">    <span class="cm">// behind the `bb_lo &lt; 0` return above, so it is at least 1 and `?? 0` is unreachable.</span></span>
+<span id="src-assets-loft-L382">    bb_band = ((v - bb_lo) * bb_k) / bb_span ?? <span class="nm">0</span>;</span>
+<span id="src-assets-loft-L383">    <span class="kw">if</span> bb_band &gt; bb_k - <span class="nm">1</span> { bb_band = bb_k - <span class="nm">1</span>; }</span>
+<span id="src-assets-loft-L384">    <span class="kw">for</span> u <span class="kw">in</span> <span class="nm">0..</span>bb_un {</span>
+<span id="src-assets-loft-L385">      bb_ax = bb_c.ce_x + (<span class="kw">if</span> bb_swap { v } <span class="kw">else</span> { u });</span>
+<span id="src-assets-loft-L386">      bb_ay = bb_c.ce_y + (<span class="kw">if</span> bb_swap { u } <span class="kw">else</span> { v });</span>
+<span id="src-assets-loft-L387">      <span class="kw">if</span> <span class="fn-call">texel_alpha</span>(bb_px, bb_page.pi_w, bb_ax, bb_ay) &lt;= <span class="en">PROXY_ALPHA_ON</span> { <span class="kw">continue</span> }</span>
+<span id="src-assets-loft-L388">      <span class="kw">if</span> bmin_u[bb_band]? &lt; <span class="nm">0</span> || u &lt; bmin_u[bb_band]? { bmin_u[bb_band] = u; }</span>
+<span id="src-assets-loft-L389">      <span class="kw">if</span> u &gt; bmax_u[bb_band]? { bmax_u[bb_band] = u; }</span>
+<span id="src-assets-loft-L390">      <span class="kw">if</span> bmin_v[bb_band]? &lt; <span class="nm">0</span> || v &lt; bmin_v[bb_band]? { bmin_v[bb_band] = v; }</span>
+<span id="src-assets-loft-L391">      <span class="kw">if</span> v &gt; bmax_v[bb_band]? { bmax_v[bb_band] = v; }</span>
+<span id="src-assets-loft-L392">    }</span>
+<span id="src-assets-loft-L393">  }</span>
+<span id="src-assets-loft-L394">  <span class="kw">for</span> b <span class="kw">in</span> <span class="nm">0..</span>bb_k {</span>
+<span id="src-assets-loft-L395">    <span class="kw">if</span> bmin_u[b]? &lt; <span class="nm">0</span> { <span class="kw">continue</span> }</span>
+<span id="src-assets-loft-L396">    bb_uu = bmin_u[b]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
+<span id="src-assets-loft-L397">    bb_vv = bmin_v[b]? <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
+<span id="src-assets-loft-L398">    bb_uw = (bmax_u[b]? - bmin_u[b]? + <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
+<span id="src-assets-loft-L399">    bb_vh = (bmax_v[b]? - bmin_v[b]? + <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
+<span id="src-assets-loft-L400">    <span class="kw">if</span> bb_swap {</span>
+<span id="src-assets-loft-L401">      bb_out += [shapes::<span class="en">Rect</span>{rx: bb_vv, ry: bb_uu, rw: bb_vh, rh: bb_uw}];</span>
+<span id="src-assets-loft-L402">    } <span class="kw">else</span> {</span>
+<span id="src-assets-loft-L403">      bb_out += [shapes::<span class="en">Rect</span>{rx: bb_uu, ry: bb_vv, rw: bb_uw, rh: bb_vh}];</span>
+<span id="src-assets-loft-L404">    }</span>
+<span id="src-assets-loft-L405">  }</span>
+<span id="src-assets-loft-L406">  bb_out</span>
+<span id="src-assets-loft-L407">}</span>
+<span id="src-assets-loft-L408"></span>
+<span id="src-assets-loft-L409"><span class="cm">/// Total area of a box set — the numerator of the overshoot the packer gates on.</span></span>
+<span id="src-assets-loft-L410"><span class="kw">fn</span> <span class="fn-call">boxes_area</span>(ba: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-assets-loft-L411">  ba_t = <span class="nm">0.0</span>;</span>
+<span id="src-assets-loft-L412">  <span class="kw">for</span> r <span class="kw">in</span> ba { ba_t += r.rw * r.rh; }</span>
+<span id="src-assets-loft-L413">  ba_t</span>
+<span id="src-assets-loft-L414">}</span>
+<span id="src-assets-loft-L415"></span>
+<span id="src-assets-loft-L416"><span class="cm">/// How many texels of this cell are opaque — the thing a proxy stands for, and the</span></span>
+<span id="src-assets-loft-L417"><span class="cm">/// denominator of `proxy_overshoot`.</span></span>
+<span id="src-assets-loft-L418"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">opaque_texels</span>(ot_px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, ot_page: const <span class="en">PageInfo</span>,</span>
+<span id="src-assets-loft-L419">                     ot_c: const <span class="en">Cell</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-assets-loft-L420">  ot_n = <span class="nm">0</span>;</span>
+<span id="src-assets-loft-L421">  <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">0..</span>ot_c.ce_h {</span>
+<span id="src-assets-loft-L422">    <span class="kw">for</span> x <span class="kw">in</span> <span class="nm">0..</span>ot_c.ce_w {</span>
+<span id="src-assets-loft-L423">      <span class="kw">if</span> <span class="fn-call">texel_alpha</span>(ot_px, ot_page.pi_w, ot_c.ce_x + x, ot_c.ce_y + y) &gt; <span class="en">PROXY_ALPHA_ON</span> {</span>
+<span id="src-assets-loft-L424">        ot_n += <span class="nm">1</span>;</span>
+<span id="src-assets-loft-L425">      }</span>
+<span id="src-assets-loft-L426">    }</span>
+<span id="src-assets-loft-L427">  }</span>
+<span id="src-assets-loft-L428">  ot_n</span>
+<span id="src-assets-loft-L429">}</span>
+<span id="src-assets-loft-L430"></span>
+<span id="src-assets-loft-L431"><span class="cm">/// Derive `c`'s collision proxy from the page's own alpha, in cell-local</span></span>
+<span id="src-assets-loft-L432"><span class="cm">/// coordinates.</span></span>
+<span id="src-assets-loft-L433"><span class="cm">///</span></span>
+<span id="src-assets-loft-L434"><span class="cm">/// Banded on the TIGHTER axis: the derivation runs both ways and keeps the smaller</span></span>
+<span id="src-assets-loft-L435"><span class="cm">/// total area. 17 of the 36 corpus sprites band better by column than by row, so</span></span>
+<span id="src-assets-loft-L436"><span class="cm">/// choosing per sprite rather than fixing an axis takes the median overshoot from</span></span>
+<span id="src-assets-loft-L437"><span class="cm">/// +29.2 % to +22.8 % — for the cost of running a pass twice at pack time, which</span></span>
+<span id="src-assets-loft-L438"><span class="cm">/// is a cost nothing at runtime pays.</span></span>
+<span id="src-assets-loft-L439"><span class="cm">///</span></span>
+<span id="src-assets-loft-L440"><span class="cm">/// A cell with no opaque texels derives an EMPTY proxy, and an empty proxy hits</span></span>
+<span id="src-assets-loft-L441"><span class="cm">/// nothing. That is the answer a fully transparent cell should give; a single box</span></span>
+<span id="src-assets-loft-L442"><span class="cm">/// around it would collide with whatever stood there.</span></span>
+<span id="src-assets-loft-L443"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_proxy</span>(c: const <span class="en">Cell</span>, page: const <span class="en">PageInfo</span>, px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-assets-loft-L444">                  bands: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="en">PROXY_BANDS</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; {</span>
+<span id="src-assets-loft-L445">  rows = <span class="fn-call">band_boxes</span>(px, page, c, bands, <span class="kw">false</span>);</span>
+<span id="src-assets-loft-L446">  cols = <span class="fn-call">band_boxes</span>(px, page, c, bands, <span class="kw">true</span>);</span>
+<span id="src-assets-loft-L447">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(cols) &gt; <span class="nm">0</span> &amp;&amp; <span class="fn-call">boxes_area</span>(cols) &lt; <span class="fn-call">boxes_area</span>(rows) { <span class="kw">return</span> cols }</span>
+<span id="src-assets-loft-L448">  rows</span>
+<span id="src-assets-loft-L449">}</span>
+<span id="src-assets-loft-L450"></span>
+<span id="src-assets-loft-L451"><span class="cm">/// How much bigger a derived proxy is than the art it stands for.</span></span>
+<span id="src-assets-loft-L452"><span class="cm">///</span></span>
+<span id="src-assets-loft-L453"><span class="cm">/// The number F7 gates on: `&lt;= 1.0` is at most twice the art. Reported per sprite</span></span>
+<span id="src-assets-loft-L454"><span class="cm">/// rather than asserted in aggregate, because one adversarial shape — three thin</span></span>
+<span id="src-assets-loft-L455"><span class="cm">/// diagonal arrows — misses the bound at every band count, and a bound nothing can</span></span>
+<span id="src-assets-loft-L456"><span class="cm">/// violate is not a bound.</span></span>
+<span id="src-assets-loft-L457"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">proxy_overshoot</span>(po_boxes: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, po_solid: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-assets-loft-L458">  <span class="kw">if</span> po_solid &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span> }</span>
+<span id="src-assets-loft-L459">  ((<span class="fn-call">boxes_area</span>(po_boxes) - (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) / (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>))?</span>
+<span id="src-assets-loft-L460">}</span>
 <span id="src-assets-loft-L461"></span>
-<span id="src-assets-loft-L462"><span class="cm">/// The pack's own types, field by field, as the store records them.</span></span>
-<span id="src-assets-loft-L463"><span class="cm">///</span></span>
-<span id="src-assets-loft-L464"><span class="cm">/// Read this when the fingerprints below disagree: it names the type and the field</span></span>
-<span id="src-assets-loft-L465"><span class="cm">/// whose position moved, which the single number cannot. Derived by reflection from</span></span>
-<span id="src-assets-loft-L466"><span class="cm">/// the schema itself, so it cannot drift from it.</span></span>
-<span id="src-assets-loft-L467"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_descriptor</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-assets-loft-L468">  d = <span class="st">""</span>;</span>
-<span id="src-assets-loft-L469">  <span class="kw">for</span> n <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
-<span id="src-assets-loft-L470">    t = <span class="fn-call"><a href="stdlib-type-reflection.html">type_named</a></span>(n);</span>
-<span id="src-assets-loft-L471">    <span class="kw">if</span> t == <span class="kw">null</span> { d += <span class="st">"{n} MISSING\n"</span>; <span class="kw">continue</span> }</span>
-<span id="src-assets-loft-L472">    d += <span class="st">"{t.name} size={t.size}\n"</span>;</span>
-<span id="src-assets-loft-L473">    <span class="kw">for</span> f <span class="kw">in</span> t.fields {</span>
-<span id="src-assets-loft-L474">      d += <span class="st">"  {f.name} {f.type_name} @{f.position} {f.kind} null={f.nullable}\n"</span>;</span>
-<span id="src-assets-loft-L475">    }</span>
-<span id="src-assets-loft-L476">  }</span>
-<span id="src-assets-loft-L477">  d</span>
-<span id="src-assets-loft-L478">}</span>
-<span id="src-assets-loft-L479"></span>
-<span id="src-assets-loft-L480"><span class="cm">/// One number naming this build's pack layout — compare it across targets before a</span></span>
-<span id="src-assets-loft-L481"><span class="cm">/// pack is read.</span></span>
-<span id="src-assets-loft-L482"><span class="cm">///</span></span>
-<span id="src-assets-loft-L483"><span class="cm">/// The struct definition IS the file layout, so a field that sits four bytes further</span></span>
-<span id="src-assets-loft-L484"><span class="cm">/// along on one target reads a NEIGHBOUR's value on the other, silently, and the file</span></span>
-<span id="src-assets-loft-L485"><span class="cm">/// looks corrupt rather than the layout looking wrong. A game that reads packs built</span></span>
-<span id="src-assets-loft-L486"><span class="cm">/// elsewhere should compare this once at boot and refuse rather than draw garbage.</span></span>
-<span id="src-assets-loft-L487"><span class="cm">/// (A 32-bit FNV-1a over `layout_descriptor`, masked at every step because an</span></span>
-<span id="src-assets-loft-L488"><span class="cm">/// unbounded multiply would reach loft's null.)</span></span>
-<span id="src-assets-loft-L489"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_fingerprint</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-assets-loft-L490">  h = <span class="nm">2166136261</span>;</span>
-<span id="src-assets-loft-L491">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">layout_descriptor</span>() {</span>
-<span id="src-assets-loft-L492">    h = (h ^ (c <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)) &amp; <span class="nm">4294967295</span>;</span>
-<span id="src-assets-loft-L493">    h = (h * <span class="nm">16777619</span>) &amp; <span class="nm">4294967295</span>;</span>
-<span id="src-assets-loft-L494">  }</span>
-<span id="src-assets-loft-L495">  h</span>
-<span id="src-assets-loft-L496">}</span>
+<span id="src-assets-loft-L462"><span class="cm">// --- Checking the layout before anything reads a pack ---</span></span>
+<span id="src-assets-loft-L463"></span>
+<span id="src-assets-loft-L464"><span class="cm">/// The pack's own types, field by field, as the store records them.</span></span>
+<span id="src-assets-loft-L465"><span class="cm">///</span></span>
+<span id="src-assets-loft-L466"><span class="cm">/// Read this when the fingerprints below disagree: it names the type and the field</span></span>
+<span id="src-assets-loft-L467"><span class="cm">/// whose position moved, which the single number cannot. Derived by reflection from</span></span>
+<span id="src-assets-loft-L468"><span class="cm">/// the schema itself, so it cannot drift from it.</span></span>
+<span id="src-assets-loft-L469"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_descriptor</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-assets-loft-L470">  d = <span class="st">""</span>;</span>
+<span id="src-assets-loft-L471">  <span class="kw">for</span> n <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
+<span id="src-assets-loft-L472">    t = <span class="fn-call"><a href="stdlib-type-reflection.html">type_named</a></span>(n);</span>
+<span id="src-assets-loft-L473">    <span class="kw">if</span> t == <span class="kw">null</span> { d += <span class="st">"{n} MISSING\n"</span>; <span class="kw">continue</span> }</span>
+<span id="src-assets-loft-L474">    d += <span class="st">"{t.name} size={t.size}\n"</span>;</span>
+<span id="src-assets-loft-L475">    <span class="kw">for</span> f <span class="kw">in</span> t.fields {</span>
+<span id="src-assets-loft-L476">      d += <span class="st">"  {f.name} {f.type_name} @{f.position} {f.kind} null={f.nullable}\n"</span>;</span>
+<span id="src-assets-loft-L477">    }</span>
+<span id="src-assets-loft-L478">  }</span>
+<span id="src-assets-loft-L479">  d</span>
+<span id="src-assets-loft-L480">}</span>
+<span id="src-assets-loft-L481"></span>
+<span id="src-assets-loft-L482"><span class="cm">/// One number naming this build's pack layout — compare it across targets before a</span></span>
+<span id="src-assets-loft-L483"><span class="cm">/// pack is read.</span></span>
+<span id="src-assets-loft-L484"><span class="cm">///</span></span>
+<span id="src-assets-loft-L485"><span class="cm">/// The struct definition IS the file layout, so a field that sits four bytes further</span></span>
+<span id="src-assets-loft-L486"><span class="cm">/// along on one target reads a NEIGHBOUR's value on the other, silently, and the file</span></span>
+<span id="src-assets-loft-L487"><span class="cm">/// looks corrupt rather than the layout looking wrong. A game that reads packs built</span></span>
+<span id="src-assets-loft-L488"><span class="cm">/// elsewhere should compare this once at boot and refuse rather than draw garbage.</span></span>
+<span id="src-assets-loft-L489"><span class="cm">/// (A 32-bit FNV-1a over `layout_descriptor`, masked at every step because an</span></span>
+<span id="src-assets-loft-L490"><span class="cm">/// unbounded multiply would reach loft's null.)</span></span>
+<span id="src-assets-loft-L491"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_fingerprint</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-assets-loft-L492">  h = <span class="nm">2166136261</span>;</span>
+<span id="src-assets-loft-L493">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">layout_descriptor</span>() {</span>
+<span id="src-assets-loft-L494">    h = (h ^ (c <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-assets-loft-L495">    h = (h * <span class="nm">16777619</span>) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-assets-loft-L496">  }</span>
+<span id="src-assets-loft-L497">  h</span>
+<span id="src-assets-loft-L498">}</span>
 </code></pre>
 <h2 id="tests-layout-loft">tests/layout.loft</h2>
 <pre class="src"><code><span id="tests-layout-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -686,99 +688,107 @@
 <span id="tests-pack-loft-L66">  qb: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
 <span id="tests-pack-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-file-system.html">store_load</a></span>(qb, <span class="fn-call">blobs_path</span>(base)), <span class="st">"bulk half read back"</span>);</span>
 <span id="tests-pack-loft-L68">  out = qb[<span class="st">"page/mobs"</span>];</span>
-<span id="tests-pack-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out != <span class="kw">null</span>, <span class="st">"page pixels present"</span>);</span>
-<span id="tests-pack-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(out.bl_bytes, b[<span class="st">"page/mobs"</span>].bl_bytes), <span class="st">"pixels byte-identical"</span>);</span>
-<span id="tests-pack-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out.bl_kind is <span class="en">Rgba</span>, <span class="st">"the kind came back too"</span>);</span>
-<span id="tests-pack-loft-L72">  <span class="cm">// Length alone cannot witness the bytes: two blobs of the same size differ here.</span></span>
-<span id="tests-pack-loft-L73">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same_bytes</span>(qb[<span class="st">"page/items"</span>].bl_bytes, qb[<span class="st">"hit.ogg"</span>].bl_bytes),</span>
-<span id="tests-pack-loft-L74">         <span class="st">"the fixture's blobs are distinguishable at all"</span>);</span>
-<span id="tests-pack-loft-L75">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L76">}</span>
-<span id="tests-pack-loft-L77"></span>
-<span id="tests-pack-loft-L78"><span class="kw">fn</span> <span class="fn-call">test_one_key_reads_without_the_rest_of_the_pack</span>() {</span>
-<span id="tests-pack-loft-L79">  base = <span class="fn-call">base_for</span>(<span class="st">"paged"</span>);</span>
-<span id="tests-pack-loft-L80">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L81">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L82">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L83">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L84">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L85"></span>
-<span id="tests-pack-loft-L86">  <span class="cm">// The whole point of the bulk half: a reader starts EMPTY and ends holding only</span></span>
-<span id="tests-pack-loft-L87">  <span class="cm">// what it asked for.  A loader that pulled the file would pass a value check and</span></span>
-<span id="tests-pack-loft-L88">  <span class="cm">// fail this one.</span></span>
-<span id="tests-pack-loft-L89">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L90">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]);</span>
-<span id="tests-pack-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the fetch cost one round trip"</span>);</span>
-<span id="tests-pack-loft-L92">  clip = res[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(clip.bl_bytes) == <span class="nm">2048</span>, <span class="st">"the clip arrived whole"</span>);</span>
-<span id="tests-pack-loft-L94">  n = <span class="nm">0</span>;</span>
-<span id="tests-pack-loft-L95">  <span class="kw">for</span> _r <span class="kw">in</span> res { n += <span class="nm">1</span>; }</span>
-<span id="tests-pack-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">1</span>, <span class="st">"only the requested key is resident, not the two pages"</span>);</span>
-<span id="tests-pack-loft-L97"></span>
-<span id="tests-pack-loft-L98">  <span class="cm">// Asking again costs nothing — which is what lets a frame assert zero.</span></span>
-<span id="tests-pack-loft-L99">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]) == <span class="nm">0</span>, <span class="st">"a resident key is free"</span>);</span>
-<span id="tests-pack-loft-L100">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L101">}</span>
-<span id="tests-pack-loft-L102"></span>
-<span id="tests-pack-loft-L103"><span class="kw">fn</span> <span class="fn-call">test_a_key_the_pack_does_not_have_answers_false</span>() {</span>
-<span id="tests-pack-loft-L104">  base = <span class="fn-call">base_for</span>(<span class="st">"absent"</span>);</span>
-<span id="tests-pack-loft-L105">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L106">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L107">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L108">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L109">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L110"></span>
-<span id="tests-pack-loft-L111">  <span class="cm">// A paged reader that cannot say "absent" is one a caller has to guess about.</span></span>
-<span id="tests-pack-loft-L112">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"no-such-blob"</span>]) == <span class="nm">0</span>, <span class="st">"nothing was fetched"</span>);</span>
-<span id="tests-pack-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(res[<span class="st">"no-such-blob"</span>] == <span class="kw">null</span>, <span class="st">"and no empty record was invented"</span>);</span>
-<span id="tests-pack-loft-L115">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L116">}</span>
+<span id="tests-pack-loft-L69">  src = b[<span class="st">"page/mobs"</span>];</span>
+<span id="tests-pack-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out != <span class="kw">null</span> <span class="kw">and</span> src != <span class="kw">null</span>, <span class="st">"page pixels present"</span>);</span>
+<span id="tests-pack-loft-L71">  <span class="cm">// A keyed read answers `Blob?`, so the bytes are `vector&lt;u8&gt;?`.  Every `?? []` in</span></span>
+<span id="tests-pack-loft-L72">  <span class="cm">// this file sits behind a non-null assert on the line above it: the default is what</span></span>
+<span id="tests-pack-loft-L73">  <span class="cm">// an already-failed test would have read, never a comparison of two empty vectors.</span></span>
+<span id="tests-pack-loft-L74">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(out.bl_bytes ?? [], src.bl_bytes ?? []), <span class="st">"pixels byte-identical"</span>);</span>
+<span id="tests-pack-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out.bl_kind is <span class="en">Rgba</span>, <span class="st">"the kind came back too"</span>);</span>
+<span id="tests-pack-loft-L76">  <span class="cm">// Length alone cannot witness the bytes: two blobs of the same size differ here.</span></span>
+<span id="tests-pack-loft-L77">  items = qb[<span class="st">"page/items"</span>];</span>
+<span id="tests-pack-loft-L78">  clip = qb[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(items != <span class="kw">null</span> <span class="kw">and</span> clip != <span class="kw">null</span>, <span class="st">"both fixture blobs are resident"</span>);</span>
+<span id="tests-pack-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same_bytes</span>(items.bl_bytes ?? [], clip.bl_bytes ?? []),</span>
+<span id="tests-pack-loft-L81">         <span class="st">"the fixture's blobs are distinguishable at all"</span>);</span>
+<span id="tests-pack-loft-L82">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L83">}</span>
+<span id="tests-pack-loft-L84"></span>
+<span id="tests-pack-loft-L85"><span class="kw">fn</span> <span class="fn-call">test_one_key_reads_without_the_rest_of_the_pack</span>() {</span>
+<span id="tests-pack-loft-L86">  base = <span class="fn-call">base_for</span>(<span class="st">"paged"</span>);</span>
+<span id="tests-pack-loft-L87">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L88">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L89">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L90">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L92"></span>
+<span id="tests-pack-loft-L93">  <span class="cm">// The whole point of the bulk half: a reader starts EMPTY and ends holding only</span></span>
+<span id="tests-pack-loft-L94">  <span class="cm">// what it asked for.  A loader that pulled the file would pass a value check and</span></span>
+<span id="tests-pack-loft-L95">  <span class="cm">// fail this one.</span></span>
+<span id="tests-pack-loft-L96">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L97">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]);</span>
+<span id="tests-pack-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the fetch cost one round trip"</span>);</span>
+<span id="tests-pack-loft-L99">  clip = res[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(clip.bl_bytes ?? []) == <span class="nm">2048</span>, <span class="st">"the clip arrived whole"</span>);</span>
+<span id="tests-pack-loft-L101">  n = <span class="nm">0</span>;</span>
+<span id="tests-pack-loft-L102">  <span class="kw">for</span> _r <span class="kw">in</span> res { n += <span class="nm">1</span>; }</span>
+<span id="tests-pack-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">1</span>, <span class="st">"only the requested key is resident, not the two pages"</span>);</span>
+<span id="tests-pack-loft-L104"></span>
+<span id="tests-pack-loft-L105">  <span class="cm">// Asking again costs nothing — which is what lets a frame assert zero.</span></span>
+<span id="tests-pack-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]) == <span class="nm">0</span>, <span class="st">"a resident key is free"</span>);</span>
+<span id="tests-pack-loft-L107">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L108">}</span>
+<span id="tests-pack-loft-L109"></span>
+<span id="tests-pack-loft-L110"><span class="kw">fn</span> <span class="fn-call">test_a_key_the_pack_does_not_have_answers_false</span>() {</span>
+<span id="tests-pack-loft-L111">  base = <span class="fn-call">base_for</span>(<span class="st">"absent"</span>);</span>
+<span id="tests-pack-loft-L112">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L113">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L114">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L115">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
 <span id="tests-pack-loft-L117"></span>
-<span id="tests-pack-loft-L118"><span class="kw">fn</span> <span class="fn-call">test_one_base_drives_both_halves_as_a_url</span>() {</span>
-<span id="tests-pack-loft-L119">  base = <span class="fn-call">base_for</span>(<span class="st">"url"</span>);</span>
-<span id="tests-pack-loft-L120">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L121">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L122">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L123">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L125"></span>
-<span id="tests-pack-loft-L126">  <span class="cm">// The plan's whole premise: develop against a file, ship against a CDN, with ONE</span></span>
-<span id="tests-pack-loft-L127">  <span class="cm">// string changed.  `file://` is the scheme this suite can drive without a server,</span></span>
-<span id="tests-pack-loft-L128">  <span class="cm">// and it takes the same branch an `http(s)://` base does.</span></span>
-<span id="tests-pack-loft-L129">  <span class="cm">//</span></span>
-<span id="tests-pack-loft-L130">  <span class="cm">// ⚠ The two halves do NOT accept the same spellings underneath: the metadata half</span></span>
-<span id="tests-pack-loft-L131">  <span class="cm">// reads a `file://` URL and the paged half REFUSES it (a path or an http URL, and</span></span>
-<span id="tests-pack-loft-L132">  <span class="cm">// nothing else).  A test that only read the metadata would pass while a game's</span></span>
-<span id="tests-pack-loft-L133">  <span class="cm">// art silently loaded nothing.</span></span>
-<span id="tests-pack-loft-L134">  url = <span class="st">"file://{base}"</span>;</span>
-<span id="tests-pack-loft-L135">  q = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L136">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, url), <span class="st">"the metadata half read through a URL"</span>);</span>
-<span id="tests-pack-loft-L137">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.pages[<span class="st">"mobs"</span>] != <span class="kw">null</span>, <span class="st">"and carries the same pages"</span>);</span>
-<span id="tests-pack-loft-L138"></span>
-<span id="tests-pack-loft-L139">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L140">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(url), [<span class="st">"hit.ogg"</span>]);</span>
-<span id="tests-pack-loft-L141">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the bulk half fetched through the SAME base, got {got}"</span>);</span>
-<span id="tests-pack-loft-L142">  clip = res[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span>, <span class="st">"a record, not a refusal"</span>);</span>
-<span id="tests-pack-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(clip.bl_bytes, b[<span class="st">"hit.ogg"</span>].bl_bytes), <span class="st">"the same bytes as the path read"</span>);</span>
-<span id="tests-pack-loft-L145">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L146">}</span>
-<span id="tests-pack-loft-L147"></span>
-<span id="tests-pack-loft-L148"><span class="kw">fn</span> <span class="fn-call">test_the_two_halves_are_separate_files</span>() {</span>
-<span id="tests-pack-loft-L149">  base = <span class="fn-call">base_for</span>(<span class="st">"split"</span>);</span>
-<span id="tests-pack-loft-L150">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L151">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L152">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L153">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L154">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L155">  <span class="cm">// The split is the design, and it is observable: the metadata a boot load pays</span></span>
-<span id="tests-pack-loft-L156">  <span class="cm">// for is a different file from the art, so it can stay small beside it.</span></span>
-<span id="tests-pack-loft-L157">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="fn-call">meta_path</span>(base)).<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(), <span class="st">"metadata half on disk"</span>);</span>
-<span id="tests-pack-loft-L158">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="fn-call">blobs_path</span>(base)).<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(), <span class="st">"bulk half on disk"</span>);</span>
-<span id="tests-pack-loft-L159">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">meta_path</span>(base) != <span class="fn-call">blobs_path</span>(base), <span class="st">"two names, not one"</span>);</span>
-<span id="tests-pack-loft-L160">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L161">}</span>
+<span id="tests-pack-loft-L118">  <span class="cm">// A paged reader that cannot say "absent" is one a caller has to guess about.</span></span>
+<span id="tests-pack-loft-L119">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"no-such-blob"</span>]) == <span class="nm">0</span>, <span class="st">"nothing was fetched"</span>);</span>
+<span id="tests-pack-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(res[<span class="st">"no-such-blob"</span>] == <span class="kw">null</span>, <span class="st">"and no empty record was invented"</span>);</span>
+<span id="tests-pack-loft-L122">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L123">}</span>
+<span id="tests-pack-loft-L124"></span>
+<span id="tests-pack-loft-L125"><span class="kw">fn</span> <span class="fn-call">test_one_base_drives_both_halves_as_a_url</span>() {</span>
+<span id="tests-pack-loft-L126">  base = <span class="fn-call">base_for</span>(<span class="st">"url"</span>);</span>
+<span id="tests-pack-loft-L127">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L128">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L129">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L130">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L132"></span>
+<span id="tests-pack-loft-L133">  <span class="cm">// The plan's whole premise: develop against a file, ship against a CDN, with ONE</span></span>
+<span id="tests-pack-loft-L134">  <span class="cm">// string changed.  `file://` is the scheme this suite can drive without a server,</span></span>
+<span id="tests-pack-loft-L135">  <span class="cm">// and it takes the same branch an `http(s)://` base does.</span></span>
+<span id="tests-pack-loft-L136">  <span class="cm">//</span></span>
+<span id="tests-pack-loft-L137">  <span class="cm">// ⚠ The two halves do NOT accept the same spellings underneath: the metadata half</span></span>
+<span id="tests-pack-loft-L138">  <span class="cm">// reads a `file://` URL and the paged half REFUSES it (a path or an http URL, and</span></span>
+<span id="tests-pack-loft-L139">  <span class="cm">// nothing else).  A test that only read the metadata would pass while a game's</span></span>
+<span id="tests-pack-loft-L140">  <span class="cm">// art silently loaded nothing.</span></span>
+<span id="tests-pack-loft-L141">  url = <span class="st">"file://{base}"</span>;</span>
+<span id="tests-pack-loft-L142">  q = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, url), <span class="st">"the metadata half read through a URL"</span>);</span>
+<span id="tests-pack-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.pages[<span class="st">"mobs"</span>] != <span class="kw">null</span>, <span class="st">"and carries the same pages"</span>);</span>
+<span id="tests-pack-loft-L145"></span>
+<span id="tests-pack-loft-L146">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L147">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(url), [<span class="st">"hit.ogg"</span>]);</span>
+<span id="tests-pack-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the bulk half fetched through the SAME base, got {got}"</span>);</span>
+<span id="tests-pack-loft-L149">  clip = res[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L150">  fix = b[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> <span class="kw">and</span> fix != <span class="kw">null</span>, <span class="st">"a record, not a refusal"</span>);</span>
+<span id="tests-pack-loft-L152">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(clip.bl_bytes ?? [], fix.bl_bytes ?? []), <span class="st">"the same bytes as the path read"</span>);</span>
+<span id="tests-pack-loft-L153">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L154">}</span>
+<span id="tests-pack-loft-L155"></span>
+<span id="tests-pack-loft-L156"><span class="kw">fn</span> <span class="fn-call">test_the_two_halves_are_separate_files</span>() {</span>
+<span id="tests-pack-loft-L157">  base = <span class="fn-call">base_for</span>(<span class="st">"split"</span>);</span>
+<span id="tests-pack-loft-L158">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L159">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L160">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L161">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L162">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L163">  <span class="cm">// The split is the design, and it is observable: the metadata a boot load pays</span></span>
+<span id="tests-pack-loft-L164">  <span class="cm">// for is a different file from the art, so it can stay small beside it.</span></span>
+<span id="tests-pack-loft-L165">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="fn-call">meta_path</span>(base)).<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(), <span class="st">"metadata half on disk"</span>);</span>
+<span id="tests-pack-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="fn-call">blobs_path</span>(base)).<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(), <span class="st">"bulk half on disk"</span>);</span>
+<span id="tests-pack-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">meta_path</span>(base) != <span class="fn-call">blobs_path</span>(base), <span class="st">"two names, not one"</span>);</span>
+<span id="tests-pack-loft-L168">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L169">}</span>
 </code></pre>
 <h2 id="tests-proxy-loft">tests/proxy.loft</h2>
 <pre class="src"><code><span id="tests-proxy-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -797,119 +807,122 @@
 <span id="tests-proxy-loft-L14"><span class="cm">// A blank RGBA page, `w * h` texels, every one fully transparent.</span></span>
 <span id="tests-proxy-loft-L15"><span class="kw">fn</span> <span class="fn-call">blank_page</span>(bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
 <span id="tests-proxy-loft-L16">  bp: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
-<span id="tests-proxy-loft-L17">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>(bw * bh * <span class="nm">4</span>) { bp += [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?]; }</span>
-<span id="tests-proxy-loft-L18">  bp</span>
-<span id="tests-proxy-loft-L19">}</span>
-<span id="tests-proxy-loft-L20"></span>
-<span id="tests-proxy-loft-L21"><span class="cm">// Paint one texel opaque (or to a given alpha).</span></span>
-<span id="tests-proxy-loft-L22"><span class="kw">fn</span> <span class="fn-call">put</span>(pu_px: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pu_stride: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="tests-proxy-loft-L23">       pu_a: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="tests-proxy-loft-L24">  pu_i = (pu_y * pu_stride + pu_x) * <span class="nm">4</span>;</span>
-<span id="tests-proxy-loft-L25">  pu_px[pu_i] = <span class="nm">200</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L26">  pu_px[pu_i + <span class="nm">1</span>] = <span class="nm">100</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L27">  pu_px[pu_i + <span class="nm">2</span>] = <span class="nm">50</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L28">  pu_px[pu_i + <span class="nm">3</span>] = pu_a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L29">}</span>
-<span id="tests-proxy-loft-L30"></span>
-<span id="tests-proxy-loft-L31"><span class="kw">fn</span> <span class="fn-call">a_cell</span>(ac_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ac_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">Cell</span> {</span>
-<span id="tests-proxy-loft-L32">  assets::<span class="en">Cell</span>{ce_key: <span class="st">"c"</span>, ce_page: <span class="st">"p"</span>, ce_x: <span class="nm">0</span>, ce_y: <span class="nm">0</span>, ce_w: ac_w, ce_h: ac_h}</span>
-<span id="tests-proxy-loft-L33">}</span>
-<span id="tests-proxy-loft-L34"></span>
-<span id="tests-proxy-loft-L35"><span class="kw">fn</span> <span class="fn-call">a_page</span>(ap_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ap_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">PageInfo</span> {</span>
-<span id="tests-proxy-loft-L36">  assets::<span class="en">PageInfo</span>{pi_name: <span class="st">"p"</span>, pi_w: ap_w, pi_h: ap_h, pi_blob: <span class="st">"b"</span>}</span>
-<span id="tests-proxy-loft-L37">}</span>
-<span id="tests-proxy-loft-L38"></span>
-<span id="tests-proxy-loft-L39"><span class="cm">// Is (x, y) inside any box?  The containment check, written here rather than</span></span>
-<span id="tests-proxy-loft-L40"><span class="cm">// reused, so the test does not depend on the predicate it is checking.</span></span>
-<span id="tests-proxy-loft-L41"><span class="kw">fn</span> <span class="fn-call">covered</span>(cv: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="tests-proxy-loft-L42">  <span class="kw">for</span> r <span class="kw">in</span> cv {</span>
-<span id="tests-proxy-loft-L43">    <span class="kw">if</span> (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.rx &amp;&amp; (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.rx + r.rw</span>
-<span id="tests-proxy-loft-L44">      &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.ry &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.ry + r.rh { <span class="kw">return</span> <span class="kw">true</span> }</span>
-<span id="tests-proxy-loft-L45">  }</span>
-<span id="tests-proxy-loft-L46">  <span class="kw">false</span></span>
-<span id="tests-proxy-loft-L47">}</span>
-<span id="tests-proxy-loft-L48"></span>
-<span id="tests-proxy-loft-L49"><span class="cm">// CONTAINMENT is the half that makes substitution safe: a system validated</span></span>
-<span id="tests-proxy-loft-L50"><span class="cm">// against the proxy stays valid when the art changes, because the proxy can only</span></span>
-<span id="tests-proxy-loft-L51"><span class="cm">// ever be bigger than the art.  Checked texel by texel on a diagonal — the shape</span></span>
-<span id="tests-proxy-loft-L52"><span class="cm">// a single box is worst at.</span></span>
-<span id="tests-proxy-loft-L53"><span class="kw">fn</span> <span class="fn-call">test_every_opaque_texel_is_inside_the_proxy</span>() {</span>
-<span id="tests-proxy-loft-L54">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L55">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L56">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L57">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L58">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L59">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) &gt; <span class="nm">1</span>, <span class="st">"a diagonal derives more than one band"</span>);</span>
-<span id="tests-proxy-loft-L60">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="tests-proxy-loft-L61">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, i), <span class="st">"texel ({i},{i}) is inside the proxy"</span>);</span>
-<span id="tests-proxy-loft-L62">  }</span>
-<span id="tests-proxy-loft-L63">}</span>
-<span id="tests-proxy-loft-L64"></span>
-<span id="tests-proxy-loft-L65"><span class="cm">// And the BOUND is what stops containment being satisfied by a screen-sized box.</span></span>
-<span id="tests-proxy-loft-L66"><span class="cm">// A 32x32 diagonal is 32 opaque texels; its single tight box is 1024, which is</span></span>
-<span id="tests-proxy-loft-L67"><span class="cm">// +3100 %.  The banded proxy has to come in far under that, and under F7's +100 %.</span></span>
-<span id="tests-proxy-loft-L68"><span class="kw">fn</span> <span class="fn-call">test_the_proxy_is_bounded_where_a_single_box_is_not</span>() {</span>
-<span id="tests-proxy-loft-L69">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L70">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L71">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L72">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L73">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
-<span id="tests-proxy-loft-L74">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(solid == <span class="nm">32</span>, <span class="st">"32 opaque texels"</span>);</span>
-<span id="tests-proxy-loft-L75"></span>
-<span id="tests-proxy-loft-L76">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L77">  over = assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid);</span>
-<span id="tests-proxy-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over &lt;= <span class="nm">1.0</span>, <span class="st">"the derived proxy is inside F7's +100% bound, at {over}"</span>);</span>
-<span id="tests-proxy-loft-L79"></span>
-<span id="tests-proxy-loft-L80">  <span class="cm">// The single box it replaces is not, by a wide margin — that is the gain.</span></span>
-<span id="tests-proxy-loft-L81">  one: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; = [shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">32.0</span>, rh: <span class="nm">32.0</span>}];</span>
-<span id="tests-proxy-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(one, solid) &gt; <span class="nm">30.0</span>, <span class="st">"one box is +3100%"</span>);</span>
-<span id="tests-proxy-loft-L83">}</span>
-<span id="tests-proxy-loft-L84"></span>
-<span id="tests-proxy-loft-L85"><span class="cm">// A cell with nothing opaque derives NOTHING, and an empty proxy hits nothing.</span></span>
-<span id="tests-proxy-loft-L86"><span class="cm">// A single box around an empty cell would collide with whatever stood there.</span></span>
-<span id="tests-proxy-loft-L87"><span class="kw">fn</span> <span class="fn-call">test_a_transparent_cell_derives_an_empty_proxy</span>() {</span>
-<span id="tests-proxy-loft-L88">  px = <span class="fn-call">blank_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L89">  page = <span class="fn-call">a_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L90">  cell = <span class="fn-call">a_cell</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">0</span>, <span class="st">"nothing opaque"</span>);</span>
-<span id="tests-proxy-loft-L92">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) == <span class="nm">0</span>, <span class="st">"and nothing derived"</span>);</span>
-<span id="tests-proxy-loft-L94">  p = shapes::<span class="en">Proxy</span>{boxes: boxes};</span>
-<span id="tests-proxy-loft-L95">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!p.<span class="fn-call">proxy_hits</span>(shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">16.0</span>, rh: <span class="nm">16.0</span>}),</span>
-<span id="tests-proxy-loft-L96">         <span class="st">"an empty proxy hits nothing"</span>);</span>
-<span id="tests-proxy-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, <span class="nm">0</span>) == <span class="nm">0.0</span>, <span class="st">"and no art to be a multiple of"</span>);</span>
-<span id="tests-proxy-loft-L98">}</span>
-<span id="tests-proxy-loft-L99"></span>
-<span id="tests-proxy-loft-L100"><span class="cm">// The alpha threshold is a threshold, not `== 255`: antialiased art has a fringe</span></span>
-<span id="tests-proxy-loft-L101"><span class="cm">// of partly-transparent texels that belong to the silhouette.  At or below</span></span>
-<span id="tests-proxy-loft-L102"><span class="cm">// PROXY_ALPHA_ON a texel is not art.</span></span>
-<span id="tests-proxy-loft-L103"><span class="kw">fn</span> <span class="fn-call">test_the_alpha_cutoff_decides_what_is_art</span>() {</span>
-<span id="tests-proxy-loft-L104">  px = <span class="fn-call">blank_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L105">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">255</span>);   <span class="cm">// solid</span></span>
-<span id="tests-proxy-loft-L106">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">6</span>, <span class="nm">6</span>, <span class="nm">4</span>);     <span class="cm">// below the cutoff — a stray almost-clear texel</span></span>
-<span id="tests-proxy-loft-L107">  page = <span class="fn-call">a_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L108">  cell = <span class="fn-call">a_cell</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L109">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">1</span>, <span class="st">"only the solid one counts"</span>);</span>
-<span id="tests-proxy-loft-L110">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L111">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, <span class="nm">1</span>, <span class="nm">1</span>), <span class="st">"the solid texel is in"</span>);</span>
-<span id="tests-proxy-loft-L112">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">covered</span>(boxes, <span class="nm">6</span>, <span class="nm">6</span>), <span class="st">"the near-transparent one is not"</span>);</span>
-<span id="tests-proxy-loft-L113">}</span>
-<span id="tests-proxy-loft-L114"></span>
-<span id="tests-proxy-loft-L115"><span class="cm">// The axis is chosen PER SPRITE, not fixed.  A wide, short bar bands badly by row</span></span>
-<span id="tests-proxy-loft-L116"><span class="cm">// (one band holds the whole bar) and well by column, so the derivation must run</span></span>
-<span id="tests-proxy-loft-L117"><span class="cm">// both and keep the smaller — 17 of 36 corpus sprites are tighter by column.</span></span>
-<span id="tests-proxy-loft-L118"><span class="kw">fn</span> <span class="fn-call">test_the_tighter_axis_is_chosen_per_sprite</span>() {</span>
-<span id="tests-proxy-loft-L119">  <span class="cm">// A horizontal staircase: wide, only a few rows tall, with big empty corners.</span></span>
-<span id="tests-proxy-loft-L120">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L121">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, <span class="nm">10</span> + (i / <span class="nm">8</span>), <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L122">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L123">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L124">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
-<span id="tests-proxy-loft-L125">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L126">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, <span class="nm">10</span> + (i / <span class="nm">8</span>)), <span class="st">"contains texel {i}"</span>); }</span>
-<span id="tests-proxy-loft-L127">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid) &lt;= <span class="nm">1.0</span>,</span>
-<span id="tests-proxy-loft-L128">         <span class="st">"the chosen axis keeps it inside the bound"</span>);</span>
-<span id="tests-proxy-loft-L129">}</span>
+<span id="tests-proxy-loft-L17">  <span class="cm">// `0 as u8` and not `0 as u8?`: a checked cast is required only where the value</span></span>
+<span id="tests-proxy-loft-L18">  <span class="cm">// could overflow the target width at run time, and a literal 0 cannot.  The</span></span>
+<span id="tests-proxy-loft-L19">  <span class="cm">// nullable form would put an `u8?` into a `vector&lt;u8&gt;`, where it becomes null.</span></span>
+<span id="tests-proxy-loft-L20">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>(bw * bh * <span class="nm">4</span>) { bp += [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]; }</span>
+<span id="tests-proxy-loft-L21">  bp</span>
+<span id="tests-proxy-loft-L22">}</span>
+<span id="tests-proxy-loft-L23"></span>
+<span id="tests-proxy-loft-L24"><span class="cm">// Paint one texel opaque (or to a given alpha).</span></span>
+<span id="tests-proxy-loft-L25"><span class="kw">fn</span> <span class="fn-call">put</span>(pu_px: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pu_stride: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="tests-proxy-loft-L26">       pu_a: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="tests-proxy-loft-L27">  pu_i = (pu_y * pu_stride + pu_x) * <span class="nm">4</span>;</span>
+<span id="tests-proxy-loft-L28">  pu_px[pu_i] = <span class="nm">200</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
+<span id="tests-proxy-loft-L29">  pu_px[pu_i + <span class="nm">1</span>] = <span class="nm">100</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
+<span id="tests-proxy-loft-L30">  pu_px[pu_i + <span class="nm">2</span>] = <span class="nm">50</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
+<span id="tests-proxy-loft-L31">  pu_px[pu_i + <span class="nm">3</span>] = pu_a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
+<span id="tests-proxy-loft-L32">}</span>
+<span id="tests-proxy-loft-L33"></span>
+<span id="tests-proxy-loft-L34"><span class="kw">fn</span> <span class="fn-call">a_cell</span>(ac_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ac_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">Cell</span> {</span>
+<span id="tests-proxy-loft-L35">  assets::<span class="en">Cell</span>{ce_key: <span class="st">"c"</span>, ce_page: <span class="st">"p"</span>, ce_x: <span class="nm">0</span>, ce_y: <span class="nm">0</span>, ce_w: ac_w, ce_h: ac_h}</span>
+<span id="tests-proxy-loft-L36">}</span>
+<span id="tests-proxy-loft-L37"></span>
+<span id="tests-proxy-loft-L38"><span class="kw">fn</span> <span class="fn-call">a_page</span>(ap_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ap_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">PageInfo</span> {</span>
+<span id="tests-proxy-loft-L39">  assets::<span class="en">PageInfo</span>{pi_name: <span class="st">"p"</span>, pi_w: ap_w, pi_h: ap_h, pi_blob: <span class="st">"b"</span>}</span>
+<span id="tests-proxy-loft-L40">}</span>
+<span id="tests-proxy-loft-L41"></span>
+<span id="tests-proxy-loft-L42"><span class="cm">// Is (x, y) inside any box?  The containment check, written here rather than</span></span>
+<span id="tests-proxy-loft-L43"><span class="cm">// reused, so the test does not depend on the predicate it is checking.</span></span>
+<span id="tests-proxy-loft-L44"><span class="kw">fn</span> <span class="fn-call">covered</span>(cv: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-proxy-loft-L45">  <span class="kw">for</span> r <span class="kw">in</span> cv {</span>
+<span id="tests-proxy-loft-L46">    <span class="kw">if</span> (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.rx &amp;&amp; (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.rx + r.rw</span>
+<span id="tests-proxy-loft-L47">      &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.ry &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.ry + r.rh { <span class="kw">return</span> <span class="kw">true</span> }</span>
+<span id="tests-proxy-loft-L48">  }</span>
+<span id="tests-proxy-loft-L49">  <span class="kw">false</span></span>
+<span id="tests-proxy-loft-L50">}</span>
+<span id="tests-proxy-loft-L51"></span>
+<span id="tests-proxy-loft-L52"><span class="cm">// CONTAINMENT is the half that makes substitution safe: a system validated</span></span>
+<span id="tests-proxy-loft-L53"><span class="cm">// against the proxy stays valid when the art changes, because the proxy can only</span></span>
+<span id="tests-proxy-loft-L54"><span class="cm">// ever be bigger than the art.  Checked texel by texel on a diagonal — the shape</span></span>
+<span id="tests-proxy-loft-L55"><span class="cm">// a single box is worst at.</span></span>
+<span id="tests-proxy-loft-L56"><span class="kw">fn</span> <span class="fn-call">test_every_opaque_texel_is_inside_the_proxy</span>() {</span>
+<span id="tests-proxy-loft-L57">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L58">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L59">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L60">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L61">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) &gt; <span class="nm">1</span>, <span class="st">"a diagonal derives more than one band"</span>);</span>
+<span id="tests-proxy-loft-L63">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="tests-proxy-loft-L64">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, i), <span class="st">"texel ({i},{i}) is inside the proxy"</span>);</span>
+<span id="tests-proxy-loft-L65">  }</span>
+<span id="tests-proxy-loft-L66">}</span>
+<span id="tests-proxy-loft-L67"></span>
+<span id="tests-proxy-loft-L68"><span class="cm">// And the BOUND is what stops containment being satisfied by a screen-sized box.</span></span>
+<span id="tests-proxy-loft-L69"><span class="cm">// A 32x32 diagonal is 32 opaque texels; its single tight box is 1024, which is</span></span>
+<span id="tests-proxy-loft-L70"><span class="cm">// +3100 %.  The banded proxy has to come in far under that, and under F7's +100 %.</span></span>
+<span id="tests-proxy-loft-L71"><span class="kw">fn</span> <span class="fn-call">test_the_proxy_is_bounded_where_a_single_box_is_not</span>() {</span>
+<span id="tests-proxy-loft-L72">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L73">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L74">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L75">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L76">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
+<span id="tests-proxy-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(solid == <span class="nm">32</span>, <span class="st">"32 opaque texels"</span>);</span>
+<span id="tests-proxy-loft-L78"></span>
+<span id="tests-proxy-loft-L79">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L80">  over = assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid);</span>
+<span id="tests-proxy-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over &lt;= <span class="nm">1.0</span>, <span class="st">"the derived proxy is inside F7's +100% bound, at {over}"</span>);</span>
+<span id="tests-proxy-loft-L82"></span>
+<span id="tests-proxy-loft-L83">  <span class="cm">// The single box it replaces is not, by a wide margin — that is the gain.</span></span>
+<span id="tests-proxy-loft-L84">  one: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; = [shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">32.0</span>, rh: <span class="nm">32.0</span>}];</span>
+<span id="tests-proxy-loft-L85">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(one, solid) &gt; <span class="nm">30.0</span>, <span class="st">"one box is +3100%"</span>);</span>
+<span id="tests-proxy-loft-L86">}</span>
+<span id="tests-proxy-loft-L87"></span>
+<span id="tests-proxy-loft-L88"><span class="cm">// A cell with nothing opaque derives NOTHING, and an empty proxy hits nothing.</span></span>
+<span id="tests-proxy-loft-L89"><span class="cm">// A single box around an empty cell would collide with whatever stood there.</span></span>
+<span id="tests-proxy-loft-L90"><span class="kw">fn</span> <span class="fn-call">test_a_transparent_cell_derives_an_empty_proxy</span>() {</span>
+<span id="tests-proxy-loft-L91">  px = <span class="fn-call">blank_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L92">  page = <span class="fn-call">a_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L93">  cell = <span class="fn-call">a_cell</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">0</span>, <span class="st">"nothing opaque"</span>);</span>
+<span id="tests-proxy-loft-L95">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) == <span class="nm">0</span>, <span class="st">"and nothing derived"</span>);</span>
+<span id="tests-proxy-loft-L97">  p = shapes::<span class="en">Proxy</span>{boxes: boxes};</span>
+<span id="tests-proxy-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!p.<span class="fn-call">proxy_hits</span>(shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">16.0</span>, rh: <span class="nm">16.0</span>}),</span>
+<span id="tests-proxy-loft-L99">         <span class="st">"an empty proxy hits nothing"</span>);</span>
+<span id="tests-proxy-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, <span class="nm">0</span>) == <span class="nm">0.0</span>, <span class="st">"and no art to be a multiple of"</span>);</span>
+<span id="tests-proxy-loft-L101">}</span>
+<span id="tests-proxy-loft-L102"></span>
+<span id="tests-proxy-loft-L103"><span class="cm">// The alpha threshold is a threshold, not `== 255`: antialiased art has a fringe</span></span>
+<span id="tests-proxy-loft-L104"><span class="cm">// of partly-transparent texels that belong to the silhouette.  At or below</span></span>
+<span id="tests-proxy-loft-L105"><span class="cm">// PROXY_ALPHA_ON a texel is not art.</span></span>
+<span id="tests-proxy-loft-L106"><span class="kw">fn</span> <span class="fn-call">test_the_alpha_cutoff_decides_what_is_art</span>() {</span>
+<span id="tests-proxy-loft-L107">  px = <span class="fn-call">blank_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L108">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">255</span>);   <span class="cm">// solid</span></span>
+<span id="tests-proxy-loft-L109">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">6</span>, <span class="nm">6</span>, <span class="nm">4</span>);     <span class="cm">// below the cutoff — a stray almost-clear texel</span></span>
+<span id="tests-proxy-loft-L110">  page = <span class="fn-call">a_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L111">  cell = <span class="fn-call">a_cell</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L112">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">1</span>, <span class="st">"only the solid one counts"</span>);</span>
+<span id="tests-proxy-loft-L113">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, <span class="nm">1</span>, <span class="nm">1</span>), <span class="st">"the solid texel is in"</span>);</span>
+<span id="tests-proxy-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">covered</span>(boxes, <span class="nm">6</span>, <span class="nm">6</span>), <span class="st">"the near-transparent one is not"</span>);</span>
+<span id="tests-proxy-loft-L116">}</span>
+<span id="tests-proxy-loft-L117"></span>
+<span id="tests-proxy-loft-L118"><span class="cm">// The axis is chosen PER SPRITE, not fixed.  A wide, short bar bands badly by row</span></span>
+<span id="tests-proxy-loft-L119"><span class="cm">// (one band holds the whole bar) and well by column, so the derivation must run</span></span>
+<span id="tests-proxy-loft-L120"><span class="cm">// both and keep the smaller — 17 of 36 corpus sprites are tighter by column.</span></span>
+<span id="tests-proxy-loft-L121"><span class="kw">fn</span> <span class="fn-call">test_the_tighter_axis_is_chosen_per_sprite</span>() {</span>
+<span id="tests-proxy-loft-L122">  <span class="cm">// A horizontal staircase: wide, only a few rows tall, with big empty corners.</span></span>
+<span id="tests-proxy-loft-L123">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L124">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, <span class="nm">10</span> + (i / <span class="nm">8</span>), <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L125">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L126">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L127">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
+<span id="tests-proxy-loft-L128">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L129">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, <span class="nm">10</span> + (i / <span class="nm">8</span>)), <span class="st">"contains texel {i}"</span>); }</span>
+<span id="tests-proxy-loft-L130">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid) &lt;= <span class="nm">1.0</span>,</span>
+<span id="tests-proxy-loft-L131">         <span class="st">"the chosen axis keeps it inside the bound"</span>);</span>
+<span id="tests-proxy-loft-L132">}</span>
 </code></pre>
 <h2 id="tests-scene-loft">tests/scene.loft</h2>
 <pre class="src"><code><span id="tests-scene-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
