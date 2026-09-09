@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 449 | 425 | **24** |
+| 450 | 426 | **24** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 766 | 422 | 6 | **338** |
+| 767 | 422 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2621,8 +2621,10 @@ column's `neither` did not move.
 loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.**  Taken from
 `scripts/ir_walker_audit.py unspan` on the joined tree, not from either side.
 
-loft#1494 and loft#1495 then move it to **`449 · 425 · 24`**, and the OPAQUE column is the one
-that rises — the only time in this table's history that a fix has added a blind site rather than
+loft#1494, loft#1495 and loft#1496 then move it to **`450 · 426 · 24`** — loft#1496's
+`control::void_dropped_statement_arms` peels, so it lands on the peeling side, and the OPAQUE
+column rises by loft#1495's site alone.  That one rise is the only time in this table's history
+that a fix has added a blind site rather than a peeling one — the only time in this table's history that a fix has added a blind site rather than
 a peeling one, so it is worth saying why it is not one.  `generation::emit::arm_diverges` asks
 whether a branch arm leaves through `return` / `break` / `continue`, and it asks it of
 `Value::tail()` — whose own first arm is `Value::Span(b) => b.1.tail()`, so the peel happens one
