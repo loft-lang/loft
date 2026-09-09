@@ -398,18 +398,7 @@ pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     // Plan-57 Phase C: single-ownership (ref-count removed) — close the file
     // handle whenever its File store is freed.
     #[cfg(not(host_fs))]
-    if !stores.allocations[db.store_nr as usize].free
-        && db.rec != 0
-        && let Some(&file_type) = stores.names.get("File")
-    {
-        let stored_type = stores.store(&db).get_u32_raw(db.rec, 4) as u16;
-        if stored_type == file_type {
-            let file_ref = stores.store(&db).get_i32_raw(db.rec, db.pos + 28);
-            if file_ref != i32::MIN && (file_ref as usize) < stores.files.len() {
-                stores.files[file_ref as usize] = None;
-            }
-        }
-    }
+    stores.close_file_handle(&db);
     stores.free_named(&db, name);
 }
 
@@ -965,10 +954,11 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // uses to free the destination's nested vectors/strings so a
     // reassignment doesn't double-free on scope exit.
     let raw_tp = tp as u16;
-    let free_source = raw_tp & 0x8000 != 0;
-    let tp = raw_tp & 0x7FFF;
+    let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+    let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
+    let tp = raw_tp & crate::keys::COPY_TP_MASK;
     let size = u32::from(stores.size(tp));
-    if std::env::var("LOFT_TRACE_COPY").is_ok() {
+    if crate::keys::trace_copy() {
         crate::loft_eprintln!(
             "[copy] OpCopyRecord src=#{}@{},{} dst=#{}@{},{} tp={tp} size={size} free_src={free_source}",
             data.store_nr,
@@ -979,7 +969,9 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
             to.pos,
         );
     }
-    stores.remove_claims(&to, tp);
+    if !fresh_dest {
+        stores.remove_claims(&to, tp);
+    }
     stores.copy_block(&data, &to, size);
     stores.copy_claims(&data, &to, tp);
     // @P317 — LOFT_LOG=copy_check (native): warn on nested-length divergence.
@@ -3420,7 +3412,17 @@ pub fn n_set_store_lock(cell: &std::cell::UnsafeCell<Stores>, r: DbRef, locked: 
 pub fn n_protect_store_frees(cell: &std::cell::UnsafeCell<Stores>, r: DbRef) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     if r.rec != 0 && (r.store_nr as usize) < stores.allocations.len() {
-        let origin = format!("call_bracket(store_nr={}, rec={})", r.store_nr, r.rec);
+        // The origin names the bracket in a refusal or a `LOFT_LOG=locks` trace; it is
+        // formatted only when someone will read it — this runs on every call with a
+        // `const` collection argument (@PLN157 § V-e).
+        let origin: std::borrow::Cow<'static, str> = if crate::log_config::lock_trace_enabled() {
+            std::borrow::Cow::Owned(format!(
+                "call_bracket(store_nr={}, rec={})",
+                r.store_nr, r.rec
+            ))
+        } else {
+            std::borrow::Cow::Borrowed("call_bracket")
+        };
         stores.allocations[r.store_nr as usize].set_free_protected(origin);
     }
 }
@@ -5336,6 +5338,7 @@ pub fn cr_call_pop() {
 pub struct CallGuard;
 
 impl Drop for CallGuard {
+    #[inline]
     fn drop(&mut self) {
         cr_call_pop();
     }
@@ -5471,6 +5474,7 @@ impl FnRefBufGuard {
     /// declared return type is a heap value, which is the only way a buffer it delivered
     /// into can still be reachable after it ends.
     #[must_use]
+    #[inline]
     pub fn new(cell: &std::cell::UnsafeCell<Stores>, hands_up: bool) -> Self {
         Self {
             cell: std::ptr::from_ref(cell),
@@ -5478,13 +5482,15 @@ impl FnRefBufGuard {
             hands_up,
         }
     }
-}
 
-impl Drop for FnRefBufGuard {
-    fn drop(&mut self) {
-        if self.hands_up || FNREF_LEN.with(Cell::get) == self.mark {
-            return;
-        }
+    /// The out-of-line half of the drop: the frame DID deliver fn-ref return buffers, so
+    /// split them off the list and release the ones the frame still holds.  Kept apart
+    /// from `drop` so the test a frame pays on every exit -- two `Cell` reads -- inlines
+    /// across the rlib boundary (@PLN157 § The floor: the guards were three calls per
+    /// non-leaf frame on the drawing bench).
+    #[cold]
+    #[inline(never)]
+    fn release(&mut self) {
         let mine: Vec<(DbRef, u64)> = FNREF_BUFS.with(|b| {
             let mut list = b.borrow_mut();
             let from = usize::try_from(self.mark)
@@ -5514,6 +5520,16 @@ impl Drop for FnRefBufGuard {
             }
             OpFreeRef(cell, buf, "__vc_hbuf");
         }
+    }
+}
+
+impl Drop for FnRefBufGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if self.hands_up || FNREF_LEN.with(Cell::get) == self.mark {
+            return;
+        }
+        self.release();
     }
 }
 

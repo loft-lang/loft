@@ -79,6 +79,10 @@ those that share a RULE.
 | may a move-elide retarget across this statement | `scopes::collect_move_disturbed` | the Record and Construct shapes had the identical hole; now one predicate, parameterised by copy-op + source-arg |
 | which `@EXPECT_*` tag a corpus file carries | `common::expect_tag` | the interpreter and native runners skipped on different readings, costing 79 assertions |
 | is this a cell / primitive-vector element target | `cell_struct_name`, `is_primitive_vector_element_target` | audited 2026-08-22; the three copies of each list agree |
+| may this binding's store be freed here — the @FR-O-Proxy / @FR-O-Override PAIR | `variables::Function::proxy_says_owned` | six free sites spelled `tp(v).depend().is_empty() && !is_skip_free(v)` by hand, and the rule says those two must never travel apart (@PLN155 phase 1). On `Function`, because that is what all six hold: the parser's `self.vars`, the interpreter codegen's `stack.function`, and the one `Scopes` is handed. `Scopes::owns_freeable_store` is that pair PLUS the sweep's own parameter carve-out. Three sites that free on `deps` are NOT this question and stay apart — see below |
+| the pair WIDENED by a single-argument borrow | `variables::Function::proxy_says_owned_or_arg` | the displacement question reads the proxy wider — a local borrowing one argument still has a store of its own to release — and `owns_displaced_store` wrote both halves by hand 99 lines above the home.  Routed THROUGH the pair: @FR-O-Override does not soften because the proxy did (@PLN155) |
+| a VECTOR marked never-free that still carries deps | `variables::Function::is_marked_vector_borrow` | the COMPLEMENT of the pair, spelled at two sites — `Parser::ref_return` and `Parser::jo_copy_borrowed_arm_yield` each named three conditions to say one thing (@PLN155) |
+| is `v` never-free (@FR-O-Override) | `variables::Function::is_skip_free` | the flag had two readers, `is_skip_free` and a bare `skip_free` with five callers, and the contract is written in a doc block on the first only — so a reader of the second never met it (@PLN155 phase 1) |
 
 ## The checklist — candidates, with site counts measured 2026-08-24
 
@@ -837,6 +841,31 @@ noise.  The
 fourth row above was found by hand, from inside one of the lists the screen could not see; a
 mode that asks "who is blind to spelling B" is worth asking of the mode itself.
 
+## A traverser's audit is blind to a classifier's omission (2026-09-08)
+
+Three defects this cycle — loft#1444, loft#1474, loft#1477 — are one shape: **one question,
+several decoders, and the defect is in whichever decoder the failing route consults.**  All
+three sit in the return/closure neighbourhood, and the instrument that should have found them
+could not, for a reason worth writing down.
+
+`ir_walker_audit.py`'s `walkers` and `reach` measure DESCENT: does this walker enter every
+child-bearing shape.  `Value::FnRef` is a LEAF in `Value::for_each_child` — correctly, it
+carries no child expression — so a walker with no `FnRef` arm is invisible to both modes.
+loft#1477 is exactly that: `scopes::collect_return_sources` classifies which VALUES a return
+delivers, and a capturing lambda is not a `Var`, so `return fn() { … }` contributed nothing to
+the delivered set and the frame freed what it had just handed to the caller.  `reach` listed
+the function and named nine missing variants; `FnRef` was not among them and could not be.
+
+**The distinction:** a TRAVERSER must descend into every child-bearing shape, and the audit
+checks that.  A value CLASSIFIER must recognise every value-bearing LEAF — the complement —
+and nothing checks it.
+
+⚠ **The obvious screen for the complement is not an instrument yet.**  "Walkers that name `Var`
+but omit `FnRef`/`FnRefDnr`/`TupleGet`/`Enum`" returns **238 functions**, because most of them
+ask a question those leaves cannot answer.  Recorded so the next person does not build on the
+number: sharpening it needs a way to say which walkers ask *which values does this deliver or
+own*, and that is not written down anywhere.
+
 ## The three corners, and why all three feel like a condition bug (2026-09-08)
 
 The two sections above ask questions that sound alike and are not, and a third case turned up the
@@ -952,6 +981,27 @@ shape.  The sites, so the next reader can find them all:
 
 The instrument is `LOFT_TEXT_TIMELINE=1` (one ledger per process, reported at a program's
 exit and at the end of a `--tests` run) and, for the release, `scripts/valgrind-sweep.sh`.
+
+## The free licence — three sites that read `deps` and are NOT the pair (@PLN155 phase 1, 2026-09-08)
+
+`Function::proxy_says_owned` is the one home for *does the proxy say this binding owns its
+store, with the veto discharged*. Nine sites conclude ownership on the proxy and reach a free;
+six are that question and now ask it once. The other three are recorded here so the fold is not
+"finished" by someone merging them:
+
+| site | what it actually asks | why it cannot be the pair |
+|---|---|---|
+| `Scopes::tuple_owned_elem_frees` | does this tuple ELEMENT own its store, and is the CONTAINER never-free? | TWO subjects. The proxy is read off `elems[idx].depend()` and the veto off `v`; a predicate over one binding has one subject, and a tuple has no dep list of its own to lend the element |
+| `Scopes::scan_set`, the displaced-owned strip | is there a dep list LEFT TO STRIP, and is the binding never-free? | `!empty && !veto` is not the pair negated (`!(empty && !veto)` is `!empty \|\| veto`). Its first half is not an ownership answer — it is a question about work to do — so only its veto is @FR-O-Proxy's obligation |
+| `Scopes::scan_set`, the callref-delivery strip | the same question, for a collection a closure delivered | as above; the two strips share one reading and are marked at both sites |
+
+⚠ **And the instrument had to be taught the fold, or the fold blinds it.** Replacing six
+textual `depend().is_empty()` reads with calls to one predicate took `scripts/o_proxy_check.py`
+from *9 of 29 reach a free* to *3 of 23* — which reads as an improvement and is a loss of
+coverage: a site whose obligation is discharged BY CONSTRUCTION is still a site that frees on
+the proxy, and the check had simply stopped seeing it. `PROXY` and `DISCHARGE` now name
+`proxy_says_owned`, and the population reads 9 of 30. **Any future fold onto a predicate owes
+its instrument the same edit in the same commit.**
 
 ## Not mergeable — recorded so the question is not reopened
 

@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1476 — a closure record the return delivers on SOME path, on the runs that do not.
+//
+// `@FR-L-CapOwn` — the frame gives its release up to the record's cascade, and that handover is
+// right only where the record actually LEAVES.  Delivery through a branch is a per-run fact,
+// while `record_leaves_frame` is one static answer for the whole function: a record handed out
+// by one arm was exempted from the frame's free on EVERY path, so the runs that drop it leaked
+// the record AND the capture its cascade would have taken.  Measured: `loft introspect` showed
+// the function emitting no frees at all.
+//
+// The release goes INSIDE the arms that do not hand it out.  That is what makes it per-run
+// without a runtime witness — the arm IS the path — and on that path nothing escaped holding the
+// record, so cascading into its capture is exactly right.
+//
+// Where several records SHARE one store the release needs a second half, because each of them
+// OWNS: a plain free on the one left behind would follow its capture slots into the store the
+// DELIVERED record still holds.  The slots are NULLED first, so the cascade finds nothing — the
+// record's own store is reclaimed and the capture stays for whoever escaped with it.  That is
+// what lets the static owner pick be dropped entirely for such a group: "exactly one record
+// cascades, and it is the one that escapes" becomes true by construction rather than by a
+// marker chosen at compile time.
+//
+// Axes this file MOVES:  the branch's SPELLING (`if` · `match` · a three-arm match) · WHICH arm
+//                        delivers (first · middle · last · every arm) · what the omitting arm
+//                        yields (a bare non-capturing lambda, which is the shape that also has
+//                        to be WIDENED as it is wrapped — a bare def-number placed in a value
+//                        position loses the fn-ref's closure half otherwise) · and whether the
+//                        record leaves the frame AT ALL, which is the control · and how many
+//                        records ADOPT one store (one · two · three), which is what decides
+//                        whether the capture slots must be nulled before the release.
+// Axes it HOLDS FIXED:   one capture per record, and the RETURN as the only route out.  A record
+//                        handed over through a `&fn(…)` LINK never appears in the tail, so no arm
+//                        can witness that it was delivered and the release must not reach it —
+//                        `1443-a-closure-written-through-a-fn-parameter-link.loft` is that cell
+//                        and it is where this file's bound is measured.  A build sitting inside
+//                        a branch ARM is loft#1464's question, answered by the conditional
+//                        release rather than by this one.
+//
+// @falsified-at: e5f44328f, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 101 -> 0 and panicked -> clean; native exit 1 -> 0 and
+//   `kt=82 E76×10, kt=87 __closure_4×2, kt=88 __closure_7×2, …` (11 kinds) leaked -> clean.
+//   Every VALUE is correct on the control too — the record is simply never returned — so an
+//   unarmed run reads INERT, which is the whole shape of this ticket.
+
+struct E76 { a: integer }
+enum W76 { One, Two }
+
+// e1 — the filed shape reduced to ONE record: delivered by the `if` arm, dropped by the `else`.
+fn if_one(p: boolean) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  if p { g1 } else { fn() -> integer { 7 } }
+}
+
+// e2 — the `match` spelling, whose arms are built by the other chain builder.
+fn match_one(p: boolean) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  match p { true => g1, false => fn() -> integer { 7 } }
+}
+
+// e3 — three arms, the record delivered by the FIRST.  Two omitting arms, so a cure that
+// reached only one of them would leave this cell leaking on `f(2)`.
+fn three_first(p: integer) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  match p { 0 => g1, 1 => fn() -> integer { 7 }, _ => fn() -> integer { 9 } }
+}
+
+// e4 — three arms, the record delivered by the MIDDLE one: neither first nor last, so the walk
+// has to reach a nested branch rather than the top-level pair.
+fn three_middle(p: integer) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  match p { 0 => fn() -> integer { 7 }, 1 => g1, _ => fn() -> integer { 9 } }
+}
+
+// e5 — an ENUM subject.
+fn enum_one(p: W76) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  match p { One => g1, Two => fn() -> integer { 7 } }
+}
+
+// c1 — CONTROL: delivered by EVERY arm.  There is no omitting path, so nothing may be inserted;
+// a cure that freed here would release the record the caller is being handed.
+fn always(p: boolean) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  if p { g1 } else { g1 }
+}
+
+// c2 — CONTROL: the record never leaves the frame at all.  The frame's ordinary release covers
+// it, and the exemption this ticket is about never fires.
+fn never_leaves(p: boolean) -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  if p { g1() } else { 7 }
+}
+
+// e6 — TWO records adopting ONE store, delivered conditionally: the shape the ticket was filed
+// on, and the one the per-arm release alone cannot carry.  Each record OWNS here (none is freed
+// by this frame, so none of their cascades runs in it), and the release on the one left behind
+// NULLS its capture slots first — so the cascade finds nothing, that record's own store is
+// reclaimed, and the shared capture stays for the record that escaped to free in the caller.
+// Both directions matter: the run delivering the FIRST and the run delivering the SECOND each
+// leave a different record behind.
+fn two_records(p: boolean) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  g2: fn() -> integer = fn() -> integer { 5 + e.a };
+  if p { g1 } else { g2 }
+}
+
+// e7 — THREE records over one store, so "the one left behind" is two of them on every run.
+fn three_records(p: integer) -> fn() -> integer {
+  e: E76 = E76 { a: 2 };
+  g1: fn() -> integer = fn() -> integer { 3 + e.a };
+  g2: fn() -> integer = fn() -> integer { 5 + e.a };
+  g3: fn() -> integer = fn() -> integer { 7 + e.a };
+  match p { 0 => g1, 1 => g2, _ => g3 }
+}
+
+fn main() {
+  a1 = if_one(true);  b1 = if_one(false);
+  assert(a1() == 5, "e1 `if`, delivering arm: {a1()}");
+  assert(b1() == 7, "e1b `if`, omitting arm: {b1()}");
+  a2 = match_one(true); b2 = match_one(false);
+  assert(a2() == 5, "e2 `match`, delivering arm: {a2()}");
+  assert(b2() == 7, "e2b `match`, omitting arm: {b2()}");
+
+  a3 = three_first(0); b3 = three_first(1); c3 = three_first(2);
+  assert(a3() == 5, "e3 three arms, delivered first: {a3()}");
+  assert(b3() == 7, "e3b three arms, first omitting arm: {b3()}");
+  assert(c3() == 9, "e3c three arms, second omitting arm: {c3()}");
+
+  a4 = three_middle(0); b4 = three_middle(1); c4 = three_middle(2);
+  assert(a4() == 7, "e4 three arms, omitting before: {a4()}");
+  assert(b4() == 5, "e4b three arms, delivered in the MIDDLE: {b4()}");
+  assert(c4() == 9, "e4c three arms, omitting after: {c4()}");
+
+  a5 = enum_one(W76.One); b5 = enum_one(W76.Two);
+  assert(a5() == 5, "e5 enum subject, delivering arm: {a5()}");
+  assert(b5() == 7, "e5b enum subject, omitting arm: {b5()}");
+
+  a6 = always(true); b6 = always(false);
+  assert(a6() == 5, "c1 delivered by every arm, first: {a6()}");
+  assert(b6() == 5, "c1b delivered by every arm, second: {b6()}");
+  assert(never_leaves(true) == 5, "c2 never leaves the frame, called: {never_leaves(true)}");
+  assert(never_leaves(false) == 7, "c2b never leaves the frame, skipped: {never_leaves(false)}");
+
+
+  a8 = two_records(true); b8 = two_records(false);
+  assert(a8() == 5, "e6 two records over one store, first delivered: {a8()}");
+  assert(b8() == 7, "e6b two records over one store, second delivered: {b8()}");
+  c8 = three_records(0); d8 = three_records(1); f8 = three_records(2);
+  assert(c8() == 5, "e7 three records, first delivered: {c8()}");
+  assert(d8() == 7, "e7b three records, middle delivered: {d8()}");
+  assert(f8() == 9, "e7c three records, last delivered: {f8()}");
+
+  println("1476-a-record-delivered-on-some-paths-is-freed-on-the-others ok");
+}

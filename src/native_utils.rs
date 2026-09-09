@@ -2818,7 +2818,6 @@ mod dep_search_dirs_tests {
 #[cfg(test)]
 mod publish_cached_binary_tests {
     use super::publish_cached_binary;
-    use std::os::unix::fs::MetadataExt;
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join("loft-publish-cache").join(name);
@@ -2830,6 +2829,11 @@ mod publish_cached_binary_tests {
     /// The pre-fix publish, kept as the POSITIVE CONTROL.  Without it the test below
     /// asserts a property nothing was ever measured to violate, and a guard that cannot
     /// fail is not a guard.
+    ///
+    /// `cfg(unix)` with its one caller: the control exists only for the inode reading, so
+    /// on Windows it would be a function nobody calls and `-D warnings` fails the build on
+    /// `dead_code`.
+    #[cfg(unix)]
     fn publish_by_copy(built: &std::path::Path, cached: &std::path::Path) {
         let _ = std::fs::copy(built, cached);
     }
@@ -2841,8 +2845,19 @@ mod publish_cached_binary_tests {
     /// already accepted the path watches its bytes vanish and then regrow.  A rename
     /// swaps in a different inode, and a process still exec'ing the old one keeps a
     /// complete file.  This is the property; the timing window is only its symptom.
+    ///
+    /// UNIX only, because the READING is: `MetadataExt::ino` does not exist on Windows,
+    /// and an unguarded `use std::os::unix::fs::MetadataExt` at the module head broke the
+    /// Windows build outright (`cannot find unix in os`, then four `no method named ino`)
+    /// — a test's import, taking down `cargo test` for the whole target.  The property is
+    /// not unix-only and Windows spells its identity `MetadataExt::file_index`; that arm is
+    /// deliberately NOT written here, because it cannot be measured from this box and an
+    /// assertion nobody has watched fail is the thing this test's own control exists to
+    /// refuse.  The sweep test below stays on every platform.
+    #[cfg(unix)]
     #[test]
     fn a_publish_swaps_the_inode_instead_of_truncating_in_place() {
+        use std::os::unix::fs::MetadataExt;
         let dir = scratch("inode");
         let a = dir.join("built-a");
         let b = dir.join("built-b");

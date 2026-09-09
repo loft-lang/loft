@@ -373,6 +373,41 @@ Against 572 s that is noise, and it re-opens the starvation flake the group exis
 ⚠ 2 and 3 are not equivalent: 2 reduces what is checked, 3 does not. Prefer 3 if the
 serialiser turns out to be the cost, and measure it before choosing.
 
+### When the local gate is unreliable, run the same gate on GitHub (2026-09-08)
+
+A local `make ci` is one process tree on a shared laptop.  On 2026-09-08 the waiter for
+one was killed for memory while the gate ran on at 10 of 14 GiB used, and a gate under that
+pressure can die the same way (SIGKILL, no verdict) — a run that ends without a verdict is
+not a gate, however far it got.  The owner's rule: **do not fight the box; the identical
+gate runs on GitHub against the pushed commit.**  `ci.yml` carries a `workflow_dispatch`
+trigger, so a branch needs no PR to be gated:
+
+```bash
+git push origin <branch>                    # a dispatch runs the commit GitHub holds
+gh workflow run ci.yml --ref <branch> -f os=ubuntu-latest
+gh run list --workflow ci.yml --branch <branch> --limit 1      # its run id
+gh run watch <run-id> --exit-status         # or poll: gh run view <run-id>
+```
+
+`os=ubuntu-latest` is the local gate's twin: the PR matrix is Linux-only (macOS and
+Windows are placeholders there), and so is `make ci`.  One dispatch per push: the
+workflow's concurrency group cancels an in-progress run on the same ref (every ref but
+`main`), so a second dispatch after a follow-up commit CANCELS the first — which is the
+right outcome (the newer commit supersedes), but a cancelled run is no verdict for the
+older one.  A dispatch takes the push-to-main
+path rather than the PR path, so it also runs the non-PR extras (the stdlib round-trip, the
+differential oracle) — strictly more than `make ci`, in ~20 min.  `os=all` adds macOS and
+the ~30-min Windows leg; reach for it when the change touches a platform seam.  `make
+release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
+release evidence, not a branch gate.
+
+What a GitHub run cannot do: measure a ratio (`make native-ratio`, `make speed` — reports,
+never gates, and they stay local) or read this box's scratch.  What it does that a local
+run cannot: run cold, on a machine nobody else is using, and leave a verdict that
+`release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
+`find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
+`make ci`.
+
 ## Where the 31 minutes actually are (2026-08-10) — measured, and one axis untried
 
 Per-job wall-clock on the last green PR run (`31359676983`). **One job is the whole
@@ -529,10 +564,11 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL, feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored ownership fuzz replay + SI-2 check), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
-| **nightly 04:30** | `registry-validation` — every published package installed + tested on both backends | `schedule` |
+| **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
+| **Sundays 05:30** | `registry-validation` (scope `full`) — EVERY non-yanked published version, 164 legs.  The nightly only ever validated the tip, so 121 of 164 versions were checked by nothing (loft#1462, the gate hole behind #1448).  Weekly rather than nightly because a rotted OLD release breaks nobody until somebody pins it | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — every published lib against this loft, plus the warning dashboard | `schedule`, `push`, `pull_request` |
 | **nightly 07:00** | `lib-branch-report` — unmerged branches across the library repos | `schedule` |
 | **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check) | `schedule` |
@@ -574,6 +610,27 @@ Two measurements, both from `gh run list`, decided this:
   (`-C debug-assertions=on`, which `[profile.dev.package.loft]` strips), so the way to
   ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the
   FULL nightly set, wider than the push-triggered run that produced the reds.
+
+- ⚠ **Two of those gates need no dispatch at all — they are a MINUTE each on this box**, and
+  not knowing that is what makes the round-trip look like the only option.  Both are plain
+  `nextest` runs of the ordinary corpus with one env var, and the nightly's own recipe is the
+  whole of it:
+
+  ```bash
+  LOFT_POISON=1       cargo nextest run --release --lib --test issues --test wrap                         --test strings --test frame_vars -E 'not test(library_suite)'
+  LOFT_VERIFY_STACK=1 cargo nextest run --release --lib --test issues --test wrap                         --test strings --test frame_vars -E 'not test(library_suite)'
+  ```
+
+  Measured 2026-09-09: **57 s** and **69 s**, 2011 tests each.  Run BOTH before pushing a change
+  to shared store-lifetime or codegen machinery, because `make ci` arms neither and
+  `find_problems --changed` arms neither — the class they cover is a freed store that is READ,
+  which no ordinary run reports, and a frame slot nobody wrote.  A same-session regression was
+  caught exactly here on the sibling branch: a per-arm capture release destroyed a record
+  handed to the caller through a `&fn(…)` LINK, which no arm can witness, and `1443` read
+  `0xBEEF` under poison while every other gate was green.
+
+  The two that genuinely need CI are the macOS legs and the debug-assertions gate, for the
+  reasons above — a config this box cannot run, and one it does not build by default.
 
 The **release gate** (`release-gate.yml`) is the deliberate counterpart: the six
 nightlies called as reusable workflows (`workflow_call`, the pattern

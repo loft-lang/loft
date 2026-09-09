@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(F-Return)` — a body ending in an expression returns THAT expression — for a `-> fn(…)`
+// return whose tail is a BRANCH and whose frame has any scope-exit free.
+//
+// The tail was demoted to a STATEMENT and a `return null` fabricated after the frees, so the
+// caller got the typed null sentinel and calling it read fn-ref `65535`: an interpreter panic
+// (`fn_call_ref: d_nr=65535 out of range`) and a native one, on a value the program never
+// produced.  Nothing about closures is special here — the free may belong to a struct or a
+// text local the closure never touches; it is the RETURN TYPE that decides.
+//
+// The tail is hoisted into a `__ret_tail_N` temp before the frees now, which is what every
+// other return shape already does.  The three carve-outs that grew this hole one member at a
+// time each name it in the same words — a value return whose result no binding holds, emitted
+// as a discarded statement plus a fabricated null: `@PLN25` for `-> τ?`, loft#816/#817 for a
+// pure-value TUPLE, loft#957 for a bodiless-native CALL, loft#1097 for a COLLECTION with a
+// null arm.  `fn(…)` is the member none of them covered, and it is the only return type in the
+// spread below that still reached it.
+//
+// Axes this file MOVES:  what makes the frame free at all (a struct local · a text local ·
+//                        nothing, the control) · the tail's SHAPE (an `if` · a `match` · a
+//                        plain value, the control · explicit `return`s, the control) · whether
+//                        the returned closures CAPTURE, since a capturing fn-ref occupies the
+//                        20-byte stack form where a plain one carries only the `d_nr` · and the
+//                        RETURN TYPE, with an `integer` twin that pins the carve-outs already
+//                        working.
+// Axes it HOLDS FIXED:   one branch level and one free per frame; `iterator` returns are
+//                        excluded from the hoist on purpose — a coroutine does not return its
+//                        body's value, and wrapping its `while` tail broke the state-machine
+//                        lowering — so no cell here is a generator.  Every tail here is an
+//                        EXPRESSION: an explicit `return fn() -> …` from inside a branch, with a
+//                        free in the frame, does not reach `--native` at all (`internal error:
+//                        invalid fn-ref: N`) on the pre-fix build as much as on this one — a
+//                        separate defect in the generator, on a shape a terminal tail is never
+//                        wrapped into.
+//
+// @falsified-at: 92e872c7 — interpret exit 1 -> 0, native exit 1 -> 0.  The pre-fix failure is
+//   a PANIC, not a wrong answer: `fn_call_ref: d_nr=65535 out of range (fn_positions.len=…)` on
+//   the interpreter and the same read inside the generated Rust.  So no instrument is needed —
+//   a plain run of e1 alone falsifies it.
+
+struct Efr { a: integer }
+
+// e1 — a STRUCT local forces the scope-exit free; the tail is an `if` yielding fn-refs.
+fn struct_free(p: boolean) -> fn() -> integer {
+  e: Efr = Efr { a: 1 };
+  if p && e.a > 0 { fn() -> integer { 5 } } else { fn() -> integer { 7 } }
+}
+
+// e2 — a TEXT local instead: a different free path, the same demoted tail.
+fn text_free(p: boolean) -> fn() -> integer {
+  t: text = "xy";
+  if p && size(t) > 0 { fn() -> integer { 5 } } else { fn() -> integer { 7 } }
+}
+
+// e3 — the arms CAPTURE, so the returned fn-ref is the 20-byte form (a `d_nr` beside a closure
+// `DbRef`) rather than a bare constant.  The hoist has to carry both halves through the temp.
+fn capturing(p: boolean) -> fn() -> integer {
+  d: Efr = Efr { a: 33 };
+  if p { fn() -> integer { d.a } } else { fn() -> integer { 7 } }
+}
+
+// e4 — a `match` tail, which lowers to the same `If` through a `scalar_match` block.  The arms
+// do NOT capture, and that exclusion is measured rather than stylistic: a `match` tail
+// delivering a CAPTURING closure out of the frame is broken on its own, before any of this
+// (the interpreter reads a garbage `d_nr` on the pre-fix build too), and it is a defect about
+// the 20-byte fn-ref's delivery through `scalar_match` rather than about the tail's value.  The
+// `if` spelling of that same cell works and is e3 above.
+fn match_tail(p: boolean) -> fn() -> integer {
+  e: Efr = Efr { a: 2 };
+  n = e.a - 2;
+  match p { true => fn() -> integer { 5 }, false => fn() -> integer { 7 + n } }
+}
+
+// c1 — CONTROL: no free in the frame, so the pre-fix build emitted `return <if>` directly and
+// answered correctly.  It must keep answering correctly through the hoist.
+fn no_free(p: boolean) -> fn() -> integer {
+  if p { fn() -> integer { 5 } } else { fn() -> integer { 7 } }
+}
+
+// c3 — CONTROL: a free and a NON-branch tail.  The value lives in no branch, and the shape is
+// the one that already worked.
+fn plain_tail() -> fn() -> integer {
+  e: Efr = Efr { a: 1 };
+  n = e.a;
+  fn() -> integer { 5 + n - 1 }
+}
+
+// c4 — CONTROL: the same free and the same branch tail at an `integer` return, which the
+// existing carve-outs already cover.
+fn integer_twin(p: boolean) -> integer {
+  e: Efr = Efr { a: 1 };
+  if p && e.a > 0 { 5 } else { 7 }
+}
+
+fn main() {
+  a = struct_free(true);
+  b = struct_free(false);
+  assert(a() == 5, "e1 a struct free must not swallow the tail: {a()}");
+  assert(b() == 7, "e1b the other arm: {b()}");
+
+  c = text_free(true);
+  assert(c() == 5, "e2 a text free is the same shape: {c()}");
+
+  d = capturing(true);
+  f = capturing(false);
+  assert(d() == 33, "e3 a capturing fn-ref survives the hoist: {d()}");
+  assert(f() == 7, "e3b the non-capturing arm beside it: {f()}");
+
+  g = match_tail(true);
+  assert(g() == 5, "e4 a match tail lowers to the same branch: {g()}");
+
+  h = no_free(true);
+  assert(h() == 5, "c1 no free, unchanged: {h()}");
+  m = plain_tail();
+  assert(m() == 5, "c3 a non-branch tail with a free: {m()}");
+  assert(integer_twin(true) == 5, "c4 the integer twin already worked: {integer_twin(true)}");
+}

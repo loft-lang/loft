@@ -36,7 +36,14 @@ impl Parser {
             && !self
                 .narrowed_non_null_exprs
                 .iter()
-                .any(|e| Self::same_projection(e, code));
+                .any(|e| Self::same_projection(e, code))
+            // …and the VAR list, which is the same proof about a NAME.  A guard records a
+            // proven variable in `narrowed_non_null` and a proven projection in
+            // `narrowed_non_null_exprs`; reading only the second was survivable while this
+            // was a LINT (a missed narrowing costs a redundant-coalesce note), and is not
+            // once it decides a TYPE — `if hit { hit.val }` then typed `integer?` inside its
+            // own guard.  Two lists for one question, and the answer needs both.
+            && !matches!(code, Value::Var(v) if self.narrowed_non_null.contains(v));
         let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction
@@ -106,6 +113,25 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Expect a field name");
             return t;
         };
+        // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
+        // its DENSE type: the mutation is admissible whatever the chain's nullability, and it
+        // does nothing when a link is absent (the runtime already skips it — verified on every
+        // mutation kind, both backends).  Peeled HERE, before `type_elm`, so the whole dispatch
+        // below sees one receiver type and the refusal a READ earns cannot fire on a write.
+        //
+        // `remove` and `clear` are the collection surface's only mutating METHODS: insertion is
+        // `+=` (`(Col-Insert)`, whose absent destination is `(Col-Insert-Absent)`), and the
+        // keyed kinds spell a removal as a statement rather than a method.  The set is a LIST
+        // and not a derivation because a `both:` receiver carries no mutability marker — the
+        // same gap `is_mutating_op` carries for the `parallel` capture check, and both want one
+        // derived home.
+        if matches!(field.as_str(), "remove" | "clear")
+            && let Type::Optional(inner) = &t
+            && crate::parser::vectors::is_collection(inner.base())
+            && self.lexer.peek_token("(")
+        {
+            t = inner.as_ref().clone();
+        }
         let enr = self.data.type_elm(&t);
         if enr == u32::MAX {
             let shown = t.show(&self.data, &self.vars);
@@ -655,7 +681,45 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
+        self.wrap_projection_nullable(&mut t, receiver_optional);
         t
+    }
+
+    /// `@FR-N-Chain` — a projection carries its receiver's absence into its own TYPE, so a
+    /// chain discharges ONCE at its tail instead of per link.
+    ///
+    /// `get_field` types the read from the FIELD's declared nullness, which is the field's own
+    /// promise and says nothing about whether the receiver is there to hold it: reading `s.f`
+    /// on an absent `s: S?` yields the C80 null whatever `f` declares.  The lint clear beside
+    /// this call already knew that — it is why `s.f ?? d` is not reported redundant — but a
+    /// lint switch is not a type, and `(N-Store)` reads the type.
+    ///
+    /// The guards are `wrap_keyed_lookup_nullable`'s, for the same reasons: an UNRESOLVED type
+    /// takes no marker (a first-pass `Optional(Unknown)` has no name the rest of the compiler
+    /// can print), the null model's switch gates it, and a `__nullable<S>` receiver is already
+    /// `S?` in the slot's own spelling (`@FR-L-Null-Tag`), so wrapping it again would mint the
+    /// `τ??` that `@FR-N-Idem` forbids and which `Type::optional` cannot see through an `Enum`.
+    ///
+    /// PLACE position is peeled BEFORE this runs (`@FR-N-Chain-Place`, at the top of `field`),
+    /// so a widened chain never reaches a mutating method's dispatch.  Assignment targets are
+    /// already covered one door over: the chokepoint peels a discharge off a target instead of
+    /// reading one (loft#1205), and `??` on a place is refused outright.
+    fn wrap_projection_nullable(&mut self, t: &mut Type, receiver_optional: bool) {
+        if receiver_optional
+            && !t.is_unknown()
+            && !matches!(t, Type::Optional(_))
+            // `@FR-N-Opt`'s side condition, from its ONE home.  This list used to be spelled
+            // out here and was the only construction site that asked at all; the comment beside
+            // it said so and named what that costs — *"every bare `Type::Function` match
+            // downstream then misses it"*.  Both other constructors have it now, and the
+            // predicate is `crate::data::has_null`.
+            && crate::data::has_null(t)
+            && crate::keys::pln25_dn1_enabled()
+            && self.tagged_pointer_type(t).is_none()
+        {
+            *t = Type::optional(t.clone());
+        }
     }
 
     /// Consume remaining function call arguments after `(` has already been consumed.
@@ -688,6 +752,13 @@ impl Parser {
         // element type is known and this wraps it then.
         if point_lookup
             && !elm_type.is_unknown()
+            // `@FR-N-Opt`'s side condition — a keyed miss answers `τ?`, so `(Col-Lookup)` owes
+            // it exactly as `(N-Domain)` and `(N-Chain)` do.  It asked nothing until now, which
+            // is latent rather than harmless: it needs only a keyed collection whose ELEMENT is
+            // a fn-ref to mint a type nothing downstream expects.  `constructs_optional` and not
+            // `has_null`, because the TUPLE's cure is to build `(T-Absent)`'s member-nullable
+            // form and not to stop marking absence — `D-tup-10`, and its doc has the reading.
+            && crate::data::constructs_optional(elm_type)
             && crate::keys::pln25_dn1_enabled()
             && self.tagged_pointer_type(elm_type).is_none()
         {
@@ -1144,8 +1215,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
             // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
             // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
+            // `@FR-N-Opt`'s side condition — the third constructor, and the one where the
+            // missing question was not latent.  A `vector<fn() -> integer>` read by a plain
+            // variable index minted `fn?`; `gen_set_first_at_tos` tests `Type::Function` BARE,
+            // so the wrapper hid the fn-ref branch from it and the fall-through panicked — an
+            // internal compiler error on both backends, for a type the rules never permitted.
+            //
+            // The same index also mints `(integer, text)?`, which `(T-Absent)` equally forbids,
+            // and that one is NOT fixed here: `constructs_optional` keeps it deliberately.
+            // Measured — stopping the wrap alone types the read `(integer, text)`, non-null
+            // members holding nulls with no diagnostic, which trades a type the language cannot
+            // spell for one that lies.  The tuple's cure is `(T-Absent)`'s member-nullable form,
+            // and that is `D-tup-10`.
             if crate::keys::pln25_dn1_enabled()
                 && (!self.last_index_fit || receiver_optional)
+                && crate::data::constructs_optional(&elm_type)
                 && self.tagged_pointer_type(&elm_type).is_none()
             {
                 elm_type = Type::optional(elm_type);
@@ -1415,6 +1499,18 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
     }
 
+    /// ⚠ **One question, three decoders.**  `@FR-N-Domain` promises a SINGLE elision —
+    /// "provably in-domain (constant / range / guard)" — over three families of partial
+    /// operation, and it is answered here, in `Parser::divisor_provably_nonzero` /
+    /// `divisor_proof_from_condition` for `÷0`, and in `Parser::math_arg_provably_in_domain`
+    /// for the domain-partial float functions.  Each carries its own set of admissible
+    /// spellings, and none reads the others.
+    ///
+    /// That is why the same gap has to be fixed three times: the guard-clause spelling
+    /// (`if bad { return } …`) was added to the index and the divisor on 2026-09-08 and is
+    /// still absent from the math family.  Before widening what THIS site accepts, check
+    /// whether the other two accept it — a licence added here alone is the fourth family's
+    /// bug waiting to be filed.  `formal/types-history.md` § D-Domain-Guard.
     fn index_provably_fit(&self, index: &Value, vec: &Value) -> bool {
         // A compile-time-constant index — positive OR negative (`v[-1]` is the Python-style
         // last-element idiom; `-1` lowers to a negation, so use `const_int`, not a literal match)
@@ -1445,8 +1541,21 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // NOT thread the `i < len(v)` guard through arithmetic — that proof is specific to
             // `v[i]` and does not survive `v[i*2]` — so `index_arith_trusted` reads only the two
             // by-contract leaves, never `index_bounded`.
-            _ => self.index_arith_trusted(index),
+            _ => self.index_arith_trusted(
+                index,
+                crate::parser::operators::vec_key(vec, &self.data).as_ref(),
+            ),
         }
+    }
+
+    /// Is `op` a `len` on a collection — the method spelling (`t_6vector_len`) or the free one?
+    ///
+    /// Named rather than matched inline because the answer decides a TRUST, and the method
+    /// spelling carries the receiver type's name inside it (`t_<LEN><Type>_len`), so a literal
+    /// list would have to grow with every collection kind.
+    fn is_len_call(&self, op: u32) -> bool {
+        let n = self.data.def(op).name.as_str();
+        n == "n_len" || (n.starts_with("t_") && n.ends_with("_len"))
     }
 
     /// @PLN102 D1 — is `index` an integer-arithmetic expression built purely from trusted leaves
@@ -1455,14 +1564,37 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// A leaf is a constant (`const_int`) or an active loop var; a node is one of the integer
     /// arithmetic ops. Any other var (a plain local, a guard-bounded var) or non-arithmetic call
     /// (`len(w)`, `f(i)`) breaks the chain → `false`, keeping the read `τ?`.
-    fn index_arith_trusted(&self, index: &Value) -> bool {
+    fn index_arith_trusted(
+        &self,
+        index: &Value,
+        vec: Option<&crate::parser::operators::VecKey>,
+    ) -> bool {
         if self.const_int(index).is_some() {
             return true;
         }
         match index.unspan() {
             Value::Var(v) => self.vars.is_active_loop_var(*v),
             Value::Call(op, args) if self.is_index_arith_op(*op) => {
-                args.iter().all(|a| self.index_arith_trusted(a))
+                args.iter().all(|a| self.index_arith_trusted(a, vec))
+            }
+            // `@FR-N-Domain` — the LAST-ELEMENT idiom, `v[len(v) - 1]`.  `len` OF THE VECTOR
+            // BEING INDEXED is a trusted leaf for the same reason the arm above trusts a
+            // constant: it is the developer's explicit contract, and a genuine overrun still
+            // raises the recoverable OOB fault (C80).  `v[-1]` — the same element, spelled
+            // negatively — has been trusted here since loft#1436; spelling it with `len` is not
+            // a weaker claim, and the rule's own elision names a GUARD, which `if len(v) >= 2`
+            // is.  Published `web` 0.3.0 writes exactly this and stopped compiling when
+            // `(N-Chain)` began carrying the `?` out of the index and into `as integer`.
+            //
+            // ⚠ The vector IDENTITY is the whole guard.  `for i in 0..len(v) { w[i] }` is
+            // `LOFT_LINT_STRICT_INDEX`'s subject and must stay untrusted — the length of ONE
+            // collection says nothing about the domain of ANOTHER.  So the leaf is admitted
+            // only when its argument's `VecKey` is the indexed vector's, and an unkeyable
+            // receiver (`None`) admits nothing.
+            Value::Call(op, args) if args.len() == 1 && self.is_len_call(*op) => {
+                vec.is_some_and(|k| {
+                    crate::parser::operators::vec_key(&args[0], &self.data).as_ref() == Some(k)
+                })
             }
             _ => false,
         }
@@ -1919,7 +2051,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
         Some(match args.first().map(Value::unspan) {
             Some(Value::Var(x)) => crate::data::Deps::frame1(*x),
-            _ => crate::data::Deps::none(),
+            // …and the container reached THROUGH a projection: `g.ts[i]` reads out of `g`
+            // exactly as `t[i]` reads out of `t`, and the cursor borrows the same store either
+            // way.  Only the `Var` spelling was recognised, so a field's vector took the
+            // `Deps::none()` arm — and the two halves of "this is a borrow" then disagreed:
+            // `borrows.is_some()` is TRUE for any `OpGetVector`, so the scope-exit free was
+            // SUPPRESSED, while the empty deps left the cursor typed as owning nothing.  A
+            // work-ref that is neither freed nor a borrow is a leak, and `--native` leaked one
+            // `__tuple<…>` record per read while `--interpret` stayed clean (loft#1479).
+            //
+            // `projection_container_var` is asked of the WHOLE `OpGetVector` node, not of its
+            // argument, because that walk starts at a projection op and peels: it takes this
+            // node, then the `OpGetField` under it, and stops at the variable.  It is *"the ONE
+            // derivation of which container did this view come out of"*, whose own doc records
+            // two readers that had the loop byte-for-byte — this was a third, spelled inline
+            // and only one level deep.
+            //
+            // A chain rooted at a CALL (`make_bag().rows[i]`) still answers `None` and keeps
+            // today's `Deps::none()`: that base is a temporary nobody else owns, and naming it
+            // here is `container_dep`'s separate question.  `OpGetVectorNullable` is off
+            // `is_projection_op`'s list — deliberately, because this deps list IS the proxy its
+            // doc warns about — so it too is unchanged.
+            Some(_) => crate::use_analysis::projection_container_var(&self.data, v)
+                .map_or_else(crate::data::Deps::none, crate::data::Deps::frame1),
+            None => crate::data::Deps::none(),
         })
     }
 
@@ -2696,6 +2851,19 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     }
 
     pub(crate) fn parse_key(&mut self, code: &mut Value, typedef: &Type, key_types: &[Type]) {
+        // A keyed kind with NO key only arrives after its declaration was refused
+        // (`sorted<integer>` is "Expect token [" — `(Col-Sorted)` keys on a field), so the
+        // lookup below has nothing to convert the key against.  Indexing `key_types[0]`
+        // here was an internal compiler error on a program that had already been told
+        // what was wrong; consume the subscript and leave the poisoned value instead.
+        let Some(key_0) = key_types.first() else {
+            let mut p = Value::Null;
+            if !(self.lexer.peek_token("..") || self.lexer.peek_token("..=")) {
+                self.expression(&mut p);
+            }
+            *code = Value::Null;
+            return;
+        };
         // detect open-start `col[..hi]` or `col[..]` before parsing expression.
         let open_start = self.lexer.peek_token("..") || self.lexer.peek_token("..=");
         let mut p = Value::Null;
@@ -2704,9 +2872,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else {
             let t = self.expression(&mut p);
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
-            if !self.convert_store_lenient(&mut p, &t, &key_types[0], "the key", None)
-                && !self.first_pass
-            {
+            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
                 // a `(integer, integer)` key is a plain miscount, and "Invalid index key"
                 // leaves the reader comparing the two spellings by eye.

@@ -128,7 +128,9 @@ pub fn get_type(self: Code, name: text) -> u16 {
   if nr == null {
     return 0;
   }
-  self.definitions[nr].typedef
+  // `(N-Chain)` — the lookup can miss, and 0 is this file's own "no type" answer, the same
+  // one the `nr == null` guard above returns.
+  self.definitions[nr].typedef ?? 0
 }
 
 pub fn define(self: Code, public: boolean, name: text, tp: Structure, file: u16, line: i32) -> i32 {
@@ -168,7 +170,7 @@ pub fn field(self: Code, name: text, tp: u16) {
 }
 
 pub fn argument(self: Code, name: text, tp: u16) {
-  self.cur_arg = (self.definitions[self.cur_def ?? 0].variables.len() & 255) as u8;
+  self.cur_arg = ((self.definitions[self.cur_def ?? 0].variables ?? []).len() & 255) as u8;
   self.definitions[self.cur_def ?? 0].variables +=[Variable {name: name, nr: self.cur_arg, typedef: tp }];
 }
 
@@ -324,5 +326,5 @@ pub fn type_name(self: Code, tp: u16) -> text {
 }
 
 pub fn def_type(self: Code, def: i32) -> u16 {
-  self.definitions[def].typedef
+  self.definitions[def].typedef ?? 0
 }

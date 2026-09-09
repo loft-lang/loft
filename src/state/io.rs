@@ -741,20 +741,7 @@ impl State {
         // Plan-57 Phase C: single-ownership (ref-count removed) — close the OS file
         // handle whenever its File store is freed (free_named frees unconditionally).
         #[cfg(not(host_fs))]
-        if db.store_nr != u16::MAX
-            && (db.store_nr as usize) < self.database.allocations.len()
-            && !self.database.allocations[db.store_nr as usize].free
-            && db.rec != 0
-            && let Some(&file_type) = self.database.names.get("File")
-        {
-            let stored_type = self.database.store(&db).get_u32_raw(db.rec, 4) as u16;
-            if stored_type == file_type {
-                let file_ref = self.database.store(&db).get_i32_raw(db.rec, db.pos + 28);
-                if file_ref != i32::MIN && (file_ref as usize) < self.database.files.len() {
-                    self.database.files[file_ref as usize] = None;
-                }
-            }
-        }
+        self.database.close_file_handle(&db);
         self.database.free(&db);
     }
 
@@ -1642,9 +1629,11 @@ impl State {
     /// frees the source store after the copy (#120).  Factored so the nullable
     /// struct-return ABI-B path (`copy_ref_or_null`) reuses the non-null branch.
     fn do_copy_record(&mut self, data: DbRef, to: DbRef, raw_tp: u16) {
-        // Issue #120: high bit of tp signals "free source store after copy".
-        let free_source = raw_tp & 0x8000 != 0;
-        let tp = raw_tp & 0x7FFF;
+        // Issue #120: high bit of tp signals "free source store after copy"; the next bit
+        // says the destination is fresh (`keys::COPY_FRESH_DEST`).
+        let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+        let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
         // @PLAN51 Cluster II — true alias copy is a no-op.  When data
         // and to refer to the SAME slot (full DbRef equality), the
         // remove_claims + copy_block + copy_claims sequence would
@@ -1819,7 +1808,9 @@ impl State {
         // free any nested vectors/strings already owned by the destination
         // before overwriting it, to prevent double-free and leaks when a struct
         // field containing a nested vector is reassigned.
-        self.database.remove_claims(&to, tp);
+        if !fresh_dest {
+            self.database.remove_claims(&to, tp);
+        }
         self.database.copy_block(&data, &to, size);
         self.database.copy_claims(&data, &to, tp);
         // LOFT_WATCH_STORE (cluster-462 write-watch) — name the copy that leaves a garbage

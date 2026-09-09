@@ -162,6 +162,13 @@ pub(super) struct OwnedWalk {
     pub zero_field: bool,
 }
 
+/// A field's two walk-relevant numbers, by value (see `Stores::field_at`).
+#[derive(Clone, Copy)]
+struct FieldAt {
+    position: u16,
+    content: u16,
+}
+
 impl Stores {
     /// Is `cur` a record this store could actually contain?
     ///
@@ -400,17 +407,28 @@ impl Stores {
                             zero_field: true,
                         };
                     }
-                    for i in 0..length {
-                        children.push(OwnedChild {
-                            child: DbRef {
-                                store_nr: rec.store_nr,
-                                rec: cur,
-                                pos: 8 + size * i,
-                            },
-                            child_tp: v,
-                            owning_elem: None,
-                            borrowed: false,
-                        });
+                    // An INLINE element of a type that owns no heap has no owned edge to
+                    // yield: a `vector<float>` or a `vector<Pt>` of scalars is one block,
+                    // and the block IS the container record below.  Enumerating its
+                    // elements built a child per element for every consumer to visit and
+                    // find nothing — the copy of a `vector<Pt>` walked every point after
+                    // the bulk copy had already moved it, a free of one walked it to free
+                    // nothing (@PLN157 § V-i; the per-type fact is § V-f's).  A record
+                    // element that owns heap keeps its walk; an Array/Ordered element is
+                    // its own record and is never skipped (its walk is what frees it).
+                    if self.type_owns_heap(v) {
+                        for i in 0..length {
+                            children.push(OwnedChild {
+                                child: DbRef {
+                                    store_nr: rec.store_nr,
+                                    rec: cur,
+                                    pos: 8 + size * i,
+                                },
+                                child_tp: v,
+                                owning_elem: None,
+                                borrowed: false,
+                            });
+                        }
                     }
                     container_rec = Some(cur);
                 }
@@ -805,9 +823,16 @@ impl Stores {
         };
         // LOFT_STORES=log  → full alloc/free trace
         // LOFT_STORES=warn → only warn when active stores > 30
-        let active = self.allocations.iter().filter(|s| !s.free).count();
-        match std::env::var("LOFT_STORES").as_deref() {
-            Ok("log") => {
+        // The live-store count is a scan of every slot; only the diagnostics
+        // below read it, so it is taken only when one of them is armed.
+        let mode = crate::keys::stores_mode();
+        let active = if mode.is_some() {
+            self.allocations.iter().filter(|s| !s.free).count()
+        } else {
+            0
+        };
+        match mode {
+            Some("log") => {
                 let label = if name.is_empty() { "" } else { name };
                 crate::loft_eprintln!(
                     "[store] + alloc #{} {label:>12} | active={active:<4} max={:<4} size={size}",
@@ -815,14 +840,14 @@ impl Stores {
                     self.max
                 );
             }
-            Ok("warn") if active > 30 => {
+            Some("warn") if active > 30 => {
                 crate::loft_eprintln!(
                     "[store] WARNING: {active} active stores (max={}) — possible leak at alloc #{}",
                     self.max,
                     result.store_nr
                 );
             }
-            Ok("timeline") => {
+            Some("timeline") => {
                 let seq = TIMELINE.with(|t| {
                     let mut t = t.borrow_mut();
                     let s = t.seq;
@@ -909,13 +934,40 @@ impl Stores {
         self.free_named(displaced, "");
     }
 
+    /// Close the OS handle a `File` record owns, at the moment its store is
+    /// freed — the one point where the runtime sees the record go.  Both
+    /// backends' free ops call this before [`Self::free_named`].
+    ///
+    /// The record's stored type tag names the row, so the test is that row's
+    /// NAME rather than a resolution of `"File"` through the name map: the
+    /// same identity, without a string hash on every free (@PLN157 § V-e).
+    #[cfg(not(host_fs))]
+    pub fn close_file_handle(&mut self, db: &DbRef) {
+        if db.store_nr == u16::MAX
+            || (db.store_nr as usize) >= self.allocations.len()
+            || self.allocations[db.store_nr as usize].free
+            || db.rec == 0
+        {
+            return;
+        }
+        let stored_type = self.store(db).get_u32_raw(db.rec, 4) as usize;
+        if self.types.get(stored_type).is_none_or(|t| t.name != "File") {
+            return;
+        }
+        let file_ref = self.store(db).get_i32_raw(db.rec, db.pos + 28);
+        if file_ref != i32::MIN && (file_ref as usize) < self.files.len() {
+            self.files[file_ref as usize] = None;
+        }
+    }
+
     /**
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
     */
     pub fn free_named(&mut self, db: &DbRef, name: &str) {
-        // u16::MAX is the null-sentinel used by OpNullRefSentinel for inline-ref temporaries
-        // that were never assigned a real store.  Nothing to free in this case.
+        // @FR-H-FreeNull — `free(nullref)` is a no-op.  u16::MAX is the null sentinel
+        // `OpNullRefSentinel` gives an inline-ref temporary that was never assigned a real
+        // store, and it is not an index into `allocations`; this is the rule's runtime home.
         if db.store_nr == u16::MAX {
             return;
         }
@@ -1096,8 +1148,8 @@ impl Stores {
                 Vec::new()
             }
         };
-        match std::env::var("LOFT_STORES").as_deref() {
-            Ok("log") => {
+        match crate::keys::stores_mode() {
+            Some("log") => {
                 let active = self.allocations.iter().filter(|s| !s.free).count();
                 let label = if name.is_empty() { "" } else { name };
                 crate::loft_eprintln!(
@@ -1106,7 +1158,7 @@ impl Stores {
                     self.max
                 );
             }
-            Ok("timeline") => {
+            Some("timeline") => {
                 // @PLN103 P3 — print the SAME `<store_nr>.<seq>` id the alloc printed, so
                 // a reader matches alloc↔free across slot reuse. `?` = a free with no live
                 // alloc record (a double-free or a pre-timeline store).
@@ -2607,9 +2659,8 @@ impl Stores {
         // byte-identically, so each element sits at the SAME offset in `into`; reuse
         // `child.pos` for the destination instead of recomputing `8 + size*i`.
         let children = self.for_each_owned_child(rec, tp).children;
-        debug_assert_eq!(
-            u32::try_from(children.len()).unwrap_or(u32::MAX),
-            length,
+        debug_assert!(
+            children.is_empty() || u32::try_from(children.len()).unwrap_or(u32::MAX) == length,
             "keystone element count disagrees with the vector length header (tp={tp})"
         );
         for child in children {
@@ -2988,6 +3039,28 @@ impl Stores {
     # Panics
     When a field points to a spatial structure.
     */
+    /// The `i`th field of record type `tp` as the two numbers the per-field walks read —
+    /// its byte position and its content type — without cloning the list, and without
+    /// cloning the field either (a `Field` owns its name).
+    fn field_at(&self, tp: u16, i: usize) -> FieldAt {
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => FieldAt {
+                position: fields[i].position,
+                content: fields[i].content,
+            },
+            _ => unreachable!("field_at on a type without fields"),
+        }
+    }
+
+    /// A field's name, cloned — for the diagnostic walks only; the hot walks read
+    /// [`Self::field_at`].
+    fn field_label(&self, tp: u16, i: usize) -> String {
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields[i].name.clone(),
+            _ => unreachable!("field_label on a type without fields"),
+        }
+    }
+
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         // TODO prevent copying secondary structures
         match &self.types[tp as usize].parts {
@@ -3013,7 +3086,15 @@ impl Stores {
                 }
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                for f in fields.clone() {
+                // A record that owns no heap has nothing here to copy — its bytes
+                // came with the block copy — so the per-field descent is skipped.
+                if !self.type_owns_heap(tp) {
+                    return;
+                }
+                // By index, re-borrowing the row per field: the list was cloned here on
+                // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
+                for i in 0..fields.len() {
+                    let f = self.field_at(tp, i);
                     self.copy_claims(
                         &DbRef {
                             store_nr: rec.store_nr,
@@ -3199,8 +3280,8 @@ impl Stores {
     ) {
         match &self.types[tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                let fields = fields.clone();
-                for f in fields {
+                for i in 0..fields.len() {
+                    let f = self.field_at(tp, i);
                     let s = DbRef {
                         store_nr: src.store_nr,
                         rec: src.rec,
@@ -3211,7 +3292,8 @@ impl Stores {
                         rec: dst.rec,
                         pos: dst.pos + u32::from(f.position),
                     };
-                    self.walk_copy_cmp(&s, &d, f.content, format!("{path}.{}", f.name), seen);
+                    let name = self.field_label(tp, i);
+                    self.walk_copy_cmp(&s, &d, f.content, format!("{path}.{name}"), seen);
                 }
             }
             Parts::Vector(v) | Parts::Sorted(v, _) => {
@@ -3465,6 +3547,12 @@ impl Stores {
             // (@P290/@P306/@P318/@P309) lived in the per-dispatcher copies of this
             // walk; reading it once removes them by construction.
             _ => {
+                // A value that owns no heap record has nothing to tear down — not a
+                // scalar, and not a record of scalars either, whose walk would build
+                // a child per field to free nothing.
+                if !borrowed && !self.type_owns_heap(tp) {
+                    return;
+                }
                 let walk = self.owned_walk(rec, tp, borrowed);
                 for c in walk.children {
                     // @PLN102 heap-free audit — an `owning_elem == Some(0)` slot is an
@@ -4035,39 +4123,93 @@ impl Stores {
         *FLAG.get_or_init(|| std::env::var_os("LOFT_NO_COMPACT_ON_LOAD").is_none())
     }
 
-    /// Can a collection of type `tp` be rebuilt by [`Stores::copy_claims`]?
+    /// The two facts about a value of `tp` that every record copy, free and
+    /// default-fill keys on, derived from `parts` once and cached on the row
+    /// (`Type::facts`):
     ///
-    /// Exhaustive over `Parts` with **no catch-all**, so a variant added later
-    /// is a compile error here rather than a silently-skipped shape — the whole
-    /// point of the check is that an unhandled kind must REFUSE, and a
-    /// `_ => true` would refuse nothing.  `Radix` is the one live refusal:
-    /// `copy_claims` panics on it and the `for_each_owned_child` keystone
-    /// returns an empty walk, so a spatial index would come back empty.
-    /// loft#730 — can a value of `tp` own a heap record? Decides whether a
-    /// vector's ELEMENTS must be walked or the container alone is the whole
-    /// story, which is the difference between visiting 5 000 records and
-    /// 5 600 000 of them on a real store.
-    fn type_owns_heap(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
-        if tp as usize >= self.types.len() || seen.contains(&tp) {
-            return false;
+    /// - **owns_heap** — can the value own a heap record?  Text and reference
+    ///   are the owning primitives; a collection, a child record, and a struct
+    ///   or enum variant holding any of those own one too.  A record that owns
+    ///   none has nothing for `copy_claims` or `remove_claims` to walk, which
+    ///   is the difference between visiting 5 000 records and 5 600 000 of
+    ///   them on a real store (loft#730), and between a per-field descent and
+    ///   no work at all on a record of scalars (@PLN157).
+    /// - **zero_default** — is the record's default all zero bytes under every
+    ///   `Absent` mode?  A nullable field takes a sentinel, a declared default
+    ///   its value, a text field the interned `""`, a variant its tag; a record
+    ///   with none of those, recursively, is one `zero_range` in
+    ///   `set_default_value_nullable`.
+    ///
+    /// Exhaustive over `Parts` with no catch-all, so a kind added later is a
+    /// compile error here rather than a silently wrong answer.  A type index
+    /// out of range, or a cycle, answers `(false, false)`: owns nothing, and
+    /// walk the default anyway.
+    #[inline]
+    pub(super) fn heap_facts(&self, tp: u16) -> (bool, bool) {
+        match self.types.get(tp as usize).and_then(|row| row.facts.get()) {
+            Some(known) => known,
+            None => self.derive_facts(tp, &mut Vec::new()),
+        }
+    }
+
+    fn derive_facts(&self, tp: u16, seen: &mut Vec<u16>) -> (bool, bool) {
+        let Some(row) = self.types.get(tp as usize) else {
+            return (false, false);
+        };
+        if let Some(known) = row.facts.get() {
+            return known;
+        }
+        if seen.contains(&tp) {
+            return (false, false);
         }
         seen.push(tp);
-        match &self.types[tp as usize].parts {
-            // text and reference are the two heap-owning primitives.
-            Parts::Base => matches!(tp, 5 | 6),
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
-                .clone()
-                .iter()
-                .any(|f| self.type_owns_heap(f.content, seen)),
-            Parts::Byte(..)
-            | Parts::Short(..)
-            | Parts::Int(..)
-            | Parts::IntRaw(..)
-            | Parts::ShortRaw(..)
-            | Parts::Enum(_)
-            | Parts::DbRef => false,
-            _ => true,
-        }
+        let facts = match &row.parts {
+            // text and reference are the two heap-owning primitives; text is
+            // also the one base type whose default is not zero.
+            Parts::Base => (matches!(tp, 5 | 6), tp <= 6 && tp != 5),
+            Parts::Byte(_, null)
+            | Parts::Short(_, null)
+            | Parts::Int(_, null)
+            | Parts::IntRaw(_, null)
+            | Parts::ShortRaw(_, null) => (false, !null),
+            Parts::Enum(values) => (
+                values
+                    .iter()
+                    .any(|(v, _)| *v != u16::MAX && self.derive_facts(*v, seen).0),
+                true,
+            ),
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                let mut owns = false;
+                let mut zero = true;
+                for f in fields {
+                    let (o, z) = self.derive_facts(f.content, seen);
+                    owns |= o;
+                    zero &= z
+                        && !f.nullable
+                        && f.default.is_none()
+                        && !(f.name == "type" && f.position == 0);
+                }
+                (owns, zero)
+            }
+            Parts::Vector(_)
+            | Parts::Array(_)
+            | Parts::Sorted(..)
+            | Parts::Ordered(..)
+            | Parts::Hash(..)
+            | Parts::Index(..)
+            | Parts::Radix(..)
+            | Parts::Trie(..)
+            | Parts::ChildRec(_) => (true, true),
+            Parts::DbRef => (false, true),
+        };
+        row.facts.set(facts.0, facts.1);
+        facts
+    }
+
+    /// Can a value of `tp` own a heap record?  See [`Self::heap_facts`].
+    #[inline]
+    pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
+        self.heap_facts(tp).0
     }
 
     /// @PLN134, @PLN136 — lay every radix TREE in `slot` out for PAGING, and answer
@@ -4190,10 +4332,11 @@ impl Stores {
         match &self.types[tp as usize].parts {
             Parts::Trie(_, _) | Parts::Radix(_, _) => out.push(*rec),
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                for f in fields.clone() {
+                for i in 0..fields.len() {
+                    let f = self.field_at(tp, i);
                     // A field that owns no heap record cannot hold a collection, so
                     // the descent stops at the scalars rather than at every field.
-                    if self.type_owns_heap(f.content, &mut Vec::new()) {
+                    if self.type_owns_heap(f.content) {
                         let at = DbRef {
                             store_nr: rec.store_nr,
                             rec: rec.rec,
@@ -4230,10 +4373,10 @@ impl Stores {
         *budget -= 1;
         match &self.types[tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                let fields = fields.clone();
                 let mut total = 0u32;
-                for f in &fields {
-                    if self.type_owns_heap(f.content, &mut Vec::new()) {
+                for i in 0..fields.len() {
+                    let f = self.field_at(tp, i);
+                    if self.type_owns_heap(f.content) {
                         let at = DbRef {
                             store_nr: rec.store_nr,
                             rec: rec.rec,
@@ -4257,7 +4400,7 @@ impl Stores {
                 let need = 1 + esize.saturating_mul(length).div_ceil(8);
                 let have = self.store(rec).record_words(cur);
                 let mut total = have.saturating_sub(need);
-                if self.type_owns_heap(v, &mut Vec::new()) {
+                if self.type_owns_heap(v) {
                     for i in 0..length {
                         let at = DbRef {
                             store_nr: rec.store_nr,

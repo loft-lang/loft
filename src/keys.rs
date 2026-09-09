@@ -984,6 +984,25 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// The two flag bits `OpCopyRecord` carries in its `tp` operand beside the type id, so
+/// a type id is at most `0x3FFF` (16 383 types — `debug_assert`ed where the parser sets a
+/// bit).  Every decoder masks with [`COPY_TP_MASK`]; a decoder that masks only one bit
+/// indexes the type table with the other still set.
+///
+/// [`COPY_FREE_SOURCE`] (#120): free the SOURCE store after the copy — the source is a
+/// callee's fresh temporary nobody else frees.
+///
+/// [`COPY_FRESH_DEST`] (@PLN157 § V-j): the DESTINATION was created by the `OpNewRecord`
+/// just before — its handles are zero, so the `remove_claims` a copy performs on its
+/// destination has nothing to release and is skipped.  Not an optimisation of the walk:
+/// the walk allocated a child list per record and per owned field to find nothing, a
+/// quarter of `fronds`' append cost (DESIGN.md § V-j).  Set only where the destination is
+/// provably fresh — the vector-literal element arms of `new_record` — never on a
+/// reassignment, whose old value is exactly what the clear releases.
+pub const COPY_FREE_SOURCE: u16 = 0x8000;
+pub const COPY_FRESH_DEST: u16 = 0x4000;
+pub const COPY_TP_MASK: u16 = 0x3FFF;
+
 /// @PLN157 § V (Route R, caller half): a call's hidden RECORD buffer is allocated once —
 /// **DEFAULT ON**.  Opt OUT with `LOFT_NO_RETBUF_REUSE`.
 ///
@@ -1032,6 +1051,19 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// @PLN157 § V-l: a loop that calls an IN-PLACE-ONLY writer keeps its hoisted vector
+/// headers — **DEFAULT ON**.  Opt OUT with `LOFT_NO_INPLACE_CALLEE_HOIST` (read at
+/// GENERATION time: the before-half of the A/B on one binary, and the first bisect step
+/// for a native-only wrong element in a loop that calls a setter).  A callee whose store
+/// writes are all `IN_PLACE_SET_OPS` moves no record and changes no length, so no header
+/// the caller derived can go stale across the call (`generation::hoist::in_place_only_writer`
+/// carries the argument; `LOFT_HOIST_VERIFY=1` is the falsifier).
+#[must_use]
+pub fn inplace_callee_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INPLACE_CALLEE_HOIST"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary
@@ -1041,6 +1073,15 @@ pub fn retbuf_hoist_enabled() -> bool {
 pub fn append_in_place_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_IN_PLACE"))
+}
+
+/// `LOFT_TRACE_COPY=1` — print every native `OpCopyRecord` with its source, destination,
+/// type and whether the source is released.  Off by default; ONE cached read, because the
+/// op runs per element copy and an uncached `getenv` there is measurable (@PLN157 § V-e).
+#[must_use]
+pub fn trace_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COPY"))
 }
 
 /// The @PLN90 phase B last-use MOVE-elision REWRITE — **DEFAULT ON** (B1.5 flip). Build a
@@ -1375,6 +1416,83 @@ pub fn lift_join_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_JOIN_WITNESS"))
 }
 
+/// @PLN157 § V-g — a read-only record local bound from a call whose return borrows a
+/// value-const argument keeps the VIEW instead of taking the copy `(O-Move)` asks for,
+/// because no program can observe the difference there; the callee's per-execution
+/// minted store is released by identity at scope exit.  `LOFT_NO_VIEW_ELISION=1`
+/// restores the copy — the control for the elision's own guard.
+#[must_use]
+pub fn view_elision_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
+}
+
+/// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer
+/// they gave when the fail-open still spelled itself `Owned`?
+///
+/// `LOFT_OWN_DECLINE=<name>[,<name>…]`, opt-in and empty by default, so the shipped path is
+/// phase 2a's: every reader disposes of `Unknown` explicitly and disposes of it as `Owned`.
+/// Each name flips ONE reader, because each trades something different and the trades are not
+/// comparable — a decline is never free, it withholds a decision, and what that costs is the
+/// per-reader question phase 2b exists to answer:
+///
+///   `witness`     — `scopes`' `__ret` witness: `Unknown` is exactly the shape the arm's own
+///                   comment hand-compensates for by asking the callee, so declining lets the
+///                   inference go rather than adding one.
+///   `owned-slot`  — `scopes`' owned-slot set: membership licenses a free downstream, so a
+///                   decline WITHHOLDS a free.  The conservative direction, trading a leak.
+///   `collection`  — `callref_collection_join_base`: `Unknown` is the sharper trigger for
+///                   consulting the DECLARED dep, so declining here means asking the dep only
+///                   where the summary genuinely had no answer.
+///   `join`        — `Own::join` makes `Unknown` ABSORBING: a `Join` is a witness, and an arm
+///                   with no answer can neither supply nor refute one.
+///
+/// **All four are REFUTED as of 2026-09-08, for three different reasons, and the switch stays
+/// because it is what says so.**  Measured as an A/B on ONE binary over the 1412-file corpus:
+///
+/// | candidate | emit | verdict |
+/// |---|---|---|
+/// | `witness` | 4 files | **wrong VALUE** on both backends (guard 1335 reads 99 for 81) — the permissive answer is load-bearing for correctness, and the arm's hand-compensation is the mechanism that makes it right |
+/// | `owned-slot` | 3 files | every channel unchanged — value, exit and leak, both backends, under `LOFT_STRICT_STORES`.  An emit change with no demonstrated benefit and none demonstrated harm, which is UNVERIFIED rather than safe |
+/// | `collection` | none | inert on this corpus |
+/// | `join` | none | inert on this corpus |
+///
+/// ⚠ The A/B has to be run with a WRAPPER per candidate, not with
+/// `introspect_diff.sh --env`: that flag applies the environment to BOTH binaries, by design
+/// (it exists for "same env, two builds"), so using it for "one build, two envs" makes both
+/// sides decline and reports IDENTICAL for every candidate.  Measured — all four read
+/// IDENTICAL that way, and two of them move four and three files respectively.
+#[must_use]
+pub fn own_declines(name: &str) -> bool {
+    static SET: OnceLock<Vec<String>> = OnceLock::new();
+    SET.get_or_init(|| {
+        std::env::var("LOFT_OWN_DECLINE")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+    .iter()
+    .any(|s| s == name)
+}
+
+/// @PLN155 phase 3 — the ladder at the free: `LOFT_OWN_FREE=off|deny` (default `off`).
+///
+/// The plan's rung: *a free whose licence is proxy-only, with no oracle agreement, is refused
+/// and names the binding.*  `deny` adds that requirement to `Scopes::owns_freeable_store` —
+/// the proxy and its veto are no longer enough, the oracle must also have DERIVED an owner
+/// fact — so the frees phase 0 counted as `proxy-alone` and `no-answer` stop being emitted.
+///
+/// ⚠ **Slow by construction and gated for that reason.**  It asks the oracle per binding,
+/// which recomputes `function_defs` (loft#854's quadratic shape), so it is a measurement
+/// switch and not a shipping mode.
+#[must_use]
+pub fn own_free_deny() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_OWN_FREE").as_deref() == Ok("deny"))
+}
+
 #[must_use]
 pub fn join_own_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -1498,6 +1616,17 @@ pub fn alloc_init_ref() -> bool {
     *AIR.get_or_init(|| env_set("LOFT_ALLOC_INIT_REF"))
 }
 
+/// `LOFT_STORES=warn|error|…` — the store-lifetime report mode, read ONCE.  It is
+/// consulted on every allocation and every free (`Stores::database_named`,
+/// `Stores::free_named`), and an uncached `getenv` there was ~13 % of an
+/// allocation-heavy row's time (@PLN157 § V-e, measured with perf on `smooth`).
+#[must_use]
+pub fn stores_mode() -> Option<&'static str> {
+    static MODE: OnceLock<Option<String>> = OnceLock::new();
+    MODE.get_or_init(|| std::env::var("LOFT_STORES").ok())
+        .as_deref()
+}
+
 pub fn trace_db() -> bool {
     static TD: OnceLock<bool> = OnceLock::new();
     *TD.get_or_init(|| env_set("LOFT_TRACE_DB"))
@@ -1520,9 +1649,24 @@ pub fn trace_db() -> bool {
 /// probe programs that exercise one lifetime question each. Under it a probe that would
 /// otherwise print a plausible wrong number fails loudly instead.
 #[must_use]
+#[inline]
 pub fn strict_stores() -> bool {
-    static SS: OnceLock<bool> = OnceLock::new();
-    *SS.get_or_init(|| env_set("LOFT_STRICT_STORES"))
+    // Read on every store access (`Stores::store`), so the cached answer is one
+    // relaxed load: 0 = not read yet, 1 = off, 2 = on.
+    static SS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    let v = SS.load(std::sync::atomic::Ordering::Relaxed);
+    if v == 0 {
+        strict_stores_init(&SS)
+    } else {
+        v == 2
+    }
+}
+
+#[cold]
+fn strict_stores_init(ss: &std::sync::atomic::AtomicU8) -> bool {
+    let on = env_set("LOFT_STRICT_STORES");
+    ss.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+    on
 }
 
 /// Violations recorded by [`strict_stores`] mode, so one run surfaces every site rather

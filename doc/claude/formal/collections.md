@@ -536,12 +536,14 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 1.**  `D-col-lookup` (loft#1450, opened 2026-09-07): `(Col-Lookup)`'s `τ?` is carried by
-the `expr_not_null` LINT flag its own anchor cites and never reaches a type, so a lookup that
-misses in a present collection binds into a non-null slot in silence, on all four keyed kinds.
-Deferred on cost (351 corpus sites), not on doubt.  The RECEIVER-absent half is closed
-(`D-Null-Recv`, [types-history.md](types-history.md)).  The rest of the record is in
-the companion [collections-history.md](collections-history.md).
+**OPEN: 0.**  `D-col-lookup` (loft#1450, opened 2026-09-07) was CLOSED 2026-09-08: `(Col-Lookup)`
+carried its `τ?` on the `expr_not_null` LINT flag its own anchor cited and never on a type, so a
+lookup that missed in a PRESENT collection bound into a non-null slot in silence, on all four
+keyed kinds.  `wrap_keyed_lookup_nullable` is the type now, in one home for both arms.  The
+RECEIVER-absent half closed a day earlier (`D-Null-Recv`, [types-history.md](types-history.md)),
+and the FIELD half — the same gap one projection out — is `D-Null-Chain`, closed 2026-09-08 under
+the new `(N-Chain)`.  The rest of the record is in the companion
+[collections-history.md](collections-history.md).
 
 ## 4. Conformance / oracle plan (how each rule gets pinned — [VERIFICATION.md](VERIFICATION.md))
 

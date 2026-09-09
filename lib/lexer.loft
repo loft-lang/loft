@@ -261,7 +261,10 @@ fn scan(self: Lexer) {
   }
   // Tokens
   self.scanned = Token;
-  for pt in self.tokens[l].possible {
+  // `(N-Chain)` — `self.tokens[l]` is a keyed point lookup, so the chain is nullable and the
+  // `for` needs the discharge.  An absent entry means this character starts no token, and
+  // `?? []` is exactly that: zero iterations.
+  for pt in self.tokens[l].possible ?? [] {
     tok = pt.token;
     if self.data[self.index..self.index + tok.size()] == tok {
       self.index += tok.size();

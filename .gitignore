@@ -80,6 +80,10 @@ dist/
 # offline generator input for `make features-gen` / `features-check`); tags.json
 # stays generated/ignored.  index/ is not a scan root, so this adds no tag noise.
 !/index/features.json
+# @PLN153 batch 11: the `@FR-N-Shape` ratchet baseline is committed for the same reason —
+# `make optional-ratchet` compares against it, and the number in the DIFF is the receipt for
+# the walk that lowered it.
+!/index/optional_ratchet.json
 # loft#680: the per-target builtin surface is committed for the same reason —
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.

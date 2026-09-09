@@ -165,7 +165,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue features-fetch features-gen features-check surface-gen surface-check api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -845,6 +845,12 @@ surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per 
 surface-check:  ## Drift guard: fail if the committed per-target surface is stale
 	@python3 scripts/gen_target_surface.py --check
 
+optional-ratchet:  ## @FR-N-Shape ratchet: fail if MORE shape tests go blind to `τ?`
+	@python3 scripts/ir_walker_audit.py optional --check-ratchet
+
+optional-ratchet-pin:  ## Re-pin the ratchet after a walk that lowered it
+	@python3 scripts/ir_walker_audit.py optional --write-ratchet
+
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
 	    --json number,title,labels,body \
@@ -896,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -932,6 +938,28 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
 	@python3 scripts/bug-review.py $(ARGS)
+
+# @PLN155 arc A — the four gates that pick a campaign, joined into one report:
+#   make campaign-review                       # which class earns a campaign next
+#   make campaign-review ARGS=--verbose        # + the evidence behind each gate
+#   make campaign-review ARGS=--control        # the negative control (run after a gate edit)
+campaign-review:  ## Which mechanism class earns a CAMPAIGN next, on four measured gates
+	@python3 scripts/campaign_review.py $(ARGS)
+
+# @PLN155 phase 0 — which FACT licensed each emitted free?  The kill probe: a small
+# `proxy-alone` count means the plan's phases 2-4 are not worth their cost.
+#   make licence-census                     # the whole corpus (~minutes)
+#   make licence-census ARGS="--limit 100"  # a sample, for a quick read
+#   make licence-census ARGS=--control      # the injected-free control; run it after a gate edit
+licence-census:  ## @PLN155: how many emitted frees rest on the deps PROXY alone?
+	@python3 scripts/licence_census.py $(ARGS)
+
+# @PLN155 re-aimed: the frees are in the right places; what needs bounding is the code that
+# DERIVES whether one is needed.  This counts that code and groups the derivations.
+#   make free-licences                  # the two tables
+#   make free-licences ARGS=--sites     # + every construction site with its facts
+free-licences:  ## @PLN155: how many pieces of code decide *is a free needed here*?
+	@python3 scripts/free_licence_audit.py $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this
@@ -2092,6 +2120,7 @@ ci: ci-guard
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
+	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
 	cargo build --all-targets >> result.txt 2>&1 && \
 	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
@@ -2424,6 +2453,13 @@ contract-labels-test:  ## the `Contract:` trailer parse behind the push workflow
 .PHONY: revalidate-matrix-test
 revalidate-matrix-test:  ## the revalidate-libs matrix policy shared by the workflow and the local gate
 	@python3 scripts/revalidate_matrix.py --self-test
+
+# The registry sweep's POPULATION — which versions a scope validates.  Local, because the
+# thing it decides (does any published version go unchecked?) is a policy question, and a
+# policy only the nightly can answer is one nobody reads until it is wrong (loft#1462).
+.PHONY: registry-matrix-test
+registry-matrix-test:  ## the registry-validation population policy, shared by the workflow
+	@python3 scripts/registry_matrix_versions.py --self-test
 
 .PHONY: linkcheck linkcheck-external
 linkcheck:

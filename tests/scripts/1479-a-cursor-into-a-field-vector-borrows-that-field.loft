@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1479 — the work-ref that reads a tuple element out of a vector BORROWS the container,
+// and a container reached through a projection is still a container.
+//
+// `v[i]` on a `vector<(…)>` unboxes through a cursor: a `__ref_N` work-ref holding the DbRef of
+// the element's bytes.  Whether that cursor OWNS or BORROWS is one question with two consumers
+// — the deps it is typed with, and whether the scope-exit sweep frees it (loft#857/#858) — and
+// `vector_element_cursor_deps` answered them from two different facts:
+//
+//   * `borrows.is_some()` is TRUE for any `OpGetVector`, so the free was SUPPRESSED;
+//   * the deps came from `match args.first() { Some(Value::Var(x)) => frame1(x), _ => none() }`,
+//     so a container reached through a projection got an EMPTY dep list.
+//
+// A work-ref that is neither freed nor a borrow is a leak, and `g.ts[i]` is exactly that: one
+// `__tuple<…>` record per FUNCTION, on `--native`, with `--interpret` clean and the value right
+// on both.  Only `LOFT_STRICT_STORES=1` says anything.
+//
+// The cure is not a peel but the same one-home move the rest of the neighbourhood wanted:
+// `use_analysis::projection_container_var` already IS *"the ONE derivation of which container
+// did this view come out of"*, and its own doc records two readers that had the loop
+// byte-for-byte.  This was a third, spelled inline and only one level deep.  It is asked of the
+// WHOLE `OpGetVector` node, not of its argument, because that walk starts at a projection op
+// and peels: this node, then the `OpGetField` under it, stopping at the variable.
+//
+// ⚠ **The axis is the CONTAINER's spelling and nothing else** — measured, and it corrects the
+// filing.  A CONSTANT index leaks, an all-`integer` tuple leaks, a `for` variable leaks, two
+// levels of projection leak.  Neither the index's trust nor the member's type gates it, which is
+// what separates this from loft#1478 (which needed both a non-`Copy` member AND an index
+// `(N-Index)` does not trust).  The two met only because the `text` + variable-index cell could
+// not COMPILE until loft#1478 was fixed — so that one cell was newly reachable while the rest
+// had been leaking all along.
+//
+// Axes this file MOVES:  the container's spelling (a LOCAL variable · a struct FIELD · a field
+//                        two levels down · a field of a PARAMETER) · the index (constant ·
+//                        variable · `for` variable · out of range) · the element (a tuple with
+//                        a `text` member · an all-`integer` tuple · a plain STRUCT, which does
+//                        not unbox at all) · and how many reads run (one · six, in nested
+//                        loops, which is what says the leak is per-FUNCTION and not per-read).
+// Axes it HOLDS FIXED:   the vector is DENSE and every tuple is a pair.
+//
+// @falsified-at: 415e1b0e0, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   native exit 1 -> 0 and native leak `kt=82 __tuple<integer,text>×8, kt=85
+//   __tuple<integer,integer>×1` -> clean; interpret INERT, which is expected for a
+//   backend-divergence guard — only one side can move.  The LEAK channel is the one that
+//   carries this, and it is why the instrument has to be armed: a leaked store is not an exit
+//   code, and a plain `make falsify` scores this file as unfalsifiable.
+//
+//   The nine records are the eight `text` cells plus the all-`integer` one, which is the count
+//   that says the container's spelling is the axis: the three cells that stay clean on the
+//   control are the LOCAL-vector read, the plain-STRUCT element (which never unboxes) and the
+//   out-of-range read (whose cursor is never populated).
+
+struct Bag79 { ts: vector<(integer, text)> }
+struct Ints79 { ts: vector<(integer, integer)> }
+struct Inner79 { ts: vector<(integer, text)> }
+struct Outer79 { inner: Inner79, n: integer }
+struct E79 { x: integer }
+struct EBag79 { es: vector<E79> }
+
+fn via_param79(g: Bag79, i: integer) -> text { b = g.ts[i]; b.1 }
+
+fn main() {
+  g = Bag79 { ts: [(7, "seven")] };
+  i = 0;
+
+  // ---- e1: the filed cell — a struct FIELD's vector, variable index ----
+  b = g.ts[i];
+  assert(b.1 == "seven", "a text member read through a field vector: {b.1}");
+  assert(b.0 == 7, "…and its integer neighbour: {b.0}");
+
+  // ---- e2: a CONSTANT index through the same field.  It leaked too, which is what says the
+  //      index is not the axis — `(N-Index)` trusts a constant and it made no difference ----
+  cb = g.ts[0];
+  assert(cb.1 == "seven", "a constant index through a field vector: {cb.1}");
+
+  // ---- e3: an all-`integer` tuple.  It leaked too, so the member's type is not the axis
+  //      either — this is the cell that separates loft#1479 from loft#1478 ----
+  gi = Ints79 { ts: [(7, 8)] };
+  ib = gi.ts[i];
+  assert(ib.0 == 7 && ib.1 == 8, "an all-integer tuple through a field vector: {ib.1}");
+
+  // ---- e4: TWO levels of projection.  The walk has to peel both, not just the outermost ----
+  o = Outer79 { inner: Inner79 { ts: [(1, "deep")] }, n: 0 };
+  db = o.inner.ts[i];
+  assert(db.1 == "deep", "a field vector two levels down: {db.1}");
+
+  // ---- e5: a `for` variable, the third index spelling ----
+  many = Bag79 { ts: [(1, "a"), (2, "b")] };
+  joined: text = "";
+  for k in 0..2 { fb = many.ts[k]; joined = joined + fb.1; }
+  assert(joined == "ab", "a `for` variable through a field vector: {joined}");
+
+  // ---- e6: SIX reads in nested loops.  The cursor is one work-ref per function, so the leak
+  //      was one record however many times the read ran — a per-read count would have been a
+  //      different defect and this is the cell that says which ----
+  three = Bag79 { ts: [(1, "a"), (2, "b"), (3, "c")] };
+  acc: text = "";
+  for r in 0..2 { for k in 0..3 { rb = three.ts[k]; acc = acc + rb.1; } acc = acc + "{r}"; }
+  assert(acc == "abc0abc1", "six reads through one field vector: {acc}");
+
+  // ---- e7: the container is a PARAMETER's field, so the store is the caller's throughout ----
+  assert(via_param79(g, i) == "seven", "a field vector reached through a parameter");
+
+  // ---- e8: the view survives a write to the container.  The cursor borrows now, so this is
+  //      the cell that says the new dep did not turn a copy into a live alias — `(B-View)` ----
+  w = Bag79 { ts: [(7, "seven")] };
+  wb = w.ts[i];
+  w.ts[i] = (99, "ninetynine");
+  assert(wb.1 == "seven", "the binding keeps the value it was given: {wb.1}");
+  assert(w.ts[0].0 == 99, "…and the container took the write: {w.ts[0].0}");
+
+  // ---- c1 CONTROL: a LOCAL vector, which took the `Var` arm and was always clean ----
+  t: vector<(integer, text)> = [(7, "seven")];
+  lb = t[i];
+  assert(lb.1 == "seven", "c1 a local vector is unchanged");
+
+  // ---- c2 CONTROL: a field vector of plain STRUCTS.  A struct element is a DbRef already and
+  //      never unboxes, so it never reaches this cursor at all ----
+  eg = EBag79 { es: [E79 { x: 7 }] };
+  eb = eg.es[i];
+  assert((eb ?? E79 { x: 0 }).x == 7, "c2 a struct element does not unbox");
+
+  // ---- c3 CONTROL: OUT OF RANGE through a field.  Clean before the fix as well — the cursor
+  //      is never populated, so there was nothing to leak ----
+  j = 9;
+  ob = g.ts[j];
+  assert(ob.0 == null && ob.1 == null, "c3 an out-of-range field read is absent members");
+
+  println("1479-a-cursor-into-a-field-vector-borrows-that-field ok");
+}

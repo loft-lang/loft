@@ -1427,6 +1427,27 @@ impl Parser {
         } else {
             Value::Null
         };
+        // @PLN25 DN3 — a `while` body is the condition's THEN branch: it runs only while the
+        // condition holds, so a non-null proof narrows the proven var inside it exactly as
+        // `if`'s does (`parse_if`, the same two lists on the same push/truncate discipline).
+        // Without it the two spellings of ONE guard disagreed — `if cur != null { cur.value }`
+        // narrowed and `while cur != null { cur.value }` did not — so under `(N-Chain)` the
+        // canonical linked-list walk could not read its own node, which is the idiom the
+        // nullable pointer field exists for.
+        //
+        // A reassignment inside the body drops the proof at the write (`narrowed_non_null` is
+        // retained-against on assignment), which is what keeps the `cur = cur.next` step
+        // honest: the proof covers the reads BEFORE the advance, and nothing after it.
+        let narrow = self.narrowing_from_condition(&cond);
+        let narrow_base = self.narrowed_non_null.len();
+        if let Some((v, true)) = narrow {
+            self.narrowed_non_null.push(v);
+        }
+        let proj_narrow = self.projection_narrowing_from_condition(&cond);
+        let proj_base = self.narrowed_non_null_exprs.len();
+        if let Some((ref e, true)) = proj_narrow {
+            self.narrowed_non_null_exprs.push(e.clone());
+        }
         let not_cond = self.cl("OpNot", &[cond]);
         let break_if = v_if(
             not_cond,
@@ -1439,6 +1460,8 @@ impl Parser {
         let mut body = Value::Null;
         let loop_write_state = self.vars.save_and_clear_write_state();
         self.parse_block("while", &mut body, &Type::Void);
+        self.narrowed_non_null.truncate(narrow_base);
+        self.narrowed_non_null_exprs.truncate(proj_base);
         self.vars.restore_write_state(&loop_write_state);
         self.in_loop = in_loop;
         self.vars.finish_loop(loop_nr);
@@ -4425,6 +4448,79 @@ use a separate collection or add after the loop"
         } else {
             s_type
         };
+        // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
+        // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
+        // about the shape the body will take; where the body MATERIALISES its answer
+        // (`return_projects_into_local` picking `MaterializeView`, which a nullable element
+        // binding needs because the tagged-slot read is not emittable on pass 1) the guess is a
+        // borrow of a parameter where the truth is a store of the callee's own.  `is_equal`
+        // collapses deps, so `change_var_type`'s equality early-return keeps the guess: the
+        // caller's local reads `-> S?["q"]`, `owns_freeable_store` sees a non-empty list, no
+        // free is emitted, and the record the callee minted is orphaned once per call.
+        //
+        // Pass 2 re-derives every assignment, so its union is the whole answer and pass 1's is
+        // redundant — the binding's list is therefore CLEARED at its first pass-2 assignment
+        // and rebuilt from there.  First, and not last: a dep list is flow-INsensitive, one
+        // list per binding for every assignment to it, so replacing at the LAST assignment
+        // drops what the binding's other assignments contributed.  Measured rather than
+        // reasoned — the replace-at-every-assignment form freed the caller's vector out from
+        // under a sibling `t = head_dense(qd)` in the same function, and this file's own dense
+        // control read `USE AFTER FREE store #13 type=main_vector<S66>`.
+        //
+        // A CALL, and only a call, opens it: that is the producer whose deps are not the
+        // caller's to know, the same bound loft#957 drew for the same reason.  Every other
+        // right-hand side is made of things pass 1 can already see, and clearing on pass 1's
+        // behalf where it was right is how the stdlib stopped loading (`Unknown variable
+        // 'result'`) when this was first written as a pass-1 strip.
+        //
+        // "A call" means one to a function with a BODY.  An operator or a bodiless `#rust`
+        // native publishes fixed deps that pass 1 reads correctly — and `Value::Call` covers
+        // those too, `v[0]` among them — so the test is on the CALLEE, not on the node.
+        //
+        // And it means one whose callee this site can READ.  A `CallRef` goes through a fn-ref
+        // whose target is not known statically, so the premise above — "pass 1 published a guess
+        // and pass 2 has the truth" — cannot be established for it; clearing there is done on
+        // the assumption that pass 1 was wrong.  Measured: it is not always.  A `??`-joining
+        // lambda called through a local (`g = fn(q: vector<integer>?) -> vector<integer>
+        // { q ?? [7, 8] }`) returns its ARGUMENT's store on the non-null arm, and the borrow
+        // recording that is contributed by the `??` materialisation, not by the call at all —
+        // so the clear wiped a dep no call-result guess had put there and nothing re-added it.
+        // The binding then read OWNS, the loop freed the caller's vector, and the second pass
+        // through that arm saw an empty one (loft#1320's `two-base local` cell).
+        //
+        // A dep list is one list per binding for every route that writes it, so a wholesale
+        // clear can only be justified where the site knows which route it is correcting.  For a
+        // direct call it does; for a `CallRef` it does not, and the conservative answer there is
+        // to leave pass 1's list alone — an over-kept borrow leaks at worst, while an
+        // over-cleared one frees a store somebody else still holds.
+        let call_has_body = match code.unspan() {
+            Value::Call(d, _) => !matches!(self.data.def(*d).code(), Value::Null),
+            _ => false,
+        };
+        let rebuild_call_deps = match to.unspan() {
+            Value::Var(v_nr)
+                if !self.first_pass
+                    && op == "="
+                    && call_has_body
+                    && self.vars.exists(*v_nr)
+                    && !self.vars.is_argument(*v_nr)
+                    && !s_type.is_unknown()
+                    // …and the SLOT must be resolved too.  `is_equal(Unknown, τ)` is TRUE, so
+                    // without this a generic's still-unknown local passes the equality test and
+                    // is rewritten to `Unknown` carrying an empty dep list.
+                    && !self.vars.tp(*v_nr).is_unknown()
+                    && self.vars.tp(*v_nr).is_equal(&s_type)
+                    && self.vars.tp(*v_nr).depend() != s_type.depend()
+                    && self.vars.mark_pass2_rebuilt(*v_nr) =>
+            {
+                Some(*v_nr)
+            }
+            _ => None,
+        };
+        if let Some(v_nr) = rebuild_call_deps {
+            let cleared = self.vars.tp(v_nr).with_deps(&crate::data::Deps::none());
+            self.vars.set_type(v_nr, cleared);
+        }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right

@@ -433,8 +433,17 @@ fn blocks_header_hoist(
                 && frees_a_record(data.def(*d).name(), args, vars);
             if in_place_setter || record_free {
                 false
+            } else if call_writes_store(*d, data, cache, active) {
+                // @PLN157 § V-l — a USER callee that writes, but only in place: admitted
+                // under the same tier as a direct in-place setter, for the same reason
+                // (its writes move nothing).  The arguments still walk below this node,
+                // so a growing op inside one blocks on its own.
+                !(known
+                    && allow_in_place
+                    && crate::keys::inplace_callee_hoist_enabled()
+                    && in_place_only_writer(*d, data, cache, active))
             } else {
-                call_writes_store(*d, data, cache, active)
+                false
             }
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
@@ -473,6 +482,58 @@ fn call_writes_store(
     // have come from the branch above, since a cycle contributes `true` to every caller.
     cache.insert(d_nr, writes);
     writes
+}
+
+/// @PLN157 § V-l — does this def write stores ONLY through [`IN_PLACE_SET_OPS`]?
+///
+/// The P4a argument, one call deep: a scalar set through an address it is given moves no
+/// record and changes no length, so every header a CALLER hoisted stays valid across the
+/// call, whatever the address — an element of a vector reached through a parameter, a
+/// record's field, the callee's own local.  Everything else the callee runs must be
+/// store-free: a native op that is neither store-free nor one of those setters (a growth,
+/// a free, an `OpDatabase`, a text or reference set), a user callee that is neither
+/// store-free nor in-place-only itself, and a `CallRef` / `Parallel` / `Yield` (what runs
+/// is not this body) each keep the writer verdict; so does recursion, conservatively.
+/// The `composite` row's `set_pixel` — three scalar field reads, one element address, one
+/// `set_int` through it — is the shape.  Memoised beside [`call_writes_store`]'s answers
+/// under [`IN_PLACE_KEY`]; `LOFT_HOIST_VERIFY=1` is the falsifier.
+const IN_PLACE_KEY: u32 = 1 << 31;
+
+fn in_place_only_writer(
+    d_nr: u32,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let key = d_nr | IN_PLACE_KEY;
+    if let Some(known) = cache.get(&key) {
+        return *known;
+    }
+    let def = data.def(d_nr);
+    if matches!(def.code(), Value::Null) || !active.insert(d_nr) {
+        return false;
+    }
+    let only_in_place = !def.code().any_node(&mut |n| match n {
+        Value::Call(op, _) => {
+            if (*op as usize) >= data.definitions.len() {
+                return true;
+            }
+            let callee = data.def(*op);
+            if matches!(callee.code(), Value::Null) {
+                !(native_op_is_store_free(callee) || IN_PLACE_SET_OPS.contains(&callee.name()))
+            } else {
+                call_writes_store(*op, data, cache, active)
+                    && !in_place_only_writer(*op, data, cache, active)
+            }
+        }
+        Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
+        _ => false,
+    });
+    active.remove(&d_nr);
+    // A verdict reached while a cycle was open is `false` on the recursive edge only, which
+    // never admits a hoist; memoising it is safe either way.
+    cache.insert(key, only_in_place);
+    only_in_place
 }
 
 /// @PLN157 § V-c — does this def write nothing but fixed-width scalars into its own

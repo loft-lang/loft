@@ -506,8 +506,14 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
 }
 
 fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type) -> Value {
+    // The fn-ref widening `build_scalar_chain` does for a scalar subject, for the
+    // pattern subject: an enum arm yielding a non-capturing lambda is the same bare
+    // eight-byte d_nr meeting the same twenty-byte join (loft#1469).  The fallback is
+    // widened too — it is the value every un-matched subject delivers.
     let mut chain = fallback;
-    for arm in arms.into_iter().rev() {
+    crate::parser::widen_bare_fn_ref(&mut chain, result_type);
+    for mut arm in arms.into_iter().rev() {
+        crate::parser::widen_bare_fn_ref(&mut arm.code, result_type);
         let Some(guard) = arm.guard else {
             chain = match arm.cond {
                 Some(cond) => v_if(cond, arm.code, chain),
@@ -726,6 +732,13 @@ impl Parser {
         // sibling blocks / later functions (whose var slots collide), silently suppressing real
         // `(N-Store)` warnings.
         let nn_base = self.narrowed_non_null.len();
+        // …and the same discipline for the INDEX in-bounds proofs a fall-through guard
+        // establishes (`@FR-N-Domain`'s "guard" elision).  Same reason as above: a pair pushed
+        // by a guard clause inside this block holds only for the rest of THIS block, and var
+        // slots collide across functions, so leaking it would elide a `τ?` somewhere unrelated.
+        let ib_base = self.index_bounded.len();
+        // …and the DIVISOR proof, the third of `@FR-N-Domain`'s families, on the same discipline.
+        let dz_base = self.divisor_nonzero.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
         loop {
@@ -953,6 +966,38 @@ impl Parser {
                 && !self.narrowed_non_null.contains(&v)
             {
                 self.narrowed_non_null.push(v);
+            }
+            // The INDEX twin of the guard clause above, on the same three conditions — no else,
+            // an unconditionally divergent body, and a condition that proves the fact on the
+            // FALL-THROUGH.  `if idx < 0 or idx >= len(v) { return … }` states the bad case and
+            // leaves, so the rest of this block has `v[idx]` in-bounds; `@FR-N-Domain` names a
+            // GUARD among its elisions and this is one, but only the `if idx < len(v) { … }`
+            // spelling was ever read, so the promise depended on which way the test was written
+            // (published `stage` 0.18.1 `frame_of` writes the second).
+            if let Value::If(test, true_code, false_code) = n.unspan()
+                && matches!(false_code.unspan(), Value::Null)
+                && let Value::Block(bl) = true_code.unspan()
+                && is_block_divergent(&bl.operators)
+            {
+                let caps = std::collections::HashMap::new();
+                for pair in
+                    crate::parser::operators::collect_guard_pairs_negated(test, &self.data, &caps)
+                {
+                    if !self.index_bounded.contains(&pair) {
+                        self.index_bounded.push(pair);
+                    }
+                }
+                // The DIVISOR twin, and the reason all three of these sit together: `if d == 0 {
+                // return … } … a / d` is the index gap one family over, and the fact was already
+                // being computed — `divisor_proof_from_condition` answers "proven on the ELSE
+                // side" for `d == 0` — with nothing consuming it on the fall-through.  Walking
+                // `@FR-N-Domain` as a RULE rather than as a site is what turned that up: one
+                // promise, three families, three sets of admissible spellings.
+                if let Some((v, false)) = self.divisor_proof_from_condition(test)
+                    && !self.divisor_nonzero.contains(&v)
+                {
+                    self.divisor_nonzero.push(v);
+                }
             }
             if let Value::Insert(ls) = n {
                 Self::move_insert_elements(&mut l, ls);
@@ -1475,6 +1520,8 @@ impl Parser {
         // @PLN25/#585: drop any guard-clause fall-through narrowing this block introduced — the
         // proof does not escape the block (see `nn_base` above).
         self.narrowed_non_null.truncate(nn_base);
+        self.index_bounded.truncate(ib_base);
+        self.divisor_nonzero.truncate(dz_base);
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -2735,6 +2782,31 @@ impl Parser {
         } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
             // #306: the tail borrows a LOCAL's store — copy it before it escapes.
             RefDelivery::MaterializeView
+        } else if !self.first_pass
+            && self.return_buffer().is_none()
+            && self.return_views_an_argument(ls)
+        {
+            // PASS 2 ONLY, and that is a soundness condition rather than an optimisation.
+            // The dep list this reads is not pass-stable for every shape: a `??`-JOIN local
+            // (`d = q ?? P { n: 0 }`, owned on the fallback arm and borrowing the argument on
+            // the other) reads as borrowing on pass 1 and not on pass 2, so a delivery keyed
+            // on it fired on ONE pass while the promotion ran on the other — the lambda then
+            // grew a pass-2-only attribute and tripped the H5 two-pass contract
+            // (`1179-a-fn-ref-return-buffer-has-an-owner`).  Deciding on pass 2 alone is
+            // decided ONCE, which is what that contract asks; loft#1468's own shape carries
+            // the same deps on both passes, so nothing it needs is lost.
+            // loft#1468, `@FR-F-Ret` — the tail borrows an ARGUMENT's store, so handing it
+            // back is a view where the rule promises a fresh, independent value.  The leg
+            // above does not catch it because it does not DANGLE: the store is the caller's
+            // and outlives the frame.  It aliases instead, and a write through the result
+            // lands on the argument the caller passed.
+            //
+            // Only a BUFFER-LESS return arrives here with an argument borrow.  A dense heap
+            // return keeps the promise through its hidden `__retbuf` — the caller allocates
+            // and `ref_return`'s copy leg writes into it — so `-> S` copies while `-> S?`,
+            // the SAME body, did not.  That asymmetry is what `@FR-N-Shape` refuses: a shape
+            // question answers alike for `τ` and `τ?`.
+            RefDelivery::MaterializeView
         } else {
             // Owned / arg-borrow: rename the tail's work-ref(s) onto `__retbuf`.
             RefDelivery::Rename(ls.to_vec())
@@ -3991,7 +4063,10 @@ impl Parser {
     /// Deliberately narrow: the operand must be a CALL (a lookup or a field read), never a
     /// bare `Var` — a name is [`Self::narrowing_from_condition`]'s to answer, and answering it
     /// here as well would put one fact in two lists with two lifetimes.
-    fn projection_narrowing_from_condition(&self, test: &Value) -> Option<(Value, bool)> {
+    pub(crate) fn projection_narrowing_from_condition(
+        &self,
+        test: &Value,
+    ) -> Option<(Value, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -4042,7 +4117,19 @@ impl Parser {
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
     /// side of a comparison is any `OpConv*FromNull()` (the parser's typed-null lowering).
-    fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+    pub(crate) fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+        // `if v` BEFORE the boolean conversion is materialised — the same truthy test as the
+        // `OpConvBoolFrom*` arm below, just earlier in the pipeline.  PASS 1 leaves the
+        // condition as a bare `Var`; only pass 2 wraps it, so reading `Call` alone made the
+        // two passes disagree about whether the guard narrows, and the parser keeps the FIRST
+        // answer for an inferred local.  `if hit { hit.val }` then typed `integer?` from pass
+        // 1 and `integer` from pass 2, and the `integer?` won — a rule reporting the very code
+        // its own diagnostic asks for.  Recognising the pre-conversion shape is what makes the
+        // proof pass-independent; a boolean var narrows to itself, so the extra arm costs
+        // nothing where the condition was never nullable.
+        if let Value::Var(v) = test.unspan() {
+            return Some((*v, true));
+        }
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -4180,6 +4267,14 @@ impl Parser {
             return None;
         };
         let name = self.data.def(*op).name();
+        // ⚠ NOT the truthy spellings.  `if d { … }` / `if !d { … }` prove a NULLABLE value
+        // present — which is why `narrowing_from_condition` reads them one door over — and they
+        // prove NOTHING about an integer being non-zero here: measured, `if 0 { … }` takes the
+        // THEN branch and `!0` is `false`, exactly as `!3` is.  An arm for them was written and
+        // reverted the same hour: it elided the `?` on `if !d { return -1; } … a / d`, where the
+        // guard never fires, so `f(10, 0)` answered a silent null through a non-null slot.  A
+        // widening that removes a diagnostic has to be measured on the cell the diagnostic was
+        // ABOUT, not only on the cells it was annoying in.
         let then_branch = if name.starts_with("OpNe") {
             true
         } else if name.starts_with("OpEq") {
@@ -4525,11 +4620,9 @@ impl Parser {
         // @FR-O-Proxy asks copy — a non-empty dep list is what marks the arm's yield as a
         // BORROW, and the answer chooses whether to build the owned `mvcopy`.  It authorises
         // no free: the copy is a fresh binding, and the borrow keeps its own owner.
-        if v >= self.vars.count()
-            || !self.vars.skip_free(v)
-            || !matches!(self.vars.tp(v), Type::Vector(_, _))
-            || self.vars.tp(v).depend().is_empty()
-        {
+        // The same notion `ref_return` asks, asked once
+        // ([`Function::is_marked_vector_borrow`]) — read negated here, guarding the early exit.
+        if v >= self.vars.count() || !self.vars.is_marked_vector_borrow(v) {
             return None;
         }
         let v_type = self.vars.tp(v).clone();
@@ -10153,6 +10246,18 @@ impl Parser {
                 set_arm_null_typed(&mut arm.1, &typed_null, result_type);
             }
         }
+        // The same repair one width up, for the fn-ref result type.  A non-capturing
+        // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
+        // the full twenty-byte fn-ref, so the arms of one choice leave different depths
+        // and the read straddles.  The `if` spelling of the identical choice is correct
+        // because its arm is a BLOCK typed `function(…)` whose result path completes the
+        // pair; this chain puts the arm body in raw, so the widening happens here instead
+        // (loft#1469).  Both the bare and the `{ … ; <lambda> }` block spelling, and the
+        // wildcard arm too — it is still in `arms` at this point and becomes the fallback
+        // just below.
+        for arm in &mut arms {
+            crate::parser::widen_bare_fn_ref(&mut arm.1, result_type);
+        }
         let fallback = if has_wildcard {
             let (_, arm_code, _, _) = arms.pop().unwrap();
             arm_code
@@ -10226,6 +10331,19 @@ impl Parser {
         subject_type: &Type,
         variant_name: &str,
     ) -> Type {
+        // `@FR-N-Chain` — a NULLABLE enum is TESTABLE.  `is` asks which variant a value
+        // carries, and *"none, it is absent"* is an answer to that question rather than a
+        // reason to refuse it: `Sh?` is `Optional(Enum(Sh, true))`, the same record behind a
+        // nullability marker (`@FR-L-Null`), so the variant test reads through the marker
+        // exactly as `match` does under `(N-Match)`.
+        //
+        // Without the peel an `Optional` subject fell to the `_` arm below, which answers
+        // `Boolean` WITHOUT consuming the `{ … }` payload — so the capture list was then read
+        // as a block and reported as *"Expect token ;"* at the first bound name: a message
+        // about punctuation for a program whose only fault was that its subject could be
+        // absent.  Reachable from a plain `s: Sh? = Box{…}` with no projection in sight, so it
+        // predates the chain widening that made the corpus meet it.
+        let subject_type = subject_type.base();
         let (e_nr, is_struct) = match subject_type {
             Type::Enum(nr, true, _) => (*nr, true),
             Type::Enum(nr, false, _) => (*nr, false),
@@ -12513,8 +12631,20 @@ impl Parser {
             Value::Null => true,
             Value::Var(v) => {
                 *v >= self.vars.count()
+                    // The leaf IS a parameter: `keep(s) -> S? { s }`.  Handing a parameter
+                    // straight back is loft#1368's settled shape and the CALLER copies it, so
+                    // copying here as well would only add a second one.
                     || self.vars.is_argument(*v)
-                    || !self.return_views_local(&[*v])
+                    // …but a LOCAL that views a parameter is not owned either, and it was
+                    // read as owned because `return_views_local` walks PAST an argument dep
+                    // (that store outlives the frame, so nothing dangles).  loft#1468: it
+                    // aliases instead — `match p { [a, ..] => a, … }` binds the element to a
+                    // local whose dep is `p`, and the view escaped into the caller, where a
+                    // write through the result landed on the argument.  `@FR-F-Ret` asks for
+                    // a FRESH value, not merely a non-dangling one, and the dense twin
+                    // already copies through its `__retbuf` — `@FR-N-Shape` refuses that
+                    // asymmetry between `-> S` and `-> S?`.
+                    || !(self.return_views_local(&[*v]) || self.return_views_an_argument(&[*v]))
             }
             Value::Call(d, args) => {
                 let name = self.data.def(*d).name();
@@ -13413,6 +13543,38 @@ impl Parser {
         }
     }
 
+    /// loft#1468 — do the tail's bindings BORROW an argument's store?
+    ///
+    /// The `ls` twin of [`Self::return_views_a_caller_store`], and the one that fires for the
+    /// filed shape: a `match` arm binds the element to `a` and the tail is then the bare `a`,
+    /// so no projection is visible AT the tail and the fact lives in the binding's dep list
+    /// instead.  `@FR-F-Ret` asks for a fresh value however the callee spelled the route to it.
+    ///
+    /// The mirror of [`Self::return_views_local`], which asks the same question about a LOCAL
+    /// root and copies for the other reason — that one dangles, this one aliases.
+    fn return_views_an_argument(&self, ls: &[u16]) -> bool {
+        // `&T` is `(F-Ret)`'s own exception: it exists to hand out a view, so materialising one
+        // would BE the defect.  Through `base()`, which peels the `?` and not the `&` — the
+        // question is about the route, and `@FR-N-Shape` asks only that `τ` and `τ?` answer
+        // alike.
+        if matches!(
+            self.data.def(self.context).returned().base(),
+            Type::RefVar(_)
+        ) {
+            return false;
+        }
+        ls.iter().any(|&v| {
+            v < self.vars.count()
+                && !self.vars.is_argument(v)
+                && self
+                    .vars
+                    .tp(v)
+                    .depend()
+                    .iter()
+                    .any(|&d| d < self.vars.count() && self.vars.is_argument(d))
+        })
+    }
+
     fn site_value_ref(&self, tail: &Value) -> Option<u16> {
         match tail.unspan() {
             Value::Var(v) => Some(*v),
@@ -13705,13 +13867,14 @@ impl Parser {
                 // `_mv_items_1 = OpGetField(e,…)`) that does NOT own its backing store
                 // (it aliases the subject `e`); freeing its deps would over-free `e`
                 // (@PLN85 match_return). The append already copied its elements into `w`.
-                if !self.vars.skip_free(local) {
-                    // @FR-O-Proxy asks free — the arm's own backing store is released here.
-                    // @FR-O-Override is consulted by the enclosing test, which is where the
-                    // borrowed-view case (a `_mv_` match-field binding) is turned away; the
-                    // veto has to be read for a free on the proxy, and reading it once for
-                    // the whole block is what that test is.
-                    if deps.is_empty()
+                if !self.vars.is_skip_free(local) {
+                    // @FR-O-Proxy asks free — the arm's own backing store is released here,
+                    // and the proxy is asked WITH its @FR-O-Override veto as one question
+                    // ([`Function::proxy_says_owned`]) rather than leaning on the enclosing
+                    // test.  The enclosing test stays because the `else` arm below frees the
+                    // deps and needs the same veto; what changes is that this free states its
+                    // own obligation instead of inheriting one from a block boundary.
+                    if self.vars.proxy_says_owned(local)
                         && self.vars.is_work_ref(local)
                         && !self.vars.is_argument(local)
                     {
@@ -14649,9 +14812,8 @@ impl Parser {
                 .filter(|&v| {
                     v < self.vars.count()
                         && v != buf_var
-                        && self.vars.skip_free(v)
-                        && matches!(self.vars.tp(v), Type::Vector(_, _))
-                        && !self.vars.tp(v).depend().is_empty()
+                        // One notion, one home ([`Function::is_marked_vector_borrow`]).
+                        && self.vars.is_marked_vector_borrow(v)
                 })
                 .collect();
             if !borrowed.is_empty()

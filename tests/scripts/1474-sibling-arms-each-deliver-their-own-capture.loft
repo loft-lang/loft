@@ -1,0 +1,122 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1474 — sibling branch arms that each close over a DIFFERENT local, delivered out.
+//
+// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the
+// frame outlives the other.  The scope sweep asks "does this return deliver this closure
+// record?" and was answering it from the DECLARED RETURN's `CalleeFrame` note, which is
+// published once per lambda and OVERWRITTEN: where a function builds more than one record the
+// note names the last one BUILT, not the ones the return can hand out.  So a `match` or `if`
+// whose arms each build a closure had one record named and the rest freed by the frame — and
+// that free is what TRIGGERS the capture cascade, so it reached through into everything the
+// record captured.
+//
+// loft#1444 had already moved the fn-ref VARIABLE's own free onto the values in return
+// position; the record local's free was left reading the note.  It asks
+// `record_leaves_frame` now, so both sides answer from one place.
+//
+// The symptom is a wrong VALUE with nothing to see: the lambda that runs is the right one and
+// every store it reads is LIVE, just not the one it closed over — so `LOFT_STRICT_STORES=1`
+// and `LOFT_POISON=1` are both silent, and the answer is three ordinary-looking integers.
+// That is why the cells assert the exact value rather than merely running clean.
+//
+// Axes this file MOVES:  the branch's SPELLING (`if` · `match` · a three-arm match) · the
+//                        NUMBER of arms, since the note names the last BUILT and a two-arm
+//                        cell cannot tell "the last" from "the other" · the ORDER captures are
+//                        written in, which is what separates "the last arm's capture" from
+//                        "the last declared local" — the reversed cell would read green
+//                        against a fix that simply preferred a fixed slot · and whether the
+//                        fn-ref LEAVES the frame, because bound and called in place the store
+//                        is still alive and every arm answers correctly.
+// Axes it HOLDS FIXED:   each arm captures its OWN local, so exactly one record adopts each
+//                        store.  Several records adopting ONE store is loft#1473's question —
+//                        a static owner pick for a per-run fact — and it is still open, so a
+//                        cell of that shape here would be red for a reason none of these axes
+//                        name.
+//
+// @falsified-at: 0dd1ad660 — interpret exit 1 -> 0 and 1 assertion failure -> 0, native the
+//   same.  The ASSERT is the only channel that moves: leak and panic are `none` on both sides,
+//   on both backends, because every store the wrong answer reads is live.  The underlying
+//   values move `e1` 104 -> 102, `e3` `103 203 303` -> `101 202 303`, `e4` `101 201 301` ->
+//   `103 202 301`; without the assertions this file would run clean over all three.
+
+struct E74 { a: integer }
+
+// e1 — the filed shape: two `if` arms over two locals, fn-ref returned.
+fn if_two(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + d.a } }
+}
+
+// e2 — the `match` spelling of the same choice: a different chain builder reaching one sweep.
+fn match_two(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  match p { true => fn() -> integer { 100 + e.a }, false => fn() -> integer { 200 + d.a } }
+}
+
+// e3 — THREE arms over three locals, captured in declaration order.  Two arms cannot tell the
+// note's "last built" from "the other one"; three can.
+fn three_forward(p: integer) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  match p { 0 => fn() -> integer { 100 + x.a }, 1 => fn() -> integer { 200 + y.a }, _ => fn() -> integer { 300 + z.a } }
+}
+
+// e4 — the same three arms with the captures REVERSED, so the last ARM takes the FIRST-declared
+// local.  This is the cell that says "the last arm's capture" and not "the last declared local":
+// a fix that preferred a fixed slot would pass e3 and fail here.
+fn three_reversed(p: integer) -> fn() -> integer {
+  x: E74 = E74 { a: 1 };
+  y: E74 = E74 { a: 2 };
+  z: E74 = E74 { a: 3 };
+  match p { 0 => fn() -> integer { 100 + z.a }, 1 => fn() -> integer { 200 + y.a }, _ => fn() -> integer { 300 + x.a } }
+}
+
+// c1 — CONTROL: the fn-ref does NOT leave the frame.  The captured stores are still alive when
+// it is called, so every arm answered correctly even before the fix; a cure that changed this
+// cell would have moved a path that was never broken.
+fn bound_in_frame(p: boolean) -> integer {
+  e: E74 = E74 { a: 2 };
+  d: E74 = E74 { a: 4 };
+  g: fn() -> integer = if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 200 + d.a } };
+  g()
+}
+
+// c2 — CONTROL: ONE capturing arm and one bare arm.  Only one record exists, so the declared
+// note and the delivered set agree and the old reading was right.
+fn one_capture(p: boolean) -> fn() -> integer {
+  e: E74 = E74 { a: 2 };
+  if p { fn() -> integer { 100 + e.a } } else { fn() -> integer { 207 } }
+}
+
+fn main() {
+  g1 = if_two(true);  h1 = if_two(false);
+  assert(g1() == 102, "e1 `if`, first arm reads its own capture: {g1()}");
+  assert(h1() == 204, "e1b `if`, second arm: {h1()}");
+
+  g2 = match_two(true); h2 = match_two(false);
+  assert(g2() == 102, "e2 `match`, first arm reads its own capture: {g2()}");
+  assert(h2() == 204, "e2b `match`, second arm: {h2()}");
+
+  a3 = three_forward(0); b3 = three_forward(1); c3 = three_forward(2);
+  assert(a3() == 101, "e3 three arms, first: {a3()}");
+  assert(b3() == 202, "e3b three arms, middle: {b3()}");
+  assert(c3() == 303, "e3c three arms, last: {c3()}");
+
+  a4 = three_reversed(0); b4 = three_reversed(1); c4 = three_reversed(2);
+  assert(a4() == 103, "e4 reversed captures, first arm takes the LAST local: {a4()}");
+  assert(b4() == 202, "e4b reversed captures, middle: {b4()}");
+  assert(c4() == 301, "e4c reversed captures, last arm takes the FIRST local: {c4()}");
+
+  assert(bound_in_frame(true) == 102, "c1 bound in frame, first: {bound_in_frame(true)}");
+  assert(bound_in_frame(false) == 204, "c1b bound in frame, second: {bound_in_frame(false)}");
+  g5 = one_capture(true); h5 = one_capture(false);
+  assert(g5() == 102, "c2 single capturing arm: {g5()}");
+  assert(h5() == 207, "c2b single capturing arm, bare sibling: {h5()}");
+
+  println("1474-sibling-arms-each-deliver-their-own-capture ok");
+}

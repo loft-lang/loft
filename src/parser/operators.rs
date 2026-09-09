@@ -2830,8 +2830,21 @@ impl Parser {
         // code below builds with the non-null base (the null sentinel is representable in the
         // base's storage: `i64::MIN`, a null DbRef, …); only the REPORTED `*ctp` is re-wrapped, so
         // the N-Store check at the consuming slot rejects. Gated `LOFT_NO_QQ_NULL` (default on).
+        // `@FR-N-Coal` is UNCONDITIONAL — `e ?? d ⇒ τ`, non-null — and the one shape that
+        // re-marks the result nullable is a fallback that can itself be null (@PLN102 gate-2,
+        // `?? null`).  That question is decided by the fallback's TYPE, not by its IR shape: a
+        // call to a function declared BELOW this line parses to `Value::Null` on pass 1, because
+        // its callee is not resolved yet, and reading the shape alone counted that as a null
+        // fallback.  `change_var_type` keeps the FIRST answer, so `sub = st ?? no_type()` was
+        // `TypeInfo?` for the rest of the function whenever `no_type` was written further down
+        // — invisible until something read the result's nullability, and then a `for` over
+        // `sub.fields` was refused in a program that had already discharged.
+        //
+        // A genuine `?? null` types `Null`; the unresolved call types `Unknown`.  Asking for
+        // `Type::Null` keeps gate-2 exactly and makes the answer pass-independent.
         let fallback_nullable = crate::keys::qq_null_typing_enabled()
-            && (matches!(rhs.unspan(), Value::Null) || matches!(rhs_type, Type::Optional(_)));
+            && ((matches!(rhs.unspan(), Value::Null) && matches!(rhs_type, Type::Null))
+                || matches!(rhs_type, Type::Optional(_)));
 
         // The default may be a vector literal (`?? []`, `?? [99]`) that builds into
         // its OWN work-ref `_vec_N` — the last operator of the emitted `"Vector"`
@@ -3594,6 +3607,18 @@ impl Parser {
     /// — a named constant like `SFX_RATE`, or a cast of one like `RATE as single` (both inline to a
     /// literal that `const_eval` reduces). This closes the gap where a direct `x / 600.0` was
     /// non-null but `x / NAMED_CONST` spuriously typed `τ?`. Anything else can be zero → `τ?`.
+    /// ⚠ **One question, three decoders.**  `@FR-N-Domain` promises a SINGLE elision —
+    /// "provably in-domain (constant / range / guard)" — over three families of partial
+    /// operation, and it is answered here, in `Parser::divisor_provably_nonzero` /
+    /// `divisor_proof_from_condition` for `÷0`, and in `Parser::math_arg_provably_in_domain`
+    /// for the domain-partial float functions.  Each carries its own set of admissible
+    /// spellings, and none reads the others.
+    ///
+    /// That is why the same gap has to be fixed three times: the guard-clause spelling
+    /// (`if bad { return } …`) was added to the index and the divisor on 2026-09-08 and is
+    /// still absent from the math family.  Before widening what THIS site accepts, check
+    /// whether the other two accept it — a licence added here alone is the fourth family's
+    /// bug waiting to be filed.  `formal/types-history.md` § D-Domain-Guard.
     fn divisor_provably_nonzero(&self, divisor: &Value) -> bool {
         match divisor.unspan() {
             Value::Int(n) => *n != 0,
@@ -5138,6 +5163,133 @@ fn is_easy_proof(kind: FaultKind, args: &[Value], ctx: &WarnCtx, data: &Data) ->
 /// returning `(idx_var, vec_var)` on a match.  Skip pattern 5's entry
 /// point for the If walker — pushed onto `WarnCtx::guarded_pairs` for
 /// the duration of the then-block.
+/// Every `(idx_var, vec)` pair a GUARD-CLAUSE condition proves in-bounds on its FALL-THROUGH.
+///
+/// `@FR-N-Domain` elides its `τ?` when the index is "PROVABLY in-domain (constant / range /
+/// GUARD)", and [`collect_guard_pairs`] reads the guard written one way — `if idx < len(v) { … }`,
+/// where the proof holds inside the THEN branch.  The other canonical spelling states the BAD
+/// case and leaves:
+///
+/// ```loft
+/// if idx < 0 or idx >= len(v) { return 0; }
+/// x = v[idx];                 // in-bounds, and it was reported nullable
+/// ```
+///
+/// Two spellings of one guard, and only one was recognised — so the elision the rule promises
+/// depended on which way the author wrote the test.  Published `stage` 0.18.1 writes the second
+/// (`frame_of`), and nothing observed it until `(N-Chain)` carried the `?` out of the index and
+/// into a cast.
+///
+/// This answers the ELSE side, so it collects from the DISJUNCTS: `not (a or b)` is `not a and
+/// not b`, so every disjunct contributes and a disjunct that proves nothing simply adds nothing.
+/// That is why an OR is the right recursion here where [`collect_guard_pairs`] recurses into an
+/// AND — the two sides of one De Morgan step.
+///
+/// Conservative in the same way its twin is: the leaf must be `idx >= len(v)` over a bare index
+/// var, with `len` naming the collection actually indexed.  A `>` , a swapped operand order, or
+/// a length captured in a local is not recognised and merely keeps the read `τ?`.
+pub(crate) fn collect_guard_pairs_negated(
+    cond: &Value,
+    data: &Data,
+    captures: &std::collections::HashMap<u16, VecKey>,
+) -> Vec<(u16, VecKey)> {
+    let mut out = Vec::new();
+    collect_negated_into(cond, data, captures, &mut out);
+    out
+}
+
+fn collect_negated_into(
+    cond: &Value,
+    data: &Data,
+    captures: &std::collections::HashMap<u16, VecKey>,
+    out: &mut Vec<(u16, VecKey)>,
+) {
+    let inner = unwrap_cond(cond, data);
+    // `a or b` lowers to `if a then true else b` — recurse into both, mirroring the AND arm in
+    // `collect_guard_pairs_into`.
+    if let Value::If(left, right, else_v) = inner
+        && matches!(right.unspan(), Value::Boolean(true))
+    {
+        collect_negated_into(left, data, captures, out);
+        collect_negated_into(else_v, data, captures, out);
+        return;
+    }
+    if let Value::Call(def_nr, args) = inner {
+        let raw = data.def(*def_nr).original_name();
+        let name = raw.strip_suffix("Nullable").unwrap_or(raw.as_str());
+        if matches!(name, "OrBool" | "Or" | "LorInt") && args.len() == 2 {
+            collect_negated_into(&args[0], data, captures, out);
+            collect_negated_into(&args[1], data, captures, out);
+            return;
+        }
+        // `!(idx < len(v))` is the same fact spelled with a negation.
+        if name == "Not" && args.len() == 1 {
+            if let Some(pair) = guard_pair_with_ctx(&args[0], data, Some(captures)) {
+                out.push(pair);
+            }
+            return;
+        }
+    }
+    if let Some(pair) = ge_guard_pair(inner, data, captures) {
+        out.push(pair);
+    }
+}
+
+/// `idx >= len(vec)` — the bad-case leaf, whose NEGATION is the in-bounds proof.
+///
+/// Shares `guard_pair_with_ctx`'s reading of the right-hand side (an inline `len(<vec>)` or a
+/// local captured from one) so the two spellings cannot drift in what counts as "the length of
+/// the collection being indexed".
+fn ge_guard_pair(
+    v: &Value,
+    data: &Data,
+    captures: &std::collections::HashMap<u16, VecKey>,
+) -> Option<(u16, VecKey)> {
+    let inner = unwrap_cond(v, data);
+    let Value::Call(def_nr, args) = inner else {
+        return None;
+    };
+    let raw = data.def(*def_nr).original_name();
+    let name = raw.strip_suffix("Nullable").unwrap_or(raw.as_str());
+    if args.len() != 2 {
+        return None;
+    }
+    // `idx >= len(v)` is NOT emitted as a `Ge` — the parser normalises it by swapping the
+    // operands, so it arrives as `LeInt(len(v), idx)`.  Read off the IR rather than assumed:
+    // matching `GeInt(idx, len(v))` alone found nothing at all.  Both spellings are accepted
+    // because the normalisation is the parser's choice and not a promise.
+    let (idx_side, len_side) = match name {
+        "LeInt" | "LeLong" => (&args[1], &args[0]),
+        "GeInt" | "GeLong" => (&args[0], &args[1]),
+        _ => return None,
+    };
+    let Value::Var(idx_var) = idx_side.unspan() else {
+        return None;
+    };
+    let vec = len_arg_vec_key(len_side, data, captures)?;
+    Some((*idx_var, vec))
+}
+
+/// The `len(<vec>)` / captured-length right-hand side both guard readings share.
+fn len_arg_vec_key(
+    rhs: &Value,
+    data: &Data,
+    captures: &std::collections::HashMap<u16, VecKey>,
+) -> Option<VecKey> {
+    match rhs.unspan() {
+        Value::Call(len_def, len_args) => {
+            let len_raw = data.def(*len_def).original_name();
+            let len_name = len_raw.strip_suffix("Nullable").unwrap_or(len_raw.as_str());
+            if !matches!(len_name, "len" | "LengthVector") || len_args.len() != 1 {
+                return None;
+            }
+            vec_key(&len_args[0], data)
+        }
+        Value::Var(n) => captures.get(n).copied(),
+        _ => None,
+    }
+}
+
 fn guard_pair_with_ctx(
     v: &Value,
     data: &Data,

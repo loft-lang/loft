@@ -9,11 +9,29 @@ Tracker: [@PLN153](https://github.com/loft-lang/plans/issues/153).
 
 ## Status
 
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and SEVEN batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and FOUR batches landed, the audit row moving DOWN for the first time (359 → 354, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and EIGHT batches landed, the audit row moving DOWN twice (359 → 354 → 351, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and NINE batches landed, the audit row moving DOWN three times (359 → 354 → 351 → 347, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
-**Active — phase 3 complete and gated (3a, 3b, 3c — 2026-09-05); phase 4 opened with its instrument and TEN batches landed, the audit row moving DOWN three times (359 → 354 → 351 → 347, 2026-09-07); phase 5 opened by loft#1374 and its first batch landed (2026-09-06); the long tails of 4 and 5, and 6, remain.**  The null MODEL is decided and not reopened here: @PLN102's
+**Status — CLOSED 2026-09-08.**  All six phases ran.  Phase 6 re-measured the class and the
+answer is **NO EFFECT** — null/sentinel 14.1 % → 37.3 % (→ 25.9 % with this plan's own screen
+finds removed; it rose either way), the third consecutive no-effect verdict for this class.  The
+Done criterion is met in its SECOND form: the residual names a mechanism this plan did not touch
+— *the nullable spelling reaches the store machinery by a different road from its dense twin* —
+and it is filed as **@PLN160**.
+
+What shipped: the null rules have one home each (phases 1–2), the `(N-Store)` refusal sits at one
+point (phase 3, `Parser::nstore_unwrap_report`, now a registered keystone in
+`scripts/bug-review.py`), and `@FR-N-Shape` plus its ratchet (phase 4 batch 11) turned the
+1520-site walk into standing enforcement instead of an unfinishable queue.
+
+What was DECLINED rather than finished: **phase 5's citation-convergence tail**.  Converging
+`@FR-L-Null`'s citations is the same activity the bug review has now scored NO EFFECT three
+times — *"a rule gains nothing by being pointed at from more places"* — so the remaining 42
+citations are not work this plan hands on.  Phase 4's function-by-function tail is likewise
+closed by CONVERSION, not by completion.
+
+One open debt, tracked as an issue and not as a phase: **loft#1450**'s remaining leg (a
+projection through a nullable receiver drops the `?`), re-measured at 115 sites and written up in
+[batch11-shape-rule.md](batch11-shape-rule.md).
+
+The null MODEL is decided and was not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
 [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
@@ -89,15 +107,9 @@ the axes it reports unreached are the cells still to build, not a note.
 | **1** | **Census: one home per N rule.**  For each of the 18, the predicate or emitter that decides it today.  Candidates: `N-Coal` → `parser/operators.rs::build_null_coalesce_default`; `N-Default` → the `x?` lowering + `Data::has_default`; `N-Store`/`N-Decl` → the `(N-Store)` teeth (`keys.rs`: the DN3 gate, the call-arg gate, the heap gate); `N-Prop` → `nullflow_enabled()`; `N-Join` → the inferred-assignment join; `N-Match` → the null arm; `N-Div`/`N-Arith`/`N-Cast`/`N-Cast?` → operator typing ([float-null-domain-typing.md](../102-stability-contract/float-null-domain-typing.md)); `N-Dense` → element storage; `N-Parse` → folded into `N-Cast`; `N-Index`, `N-Reserve`, `N-Store` already cited. | Per rule, ONE probe pair on both backends — a program where the rule must hold and one where its negation must be refused — green BEFORE the `@FR-` citation is added.  `rule_tags.py check` then reports 18/18 cited; a rule whose only evidence is the citation is the B6u failure and does not count. | **Done** 2026-09-05 — § Phase 1 census |
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 7 batches landed; the row moved DOWN twice (359 → 354 → 351).  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 4 batches landed; the row moved DOWN for the first time (359 → 354) |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 5 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 6 batches landed; the row moved DOWN for the first time (359 → 354).  Batch 5's element-tag finding is the phase's first OPEN item |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 8 batches landed; the row moved DOWN twice (359 → 354 → 351) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 9 batches landed; the row moved DOWN three times (359 → 354 → 351 → 347) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
-| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **Open**, 10 batches landed; the row moved DOWN three times (359 → 354 → 351 → 347) and batch 8 closed its group by probe cell instead.  Batch 5's element-tag finding is CLOSED by batch 7, which reversed its reading |
-| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **Opened** 2026-09-06 — batch 1 (§ Phase 5) |
-| **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | Open |
+| **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **CLOSED by CONVERSION** — 11 batches, the row 359 → 338; batch 11 measured the real population (1520 TESTS, not 338 functions), wrote `@FR-N-Shape` and put a ratchet on it.  The remaining sites are gated, not queued |
+| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **DECLINED** after 2 batches — the bug review has scored citation-convergence NO EFFECT three times; the remaining 42 are not work this plan hands on |
+| **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | **DONE** 2026-09-08 — NO EFFECT (14.1 % → 37.3 %, → 25.9 % net of this plan's own finds); residual characterised and routed to @PLN160 |
 
 ## Phase 0 — result (2026-09-05)
 
@@ -1034,6 +1046,72 @@ about a Rust `String` inside a record, which is not a store at all — the loft2
 loft#1406 leak was 8 bytes of exactly that kind, invisible to the store gate, which reads clean
 because nothing was retained.
 
+**Batch 11 — the mechanism the first ten batches kept curing, written as a rule and gated
+(2026-09-08).**  Ten batches had cured one mechanism — a `matches!` / `if let` / catch-all `match`
+over a `Type` that answers "no" for `Optional(τ)` — and each cured it at the callers it happened
+to reach.  The governing fact was already written, in `Type::peel_optional`'s doc block since
+@PLN25: *"the nullability-agnostic majority of `match Type` sites peel through this; only the
+discharge / store / cast checks read the bool."*  It had no rule, no citation and no gate, so
+every batch re-derived it.  It is now **`(N-Shape)`** in [types.md](../../formal/types.md), cited
+at its home and at the verbs below, and the register entry is in
+[types-history.md](../../formal/types-history.md).
+
+**The re-scope, and it is the batch's real finding.**  The phase has been reading its progress off
+the FUNCTION row (359 → 338).  The unit that carries the defect is the TEST, and
+`ir_walker_audit.py optional` has been printing that number all along: **2268** shape tests,
+**1520** opaque on their own scrutinee.  At three to five functions a batch, the function row is a
+seventy-batch queue and the test population is not a walk at all.  So the enforcement is the
+DERIVATIVE, not the level: `make optional-ratchet` pins both counts in
+`index/optional_ratchet.json` and fails when either GROWS, on `asan_leak_ratchet.sh`'s argument
+for a count over an allowlist — the opaque tests are ordinary `matches!` on a `Type` and no
+suppression pattern can tell a known one from a new one.  A FALL is not a failure: it prints the
+re-pin command and exits 0, so a PR is never blocked by its own improvement.
+
+**Three verbs fixed at the verb rather than at their callers**, which answers ~48 bare call sites
+at one home: `is_scalar`, `Type::heap_def_nr`, `Type::heap_dep`.  Measured with
+`scripts/introspect_diff.sh`: **DIFFERENT 9 of 1411**, every one a null guard, every one identical
+in VALUE on both backends and under `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` / `LOFT_STORES=warn`.
+Eight now take the copy-or-adopt lowering their DENSE twin already took — `heap_def_nr` is
+`(B-Copy)`'s home and loft#1319 had cured only the local-to-local site, leaving the call-result and
+fn-ref-result sites bare — and the ninth moves a hoisted nullable scalar's declaration into the
+native prologue, which is where batch 3's own cell said it belonged.  `heap_dep` alone reads
+IDENTICAL 1411/1411: insurance, on batch 2's own argument for peeling its four `scopes.rs` callers.
+
+**⚠ `is_dbref` is the one OPEN exception, and the measurement is why.**  The prediction written
+before the probe was 10–30 files; it moves **102** and breaks **12** guards, because at least
+thirteen callers read its blindness as a NULLABILITY test — they ask *"is this a non-null heap
+slot?"* and take the answer from a SHAPE predicate's missing arm.  Two of four predictions in
+`DESIGN.md` were wrong and both wrong ones changed the plan, which is the probe earning its keep.
+One caller is named and cured WITHOUT peeling the verb: `nstore_null_report_as`'s `heap_target`
+tests the synthetic `__nullable<S>` spelling of `τ?` explicitly and left the `Type::Optional`
+spelling to `is_dbref` answering false — one notion, two spellings, one of them looked for.
+Spelling the second is byte-identical today and makes the gate's reason local.  A second site,
+`coroutine_layout::channel_0_carries`, is the rule broken INSIDE ONE EXPRESSION: `Text` peels, the
+handle test did not, the scalar list peels.  Also byte-identical, and the clearest single
+illustration of why the rule is worth naming.
+
+**Guards.**  `data::tests::every_shape_verb_answers_alike_for_a_nullable_type` is `(N-Shape)` as an
+executable property — one τ per storage class the model has, each asserted against its `τ?` for
+all five verbs — and it goes RED naming the verb and the type when a peel is reverted (measured).
+`is_dbref_is_the_documented_exception_to_shape_agreement` holds the exception open and FLIPS when
+the caller split lands, so closing it cannot be forgotten.  A `.loft` guard would be inert here:
+the change is behaviour-neutral by construction, which is the claim, so the cell has to be the
+INVARIANT rather than a program.
+
+**Two of the audit's rows are FALSE POSITIVES**, recorded so the baseline is honest rather than
+merely frozen: `borrow_deps` and `rewrap_deps` name `Rewritten` with no `Optional` arm but delegate
+to `deps_ref` / `with_deps`, which are dep-transparent by construction.  Two more are DELIBERATE
+and must stay bare: `is_unknown` (106 bare callers — phase 0 F1 settled that a wrapper over a stub
+IS a written type at the settledness guards) and `find_fn` (`(F-Recv)` keys two overloads apart BY
+the `?`).
+
+Filed rather than fixed, and NOT a null defect — the dense control is what says so: **loft#1467 — a generator
+yielding a tuple with a store-handle member emits its correct refusal AND a spurious rustc
+`E0308` beside it**, so the author gets loft's own message with a codegen dump attached, which is
+the outcome loft#1132's write-up says must not happen.  Pre-existing, dense and nullable alike;
+found because the first cut of this batch's yield probe had no dense control, and adding one
+killed a finding that had looked like a nullability defect.
+
 ## Phase 5 — opened: the value spelling of absence has one home (2026-09-06)
 
 The opening cell was loft#1374, filed by phase 4's return-delivery matrix: an absent element
@@ -1085,6 +1163,117 @@ view survives a source realloc"*, rested on a guard cell that appends to the INN
 nested one and never measured the realloc of the container the view names.  Recorded as
 D-bind-18; the collection-typed twin is loft#1377, filed rather than bundled because admitting
 its type makes the advice fire over a copy the materialise arm does not make.
+
+## Phase 6 — re-measured: the class did NOT fall, and a third of it is not null (2026-09-08)
+
+**The verdict, by the project's own instrument.**  `Parser::nstore_unwrap_report` is registered
+in `scripts/bug-review.py`'s `KEYSTONES` as phase 3's chokepoint, landed at #1366, so the payoff
+check judges it rather than a hand-rolled regex.  It reads **NO EFFECT — re-open the premise**:
+null/sentinel **14.1 % → 37.3 %**.  Section 2 agrees from the other direction — `RISING +10.4pp
+vs peak 17.5 %`, the largest class in the newest band.  That is the THIRD consecutive no-effect
+verdict for this class, after the 2026-08 collapse-×5 and the citation walk.
+
+⚠ **The check abstains at the default band width and has to be pushed to 14 bands to speak**,
+because bands are equal-width in issue NUMBER and none starts above #1366 until then.  Recorded
+because the abstention is the honest reading of a three-day window: the pass is monthly for a
+reason, and this number should be re-read next cycle before anything is built on it.
+
+**The bias phase 6 found in the instrument, and fixed.**  A keystone whose plan also ran a SCREEN
+for its own class cannot be judged on the raw share — the screen FILES that class's bugs into the
+window that scores it.  Of the 35 null/sentinel bugs at #1366+, **21 are phase 4's own finds**.
+The payoff check now prints both lines when a keystone names its plan: `14.1 % → 37.3 %` raw and
+`14.1 % → 25.9 %` with @PLN153's own finds removed.  **It rose either way**, which is what makes
+this a correction to the instrument rather than a rescue of the verdict — and it is now the fourth
+entry in BUG_REVIEW.md's list of traps that produced a wrong answer first.
+
+**The residual, read by hand — the fourteen the plan did not file.**
+
+- **Five are null × STORE LIFETIME, and that is the mechanism this plan did not touch**
+  (loft#1421, #1422, #1447, #1456, #1466).  Each is the same sentence: *the nullable spelling
+  takes a different LOWERING from its dense twin, so every ownership decision downstream is posed
+  a second time and answered once.*  A nullable heap local mints through a work-ref the dense one
+  has no need of; a nullable element binding publishes a borrow on pass 1 and materialises on
+  pass 2; a nullable capture keeps its build-time value where the dense twin reads its rebind.
+  This plan gave the null RULES one home each.  It never asked the two SPELLINGS to share a
+  lowering, and that is where the class still lives.  Filed as **@PLN160**.
+- **Three are not null defects at all** (loft#1437, #1438, #1457): a `u32` above `i32::MAX`
+  decoding negative, a narrow field's raw byte read through reflection, a `spatial` accepting a
+  one-key subscript.  In each the ANSWER is null and the CAUSE is width or key arity.  The
+  classifier is a title regex, so any bug whose symptom is *"answers null"* lands in this class —
+  the share is therefore an over-count of unknown size, and reading the titles is the only way to
+  see it.  **That alone is enough to say the 37.3 % should not be acted on as a magnitude.**
+- **Two are holes in this plan's OWN payload** (loft#1404, #1450): the chokepoint is not asked at
+  the assignment target, and a projection through a nullable receiver drops the `?` before the
+  gate can see it.  #1404 is fixed; #1450's remaining leg is measured at 115 sites and is the
+  plan's one open debt.
+- Two are diagnostics rather than values (loft#1453, #1459) and two are other mechanisms
+  (loft#1385, #1386).
+
+**So the Done criterion is met in its second form**, not its first: the class did not fall, and
+the residual names a mechanism this plan did not touch, with a follow-on plan filed for it.
+
+## Batch 11's regression, and what the emit diff could not see (2026-09-08)
+
+Batch 11 taught three verbs to peel — `is_scalar`, `heap_def_nr`, `heap_dep` — and gated the
+change on `scripts/introspect_diff.sh`: DIFFERENT 9 of 1411, every one a null guard, all
+identical in value on both backends.  That gate was not enough, and the reason generalises.
+
+**What it missed.**  `generation/dispatch.rs`'s `record_def` asks the BARE heap question on a
+FIRST bind and the peeled one on a reassignment, deliberately — its own comment says *"A FIRST
+bind keeps the bare question plus the join fallback loft#1106 gave it; widening that is a
+separate walk."*  It obtained the nullability half of that split from `heap_def_nr`'s
+**blindness**, so teaching the verb to peel turned the first-bind branch into the reassignment
+branch in silence: the separate walk, landed by accident.  On `t = head(q)` where
+`head(p: vector<S>) -> S?` returns a view of its argument, `--native` then took the
+copy-or-adopt split against an IR that says alias — a stale `q[0]` where `--interpret` read the
+written one, and a store with no owner, because the caller's type still names `q`'s dep so
+`owns_freeable_store` emits no free.  Reported by the sibling checkout against its loft#1466
+dense control; fixed in `4f3e03810` by spelling the marker (`peel_optional()`) instead of
+borrowing a shape verb's blindness, which is what `@FR-N-Shape` asks of a site that must tell
+`τ` from `τ?`.
+
+**The three lessons, in the order they cost something.**
+
+1. **A verb that peels overrides every caller that was asking the bare question.**  Batch 11
+   knew this — it is why `is_dbref` was left unpeeled, with the measurement (102 files, 12
+   guards) written into its doc block.  The check was run for `is_dbref` and not for the three
+   verbs that did land, and `heap_def_nr` had a caller in exactly that position.  The audit is
+   per VERB, not once per commit.
+2. **A byte-diff over the corpus answers "did anything change", never "is the change right".**
+   Eight of the nine files it named still passed on both backends before and after the repair,
+   so the diff was read as benign.  Three of them (1181, 1202, 1414) were leaking under
+   `LOFT_STRICT_STORES=1` the whole time and nothing gated that channel; the repair removes
+   those leaks too.  A moved file has to be re-run on the channel the change could break — here
+   the leak channel — not merely diffed.
+3. **A backend-divergence guard is INERT on one side by construction, and no single-backend
+   assertion can see it.**  `make falsify` against `62118945a` reads *native leak `kt=81
+   S1468×11` -> clean, interpret INERT* — the VALUE channel does not move at all.  It cannot:
+   the script's loft#1468 cell has to accept both 93 and 7 (today's answer and the one the fix
+   will give), so it passes on each backend separately whichever it gets.  The divergence lives
+   BETWEEN the two runs — the control prints `source=93` on `--interpret` beside `source=7` on
+   `--native` — so the script PRINTS the value and a Rust driver compares the two runs.  Two
+   channels, two homes, both falsified against the same control build.
+4. **An instrument that restates a predicate can under-report the class it exists to count, and
+   nothing gates a script.**  Found while building @PLN155 arc A, in this plan's own ratchet:
+   `ir_walker_audit.py` spelled *"what strips this wrapper"* twice, and the peel-CALL list
+   carried `ret_dep_shape` / `ret_promo_base` / `ret_promo_peels` while the peel-BIND list did
+   not — so a scrutinee bound from `let (dep_base, peel) = ret.ret_dep_shape()` read as
+   unpeeled at three sites.  The same defect as the one in `dispatch.rs` above, one level up:
+   one fact, two spellings, drifted.  Both are built from one list now, with `ret_promo_peels`
+   split off as an AWARENESS verb because it returns a `bool` and binding it proves nothing
+   about the value under test.  `opaque_tests` 1520 -> 1517 as a result — a derived row, so
+   re-measure it on a join rather than carrying either branch's number.
+5. **A corpus gate is only as wide as the corpus.**  The shape that broke does not appear in
+   any of the 1411 files, so no amount of diffing could have shown it.
+   `tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft` and
+   `tests/nullable_first_bind_copy.rs` add it, with the strict-store run as the channel that
+   fails against the defect.
+
+The residual is **loft#1468**, filed apart and pre-existing on `main`: the `match`/slice-binding
+spelling of a `-> S?` view return aliases the caller's argument on BOTH backends where its dense
+twin copies.  It is a third spelling of loft#1337 / loft#1368, and its cure is the callee-side
+materialisation loft#1368 already names — which is precisely why the caller-side copy batch 11
+produced by accident could not carry an owner.
 
 ## Phase ordering
 

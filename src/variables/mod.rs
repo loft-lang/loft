@@ -134,6 +134,8 @@ pub(crate) struct VarSnapshot<'a> {
     pub skip_free: bool,
     pub captured: bool,
     pub caller_hidden_buf: bool,
+    /// @PLN157 § V-g — the copy from a borrowing call is elided; read by both emitters.
+    pub view_elided: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -151,6 +153,7 @@ pub(crate) struct RestoredVar {
     pub skip_free: bool,
     pub captured: bool,
     pub caller_hidden_buf: bool,
+    pub view_elided: bool,
     pub owner_witness: u16,
 }
 
@@ -178,6 +181,11 @@ pub struct Variable {
     /// element, field, nested) is rejected, but a rebind (`=`) that re-points the
     /// slot is allowed.  The sibling of the `&T` mutable borrow.  @PLN40 phase 1.
     value_const: bool,
+    /// @PLN157 § V-g — bound from a call whose return borrows an argument, and only ever
+    /// read: the copy `(O-Move)` asks for is unobservable, so the local keeps the VIEW and
+    /// releases only the callee's per-execution minted store, by identity at scope exit.
+    /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
+    view_elided: bool,
     /// @PLN130 F9 — this binding was spelled with `&` at a STRUCT-typed projection
     /// (`c = &v[0]`, `c = &o.inner`).  Such a projection is already a VIEW under B-View,
     /// so both spellings lower to byte-identical IR and the `&` used to be dropped as
@@ -254,6 +262,18 @@ pub struct Variable {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
+    ///
+    /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
+    /// so the list it publishes for one is a guess.  Pass 2 re-derives every assignment, so its
+    /// union is the whole answer: the binding's list is cleared at its FIRST pass-2 assignment
+    /// from a call and rebuilt from there.  This records which locals that has happened to, so
+    /// the clear happens once and the later assignments union onto it — clearing at every one
+    /// would keep only the last, and a dep list is flow-INsensitive.
+    ///
+    /// Lives on the `Function` rather than on the parser because a var number is unique per
+    /// FUNCTION, and the parser swaps this whole table for a lambda's.
+    pass2_rebuilt: std::collections::HashSet<u16>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -500,6 +520,7 @@ impl Display for Function {
 impl Function {
     pub fn new(name: &str, file: &str) -> Self {
         Function {
+            pass2_rebuilt: std::collections::HashSet::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -574,6 +595,7 @@ impl Function {
             skip_free: v.skip_free,
             captured: v.captured,
             caller_hidden_buf: v.caller_hidden_buf,
+            view_elided: v.view_elided,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -632,6 +654,7 @@ impl Function {
                 skip_free: r.skip_free,
                 captured: r.captured,
                 caller_hidden_buf: r.caller_hidden_buf,
+                view_elided: r.view_elided,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -737,6 +760,7 @@ impl Function {
 
     pub fn copy(other: &Function) -> Self {
         Function {
+            pass2_rebuilt: std::collections::HashSet::new(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -2051,6 +2075,7 @@ impl Function {
             defined: false,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2083,6 +2108,7 @@ impl Function {
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
+            view_elided: false,
             amp_link: self.variables[var as usize].amp_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2118,6 +2144,7 @@ impl Function {
             defined: false,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2150,6 +2177,7 @@ impl Function {
             defined: true,
             const_binding: false,
             value_const: false,
+            view_elided: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2762,6 +2790,22 @@ impl Function {
     /// field, nested) is rejected; a rebind (`=`) that re-points the slot is allowed.
     pub fn is_value_const(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].value_const
+    }
+
+    /// @PLN157 § V-g — mark `var_nr` as a read-only local bound from a borrowing call whose
+    /// copy is elided: it keeps its dep (a view) and both backends deliver the call's
+    /// result to it directly.  Decided once, in `scopes::scan_set`
+    /// (`use_analysis::view_elision_bind`), so the strip and the two copy arms name the
+    /// same binds.
+    pub fn mark_view_elided(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].view_elided = true;
+    }
+
+    /// Whether `var_nr`'s copy from its borrowing call is elided — see
+    /// [`Self::mark_view_elided`].
+    #[must_use]
+    pub fn is_view_elided(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].view_elided
     }
 
     /// Mark `var_nr` as bound with an explicit `&` at a struct-typed projection —
@@ -3668,8 +3712,7 @@ impl Function {
         ) || crate::parser::vectors::is_keyed(self.tp(v).base()))
             // @FR-O-Proxy asks free — the displacement free follows on this answer, so the
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
-            && (self.tp(v).depend().is_empty() || self.borrows_one_argument(v))
-            && !self.is_skip_free(v)
+            && self.proxy_says_owned_or_arg(v)
             && !self.is_captured(v)
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
     }
@@ -3731,6 +3774,82 @@ impl Function {
         self.variables[v as usize].skip_free
     }
 
+    /// Does the deps PROXY say `v` owns its store, with the never-free veto discharged?
+    ///
+    /// The two obligations @FR-O-Proxy names, travelling together — which is the only way
+    /// that rule permits the proxy to be read at a site that frees. `tp(v).depend().is_empty()`
+    /// is the cheap stand-in for *"this binding owns its store"* and is unsound alone: a
+    /// borrow whose dep list was never populated reads empty too, and answers "owner" for a
+    /// borrower (loft#723). [`Self::is_skip_free`] is the veto that makes it safe, and its
+    /// contract is *no ownership-derived free, in any spelling, for this binding*.
+    ///
+    /// **One home because the conjunction was written out at six free sites** — the arm's
+    /// backing-store release in `parser/control.rs`, three ownership-TRANSITION frees and the
+    /// drop-cascade hook in `scopes.rs`, and the move-elision shortcut in `state/codegen.rs`
+    /// — each of which had to be found and taught the veto separately. That is how the
+    /// pre-`Set` free in a loop body came to read the proxy without it, landing on the next
+    /// iteration's store (@PLN155 phase 1).
+    ///
+    /// ⚠ This is the PROXY, not the oracle. @FR-O-Oracle's independent derivation is
+    /// `use_analysis::ownership_of`, which never consults `deps` — so the two can disagree,
+    /// and 8.0 % of emitted frees rest on this predicate with the oracle having nothing to
+    /// say (`make licence-census`, @PLN155 phase 0).
+    ///
+    /// ⚠ Three sites that free on `deps` do NOT ask this question, and each is marked at its
+    /// own site. `Scopes::tuple_owned_elem_frees` reads the proxy off a tuple ELEMENT's type
+    /// and the veto off the CONTAINER binding — two subjects, which no predicate over one
+    /// `v` can express. The two dep-STRIPPING sites in `Scopes::scan_set` read
+    /// `!depend().is_empty()` as *"is there a dep list to strip"* rather than as an
+    /// ownership answer; only their veto is this rule's obligation. Merging those onto this
+    /// predicate would couple three questions that must stay free to differ.
+    /// Is `v` a VECTOR the parser marked never-free that still carries deps — a borrowed view
+    /// it holds rather than a store it owns?
+    ///
+    /// The complement of [`Self::proxy_says_owned`], and a notion in its own right: the veto
+    /// says nobody frees this binding on an ownership derivation, and the non-empty dep list
+    /// says there is something it still views.  A `_mv_` match-field binding is the shape.
+    ///
+    /// One home because two sites asked it independently — `Parser::ref_return`, deciding
+    /// which arms need their borrow copied before the return, and
+    /// `Parser::jo_copy_borrowed_arm_yield`, deciding whether to build the owned `mvcopy` —
+    /// and both had to name three conditions to say one thing.
+    #[must_use]
+    pub fn is_marked_vector_borrow(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — read as the COMPLEMENT: a true answer says this binding is
+        // a marked borrow, so no ownership-derived free is emitted for it.
+        self.is_skip_free(v)
+            // @FR-N-Shape — a SHAPE question answers alike for `τ` and `τ?`, and "is this a
+            // vector" is one.  Both folded sites matched bare; peeling is measured
+            // byte-identical over the corpus, so the fold keeps its meaning and the rule gets
+            // its answer in the same step.
+            && matches!(self.tp(v).base(), Type::Vector(_, _))
+            && !self.tp(v).depend().is_empty()
+    }
+
+    /// [`Self::proxy_says_owned`] WIDENED: a binding whose dep list names exactly one
+    /// ARGUMENT still counts as owning what it displaces.
+    ///
+    /// The displacement question is not the sweep's.  A local that borrows one argument still
+    /// has a store of its own to release when a reassignment displaces it, and the dep naming
+    /// that argument is what makes the release decidable at runtime — so the proxy is read
+    /// wider here on purpose.  Routed through the pair rather than respelling it, because the
+    /// VETO is the same obligation either way: @FR-O-Override does not soften because the
+    /// proxy did.
+    #[must_use]
+    pub fn proxy_says_owned_or_arg(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — the displacement release follows on this answer, and the
+        // @FR-O-Override veto rides on both halves: through the pair on the left, spelled on
+        // the right because the widening does not exempt it.
+        self.proxy_says_owned(v) || (self.borrows_one_argument(v) && !self.is_skip_free(v))
+    }
+
+    #[must_use]
+    pub fn proxy_says_owned(&self, v: u16) -> bool {
+        // @FR-O-Proxy asks free — this IS the free question, and @FR-O-Override is the
+        // conjunct beside it, which is the whole point of the predicate.
+        self.tp(v).depend().is_empty() && !self.is_skip_free(v)
+    }
+
     /// Is `v` a text temp that STAGES a value across the statement or the return that reads
     /// it — a `??` coalesce subject (`__ncc_N`) or a return-delivery stage (`__ret_N`,
     /// `__ret_text_N`)?
@@ -3757,11 +3876,39 @@ impl Function {
     /// into the result vector store).
     /// Lift the never-free mark — the binding has stopped being the borrow it was marked for.
     ///
-    /// The one caller is `(B-View)`'s materialise: a view live across a disturbance of its
-    /// container is given a store of ITS OWN, and a binding that owns a store must free it.
-    /// Stripping the deps without lifting the mark is what left a materialised `_mv_<field>_N`
-    /// holding a record nothing released.  `@FR-O-Override`'s contract is that a MARKED
-    /// binding is never freed; this retires the marking rather than freeing around it.
+    /// Two callers, and they are the same fact in two passes: a view that is given a store of
+    /// ITS OWN stops being a view, and a binding that owns a store must free it.
+    /// `@FR-O-Override`'s contract is that a MARKED binding is never freed; this retires the
+    /// marking rather than freeing around it.
+    ///
+    /// * `(B-View)`'s materialise — a view live across a disturbance of its container.
+    ///   Stripping the deps without lifting the mark left a materialised `_mv_<field>_N`
+    ///   holding a record nothing released: one leaked record per call on `--native`.
+    /// * @PLN101's value-struct copy (`value_struct_copy`) — a view into a TAINTED local is
+    ///   materialised for the same reason, and it inherited the same omission: the parser marks
+    ///   the `??` temp `skip_free` because its subject is a borrowed place read, that pass makes
+    ///   it an owner, and the stale mark suppressed the free.  `(v[0] ?? d)` on a value struct
+    ///   leaked one record per evaluation, both backends (loft#1472).
+    ///
+    /// ⚠ The DEP LIST and this MARK are two spellings of one question — *does this variable own
+    /// its store?* — so a site that changes the first owes the second.  Two passes have now
+    /// learned that separately; a third that strips deps should call this rather than rediscover
+    /// it.
+    ///
+    /// **Audited 2026-09-08, and the class is CONTAINED — measured, not assumed.**  24 sites in
+    /// `src/` make a binding an owner (`make_independent`, or a `set_type` to `Deps::none()`).
+    /// A source scan cannot judge them: most act on a variable that was never marked, so it
+    /// reports 21 undischarged and cries wolf.  Nor can a state check at free time — "marked AND
+    /// dep-empty" is a LEGITIMATE resting state, a borrow whose dep list nobody populated, which
+    /// is the same proxy weakness `scripts/o_proxy_check.py` exists for.
+    ///
+    /// The decidable signal is the TRANSITION: a variable losing a dep while still marked.
+    /// Instrumented at `make_independent` — its one home, so every caller is covered — 14 corpus
+    /// files reach it (`_mv_*` from `(B-View)`'s materialise, `__ncc_*` from @PLN101's), and
+    /// NONE of them leaks under `LOFT_STORES=warn`.  Every live transition is already followed by
+    /// the clear.  So the two callers below are the whole of it today, and the instrument to
+    /// re-run if a third pass starts stripping deps is that one: probe the transition, then ask
+    /// the corpus whether it leaks.
     pub fn clear_skip_free(&mut self, v: u16) {
         self.variables[v as usize].skip_free = false;
     }
@@ -3779,13 +3926,6 @@ impl Function {
             );
         }
         self.variables[v as usize].skip_free = true;
-    }
-
-    /// Is `v` marked `skip_free`? Match-arm field bindings (`_mv_<field> =
-    /// OpGetField(subject,…)`) are, being borrowed views of the match subject.
-    #[must_use]
-    pub fn skip_free(&self, v: u16) -> bool {
-        self.variables[v as usize].skip_free
     }
 
     /// Mark a variable as captured by a closure.
@@ -3965,6 +4105,13 @@ impl Function {
         if std::env::var_os("LOFT_TIMELINE_BT").is_some() {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
+    }
+
+    /// Record that pass 2 has rebuilt `var_nr`'s borrow list — `true` the FIRST time only.
+    ///
+    /// loft#1466: see [`Self::pass2_rebuilt`].
+    pub(crate) fn mark_pass2_rebuilt(&mut self, var_nr: u16) -> bool {
+        self.pass2_rebuilt.insert(var_nr)
     }
 
     #[track_caller]

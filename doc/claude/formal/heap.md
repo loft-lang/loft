@@ -244,7 +244,7 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
   (H-FreeNull)   ⟨free(nullref), σ⟩ → ⟨(), σ⟩                      (freeing null is a no-op)
   (H-FreeLIFO)   freeing a store that is NOT the current top of the allocation order is a
                  FAULT — the LIFO discipline (a store's lifetime nests within those allocated
-                 before it).
+                 before it).  ⚠ RETIRED IN THE IMPLEMENTATION — see D-heap-LIFO below.
   (H-FreeStack)  freeing store 0 (the evaluation stack) is a FAULT (#306): a stack-record ref
                  is never an owned heap store.
   (H-FreeTwice)  freeing an already-freed store is a FAULT (use-after-free / double-free).
@@ -273,6 +273,24 @@ refuses it — the marker is how a static ownership fact reaches a callee compil
 every caller (loft#1287, `scopes::scan_args`). Nothing widens: the mark names one store, the
 parameter's ENTRY store, so a REPEATED call still releases the fresh store the previous one
 installed, which the frame does own.
+
+> **D-heap-LIFO — OPEN (2026-09-09).**  `(H-FreeLIFO)` states a fault the implementation
+> deliberately stopped requiring, and nothing enforces it.  `Stores::free_bits` (S29) says so
+> in its own doc — a bitmap of free slots, so `database_named` reuses the lowest free slot
+> below `max`, which *"eliminates the LIFO-order requirement on `free()` that the old
+> cascade-based scan imposed"*.  Measured from the other side: `scripts/rule_tags.py sites
+> H-FreeLIFO` reports **zero** citations, alone among heap.md's five free rules, and there is no
+> LIFO check anywhere in the free path.
+>
+> Freeing an older store while a newer one is live succeeds and leaves the newer one untouched
+> (`tests/heap_free_discipline.rs::lifo_order_is_not_a_fault`), and slot REUSE — the thing a
+> LIFO discipline exists to avoid needing — is what makes a double free dangerous in the first
+> place, which is the rule that replaced it.
+>
+> Open rather than closed because the wording is a DESIGN call, not a transcription: either the
+> rule is deleted, or it is rewritten as the weaker invariant that actually holds (a store's
+> lifetime nests within its OWNER's, which is `(H-Free)`'s liveness condition and not an
+> ordering).  @PLN155 phase 4 measured it and did not take that call.
 
 ### Drop — the hook a type declares runs once per resource, when the record that owns it dies
 

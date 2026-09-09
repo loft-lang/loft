@@ -42,7 +42,6 @@
 use mmap_storage::file::Storage as MmapStorage;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
 
 #[allow(dead_code)]
@@ -196,6 +195,75 @@ pub enum StoreChange {
     Free { pos: u32, before: Box<[u8]> },
 }
 
+/// The live-record set of one store: which word positions START a claimed
+/// record.  It is what [`Store::valid`] asks ("is this a record, not a
+/// position inside one?") and what [`Store::claims_count`] counts.
+///
+/// One bit per word of the arena, so membership is a shift and a mask and the
+/// set costs at most 1/64 of the arena it describes.  It grows on demand to the
+/// highest position claimed: a mapped image this process never allocates into
+/// keeps no bits at all, and a fresh 100-word store keeps two words.  The live
+/// count is kept beside the bits, because a count is the one thing a release
+/// build reads from the set and a walk to answer it would scale with the
+/// arena, not with the records in it.  Nothing iterates the set, so the
+/// representation owes no order.
+#[derive(Clone, Default)]
+struct Claims {
+    bits: Vec<u64>,
+    live: u32,
+}
+
+impl Claims {
+    #[inline]
+    fn contains(&self, pos: u32) -> bool {
+        self.bits
+            .get((pos >> 6) as usize)
+            .is_some_and(|w| (w >> (pos & 63)) & 1 == 1)
+    }
+
+    /// Mark `pos` claimed; `true` when it was not already.
+    #[inline]
+    fn insert(&mut self, pos: u32) -> bool {
+        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
+        if word >= self.bits.len() {
+            self.bits.resize(word + 1, 0);
+        }
+        let w = &mut self.bits[word];
+        let new = *w & mask == 0;
+        *w |= mask;
+        self.live += u32::from(new);
+        new
+    }
+
+    /// Unmark `pos`; `true` when it was claimed.
+    #[inline]
+    fn remove(&mut self, pos: u32) -> bool {
+        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
+        match self.bits.get_mut(word) {
+            Some(w) if *w & mask != 0 => {
+                *w &= !mask;
+                self.live -= 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Forget every claim, keeping the allocation for the store's next layout.
+    fn clear(&mut self) {
+        self.bits.fill(0);
+        self.live = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.live as usize
+    }
+
+    fn is_empty(&self) -> bool {
+        self.live == 0
+    }
+}
+
 // A low-level heap store: the several flags (free / read_only /
 // free_protected / borrowed) are independent state bits on the same
 // allocation, not a bundle that should become an enum.
@@ -203,7 +271,7 @@ pub enum StoreChange {
 pub struct Store {
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
-    claims: HashSet<u32>,
+    claims: Claims,
     size: u32,
     #[cfg(feature = "mmap")]
     file: Option<MmapStorage>,
@@ -333,7 +401,7 @@ pub struct Store {
     /// Surfaced in panic messages from `addr_mut` / `claim` / `delete`
     /// so a "Write to read-only store" failure points directly at the
     /// locker rather than requiring `LOFT_LOG=locks` to re-trace.
-    pub lock_origin: String,
+    pub lock_origin: std::borrow::Cow<'static, str>,
     /// P259 — type-id of the loft type whose root record lives at
     /// `(rec=1, pos=8)` of this store.  `u16::MAX` when unknown
     /// (raw stores not allocated through `database_named`).
@@ -773,7 +841,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: true,
@@ -793,7 +861,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -891,7 +959,7 @@ impl Store {
             // Recorded so the store can answer "is a `.dmeta` sidecar recording
             // MY bytes" — see `has_durable_sidecar`.
             ptr,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             size,
             // An opened FILE-BACKED store is in use by definition (it
             // carries real data and `open` itself validates it below,
@@ -915,7 +983,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: Some(std::path::PathBuf::from(path)),
@@ -973,7 +1041,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size: words,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
@@ -994,7 +1062,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -1073,7 +1141,7 @@ impl Store {
         let mut store = Store {
             ptr,
             size: words,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: false,
@@ -1093,7 +1161,7 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
@@ -1183,6 +1251,13 @@ impl Store {
         self.generation = self.generation.wrapping_add(1);
         #[cfg(debug_assertions)]
         self.fl_validate();
+        // Faster path: the store has freed nothing yet, so its one free block is the
+        // tail and the claim is two header writes (`bump_tail`).
+        if let Some(pos) = self.bump_tail(size) {
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return self.finish_claim(pos);
+        }
         // Fast path: find the smallest tracked free block that fits.
         if let Some(pos) = self.fl_take_ge(size as i32) {
             let result = self.claim_block(pos, size);
@@ -1212,6 +1287,49 @@ impl Store {
         #[cfg(debug_assertions)]
         self.fl_validate();
         self.finish_claim(result)
+    }
+
+    /// The common claim, done without the free tree: a store that has freed nothing yet
+    /// has ONE free block, its tail, and every claim takes the front of it.  Through the
+    /// tree that is a delete of the root, a split and an insert of the remainder — three
+    /// LLRB walks to move one number.  Here the remainder simply stays the root: its
+    /// header shrinks, its links were already empty, and the layout is byte-for-byte the
+    /// one `claim_block` would have produced, because the split rule is the same and the
+    /// remainder is the only node either way.  Declines (answering `None`) for anything
+    /// that is not exactly that shape — a tree with two nodes, a single free block that is
+    /// not the tail, a tail the split rule would claim whole, or a remainder too small for
+    /// the tree (`MIN_FREE_TREE`, which `fl_insert` would leave out) — so every other claim
+    /// takes the path it always took.  Measured on the drawing pass: the free-tree walks
+    /// were 9 % of the `fronds` row (@PLN157).
+    fn bump_tail(&mut self, size: u32) -> Option<u32> {
+        let root = self.free_root;
+        if root == 0 || self.fl_left(root) != 0 || self.fl_right(root) != 0 {
+            return None;
+        }
+        let block_size = -(*self.addr::<i32>(root, 0));
+        let req_size = size as i32;
+        if block_size <= req_size * 4 / 3
+            || block_size - req_size < MIN_FREE_TREE
+            || root + block_size as u32 != self.size
+        {
+            return None;
+        }
+        let pos = root;
+        let new_free = pos + size;
+        *self.addr_mut(pos, 0) = req_size;
+        *self.addr_mut(new_free, 0) = req_size - block_size; // negative = free
+        // The remainder becomes the root in place: no links, black — what a fresh
+        // single-node insert leaves.
+        *self.addr_mut::<u32>(new_free, FL_LEFT) = 0;
+        *self.addr_mut::<u32>(new_free, FL_RIGHT) = 0;
+        self.fl_set_red(new_free, false);
+        self.free_root = new_free;
+        self.claims.insert(pos);
+        self.claimed_end = self.claimed_end.max(new_free);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos, size });
+        }
+        Some(pos)
     }
 
     /// Mark `pos` as claimed (splitting if the block is much larger than `size`).
@@ -1441,7 +1559,7 @@ impl Store {
             claim -= next_header;
         }
         *self.addr_mut(rec, 0) = -claim;
-        self.claims.remove(&rec);
+        self.claims.remove(rec);
         // Register the (possibly coalesced) free block in the tree.
         self.fl_insert(rec);
         // P6: a free block now exists.  `delete` only merged FORWARD, so an
@@ -1863,7 +1981,7 @@ impl Store {
     /// The origin string surfaces in panic messages from `addr_mut` / `claim`
     /// / `delete` so a "Write to read-only store" failure points directly at the
     /// locker rather than requiring `LOFT_LOG=locks` to re-trace.
-    pub fn lock_with_origin(&mut self, origin: impl Into<String>) {
+    pub fn lock_with_origin(&mut self, origin: impl Into<std::borrow::Cow<'static, str>>) {
         let origin = origin.into();
         // Plan-22 02d-vii follow-up — `LOFT_LOG=locks` trace.
         // Caught here (the lowest-level lock site) so direct
@@ -1885,7 +2003,7 @@ impl Store {
         }
         self.read_only = false;
         self.user_locked = false;
-        self.lock_origin.clear();
+        self.lock_origin = std::borrow::Cow::Borrowed("");
     }
 
     /// @P290 — mark the store as PROTECTED-FROM-FREE for the duration
@@ -1895,7 +2013,7 @@ impl Store {
     /// blocked here too until loft#760 — wider than the marker's job, and
     /// it aborted on a container releasing its own block as it regrew.
     /// Cleared by `clear_free_protected()`.
-    pub fn set_free_protected(&mut self, origin: impl Into<String>) {
+    pub fn set_free_protected(&mut self, origin: impl Into<std::borrow::Cow<'static, str>>) {
         let origin = origin.into();
         if self.free_protect_depth == 0 && crate::log_config::lock_trace_enabled() {
             crate::loft_eprintln!("[locks] FREE_PROTECT origin={origin:?}");
@@ -1917,7 +2035,7 @@ impl Store {
         // Clear lock_origin only if the hard read_only lock isn't also
         // holding it (it shouldn't be — but be defensive).
         if !self.read_only {
-            self.lock_origin.clear();
+            self.lock_origin = std::borrow::Cow::Borrowed("");
         }
     }
 
@@ -2067,7 +2185,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
-            lock_origin: "clone_locked".to_string(),
+            lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,
@@ -2112,7 +2230,7 @@ impl Store {
             recording: None,
             tag: self.tag,
             pinned: self.pinned,
-            lock_origin: String::new(),
+            lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,
@@ -2131,7 +2249,7 @@ impl Store {
     pub unsafe fn borrow_locked_for_light_worker(&self) -> Store {
         Store {
             ptr: self.ptr,
-            claims: HashSet::new(),
+            claims: Claims::default(),
             size: self.size,
             #[cfg(feature = "mmap")]
             file: None,
@@ -2154,7 +2272,7 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
-            lock_origin: "borrow_locked_for_light_worker".to_string(),
+            lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             durable_meta_path: None,
             file_path: None,
@@ -2781,7 +2899,7 @@ impl Store {
             "fl_validate: node at {h} has positive header {header} (should be free)"
         );
         debug_assert!(
-            !self.claims.contains(&h),
+            !self.claims.contains(h),
             "fl_validate: node at {h} is both in the free tree and in claims"
         );
         self.fl_validate_node(self.fl_left(h));
@@ -2879,10 +2997,41 @@ impl Store {
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
         }
+        // ⚠ **Not `&*off`.**  A store is word-addressed in FOUR-byte units, so an eight-byte
+        // field sitting at an odd word is 4-aligned and no more, and a reference to a
+        // misaligned address is undefined behaviour whatever spelling mints it.  `as_mut()`
+        // derefs inside `core`, which is precompiled without the check, so the same UB simply
+        // goes unreported there; writing the deref here instead makes `-C debug-assertions=on`
+        // abort on it (`Store::addr::<i64>` under `iter_frame_variables_at`, measured
+        // 2026-09-09).  The report is right and the ACCESS is the bug, so the cure is not to
+        // move the deref back out of sight: [`Store::read`] is the sound form for the callers
+        // that immediately copy the value out, which is nearly all of them, and the remaining
+        // `&String` / `&Str` callers want a layout ruling — loft#1481 carries the split and the
+        // ruling it owes.  Until those are migrated this keeps the spelling `main` has always
+        // had.
         unsafe {
             let off = self.ptr.offset(at).cast::<T>();
             off.as_mut().expect("Reference")
         }
+    }
+
+    /// Read a `Copy` field OUT of the store, rather than borrowing it in place.
+    ///
+    /// The sound counterpart to [`Store::addr`] for every caller that immediately writes
+    /// `*store.addr::<T>(…)`.  A store is word-addressed in four-byte units, so an `i64` or an
+    /// `f64` at an odd word is only 4-aligned, and taking a `&T` there is undefined behaviour
+    /// even though x86 loads it happily.  `read_unaligned` states the alignment the data
+    /// actually has and lowers to the same single `mov` on this target, so the soundness costs
+    /// nothing — and it drops `as_mut()`'s null test and panic path, which is what made `addr`
+    /// expensive on the hottest read in the language (`get_elem_hoisted` is 15 % of the drawing
+    /// library's bench, loft#1426).
+    ///
+    /// Migrating the rest of `addr`'s `Copy` readers here is loft#1481's mechanical half; its
+    /// `&String` / `&Str` callers are the other half and need a layout ruling first.
+    #[inline]
+    pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
+        let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
     }
 
     /// `@FR-H-WriteLocked`'s user half: refuse the write as a loft fault.
@@ -3055,8 +3204,8 @@ impl Store {
 
     /// Fast check whether a value looks like a valid live record.
     /// Used by `get_ref()` to detect inline data that was misinterpreted
-    /// as a record pointer.  Cheaper than `HashSet` lookup — just a range
-    /// check and one memory read (the record header).
+    /// as a record pointer.  A range check and one memory read (the record
+    /// header) — it does not consult the claims set.
     #[must_use]
     pub fn is_valid_record(&self, rec: u32) -> bool {
         // Record must be within the store's allocated space and have a
@@ -3066,6 +3215,7 @@ impl Store {
 
     /// Try to validate a record reference as much as possible.
     /// Complete validations are only done in 'test' mode.
+    #[inline]
     pub fn valid(&self, rec: u32, fld: u32) -> bool {
         // S29/P1-R3: locked (worker) stores have empty claims by design — skip the
         // claims check.  Records in worker stores are valid copies of the originals.
@@ -3074,7 +3224,7 @@ impl Store {
         // existing image has an empty set while its records are live (the same
         // reason poison skips file-backed stores).
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(&rec),
+            self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         // Read size before any multiplication to avoid overflow when fld 0 is negative
@@ -3303,7 +3453,7 @@ impl Store {
         // header read asserts "Unknown record" for every bound store — which is
         // precisely the store `store_verify` is most often asked about.
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(&rec),
+            self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         let size: i32 = *self.addr(rec, 0);
@@ -4683,6 +4833,57 @@ mod tests {
     /// (smaller) store, and the free tree no longer indexes the words that were
     /// cut.  Shrinking to the mark EXACTLY is the boundary case — no free block
     /// is left at all.
+    /// `bump_tail` is a layout twin of the tree path: a fresh store claims from its tail,
+    /// each record's header is its size, the remainder is the one free block and the root,
+    /// and the moment the tail is too small to split by `claim_block`'s rule the claim
+    /// takes the tree path and the whole block — the same store the tree path alone builds.
+    #[test]
+    fn bump_tail_claims_are_the_tree_paths_layout() {
+        let mut store = Store::new(64);
+        store.init();
+        let a = store.claim(3);
+        let b = store.claim(5);
+        let c = store.claim(7);
+        assert_eq!(
+            (a, b, c),
+            (1, 4, 9),
+            "claims take the front of the tail in order"
+        );
+        for (pos, size) in [(a, 3), (b, 5), (c, 7)] {
+            assert_eq!(
+                *store.addr::<i32>(pos, 0),
+                size,
+                "record {pos} keeps its size header"
+            );
+            assert!(store.claims.contains(pos), "record {pos} is claimed");
+        }
+        let tail = c + 7;
+        assert_eq!(
+            store.free_root, tail,
+            "the remainder is the free tree's only node"
+        );
+        assert_eq!(store.fl_left(tail), 0);
+        assert_eq!(store.fl_right(tail), 0);
+        assert_eq!(
+            -(*store.addr::<i32>(tail, 0)) as u32,
+            store.size - tail,
+            "the remainder's header spans exactly the rest of the store"
+        );
+        #[cfg(debug_assertions)]
+        store.fl_validate();
+        // A remainder the tree would not track declines the bump: the claim takes the
+        // tree path and the block whole, leaving no free root — as it always did.
+        let left = store.size - tail;
+        let d = store.claim(left - 1);
+        assert_eq!(d, tail);
+        assert_eq!(
+            *store.addr::<i32>(d, 0) as u32,
+            left,
+            "a block not much larger than the request is claimed whole"
+        );
+        assert_eq!(store.free_root, 0, "nothing is left to track");
+    }
+
     #[test]
     fn shrink_to_the_mark_keeps_every_record() {
         let mut store = Store::new(64);

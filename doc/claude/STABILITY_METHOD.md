@@ -282,6 +282,15 @@ and you go clean it. That works, and it needs someone to notice. The rule-led wa
 the **formal rules** instead, which makes it a queue rather than an observation — and a queue
 long enough to work from for years.
 
+**Which is it — a walk or a campaign?** `make campaign-review` answers that on four measured
+gates rather than by feel (@PLN155 arc A, and [BUG_REVIEW.md](BUG_REVIEW.md) § The pass): a
+class passing all four earns a plan, one to three earn a walk, and gate 2 alone earns a queue
+entry. Two readings are worth knowing before you reach for it. A class whose keystone has
+landed but has not been scored yet reads `MEASURING` and is held back whatever else it
+passes. And a class whose walks landed days ago cannot be scored either — the report says
+`unjudged (thin window)` instead of a verdict, because a two-bug difference in a hundred-bug
+window separates nothing.
+
 **Why the rules are the right index.** Code moves; a rule does not. `formal/`'s rules are the
 thing two implementations are both claiming to implement, so they are the only stable place to
 ask *"is this the same question?"*. That is what `@FR-` tags are for, and what makes the

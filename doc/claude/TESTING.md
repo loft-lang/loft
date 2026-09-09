@@ -612,6 +612,24 @@ which is how this one was found.
 
 ### A guard that never failed is not a guard — `make falsify`
 
+**A leak-channel guard needs the INSTRUMENT ARMED, or `make falsify` scores it unfalsifiable.**
+A leaked store is not an exit code, so a plain run reads `leak none -> none` and the tool reports
+that the guard proves nothing — correctly. `LOFT_STRICT_STORES=1 make falsify …` (add
+`LOFT_POISON=1` where the defect is a use-after-free rather than a leak) moves both channels at
+once, and that PAIR is the evidence. Record the invocation in the guard's `@falsified-at:` line,
+not just the verdict: the next reader has to know which instrument the numbers came from.
+
+**`make falsify` REFUSES a tree the guard does not pass, and that refusal is the useful half.**
+It reports `THIS TREE IS NOT CLEAN` and scores nothing, because a guard that the current tree
+fails says nothing about what it can CATCH. Measured 2026-09-09: a new guard carried cells with
+two captured locals each, which leaked through a defect unrelated to the one under test; the
+refusal is what forced those cells to be narrowed to one mechanism instead of shipping a file
+that was red for reasons none of its own axes named. The opposite error scores a verdict that is
+worthless: a guard whose CONTROL fails to compile is "falsified" on the exit channel alone,
+proving only that the file is sensitive to the build. **Read the `asserts` column, not the
+verdict** — a guard should move the channel it is about.
+
+
 **`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
 (`scripts/falsify.sh`). It builds `REF` in a cached worktree, runs the guard THERE and
 HERE, and compares four channels apart — **exit code, assertion failures, leaked stores,
@@ -629,6 +647,61 @@ Paste that line into the guard.  `doc_hygiene::every_new_guard_records_its_contr
 requires one on every file added under `tests/scripts/`, against the ratchet in
 `tests/falsified.baseline`; `// @falsified-at: none — <reason>` is the honest opt-out for a
 file that genuinely cannot fail on any earlier build.
+
+⚠ **The sha in that line is a RECEIPT, not a pointer — so a CHERRY-PICKED guard keeps the
+peer's.**  When you take a guard from a sibling checkout its `@falsified-at:` names a commit on
+THEIR branch, and the reflex is to re-point it at your own equivalent so the reference resolves
+in your history.  That replaces a measured statement with an assumed one: your equivalent
+commit is a different tree, carrying all your own work, and nothing gates the difference —
+`every_new_guard_records_its_control` checks that the LINE EXISTS, never that its sha resolves
+or that the guard still falsifies there.  Re-point only together with a fresh `make falsify`
+run whose output you paste.
+
+**And `origin/main` is not a free durable substitute for all of them.**  One control build at
+main would serve every picked guard and never go stale, which is the tempting move — and it is
+wrong wherever the guards CHAIN.  A guard whose control is the previous fix in a series does
+move a channel against main, for the EARLIER defect's reason: measured 2026-09-09, loft#1472's
+control is loft#1471's fix and loft#1479's is loft#1478's, so scoring either at main records a
+green receipt for the wrong cause.  Say in the join's report which shas depend on which branch
+instead, so the rebuild is a decision rather than an accident.
+
+**How far this already goes, measured 2026-09-09 on `origin/main`** — 359 guards there carry a
+control sha, and two sessions classified every one of them from opposite directions and agreed
+on the totals:
+
+| where the control still lives | guards | survives a mirror or a host migration? |
+|---|---:|---|
+| reachable from `origin/main` | 11 | yes |
+| reachable from another `origin` branch | 25 | yes, while that branch lives |
+| **only** via `refs/pull/<n>/head` | 199 | **no** — a GitHub convention with no retention contract |
+| present in one clone, no public ref | 121 | no |
+| absent from that clone entirely | 3 | no |
+
+**65 % are publicly recoverable and 35 % are not**, and the two halves want different answers.
+For the 235 the receipt is fine *provided the reader fetches PR refs*, which nobody does by
+default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'` — so a fallback fetch before
+`falsify.sh` gives up on an unknown ref is a small mitigation covering two thirds of the
+problem.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
+124 are recoverable by nobody, and they are the population a self-contained form would have to
+serve.
+
+⚠ **Resolvability is a property of the CHECKOUT, not of the receipt**, and it was measured in
+BOTH directions: one clone held three controls the other had lost (it had fetched PR refs), and
+the other held two the first had lost (local gc, no other explanation).  Neither clone is the
+authority, and nothing in the guard file tells a reader which one they are in.
+
+The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
+`src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
+ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
+fail, with nothing recording when it stopped being checkable.  What a receipt should BE (gate
+on resolvability, a durable tag per control, or the reintroducing PATCH recorded inline) is an
+open design call and the owner's to make; it is stated here as measurement, not as a decision.
+
+⚠ **A method note that cost one of the two counts its first answer:** `git rev-parse
+"<sha>^{commit}"` exits non-zero for a missing object but still PRINTS its argument to stdout,
+so `full=$(git rev-parse …)` is non-empty for a missing object and a `[ -z "$full" ]` guard
+misclassifies it silently.  `git rev-parse --verify --quiet` is the form that stays quiet, and
+`git cat-file -e` answers on the exit code alone.
 
 ### The defect no guard can catch — the corpus EMISSION diff
 
@@ -1557,7 +1630,28 @@ cargo build --bin loft --target-dir /tmp/loft-dbg
 LOFT_MAX_OPS=100000 /tmp/loft-dbg/debug/loft --interpret --path . prog.loft
 ```
 
-(`--path .` because the stdlib is found relative to the binary.)  The same applies to
+(`--path .` because the stdlib is found relative to the binary.)
+
+⚠ **Running the nightly debug-assertions GATE locally: a separate `--target-dir` makes four
+tests fail for a reason that is not the code.**  The gate is
+
+```bash
+RUSTFLAGS='-C debug-assertions=on' LOFT_STORE_GUARD=1 CARGO_TARGET_DIR=/tmp/loft-da \
+  cargo test --release --no-fail-fast --lib --test issues --test wrap --test strings \
+  --test frame_vars -- --skip library_suite
+```
+
+and several of those tests SPAWN the built binary.  A spawned binary under a target dir outside
+the repo cannot find `default/` — the same stdlib-resolution trap the `--path .` note above is
+about — so the subprocess exits non-zero and the test's `assert!(out.status.success())` fires.
+Measured 2026-09-09: four failures (`issues.rs` ×3, plus `data.rs`'s `Unknown operator` from
+inside a spawned temp package) that are ALL this artifact — re-running two of the spawned
+programs by hand with `--path .` printed their expected `… ok` lines.  CI has no such artifact
+because it builds into the repo's own `target/`.
+
+So when reading that gate locally, separate the two populations before believing a red: an assert
+inside `src/` is the gate speaking, and a test-file `assert!` on a spawned process's exit status
+is probably the target dir.  The same applies to
 every other `#[cfg(debug_assertions)]` item in `src/` — **93 of them**, including
 `check_arg_ref_allocs` and `check_ref_leaks`.  The store LEAK check is unaffected because
 it is not gated at all.

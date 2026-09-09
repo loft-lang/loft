@@ -1411,9 +1411,9 @@ build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in 
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
 sentinel, or a doomed loop condition is visible directly.
 
-Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) and
-`perf` (`perf_event_paranoid=4`) are both blocked in this sandbox, so you cannot
-backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
+Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) is
+blocked in this sandbox, and `perf` needs `perf_event_paranoid <= 2` (the default is 4;
+`make profile` names the sysctl) — without it you cannot backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
 (§ above) — is the substitute.
 
 Worked example (#401): an `iterator<float>` for-loop hung the interpreter at codegen.
@@ -1448,6 +1448,61 @@ Strategy:
 The matrix-first protocol in CLAUDE.md says how to *measure* a defect. These are the reading
 errors that survive it, each one measured here rather than imagined. They are ordered by how
 expensive each was.
+
+**"Needs design" is a claim about your SEARCH, not about the defect — re-test it.** Declaring a
+fix impossible without new surface is a hypothesis about the solution space, and it deserves the
+same scepticism as a hypothesis about a cause. Measured on loft#1476: several closure records
+adopt one store, exactly one must CASCADE to release the capture, and it must be the one that
+escapes — a per-run fact against a marker set at compile time. The op surface was checked for a
+non-cascading free and had none, so the conclusion was a new IR node plus per-run ownership.
+Every step was true and the conclusion was wrong. The cure needed per-run **reach**, not per-run
+ownership: let every record own, and NULL the left-behind record's capture slots before freeing
+it, so its cascade follows nothing. No new node, no new op, no witness. The tell is that the
+search had fixed the CASCADE as given and looked for a way to control it; the move was to change
+what the cascade can REACH. So when routing something as needs-design, write down the primitive
+you believe is missing, then ask whether the invariant could be met by changing a different term.
+
+**Lifting a refusal RUNS never-run code.** A shape that did not compile has never been scored, so
+the first green build of it is not a regression check — it is a first measurement. Two defects
+this cycle were found this way and both were invisible until the refusal above them was gone
+(one leaked only under `LOFT_STRICT_STORES=1` while the value was right). After removing a
+refusal, run the newly-reachable cells under the instruments before believing the value — a guard
+that suddenly compiles is a guard whose cells have never been measured.  The worked example is
+loft#1479: right answer on both backends, clean on `--interpret`, and one leaked record on
+`--native` that only `LOFT_STRICT_STORES=1` sees, found because `make falsify` refused to score
+the tree.
+
+**A baseline must FORK BEFORE the work you are attributing.** To answer *"is this mine?"* the
+control build has to lack the suspect change. A commit inside your own branch's lineage cannot:
+it already contains everything you are asking about, so *"identical on X and on my tip"* only
+rules out what came after X. Measured 2026-09-08 with three checkouts in flight: a worktree at
+the session's own tip-ancestor was used to call four defects pre-existing, and at the true
+merge-base three of them were regressions — including two red corpus tests and a silently-wrong
+capture defect, one of which the session's own earlier notes had already bisected to its own
+commit. `git merge-base <mine> <theirs>` names the honest baseline; build it in its own worktree
+with its own `--target-dir`, and run a positive control first, because a scratchpad binary
+without `--path <worktree>` cannot find `default/` and greps as a clean run.
+
+**A fix that makes the surviving defect QUIETER is a cost, not a neutral.** After a partial fix,
+read what the still-failing cells now PRINT. The same session's fn-ref width fix turned a
+capture defect's symptom from `4294967398` — visibly 2^32 plus the right answer — into a
+plausible `103`, with both leak instruments silent because the store being read is live and
+merely wrong. And backing out the incident-shaped half of that fix, keeping only the general
+one, left thirteen matrix cells wrong with several converting a SIGSEGV into a quiet wrong
+answer. A general fix that trades a loud failure for a quiet one can be worse than the bug; that
+measurement is what made both halves ship together.
+
+**One question with several DECODERS: the defect sits in whichever one the failing route
+consults.** Three times in one cycle (loft#1444, loft#1474, loft#1477), all in the neighbourhood
+of *"which closure records does this return deliver?"* — a fn-ref variable's free read one
+decoder while the record local's free read a stale note; a tail return read a walker that
+handles `Value::FnRef` while an explicit mid-body `return` routed through one that answers in
+variables and has no `FnRef` arm at all. The defect is invisible from every route that consults
+a correct decoder, so the search is not "where is the wrong answer" but "how many places answer
+this question, and do they agree". A related structural warning from the same cycle: the
+`ir_walker_audit` modes measure DESCENT into child-bearing shapes, so a walker missing a LEAF
+arm like `FnRef` is invisible to them by construction — a traverser is checked, a value
+CLASSIFIER is not.
 
 **Start at the PRODUCER of a wrong fact, not the consumer where it surfaces.** When the bug is
 a lie in the data — a dep, a type, a flag that disagrees with runtime — the crash is at the
@@ -1668,6 +1723,39 @@ Use `.warning("expected warning")` for non-fatal diagnostics.
 
 For end-to-end tests on `.loft` files, add to `tests/docs/` and the `wrap.rs`
 runner will pick it up automatically.
+
+---
+
+## The axis your cells hold FIXED is where the defect is
+
+A matrix that reads green on a build which HAS the defect is the expensive failure, because it
+retires the question. Both instances measured in one session moved the same axis by accident and
+then held it fixed on purpose.
+
+**Reproduce the filed spelling before generalising it.** loft#1471 reports that an out-of-range
+read of a `vector<value struct>` fabricates a zero record. A thirteen-cell matrix built from that
+sentence read **11/13 green on the merge-base**, and the two reds were unrelated — so the issue
+looked already fixed. It was not: every cell asked `v[9] == null` INLINE, and the filed
+reproducer BINDS first (`a = v[9]; a == null`). Inline, the read is never materialised; bound, the
+materialised copy of an absent value was allocated and zeroed and the absence was gone. The bind
+was in the report and out of the matrix, which is the specific way a paraphrase loses a defect.
+
+**A guard's own header is the place to name the axis, because the next reader will paraphrase
+too.** The cure is one line in the file — keep the inline read as a CONTROL beside the bound one,
+so the pair says *these differ* rather than leaving the reader to rediscover it.
+
+**Then ask the tool, because counting axes by hand is what keeps failing.**
+`python3 scripts/matrix_axes.py file <guard.loft>` reads the axes a finished guard actually
+reaches. On that same file it named three it did not — a PARAMETER-provenance read, evaluation in
+a LOOP, and `(Col-Lookup)`'s keyed miss — and all three were on the ISSUE'S OWN list of rules that
+construct a `τ?`. None was broken, which is the ordinary outcome and still worth the minute: an
+unreached axis with a bug history is a probe to build, and the ones that pass become cells rather
+than neighbours.
+
+**A deviation's measured cells are a claim to re-measure, not a record to cite.** `D-tup-10`
+listed four cells as REFUSED; three of them answer correctly today, carried along by unrelated
+work on the null model. An entry that overstates what is broken sends the next reader to fix
+something that already works.
 
 ---
 

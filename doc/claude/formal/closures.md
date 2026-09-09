@@ -87,6 +87,21 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+  (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
+                 one that leaves the frame, or the first where none does — and the rest borrow.
+                 Records that cannot coexist, each built in a different arm of one branch, EACH
+                 own: at most one of them is ever built, so each is the sole owner on its own
+                 run and a borrow there would leave that run's store with no release.  Being
+                 CONDITIONAL is not being exclusive — two sequential `if`s over one store can
+                 both run — so the condition is mutual exclusion, not "the build might not
+                 happen".  A record leaves by two routes, the RETURN and a `&fn(…)` LINK, and
+                 they are symmetric for KEEPING it and asymmetric for RELEASING it: an arm is a
+                 path, so an arm can witness that the return did not deliver, while nothing in
+                 the arms speaks for the link.  A per-arm release therefore SUBTRACTS the link
+                 route where a keep-decision would union it.  An arm that TERMINATES is exclusive with everything after the branch
+                 and not only with its sibling: `if p { return |…| e.a; } return |…| e.a;`
+                 builds one record inside the arm and one after it, never in opposite arms, and
+                 the arm's return is what says the second cannot follow the first.
   (L-CapRef)     capturing a `&T` parameter (calls.md F-ParamRef) captures its POINTEE: the
                  `&` is a channel to the CALLER's slot, so the share-or-copy question is asked
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
@@ -185,8 +200,58 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 
+- **D-clo-33** *(CLOSED 2026-09-09, loft#1476)* — `record_leaves_frame` is one static answer to
+  a per-run question, so a closure record the return delivers on SOME path was exempt from the
+  frame's free on ALL of them, and the runs that dropped it leaked the record and the capture its
+  cascade would have taken (the function emitted no frees at all).  Closed by putting the release
+  INSIDE the arms that do not hand it out: the arm IS the path, so no runtime witness is needed
+  and nothing escaped holding the record there.
+  Where several records SHARE a store the release takes a second half.  Each of them OWNS — none
+  is freed by this frame, so no cascade runs in it — and a plain free on the one left behind
+  would follow its capture slots into the store the DELIVERED record still holds.  Those slots
+  are NULLED first, so the cascade finds nothing: the record's own store is reclaimed and the
+  capture stays for whoever escaped with it.  **That is what retires the static owner pick for
+  such a group** — `(L-CapOne)`'s "exactly one record cascades, and it is the one that escapes"
+  becomes true by construction instead of by a marker chosen at compile time, which is the answer
+  the multi-adopter case could not get any other way.  Guard
+  `1476-a-record-delivered-on-some-paths-is-freed-on-the-others.loft` (one, two and three records
+  over one store, both delivery directions).
+- **D-clo-32** *(closed 2026-09-09, found while taking loft#1474's matrix over)* — the walk that
+  decides which captures are built CONDITIONALLY recognised `if`/`match` arms and loop bodies,
+  and read a build standing after them as straight-line.  An early `return` takes everything
+  after it off that line: `if p { return |…| e.a; } return |…| d.a;` builds the second closure at
+  the block's top level, so the frame gave its release away to a record the early-return run
+  never made and the capture leaked, one store per call.  Closed by walking a statement SEQUENCE
+  in order and treating everything after an operator containing a `return` as conditional — the
+  same bound `(L-CapOne)`'s terminating-arm clause draws from the other side.  Over-approximating
+  on purpose, which is what this walk's own contract asks: it costs a run-time test, while
+  under-approximating strands the store.  Cell `explicit_returns` in
+  `1474-a-branch-of-lambdas-delivers-the-arm-that-ran.loft`.
+- **D-clo-31** *(closed 2026-09-08, loft#1477)* — `returned_closure_records` decides which
+  closure records a return DELIVERS, and it had two decoders: the tail walks a stack that reads
+  a `Value::FnRef`, while every `Value::Return` routed through `collect_return_sources`, whose
+  arms answer in VARIABLES and have no `FnRef` case at all.  A capturing lambda is not a
+  variable, so `return fn() { … }` written straight out contributed nothing, the record was
+  absent from the delivered set, and the frame freed what it had just handed over — the caller
+  read a released capture (`null`, both backends, exit 0).  The tail path would have caught it
+  but only reaches a block's LAST operator, so an explicit `return` standing in an `if` arm took
+  the blind route.  Closed by giving that route the missing spelling.  `(L-CapOne)` also gained
+  its terminating-arm clause here: the same shape over ONE local left the two records sharing an
+  owner, because they are never in opposite arms.  Guard
+  `1477-an-explicit-return-of-a-lambda-keeps-its-capture.loft`.
+- **D-clo-30** *(closed 2026-09-08, loft#1473)* — `(L-CapOwn)`'s single owner was picked for
+  every group, including records that CANNOT COEXIST.  Arms of one branch each build a record
+  over the same store; the marking demoted all but one to a borrow, and on the run that built a
+  demoted one the frame had already given its free away to a record that run never made — a
+  use-after-free the plain run cannot see, because the released store still holds its bytes and
+  the answer comes out right.  Closed by giving the rule its coexistence condition,
+  `(L-CapOne)`: an exclusive group owns entirely and the frame's conditional release stands down
+  for ANY member being present.  The marking and the release read one predicate, since a record
+  left owning by one and unnamed by the other frees the store out from under that run's cascade.
+  Guard `1473-mutually-exclusive-closure-builds-each-own-their-store.loft`, whose control is the
+  two-sequential-`if`s shape that must stay single-owner.
 - **D-clo-24** *(closed 2026-09-07, loft#1440)* — two closures over ONE store both adopted it,
   and their deaths are independent: the record left behind released what the escaped one still
   held.  Closed the way `(L-CapOwn)` says — among the records that adopted a store exactly one
@@ -228,14 +293,32 @@ with the closure's environment in scope.
   `1443-a-closure-written-through-a-fn-parameter-link.loft` pass on the broken build, because a
   freed arena slot still reads back the bytes it held; `LOFT_POISON=1` fails 8 of them, which is
   the nightly gate that caught it.
-- **D-clo-29** *(open, loft#1464)* — `(L-CapOwn)` says a captured heap store is freed ONCE, and
-  where the closure BUILD sits inside a conditional block it is freed ZERO times on the path that
-  skips the build.  The frame gives up its own release in favour of the record's cascade
-  (`capture_adoption_owns_free`), but the suppression is decided from the CAPTURE relation — a
-  static fact about the function — while the cascade that replaces it happens only if the build
-  EXECUTES.  Struct and vector captures leak, text does not (its own free path is separate); a
-  zero-iteration loop body is the same shape.  Not a link question: it reproduces with no `&fn`
-  anywhere.
+- **D-clo-29** *(closed 2026-09-08, loft#1464)* — `(L-CapOwn)` says a captured heap store is
+  freed ONCE, and where the closure BUILD sits inside a conditional block it was freed ZERO times
+  on the path that skips the build.  The frame gives up its own release in favour of the record's
+  cascade (`capture_adoption_owns_free`), but the suppression is decided from the CAPTURE
+  relation — a static fact about the function — while the cascade that replaces it happens only
+  if the build EXECUTES.  Struct and vector captures leaked, text did not (its own free path is
+  separate); a zero-iteration loop body is the same shape.  Not a link question: it reproduced
+  with no `&fn` anywhere.
+  **The filed scope was the narrow half.** Measured, the same sentence also covered a `match`
+  arm, a conditional nested two deep, a record that ESCAPES the frame, a capture REASSIGNED after
+  a conditional build (whose suppression runs through the owner witness instead), two captures in
+  one build, and — the cell that says the fix cannot be keyed on "some record was built" — one
+  record PER ARM, where `(L-CapOwn)`'s single owner is picked statically and the arm that builds
+  only the BORROWING record still owes the store.
+  Closed by keeping the frame's release there and making it conditional on the OWNING record
+  existing.  The record local is the witness: `emit_lambda_code` inits it to the empty slot and
+  the build is the only thing that mints into it, so *"a record is there"* and *"the cascade that
+  replaces this free will run"* are the same fact — `@FR-O-Witness`'s currency, a fact only the
+  run knows, read off a slot at the moment the answer is needed.  Which record that is comes from
+  the same grouping the borrow-marking reads (`capture_store_adopters` + `adoption_owner_index`,
+  one home), because naming an adopter the marking made BORROW would decline the frame's free in
+  favour of a cascade that stops at that attribute.  The guard runs BEFORE the record's own free:
+  the two backends do not agree on what a freed slot reads back as — the interpreter leaves it
+  standing, `--native` nulls `store_nr` — so a test placed after it declines on one and
+  double-frees on the other.  Guard
+  `1464-a-capture-built-in-a-branch-is-released-on-the-path-that-skips-it.loft`.
 - **D-clo-27** *(open, loft#1447)* — `(L-CapHeap)` says a rebind is not a mutation-through for a
   captured **struct** as much as for a vector, and the DENSE spelling breaks it: `d: C = C{a:5};
   out = fn() { d.a }; d = C{a:9}` answers 9 on both backends where its nullable twin answers 5.

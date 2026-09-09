@@ -281,15 +281,16 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         );
         let cur_words = cur_words_signed as u32;
         let cur_cap = cur_words.saturating_mul(8).saturating_sub(8) / size;
-        let target = if needed <= cur_cap {
-            needed
-        } else {
-            needed.saturating_mul(2)
-        };
-        let new_vec = store.resize(vec_rec, checked_vec_cap(target, size));
-        if new_vec != vec_rec {
-            store.set_u32_raw(db.rec, db.pos, new_vec);
-            vec_rec = new_vec;
+        // An element that fits needs no `resize`: that call re-read the header, bumped
+        // the store generation and answered the same record on every append that was
+        // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step
+        // keeps the ~2x ladder.
+        if needed > cur_cap {
+            let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), size));
+            if new_vec != vec_rec {
+                store.set_u32_raw(db.rec, db.pos, new_vec);
+                vec_rec = new_vec;
+            }
         }
         length
     };
@@ -493,6 +494,7 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
 /// one question — how many elements does this source have — and `nullref` is a RUNTIME null of
 /// a non-nullable type.  A source whose TYPE is `τ?` never reaches here: it is refused at parse
 /// time, since `types.md` admits no implicit unwrap (`Parser::iterator`).
+#[inline]
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
     // the null sentinel is checked first so it never indexes stores[u16::MAX].
@@ -741,14 +743,14 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
                 "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
             );
         }
-        return *stores[h.store_nr as usize]
-            .addr::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
+        return stores[h.store_nr as usize]
+            .read::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
     }
     let elem = get_vector(db, size, from, stores);
     if elem.rec == 0 {
         absent
     } else {
-        *keys::store(&elem, stores).addr::<T>(elem.rec, elem.pos + fld)
+        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
     }
 }
 

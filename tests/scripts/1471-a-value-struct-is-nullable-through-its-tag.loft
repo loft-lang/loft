@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `value struct` IS nullable, and the way it is nullable is the TAG.
+//
+// `@FR-N-Opt` licenses `τ?` for a τ that has a value to spend on absence — "a reserved sentinel
+// (`@FR-L-Null`) or a DISCRIMINANT (`@FR-L-Null-Tag`)".  Either suffices.  A `value struct` is
+// stored INLINE, which is precisely the case `(L-Null-Tag)` governs: `Pt?` is the synthetic
+// `__nullable<Pt>`, layout(Pt?) = discriminant ++ layout(Pt), absence is discriminant 0.
+//
+// It was REFUSED at the declaration until 2026-09-08, on the reasoning that an inline value has
+// no `store_nr` sentinel.  True, and beside the point — that is the OTHER representation, and
+// `(L-Null)` is not the rule for an inline slot.  Owner ruling: *a `Pt?` implementation is an
+// enum variant of the record so it can be null.*  Nothing new was built to carry it:
+// `synth_nullable_target` already admits a `value struct` (it is a `DefType::Struct`), so
+// declaration, local, field, vector element and `??` discharge all worked the moment the refusal
+// came off.
+//
+// ⚠ The refusal was enforced at the DECLARATION only, which is the part worth remembering.
+// `(N-Domain)` and `(N-Chain)` construct a `τ?` without asking `has_null`, so `v[i]` on a
+// `vector<Pt>` and a `Pt` field read through a nullable receiver both minted a `Pt?` anyway —
+// and the diagnostic then NAMED a type the declaration forbade the author to write, while its
+// advertised `?? d` cure was dead code.  A side condition enforced at one site is not enforced.
+//
+// Axes this file MOVES:  where the nullable lives (a local · a struct FIELD · a vector ELEMENT),
+//                        presence vs absence, and the discharge (`??` · a `== null` test).
+// Axes it HOLDS FIXED:   the payload is two scalars, so what is asserted is the TAG and never
+//                        the payload's own nullability.
+//
+// @falsified-at: bf4243ca2 — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED both backends.
+//   On the control the file does not compile at all: `a: Pt1471? = null` is refused by name, so
+//   every cell below it is unreachable.  That is the right red here — the defect WAS the
+//   refusal, and a guard whose first line is rejected is exactly what a lifted refusal has to
+//   turn green.
+
+value struct Pt1471 { x: integer, y: integer }
+struct Holder1471 { p: Pt1471?, n: integer }
+
+fn main() {
+  // ---- a LOCAL: absent and present, and both tests answer ----
+  a: Pt1471? = null;
+  b: Pt1471? = Pt1471 { x: 7, y: 8 };
+  assert(a == null, "an absent value struct tests null");
+  assert(b != null, "a present one does not");
+  assert((b ?? Pt1471 { x: 0, y: 0 }).x == 7, "…and carries its payload");
+
+  // ---- the DISCHARGE actually runs, which is what the refusal's absence used to cost: while
+  //      `Pt?` was unrepresentable the compiler still demanded `?? d` at a minted `Pt?` and the
+  //      default was never used (loft#1471's third wrong) ----
+  assert((a ?? Pt1471 { x: -1, y: -1 }).x == -1, "the default is USED for an absent value");
+
+  // ---- a struct FIELD, which is where `(L-Null-Which)` decides tag-vs-pointer ----
+  h = Holder1471 { p: null, n: 1 };
+  assert(h.p == null, "a nullable value-struct field starts absent");
+  h.p = Pt1471 { x: 3, y: 4 };
+  assert(h.p != null, "…and holds a value after a write");
+  assert((h.p ?? Pt1471 { x: 0, y: 0 }).y == 4, "…the one that was written");
+
+  // ---- a vector ELEMENT: the tagged element carries absence per slot ----
+  v: vector<Pt1471?> = [Pt1471 { x: 5, y: 6 }, null];
+  assert(v[0] != null, "a present tagged element");
+  assert(v[1] == null, "and an absent one beside it");
+  assert((v[0] ?? Pt1471 { x: 0, y: 0 }).x == 5, "the present element keeps its payload");
+
+  // ---- the CONTROL: a DENSE `vector<Pt>` is unchanged — `(N-Dense)` says elements are non-null
+  //      unless written `vector<τ?>`, so this pays no discriminant and stores what it always did ----
+  d: vector<Pt1471> = [Pt1471 { x: 9, y: 9 }];
+  assert(d[0].x == 9, "a dense element is untouched by the tag");
+  assert(d.len() == 1, "…and so is its length");
+
+  println("1471 ok");
+}

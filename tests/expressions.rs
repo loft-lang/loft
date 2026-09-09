@@ -172,7 +172,7 @@ fn call_frame_has_line() {
     code!(
         "fn check_line(n: integer) -> integer {
             frames = stack_trace();
-            if len(frames) > 0 { frames[len(frames) - 1].line + n - n } else { -1 + n - n }
+            if len(frames) > 0 { (frames[len(frames) - 1].line ?? 0) + n - n } else { -1 + n - n }
          }"
     )
     .expr("check_line(0)")

@@ -1,0 +1,154 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1470 — an explicit `return` of a fn-ref from inside a branch, in a frame that owns a
+// heap local.
+//
+// `(F-Return)` says `return e` exits the call WITH e.  Where frees have to run between the
+// value and the return, the value is hoisted to a temp so the frees cannot come between them;
+// the list of return types that take that hoist had grown one member at a time — @PLN25 for
+// `-> τ?`, loft#816/#817 for a pure-value tuple, loft#957 for a bodiless-native call,
+// loft#1097 for a collection with a null arm — and `fn(…)` was the member none of them covered.
+// Untreated, the tail was demoted to a STATEMENT and a `return null` fabricated in its place.
+//
+// The leg is keyed on the return TYPE and not on the tail's node shape, and it has to be: a
+// non-capturing lambda lowers to a bare `Value::Int` holding its def-number, which no node test
+// can tell from the integer 733.  That is the same reason loft#1469 widens at the arm.
+//
+// The interpreter answered correctly here by ACCIDENT — its `OpReturn` took the eval-stack top
+// the discarded statement happened to leave behind — so only `--native` faulted, with
+// `internal error: invalid fn-ref: 733`.  A guard that read one backend would have called this
+// fixed.
+//
+// Axes this file MOVES:  where the `return` STANDS (an `if` arm · a `match` arm · after the
+//                        branch · nested two deep · a loop body) · whether the returned lambda
+//                        CAPTURES · what gives the frame its scope-exit free (a struct · a
+//                        vector · text · nothing, which is the control) · the lambda's own type
+//                        (`fn() -> integer` · `fn(integer) -> integer`) · and whether the branch
+//                        is TAKEN, because the fabricated `return null` and a correct delivery
+//                        agree on every path that does not reach the branch.
+// Axes it HOLDS FIXED:   one capturing arm per returning function.  Two capturing builds in one
+//                        fn-ref return is loft#1473's cell — a separate, pre-existing
+//                        store-lifetime defect that the `if` spelling shows identically on a
+//                        pristine baseline — and moving it here would mix two mechanisms.
+//
+// @falsified-at: a2efc8720 — native exit 1 -> 0, native panicked -> clean; interpret INERT
+//   (expected for a backend-divergence guard — only one side can move).  The control panics
+//   with `internal error: entered unreachable code: invalid fn-ref: N in g`.  The interpreter
+//   reads INERT and that is the point of the ticket: it takes the value off eval-stack top and
+//   is right by accident, so `--interpret` alone cannot see this defect.
+
+struct E70 { a: integer }
+enum W70 { One, Two }
+
+// e1 — the filed shape: `return` inside an `if` arm, non-capturing lambda, struct free.
+fn if_arm(p: boolean) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 { return fn() -> integer { 5 }; }
+  return fn() -> integer { 7 };
+}
+
+// e2 — the same with the returned lambda CAPTURING the local that gives the frame its free.
+fn if_arm_capturing(p: boolean) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 { return fn() -> integer { 4 + e.a }; }
+  return fn() -> integer { 7 };
+}
+
+// e3 — a `match` arm rather than an `if` arm.  It lowers through a different chain builder, so
+// a fix that recognised the `if` spelling would report green here.
+fn match_arm(p: W70) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  match p { One => { return fn() -> integer { 4 + e.a }; }, Two => { } }
+  return fn() -> integer { 7 };
+}
+
+// e4 — the free is a VECTOR, whose release is a different op from a struct's.
+fn free_vector(p: boolean) -> fn() -> integer {
+  v: vector<E70> = [E70 { a: 1 }];
+  if p && v[0].a > 0 { return fn() -> integer { 5 }; }
+  return fn() -> integer { 7 };
+}
+
+// e5 — the free is TEXT, which carries its own delivery buffer.
+fn free_text(p: boolean) -> fn() -> integer {
+  t: text = "ab" + "cd";
+  if p && size(t) > 0 { return fn() -> integer { 5 }; }
+  return fn() -> integer { 7 };
+}
+
+// e6 — nested two deep: the return sits in an inner branch of an outer one.
+fn nested(p: boolean, q: boolean = true) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 {
+    if q { return fn() -> integer { 5 }; }
+    return fn() -> integer { 6 };
+  }
+  return fn() -> integer { 7 };
+}
+
+// e7 — the return sits in a LOOP body, which is a branch whose zero-iteration path is the skip.
+fn loop_body(n: integer) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  for i in 0..n { if i + e.a > 0 { return fn() -> integer { 5 }; } }
+  return fn() -> integer { 7 };
+}
+
+// e8 — the lambda takes a PARAMETER.  Its slot is the same twenty bytes; a fix keyed on arity
+// rather than on the type would miss it.
+fn with_param(p: boolean) -> fn(integer) -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 { return fn(x: integer) -> integer { x + 2 }; }
+  return fn(x: integer) -> integer { x + 4 };
+}
+
+// c1 — CONTROL: no frame free at all.  With nothing to run between the value and the return the
+// legacy shape was already correct, so this cell is what stops a green reading above being
+// mistaken for coverage of the frames that do free.
+fn ctl_no_free(p: boolean) -> fn() -> integer {
+  if p { return fn() -> integer { 5 }; }
+  return fn() -> integer { 7 };
+}
+
+// c2 — CONTROL: the TAIL-EXPRESSION spelling of the same choice, which was always correct.
+fn ctl_tail(p: boolean) -> fn() -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 { fn() -> integer { 5 } } else { fn() -> integer { 7 } }
+}
+
+// c3 — CONTROL: the same branch-return shape with a NON-fn return type.  It shares the hoist
+// list, so it pins that adding `fn(…)` to that list left the members already on it alone.
+fn ctl_int(p: boolean) -> integer {
+  e: E70 = E70 { a: 1 };
+  if p && e.a > 0 { return 5; }
+  return 7;
+}
+
+fn main() {
+  assert(if_arm(true)() == 5, "e1 branch taken: {if_arm(true)()}");
+  assert(if_arm(false)() == 7, "e1b branch not taken: {if_arm(false)()}");
+  assert(if_arm_capturing(true)() == 5, "e2 capturing, taken: {if_arm_capturing(true)()}");
+  assert(if_arm_capturing(false)() == 7, "e2b capturing, not taken: {if_arm_capturing(false)()}");
+  assert(match_arm(W70.One)() == 5, "e3 match arm taken: {match_arm(W70.One)()}");
+  assert(match_arm(W70.Two)() == 7, "e3b match arm not taken: {match_arm(W70.Two)()}");
+  assert(free_vector(true)() == 5, "e4 vector free, taken: {free_vector(true)()}");
+  assert(free_vector(false)() == 7, "e4b vector free, not taken: {free_vector(false)()}");
+  assert(free_text(true)() == 5, "e5 text free, taken: {free_text(true)()}");
+  assert(free_text(false)() == 7, "e5b text free, not taken: {free_text(false)()}");
+  assert(nested(true, true)() == 5, "e6 nested, inner taken: {nested(true, true)()}");
+  assert(nested(true, false)() == 6, "e6b nested, inner skipped: {nested(true, false)()}");
+  assert(nested(false, true)() == 7, "e6c nested, outer skipped: {nested(false, true)()}");
+  assert(loop_body(3)() == 5, "e7 loop body reached: {loop_body(3)()}");
+  assert(loop_body(0)() == 7, "e7b zero iterations is the skip path: {loop_body(0)()}");
+  assert(with_param(true)(3) == 5, "e8 lambda with a parameter, taken: {with_param(true)(3)}");
+  assert(with_param(false)(3) == 7, "e8b lambda with a parameter, not taken: {with_param(false)(3)}");
+
+  assert(ctl_no_free(true)() == 5, "c1 no frame free, taken: {ctl_no_free(true)()}");
+  assert(ctl_no_free(false)() == 7, "c1b no frame free, not taken: {ctl_no_free(false)()}");
+  assert(ctl_tail(true)() == 5, "c2 the tail-expression spelling: {ctl_tail(true)()}");
+  assert(ctl_tail(false)() == 7, "c2b the tail-expression spelling, else: {ctl_tail(false)()}");
+  assert(ctl_int(true) == 5, "c3 non-fn return type, taken: {ctl_int(true)}");
+  assert(ctl_int(false) == 7, "c3b non-fn return type, not taken: {ctl_int(false)}");
+
+  println("1470-a-fn-ref-returned-from-a-branch-is-delivered-not-discarded ok");
+}

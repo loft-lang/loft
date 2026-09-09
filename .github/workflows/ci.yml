@@ -1119,6 +1119,12 @@ jobs:
         # guard.  Reuses the release loft binary built above.  Advisory (this
         # whole job is), so drift shows red without blocking merge.
         run: make features-check
+      - name: Shape tests can see through `τ?` (@FR-N-Shape ratchet)
+        # The `Optional` VARIANT makes an omission a compile error for an EXHAUSTIVE
+        # `match Type` and for nothing else, so `matches!` / `if let` / a catch-all arm
+        # go blind silently.  Too many to walk (1520), so the gate is the derivative:
+        # the count may fall and may not rise.  Advisory like the rest of this job.
+        run: make optional-ratchet
 
   # WASM node bridge — build the wasm-pack nodejs bundle and RUN the binary-I/O
   # bridge tests (tests/wasm/bridge.test.mjs).  The per-platform `Test` job's

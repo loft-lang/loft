@@ -1699,7 +1699,17 @@ fn n_set_store_lock(stores: &mut Stores, stack: &mut DbRef) {
 fn n_protect_store_frees(stores: &mut Stores, stack: &mut DbRef) {
     let r = *stores.get::<DbRef>(stack);
     if r.rec != 0 && (r.store_nr as usize) < stores.allocations.len() {
-        let origin = format!("call_bracket(store_nr={}, rec={})", r.store_nr, r.rec);
+        // The origin names the bracket in a refusal or a `LOFT_LOG=locks` trace; it is
+        // formatted only when someone will read it — this runs on every call with a
+        // `const` collection argument (@PLN157 § V-e).
+        let origin: std::borrow::Cow<'static, str> = if crate::log_config::lock_trace_enabled() {
+            std::borrow::Cow::Owned(format!(
+                "call_bracket(store_nr={}, rec={})",
+                r.store_nr, r.rec
+            ))
+        } else {
+            std::borrow::Cow::Borrowed("call_bracket")
+        };
         stores.allocations[r.store_nr as usize].set_free_protected(origin);
     }
 }

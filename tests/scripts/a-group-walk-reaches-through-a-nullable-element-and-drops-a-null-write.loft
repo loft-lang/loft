@@ -39,13 +39,15 @@ fn main() {
   a = WNull {}; a.rooms += [R {}];
   a.rooms[0].items += [I { n: "key", v: 3 }, I { n: "two", v: 4 }];
   a.rooms[0].items.remove(0);
-  assert(len(a.rooms[0].items) == 1 && len(a.rooms[0].by_n) == 1 && a.rooms[0].by_n["key"] == null,
-    "nullable element remove: items={len(a.rooms[0].items)} by_n={len(a.rooms[0].by_n)}");
+  // `(N-Chain)` — `a.rooms[0]` is an index, so a member READ through it is `τ?` and asks for
+  // the discharge; the `+=` and `.remove` above are places and take none `(N-Chain-Place)`.
+  assert(len(a.rooms[0].items ?? []) == 1 && len(a.rooms[0].by_n ?? []) == 1 && a.rooms[0].by_n["key"] == null,
+    "nullable element remove: items={len(a.rooms[0].items ?? [])} by_n={len(a.rooms[0].by_n ?? [])}");
 
   // 1b — and a REPLACE through the same route re-keys the record.
   a.rooms[0].items[0] = I { n: "new", v: 9 };
-  assert(len(a.rooms[0].by_n) == 1 && a.rooms[0].by_n["new"].v == 9 && a.rooms[0].by_n["two"] == null,
-    "nullable element replace: by_n={len(a.rooms[0].by_n)}");
+  assert(len(a.rooms[0].by_n ?? []) == 1 && a.rooms[0].by_n["new"].v == 9 && a.rooms[0].by_n["two"] == null,
+    "nullable element replace: by_n={len(a.rooms[0].by_n ?? [])}");
 
   // 1c — the DENSE twin, which was never broken: the control that says the peel is the axis.
   b = WDense {}; b.rooms += [R {}];

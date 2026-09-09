@@ -2758,20 +2758,43 @@ impl Parser {
             return Some(assoc);
         }
         if self.lexer.has_token("?") {
+            // ⚠ **`has_null(τ)` has no home, and these are its decoders.**  `@FR-N-Opt` states it as a
+            // PREDICATE — `τ? wf` only when τ has a value to spend on absence — and there is no `fn
+            // has_null` in `src/`: it is re-derived inline wherever something happens to ask, with a
+            // different type list each time.  The sites: this one (`value struct`), the tuple arm below in
+            // `parse_type_inner`, and `Parser::wrap_projection_nullable` in `parser/fields.rs` (which
+            // excludes `Function | Tuple` and NOT this one).
+            //
+            // Enforcing the precondition at the DECLARATION only means every rule that CONSTRUCTS a `τ?` —
+            // `(N-Domain)`'s index, `(N-Chain)`'s projection — can still mint one for a type with no null,
+            // and the diagnostic then names a type this site forbids the author to write.  That is loft#1471
+            // (an out-of-range read on a `vector<value struct>` fabricates a zero record, `== null` is
+            // false, and the advertised `?? d` discharge is dead code), and it carries the design question:
+            // which of `(N-Domain)` and `(N-Opt)` gives.  Do NOT widen one of these lists alone — that adds
+            // a fourth answer rather than removing the third.
             // @PLN101 — a `value struct` is stored INLINE (bytes, no `DbRef`), so it has no
             // `store_nr` null sentinel: `<value struct>?` cannot be represented. Reject it with
             // a clear diagnostic; fall through as the plain (non-null) type to avoid a cascade.
-            if let Type::Reference(p, _) = &t
-                && self.data.is_value_struct(*p)
-            {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "`{type_name}?` is not allowed — a `value struct` is stored inline and has \
-                     no null; use a plain `{type_name}`, or a reference `struct` for nullability"
-                );
-                return Some(t);
-            }
+            // @PLN101 / `@FR-L-Null-Tag` — a `value struct` IS nullable, and the way it is
+            // nullable is the tag.  It is stored INLINE, which is precisely the case
+            // `(L-Null-Tag)` governs: `S?` is the synthetic `__nullable<S>`, layout(S?) =
+            // discriminant ++ layout(S), absence is discriminant 0.  `synth_nullable_target`
+            // already admits it (a `value struct` is a `DefType::Struct`), so the whole tagged
+            // path — declaration, local, field, vector element, `??` discharge — carries it
+            // with no new machinery.
+            //
+            // This used to be REFUSED here, on the reasoning that an inline value "has no
+            // `store_nr` null sentinel".  True, and beside the point: that is `(L-Null)`'s
+            // representation, and `(L-Null)` is not the rule for an inline slot.  The refusal
+            // reasoned about the pointer form only, so it turned a representable type away and
+            // sent the author to "a reference `struct` for nullability" — a heap allocation to
+            // buy back something the tag already provides.
+            //
+            // Worse, the refusal was only ever enforced HERE.  `(N-Domain)` and `(N-Chain)`
+            // construct a `τ?` without asking, so `v[i]` on a `vector<Pt>` and a `Pt` field read
+            // through a nullable receiver both minted a `Pt?` — and the diagnostic then NAMED a
+            // type this site forbade the author to write (loft#1471).  Owner ruling 2026-09-08:
+            // *a `Pt?` implementation is an enum variant of the record so it can be null*.
             // @PLN25 slice (a): the postfix `?` constructs the real `Optional` former
             // (idempotent + normalising via `Type::optional`). GATED on `LOFT_PLN25_OPT`
             // while the slice-(b) peel audit is incomplete — OFF keeps the Phase-0 no-op

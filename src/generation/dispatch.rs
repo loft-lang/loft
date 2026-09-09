@@ -684,10 +684,25 @@ impl Output<'_> {
         // loft#1336) — asked bare, `c = keep(other)` on a `c: S?` fell to the plain
         // assignment below and ALIASED the argument.  A FIRST bind keeps the bare question
         // plus the join fallback loft#1106 gave it; widening that is a separate walk.
+        //
+        // ⚠ The first bind's question is a NULLABILITY one and has to SAY so, which is what
+        // `@FR-N-Shape` asks of a site that must tell `τ` from `τ?`: read the marker, never
+        // a missing arm.  It used to get the answer from `heap_def_nr`'s own blindness, and
+        // when that verb learned to peel, this branch became the reassignment branch in
+        // silence — the widening the sentence above calls a separate walk, landed by
+        // accident.  What that costs is a `t = head(q)` on a `t: S?` where `head` returns a
+        // VIEW of its argument: `--native` took the copy-or-adopt split against an IR that
+        // says alias, so it answered a stale `q[0]` where `--interpret` answered the
+        // written one, and the store it minted had no owner to free it (the caller's type
+        // still names `q`'s dep, so `owns_freeable_store` emits no free).  The value half
+        // was silent on both backends.
         let record_def = if self.declared.contains(&var) {
             variables.tp(var).base().heap_def_nr()
         } else {
-            variables.tp(var).heap_def_nr()
+            match variables.tp(var).peel_optional() {
+                (_, true) => None,
+                (shape, false) => shape.heap_def_nr(),
+            }
         }
         .or_else(|| {
             crate::use_analysis::nullable_join_first_bind(
@@ -716,10 +731,18 @@ impl Output<'_> {
             if first_bind {
                 self.declared.insert(var);
                 let tp_str = rust_type(variables.tp(var), &Context::Variable);
-                writeln!(
-                    w,
-                    "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
-                )?;
+                // @PLN157 § V-g — an elided local aliases the call's result and never
+                // copies into a slot store of its own, so the `null_named` pre-allocation
+                // (a store minted for the copy to land in) would only be minted to be
+                // freed as displaced by the adopt arm; it starts as the null sentinel.
+                if variables.is_view_elided(var) {
+                    writeln!(w, "let mut var_{name}: {tp_str} = DbRef::NULL;")?;
+                } else {
+                    writeln!(
+                        w,
+                        "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
+                    )?;
+                }
                 self.indent(w)?;
             }
             // @P298 / @P297 (native half) — free the callee's return store
@@ -846,52 +869,60 @@ impl Output<'_> {
             // and not a second opinion — writing it twice is how the witnessed form came to
             // omit it.
             const PASSTHROUGH: &str = "_src.store_nr == u16::MAX || _src.store_nr == _dst.store_nr";
-            let adopt = match &join_witness {
-                // @FR-O-Move — the caller COPIES only to obtain its OWN store.  When `_src`
-                // already lives in the destination's own store the caller HAS that store, so
-                // the rule asks for nothing and the copy is not merely redundant but
-                // destructive: the COPY arm clears `_dst` in place via `OpDatabase`, which
-                // wipes the record `_src` names before `OpCopyRecord` reads it.  That is the
-                // same-store passthrough the `None` arm below carries and the @P290 comment
-                // above requires ("clearing that store would wipe the very data we copy, so
-                // pass the reference through unchanged"); the witnessed form REPLACED the
-                // whole condition instead of refining it and so dropped it.  Measured:
-                // `c = cond(c, 3)` where `cond` returns its argument on one path answered
-                // `x = 0` on `--native` against `2` on the interpreter, silently, on the
-                // shipped 2026.8.0 release.  Guard
-                // `tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft`.
-                //
-                // It is a strict widening of the ADOPT arm: the extra disjunct fires only
-                // where the destination's old store and the returned value are one store, so
-                // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
-                // false there and nothing is freed — the assignment becomes the no-op it
-                // always was.
-                Some(witness) => {
-                    format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+            // @PLN157 § V-g — an elided bind ALIASES the result whichever arm the callee
+            // took: the view is what the local keeps, and the minted arm's store is
+            // released by identity at scope exit (`scopes` registered the witness).  The
+            // interpreter binds it with a bare `PutRef` for the same reason.
+            let adopt = if variables.is_view_elided(var) {
+                "true".to_string()
+            } else {
+                match &join_witness {
+                    // @FR-O-Move — the caller COPIES only to obtain its OWN store.  When `_src`
+                    // already lives in the destination's own store the caller HAS that store, so
+                    // the rule asks for nothing and the copy is not merely redundant but
+                    // destructive: the COPY arm clears `_dst` in place via `OpDatabase`, which
+                    // wipes the record `_src` names before `OpCopyRecord` reads it.  That is the
+                    // same-store passthrough the `None` arm below carries and the @P290 comment
+                    // above requires ("clearing that store would wipe the very data we copy, so
+                    // pass the reference through unchanged"); the witnessed form REPLACED the
+                    // whole condition instead of refining it and so dropped it.  Measured:
+                    // `c = cond(c, 3)` where `cond` returns its argument on one path answered
+                    // `x = 0` on `--native` against `2` on the interpreter, silently, on the
+                    // shipped 2026.8.0 release.  Guard
+                    // `tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft`.
+                    //
+                    // It is a strict widening of the ADOPT arm: the extra disjunct fires only
+                    // where the destination's old store and the returned value are one store, so
+                    // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
+                    // false there and nothing is freed — the assignment becomes the no-op it
+                    // always was.
+                    Some(witness) => {
+                        format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+                    }
+                    // loft#974 — a callee that returns a VIEW hands back a pointer into a
+                    // store the CALLER already owns, so the destination ALIASES it: that is
+                    // what the borrow in the signature means, and it is what the interpreter
+                    // emits here (a bare `PutRef`).  Copying instead mints a store the IR —
+                    // which types such a destination as a borrow and therefore emits no
+                    // `OpFreeRef` — never frees: one leaked record per call, measured.  It
+                    // also made the two backends disagree about what a view IS, so a write
+                    // through the result would land on one and be lost on the other.
+                    //
+                    // BOTH halves are required, and the destination is the half loft#677's
+                    // guard proved: a lifted call temporary (`__lift_1`) takes a borrowed
+                    // return too, and its own type carries NO deps — the IR calls it an owner
+                    // and frees it at scope exit.  Aliasing there hands that free the
+                    // CALLER's store (`USE AFTER FREE (write) … killed by the free of
+                    // var___lift_1`, native-only, the interpreter's own copy path unaffected).
+                    // So the alias follows the destination's ownership, not the callee's
+                    // return alone.
+                    // A WITNESSED local (loft#1336) is never-free for a different reason — its
+                    // witness releases its stores — and it is copied into like its owned twin.
+                    None if is_borrowed_view && variables.is_skip_free(var) && !witnessed => {
+                        "true".to_string()
+                    }
+                    None => PASSTHROUGH.to_string(),
                 }
-                // loft#974 — a callee that returns a VIEW hands back a pointer into a
-                // store the CALLER already owns, so the destination ALIASES it: that is
-                // what the borrow in the signature means, and it is what the interpreter
-                // emits here (a bare `PutRef`).  Copying instead mints a store the IR —
-                // which types such a destination as a borrow and therefore emits no
-                // `OpFreeRef` — never frees: one leaked record per call, measured.  It
-                // also made the two backends disagree about what a view IS, so a write
-                // through the result would land on one and be lost on the other.
-                //
-                // BOTH halves are required, and the destination is the half loft#677's
-                // guard proved: a lifted call temporary (`__lift_1`) takes a borrowed
-                // return too, and its own type carries NO deps — the IR calls it an owner
-                // and frees it at scope exit.  Aliasing there hands that free the
-                // CALLER's store (`USE AFTER FREE (write) … killed by the free of
-                // var___lift_1`, native-only, the interpreter's own copy path unaffected).
-                // So the alias follows the destination's ownership, not the callee's
-                // return alone.
-                // A WITNESSED local (loft#1336) is never-free for a different reason — its
-                // witness releases its stores — and it is copied into like its owned twin.
-                None if is_borrowed_view && variables.skip_free(var) && !witnessed => {
-                    "true".to_string()
-                }
-                None => PASSTHROUGH.to_string(),
             };
             // @PLN85 (the adopt-arm placeholder leak) — the ADOPT arm replaces
             // `var_{name}`'s slot with `_src`, orphaning `_dst` when it is a
@@ -1435,13 +1466,22 @@ impl Output<'_> {
                 // member written as a bare name is built as the `(u32, DbRef)` pair its
                 // slot is rather than emitted as the lone d_nr it infers to.
                 let prev_tuple_slots = std::mem::take(&mut self.tuple_slot_types);
-                if let Type::Tuple(elems) = variables.tp(var)
+                // `.base()`, and it is the fifth site this same list has drifted short by the
+                // wrapper (`is_dbref` and D-own-13, `deps_mut`, `is_keyed`, `depend` —
+                // loft#1150 counts the others).  A `vector<(integer, text)>` element read by a
+                // plain VARIABLE index types `(integer, text)?` under `(N-Domain)`, and the
+                // SLOT renders as the bare `(i64, String)` — `(T-Absent)` says a tuple has no
+                // wrapped form — so a bare match here disagreed with the declaration it is
+                // supposed to fit.  The text member emitted `&str` into a `String` slot and
+                // rustc refused the program (E0308).  A CONSTANT index compiles, because
+                // `(N-Index)` trusts it and no wrapper is ever built; loft#1478.
+                if let Some(elems) = crate::generation::var_tuple_elems(variables, var)
                     && elems.iter().any(crate::data::tuple_carries_fn_ref)
                 {
-                    self.tuple_slot_types = elems.clone();
+                    self.tuple_slot_types = elems;
                 }
-                if let Type::Tuple(elems) = variables.tp(var)
-                    && tuple_has_text_leaf(elems)
+                if let Some(elems) = crate::generation::var_tuple_elems(variables, var)
+                    && tuple_has_text_leaf(&elems)
                 {
                     // Recurse through nested tuples so `((i64, String),
                     // (i64, String))` triggers the flag too — without
@@ -1520,11 +1560,12 @@ impl Output<'_> {
                 // `var_t.0.X` in the same expression.  Emit
                 // `var_t.0.clone()` instead so each chained access
                 // gets its own owned copy.
-                let nested_tuple_clone = matches!(variables.tp(var), Type::Tuple(elems)
-                    if tuple_has_non_copy_leaf(elems))
+                let nested_tuple_clone = crate::generation::var_tuple_elems(variables, var)
+                    .is_some_and(|elems| tuple_has_non_copy_leaf(&elems))
                     && matches!(to_inner, Value::TupleGet(v, _) if {
                         let vars = self.data.def(self.def_nr).variables();
-                        !vars.is_argument(*v) && matches!(vars.tp(*v), Type::Tuple(_))
+                        !vars.is_argument(*v)
+                            && crate::generation::var_tuple_elems(vars, *v).is_some()
                     });
                 // loft#1325 — the WHOLE tuple, one level out from the arm above.  `u = a` over
                 // a local `(text, text)` emitted `let mut var_u: (String, String) = var_a;`,
@@ -1538,11 +1579,12 @@ impl Output<'_> {
                 // Only a non-Copy leaf needs it — an all-scalar tuple is `Copy` and the move is
                 // a copy already — and only a LOCAL source: a tuple PARAMETER arrives borrowed
                 // and is re-spelled by `tuple_arg_owned_elems` below, which owns that pair.
-                let whole_tuple_clone = matches!(variables.tp(var), Type::Tuple(elems)
-                    if tuple_has_non_copy_leaf(elems))
+                let whole_tuple_clone = crate::generation::var_tuple_elems(variables, var)
+                    .is_some_and(|elems| tuple_has_non_copy_leaf(&elems))
                     && matches!(to_inner, Value::Var(v) if {
                         let vars = self.data.def(self.def_nr).variables();
-                        !vars.is_argument(*v) && matches!(vars.tp(*v), Type::Tuple(_))
+                        !vars.is_argument(*v)
+                            && crate::generation::var_tuple_elems(vars, *v).is_some()
                     });
                 // loft#840 — the destination is an owned tuple slot holding text
                 // (`(i64, String, u8)`) and the source is a tuple PARAMETER, which
@@ -1561,8 +1603,9 @@ impl Output<'_> {
                 // Both are one fact — a tuple crossing from a BORROWED parameter into an
                 // OWNED slot — so they share the re-spelling and differ only in the place
                 // they name.
-                let tuple_arg_owned_elems = match variables.tp(var) {
-                    Type::Tuple(elems) if tuple_has_text_leaf(elems) => {
+                let tuple_arg_owned_elems = match crate::generation::var_tuple_elems(variables, var)
+                {
+                    Some(elems) if tuple_has_text_leaf(&elems) => {
                         let from_param = match to_inner {
                             Value::Var(v) => {
                                 let vars = self.data.def(self.def_nr).variables();
@@ -1574,7 +1617,7 @@ impl Output<'_> {
                             }
                             _ => false,
                         };
-                        from_param.then(|| elems.clone())
+                        from_param.then_some(elems)
                     }
                     _ => None,
                 };

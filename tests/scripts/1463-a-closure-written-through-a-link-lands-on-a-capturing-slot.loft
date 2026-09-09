@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1463 / `D-bind-29` — the FUNCTION half of `@FR-B-Ref-Uniform`, which says a `&τ`
+// variable is used EXACTLY like a `τ` variable and that no operation is special-cased.
+//
+// A write through a `&fn(…) -> τ` link did not land on `--native` when the caller's slot
+// already held a CAPTURING closure.  The interpreter wrote it; native left the old value in
+// place and said nothing, so the caller kept calling its own closure and got a plausible
+// answer — `silent-wrong`, and the kind that survives review because 99 is a number the
+// program could legitimately have produced.
+//
+// The special case was in the DISPATCH, not in the write.  A fn-ref call passes the closure
+// environment alongside the tag, and the emitter took it from the caller's own `___clos_N`
+// local whenever one existed — re-deriving "which environment does this slot hold" from the
+// MINT SITE, a non-local fact, right only while nothing else can write the slot.  A `&fn(…)`
+// link is exactly the thing that can.  The environment now always comes from the slot's own
+// `.1`, which is where the mint put it and where a rebind puts the next one.
+//
+// ⚠ Why it hid: a `___clos_N` local exists only when the caller's initial closure CAPTURES.
+// loft#1443 opened this write and its ten cells all pin the caller's slot to a non-capturing
+// initial value, so every one of them took the `.1` path that was already correct.  Moving
+// that single value is the whole axis — which is why this file's controls are the
+// non-capturing cells: they must keep passing, or the fix traded one shape for another.
+//
+// Axes this file MOVES:  whether the caller's initial closure CAPTURES, and how many frames
+//                        deep the link is passed (one · two).
+// Axes it HOLDS FIXED:   the link is a `&fn() -> integer` with no parameters, and the captured
+//                        value is a struct field, which is the shape the 20-byte stack form
+//                        (8 B tag + 12 B closure `DbRef`) is about.
+//
+// @falsified-at: e711d41ee — native exit 1 -> 0 and 1 assertion failure -> 0; interpret INERT.
+//   MEASURED on both backends.  The ASSERT channel moved, not merely the exit: the control
+//   reaches the cell, runs it, and answers 99 where the file says 88 — which is the right red
+//   for a silent-wrong, because a guard that only moved the exit code could not tell this
+//   defect from a refusal.
+//
+//   The interpreter half is INERT and must be: this is a backend DIVERGENCE, so only one side
+//   can move.  The interpreter answered 88 before the fix and answers 88 after, which is
+//   exactly the fact that made the native answer wrong rather than merely different.
+
+struct E1463 { a: integer }
+
+fn write_through(out: &fn() -> integer) {
+  d: E1463 = E1463 { a: 88 };
+  out = fn() -> integer { d.a };
+}
+
+fn two_frames(out: &fn() -> integer) { write_through(out); }
+
+// ⚠ WHY reading the slot is sound, not merely fresher — the question a peer session raised
+// against this fix while isolating a capture defect of its own (loft#1474).
+//
+// The slot is a `(u32 tag, DbRef env)` PAIR, and every write sets BOTH halves as one literal:
+// `(733, var____clos_1)` for a capturing mint, `(736, DbRef::NULL)` for a non-capturing one.
+// So `.0` and `.1` are written as a unit and cannot disagree about which lambda's environment
+// they hold.
+//
+// The form this replaced read a LOCAL chosen by `closure_var_of(v_nr)` — a STATIC, per-variable
+// choice.  Where several arms mint several `___clos_N` into ONE slot, that choice can disagree
+// with the runtime tag: the lambda the tag selects runs with whichever environment the static
+// pick named.  So reading `.1` does not make the one-slot assumption, it REMOVES one; the
+// rebind cells below are what say so, because they are the shapes where a stale or mismatched
+// environment would show.
+
+fn main() {
+  // ---- the CELL: the caller's slot starts out CAPTURING ----
+  c: E1463 = E1463 { a: 99 };
+  g: fn() -> integer = fn() -> integer { c.a };
+  assert(g() == 99, "a capturing slot answers its own closure first: {g()}");
+  write_through(g);
+  assert(g() == 88, "a write through the link lands on a CAPTURING slot: {g()}");
+
+  // ---- the same, two frames deep — the issue names it, and it is not a separate axis ----
+  c2: E1463 = E1463 { a: 99 };
+  g2: fn() -> integer = fn() -> integer { c2.a };
+  two_frames(g2);
+  assert(g2() == 88, "and lands when the link is passed on again: {g2()}");
+
+  // ---- the CONTROLS: loft#1443's own shape, a NON-capturing initial value.  These took the
+  //      already-correct path, so they are what says the fix did not trade one shape for the
+  //      other rather than closing both ----
+  h: fn() -> integer = fn() -> integer { 0 };
+  assert(h() == 0, "a non-capturing slot answers its own closure first: {h()}");
+  write_through(h);
+  assert(h() == 88, "a write through the link still lands on a NON-capturing slot: {h()}");
+
+  h2: fn() -> integer = fn() -> integer { 0 };
+  two_frames(h2);
+  assert(h2() == 88, "…two frames deep as well: {h2()}");
+
+  // ---- and the captured value is still READABLE where nothing wrote the slot, which is what
+  //      says the dispatch reads the right environment rather than merely a different one ----
+  k: E1463 = E1463 { a: 7 };
+  f: fn() -> integer = fn() -> integer { k.a };
+  assert(f() == 7, "an unwritten capturing slot keeps its own environment: {f()}");
+  k.a = 11;
+  assert(f() == 11, "…and sees a write to what it captured: {f()}");
+
+  // ---- REBIND: one slot, three different environments in turn.  A `.1` that were stale, or a
+  //      statically-picked local, would answer an earlier arm's capture here ----
+  re1: E1463 = E1463 { a: 11 };
+  re2: E1463 = E1463 { a: 22 };
+  r: fn() -> integer = fn() -> integer { 100 + re1.a };
+  assert(r() == 111, "the first environment: {r()}");
+  r = fn() -> integer { 200 + re2.a };
+  assert(r() == 222, "rebound to a DIFFERENT environment: {r()}");
+  r = fn() -> integer { 999 };
+  assert(r() == 999, "rebound to a NON-capturing closure: {r()}");
+  r = fn() -> integer { 300 + re1.a };
+  assert(r() == 311, "…and back to a capturing one: {r()}");
+
+  // ⚠ The SIBLING-ARMS cell — two arms each capturing a DIFFERENT local, the fn-ref bound to a
+  //   local rather than called inline — is deliberately NOT here, and its absence is a finding
+  //   rather than an omission: that shape LEAKS one capture record, byte-identical on a pristine
+  //   9720dfd06 build, so it is older than this fix and is not what this file is about.  Putting
+  //   it here would make a leak gate red for an unrelated reason and teach the next reader that
+  //   `1463` is flaky.  It is reported against the `(L-CapOwn)` neighbourhood instead (a fn-ref
+  //   whose branch arms BOTH build a capturing closure), where the free question belongs.
+  //
+  //   The rebind cells above already carry this file's own claim — one slot, several
+  //   environments in turn — and they are leak-clean.
+
+  println("1463 ok");
+}

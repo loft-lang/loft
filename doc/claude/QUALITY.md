@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 425 | 401 | **24** |
+| 434 | 410 | **24** |
 
 
 
@@ -513,6 +513,8 @@ added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
 construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
 @PLN157 § V-d adds one peeling site — **420 · 396 · 24** — `vectors::element_call_takes_record_buffer` reads a vector-literal element through its `Span` to ask whether it is a buffer-returning call.
+
+@PLN157 § V-g adds one peeling site — **421 · 397 · 24** — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
 
 @PLN157 § V (the value-return delivery) adds three peeling sites and no blind one — **419 · 395 · 24**: `control::tail_fresh_object_workref` and `guard_literal_alloc` read a body tail's `Return` and `"Object"` block through their `Span`, and `scopes::reuse_record_buffers` finds a buffer's preamble null-init through its.
 
@@ -2542,7 +2544,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 750 | 403 | 6 | **341** |
+| 759 | 414 | 6 | **339** |
+
+⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
+carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
+on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
+progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
+`index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
+for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Shape`
+([formal/types.md](formal/types.md)).  That baseline is a DERIVED row exactly as these four
+are — re-measure it on the joined tree rather than carrying either branch's number.
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
@@ -2550,6 +2561,50 @@ neither branch's numbers survived it, as at every join so far.**  This checkout 
 The KEYSTONE column moved `5 → 6` from the sibling's side (@PLN157 adds a walker that descends
 via the `Type` keystone rather than naming variants), and the opaque column is the one that did
 NOT move — three functions joined the classifier and every one of them peels.
+
+**2026-09-08, loft#1450's `(N-Domain)` half: unspan row `425 · 401 · 24` → `428 · 404 · 24`.**
+Three functions joined the classifier and all three SEE THROUGH — `collect_guard_pairs_negated`,
+`ge_guard_pair` and `len_arg_vec_key` in `parser/operators.rs`, the fall-through reading of a
+bounds guard.  The `neither` column did not move, which is the direction that matters: each one
+was written with `unspan` from its first line, because it walks a CONDITION and a condition
+arrives wrapped in a `Span` wherever the source had a position to report.
+
+⚠ Worth the line, because it is the audit's own subject arriving in new code: the first version
+of `ge_guard_pair` matched `GeInt(idx, len(v))` and found NOTHING.  `idx >= v.len()` is
+normalised by the parser to `LeInt(len(v), idx)` — swapped operands and the other comparison —
+so a predicate written from the SOURCE spelling rather than the emitted IR was dead on arrival.
+That is `spellings` (B6g) one level down: not two spellings of a notion, but the source's
+spelling and the IR's, and only the second is what a walker sees.
+
+**2026-09-09, `has_null` gets a home: `751 · 404 · 6 · 341` → `753 · 406 · 6 · 341`.**  TWO
+functions joined the classifier and both SEE THROUGH — `data::has_null`, `@FR-N-Opt`'s side
+condition, and `data::constructs_optional`, the one former where the code's answer differs from
+the rule's.  Both ask `.base()` because the question is about the type FORMER and a `τ??` cannot
+arise (`(N-Idem)`).
+
+Two rather than one is the shape of the change and worth the line: the predicate was spelled
+inline at ONE construction site and absent at two others, so giving it a home replaced a
+discriminating site rather than adding three — and the second function exists because the tuple's
+answer is not the rule's yet.  `constructs_optional` is written to be DELETED: the gap between it
+and `has_null` is `tuples.md D-tup-10`, so this row goes back down by one when that closes.  The
+opaque column did not move.
+
+**2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
+function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which
+resolves the subject of `x is Variant { … }` by naming `Type` variants.  It gained a `base()`
+peel because a nullable enum is TESTABLE (`@FR-N-Chain`): `is` asks which variant a value
+carries, and *"none, it is absent"* is an answer to that question, not a reason to refuse it.
+The opaque column did not move, which is the direction that matters here — the peel was ADDED,
+so the site moved from "would have been opaque" straight into the seeing-through column without
+ever being counted in the middle.
+
+⚠ The failure it closes is the audit's own argument, and worth the line: with no peel, an
+`Optional(Enum)` subject fell to the catch-all arm, which answers `Boolean` WITHOUT consuming
+the `{ … }` capture list — so the payload was then read as a block and reported as *"Expect
+token ;"* at the first bound name.  A message about punctuation for a program whose only fault
+was that its subject could be absent, from a site that resolved a shape by naming variants and
+therefore answered for `τ` and not for `τ?`.  That is `spellings` (B6g) with the type former
+swapped for the IR one — exactly the class this table exists to count.
 
 **2026-09-08, loft#1443's lifetime half: `749 · 403 · 6 · 340` → `750 · 403 · 6 · 341`, and the
 unspan row `424 · 400 · 24` → `425 · 401 · 24`.**  One function joined each classifier —
@@ -2561,6 +2616,37 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
+and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`
+discriminators, both peeling, and the OPAQUE column is UNCHANGED — which it was not at first.
+`arm_value_delivers_record` asked `function.tp(v)` bare and pushed opaque to 340; peeling it was
+the right answer on its own terms, because a `fn(…)?` local is the same twenty-byte fn-ref slot
+as a `fn(…)` and the wrapper is not a distinction "does this arm hand out record r" may make —
+read bare it would answer the conservative `true` for a nullable fn-ref and leave its record
+unfreed on every omitting path.  So `@FR-N-Shape` and the ratchet agreed here, and the count
+came back down in the same step rather than being absorbed.
+
+**2026-09-08, the closure-lifetime arc (loft#1469/#1473/#1474/#1475): the unspan row
+`431 · 407 · 24` → `432 · 408 · 24`, and the Optional row `754 · 409 · 6 · 339` →
+`755 · 410 · 6 · 339`.**  Both moves are one function each and both PEEL, so the third and
+fourth columns — the ones that matter — are unchanged.  `scopes::builds_are_mutually_exclusive`
+is the new `Value` discriminator: `@FR-L-CapOne` asks whether two closure records sit in
+opposite arms of one branch, which is a question about `Value::If` and so needs a walk of its
+own.  On the `Optional` side `parser::widen_bare_fn_ref` classifies a target type as a function
+type and asks it through `tp.base()`, which is why it lands on the PEELING side rather than the
+opaque one — a `-> fn(…)?` return is the same twenty-byte slot as a `-> fn(…)`, so the wrapper
+is not a distinction the widening may make.  Recorded rather than absorbed: a derived row taken
+without a reason stops being a ratchet, and the reason here is that the arc added exactly two
+classifiers and neither is opaque.
+
+**2026-09-08, the debug-assertions gate's last hard failure: the unspan row `425 · 401 · 24`
+→ `431 · 407 · 24`.**  One function joined the classifier and it peels —
+`state::codegen::ir_reads_var`, the first-assignment self-reference guard, which now asks
+whether a `Var(v)` mention is a READ or the place a free RELEASES.  Its predecessor was
+`Value::any_node`, which peels `Span` for it; asking the question about a specific argument
+position needs a walk of its own, so the `Span` arm had to be written out — and this row is
+the reason it was written rather than remembered.
 
 loft#1423's tuple walk moves ONE function out of the opaque column (`341 → 340`, and
 `399 → 400` on the seeing-through side): `parser::operators::coalesce_not_null` reads each tuple
@@ -2681,6 +2767,8 @@ than by the audit.
 
 
 @PLN157 § V-d adds one on the OPAQUE side on purpose — **733 · 367 · 6 · 360** — `vectors::element_call_takes_record_buffer` matches the callee's return type bare, because a NULLABLE record return is excluded from building into a vector element (its buffer carries a different delivery); the audit counting it opaque is the exclusion made visible.
+
+@PLN157 § V-g adds one more on the OPAQUE side, also on purpose — **734 · 367 · 6 · 361** — `use_analysis::view_elision_bind` matches the bound local's type BARE (`Type::Reference`), because a nullable local is excluded from the elision by design: its slot may hold the sentinel and it takes the nullable join's own copy (`nullable_join_first_bind`), so asking through `base()` would admit exactly the shape the rule keeps out (guard cell c13).
 
 @PLN157 § V-c adds two in the hoist gate — **732 · 367 · 6 · 359** — `hoist::frees_a_record` reads the freed operand's type through `base()` (a nullable record local's free is a record free too), and `hoist::retbuf_only_writer` asks the record's attributes through the keystone.
 
@@ -7207,6 +7295,10 @@ unification — which is what says the generic fix did not slip past `check_sati
 uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs an in-or-out
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
+
+@PLN157 § V-g adds one peeling site — **426 · 402 · 24** on the joined tree — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
+
+@PLN157 § V-g adds one more on the OPAQUE side, also on purpose — **751 · 403 · 6 · 342** on the joined tree — `use_analysis::view_elision_bind` matches the bound local's type BARE (`Type::Reference`), because a nullable local is excluded from the elision by design: its slot may hold the sentinel and it takes the nullable join's own copy (`nullable_join_first_bind`), so asking through `base()` would admit exactly the shape the rule keeps out (guard cell c13).
 
 ### The catch-all audit — every type-driven op choice, classified (2026-08-22)
 

@@ -6,7 +6,14 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
+OPEN: **1** — `D-Opt-Value` was opened and CLOSED 2026-09-08 by owner ruling (loft#1471, below):
+a `value struct` is nullable through `(L-Null-Tag)`'s discriminant, and nothing had to be built.
+`D-Domain-Guard` (opened 2026-09-08, below): `(N-Domain)`'s GUARD licence is not
+uniform across its three families — the index and divisor rows are closed, and whether the
+domain-partial MATH row is a code gap or a rule that over-promises is an owner call.
+`D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
+that issue's three legs, a field read through a nullable receiver typing non-null, closed by the
+new `(N-Chain)` / `(N-Chain-Place)` pair.  `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` were opened and CLOSED 2026-09-07
 (loft#1450, below): an element read through an ABSENT collection typed non-null, the `!= null`
 guard that discharges it narrowed SCALARS only, and the narrowing it did perform described the
 assignment TARGET.  `D-Opt-NoNull` was opened and CLOSED 2026-09-07 (loft#1423, below): `(N-Opt)` gained
@@ -17,6 +24,178 @@ default-on 2026-07-11 (#559): float `/`/`%` and the domain-partial float functio
 exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, retained as the
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
+
+### D-Opt-Value — OPENED AND CLOSED (2026-09-08, loft#1471, owner ruling): a `value struct` was refused a `τ?` it could represent
+
+`(N-Opt)` licenses `τ?` for a τ with a value to spend on absence, and names TWO representations:
+a reserved sentinel `(L-Null)` or a discriminant `(L-Null-Tag)`.  **Either suffices.**  A `value
+struct` is stored INLINE, which is precisely the case `(L-Null-Tag)` governs — and it was refused
+at the declaration anyway, on the reasoning that an inline value has no `store_nr` sentinel.  That
+is true of the OTHER representation, and `(L-Null)` is not the rule for an inline slot.
+
+Owner ruling 2026-09-08: *"a `Pt?` implementation is an enum variant of the record so it can be
+null"* — which is `(L-Null-Tag)` verbatim.  **Nothing had to be built.**  `synth_nullable_target`
+already admits a `value struct` (it is a `DefType::Struct`), so lifting the refusal turned on the
+declaration, the local, the struct FIELD, the tagged vector ELEMENT and the `??` discharge at
+once, on both backends, with one test failing in the whole suite set — the one that pinned the
+refusal.
+
+**The half that outlives this entry: a side condition enforced at ONE site is not enforced.**
+`has_null(τ)` gated only the DECLARATION, while `(N-Domain)` and `(N-Chain)` construct a `τ?`
+without asking.  So `v[i]` on a `vector<Pt>` and a `Pt` field read through a nullable receiver
+minted `Pt?` regardless, the diagnostic NAMED a type the declaration forbade the author to write,
+and its advertised `?? d` cure was dead code — the value could not be null, so the default never
+ran.  The predicate still has no implementation in `src/`; it is re-derived inline at each site
+that happens to ask, and the three lists still differ.
+
+⚠ **What this does NOT close.**  loft#1471's original cell — an out-of-range read on a DENSE
+`vector<Pt>` — still fabricates `Pt{0,0}` and reports `== null` false, because `(N-Dense)` says a
+dense element pays no discriminant and the ruling does not change that.  What the ruling unblocks
+is the honest fix: `(N-Domain)` can now type that read `Pt?` and MEAN it, because the tagged
+absent value finally exists to hand back.  That was impossible while `Pt?` was unrepresentable,
+and it is a change to the READ rather than a deletion.
+
+### D-Domain-Guard — OPENED 2026-09-08 (loft#1450's walk): `(N-Domain)`'s GUARD licence is not uniform across its families
+
+`(N-Domain)` promises ONE elision — *"Non-null when the input is PROVABLY in-domain (constant /
+range / guard)"* — and states it over every partial operation it names.  Walked as a rule rather
+than as a site, the promise is kept unevenly.  Measured, one tree, both backends:
+
+| licence | index `v[i]` | divisor `a / d` | `sqrt` `ln` `asin` … |
+|---|---|---|---|
+| constant | ✓ | ✓ | ✓ |
+| expression proof | ✓ arithmetic over trusted leaves | ✓ `x / 2.0` | ✓ sign/interval lattice |
+| guard, positive (`if d != 0 { … }`) | ✓ | ✓ | ✗ |
+| guard, early return (`if d == 0 { return }`) | ✓ (2026-09-08) | ✓ (2026-09-08) | ✗ |
+
+**The divisor row was the index row's defect, one family over, and is CLOSED the same day.**
+`if d == 0 { return -1; } … a / d` typed `integer?`, and `divisor_proof_from_condition` already
+answered *"proven on the ELSE side"* for `d == 0` — the fact existed and nothing consumed it on
+the fall-through.  Both now take the guard-clause twin the null model has had since loft#585.
+
+⚠ **The TRUTHY spelling is not part of it, and the attempt is the entry's most useful line.**
+`if !d { return … } … a / d` reads like the same guard without the zero, and an arm for it was
+written and reverted within the hour: in loft an INTEGER CONDITION IS ALWAYS TRUE — measured,
+`if 0 { … }` takes the THEN branch and `!0` is `false` exactly as `!3` is — so that guard never
+fires, and eliding on it made `f(10, 0)` answer a silent null through a non-null slot.  A
+widening that REMOVES a diagnostic must be measured on the cell the diagnostic was ABOUT, not
+only on the cells where it was noise; what caught it was the guard file's refusal assertion,
+while every positive cell passed.  (That `if 0` takes the then branch is its own open question,
+not decided here: it is what makes the C-shaped reading of `if !d` plausible to a reader.)
+
+**The math row is a RULES-vs-HISTORY disagreement, not a plain deviation, and the difference
+matters.**  `DN3-Float` above never claimed flow guards for the domain-partial functions; it
+claimed a sign/interval lattice over EXPRESSIONS, and that claim was re-measured here rather than
+read off the word "shipped": `sqrt(dx*dx + dy*dy)` and `sqrt(max(x, 0.01))` are non-null and a
+bare `sqrt(x)` is correctly nullable.  So the code does what its history promised; it is
+`types.md`'s own sentence that promises more, by naming "guard" for the whole family list.  Which
+side moves is an owner call — narrow the rule to say where each licence applies, or widen the
+lattice to take flow facts.
+
+**Why it recurred, and the generalisation.**  *"Is this input provably in-domain?"* is answered in
+THREE places — `index_bounded`, `divisor_nonzero`, and the float lattice — each with its own set
+of admissible spellings, and none of them a home the others read.  That is
+`one-question-many-decoders` at the level of a RULE rather than a routine, and it is why fixing
+the index guard on the morning of 2026-09-08 left the identical hole in the divisor that
+afternoon.  A single "what does this guard prove about this value" home, consulted by each
+partial op, is what would make the rule's three licences one thing.
+
+⚠ **Found because a too-CONSERVATIVE type became observable.**  None of this was visible while a
+projection dropped the receiver's `?`: the over-wide `?` on an index sat harmless until
+`(N-Chain)` carried it one step further into a CAST, and `(N-Cast)` refuses a possibly-null
+subject — so strictness the rules never asked for surfaced as a REFUSAL in code that was always
+correct, in two PUBLISHED libraries (`web` 0.3.0, `stage` 0.18.1).  The direction is the lesson:
+widening one rule is what audits another, and a value assertion cannot see a type that is merely
+too wide — only something that READS the type can.
+
+### D-Null-Chain — OPENED AND CLOSED (2026-09-08, loft#1450): a field read through a nullable receiver typed non-null
+
+The last of loft#1450's three legs, and the one the register could not see: `D-Null-Recv` closed
+the ABSENT-collection read and `D-col-lookup` the keyed MISS, but a plain `s.f` on an `s: S?`
+still typed `f`'s declared type.  `get_field` reads the FIELD's own nullness, which is the field's
+promise about itself and says nothing about whether the receiver is there to hold it — reading
+`s.f` on an absent `s` yields the C80 null whatever `f` declares.
+
+**The site already knew and could not say it.**  `fields.rs`'s own header has said since @PLN102
+that *"a field access can't be MORE non-null than its receiver"*, and it acted on that by clearing
+`expr_not_null` — the input to the redundant-check lints, which is why `s.f ?? d` was never called
+redundant.  That is the same failure `D-col-lookup` recorded one door over: **a lint switch is not
+a type, and `(N-Store)` reads the type.**  Two legs of one issue reaching for the same wrong
+instrument is what makes it a class rather than a slip, and the closing question worth carrying is
+*when a rule gains a site, is the site a TYPE or a flag?*
+
+**What closed it is a rule, not a patch.**  `(N-Chain)` states the projection reading of
+`(N-Prop)`: absence at any link reaches the chain's result type, and ONE discharge at the tail
+covers every link.  That is what the language already DID — measured before the change, `a.b`
+absent and `a.b.c.v ?? -1` answers `-1` two links later — so the type was the only half missing.
+`wrap_projection_nullable` carries `wrap_keyed_lookup_nullable`'s guards for its reasons: no
+marker on an unresolved type, the null model's switch, and no second wrap on a `__nullable<S>`
+receiver that `@FR-N-Idem` forbids.
+
+**The place half was falsified before it shipped, by the matrix.**  The first version of
+`(N-Chain)` claimed PLACE position needed no exemption, because the assignment chokepoint already
+peels a discharge off a target (loft#1205).  The write-side probe matrix said otherwise on its
+first run: with the chain widened, `w.here.items.remove(0)` was refused — *"cannot call `.remove`
+on `vector<Item>?` because it is NULLABLE"* — and the refusal fired on a PRESENT receiver too,
+because it reads the TYPE.  `(N-Chain-Place)` is the answer (owner ruling 2026-09-08: *allow the
+refused spelling, and do nothing in that case*): a mutating method's receiver is a place, peeled
+to its dense type before dispatch.  The runtime needed nothing — a mutation through an absent
+chain was already a total no-op on every mutation kind and both backends, which is the measurement
+that made the ruling cheap to adopt.
+
+⚠ **The peel names `remove` and `clear` as a LIST, and that is the entry's loose end.**  They are
+the collection surface's only mutating methods today (insertion is `+=`, and the keyed kinds spell
+removal as a statement), but a `both:` receiver carries no mutability marker, so nothing derives
+the set.  `is_mutating_op` in `parser/control.rs` is the SAME question asked a second time for the
+`parallel {}` capture check, from a hand-written allow-list of 18 IR ops that omits
+`OpRemoveVector` — and that omission is a live both-backend crash, filed separately.  Two lists
+answering one question is the shape `one-question-many-decoders` warns about; the derived home is
+the work this entry leaves open.
+### `(N-Shape)` — ADDED 2026-09-08 (@PLN153 phase 4 batch 11): the rule the peels were re-deriving one site at a time
+
+Nine of phase 4's batches cured the same mechanism — a `matches!` / `if let` / catch-all `match`
+over a `Type` that answers "no" for `Optional(τ)` — and each cured it at the CALLERS it had
+reached.  `Type::peel_optional`'s doc block had stated the governing fact since @PLN25
+(*"the nullability-agnostic majority of `match Type` sites peel through this; only the discharge
+/ store / cast checks read the bool"*), with no rule, no citation and no gate, so every batch
+re-derived it.  Written down as `(N-Shape)` in [types.md](types.md), cited at its home
+(`peel_optional`) and at the verbs below.
+
+**Why the design's own guarantee does not fire.**  `Optional` is a `Type` VARIANT rather than a
+`nullable: bool` precisely so that *"every exhaustive `match Type` is a COMPILE ERROR until it
+handles nullability (loud omission)"* — and `matches!`, `if let` and a catch-all arm are not
+exhaustive matches.  Measured by `scripts/ir_walker_audit.py optional`: **2268** shape tests,
+**1520** opaque on their own scrutinee.  A population that size is not a walk, so the enforcement
+is a RATCHET on the count (`make optional-ratchet`, baseline `index/optional_ratchet.json`) —
+the same argument `asan_leak_ratchet.sh` makes for a count over an allowlist: the opaque tests are
+indistinguishable from each other by any pattern a suppression could name.
+
+**Three verbs fixed at the verb, not at their callers**, so ~48 bare call sites are answered at
+one home: `is_scalar`, `Type::heap_def_nr` and `Type::heap_dep`.  Corpus-measured with
+`scripts/introspect_diff.sh`: **9 of 1411 files move**, all nine null guards, every one identical
+in VALUE on both backends and under `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` / `LOFT_STORES=warn`.
+Eight take the copy-or-adopt lowering their dense twin already took (`heap_def_nr` is `(B-Copy)`'s
+home, and loft#1319 had cured only the local-to-local site); the ninth moves a hoisted nullable
+scalar's declaration into the native prologue, which is where batch 3's own cell said it belonged.
+`heap_dep` alone reads IDENTICAL 1411/1411 — insurance, exactly as batch 2 argued when it peeled
+that verb's four `scopes.rs` callers by hand.
+
+**⚠ `is_dbref` is the one OPEN exception, and it is measured rather than assumed.**  Peeling it
+moves **102** files and breaks **12** guards, because at least thirteen callers read its blindness
+as a NULLABILITY test — they ask *"is this a non-null heap slot?"* and take the answer from a
+SHAPE predicate's missing arm.  One of them is named and cured here without peeling the verb:
+`nstore_null_report_as`'s `heap_target` tests the synthetic `__nullable<S>` spelling of `τ?`
+explicitly and left the `Type::Optional` spelling to `is_dbref` answering false — one notion, two
+spellings, one of them looked for.  Spelling the second is byte-identical today and makes the
+gate's reason local.  Splitting the rest is a walk of its own; until it lands,
+`data::tests::is_dbref_is_the_documented_exception_to_shape_agreement` holds the exception open
+and FLIPS when it closes.
+
+**And two of the audit's rows are FALSE POSITIVES**, recorded so the baseline is honest rather
+than merely frozen: `borrow_deps` and `rewrap_deps` name `Rewritten` with no `Optional` arm but
+delegate to `deps_ref` / `with_deps`, which are dep-transparent by construction.  `is_unknown`
+(106 bare callers) and `find_fn` are DELIBERATE — phase 0 F1 settled that a wrapper over a stub
+IS a written type at the settledness guards, and `(F-Recv)` keys two overloads apart BY the `?`.
 
 ### D-Null-Recv — OPENED AND CLOSED (2026-09-07, loft#1450): an element read through an ABSENT collection typed non-null
 

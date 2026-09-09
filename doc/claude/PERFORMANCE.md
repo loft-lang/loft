@@ -283,11 +283,11 @@ fewer than ~50 samples and says why. A short run wants a higher `--freq`, or mor
 
 ### One-time setup
 
-Sampling a user process needs `perf_event_paranoid <= 1`; the script refuses with the exact
+Sampling a user process needs `perf_event_paranoid <= 2`; the script refuses with the exact
 command when it is higher.
 
 ```bash
-echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf.conf
+echo 'kernel.perf_event_paranoid = 2' | sudo tee /etc/sysctl.d/99-perf.conf
 sudo sysctl --system
 ```
 
@@ -657,6 +657,23 @@ Two lessons worth keeping:
 
 The rule generalises: a runtime helper on a per-element path needs `#[inline]`, and the
 reason belongs beside it, because the attribute looks removable and is not.
+
+**Its second half (@PLN157 § The out-of-line calls, 2026-09-08): a helper whose FAST path
+is a test and whose slow path is the work is split** — the test `#[inline]`, the body
+`#[cold] #[inline(never)]` — so the emitted code pays the test and nothing else.
+`note_format_fault` was one `bool` test in front of two thread-local reads, un-inlined, and
+the drawing bench's `hash` row called it on every float division: a real call plus the
+caller's xmm spills around it, a third of the row.  With the split the row measures AT its
+hand-written wrapping-arithmetic floor (219–287k vs 225–272k ns/op) while every sentinel
+and overflow check stays — LLVM already compiles `checked_mul` to `imul` + `jo` and a
+sentinel test to one `cmp`/`je`, so the checks were never the cost; the call beside them
+was.  The same split on the two per-frame guards (`CallGuard::drop`, `FnRefBufGuard::new`
+and `::drop`) and `#[inline]` on `length_vector` took the emitted bench from 1523 to 1459
+out-of-line call sites.  **`scripts/native_call_census.py <binary>` is how to find the next
+one**: it ranks every runtime symbol the emitted functions still call through the GOT by
+call SITE (pair it with `scripts/profile.sh --engine` for which sites are hot); a
+`#[cold]` slow half on its list is the design working, a `…::new`, `…::drop` or a length
+read on it is the finding.
 
 **3c. Inlining does not buy loop-invariant code motion — the guards prevent it**
 
@@ -4177,7 +4194,10 @@ reference: the `drawing` library (loft-libs-graphics, branch `drawing-lock`)
 times 14 routines against a pure-Rust port of the same arithmetic in the same
 order, and every row's FNV-1a-32 output hash agrees across the interpreter,
 `--native-release` and `rustc -O` — so the ratios below are like for like.
-Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio):
+Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio).  ⚠ Since
+2026-09-08 the loft-native lane is the SHIPPED tier — `--native-release` is lean and
+fully optimised (NATIVE.md § Optimisation tiers) — so a row measured before that date
+carries the named prelude and `-O`, and is not comparable to one measured after:
 
 | routine | Rust | loft-native | native / Rust |
 |---|---:|---:|---:|
@@ -4191,6 +4211,49 @@ Judged rows, best of 3, 2026-09-07 (Rust ns/op · loft-native ns/op · ratio):
 | `fill_poly` circle — 31 497 px | 34,620 | 594,740 | 17 |
 | `fill_poly` pentagram | 13,460 | 225,100 | 17 |
 | `wide_line` | 4,500 | 78,340 | 17 |
+
+### 2026-09-09 re-measurement, and where the remaining gap actually is
+
+Re-run on the `157-native-4x` tree with the native-side attribution the issue asked for
+(`make profile PROFILE_FLAGS=--engine`, which needs THIS tree and so a consumer cannot do it).
+Best of 5, same box; the `drawing` package copied to a scratchpad and `compare.py` pointed at the
+tree's binary, so the consumer repo stays read-only.
+
+**1.9–25× where the filing measured 10–50×**, `smooth_pts` from 262× to 25×, and two rows now
+UNDER the 4× bar: `hair_brush` 1.90 and `hash` 4.16→3.45.  All fourteen hashes still agree.
+
+The profile is the useful half.  Program-dominated, the compiled routine is 16.8 % and **the rest
+of the top twenty is loft runtime, ~55 % of the run**:
+
+| runtime | self | |
+|---|---:|---|
+| `vector::get_elem_hoisted` | **15.1 %** | one `DbRef`-indirected element read, AFTER loft#885's hoist |
+| `vector_append` · `vector_finish` · `length_vector` · `pre_alloc_vector` | ~13 % | |
+| `record_new` · `insert_record` · `record_finish` · `nullable_field_parent` · `set_default_value_nullable` · `sub_record_type` · `memset` | ~21 % | record allocation |
+
+So the M2 attribution above is confirmed and sharpened: **the gap is element reads plus record
+allocation**, and it is the value model rather than anything mis-emitted around it.
+
+Three structural costs were found sitting on top of that work and removed — a `Parts` clone per
+inserted element, a missing `#[inline]` on `note_format_fault` (called at every fault-prone op and
+a no-op unless it faulted), and an `Option` unwrap in `Store::addr` whose `None` arm
+`offset_in_bounds` has already ruled out.  Together: `hash` −33 %, `resize` −15 %,
+`render_marks` −14 %, `composite_layer` −13 %.
+
+**Two candidates were measured and are NOT wins — recorded so the arc does not re-spend them:**
+
+- precomputing `nullable_some_variant`'s `format!("{name}::Some")` — the `format!` never executes
+  on this workload at all (no `malloc` row appears in a program-dominated profile); it returns on
+  the `starts_with` first;
+- precomputing that `starts_with` as a `bool` on the type row — implemented and measured INSIDE
+  run-to-run noise, several rows nominally worse.  Reverted.
+
+And the `memset` is not waste: `claim` reuses freed blocks without clearing them, so a fresh
+record carries garbage and unwritten sub-fields must read as empty.
+
+The reading for whoever takes the arc: **the wins were work that should not have been there; what
+remains is work that has to happen.**  Closing the last eight rows means changing what an element
+access and a record allocation COST, not trimming around them.
 
 Attribution (measured on the issue): ~7 ns/call of prelude instrumentation
 (M1), the store-resolved element reads/writes and un-hoisted record scalars

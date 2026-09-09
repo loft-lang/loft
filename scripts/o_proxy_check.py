@@ -102,7 +102,13 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROXY = re.compile(r"depend\(\)\.is_empty\(\)")
+# The proxy read, in its two spellings: written out, and asked through the one home that asks
+# it WITH its veto (@PLN155 phase 1).  Both are counted, because folding sites onto a predicate
+# must not remove them from this check's population — a site whose obligation is discharged by
+# construction is still a site that frees on the proxy, and a check that stops seeing it stops
+# saying anything about it.  Measured: the fold took `9 of 29 reach a free` to `3 of 23` before
+# this line was added, which reads like an improvement and is a blinding.
+PROXY = re.compile(r"depend\(\)\.is_empty\(\)|proxy_says_owned\s*\(")
 # The same read, one statement apart: `let deps = <…>.depend();` and a later `deps.is_empty()`.
 # The one-expression spelling is the common one, and reading only it left this check blind to a
 # form the tree already uses twice (`ownership_cfg.rs`'s Check B, `control.rs`'s arm-return
@@ -111,6 +117,29 @@ PROXY = re.compile(r"depend\(\)\.is_empty\(\)")
 DEP_ALIAS = re.compile(
     r"\blet\s+(?:mut\s+)?([a-z_][a-z0-9_]*)\s*(?::[^=]+)?=\s*[^;]*\.depend\(\)\s*;"
 )
+# A THIRD spelling, and it is the one that hid the biggest free site in the compiler: the dep
+# list DESTRUCTURED out of the type rather than read off it —
+# `if let Type::Reference(_, dep) | Type::Vector(_, dep) | … = function.tp(v).base()`, then
+# `dep.is_empty()` further down.  That is `Scopes::get_free_vars`'s scope-exit sweep, which
+# licenses more frees than every site this check already knew about put together, and neither
+# regex above can see it: there is no `.depend()` call anywhere in it.
+#
+# Found by @PLN155 phase 3 pointing its ladder at `owns_freeable_store` and measuring that the
+# gate never fired — the sweep does not go through that predicate at all.  The check had been
+# reporting `ok` over it since it was written, which is its own doc's warning about itself:
+# *"A gate that cannot see a spelling reports it as clean."*
+#
+# Keyed on the SCRUTINEE naming a type (`tp(`/`.base()`), so an unrelated `if let Type::X(a, b)`
+# over some other value does not register `b` as a dep list.
+# The pattern half runs to the binding `=`, because the real ones are ALTERNATIONS — eight
+# `Type` arms in `get_free_vars`'s case — and a regex written for a single `Type::X(…)` arm
+# matches none of them.  Comments are already stripped (`code_only_text`), so a `Type::` written
+# in prose cannot start one.
+DEP_PATTERN = re.compile(
+    r"\b(?:if\s+let|while\s+let|let)\s+(?P<pat>Type::[^=;{]{0,600}?)"
+    r"=\s*(?P<scrut>[^;{]{0,120})"
+)
+DEP_PATTERN_NAME = re.compile(r"[,(]\s*([a-z_][a-z0-9_]*)\s*\)")
 # Emitting a free, not merely naming one.
 FREE_EMIT = re.compile(r"OpFree|free_ref|emit_free")
 # Discrimination 6 — WRITING the ownership fact `get_free_vars` reads reaches a free just as
@@ -118,11 +147,16 @@ FREE_EMIT = re.compile(r"OpFree|free_ref|emit_free")
 FREE_MANUF = re.compile(r"\b(?:make_independent|without_deps|set_skip_free)\s*\(\s*([^,)]*)")
 # Discrimination 5 — the proxy read has to hang off a variable for the veto to be consultable,
 # and discrimination 7 needs to know WHICH variable, so capture it.
-BINDING = re.compile(r"\.tp\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*(?:\.base\(\))?\.depend\(\)")
-# The obligation is discharged by the veto — `Function` exposes it as both `is_skip_free` and
-# the bare `skip_free`, and `jo_copy_borrowed_arm_yield` uses the second — or by the one home
-# that asks it for you.
-DISCHARGE = re.compile(r"skip_free|owns_freeable_store")
+BINDING = re.compile(
+    r"\.tp\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*(?:\.base\(\))?\.depend\(\)"
+    r"|proxy_says_owned\(\s*\*?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+)
+# The obligation is discharged by the veto (`Function::is_skip_free`) or by one of the two
+# homes that ask the proxy WITH it: `Function::proxy_says_owned` is the pair itself, and
+# `Scopes::owns_freeable_store` is that pair plus the scope-exit sweep's parameter carve-out.
+# A site calling either has discharged @FR-O-Override by construction rather than by
+# remembering to.
+DISCHARGE = re.compile(r"skip_free|proxy_says_owned|owns_freeable_store")
 # Discrimination 8 — every positive site DECLARES which of the four facts it reads.
 #
 # The obligation the rest of this check enforces is decidable only where a free is lexically
@@ -150,9 +184,48 @@ FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s")
 LET = re.compile(r"let\s+(?:mut\s+)?([a-z_][a-z0-9_]*)\s*=")
 
 
+# Discrimination 9 — a free named inside a STRING LITERAL is not an emitted free, exactly as
+# one named in a comment is not (discrimination 3, of which this is the sibling).
+# `scopes::check_ref_leaks` asserts that a variable "has no OpFreeRef", twice, in its
+# diagnostic text; it emits no free at all — it is the check that a free is MISSING — and
+# reading those strings as emissions accused it the moment the destructured dep spelling
+# brought it into view.  Widening an instrument's reach surfaces its next false positive; the
+# answer is to sharpen it, never to narrow the reach back.
+# ⚠ Only PROSE strings, and the distinction is load-bearing in both directions: a free is
+# EMITTED through a string too — `data.def_nr("OpFreeRef")`, `call("OpFreeRef", …)` — so
+# stripping every literal blinds this check to the very spelling it exists to find (measured:
+# `10 of 31 reach a free` collapsed to `4 of 30`).  An op NAME is one bare identifier; a
+# diagnostic is a sentence.  The space is what separates them.
+# ⚠ Only PROSE strings, and the distinction is load-bearing in both directions: a free is
+# EMITTED through a string too — `data.def_nr("OpFreeRef")`, `call("OpFreeRef", …)` — so
+# stripping every literal blinds this check to the very spelling it exists to find (measured:
+# `10 of 31 reach a free` collapsed to `4 of 30`).  An op NAME is one bare identifier; a
+# diagnostic is a sentence.  The space is what separates them.
+#
+# Scanned over the whole TEXT rather than per line, because the diagnostics that matter are
+# `\`-continued across three and four lines — `'{}' has no OpFreeRef — it is in scope …` sits
+# on a line with no quote on it at all, so a per-line regex sees nothing to strip. Newlines are
+# preserved so every line number this check reports still refers to the same line.
+STRING_SPAN = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+
+
+def strip_prose_strings(text):
+    """Blank the CONTENTS of every string literal containing whitespace, keeping line count."""
+
+    def blank(m):
+        body = m.group(0)
+        if not re.search(r"\s", body[1:-1]):
+            return body  # an op name, which is how a free is emitted
+        return '"' + "".join("\n" if c == "\n" else " " for c in body[1:-1]) + '"'
+
+    return STRING_SPAN.sub(blank, text)
+
+
 def code_only(text):
-    """Strip line comments — discrimination 3."""
-    return "\n".join(l.split("//")[0] for l in text.split("\n"))
+    """Strip line comments and prose string literals — discriminations 3 and 9."""
+    return "\n".join(
+        l.split("//")[0] for l in strip_prose_strings(text).split("\n")
+    )
 
 
 def enclosing_guards(lines, fn_start, n):
@@ -232,6 +305,12 @@ def fallthrough_region(lines, n, fn_end, kind):
 def _comment_only(line):
     """A line that carries no code — it must not consume the statement window's budget."""
     return not code_only(line).strip()
+
+
+def code_only_text(text):
+    """`code_only` over a whole file — line comments out, so a `Type::X(_, dep)` written in
+    PROSE is not read as a binding (discrimination 3, applied to the multi-line scan)."""
+    return "\n".join(code_only(l) for l in text.split("\n"))
 
 
 def gated_region(lines, n, fn_end, decl_floor=0):
@@ -331,11 +410,28 @@ for path in sorted(glob.glob(os.path.join(ROOT, "src", "**", "*.rs"), recursive=
     # site to inspect, never removes one.
     dep_aliases: set[str] = set()
     fn_starts = set(starts)
+    # The destructured spelling is MULTI-LINE — the alternation runs over eight `Type` arms
+    # before the scrutinee — so it is found over the whole source and seeded at the line the
+    # pattern ends on, rather than by the line-at-a-time scan below.
+    # Offsets are taken in the STRIPPED text and line numbers counted in it too: `code_only`
+    # shortens lines, so counting newlines in the original against an offset from the stripped
+    # copy drifts, and the alias lands in the wrong function (measured — it landed nowhere).
+    text = code_only_text("\n".join(lines))
+    destructured: dict[int, set[str]] = {}
+    for dm in DEP_PATTERN.finditer(text):
+        scrut = dm.group("scrut")
+        if ".tp(" not in scrut and ".base()" not in scrut and ".typedef" not in scrut:
+            continue
+        names = set(DEP_PATTERN_NAME.findall(dm.group("pat")))
+        if not names:
+            continue
+        destructured.setdefault(text.count("\n", 0, dm.end()), set()).update(names)
     for n, line in enumerate(lines):
         # A name means nothing outside the function that bound it, and carrying one across
         # would read an unrelated `xs.is_empty()` as an ownership question.
         if n in fn_starts:
             dep_aliases.clear()
+        dep_aliases |= destructured.get(n, set())
         if line.lstrip().startswith(("//", "///")):
             continue
         am = DEP_ALIAS.search(code_only(line))
@@ -351,7 +447,13 @@ for path in sorted(glob.glob(os.path.join(ROOT, "src", "**", "*.rs"), recursive=
             stmt, decl, region = gated_region(lines, n, fn_end, decl_floor=last_proxy + 1)
             last_proxy = n
             bm = BINDING.search(code_only(line), max(0, m.start() - 90))
-            binding = bm.group(1) if bm is not None and bm.end() >= m.start() else None
+            # Either alternative of BINDING: the written-out `tp(v).…depend()` or the folded
+            # `proxy_says_owned(v)`.  Both name the variable the veto must be consulted on.
+            binding = (
+                (bm.group(1) or bm.group(2))
+                if bm is not None and bm.end() >= m.start()
+                else None
+            )
             if negated(line, m.start()):
                 # Discrimination 4: an early-exit guard inverts the sense, so the site
                 # concludes ownership on what it FALLS THROUGH to.  Resolved BEFORE

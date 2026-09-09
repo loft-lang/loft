@@ -1,0 +1,72 @@
+// @PLN157 V-l cells — a loop that calls an IN-PLACE-ONLY writer keeps its hoisted headers.
+// The interpreter (no hoist) is the oracle; native must answer the same under LOFT_HOIST_VERIFY=1.
+struct Cv { data: vector<integer>, count: integer, name: text }
+
+fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) { d[i] = v; } }
+fn grow(cv: Cv, v: integer) { cv.data += [v]; }
+fn bump(cv: Cv) { cv.count = cv.count + 1; }
+fn label(cv: Cv, i: integer) { cv.name = "x{i}"; }
+fn setp2(cv: Cv, i: integer, v: integer) { setp(cv, i, v); }
+fn setrec(cv: Cv, i: integer, v: integer) { if i < 0 { return; } setp(cv, i, v); if v > 100 { setrec(cv, i - 1, v - 100); } }
+fn setbounded(cv: Cv, i: integer, v: integer) { if i >= len(cv.data) { return; } setp(cv, i, v); }
+fn drop_first(cv: Cv) { cv.data.remove(0); }
+
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+fn c1() {
+  src: vector<integer> = [3, 5, 7, 9];
+  cv = Cv { data: [0, 0, 0, 0], count: 0, name: "" };
+  for i in 0..len(src) { setp(cv, i, src[i]? * 2); }
+  println("c1 {total(cv.data)} {len(cv.data)}");
+}
+fn c2() {
+  cv = Cv { data: [1, 2, 3], count: 0, name: "" };
+  s = 0;
+  for i in 0..3 { s += cv.data[i]?; grow(cv, 10 + i); }
+  println("c2 {s} {total(cv.data)} {len(cv.data)}");
+}
+fn c3() {
+  src: vector<integer> = [4, 4, 4];
+  cv = Cv { data: [0], count: 0, name: "" };
+  s = 0;
+  for i in 0..len(src) { s += src[i]?; bump(cv); }
+  println("c3 {s} {cv.count}");
+}
+fn c4() {
+  src: vector<integer> = [1, 2];
+  cv = Cv { data: [0], count: 0, name: "" };
+  s = 0;
+  for i in 0..len(src) { s += src[i]?; label(cv, i); }
+  println("c4 {s} {cv.name}");
+}
+fn c5() {
+  src: vector<integer> = [6, 7];
+  cv = Cv { data: [0, 0], count: 0, name: "" };
+  for i in 0..len(src) { setp2(cv, i, src[i]? + 1); }
+  println("c5 {total(cv.data)}");
+}
+fn c6() {
+  cv = Cv { data: [0, 0, 0], count: 0, name: "" };
+  src: vector<integer> = [250, 1, 1];
+  for i in 0..len(src) { setrec(cv, 2, src[i]?); }
+  println("c6 {cv.data[0]?} {cv.data[1]?} {cv.data[2]?}");
+}
+fn c7() {
+  cv = Cv { data: [1, 1, 1, 1], count: 0, name: "" };
+  s = 0;
+  for i in 0..3 { s += cv.data[i]?; setp(cv, i + 1, cv.data[i]? + 1); }
+  println("c7 {s} {cv.data[0]?} {cv.data[1]?} {cv.data[2]?} {cv.data[3]?}");
+}
+fn c8() {
+  src: vector<integer> = [2, 3, 4];
+  cv = Cv { data: [0, 0], count: 0, name: "" };
+  for i in 0..len(src) { setbounded(cv, i, src[i]?); }
+  println("c8 {total(cv.data)} {len(cv.data)}");
+}
+fn c9() {
+  cv = Cv { data: [5, 6, 7, 8], count: 0, name: "" };
+  s = 0;
+  for i in 0..2 { s += cv.data[0]?; drop_first(cv); }
+  println("c9 {s} {total(cv.data)} {len(cv.data)}");
+}
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); }

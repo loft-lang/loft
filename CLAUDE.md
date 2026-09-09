@@ -37,7 +37,11 @@ loft debug prog.loft:12 [--lib dir]      # STOP at line 12: read/edit the live f
                                          #   (pipe commands on stdin; `--rpc` = scripted NDJSON)
                                          #   reach for this INSTEAD of adding println — DEBUG.md
 cargo run --bin gendoc                   # regenerate doc/*.html
-make ci                                  # fmt → clippy → test (full local gate)
+make ci                                  # fmt → clippy → test (full local gate).  Unreliable
+                                         #   here (memory, a sibling gate)?  Run the SAME gate
+                                         #   on GitHub, no PR needed: `gh workflow run ci.yml
+                                         #   --ref <branch> -f os=ubuntu-latest` — CI_BUDGET.md
+                                         #   § When the local gate is unreliable
 make test                                # clippy + test → result.txt
 make check-rlib                          # 1s pre-flight: is libloft.rlib current? RUN IT
                                          #   BEFORE a bare `cargo test` — `cargo build
@@ -196,6 +200,12 @@ src/main.rs            CLI; loads default/ then user file
   the overlay: `scripts/lib-overlay.py <name>` (local checkout + this project's pin),
   `scripts/proposal-review.py <name> <ref>` (a proposed candidate). We never auto-delete a
   copy — each is a legitimate source.
+- **Three optimisation tiers, kept apart** (NATIVE.md § Optimisation tiers): a SEMANTICS run
+  (`--native`, the test runner) keeps every tier and a fast compile; a PERFORMANCE lane
+  (`native_ratio.sh`, `run_bench.sh`, a consumer bench) and a SHIPPED binary
+  (`--native-release`, every library cdylib) are lean and fully optimised
+  (`-C opt-level=3 -C codegen-units=1`).  A perf number taken on the semantics build
+  is not a measurement of what ships.
 - **User-facing output** (anything a command PRINTS): silence when nothing needs acting
   on; no plan tags / phase names / "not yet implemented" in it; the full explanation only
   on failure. loft is meant to be BORING — noticed only in its absence

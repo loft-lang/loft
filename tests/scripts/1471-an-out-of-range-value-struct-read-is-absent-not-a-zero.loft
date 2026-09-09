@@ -1,0 +1,171 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1471's READ half — an out-of-range element of a `vector<value struct>` is ABSENT, and a
+// real zero element is not.
+//
+// `@FR-N-Domain` types an out-of-range element read `τ?`.  `@FR-N-Opt` licenses that `τ?` only
+// for a τ with a value to spend on absence, and until 2026-09-08 a `value struct` was held to
+// have none — so the read minted a type the declaration refused, and the runtime invented a
+// value for it: `v[9]` on a one-element vector answered a zero point, `== null` answered FALSE, and
+// the `?? d` cure the diagnostic demanded was dead code.  A program could not tell "there is no
+// element there" from a real zero point, which is a meaningful value of the type's domain.
+//
+// The owner ruling settled which rule gives: *a `Pt?` implementation is an enum variant of the
+// record so it can be null* — `@FR-L-Null-Tag`, the representation loft already had for an
+// INLINE value.  So `(N-Domain)` keeps its `τ?` and now MEANS it, because the tagged absent
+// value exists to hand back.  `(N-Dense)` is untouched: the vector's own elements still pay no
+// discriminant, and it is the READ that materialises a tagged answer.
+//
+// ⚠ The axis that decides this cell is whether the read is BOUND to a local before it is asked.
+// Tested inline, `v[9] == null` already answered `true` on the merge-base; bound first —
+// `a = v[9]; a == null` — it answered `false`, because the materialised copy of an absent value
+// was allocated and zeroed.  The filed reproducer binds; a matrix that only tests inline reads
+// green on a broken build.  `ctl_inline` below is that neighbour, kept as the control that
+// separates the two.
+//
+// Axes this file MOVES:  whether the read is BOUND before it is asked (bound · inline) · the
+//                        index (constant out-of-range · variable out-of-range · in-range ·
+//                        index 0 of an EMPTY vector) · what is asked of the answer (`== null` ·
+//                        a FIELD read · `??`) · the payload (two integers · one integer · two
+//                        floats) · where the vector lives (a local · a struct FIELD · a
+//                        PARAMETER, which is loft#1472's copy-vs-borrow axis) · how many times
+//                        it is evaluated (once · in a LOOP) · the CONSTRUCTING rule
+//                        (`(N-Domain)`'s index · `(Col-Lookup)`'s keyed miss) · and the element
+//                        kind (value struct · reference struct, the control).
+// Axes it HOLDS FIXED:   the vector is DENSE — `vector<τ?>` is `1471`'s tagged-element cell, a
+//                        different question — and NO CELL SPELLS `P71?`, which is a property of
+//                        the file rather than a gap: it is what lets the control COMPILE on a
+//                        build that still refuses that type, so the falsification lands on the
+//                        ASSERTS and names the cell.  The `-> τ?` return route is spelled, and so
+//                        is covered by `1472-a-materialised-value-struct-view-keeps-its-absence`
+//                        instead of here.
+//
+// The `a.x == null` cell draws a `redundant-null-check` warning, and the warning is RIGHT: it
+// says the test is false *"unless a null reached the slot anyway (an overflow, a NaN, or an
+// out-of-range read)"*, and this cell is that exception, named in the lint's own text.  Left
+// unpinned rather than `@EXPECT_WARNING`-ed, because the projection types the same on a
+// REFERENCE struct — `b.x == null` on a `vector<R71>` warns identically and answers `true` — so
+// it belongs to `(N-Chain)`'s typing of a projection off a nullable LOCAL, not to this file.
+//
+// @falsified-at: 9720dfd06 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  MEASURED both backends.
+//   The ASSERT channel is the one that moves, which is the right one for a silent-wrong: the
+//   control compiles, reaches the cell, and reports `assertion failed: an out-of-range
+//   value-struct read is absent` — it answered a zero point where the file says absent.
+//
+//   That channel had to be EARNED, and the first draft did not have it.  A `-> P71?` return in
+//   the file made the control fail to COMPILE, so the run scored `exit 1 | asserts 0` and
+//   falsified on exit alone — a red that proves the file is sensitive to the build and says
+//   nothing about which cell is wrong.  The sibling guard
+//   `1471-a-value-struct-is-nullable-through-its-tag` falsifies at that refusal on purpose,
+//   because there the defect WAS the refusal; here it is the answer, so the spelling had to go.
+
+value struct P71 { x: integer, y: integer }
+value struct One71 { n: integer }
+value struct F71 { a: float, b: float }
+struct R71 { x: integer, y: integer }
+struct Bag71 { pts: vector<P71>, n: integer }
+struct Keyed71 { id: integer, p: P71 }
+
+// The vector is a PARAMETER here, not a local: loft#1472 measured that as the deciding axis for
+// the materialisation (a local's element COPIES because the local is tainted by the writes that
+// filled it; a parameter's element BORROWS).  Answers a boolean, so no cell spells `P71?`.
+fn absent71(v: vector<P71>, i: integer) -> boolean { e = v[i]; e == null }
+
+fn main() {
+  v: vector<P71> = [P71 { x: 7, y: 8 }];
+
+  // ---- the filed cell: BOUND, then asked ----
+  a = v[9];
+  b = v[0];
+  assert(a == null, "an out-of-range value-struct read is absent");
+  assert(b != null, "an in-range one is present");
+
+  // ---- and the crux: a real ZERO element is a value, not an absence ----
+  z: vector<P71> = [P71 { x: 0, y: 0 }];
+  zero = z[0];
+  gone = z[9];
+  assert(zero != null, "a real zero point is PRESENT — this is what the fabricated zero destroyed");
+  assert(zero.x == 0, "…and carries its own zero: {zero.x}");
+  assert(gone == null, "…while the out-of-range read beside it is absent");
+
+  // ---- a FIELD read through the absent answer is absent, not a zero ----
+  assert(a.x == null, "a field of an absent value struct is absent: {a.x}");
+  assert(b.y == 8, "…and a field of a present one is its own: {b.y}");
+
+  // ---- the discharge RUNS, which is what the unrepresentable type used to cost ----
+  assert((a ?? P71 { x: -1, y: -1 }).x == -1, "the default is used for the absent read");
+  assert((b ?? P71 { x: -1, y: -1 }).x == 7, "…and not for the present one");
+
+  // ---- the index is an axis: a variable index cannot be elided by `(N-Domain)` ----
+  i = 9;
+  j = 0;
+  assert(v[i] == null, "absent by VARIABLE index too");
+  assert(v[j] != null, "present by variable index");
+
+  // ---- index 0 of an EMPTY vector: out of range with nothing to be confused with ----
+  e: vector<P71> = [];
+  first = e[0];
+  assert(first == null, "the first element of an empty vector is absent");
+  assert(e.len() == 0, "…and the vector is still empty");
+
+  // ---- the payload SHAPE, because the tag sits beside it: one field, and floats ----
+  o: vector<One71> = [One71 { n: 5 }];
+  assert(o[9] == null, "a one-field payload is absent out of range");
+  assert(o[0].n == 5, "…and exact in range");
+  f: vector<F71> = [F71 { a: 2.5, b: 1.5 }];
+  assert(f[9] == null, "a float payload is absent out of range");
+  assert(f[0].a == 2.5, "…and exact in range: {f[0].a}");
+
+  // ---- the vector as a struct FIELD, reached through a projection ----
+  g = Bag71 { pts: [P71 { x: 7, y: 8 }], n: 1 };
+  held = g.pts[9];
+  assert(held == null, "an out-of-range read of a vector FIELD is absent");
+  assert(g.pts[0].x == 7, "…and the in-range one is its own value");
+
+  // ---- c1 CONTROL: the INLINE read, which was already right on the merge-base.  It is what
+  //      says the defect was the materialised BIND and not `(N-Domain)`'s typing ----
+  assert(v[9] == null, "c1 inline: an out-of-range read tests null without a bind");
+  assert(v[0] != null, "c1b inline: and an in-range one does not");
+
+  // ---- c2 CONTROL: a REFERENCE struct is unaffected — its absence is the `(L-Null)` store
+  //      sentinel, a different representation, and it answered correctly throughout ----
+  r: vector<R71> = [R71 { x: 7, y: 8 }];
+  ra = r[9];
+  assert(ra == null, "c2 a reference-struct element is absent out of range");
+  assert(r[0].x == 7, "c2b …and present in range");
+
+  // ---- c3 CONTROL: `(N-Dense)` is untouched.  In-range reads stay exact and the vector keeps
+  //      its length — the tag is the READ's answer, not a per-element cost ----
+  d: vector<P71> = [P71 { x: 7, y: 8 }, P71 { x: 1, y: 2 }];
+  assert(d[0].x == 7 && d[0].y == 8, "c3 a dense element is exact");
+  assert(d[1].x == 1 && d[1].y == 2, "c3b …and so is the one beside it");
+  assert(d.len() == 2, "c3c …and the length is unchanged: {d.len()}");
+
+  // ---- the vector as a PARAMETER: the borrowing route, asked with `== null` rather than `??` ----
+  assert(absent71(v, 9), "absent through a parameter, bound and tested inside the callee");
+  assert(!absent71(v, 0), "…and present through the same parameter");
+
+  // ---- evaluated in a LOOP: one materialisation per iteration, and the count is the assertion.
+  //      A per-iteration copy is where a stale reuse would show as the WRONG count rather than a
+  //      wrong value ----
+  n = 0;
+  for loop_i in 0..3 {
+    el = v[loop_i];
+    if el == null { n = n + 1; }
+  }
+  assert(n == 2, "two of three loop reads are out of range: {n}");
+
+  // ---- a KEYED collection MISS.  `(Col-Lookup)` is the OTHER rule that constructs a `τ?`, and
+  //      loft#1471's own text names it beside `(N-Domain)` — a side condition enforced at one
+  //      site is not enforced, so the sibling constructors are cells and not neighbours ----
+  by: hash<Keyed71[id]> = [Keyed71 { id: 1, p: P71 { x: 5, y: 6 } }];
+  hit = by[1];
+  miss = by[99];
+  assert(miss == null, "a keyed MISS carrying a value struct is absent");
+  assert(hit != null, "…and a hit is present");
+  assert((hit ?? Keyed71 { id: 0, p: P71 { x: 0, y: 0 } }).p.x == 5, "…with its value-struct payload intact");
+
+  println("1471-an-out-of-range-value-struct-read-is-absent-not-a-zero ok");
+}

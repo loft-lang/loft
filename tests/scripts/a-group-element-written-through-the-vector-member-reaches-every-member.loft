@@ -196,11 +196,14 @@ fn main() {
   w17 = R17 {}; w17.rooms += [R17r {}];
   w17.rooms[0].items += [R17i { n: "key", v: 3 }, R17i { n: "two", v: 4 }];
   w17.rooms[0].items.remove(0);
-  assert(len(w17.rooms[0].by_n) == 1 && w17.rooms[0].by_n["key"] == null,
-    "r17 nested-nullable remove: by={len(w17.rooms[0].by_n)}");
+  // `(N-Chain)` — `w17.rooms[0]` is an index into a vector, so every member reached through it
+  // is `τ?` and a READ of one asks for the discharge.  The writes above need none: an
+  // assignment target and a mutating method's receiver are places `(N-Chain-Place)`.
+  assert(len(w17.rooms[0].by_n ?? []) == 1 && w17.rooms[0].by_n["key"] == null,
+    "r17 nested-nullable remove: by={len(w17.rooms[0].by_n ?? [])}");
   w17.rooms[0].items[0] = R17i { n: "new", v: 9 };
-  assert(len(w17.rooms[0].by_n) == 1 && w17.rooms[0].by_n["new"].v == 9 && w17.rooms[0].by_n["two"] == null,
-    "r17 nested-nullable replace: by={len(w17.rooms[0].by_n)}");
+  assert(len(w17.rooms[0].by_n ?? []) == 1 && w17.rooms[0].by_n["new"].v == 9 && w17.rooms[0].by_n["two"] == null,
+    "r17 nested-nullable replace: by={len(w17.rooms[0].by_n ?? [])}");
 
   // r18 & parameter
   w18 = R18 {}; w18.es += [R18e { k: 7, n: "a" }, R18e { k: 9, n: "b" }];

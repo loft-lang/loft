@@ -140,8 +140,22 @@ pub fn arm_format_fault() {
 /// `{v[0] / z}`, a real division by zero after a successful read, lost its `/0` that way.
 /// Leaving it also means an inherited null keeps the cause of wherever it was born, so
 /// `{v[9] / 2}` reports the overrun that actually produced its null.
+#[inline]
 pub fn note_format_fault(kind_id: u8, faulted: bool) {
-    if faulted && FORMAT_FAULT_ARMED.with(std::cell::Cell::get) && !format_bare_null() {
+    if faulted {
+        note_format_fault_slow(kind_id);
+    }
+}
+
+/// The out-of-line half of [`note_format_fault`]: the thread-local reads and the label
+/// store.  Split so the caller's test is on `faulted` alone -- a bool the emitted
+/// arithmetic already computed -- and inlines across the rlib boundary; the whole
+/// function out of line costs a call plus the caller's xmm spills on EVERY float
+/// division, which is a third of the drawing bench's hash row (@PLN157 § The floor).
+#[cold]
+#[inline(never)]
+fn note_format_fault_slow(kind_id: u8) {
+    if FORMAT_FAULT_ARMED.with(std::cell::Cell::get) && !format_bare_null() {
         FORMAT_FAULT_TAG.with(|t| t.set(format_fault_label(kind_id)));
     }
 }

@@ -1,0 +1,180 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and the two passes do not
+// know the same thing about it.
+//
+// Pass 1 has not parsed the callee's body, so what it publishes is a guess about the shape the
+// body will take.  Pass 2 publishes what the body actually does — and where the body
+// MATERIALISES its answer (`return_projects_into_local` picking `MaterializeView`, which a
+// nullable element binding needs because the tagged-slot read is not emittable on pass 1) that
+// flips a borrow of a parameter into a store of the callee's own.  `is_equal` collapses deps,
+// so `change_var_type`'s equality early-return kept the guess: the caller's local read
+// `-> S?["q"]`, `owns_freeable_store` saw a non-empty list, no free was emitted, and the record
+// the callee minted was orphaned once per call.  Unbounded — the count tracks the call count
+// exactly — on BOTH backends, with every value correct.
+//
+// The cure is that pass 2 REBUILDS the list: pass 2 re-derives every assignment, so its union
+// is the whole answer and pass 1's is redundant, and the binding's list is therefore cleared at
+// its FIRST pass-2 assignment from a call and rebuilt from there.  First, and not last — a dep
+// list is flow-INsensitive, one list per binding for every assignment to it, so replacing at
+// every assignment keeps only the last and drops what the binding's other assignments
+// contributed.  That was measured rather than reasoned: the replace-at-every-assignment form
+// freed the caller's vector out from under a sibling call in the same function, and the dense
+// control below read `USE AFTER FREE store #13 type=main_vector<S66>`.
+//
+// "A call" means one to a function with a BODY, and only on pass 2.  That is the producer whose
+// deps are not the caller's to know — the bound loft#957 drew for the same reason — and the
+// bodied test is on the CALLEE rather than on the node, because `Value::Call` covers operators
+// too: written as the node alone it cleared `result` in the stdlib's `min_of`, whose
+// `result = v[0]` is an `OpGetVector` call, and the standard library stopped loading.
+//
+// Axes this file MOVES:  the PATTERN that binds (`[a, ..]` · `[a]` · `[a, _b, ..]` · `[.., a]`)
+//                        · the callee's RETURN shape (the binding straight out · through a
+//                        local, which materialises on both passes and never broke · a MINTING
+//                        fallback arm) · the parameter's POSITION · the caller's shape (a loop
+//                        · a single call · the result never bound) · the element type
+//                        (`S?` · `vector<integer>?` · `integer?`, which has no store at all).
+//                        Each cell binds its OWN local: reusing one for every call mixes an
+//                        OWNED result with a BORROWED one in a single binding, which is
+//                        `@FR-O-Witness`'s question and not this one, and a file that mixes
+//                        them measures neither.
+// Axes it HOLDS FIXED:   one subject per callee.  A DENSE `vector<S>` parameter is a control
+//                        here and not a cell — see its own note, which records that
+//                        loft#1468 later removed the borrow it was written to protect.  `vector<text?>` is left out — it does not
+//                        compile on `--native` at all (`error[E0308]`), before this change as
+//                        much as after, which is a separate defect about the nullable-text
+//                        element's channel.
+//
+// @falsified-at: 33b72675, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1`: interpret exit
+//   1 -> 0, native exit 1 -> 0, reporting `NEVER FREED: kt=82 __nullable<S66>×61` on both.
+//   Plain mode reads INERT — every value below is already right on the pre-fix build, and what
+//   is wrong is only that the store is never returned.  That reference rather than the branch
+//   tip because the tip carries an unrelated `--native` leak in the c2 dense control (@PLN153
+//   batch 11 widened `Type::heap_def_nr` to peel `Optional`, which sent a `-> τ?` VIEW return
+//   into the native call-result copy path for the first time); it is fixed at `record_def` on
+//   the branch that introduced it and this file goes green on native when that is joined.
+
+struct S66 { a: integer }
+
+// e1 — the filed shape.  A nullable element binding over a PARAMETER, delivered straight out.
+fn head(p: vector<S66?>) -> S66? { match p { [a, ..] => a, _ => null } }
+
+// e2 — an exact-length pattern rather than an open one.
+fn head_exact(p: vector<S66?>) -> S66? { match p { [a] => a, _ => null } }
+
+// e3 — two bindings, taking the first.
+fn head_two(p: vector<S66?>) -> S66? { match p { [a, _b, ..] => a, _ => null } }
+
+// e4 — the TAIL binding, which walks from the other end.
+fn tail_one(p: vector<S66?>) -> S66? { match p { [.., a] => a, _ => null } }
+
+// e5 — the subject is the SECOND parameter, so the published dep is attribute 1 rather than 0.
+fn head_at(_k: integer, p: vector<S66?>) -> S66? { match p { [a, ..] => a, _ => null } }
+
+// e6 — the fallback MINTS instead of answering null, so both arms deliver a store.
+fn head_or(p: vector<S66?>) -> S66? { match p { [a, ..] => a, _ => S66 { a: 1 } } }
+
+// e7 — a COLLECTION element rather than a record one.
+fn head_vec(p: vector<vector<integer>?>) -> vector<integer>? { match p { [a, ..] => a, _ => null } }
+
+// e8 — a SCALAR element: no store exists, so nothing can be orphaned.  It is here because the
+// re-take must not disturb the case where the dep list is empty on both passes.
+fn head_int(p: vector<integer?>) -> integer? { match p { [a, ..] => a, _ => null } }
+
+// c1 — CONTROL: the binding goes through a LOCAL first, which materialises on pass 1 as well,
+// so the two passes agreed and this cell never leaked.  It must keep not leaking.
+fn head_local(p: vector<S66?>) -> S66? { match p { [a, ..] => { x = a; x }, _ => null } }
+
+// c2 — CONTROL: a DENSE element.  When this file was written the callee published
+// `-> S66["p"]?` on both passes — a genuine argument borrow — and this cell pinned that the
+// rebuild does not strip one: the replace-at-every-assignment cure freed `qd`'s record here
+// and read `USE AFTER FREE store #13 type=main_vector<S66>`.
+//
+// loft#1468 then removed the borrow it named.  `(F-Ret)` asks for a FRESH return, so this
+// callee now MATERIALISES the arm and publishes `-> S66?` owned, and no `-> τ?` return in the
+// spread above still hands back an argument view.  The cell stays because what it pins is
+// still worth pinning — the materialised copy is freed exactly once, so a dense element costs
+// no leak — but the "a real borrow must survive" reading is HISTORY, and the property it
+// protected has no witness here any more.  Say so rather than leave the old sentence
+// standing: a control whose subject moved reads as covering something it no longer touches.
+fn head_dense(p: vector<S66>) -> S66? { match p { [a, ..] => a, _ => null } }
+
+// c3 — CONTROL: the callee's subject is a LOCAL, so no parameter dep is ever published.
+fn head_of_local() -> S66? { p: vector<S66?> = [S66 { a: 7 }]; match p { [a, ..] => a, _ => null } }
+
+// e12 — the SAME materialising shape reached through a FN-REF rather than a direct call.
+// The pass-2 rebuild is opened by a call whose callee this site can READ, and a `CallRef` is
+// not one: its target is not known statically, so the "pass 1 guessed, pass 2 knows" premise
+// cannot be established and the list is left alone there (loft#1320 is what happens when it is
+// cleared on that assumption instead).  This cell is the negative half of that bound — it says
+// the defect this file exists for does NOT reach the caller through a fn-ref, so declining to
+// clear there costs nothing.  Without it the file tests one call spelling and silently licenses
+// the other.
+fn main() {
+  q: vector<S66?> = [S66 { a: 7 }];
+  q2: vector<S66?> = [S66 { a: 7 }, S66 { a: 3 }];
+  qr: vector<S66?> = [S66 { a: 3 }, S66 { a: 7 }];
+  qv: vector<vector<integer>?> = [[1, 2, 3]];
+  qi: vector<integer?> = [7];
+  qd: vector<S66> = [S66 { a: 7 }];
+
+  // ONE local per cell.  Reusing a single `t` for every call mixes an OWNED result with a
+  // BORROWED one in one binding, and a dep list is flow-insensitive — one list per binding for
+  // every assignment to it — so the union says "borrows `qd`" and the owned stores from the
+  // other cells are freed by nobody.  That is `@FR-O-Witness`'s question (a local whose
+  // assignments mix ownership carries a runtime owner witness), not this one, and mixing the
+  // two in one file measures neither.
+  n1 = 0;
+  for i in 0..10 { t1 = head(q); if t1 != null { n1 = n1 + t1.a + i * 0; } }
+  assert(n1 == 70, "e1 the filed shape, ten calls: {n1}");
+
+  n2 = 0;
+  for i in 0..10 { t2 = head_exact(q); if t2 != null { n2 = n2 + t2.a + i * 0; } }
+  assert(n2 == 70, "e2 an exact-length pattern: {n2}");
+
+  n3 = 0;
+  for i in 0..10 { t3 = head_two(q2); if t3 != null { n3 = n3 + t3.a + i * 0; } }
+  assert(n3 == 70, "e3 two bindings: {n3}");
+
+  n4 = 0;
+  for i in 0..10 { t4 = tail_one(qr); if t4 != null { n4 = n4 + t4.a + i * 0; } }
+  assert(n4 == 70, "e4 the tail binding: {n4}");
+
+  n5 = 0;
+  for i in 0..10 { t5 = head_at(1, q); if t5 != null { n5 = n5 + t5.a + i * 0; } }
+  assert(n5 == 70, "e5 the subject is the second parameter: {n5}");
+
+  n6 = 0;
+  for i in 0..10 { t6 = head_or(q); if t6 != null { n6 = n6 + t6.a + i * 0; } }
+  assert(n6 == 70, "e6 a minting fallback arm: {n6}");
+
+  n7 = 0;
+  for i in 0..10 { t7 = head_vec(qv); if t7 != null { n7 = n7 + len(t7) + i * 0; } }
+  assert(n7 == 30, "e7 a collection element: {n7}");
+
+  n8 = 0;
+  for i in 0..10 { t8 = head_int(qi); if t8 != null { n8 = n8 + t8 + i * 0; } }
+  assert(n8 == 70, "e8 a scalar element: {n8}");
+
+  // A SINGLE call leaks one record, so the loop is not what makes it reproduce.
+  one = head(q);
+  assert((one ?? S66 { a: 0 }).a == 7, "e9 one call, one record: {(one ?? S66 { a: 0 }).a}");
+
+  n9 = 0;
+  for i in 0..10 { t9 = head_local(q); if t9 != null { n9 = n9 + t9.a + i * 0; } }
+  assert(n9 == 70, "c1 delivery through a local was always clean: {n9}");
+
+  na = 0;
+  for i in 0..10 { ta = head_dense(qd); if ta != null { na = na + ta.a + i * 0; } }
+  assert(na == 70, "c2 a dense element costs no leak and no wrong value: {na}");
+
+  nb = 0;
+  for i in 0..10 { tb = head_of_local(); if tb != null { nb = nb + tb.a + i * 0; } }
+
+  head_ref = fn(p: vector<S66?>) -> S66? { match p { [a, ..] => a, _ => null } };
+  nc = 0;
+  for i in 0..10 { tc = head_ref(q); if tc != null { nc = nc + tc.a + i * 0; } }
+  assert(nc == 70, "e12 the materialising shape through a fn-ref: got {nc}");
+  assert(nb == 70, "c3 a local subject publishes no parameter dep: {nb}");
+}

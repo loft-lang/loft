@@ -563,6 +563,15 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // gate drives the matching link flags in `build_shared_cdylib`, so codegen
         // and link never disagree.  No-op when the library uses no native package.
         out.native_cabi = native_cabi_link_enabled();
+        // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
+        // `--native-release` program.  Its functions run under the consumer's every
+        // call, and the named per-call frame push was that lane's largest cost.
+        out.emit_live = false;
+        out.lean_tier = true;
+        // The frame-naming question has its own home (`Output::lean`, kept apart from the
+        // tier so a browser client can be debug-off and still name its frames): a shipped
+        // library names none.
+        out.lean = true;
         // Only the exported functions + their transitive deps (header + init + the
         // reachable subset) — exactly what a `--native` binary emits from `n_main`,
         // so unreachable operator stubs never surface.
@@ -1370,8 +1379,12 @@ pub fn build_shared_cdylib(
         "--edition=2024".to_string(),
         "-C".to_string(),
         "debuginfo=0".to_string(),
+        // Full optimisation, as `--native-release` compiles a program (see its
+        // rustc arguments in `main.rs`): a library cdylib is a shipped binary.
         "-C".to_string(),
-        "opt-level=2".to_string(),
+        "opt-level=3".to_string(),
+        "-C".to_string(),
+        "codegen-units=1".to_string(),
         "--crate-type".to_string(),
         "cdylib".to_string(),
         "-o".to_string(),

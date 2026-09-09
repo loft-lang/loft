@@ -9,6 +9,38 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `@FR-N-Shape`: a shape question answers alike for `τ` and `τ?` (2026-09-08)
+
+Ten @PLN153 batches cured one mechanism — a `matches!` / `if let` / catch-all `match` over a
+`Type` that answers "no" for `Optional(τ)` — each at the callers it happened to reach.  The
+governing fact was already written in `Type::peel_optional`'s doc block and had no rule, no
+citation and no gate, so every batch re-derived it.  It is now `(N-Shape)` in
+[formal/types.md](formal/types.md): a question about a type's SHAPE answers identically for `τ`
+and `τ?`, and only a NULLABILITY question may tell them apart — spelled by READING the marker,
+never by a missing match arm.  It follows from C90, where `Optional(τ)` shares `τ`'s storage.
+
+`Optional` is a `Type` VARIANT so that an omission is a compile error, but that fires for an
+EXHAUSTIVE `match Type` and for nothing else.  `scripts/ir_walker_audit.py optional` counts what
+falls through the hole: **2268** shape tests, **1520** opaque on their own scrutinee.  Too many to
+walk, so the enforcement is the derivative — `make optional-ratchet` pins both counts in
+`index/optional_ratchet.json` and fails when either GROWS.  A fall prints the re-pin command and
+exits 0, so a PR is never blocked by its own improvement.
+
+Three verbs now peel, answering ~48 bare call sites at one home: `is_scalar`,
+`Type::heap_def_nr`, `Type::heap_dep`.  Over the corpus that moves **9 of 1411 files**, every one
+a null guard and every one identical in value on both backends and under `LOFT_STRICT_STORES=1` /
+`LOFT_POISON=1`: eight now take the copy-or-adopt lowering their dense twin already took
+(`heap_def_nr` is `(B-Copy)`'s home and loft#1319 had cured only the local-to-local site), and the
+ninth moves a hoisted nullable scalar's declaration into the native prologue.
+
+`is_dbref` is the one OPEN exception and it is measured, not assumed: peeling it moves 102 files
+and breaks 12 guards, because at least thirteen callers read its blindness as a nullability test.
+Two of those callers are cured here WITHOUT peeling the verb —
+`coroutine_layout::channel_0_carries`, where `Text` and the scalar list peel and the handle test
+did not, and `nstore_null_report_as`'s heap gate, which tested the synthetic `__nullable<S>`
+spelling of `τ?` explicitly and left `Type::Optional` to the blindness.  Both byte-identical.
+
+
 ### A `&` bind to a keyed collection is a link, not a copy (2026-09-07)
 
 `(B-Ref-Alias)` is stated over ANY binding: the `&` annotation makes it a live link to the

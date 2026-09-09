@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Domain`'s elision reaches `v[len(v) - 1]` — the LAST-ELEMENT idiom.
+//
+// The rule types a partial operation `τ?` when the reserved null is reachable, and elides that
+// "when the input is PROVABLY in-domain (constant / range / GUARD)".  `index_provably_fit`
+// implements the elision and has trusted a constant index since loft#1436, negative ones
+// included: its own words are that `v[-1]` is "the Python-style last-element idiom … the
+// developer's explicit contract: trust it, exactly as the runtime does (a genuine overrun still
+// raises the recoverable OOB fault)".
+//
+// `v[len(v) - 1]` is that SAME element and that same contract, spelled positively — and it was
+// not trusted, because `index_arith_trusted` admitted only constants and active loop vars as
+// leaves and a `len` call broke the chain.  Nothing observed the gap while a projection dropped
+// the receiver's `?`: the read was `τ?`, `.trim()` on it answered `τ`, and the nullability died
+// one step later.  `(N-Chain)` carries it instead, and the first thing it reached was a CAST —
+// published `web` 0.3.0's `parts[parts.len() - 1].trim() as integer ?? -1`, which stopped
+// compiling under `(N-Cast)`: an assertion cannot take a possibly-null subject.
+//
+// That is the shape worth remembering: a too-conservative type is invisible until something
+// downstream starts reading it, and then it surfaces as a REFUSAL in code that was always
+// correct.  Widening one rule is what audited the other.
+//
+// Axes this file MOVES:  the arithmetic around the length (`- 1`, `- 2`, `/ 2`), the receiver
+//                        (a local · a parameter · a struct FIELD, which keys differently), and
+//                        whether the length is the INDEXED collection's or another's.
+// Axes it HOLDS FIXED:   the element is a scalar, so what is asserted is the index's domain and
+//                        never the element's own nullability.
+//
+// @falsified-at: 75adecbbd — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED both backends.
+//
+//   ⚠ The channel is EXIT, and only ONE cell moves it: the cast at the end.  Every other cell
+//   in this file is INERT against that control, and deliberately so — they assert values, and
+//   the values were always right.  A too-conservative type is invisible to a value assertion;
+//   it takes something that READS the type to make it observable, and `(N-Cast)`'s refusal of a
+//   possibly-null subject is that reader.  Said plainly because a file that falsifies is easy
+//   to read as a file whose every cell falsifies.
+
+struct Holder1450e { xs: vector<integer>, ys: vector<integer> }
+
+fn last_of(v: vector<integer>) -> integer { v[v.len() - 1] }
+
+fn main() {
+  v = [10, 20, 30];
+
+  // ---- the CELLS: `len` OF THE INDEXED VECTOR is a trusted leaf, so no discharge is asked ----
+  a: integer = v[v.len() - 1];
+  assert(a == 30, "the last element is a trusted index: {a}");
+  b: integer = v[v.len() - 2];
+  assert(b == 20, "…and so is one before it: {b}");
+  c: integer = v[v.len() / 2];
+  assert(c == 20, "…and any arithmetic over the same length: {c}");
+  assert(last_of(v) == 30, "…through a parameter too: {last_of(v)}");
+
+  // ---- a struct FIELD receiver keys differently from a local, and must be trusted the same ----
+  h = Holder1450e { xs: [1, 2, 3, 4], ys: [7] };
+  d: integer = h.xs[h.xs.len() - 1];
+  assert(d == 4, "a field's own length is trusted for that field: {d}");
+
+  // ---- the CONTROL, and it is the load-bearing half: the length of ANOTHER collection says
+  //      nothing about this one's domain, so it must STAY nullable.  That is
+  //      `LOFT_LINT_STRICT_INDEX`'s whole subject, and trusting it would silently delete the
+  //      lint's reason to exist.  Written with the discharge, because without one it warns —
+  //      which is exactly the promise this cell is pinning ----
+  w = [9];
+  e: integer = w[v.len() - 1] ?? -1;
+  assert(e == -1, "another collection's length is NOT a proof about this one: {e}");
+  f: integer = h.ys[h.xs.len() - 1] ?? -1;
+  assert(f == -1, "…the same across two fields of one struct: {f}");
+
+  // ---- and the runtime is unchanged where the contract is broken: an overrun still answers
+  //      the C80 null rather than faulting, which is what makes trusting the index safe ----
+  empty: vector<integer> = [];
+  g: integer = empty[empty.len() - 1] ?? -7;
+  assert(g == -7, "an overrun on an empty vector is still the C80 null: {g}");
+
+  // ---- the cell that carries the FALSIFICATION, and it is the reported shape verbatim.
+  //      Every cell above asserts a VALUE, and the values were always right — the defect was a
+  //      too-conservative TYPE, which is invisible until something downstream reads it.  A CAST
+  //      reads it: `(N-Cast)` is an assertion and refuses a possibly-null subject, so this line
+  //      is a hard ERROR before the fix and the whole file fails to compile.  Published `web`
+  //      0.3.0 line 138 is this line.
+  h2 = "item/42";
+  parts = h2.split('/');
+  n: integer = parts[parts.len() - 1].trim() as integer ?? -1;
+  assert(n == 42, "the reported shape compiles and answers: {n}");
+
+  // …and its own control: the same cast on a chain the trust does NOT reach.  `other` has one
+  // element and `parts.len()` is 2, so the read is out of domain, answers the C80 null, and the
+  // discharge supplies `"0"` — 0, not 42, which says the cast is still reading THIS chain and
+  // not the trusted one above it.
+  //
+  // ⚠ What this cell does NOT pin: that the read is still TYPED nullable.  It carries a `??`,
+  // so it compiles either way — a value control cannot see a type that is merely too wide.  The
+  // type half is pinned where it can be: the corpus warning baseline, and `nd4`-shaped probes in
+  // the fix's own commit.  Said here rather than left to be discovered, because every cell in
+  // this file has that limit and the file would otherwise read stronger than it is.
+  other = ["7"];
+  m: integer = (other[parts.len() - 1] ?? "0").trim() as integer ?? -1;
+  assert(m == 0, "another collection's length reads out of domain and takes the default: {m}");
+
+  println("1450e ok");
+}

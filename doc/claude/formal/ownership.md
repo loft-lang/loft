@@ -194,6 +194,14 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 staged it frees it after the statement that copied the value out.
                 `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) is the gate: a free of
                 any other never-free binding, by any live spelling, is a RED.
+  (O-Unknown)   the oracle may answer that it DERIVED NOTHING (`use_analysis::Own::Unknown`),
+                and that answer is neither a free licence nor a refusal: it obliges the
+                reader to DECIDE.  Two shapes reach it — a `CallRef` whose target cannot be
+                resolved, and a callee returning a borrow whose base the caller cannot NAME —
+                and both answered `Owned` before, the one verdict that licenses a free, so a
+                reader inherited the permissive value by writing `_ =>`.  It carries no base
+                by definition: there is nothing to witness, so a reader needing a witness
+                must read it as "no answer" and never as a `Borrowed` with a missing one.
   (O-Latest)    ownership is a property of the LATEST assignment to a binding, at the LOOP
                 DEPTH at which that assignment was taken (`Scopes::owned_refs`, a memo of
                 O-Oracle plus that depth).  A type-level `deps` list can express neither,
@@ -241,6 +249,18 @@ the IR and restored by no snapshot field, so a WARM program-cache run emitted th
 copy arm and wrote a copy INTO the record the local was viewing.  `__own_<name>` is now the
 tenth stored variable field, and the cache format version is bumped so a stale bundle is not
 read (loft#1336 follow-up, QUALITY.md B7v).
+
+**And the copy `O-Move` asks for is ELIDED where no program can observe it** (@PLN157
+§ V-g).  A record local bound once from a call whose return borrows a value-const,
+never-rebound ARGUMENT, and read only through projections, keeps the view —
+`use_analysis::view_elision_bind`, one predicate for `scan_set`'s strip and both
+backends' copy arms — and releases the callee's per-execution minted store by identity
+against that argument at scope exit, the collection join's route (loft#1257).  The rule
+is unchanged: a written local, an escaping one (a call argument, a literal element, a
+return, a capture), a nullable one, a rebound or non-const base, all still copy.  The mark
+(`view_elided`) is the eleventh stored variable field, for the reason `__own_<name>` is the
+tenth — measured before it was stored: a warm `LOFT_PROGRAM_CACHE=1` run re-emitted the
+copy beside the stored identity free.
 
 ⚠ **`(O-Oracle)`'s interprocedural half has a failure mode of its own: it can lose the
 callee's answer on the way back to the caller.** The summary is stated in the CALLEE's

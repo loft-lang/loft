@@ -103,6 +103,13 @@ struct Scopes<'s> {
     /// Set by `callref_owned_return` on that path, consumed by the next `new_lift_var`.
     /// `u16::MAX` = none.
     pending_join_witness: std::cell::Cell<u16>,
+    /// @PLN157 § V-g — the record locals this function only ever READS, off the raw body
+    /// (`use_analysis::read_only_record_locals`); one input of `view_elision_bind`.
+    read_only_locals: Vec<bool>,
+    /// Variables assigned ANYWHERE in this function ([`assigned_in`]).  A parameter in this
+    /// set is rebound after entry, so it cannot stand witness for a store it named at a
+    /// bind: `view_elision_bind` declines it, and the collection join takes its snapshot.
+    assigned: HashSet<u16>,
     /// Variables assigned at MORE THAN ONE site in this function.  The identity route
     /// (`lift_join_witness`) compares a local's store against the variable its dep names at
     /// scope exit; a base reassigned while the local is live could by then name a store that
@@ -2404,6 +2411,12 @@ fn tuple_owned_elem_frees(
         // and the site concludes ownership exactly as a positive test would.  Reading the
         // `!` as "this asks whether it is a borrow" is what kept this site out of
         // `scripts/o_proxy_check.py`'s obligation set entirely.
+        //
+        // ⚠ NOT [`crate::variables::Function::proxy_says_owned`], and it cannot be: the proxy
+        // is read off a tuple ELEMENT's type and the veto off the CONTAINER binding `v`, so
+        // the question has TWO subjects where that predicate has one (@PLN155 phase 1).
+        // Folding it would have to invent a dep list for the element, which is the very thing
+        // a tuple does not have.
         if function.is_skip_free(v)
             || !elems[idx].depend().is_empty()
             || matches!(elems[idx].base(), Type::Text(_))
@@ -2581,6 +2594,12 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        assigned: assigned_in(orig_code),
+        read_only_locals: crate::use_analysis::read_only_record_locals(
+            orig_code,
+            orig_vars.var_count(),
+            data,
+        ),
         capture_build_backing: capture_build_backings(data, orig_vars, orig_code),
         lift_decl_depth: HashMap::new(),
         callref_join_bases: callref_join_bases_in(orig_code, data, d_nr),
@@ -3347,6 +3366,23 @@ fn callref_join_bases_in(node: &Value, data: &Data, d_nr: u32) -> HashMap<u16, H
     }
     let mut out = HashMap::new();
     walk(node, data, d_nr, &mut out);
+    out
+}
+
+/// Variables that are the target of ANY `Set` node in `node`.  For a PARAMETER this is the
+/// rebind test: its own bind is the call, so a single `Set` already means it stops naming
+/// the caller's store (`v = other` on a value-const vector copies into a fresh buffer and
+/// re-points the slot), and a witness compared against it afterwards names the wrong
+/// store — @PLN157 § V-g's c11 freed the caller's vector that way.
+pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
+    fn collect(node: &Value, out: &mut HashSet<u16>) {
+        if let Value::Set(v, _) = node.unspan() {
+            out.insert(*v);
+        }
+        node.for_each_child(&mut |c| collect(c, out));
+    }
+    let mut out = HashSet::new();
+    collect(node, &mut out);
     out
 }
 
@@ -4651,14 +4687,23 @@ fn value_struct_copy(data: &mut Data) {
     }
     let op_database = data.def_nr("OpDatabase");
     let op_copy_record = data.def_nr("OpCopyRecord");
-    if op_database == u32::MAX || op_copy_record == u32::MAX {
+    let op_conv_bool_from_ref = data.def_nr("OpConvBoolFromRef");
+    if op_database == u32::MAX || op_copy_record == u32::MAX || op_conv_bool_from_ref == u32::MAX {
         return;
     }
+    let ops = VsCopyOps {
+        database: op_database,
+        copy_record: op_copy_record,
+        conv_bool_from_ref: op_conv_bool_from_ref,
+    };
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
         let mut code = data.definitions[d_nr as usize].code.clone();
+        // The walk needs `&mut Data` to mint its source temp, so the taint oracle's view of the
+        // body is taken HERE, once, rather than re-borrowed inside it.
+        let body_snapshot = code.clone();
         // Read-only-elision oracle (function scope; rescoped per loop body inside the walk): the
         // TAINTED set — variables whose backing may be mutated, or which escape, during a view's
         // lifetime. Seeded from field/element writes (`find_field_written_vars`, catches nested
@@ -4671,10 +4716,10 @@ fn value_struct_copy(data: &mut Data) {
             &mut code,
             data,
             d_nr,
-            op_database,
-            op_copy_record,
+            ops,
             &tainted,
             &mut cleared,
+            &body_snapshot,
         );
         if cleared.is_empty() {
             continue;
@@ -4688,6 +4733,16 @@ fn value_struct_copy(data: &mut Data) {
                     .variables
                     .set_type(v, Type::Reference(p, Deps::none()));
             }
+            // …and the `skip_free` mark with it.  The PARSER sets it on a `??` temp whose
+            // subject is a borrowed place read — right at the time, because a borrow must not
+            // free what it points at.  This pass then makes that same temp an OWNER, and the
+            // stale mark suppressed the free of the store it now owns: `(v[0] ?? d)` on a
+            // value struct leaked one record per evaluation, silently, on both backends.
+            //
+            // The dep and the mark are two spellings of ONE fact — "does this variable own its
+            // store?" — so the site that changes the first owes the second.  Clearing them
+            // together here is what keeps them from drifting again.
+            data.definitions[d_nr as usize].variables.clear_skip_free(v);
         }
     }
 }
@@ -4888,27 +4943,32 @@ fn vs_scope_taint(ops: &[Value], data: &Data) -> HashSet<u16> {
 /// oracle (computed once by the caller): a value-struct view-bind is left as a zero-cost view (like
 /// a reference struct) when neither the local nor any base variable is tainted; otherwise the copy
 /// is emitted for value semantics.
+/// The three opcode def-numbers `vs_copy_walk` emits, resolved once by its caller.
+///
+/// Bundled because they travel together through every arm of the walk and are meaningless
+/// apart: `OpDatabase` allocates the copy's store, `OpCopyRecord` fills it, and
+/// `OpConvBoolFromRef` is the presence test that decides whether either runs at all
+/// (`@FR-B-Copy` over `@FR-L-Null` — a copy of an absent value is absent).
+#[derive(Clone, Copy)]
+struct VsCopyOps {
+    database: u32,
+    copy_record: u32,
+    conv_bool_from_ref: u32,
+}
+
 fn vs_copy_walk(
     node: &mut Value,
-    data: &Data,
+    data: &mut Data,
     d_nr: u32,
-    op_database: u32,
-    op_copy_record: u32,
+    ops: VsCopyOps,
     tainted: &HashSet<u16>,
     cleared: &mut Vec<u16>,
+    body: &Value,
 ) {
     match node {
         Value::Set(v, rhs) => {
             let vv = *v;
-            vs_copy_walk(
-                rhs,
-                data,
-                d_nr,
-                op_database,
-                op_copy_record,
-                tainted,
-                cleared,
-            );
+            vs_copy_walk(rhs, data, d_nr, ops, tainted, cleared, body);
             if let Type::Reference(p, _) = *data.def(d_nr).variables.tp(vv)
                 && data.is_value_struct(p)
                 && matches!(
@@ -4921,32 +4981,55 @@ fn vs_copy_walk(
                 // identical to a copy — so skip the copy and keep the reference-struct-cheap view.
                 let mut affected: HashSet<u16> = HashSet::new();
                 affected.insert(vv);
-                vs_base_vars(rhs, data, &data.def(d_nr).code, &mut affected);
+                vs_base_vars(rhs, data, body, &mut affected);
                 let needs_copy = affected.iter().any(|x| tainted.contains(x));
                 if !needs_copy {
                     return;
                 }
                 let kt = i32::from(data.def(p).known_type());
                 let source = (**rhs).clone();
+                // ⚠ The materialisation must preserve ABSENCE.  Emitted unconditionally — null
+                // the destination, ALLOCATE, copy — it did not: `OpCopyRecord` from a null
+                // source "does nothing at all" (its own documented behaviour), so the
+                // destination was left ALLOCATED and zeroed and every downstream null test
+                // answered present.  A `??` on the copied view then never ran its default and an
+                // absent value read back as a zero record, on both backends (loft#1472).
+                //
+                // A copy of an absent value is absent (`@FR-B-Copy` over `@FR-L-Null`), so the
+                // allocate-and-copy moves under a presence test.  The source is bound to its own
+                // temp FIRST because it must be evaluated exactly once: it is a place read, but
+                // the index inside it can be an arbitrary expression, and splicing it into both
+                // the test and the copy would run `v[f()]`'s `f` twice.
+                //
+                // The temp is a VIEW — it carries the source's deps, so the ownership scan
+                // classifies it `Borrowed` and emits no free for it; only `vv` owns, exactly as
+                // before.  Named after the destination so the mint is stable and idempotent.
+                let view_type = data.def(d_nr).variables.tp(vv).clone();
+                let src_name = format!("__vs_src_{vv}");
+                let src_tmp = data.definitions[d_nr as usize]
+                    .variables
+                    .add_temp_var(&src_name, &view_type);
                 *node = Value::Insert(vec![
+                    Value::Set(src_tmp, Box::new(source)),
                     Value::Set(vv, Box::new(Value::Null)),
-                    Value::Call(op_database, vec![Value::Var(vv), Value::Int(kt)]),
-                    Value::Call(op_copy_record, vec![source, Value::Var(vv), Value::Int(kt)]),
+                    v_if(
+                        Value::Call(ops.conv_bool_from_ref, vec![Value::Var(src_tmp)]),
+                        Value::Insert(vec![
+                            Value::Call(ops.database, vec![Value::Var(vv), Value::Int(kt)]),
+                            Value::Call(
+                                ops.copy_record,
+                                vec![Value::Var(src_tmp), Value::Var(vv), Value::Int(kt)],
+                            ),
+                        ]),
+                        Value::Null,
+                    ),
                 ]);
                 cleared.push(vv);
             }
         }
         Value::Block(b) => {
             for op in &mut b.operators {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    tainted,
-                    cleared,
-                );
+                vs_copy_walk(op, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::Loop(b) => {
@@ -4954,58 +5037,34 @@ fn vs_copy_walk(
             // view read inside the loop, only an in-body mutation/escape does.
             let loop_taint = vs_scope_taint(&b.operators, data);
             for op in &mut b.operators {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    &loop_taint,
-                    cleared,
-                );
+                vs_copy_walk(op, data, d_nr, ops, &loop_taint, cleared, body);
             }
         }
-        Value::Insert(ops) => {
-            for op in ops {
-                vs_copy_walk(
-                    op,
-                    data,
-                    d_nr,
-                    op_database,
-                    op_copy_record,
-                    tainted,
-                    cleared,
-                );
+        Value::Insert(items) => {
+            for item in items {
+                vs_copy_walk(item, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::If(c, t, e) => {
-            vs_copy_walk(c, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(t, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(e, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(c, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(t, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(e, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Return(x) | Value::Drop(x) => {
-            vs_copy_walk(x, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(x, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Call(_, args) => {
             for a in args {
-                vs_copy_walk(a, data, d_nr, op_database, op_copy_record, tainted, cleared);
+                vs_copy_walk(a, data, d_nr, ops, tainted, cleared, body);
             }
         }
         Value::Iter(_, a, b, c) => {
-            vs_copy_walk(a, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(b, data, d_nr, op_database, op_copy_record, tainted, cleared);
-            vs_copy_walk(c, data, d_nr, op_database, op_copy_record, tainted, cleared);
+            vs_copy_walk(a, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(b, data, d_nr, ops, tainted, cleared, body);
+            vs_copy_walk(c, data, d_nr, ops, tainted, cleared, body);
         }
         Value::Span(b) => {
-            vs_copy_walk(
-                &mut b.1,
-                data,
-                d_nr,
-                op_database,
-                op_copy_record,
-                tainted,
-                cleared,
-            );
+            vs_copy_walk(&mut b.1, data, d_nr, ops, tainted, cleared, body);
         }
         _ => {}
     }
@@ -5291,46 +5350,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
 /// lives in exactly the frame whose variables decide the verdict.
 fn mark_borrowed_captures(data: &mut Data) {
     let mut borrowed: Vec<(u32, usize)> = Vec::new();
-    // Per function: the capture NAME -> every (closure local, record, attribute) that adopted
-    // its store.  More than one entry is loft#1440's shape.
-    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
     for d_nr in 0..data.definitions() {
-        adopters.clear();
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
         let function = &data.def(d_nr).variables;
         let builds = capture_build_backings(data, function, data.def(d_nr).code());
-        for v in 0..function.next_var() {
-            // The DEFINING frame holds the record in the `___clos_N` local
-            // `emit_lambda_code` mints for it.  A frame that receives the record as
-            // an ARGUMENT is the closure BODY (its hidden `__closure` parameter),
-            // whose own variable table knows nothing about who owns the captures —
-            // reading it flipped the verdict depending on definition order.
-            if function.is_argument(v) {
-                continue;
-            }
-            let Type::Reference(record, _) = function.tp(v) else {
-                continue;
-            };
-            let record = *record;
-            if !data.def(record).name.starts_with("__closure_") {
-                continue;
-            }
-            for a in 0..data.attributes(record) {
-                if !capture_attr_is_cascade_relevant(data, record, a) {
-                    continue;
-                }
-                if record_adopts_capture(data, function, record, a) {
-                    adopters
-                        .entry(adopted_store_key(data, function, &builds, v, record, a))
-                        .or_default()
-                        .push((v, record, a));
-                } else {
-                    borrowed.push((record, a));
-                }
-            }
-        }
+        let (adopters, mut never_adopted) = capture_store_adopters(data, function, &builds);
+        borrowed.append(&mut never_adopted);
         // @FR-L-CapOwn — one STORE, one owner.  Two closures over one store both adopted it,
         // and their deaths are independent: where one record escapes and the other is left
         // behind, the one left behind released the store the escaped record still holds and the
@@ -5345,14 +5372,23 @@ fn mark_borrowed_captures(data: &mut Data) {
         // stores, and grouping by name made the second borrow one the first never held —
         // measured as a leaked `S` in
         // `a-captured-local-reassigned-after-the-build-frees-its-own-store.loft`.
-        for (_, mut group) in std::mem::take(&mut adopters) {
+        for (_, mut group) in adopters {
             if group.len() < 2 {
                 continue;
             }
-            let owner = group
-                .iter()
-                .position(|(v, _, _)| record_leaves_frame(data, function, d_nr, *v))
-                .unwrap_or(0);
+            // …unless the records CANNOT COEXIST (`@FR-L-CapOne`).  "One store, one owner"
+            // answers loft#1440,
+            // where two records are built in a straight line and both exist; records in opposite
+            // arms of one branch are the other case, and there at most one is ever built, so each
+            // is the sole owner on its own run.  Demoting either leaves the run that builds it
+            // with no release at all — the frame gave its free away to a record that this run
+            // never made (loft#1473).
+            if group_is_pairwise_exclusive(data.def(d_nr).code(), &group)
+                || group_every_record_leaves(data, function, d_nr, &group)
+            {
+                continue;
+            }
+            let owner = adoption_owner_index(data, function, d_nr, &group);
             group.remove(owner);
             for (_, record, a) in group {
                 borrowed.push((record, a));
@@ -5362,6 +5398,363 @@ fn mark_borrowed_captures(data: &mut Data) {
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
     }
+}
+
+/// The capture slots a closure record's build writes, as byte offsets.
+///
+/// Read off the builds themselves (`OpSetDbRef(record, offset, capture)`) rather than from the
+/// record's attribute table, so the offsets are exactly the ones the emitted code used.
+fn record_capture_slots(code: &Value, record: u16, set_dbref: u32) -> Vec<i32> {
+    let mut out = Vec::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == set_dbref
+            && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+            && *r == record
+            && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
+            && !out.contains(off)
+        {
+            out.push(*off);
+        }
+    });
+    out
+}
+
+/// Does this ARM VALUE hand out closure record `r`?
+///
+/// Answers `true` unless the shape is one this can read and that demonstrably names something
+/// else.  The fallback is the SAFE direction and that is the whole of its design: a `true` here
+/// costs a leak the caller already has, while a wrong `false` frees a record the run is handing
+/// out, which is a use-after-free.  So only three shapes answer no — a bare def-number (a
+/// non-capturing lambda), a `FnRef` naming a different record, and a fn-ref LOCAL whose own type
+/// deps do not mention `r`.
+fn arm_value_delivers_record(leaf: &Value, r: u16, function: &Function) -> bool {
+    match leaf.unspan() {
+        Value::Int(_) | Value::Long(_) => false,
+        Value::FnRef(_, w, _) => *w == r,
+        // Asked through `base()`: a `fn(…)?` local is the same twenty-byte fn-ref slot as a
+        // `fn(…)`, so the wrapper is not a distinction "does this hand out record r" may make.
+        // Read bare it would answer the conservative `true` for a nullable fn-ref and leave its
+        // record unfreed on every omitting path.
+        Value::Var(v) if (*v as usize) < function.count() as usize => {
+            match function.tp(*v).base() {
+                Type::Function(_, _, deps) => deps.as_slice().contains(&r),
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
+/// Free closure record `r` inside each arm of `op` that does NOT hand it out.
+///
+/// `@FR-L-CapOwn` — the frame gives its release up to the record's cascade, and that handover is
+/// only right on the runs where the record actually LEAVES.  Delivery through a branch is a
+/// per-run fact: `if p { g1 } else { |…| 7 }` hands the record out on one path and drops it on
+/// the other, while the suppression is one static decision for both, so the run that does not
+/// deliver leaks the record AND the capture its cascade would have taken (measured: `n_f` emits
+/// no frees at all).
+///
+/// Placing the free INSIDE the omitting arm is what makes it per-run without a runtime witness:
+/// the arm IS the path.  On that path nothing escaped holding the record, so the cascade into
+/// its capture is exactly right.
+///
+/// Sound only where `r` is the SOLE adopter of its store — see the caller.  Where several
+/// records adopt one store, the one left behind may be the static OWNER while the delivered one
+/// borrows, and freeing it would cascade into a capture the escaping record still holds.
+fn free_record_in_omitting_arms(
+    op: &mut Value,
+    r: u16,
+    function: &Function,
+    tp: &Type,
+    release: &[Value],
+) {
+    match op {
+        Value::Span(b) => free_record_in_omitting_arms(&mut b.1, r, function, tp, release),
+        Value::Return(inner) | Value::Drop(inner) => {
+            free_record_in_omitting_arms(inner, r, function, tp, release);
+        }
+        Value::If(_, t, f) => {
+            free_record_in_omitting_arms(t, r, function, tp, release);
+            free_record_in_omitting_arms(f, r, function, tp, release);
+        }
+        // A BLOCK takes the free as a STATEMENT before its value, never as a wrapper around it.
+        // Wrapping produces an `Insert` standing in value position, and native then emitted the
+        // free itself as the block's result (`let __ret_1: (u32, DbRef) = OpFreeRef(…)`).  A
+        // preceding statement is the shape the emitters already handle everywhere.
+        Value::Block(bl) => {
+            let Some(last) = bl.operators.last() else {
+                return;
+            };
+            if arm_value_delivers_record(last, r, function) {
+                let idx = bl.operators.len() - 1;
+                free_record_in_omitting_arms(&mut bl.operators[idx], r, function, tp, release);
+            } else {
+                let idx = bl.operators.len() - 1;
+                for (n, op) in release.iter().enumerate() {
+                    bl.operators.insert(idx + n, op.clone());
+                }
+            }
+        }
+        Value::Insert(ops) => {
+            let Some(last) = ops.last() else {
+                return;
+            };
+            if arm_value_delivers_record(last, r, function) {
+                let idx = ops.len() - 1;
+                free_record_in_omitting_arms(&mut ops[idx], r, function, tp, release);
+            } else {
+                let idx = ops.len() - 1;
+                for (n, op) in release.iter().enumerate() {
+                    ops.insert(idx + n, op.clone());
+                }
+            }
+        }
+        leaf => {
+            if arm_value_delivers_record(leaf, r, function) {
+                return;
+            }
+            let mut held = std::mem::replace(leaf, Value::Null);
+            // WIDEN before wrapping.  The arm that omits the record is, in the common shape,
+            // the one holding a NON-capturing lambda — a bare `Value::Int` def-number.  Placing
+            // it inside an `Insert` makes the `Insert` the value the return hoist reads, and the
+            // block-result path that used to complete the fn-ref pair no longer sees the bare
+            // spelling underneath, so native emitted `let __ret_tail: (u32, DbRef) = 741_i64`.
+            // One notion, two spellings, and this rewrite must hand on the complete one
+            // (loft#1469's widening, applied here because this site creates the position).
+            crate::parser::widen_bare_fn_ref(&mut held, tp);
+            let mut ops = release.to_vec();
+            ops.push(held);
+            *leaf = Value::Insert(ops);
+        }
+    }
+}
+
+/// Is closure record `r` built anywhere inside `n`?
+///
+/// The build is the `FnRef(d_nr, r, _)` node `emit_lambda_code` leaves — the only thing that
+/// mints into the record local — so the presence of that node IS the presence of the build.
+fn subtree_builds_record(n: &Value, r: u16) -> bool {
+    let mut hit = false;
+    n.walk(&mut |m| {
+        if let Value::FnRef(_, w, _) = m.unspan()
+            && *w == r
+        {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Can closure records `a` and `b` ever exist on the SAME run?
+///
+/// `@FR-L-CapOne` — the coexistence condition on `@FR-L-CapOwn`'s single owner.  "One store,
+/// one owner" is a statement about records that COEXIST: loft#1440
+/// is two records built in a straight line, one escaping and one left behind, where the one left
+/// behind released the store the escaped one still held.  Records in OPPOSITE arms of one branch
+/// are the other case — at most one of them is ever built — so each is the sole owner on its own
+/// run, and demoting either to a borrow leaves that run's store with no release at all.
+///
+/// Answers "yes, exclusive" only on a branch that builds `a` in one arm and `b` in the other and
+/// NEITHER in both.  A `match` lowers to nested `If`s, so its arms are covered by the same walk;
+/// two sequential `if`s are not, and must not be — `if p { k1 } if q { k2 }` over one store can
+/// run both, and calling that exclusive would hand one store to two cascades.
+///
+/// The fallback is `false`, which is the conservative direction: an exclusive pair reported as
+/// coexisting keeps today's single-owner behaviour, while a coexisting pair reported as exclusive
+/// would double-free.
+fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
+    let mut found = false;
+    body.walk(&mut |n| {
+        if found {
+            return;
+        }
+        if let Value::If(_, t, f) = n.unspan() {
+            let (ta, tb) = (subtree_builds_record(t, a), subtree_builds_record(t, b));
+            let (fa, fb) = (subtree_builds_record(f, a), subtree_builds_record(f, b));
+            if (ta && fb && !tb && !fa) || (tb && fa && !ta && !fb) {
+                found = true;
+                return;
+            }
+            // An arm that TERMINATES is exclusive with everything after the branch, not just
+            // with its sibling.  `if p { return fn() { … e.a }; } return fn() { … e.a };` builds
+            // one record inside the arm and one after it — never in opposite arms, so the test
+            // above says nothing — yet the arm returns, so the code after it does not run on the
+            // path that built the first.  Reading only sibling arms left this pair sharing an
+            // owner, and the run that delivered the demoted one read a released capture
+            // (loft#1477's `same_local` cell, visible only under `LOFT_POISON=1`).
+            //
+            // Exactly one of the two must be inside the terminating arm: two records BOTH built
+            // inside it are ordinary coexisting siblings, and the arm's own termination says
+            // nothing about them.
+            for arm in [t, f] {
+                if !expr_ends_in_return(arm) {
+                    continue;
+                }
+                let (ia, ib) = (subtree_builds_record(arm, a), subtree_builds_record(arm, b));
+                if ia != ib {
+                    found = true;
+                    return;
+                }
+            }
+        }
+    });
+    found
+}
+
+/// Does EVERY record adopting this store leave the frame?
+///
+/// `@FR-L-CapOne`'s second admissible group.  The single owner exists because a record left
+/// BEHIND would otherwise release what the escaping one still holds (loft#1440) — but that
+/// premise needs the left-behind record to be FREED, and one the return delivers on some path is
+/// exempt from the frame's sweep on all of them.  Where every member is delivered, none of them
+/// is ever released by this frame, so no cascade can run here and each may own: the run hands
+/// one out, its cascade frees the capture in the CALLER, and the others simply die with the
+/// frame having released nothing.
+///
+/// Without this the group keeps a statically chosen owner, and the run that delivers a demoted
+/// BORROWER leaves the capture with no cascade at all — it is freed by nobody (loft#1476).
+fn group_every_record_leaves(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    group: &[(u16, u32, usize)],
+) -> bool {
+    group
+        .iter()
+        .all(|(local, _, _)| record_leaves_frame(data, function, d_nr, *local))
+}
+
+/// Are the records adopting one store pairwise unable to coexist?
+///
+/// `@FR-L-CapOne` — the condition under which every member of the group OWNS: on any given run at most one of
+/// them is built, so each one's cascade is that run's only release.  Pairwise and not merely
+/// "every build is conditional", because conditional is not exclusive — see
+/// [`builds_are_mutually_exclusive`].
+fn group_is_pairwise_exclusive(body: &Value, group: &[(u16, u32, usize)]) -> bool {
+    group.iter().enumerate().all(|(i, (la, _, _))| {
+        group[i + 1..]
+            .iter()
+            .all(|(lb, _, _)| builds_are_mutually_exclusive(body, *la, *lb))
+    })
+}
+
+/// This function's closure records, grouped by the STORE each adopted.
+///
+/// One home for `@FR-L-CapOwn`'s "which records are in the running for this store", read by
+/// [`mark_borrowed_captures`] (which makes the losers borrow) and by [`owning_record_locals`]
+/// (which asks the winner whether it exists at run time).  The two have to agree by
+/// construction: a record the marking makes borrow while the free-suppression still credits it
+/// leaves the store with no release at all, which is the shape loft#1464 is.
+///
+/// Returns the groups keyed by [`adopted_store_key`], plus the `(record, attribute)` pairs that
+/// adopt NOTHING — those borrow outright and never enter a group.
+fn capture_store_adopters(
+    data: &Data,
+    function: &Function,
+    builds: &CaptureBuilds,
+) -> (
+    HashMap<(u16, u32), Vec<(u16, u32, usize)>>,
+    Vec<(u32, usize)>,
+) {
+    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
+    let mut never_adopted = Vec::new();
+    for v in 0..function.next_var() {
+        // The DEFINING frame holds the record in the `___clos_N` local `emit_lambda_code`
+        // mints for it.  A frame that receives the record as an ARGUMENT is the closure BODY
+        // (its hidden `__closure` parameter), whose own variable table knows nothing about who
+        // owns the captures — reading it flipped the verdict depending on definition order.
+        if function.is_argument(v) {
+            continue;
+        }
+        let Type::Reference(record, _) = function.tp(v) else {
+            continue;
+        };
+        let record = *record;
+        if !data.def(record).name.starts_with("__closure_") {
+            continue;
+        }
+        for a in 0..data.attributes(record) {
+            if !capture_attr_is_cascade_relevant(data, record, a) {
+                continue;
+            }
+            if record_adopts_capture(data, function, record, a) {
+                adopters
+                    .entry(adopted_store_key(data, function, builds, v, record, a))
+                    .or_default()
+                    .push((v, record, a));
+            } else {
+                never_adopted.push((record, a));
+            }
+        }
+    }
+    (adopters, never_adopted)
+}
+
+/// Which of one store's adopters KEEPS it — `@FR-L-CapOwn`'s "exactly one".
+///
+/// The record that LEAVES the frame, because the frame is gone by the time the question is
+/// asked; where none leaves, the first, which is the single-record case unchanged.
+fn adoption_owner_index(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    group: &[(u16, u32, usize)],
+) -> usize {
+    group
+        .iter()
+        .position(|(v, _, _)| record_leaves_frame(data, function, d_nr, *v))
+        .unwrap_or(0)
+}
+
+/// The closure-record local whose cascade releases the store capture `v` names, if any.
+///
+/// `@FR-L-CapOwn` — the frame gives up its own release only because some record's cascade takes
+/// it over, and this names that record.  [`capture_adoption_owns_free`] answers *whether* the
+/// handover happened; this answers *to whom*, which is the fact a build that may not RUN needs:
+/// the record local is null until its build executes, so it is the runtime witness for
+/// "the cascade that replaces the frame's free will actually happen" (loft#1464).
+///
+/// Reads the same grouping the borrow-marking reads, so the record named here is the record
+/// whose cascade still follows the capture.  Asking it any other way is how the two drift:
+/// naming an adopter the marking made BORROW would decline the frame's free in favour of a
+/// cascade that stops at that attribute.
+fn owning_record_locals(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    builds: &CaptureBuilds,
+    v: u16,
+) -> Vec<u16> {
+    // Both spellings of "the record took this local's store", the pair `CaptureBuilds` carries:
+    // a STRUCT capture names the local outright, a COLLECTION capture names a view whose
+    // backing local is this one.
+    let name = function.name(v).to_string();
+    let (adopters, _) = capture_store_adopters(data, function, builds);
+    for group in adopters.values() {
+        // `@FR-L-CapOne` — every member owns where the records CANNOT COEXIST, the same condition
+        // `mark_borrowed_captures` uses to leave them all owning.  The two must agree by
+        // construction: a record the marking left owning while this side declined to name it
+        // would have the frame free the store out from under that run's cascade, which is
+        // loft#1473 in the other direction.
+        let owners: Vec<usize> = if group_is_pairwise_exclusive(data.def(d_nr).code(), group) {
+            (0..group.len()).collect()
+        } else {
+            vec![adoption_owner_index(data, function, d_nr, group)]
+        };
+        let mut locals = Vec::new();
+        for owner in owners {
+            let (local, record, a) = group[owner];
+            let attr = data.attr_name(record, a).clone();
+            if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
+                locals.push(local);
+            }
+        }
+        if !locals.is_empty() {
+            return locals;
+        }
+    }
+    Vec::new()
 }
 
 /// The STORE a record adopted for capture attribute `a`, as a grouping key.
@@ -5455,6 +5848,28 @@ fn returned_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<
     body.walk(&mut |n| {
         if let Value::Return(inner) = n.unspan() {
             collect_return_sources(inner, data, &mut sources);
+            // …and the `FnRef` spelling, which `collect_return_sources` has no arm for.  That
+            // decoder answers in VARIABLES, and a capturing lambda is not one: it is a `FnRef`
+            // naming its `___clos_N` directly.  So `return fn() { … }` written straight out
+            // contributed nothing, and the frame freed the record it had just handed over.
+            //
+            // The `delivered` stack below does read a `FnRef` — but it only reaches a block's
+            // LAST operator, so it sees the tail `return` and never one standing earlier in an
+            // `if` arm.  Two decoders for one question, and the blind one is on the route an
+            // explicit mid-body `return` takes (loft#1477, found by the loft2 session).
+            //
+            // Collected from the whole returned subtree: a `return` of an `if` delivers a
+            // different record per arm and every one of them outlives the frame on its own
+            // path.  A lambda BODY is a separate definition, so a closure the returned lambda
+            // builds internally cannot be swept in.
+            inner.walk(&mut |m| {
+                if let Value::FnRef(_, w, _) = m.unspan()
+                    && *w != u16::MAX
+                    && !out.contains(w)
+                {
+                    out.push(*w);
+                }
+            });
         }
     });
     while let Some(v) = delivered.pop() {
@@ -5504,8 +5919,18 @@ fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut
     }
     match function.tp(v) {
         // A fn-ref LOCAL: its own type names the record it holds.
+        //
+        // Read space-agnostically, which is what this position needs.  A fn-ref VARIABLE
+        // holds a FRAME-space list when its value is a lambda built here, and it holds the
+        // callee's DEF-space list verbatim when the value came from a call — a returned
+        // fn-ref publishes its closure work var as a tagged `CalleeFrame` note, and
+        // `call_dependencies` hands a `Type::Function` return back unchanged.  Asking
+        // `frame_vars()` therefore trips the space assert on a list that is simply INERT
+        // here: every entry of a def-space list names the CALLEE's attributes or the
+        // CALLEE's frame, never a record of this function, so nothing it carries can pass
+        // the caller's membership test (`85-closure-factory-discarded-free`).
         Type::Function(_, _, deps) => {
-            for w in deps.frame_vars() {
+            for w in deps.as_slice() {
                 if !out.contains(w) {
                     out.push(*w);
                 }
@@ -5863,6 +6288,7 @@ pub(crate) fn capture_build_backings(
     let mut generation: HashMap<u16, u32> = HashMap::new();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
+    captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
     let mut built: HashSet<u16> = HashSet::new();
     // Capture vars already resolved at their enclosing statement, waiting for the walk to
     // reach the build node itself.  See the `Value::Set` arm.
@@ -6006,6 +6432,14 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: HashSet<u16>,
+    /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
+    /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
+    ///
+    /// `(L-CapOwn)` hands the release to the record's cascade, and the cascade only happens if
+    /// the build EXECUTES.  The suppression is a static fact about the function and the thing
+    /// it trades away is a per-RUN one, so where the two can disagree the frame's free is kept
+    /// and made conditional on the record existing (loft#1464).
+    pub(crate) built_conditionally: HashSet<u16>,
     /// Per closure-record local: the `(capture local, generation)` pairs it adopted at ITS
     /// build, where the generation counts assignments to that local before the build.
     ///
@@ -6198,6 +6632,9 @@ fn record_adopts_capture(data: &Data, function: &Function, record: u32, a: usize
 /// projects into a parameter stays the BORROW that #682 made it. The bound is a guard
 /// against a cyclic dep chain, not a depth the language imposes.
 fn frame_owns_capture_store(function: &Function, start: u16) -> bool {
+    // @FR-O-Proxy asks free — the answer decides whether the frame's scope-exit free stands
+    // or the capture record's cascade takes it over, so a free follows either way and this is
+    // the free question asked about the BACKING local rather than the binding.
     let mut v = start;
     for _ in 0..8 {
         let tp = function.tp(v);
@@ -6887,11 +7324,9 @@ impl Scopes<'_> {
             && was_in_scope
             && matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
             // @FR-O-Proxy asks free — the ownership-TRANSITION free, releasing the store `v`
-            // is about to stop naming.
-            && function.tp(v).depend().is_empty()
-            // @FR-O-Proxy is unsound alone — a free taken on the empty dep list
-            // must consult @FR-O-Override.
-            && !function.is_skip_free(v)
+            // is about to stop naming.  The proxy is unsound alone, so it is asked with its
+            // @FR-O-Override veto as one question and never separately.
+            && function.proxy_says_owned(v)
             && self.owned_refs.get(&v) == Some(&self.loops.len())
             && displaces_owned_through_fresh_callee(value, v, ov, data)
         {
@@ -6910,14 +7345,13 @@ impl Scopes<'_> {
             && function.name(v).starts_with("__ncc_")
             // @FR-O-Override, consulted first: a hoist the parser marked never-free (a
             // projection subject) releases nothing here.
-            && !function.is_skip_free(v)
             && matches!(
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
             // @FR-O-Proxy asks free — the ownership-TRANSITION free of the store the hoist
-            // is about to stop naming.
-            && function.tp(v).depend().is_empty()
+            // is about to stop naming, with its @FR-O-Override veto as one question.
+            && function.proxy_says_owned(v)
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }
@@ -6940,8 +7374,7 @@ impl Scopes<'_> {
             )
             // @FR-O-Proxy asks free — the same transition free, emitted GUARDED on the
             // runtime witness where the static fact is sound but incomplete.
-            && function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+            && function.proxy_says_owned(v)
             && displaces_owned_through_fresh_callee(value, v, ov, data)
         {
             transition_free = Some(v_if(
@@ -7159,9 +7592,14 @@ impl Scopes<'_> {
                 // @FR-O-Proxy asks free.  @FR-O-Override vetoes it at every site that frees
                 // on it, and stripping the deps IS such a site: `get_free_vars` reads the dep list, so
                 // emptying it here is what makes the scope-exit sweep emit `OpFreeRef(v)`.
-                // The proxy is read negated — "this still looks like a borrow" — which does
-                // not change the conclusion the strip acts on, only its spelling.  A binding
-                // the parser marked never-free keeps its deps and its store.
+                // A binding the parser marked never-free keeps its deps and its store.
+                //
+                // ⚠ NOT [`crate::variables::Function::proxy_says_owned`], and the difference is
+                // the whole reason it stays apart (@PLN155 phase 1): that predicate is
+                // `empty && !veto`, while this is `!empty && !veto`.  The negated proxy here is
+                // not an ownership answer at all — it asks *"is there a dep list left to
+                // strip"*, which is a question about WORK TO DO.  Only the veto is this rule's
+                // obligation, and it is read on its own for that reason.
                 && !function.is_skip_free(v)
             {
                 let deps: Vec<u16> = function.tp(v).depend().clone();
@@ -7170,17 +7608,50 @@ impl Scopes<'_> {
                 }
             }
             if record_shaped && !adopts_fresh_store && !publishes_through_ref {
-                // codegen will take gen_set_first_ref_call_copy —
-                // OpConvRefFromNull +
-                // OpDatabase + lock-args + OpCopyRecord deep-copy into a
-                // FRESH store owned by `v`.  Strip v's declared deps so
-                // get_free_vars emits OpFreeRef at scope exit; otherwise
-                // the parser's "borrows from arg N" inference suppresses
-                // emission and the deep-copied store leaks (the
-                // `dep_empty=false` path in scopes.rs:906).
-                let deps: Vec<u16> = function.tp(v).depend().clone();
-                for d in deps {
-                    function.make_independent(v, d);
+                if let Some(base) = crate::use_analysis::view_elision_bind(
+                    data,
+                    self.d_nr,
+                    function,
+                    v,
+                    unspanned_value,
+                    &crate::use_analysis::BodyFacts {
+                        read_only: &self.read_only_locals,
+                        multi_assigned: &self.multi_assigned,
+                        assigned: &self.assigned,
+                    },
+                ) {
+                    // @PLN157 § V-g — the copy is unobservable here, so the dep STAYS (a
+                    // view) and the local takes the COLLECTION join's route: `get_free_vars`
+                    // releases the callee's per-execution minted store by identity against
+                    // the argument at scope exit, and a re-Set in scope releases the store
+                    // it displaces the same way.  Both backends read the mark and deliver
+                    // the result directly instead of copying.
+                    function.mark_view_elided(v);
+                    let w = function.rebind_orig(base).unwrap_or(base);
+                    self.lift_join_witness.insert(v, w);
+                    let slot_live = match self.lift_decl_depth.get(&v) {
+                        Some(&depth) => depth < self.loops.len(),
+                        None => true,
+                    };
+                    if was_in_scope && transition_free.is_none() && slot_live {
+                        transition_free = Some(Value::Call(
+                            data.def_nr("OpFreeRefIfDistinct"),
+                            vec![Value::Var(v), Value::Var(w)],
+                        ));
+                    }
+                } else {
+                    // codegen will take gen_set_first_ref_call_copy —
+                    // OpConvRefFromNull +
+                    // OpDatabase + lock-args + OpCopyRecord deep-copy into a
+                    // FRESH store owned by `v`.  Strip v's declared deps so
+                    // get_free_vars emits OpFreeRef at scope exit; otherwise
+                    // the parser's "borrows from arg N" inference suppresses
+                    // emission and the deep-copied store leaks (the
+                    // `dep_empty=false` path in scopes.rs:906).
+                    let deps: Vec<u16> = function.tp(v).depend().clone();
+                    for d in deps {
+                        function.make_independent(v, d);
+                    }
                 }
             }
             // `adopts_fresh_store == true` call whose result is assigned
@@ -7693,7 +8164,11 @@ impl Scopes<'_> {
             // on the other site's arm (sum 4034 for 12500), and against a base already
             // re-pointed it could free whatever store reused the slot; comparing against the
             // snapshot, two stale numbers still agree and decline.
+            // A parameter with any `Set` is rebound after entry (its bind is the call), so
+            // it cannot stand witness for the store it named at the bind.
+            let base_rebound = function.is_argument(base) && self.assigned.contains(&base);
             let stable = !self.multi_assigned.contains(&base)
+                && !base_rebound
                 && self.callref_join_bases.get(&v).is_none_or(|b| b.len() <= 1);
             let w = if stable {
                 function.rebind_orig(base).unwrap_or(base)
@@ -7722,6 +8197,10 @@ impl Scopes<'_> {
             // @FR-O-Proxy asks free — read negated, *"this still looks like a borrow"*:
             // stripping the deps is what makes `get_free_vars` emit the free, so the site is
             // a free site and consults @FR-O-Override like every other.
+            //
+            // ⚠ NOT [`crate::variables::Function::proxy_says_owned`] — the sibling strip site
+            // above carries the reason: `!empty && !veto` asks whether there is a dep list to
+            // strip, not whether the binding owns its store (@PLN155 phase 1).
             && !function.tp(v).depend().is_empty()
             && !function.is_skip_free(v)
             // loft#1333 — and NOT for a MIXED binding, one another path assigns a borrow.
@@ -7977,14 +8456,13 @@ impl Scopes<'_> {
             Some(depth) => *depth == self.loops.len() || rhs_owned,
             None => false,
         };
-        // @FR-O-Proxy asks free — the hook is a release, and it follows only where the
-        // empty dep list says `v` OWNS the record; @FR-O-Override (`is_skip_free`) is
-        // consulted right after it, as every free on the proxy must.
+        // @FR-O-Proxy asks free — the hook is a release, and it follows only where the empty
+        // dep list says `v` OWNS the record; the proxy carries its @FR-O-Override veto as one
+        // question, so this reads the pair negated rather than two separate escape clauses.
         if !owned_here
             || function.is_argument(v)
             || function.is_captured(v)
-            || !function.tp(v).depend().is_empty()
-            || function.is_skip_free(v)
+            || !function.proxy_says_owned(v)
             || self.drop_transferred.contains(&v)
             || self.owner_witness.contains_key(&v)
         {
@@ -8056,7 +8534,10 @@ impl Scopes<'_> {
             .fn_defs
             .get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
         match crate::use_analysis::ownership_of_with(data, d_nr, value, defs) {
-            crate::use_analysis::Own::Owned => RefRhs::Owned,
+            // `Unknown` keeps `Owned`'s answer here (@PLN155 phase 2): to DECLINE instead,
+            // this site would need a third `RefRhs` — "do not decide" — and every consumer of
+            // `RefRhs` an arm for it.  That is phase 2b's question, not a transcription.
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => RefRhs::Owned,
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. } => {
                 RefRhs::View
             }
@@ -8346,18 +8827,15 @@ impl Scopes<'_> {
                     continue;
                 }
                 if let Value::If(cond, then, els) = &inner {
-                    let mut cond_ncc = Vec::new();
-                    collect_consumed_ncc_text(cond, function, &mut cond_ncc);
-                    if !cond_ncc.is_empty() {
+                    let cond_frees = ncc_text_frees(cond, function, data);
+                    if !cond_frees.is_empty() {
                         self.ret_temp_counter += 1;
                         let name = format!("__cond_{}", self.ret_temp_counter);
                         let tmp = function.add_temp_var(&name, &Type::Boolean);
                         self.var_scope.insert(tmp, self.scope);
                         self.var_order.push(tmp);
                         with_frees.push(v_set(tmp, (**cond).clone()));
-                        for v in cond_ncc {
-                            with_frees.push(call("OpFreeText", v, data));
-                        }
+                        with_frees.extend(cond_frees);
                         let branch =
                             Value::If(Box::new(Value::Var(tmp)), then.clone(), els.clone());
                         with_frees.push(match pos {
@@ -8371,12 +8849,9 @@ impl Scopes<'_> {
                     Some(p) => Value::Span(Box::new((p, inner))),
                     None => inner,
                 };
-                let mut ncc = Vec::new();
-                collect_consumed_ncc_text(&stmt, function, &mut ncc);
+                let frees = ncc_text_frees(&stmt, function, data);
                 with_frees.push(stmt);
-                for v in ncc {
-                    with_frees.push(call("OpFreeText", v, data));
-                }
+                with_frees.extend(frees);
             }
             ls = with_frees;
         }
@@ -8397,9 +8872,8 @@ impl Scopes<'_> {
                     | Type::Enum(_, false, _)
             )
         {
-            let mut ncc = Vec::new();
-            collect_consumed_ncc_text(&expr, function, &mut ncc);
-            if !ncc.is_empty() {
+            let ncc_frees = ncc_text_frees(&expr, function, data);
+            if !ncc_frees.is_empty() {
                 // An explicit `return <e>` hoists `<e>` and keeps the `return`.
                 let (inner, was_return) = match expr.unspan() {
                     Value::Return(i) => ((**i).clone(), true),
@@ -8411,9 +8885,7 @@ impl Scopes<'_> {
                 self.var_scope.insert(tmp, self.scope);
                 self.var_order.push(tmp);
                 ls.push(v_set(tmp, inner));
-                for v in ncc {
-                    ls.push(call("OpFreeText", v, data));
-                }
+                ls.extend(ncc_frees);
                 expr = if was_return {
                     Value::Return(Box::new(Value::Var(tmp)))
                 } else {
@@ -8531,9 +9003,49 @@ impl Scopes<'_> {
         data: &Data,
         v: u16,
     ) -> bool {
-        function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+        // @FR-O-Proxy asks free — this IS the scope-exit sweep's licence.
+        //
+        // The proxy and its veto are ONE question and are asked as one
+        // ([`crate::variables::Function::proxy_says_owned`], @PLN155 phase 1); what this
+        // adds is the third obligation, which is this site's alone — the sweep frees a
+        // FRAME's bindings, and a user parameter belongs to the caller.
+        function.proxy_says_owned(v)
             && (!function.is_argument(v) || self.is_promoted_ret_buffer(function, data, v))
+    }
+
+    /// Has @FR-O-Oracle DERIVED an owner fact for `v`, rather than defaulted to one?
+    ///
+    /// The question `owns_freeable_store` cannot ask from `deps` alone, and the one phase 0
+    /// measured: `Own::Owned` with `OwnEvidence::Derived` or `Minted` is a positive answer,
+    /// while `Fallback` (nothing to read) and `Own::Unknown` (read, could not conclude) are
+    /// not.  A parameter answers `Borrowed` of itself and is excluded by the carve-out above
+    /// before this is reached.
+    fn oracle_derived_owner(
+        &self,
+        function: &crate::variables::Function,
+        data: &Data,
+        v: u16,
+    ) -> bool {
+        if usize::from(v) >= function.count() as usize {
+            return true; // not a binding this can ask about — keep the existing answer
+        }
+        let defs = crate::use_analysis::function_defs(data, self.d_nr);
+        let (own, evidence) =
+            crate::use_analysis::ownership_evidence_with(data, self.d_nr, v, &defs);
+        // The plan's refusal set, and NOT a wider one: *a free whose licence is proxy-only,
+        // with no oracle agreement*.  So the refusal is `Fallback` (nothing to read) and
+        // `Own::Unknown` (read, could not conclude) — the two the census calls `proxy-alone`
+        // and `no-answer`.
+        //
+        // ⚠ An oracle DISAGREEMENT (`Borrowed`/`Join`) is deliberately NOT refused, and
+        // getting that wrong is measured: refusing it too made the rung reject 9349 frees
+        // instead of ~1600, and shrinking the proxy-only set by 77 % then moved the deny cost
+        // by nothing at all, because the disagreements were carrying it.  Those are mostly
+        // ownership-TRANSITION frees reading the `owned_refs` memo (@FR-O-Latest), a fact this
+        // question cannot see — the census's own doc says so — so calling them unlicensed is
+        // this predicate exceeding what it knows.
+        !matches!(own, crate::use_analysis::Own::Unknown)
+            && !matches!(evidence, crate::use_analysis::OwnEvidence::Fallback)
     }
 
     fn free_vars(
@@ -8545,6 +9057,86 @@ impl Scopes<'_> {
         tp: &Type,
         to_scope: u16,
     ) -> Vec<Value> {
+        // loft#1476 — a closure record the return delivers on SOME path is exempt from the
+        // frame's free on ALL of them, because `record_leaves_frame` is one static answer to a
+        // per-run question.  The run that does not deliver it then leaks the record and the
+        // capture its cascade would have taken.  Put the release INSIDE the arms that do not
+        // hand it out: the arm IS the path, so no runtime witness is needed, and on that path
+        // nothing escaped holding the record.
+        //
+        // Restricted to a record that ALONE adopts its store.  Where several adopt one store the
+        // record left behind may be the static owner while the delivered one borrows, and
+        // freeing it would cascade into a capture the escaping record still holds — that half
+        // needs per-run OWNERSHIP, not just a per-run free, and stays open on loft#1476.
+        let rewritten;
+        let expr = {
+            let mut copy = expr.clone();
+            let mut touched = false;
+            if is_return && self.d_nr != u32::MAX {
+                let (adopters, _) =
+                    capture_store_adopters(data, function, &self.capture_build_backing);
+                let set_dbref = data.def_nr("OpSetDbRef");
+                let null_ref = data.def_nr("OpNullRefSentinel");
+                let body = data.def(self.d_nr).code();
+                // A record handed out through a `&fn(…)` LINK never appears in the tail, so the
+                // tail cannot witness that it was delivered.  `arm_value_delivers_record` reads
+                // the RETURN route only and would answer "this arm omits it" for every arm —
+                // and the release would then destroy what the link just gave the caller.
+                // `record_leaves_frame` unions both routes for exactly this reason; here the
+                // link half has to be subtracted rather than asked, because no arm can speak
+                // for it.  Measured: `give_both_ways` (a frame delivering by BOTH routes at
+                // once) read 0xBEEF under `LOFT_POISON=1`.
+                let link_delivered = link_written_closure_records(data, function, self.d_nr);
+                // Every closure-record LOCAL this frame owns, not only the ones that entered
+                // an adopter group: a record capturing a PARAMETER adopts nothing (the store is
+                // the caller's) and so appears in no group, yet it is delivered by the same
+                // branch and owes the same per-arm release.  Gating on the groups left those
+                // records with no free anywhere, which `check_ref_leaks` reports as a leak.
+                for v in 0..function.next_var() {
+                    if function.is_argument(v) {
+                        continue;
+                    }
+                    let Type::Reference(rec_def, _) = function.tp(v) else {
+                        continue;
+                    };
+                    if !data.def(*rec_def).name.starts_with("__closure_")
+                        || !record_leaves_frame(data, function, self.d_nr, v)
+                        || link_delivered.contains(&v)
+                    {
+                        continue;
+                    }
+                    // Nulling is owed only where another record can hold the SAME store: there
+                    // the cascade would reach a capture the delivered record still needs.  A
+                    // sole adopter — and a record that adopts nothing at all — wants the plain
+                    // release, whose cascade is either correct or empty.
+                    let shared = adopters
+                        .values()
+                        .any(|g| g.len() > 1 && g.iter().any(|(l, _, _)| *l == v));
+                    let mut release: Vec<Value> = Vec::new();
+                    if shared {
+                        for off in record_capture_slots(body, v, set_dbref) {
+                            release.push(Value::Call(
+                                set_dbref,
+                                vec![
+                                    Value::Var(v),
+                                    Value::Int(off),
+                                    Value::Call(null_ref, Vec::new()),
+                                ],
+                            ));
+                        }
+                    }
+                    release.push(call("OpFreeRef", v, data));
+                    free_record_in_omitting_arms(&mut copy, v, function, tp, &release);
+                    touched = true;
+                }
+            }
+            if touched {
+                rewritten = copy;
+                &rewritten
+            } else {
+                expr
+            }
+        };
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
@@ -9456,19 +10048,36 @@ impl Scopes<'_> {
                 } else if frees_follow
                     && *tp != Type::Void
                     && !expr_is_terminal
-                    // A CALL, and only a call.  That is the producer the diagnosis
-                    // names — the one whose result no binding holds — and it is the
-                    // same shape `chain_site_set_shape` promotes into `__retbuf`
-                    // when promotion does run.  A wider test is not a safer one: an
-                    // earlier cut allowed any non-null tail and so fired on a
-                    // COROUTINE's body, whose tail is the `while` loop itself.  That
-                    // wrapped the loop into `__ret_tail_1 = loop { … }`, and the
-                    // state-machine lowering then could not see the captured
-                    // parameters — four `coroutine_matrix` cells failed to compile
-                    // with `cannot find value var_n`.  An `iterator` return is
-                    // excluded outright for the same reason: a coroutine does not
-                    // return its body's value.
-                    && matches!(expr.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
+                    // A CALL or a value BRANCH — the two producers whose result no
+                    // binding holds.  A call is the shape `chain_site_set_shape`
+                    // promotes into `__retbuf` when promotion does run; a branch is
+                    // the shape whose arms `returned_var` could not unify onto one
+                    // var, which for a `-> fn(…)` return is every branch, because the
+                    // arms yield fn-ref CONSTANTS and there is no work-ref to unify.
+                    // A wider test is not a safer one: an earlier cut allowed any
+                    // non-null tail and so fired on a COROUTINE's body, whose tail is
+                    // the `while` loop itself.  That wrapped the loop into
+                    // `__ret_tail_1 = loop { … }`, and the state-machine lowering then
+                    // could not see the captured parameters — four `coroutine_matrix`
+                    // cells failed to compile with `cannot find value var_n`.  So the
+                    // widening names the branch and stops there, and an `iterator`
+                    // return stays excluded outright for the same reason: a coroutine
+                    // does not return its body's value.
+                    && (matches!(
+                        expr.unspan(),
+                        Value::Call(_, _) | Value::CallRef(_, _) | Value::If(_, _, _)
+                    )
+                    // …or the return type is a fn-ref, whatever the tail's shape.  This one
+                    // is keyed on the TYPE and not on the node because it CANNOT be keyed on
+                    // the node: a non-capturing lambda lowers to a bare `Value::Int` holding
+                    // its def-number, indistinguishable from the integer 733.  loft#1470 is
+                    // that cell — `return fn() -> integer { 5 };` with a free in the frame
+                    // emitted the def-number as a DISCARDED statement and fabricated
+                    // `return null`, so `--native` returned the typed null sentinel and the
+                    // caller read `internal error: invalid fn-ref`.  The interpreter answered
+                    // correctly by accident, off eval-stack top, which is the same accident
+                    // loft#957 names one carve-out earlier in this list.
+                    || matches!(tp.base(), Type::Function(_, _, _)))
                     && !matches!(tp.base(), Type::Iterator(_, _))
                 {
                     // loft#957 — the same eval-stack reliance P236 names above, for
@@ -9534,6 +10143,13 @@ impl Scopes<'_> {
     ) -> Vec<Value> {
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
+        // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
+        // closure-record local to decide whether that record's cascade already owes this store,
+        // and the sweep's own `OpFreeRef` of that record would destroy the answer: the two
+        // backends do not even agree on what a freed slot reads back as (the interpreter leaves
+        // it standing, `--native` nulls `store_nr`), so a guard placed after it would decline on
+        // one and double-free on the other.
+        let mut guarded: Vec<Value> = Vec::new();
         let vars = self.variables(to_scope);
         if scope_debug {
             eprintln!(
@@ -9586,6 +10202,25 @@ impl Scopes<'_> {
             // is never-free.  A returned local is skipped above like any other: the store is
             // handed up, and the witness is not released for it.
             if let Some(&w) = self.owner_witness.get(&v) {
+                // @FR-L-CapOwn, loft#1464 — the second route to the same missing release.  A
+                // witnessed local that a closure record ADOPTED gives its store up at the
+                // build (`built_here` resets the witness to the sentinel there), so on a run
+                // that skips a CONDITIONAL build neither party holds it: the witness names
+                // nothing and the cascade never ran.  Same conditional release as the
+                // suppression site below, declining by store identity where the witness is
+                // about to release the store itself.
+                if adoption_build_is_conditional(&self.capture_build_backing, v)
+                    && let records = owning_record_locals(
+                        data,
+                        function,
+                        self.d_nr,
+                        &self.capture_build_backing,
+                        v,
+                    )
+                    && !records.is_empty()
+                {
+                    guarded.push(free_unless_record_built(v, &records, Some(w), data));
+                }
                 ls.push(release_witness(w, data));
                 continue;
             }
@@ -9677,7 +10312,24 @@ impl Scopes<'_> {
                 let in_ret = ret_borrows_v
                     || backs_return_source
                     || link_delivered.contains(&v)
-                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v);
+                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
+                    // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
+                    // declared return's `CalleeFrame` note, and that note is published once per
+                    // lambda and OVERWRITTEN — so where a function builds more than one it names
+                    // the last one BUILT rather than the ones the return can hand out.  A `match`
+                    // whose arms each build a closure has one record per arm; the note named one
+                    // and the frame freed the rest, cascading into everything they captured, so
+                    // the caller called a live lambda over a released capture (loft#1474).
+                    //
+                    // [`record_leaves_frame`] is the same question asked of the VALUES in return
+                    // position, which is where loft#1444 already moved this for the fn-ref
+                    // variable's own free; the record local's free was left reading the note.
+                    // Gated on the local actually being a closure record so this stays a
+                    // statement about `@FR-L-CapOwn` and not a new suppression for every
+                    // reference local.
+                    || (matches!(function.tp(v), Type::Reference(r, _)
+                            if data.def(*r).name.starts_with("__closure_"))
+                        && record_leaves_frame(data, function, self.d_nr, v));
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -9753,12 +10405,26 @@ impl Scopes<'_> {
                 } else {
                     None
                 };
-                let owns = dep.is_empty()
+                // @FR-O-Proxy asks free — this is the scope-exit sweep's own licence, and it
+                // frees more bindings than every other site in the compiler together.  The
+                // @FR-O-Override veto is consulted in `emit` below, which is the same
+                // conjunction spelled across two statements.
+                //
+                // ⚠ It is NOT `Scopes::owns_freeable_store`, and @PLN155 phase 3 measured that
+                // the hard way: the ladder was attached to that predicate and its gate NEVER
+                // FIRED, because the sweep does not go through it.  That predicate is the
+                // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
+                let owns = (function.proxy_says_owned(v)
                     || self.lift_join_witness.contains_key(&v)
                     || borrow_witness.is_some()
                     || (dep.len() == 1
                         && dep[0] == v
-                        && crate::parser::vectors::is_keyed(function.tp(v)));
+                        && crate::parser::vectors::is_keyed(function.tp(v))))
+                    // @PLN155 phase 3, `LOFT_OWN_FREE=deny` — the rung: the proxy is not
+                    // enough, the ORACLE must also have derived an owner fact.  Off by
+                    // default; it exists to measure what refusing those frees costs.
+                    && (!crate::keys::own_free_deny()
+                        || self.oracle_derived_owner(function, data, v));
                 // Plan-57 Phase B (Mechanism B), widened by #323: a
                 // Reference-typed capture — a boxed `__cell_<T>` AND, per
                 // P260's storage rule, any plain struct capture — is OWNED
@@ -9802,6 +10468,28 @@ impl Scopes<'_> {
                     && !function.is_skip_free(v)
                     && !self.free_transferred.contains(&v)
                     && !captured_ref;
+                // @FR-L-CapOwn, loft#1464 — the release the frame just gave up is taken over by
+                // a cascade that runs only if the closure BUILD executes.  The suppression is a
+                // static fact about the function; the cascade is a per-RUN one, and where the
+                // build sits in a branch the two disagree on every run that skips it — the
+                // store is then freed by nobody.  Keep the frame's release there and make it
+                // conditional on the record existing, which is the same currency @FR-O-Witness
+                // uses for a local whose assignments mix ownership: a fact only the run knows,
+                // read off a slot at the moment the answer is needed.
+                if !emit
+                    && captured_ref
+                    && adoption_build_is_conditional(&self.capture_build_backing, v)
+                    && let records = owning_record_locals(
+                        data,
+                        function,
+                        self.d_nr,
+                        &self.capture_build_backing,
+                        v,
+                    )
+                    && !records.is_empty()
+                {
+                    guarded.push(free_unless_record_built(v, &records, None, data));
+                }
                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
                     ls.push(Value::Call(
                         data.def_nr("OpFreeRefIfDistinct"),
@@ -10048,11 +10736,15 @@ impl Scopes<'_> {
                 // cascade, so emitting it for a fn-ref whose record the caller now holds
                 // destroys the closure the caller was just handed — `h = fn() { d.a };
                 // out = h;` kept the record (the heap sweep's own link term) and then had
-                // it taken by this one. Asked through `frame_vars()`, the same tagged
-                // decode `closure_records_of_source` uses, so the two cannot disagree
-                // about which record a fn-ref holds.
-                let link_carries = matches!(function.tp(v), Type::Function(_, _, deps)
-                    if deps.frame_vars().iter().any(|w| link_delivered.contains(w)));
+                // it taken by this one.  Asked THROUGH `closure_records_of_source`, the one
+                // home `link_written_closure_records` itself reads, so the two cannot
+                // disagree about which record a fn-ref holds — restating it here as a dep
+                // walk of its own is what let this side read the list in a space the other
+                // side never does.
+                let mut carried: Vec<u16> = Vec::new();
+                closure_records_of_source(data, function, v, &mut carried);
+                let link_carries = matches!(function.tp(v), Type::Function(_, _, _))
+                    && carried.iter().any(|w| link_delivered.contains(w));
                 let in_ret = tp.depend().contains(&v)
                     || ret_carries
                     || link_carries
@@ -10168,6 +10860,10 @@ impl Scopes<'_> {
                     vec![Value::Var(param), Value::Var(orig)],
                 ));
             }
+        }
+        if !guarded.is_empty() {
+            guarded.append(&mut ls);
+            ls = guarded;
         }
         ls
     }
@@ -11468,7 +12164,11 @@ impl Scopes<'_> {
                     _ => return None,
                 };
                 match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
-                    crate::use_analysis::Own::Owned => None,
+                    // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail
+                    // that owns.  Declining on `Unknown` would BIND a temp on a shape the
+                    // oracle cannot read, which adds a store rather than withholding a free;
+                    // the safe direction here is not obviously the conservative one.
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
                     crate::use_analysis::Own::Borrowed { .. }
                     | crate::use_analysis::Own::Join { .. } => {
                         Some(ArmBind::Bind(Self::reopt(opt, tp)))
@@ -11607,7 +12307,25 @@ impl Scopes<'_> {
                     Deps::frame1(base)
                 }
             }
-            crate::use_analysis::Own::Owned => {
+            // @PLN155 phase 2 — **this is the site the split was built for.**  The comment
+            // below describes hand-compensating for a fallback that is now its own verdict:
+            // `Unknown` IS "the `CallRef` arm could not name a base", so this arm no longer
+            // has to infer that from `Owned` and ask the callee to find out.  Kept joined for
+            // now because separating them CHANGES what is emitted, and that is phase 2b with
+            // its own measurement — but this is the first reader to separate.
+            crate::use_analysis::Own::Unknown if crate::keys::own_declines("witness") => {
+                // @PLN155 phase 2b — DECLINE, and **it is REFUTED.**  The reasoning was that
+                // the arm below infers "the summary could not name a base" from an `Owned` it
+                // does not trust and asks the callee to find out, so `Unknown` saying it
+                // outright makes the inference unnecessary.  Measured: it is a WRONG VALUE on
+                // both backends (guard 1335 — `rr.x` reads 99 where the mapper must give 81),
+                // plus guard 1323 on the interpreter.  The arm's hand-compensation is not a
+                // workaround for the fail-open, it is the mechanism that makes this site
+                // right, and declining removes it.  Phase 2a called this "the first reader to
+                // separate"; the measurement says otherwise, which is why it was measured.
+                return None;
+            }
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                 // ⚠ `Own::Owned` is ALSO the `CallRef` arm's fallback for a base it cannot
                 // name — its own doc says so — so at a site that frees it is not a verdict.
                 // A second hop reaches it: `fwd = fn(q) { inner(q) }` resolves (loft#1329
@@ -12396,7 +13114,10 @@ impl Scopes<'_> {
                 // leak instead.  `Borrowed` never lifts.
                 let own = crate::use_analysis::ownership_of(data, self.d_nr, val);
                 let lift_by_oracle = match own {
-                    crate::use_analysis::Own::Owned => true,
+                    // @PLN155 phase 2 — lifting gives an unbound result a NAME so the sweep
+                    // can free it; declining on `Unknown` would leave it unnamed and leak,
+                    // which is why this arm keeps `Owned`'s answer.  `Borrowed` never lifts.
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => true,
                     crate::use_analysis::Own::Join { base } => {
                         outer_call != u32::MAX && base != u16::MAX
                     }
@@ -12776,7 +13497,23 @@ fn mixed_ownership_locals(code: &Value, function: &Function, data: &Data, d_nr: 
     ) {
         if let Value::Set(t, val) = node.unspan() {
             match crate::use_analysis::ownership_of(data, d_nr, val) {
-                crate::use_analysis::Own::Owned => {
+                // @PLN155 phase 2 — membership of `owned` licenses a free downstream, so this
+                // IS a reader where declining on `Unknown` is the conservative direction.
+                // Kept joined for 2a; a candidate for 2b, with the leak it would trade for.
+                // @PLN155 phase 2b — DECLINE withholds membership, and membership licenses a
+                // free downstream, so this is the conservative direction and the trade is a
+                // leak.  `Owned` is unaffected: only the verdict with no derivation behind it
+                // stops licensing.
+                //
+                // Measured, and NOT landable on that measurement: it moves the emit of three
+                // corpus files (1183, 1332, 1333) while every channel — value, exit and leak,
+                // both backends, under `LOFT_STRICT_STORES` — reads identically.  That is
+                // unverified rather than safe, and it is the shape `introspect_diff.sh`'s own
+                // doc warns about: a changed emission that happens to compute the same values
+                // is still a change nobody asked for.  Landing it needs the three files shown
+                // individually right, not a green suite.
+                crate::use_analysis::Own::Unknown if crate::keys::own_declines("owned-slot") => {}
+                crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => {
                     owned.insert(*t);
                 }
                 crate::use_analysis::Own::Borrowed { base }
@@ -12949,8 +13686,9 @@ fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data)
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
-            && function.tp(v).depend().is_empty()
-            && !function.is_skip_free(v)
+            // @FR-O-Proxy asks free — the pair, asked once ([`Function::proxy_says_owned`]),
+            // plus the parameter carve-out this site shares with the scope-exit sweep.
+            && function.proxy_says_owned(v)
             && !function.is_argument(v)
     });
     out
@@ -13159,7 +13897,15 @@ fn witness_set_kind(
                     data.def(fn_nr).is_loft_defined()
                         && !data.def(fn_nr).return_adopts_fresh_store()
                 });
-            copied_by_both || matches!(own(value), crate::use_analysis::Own::Owned)
+            // @PLN155 phase 2 — `Unknown` keeps `Owned`'s answer at all three `mints` tests
+            // below, and it must be SPELLED: a bare `Own::Owned` silently answers "does not
+            // mint" for a value the oracle could not read, which is a different decision from
+            // the one this site has been making.
+            copied_by_both
+                || matches!(
+                    own(value),
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+                )
         }
         Value::Block(b) => {
             let into_work_ref = b.operators.last().is_some_and(|last| {
@@ -13168,9 +13914,16 @@ fn witness_set_kind(
                         && (function.name(*r).starts_with("__ref_")
                             || function.name(*r).starts_with("__rref_")))
             });
-            !into_work_ref && matches!(own(value), crate::use_analysis::Own::Owned)
+            !into_work_ref
+                && matches!(
+                    own(value),
+                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+                )
         }
-        Value::Insert(_) => matches!(own(value), crate::use_analysis::Own::Owned),
+        Value::Insert(_) => matches!(
+            own(value),
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
+        ),
         _ => false,
     };
     if !mints {
@@ -13187,6 +13940,88 @@ fn witness_set_kind(
 /// A build that runs once adopts one store and keeps it; a build in a loop rewrites its
 /// record's capture slot on every pass, so only the LAST adoption is the one the record still
 /// holds and every earlier backing is the frame's to free again.
+/// The capture variables whose closure BUILD may not run — it sits under an `if`, a `match` or
+/// a loop body rather than on the straight line from the function's entry to its exit.
+///
+/// `@FR-L-CapOwn` — the frame gives its release up to the record's cascade, and a cascade that
+/// never happens is not a release.  Over-approximating costs a runtime test where a static
+/// suppression would have done; under-approximating strands the store, so a construct this walk
+/// does not recognise must read as CONDITIONAL rather than as straight-line.
+fn captures_built_conditionally(
+    node: &Value,
+    set_dbref: u32,
+    branched: bool,
+    out: &mut HashSet<u16>,
+) {
+    if branched
+        && let Value::Call(d, args) = node.unspan()
+        && *d == set_dbref
+        && let Some(Value::Var(c)) = args.get(2).map(Value::unspan)
+    {
+        out.insert(*c);
+    }
+    match node.unspan() {
+        // An `if`'s CONDITION is on the straight line; only the two arms are conditional.
+        // `match` lowers to nested `If`, so it needs no arm of its own here.
+        Value::If(cond, then, alt) => {
+            captures_built_conditionally(cond, set_dbref, branched, out);
+            captures_built_conditionally(then, set_dbref, true, out);
+            captures_built_conditionally(alt, set_dbref, true, out);
+        }
+        // A statement SEQUENCE is walked in order, because an early `return` earlier in it
+        // takes everything after it off the straight line.  `if p { return … } return …;`
+        // builds the second closure at the block's top level — inside no arm, so the walk read
+        // it as unconditional — while the arm's return is exactly what skips it.  The frame had
+        // then given its release away to a record that run never built, and the capture leaked
+        // (one store per call).  This is the same bound `@FR-L-CapOne`'s terminating-arm clause
+        // draws from the other side: an arm that returns is exclusive with what follows it.
+        //
+        // Keyed on a `Return` appearing ANYWHERE in a preceding operator, which over-
+        // approximates — a `return` inside a nested lambda's body would count, and a run-time
+        // test would be emitted where a static suppression would have done.  That is the
+        // direction this walk's own contract asks for: over-approximating costs a test,
+        // under-approximating strands the store.
+        Value::Block(bl) => {
+            let mut br = branched;
+            for op in &bl.operators {
+                captures_built_conditionally(op, set_dbref, br, out);
+                br = br || subtree_has_return(op);
+            }
+        }
+        Value::Insert(ops) => {
+            let mut br = branched;
+            for op in ops {
+                captures_built_conditionally(op, set_dbref, br, out);
+                br = br || subtree_has_return(op);
+            }
+        }
+        other => other.for_each_child(&mut |ch| {
+            captures_built_conditionally(
+                ch,
+                set_dbref,
+                branched || matches!(other, Value::Loop(_)),
+                out,
+            );
+        }),
+    }
+}
+
+/// Does `node` contain a `return` anywhere within it?
+///
+/// The signal that everything AFTER `node` in a statement sequence is conditional: a run that
+/// takes that return never reaches them.  Answers about the whole subtree rather than its tail,
+/// because the return that matters here is the one inside a branch arm — a tail return would end
+/// the sequence anyway.
+fn subtree_has_return(node: &Value) -> bool {
+    let mut found = false;
+    node.walk(&mut |n| {
+        if matches!(n.unspan(), Value::Return(_)) {
+            found = true;
+        }
+    });
+    found
+}
+
 fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &mut HashSet<u16>) {
     let inner = in_loop || matches!(node.unspan(), Value::Loop(_));
     if in_loop
@@ -13343,6 +14178,61 @@ fn displaces_owned_through_fresh_callee(value: &Value, v: u16, ov: u16, data: &D
         .all(|(i, a)| i == buf_idx || (!a.reads_var(v) && !a.reads_var(ov)))
 }
 
+/// Does the build that adopted `v`'s store sit in a branch?
+///
+/// Both spellings of "the record took this local's store", the pair [`CaptureBuilds`] carries:
+/// a STRUCT capture names the local outright, a COLLECTION capture names a view whose backing
+/// local is this one and which no closure captured by name.
+fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
+    builds.built_conditionally.contains(&v)
+        || builds
+            .backing
+            .iter()
+            .any(|(c, b)| *b == v && builds.built_conditionally.contains(c))
+}
+
+/// Release `v`'s store unless the closure record in `record` was built.
+///
+/// `@FR-L-CapOwn` — the store is freed ONCE, and where the build is conditional only the run
+/// knows by whom.  The record local is the witness: `emit_lambda_code` inits it to the empty
+/// slot and the build is the only thing that mints into it, so "a record is there" and "the
+/// cascade that replaces this free will run" are the same fact.
+///
+/// "A record is there" refuses BOTH spellings of absent, the pair `build_into_return_buffer`
+/// names for the same reason: the never-built slot (`rec == 0`, `OpConvBoolFromRef`) and the
+/// freed one (`store_nr == u16::MAX`, `OpRefIsNull`).  `if is_null { false } else { has_rec }`
+/// is how `&&` lowers.
+///
+/// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
+/// releases that separately, so the release here declines by store identity where the two
+/// would name one store.  Without the witness the free is plain.
+fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data: &Data) -> Value {
+    // ANY of them being there is the fact: where several records can hold this store they are
+    // mutually exclusive builds, so on a given run at most one exists — and that one's cascade
+    // is the release this free stands down for.  Folded right so the last record is the base
+    // case and each earlier one short-circuits to `true`, which is how `||` lowers.
+    let present = records
+        .iter()
+        .rev()
+        .map(|&record| {
+            v_if(
+                call("OpRefIsNull", record, data),
+                Value::Boolean(false),
+                call("OpConvBoolFromRef", record, data),
+            )
+        })
+        .reduce(|acc, one| v_if(one, Value::Boolean(true), acc))
+        .unwrap_or(Value::Boolean(false));
+    let release = match witness {
+        Some(w) => Value::Call(
+            data.def_nr("OpFreeRefIfDistinct"),
+            vec![Value::Var(v), Value::Var(w)],
+        ),
+        None => call("OpFreeRef", v, data),
+    };
+    v_if(present, Value::Null, release)
+}
+
 fn call(to: &'static str, v: u16, data: &Data) -> Value {
     Value::Call(data.def_nr(to), vec![Value::Var(v)])
 }
@@ -13416,6 +14306,22 @@ fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
 /// ncc block) is deliberately NOT matched — only the value-block's presence counts,
 /// which is why the ncc block's own `convert` attributes no free (its statement is
 /// the declaration, not a nested ncc consumer).
+/// The `OpFreeText` releases a node's CONSUMED `__ncc_` text temps need, ready to splice in.
+///
+/// One home for `collect_consumed_ncc_text` plus the loop that turns its answer into frees —
+/// `Scopes::convert` wrote that pair out three times, once per statement shape it hoists (an
+/// `if` condition, a plain statement, a block tail), and each copy had to be found and taught
+/// anything the others learned.  The list is a `Vec<Value>` rather than a push-into-a-buffer,
+/// because two of the three callers test whether there is anything to free BEFORE deciding to
+/// build a temp at all, and emptiness of the frees is that test.
+fn ncc_text_frees(node: &Value, function: &Function, data: &Data) -> Vec<Value> {
+    let mut out = Vec::new();
+    collect_consumed_ncc_text(node, function, &mut out);
+    out.into_iter()
+        .map(|v| call("OpFreeText", v, data))
+        .collect()
+}
+
 fn collect_consumed_ncc_text(node: &Value, function: &Function, out: &mut Vec<u16>) {
     match node {
         Value::Span(b) => collect_consumed_ncc_text(&b.1, function, out),
@@ -13751,12 +14657,23 @@ impl Scopes<'_> {
                         block.result.base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
                     );
+                    // loft#1469 — the fn-ref block result, the fourth member of the same
+                    // list.  A `match` in tail position lowers to a `scalar_match` BLOCK
+                    // whose last op is a `Return`, so it reaches this leg rather than
+                    // `free_vars`'s; without the type here the tail stayed un-hoisted, the
+                    // two arms of one choice pushed different WIDTHS — 20 bytes for the
+                    // capturing arm, 8 for the bare def-number — and the return read twelve
+                    // bytes of uninitialised stack as the closure half.  The `if` spelling of
+                    // the identical choice is correct precisely because it IS hoisted, which
+                    // gives both arms a `fn`-typed destination to be padded against.
+                    let is_fnref_result = matches!(block.result.base(), Type::Function(_, _, _));
                     let mut hoist_tmp: Option<u16> = None;
                     if is_return
                         && (!free.is_empty() || !trailing_frees.is_empty())
                         && (is_value_return_type(&block.result)
                             || is_text_result
-                            || is_heap_ref_result)
+                            || is_heap_ref_result
+                            || is_fnref_result)
                         && tail_needs_eval
                         && !expr_ends_in_return(o)
                     {
@@ -14105,6 +15022,32 @@ fn collect_all_return_vars(expr: &Value, data: &Data, out: &mut Vec<u16>) {
             collect_return_sources(inner, data, out);
         }
     });
+    // …and through the value STAGED into a returned variable.  `free_vars` reads its
+    // suppression set off the return EXPRESSION (`collect_return_sources` there), and the
+    // B5-L3 hoist then rewrites that expression to `Set(__ret_N, <expr>); …;
+    // Return(Var(__ret_N))` — so by the time this mirror runs, the IR names only the temp
+    // and every source the emitter suppressed sits one assignment away.  Closing the set
+    // under "assigned into a transferred var" is what keeps the two readings the same
+    // question; without it a work-ref the emitter deliberately left unfreed reads here as a
+    // leak (`match p { [a, ..] => a, _ => null }` over a `vector<S?>`, whose payload copy
+    // lands in a `__ref_N` the hoist hides).
+    //
+    // The closure is the emitter's own rule, not a wider one: `collect_return_sources`
+    // unions an `If`'s arms exactly as `free_vars` does, so a source live on one path only
+    // is credited on that path and its sibling orphan is still released by the
+    // `OpFreeRefIfDistinct` the hoist emits beside the `Set`.
+    let mut i = 0;
+    while i < out.len() {
+        let staged = out[i];
+        i += 1;
+        expr.walk(&mut |v| {
+            if let Value::Set(target, rhs) = v
+                && *target == staged
+            {
+                collect_return_sources(rhs, data, out);
+            }
+        });
+    }
 }
 
 fn collect_return_sources(expr: &Value, data: &Data, out: &mut Vec<u16>) {
@@ -14747,6 +15690,7 @@ fn check_ref_leaks(
     }
 
     let built_with = capture_build_backings(data, function, ir);
+    let link_delivered = link_written_closure_records(data, function, fn_def_nr);
     for (&v, &scope) in var_scope {
         if scope == 0 {
             continue; // function parameter — caller frees
@@ -14769,6 +15713,25 @@ fn check_ref_leaks(
         if capture_adoption_owns_free(data, function, &built_with, v) {
             continue;
         }
+        // …and the BUFFER that minted such a store, which the emitter releases through the
+        // same cascade by a predicate of its own (loft#1446's leg in `get_free_vars`).  Asked
+        // of the buffer rather than of the capture's name, because a buffer names ONE store
+        // for its whole life while a capture local reassigned after the build names two — and
+        // asked here because a mirror that knows only `capture_adoption_owns_free` reports the
+        // literal buffer behind an escaping nullable capture as a leak (`n: C39? = C39 { … };
+        // fn() -> integer { … n.a … }`, whose `__ref_p2_N` the record's cascade frees).
+        if escaping_record_holds_buffer(data, function, fn_def_nr, &built_with, v) {
+            continue;
+        }
+        // …and a closure record this frame WRITES OUT through a `&fn(…)` link, which the
+        // emitter suppresses on the same reading (`link_delivered` in `get_free_vars`): a
+        // write through a link delivers exactly as a `return` does, so the caller holds the
+        // record and the frame owes no free.  The third suppression leg this mirror has had
+        // to learn, and the reason each is a CALL to the emitter's own predicate rather than
+        // a restatement of it.
+        if link_delivered.contains(&v) {
+            continue;
+        }
         if v == direct_ret_var {
             continue; // ownership transferred to caller
         }
@@ -14779,6 +15742,11 @@ fn check_ref_leaks(
             // LOFT_REF_LEAK_WARN=1 downgrades the assert to a warning so a
             // debug build can still RUN a program with a known leak shape
             // (e.g. to chase a separate runtime corruption past compile).
+            //
+            // @FR-O-Proxy asks oracle — this CHECKS for a missing free, it never emits or
+            // suppresses one, so the empty dep list is read as evidence about a program the
+            // scope pass has already finished lowering.  A wrong answer here costs a
+            // diagnostic, never a release.
             let warn_only = std::env::var("LOFT_REF_LEAK_WARN").is_ok();
             if warn_only && !(!dep.is_empty() || ret_deps.contains(&v) || freed.contains(&v)) {
                 eprintln!(

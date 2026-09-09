@@ -95,6 +95,27 @@ impl OpEmitter for FusedElementReadEmitter {
 ///
 /// Anything else — no header, a setter this table does not fuse, a field write on a
 /// record — emits the `#rust` template unchanged.
+/// `len(v)` inside a loop that hoisted `v`'s header reads the header's length instead of
+/// resolving the vector through the store table again (@PLN157 queue item 1).  The same
+/// proof that made the header loop-invariant makes its length so: the loop writes no
+/// store, or only in place, so nothing inside it can change how many elements `v` has.
+/// Outside such a loop — and for a vector the analysis did not cover — the `#rust`
+/// template's runtime read stands, which is `DefaultEmitter`.
+pub struct HoistedLengthEmitter;
+
+impl OpEmitter for HoistedLengthEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let header = args
+            .first()
+            .and_then(|v| header_for(ctx, v))
+            .map(str::to_string);
+        let Some(header) = header else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        write!(ctx.w, "(i64::from({header}.len))")
+    }
+}
+
 pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {

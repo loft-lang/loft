@@ -2222,6 +2222,11 @@ impl Stores {
             }
         }
         self.types.truncate(keep as usize);
+        // A surviving row's facts were derived over rows that may now be gone
+        // (a forward reference into the batch being rolled back).
+        for t in &self.types {
+            t.facts.forget();
+        }
         self.names.retain(|_, &mut nr| nr < keep);
     }
 
@@ -2397,12 +2402,25 @@ impl Stores {
         if enum_tp == u16::MAX || (enum_tp as usize) >= self.types.len() {
             return;
         }
+        let mut linked = false;
         if let Parts::Enum(variants) = &mut self.types[enum_tp as usize].parts {
             for variant in variants.iter_mut() {
                 if variant.1 == value_name {
                     variant.0 = value_tp;
+                    linked = true;
                 }
             }
+        }
+        // The variant's row names its enum in `parents`, which is what lets
+        // [`Self::enum_parent_size`] answer "how big must a record of this variant be" by a
+        // lookup over that small set instead of a scan of every registered type (@PLN157 § V-e).
+        // The link belongs HERE, where the variant type becomes a member: writing it only at
+        // field containment left an enum whose variant arrived by this route out of the set, so
+        // the lookup returned a DIFFERENT parent's size than the scan — 16 where the scan said
+        // 24, on 17 corpus files under `-C debug-assertions=on`.  The two walks are the same
+        // question and the assert beside them exists to say so.
+        if linked && value_tp != u16::MAX && (value_tp as usize) < self.types.len() {
+            self.types[value_tp as usize].parents.insert(enum_tp);
         }
     }
 
@@ -2982,6 +3000,23 @@ impl Stores {
             _ => true,
         }
     }
+    /// The scan [`Self::enum_parent_size`] replaced, kept as its debug-build oracle: the
+    /// `parents` index is derived and rebuilt on load, and a divergence here means a
+    /// variant was registered without its enum being written to it.  Compiled in every
+    /// build (a `debug_assert_eq!` still type-checks its expression), dead in release.
+    fn enum_parent_size_by_scan(&self, tp: u16, own_size: u16) -> u16 {
+        for t in &self.types {
+            if let Parts::Enum(variants) = &t.parts {
+                for (v_tp, _) in variants {
+                    if *v_tp == tp && t.size > own_size {
+                        return t.size;
+                    }
+                }
+            }
+        }
+        own_size
+    }
+
     /// For EnumValue types, return the parent enum's size (which covers
     /// the largest variant).  For all other types, return their own size.
     /// B2-runtime: unit enum variants may have a smaller type size than
@@ -3038,15 +3073,22 @@ impl Stores {
         let own_size = self.types[tp as usize].size;
         // Check if any type in the system is an Enum whose variants include tp.
         // If so, use the Enum's size (which is the max of all variants).
-        for t in &self.types {
-            if let Parts::Enum(variants) = &t.parts {
-                for (v_tp, _) in variants {
-                    if *v_tp == tp && t.size > own_size {
-                        return t.size;
-                    }
-                }
+        // The variant's row already names its enum in `parents` (written where the
+        // variant is registered), so the answer is a lookup over that small set — not a
+        // scan of every type, which every record allocation paid (@PLN157 § V-e: 5.7 % of
+        // the `smooth` row, and growing with the program).  `parents` is a `BTreeSet`, so
+        // the walk is in type order, exactly as the scan was.
+        for &p in &self.types[tp as usize].parents {
+            let t = &self.types[p as usize];
+            if let Parts::Enum(variants) = &t.parts
+                && variants.iter().any(|(v_tp, _)| *v_tp == tp)
+                && t.size > own_size
+            {
+                debug_assert_eq!(t.size, self.enum_parent_size_by_scan(tp, own_size));
+                return t.size;
             }
         }
+        debug_assert_eq!(own_size, self.enum_parent_size_by_scan(tp, own_size));
         own_size
     }
 
@@ -3194,6 +3236,65 @@ impl Stores {
     }
 }
 
+/// A type's cached answers to the two questions every record allocation and
+/// free asks — does a value of it own a heap record, and is its default all
+/// zero bytes — derived from `parts` on the first ask
+/// ([`Stores::heap_facts`](super::Stores::heap_facts)).  Derived, so it takes
+/// no part in equality or in the stored form, and a table rollback forgets it
+/// ([`Stores::rollback_types_to`](super::Stores::rollback_types_to)).
+#[derive(Default)]
+pub struct TypeFacts(std::sync::atomic::AtomicU8);
+
+const FACTS_KNOWN: u8 = 1;
+const FACTS_OWNS_HEAP: u8 = 2;
+const FACTS_ZERO_DEFAULT: u8 = 4;
+
+impl TypeFacts {
+    /// `(owns_heap, zero_default)` when derived already.
+    #[inline]
+    pub(super) fn get(&self) -> Option<(bool, bool)> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & FACTS_KNOWN != 0)
+            .then_some((bits & FACTS_OWNS_HEAP != 0, bits & FACTS_ZERO_DEFAULT != 0))
+    }
+
+    pub(super) fn set(&self, owns_heap: bool, zero_default: bool) {
+        let bits = FACTS_KNOWN
+            | if owns_heap { FACTS_OWNS_HEAP } else { 0 }
+            | if zero_default { FACTS_ZERO_DEFAULT } else { 0 };
+        self.0.store(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(super) fn forget(&self) {
+        self.0.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clone for TypeFacts {
+    fn clone(&self) -> Self {
+        TypeFacts(std::sync::atomic::AtomicU8::new(
+            self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal facts whether
+/// or not either has derived them yet.
+impl PartialEq for TypeFacts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for TypeFacts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some((owns, zero)) => write!(f, "TypeFacts(owns_heap={owns}, zero_default={zero})"),
+            None => f.write_str("TypeFacts(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3211,6 +3312,7 @@ pub struct Type {
     /// Tuple element groups live on the parser-side
     /// `Definition::field_groups` instead.
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
+    pub(super) facts: TypeFacts,
 }
 
 impl Type {
@@ -3261,6 +3363,7 @@ impl Type {
             size,
             align,
             field_groups,
+            facts: TypeFacts::default(),
         }
     }
 
@@ -3281,6 +3384,7 @@ impl Type {
             size,
             align: size as u8,
             field_groups: Vec::new(),
+            facts: TypeFacts::default(),
         }
     }
 
@@ -3295,6 +3399,7 @@ impl Type {
             size: 4,
             align: 4,
             field_groups: Vec::new(),
+            facts: TypeFacts::default(),
         }
     }
 

@@ -260,8 +260,8 @@ pub(crate) const POS_POS: u32 = 8;
 pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
-/// the ten codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 37;
+/// the eleven codegen-read fields the snapshot seam exposes.
+pub(crate) const VARIABLE_STRIDE: u32 = 38;
 pub(crate) const VAR_NAME: u32 = 24;
 pub(crate) const VAR_TYPE_DEF: u32 = 28; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
@@ -272,6 +272,8 @@ pub(crate) const VAR_STACK_ALLOCATED: u32 = 33;
 pub(crate) const VAR_SKIP_FREE: u32 = 34;
 pub(crate) const VAR_CAPTURED: u32 = 35;
 pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 36;
+/// @PLN157 § V-g — the elided-copy mark; a fact the EMITTERS read, so it is stored.
+pub(crate) const VAR_VIEW_ELIDED: u32 = 37;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).

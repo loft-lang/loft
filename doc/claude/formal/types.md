@@ -103,10 +103,30 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   formation
   (N-Opt)      τ wf,  has_null(τ)  ⟹  τ? wf     τ? is a TYPE for every τ that has a value to
                spend on absence — a reserved sentinel (layout.md L-Null) or a discriminant
-               (L-Null-Tag).  A type that is only its parts' bytes has neither: a TUPLE and a
-               `value struct` (@PLN101) are refused BY NAME at the declaration, each naming its
-               cures.  A tuple that ARRIVES absent is a present tuple of null members —
-               tuples.md (T-Absent) — so no `(τ, τ)?` exists even in flight.
+               (L-Null-Tag).  EITHER suffices, and which one a τ gets is layout's question, not
+               this rule's: a `value struct` (@PLN101) has no sentinel and IS nullable, because
+               stored inline is exactly the case (L-Null-Tag) governs — `Pt?` is the tagged
+               `__nullable<Pt>` (owner ruling 2026-09-08: *a `Pt?` implementation is an enum
+               variant of the record so it can be null*).
+               What has NEITHER is a TUPLE: it is its members' bytes, with no reserved value and
+               no room for a discriminant, and it is refused BY NAME at the declaration.  A tuple
+               that ARRIVES absent is a present tuple of null members — tuples.md (T-Absent) — so
+               no `(τ, τ)?` exists even in flight.  A FUNCTION type is the second:
+               `(fn() -> integer)?` does not resolve and a yielded fn-ref has no sentinel to
+               test, so (N-Chain) does not wrap one either — a fn-ref field read through an
+               absent receiver stays a fn-ref.
+               ⚠ `has_null(τ)` is a SIDE CONDITION on this rule, so every rule that CONSTRUCTS a
+               `τ?` owes it — (N-Domain), (N-Chain), (Col-Lookup), (N-Join) — and enforcing it
+               only where a type is DECLARED is what let a `τ?` be minted for a τ that had none
+               (loft#1471).  It has ONE implementation since 2026-09-09: `data::has_null`
+               (loft#1478).  Two of the four constructors asked nothing at all before that, and
+               the index's silence was not latent — `v[i]` on a `vector<fn() -> integer>` by a
+               plain variable index minted `fn?`, which no consumer expects, and an internal
+               compiler error followed on both backends.  The FUNCTION former is closed by the
+               predicate; the TUPLE is not, because its absence HAS a form — (T-Absent)'s
+               member-nullable tuple — so the cure there is to build that form, not to stop
+               marking absence.  `data::constructs_optional` carries that one carve-out and
+               names tuples.md D-tup-10, which is what closes it.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 
@@ -411,6 +431,45 @@ old auto-`τ?` reading. Design record:
             The type tracks the propagation the runtime ALREADY performs (verified: `n+5`,
             `5-n`, `abs(n)` on a null n stay null).  C85 is the COMPLEMENT — non-null operands
             stay non-null; a sentinel PRODUCED by overflow is a result, not a propagated INPUT.
+
+(N-Chain)   a PROJECTION CHAIN carries absence to its END and discharges ONCE there.  If any
+            link of `a.b.c` is nullable, the whole chain types `υ?` for the final member type
+            υ, and one discharge at the tail covers every link: `a.b.c ?? d`, `a.b.c?`, a guard,
+            or a `υ?` slot.  This is (N-Prop) read over projection rather than arithmetic — the
+            type tracking a propagation the runtime ALREADY performs (verified: `a.b` absent,
+            `a.b.c.v ?? -1` answers -1 two links later).
+            There is deliberately no null-SAFE navigation spelling.  `a?.b?.c?` parses, but each
+            `?` is (N-Default) at that link — "replace THIS structure with an empty one" — so
+            the chain answers the default (0) instead of reporting the absence, and the trailing
+            `?? d` is then flagged redundant.  Per-link is the wrong question: a chain is one
+            projection with one absence, and `a.b.c?` is the spelling that asks it.
+
+(N-Chain-Place)  a chain in PLACE position takes NO discharge and is TOTAL.  An assignment
+            target (`a.b.c = v`) and the receiver of a MUTATING method (`a.b.c.remove(i)`) are
+            admissible whatever the chain's nullability, and when a link is ABSENT the mutation
+            DOES NOTHING — no diagnostic, no fault, neighbours untouched (verified both
+            backends, every mutation kind).  A place is not a value read (types-history
+            D-Null-Place), and an absent link is not a place, so skipping is the only answer
+            that does not invent one.
+            Contrast (Col-Insert-Absent), which INSTANTIATES rather than skipping: that rule's
+            destination has a HOME to write the empty collection back into — a field, a local, a
+            parameter — and an absent chain LINK has none.  The two answers differ because the
+            question does: "which store does this insert use" has one sensible answer, and
+            "where does this write land when there is nowhere" has none.
+            A discharge in this position is therefore the wrong spelling, not the cure: `?`
+            names what to READ when the slot is null, and a place has no read.  The assignment
+            forms already peel it (loft#1205 `peel_place_discharge`, loft#1214 for a keyed
+            receiver) so the write lands in the real place, and `??` on a place is refused
+            outright — it names two values and no place.
+(N-Shape)   a question about a type's SHAPE — which storage it uses, which definition it names,
+            whether it reaches a store, what it borrows, which channel carries it — answers
+            IDENTICALLY for τ and for τ?.  Only a NULLABILITY question may tell them apart, and
+            it is spelled by READING the marker, never by the absence of a match arm.  Follows
+            from C90: `Optional(τ)` shares τ's storage and the `?` is a compile-time marker.
+            Home: `Type::peel_optional` / `Type::base` (and `Type::data_shape`, which peels a
+            `&` as well).  The compile-error guarantee the `Optional` VARIANT was added for
+            covers an EXHAUSTIVE `match Type` and nothing else, so `matches!`, `if let` and a
+            catch-all arm are where this rule is broken silently.
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys

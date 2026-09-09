@@ -176,6 +176,9 @@ fn f_bound(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { s = mk(v
 fn f_grow(v: vector<integer>) -> integer { t = 0; for i in 0..len(v) { t += grow(v[i]?).n; } t }
 fn f_poke(v: vector<integer>, s: S) -> float { t = 0.0; for i in 0..len(v) { t += poke(s, v[i]? as float).a; } t }
 fn f_via(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += via(v[i]? as float).a; } t }
+struct Tag { name: text = \"\" }
+fn label(t: Tag, u: float) -> float { t.name = \"x\"; u }
+fn f_label(v: vector<integer>, t: Tag) -> float { r = 0.0; for i in 0..len(v) { r += label(t, v[i]? as float); } r }
 fn main() { }";
     assert_eq!(
         hoistable(script, "n_f_mk"),
@@ -187,10 +190,23 @@ fn main() { }";
         0,
         "a record with a vector field grows — still a writer"
     );
+    // @PLN157 § V-l — `poke` writes a SCALAR field of its parameter and nothing else: not
+    // a retbuf write, but an in-place-only writer, which the gate now admits under the
+    // in-place tier (a scalar set moves no record).  The pure tier still declines it.
     assert_eq!(
         hoistable(script, "n_f_poke"),
+        1,
+        "a callee whose only write is a scalar field set is in-place-only (§ V-l)"
+    );
+    assert_eq!(
+        hoistable_tier(script, "n_f_poke", false),
         0,
-        "a write to a parameter is not a retbuf write"
+        "under the pure tier a writing callee still declines"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_label"),
+        0,
+        "a TEXT field set re-allocates — not in place, still a writer (§ V-l's control)"
     );
     // `t = mk(u); t.b = 1.0; t` — NRVO promotes `t` ONTO `via`'s buffer, so both the
     // inner call and the field write land in the buffer: a retbuf-only writer too.

@@ -3710,3 +3710,36 @@ answered by the members from one home.  Code half tracked as `D-tup-10`.
 all null" and can show the distinction carries information in their domain — the identity
 collapses those two, deliberately.
 
+
+## C67 — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
+
+**Catalogue:** @F38 (arithmetic safety).
+
+**Question.** Every scalar op in loft checks for the null sentinel, because ordinary
+arithmetic MAKES nulls — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — and that is how a
+program never halts on a number.  Measured on the drawing pass (@PLN157, 2026-09-08) those
+checks are a third of the `hash` row (a four-op hash per byte: 553–584k ns/op with them,
+370–396k with plain arithmetic).  Should loft offer an explicit opt-in to the PROCESSOR's
+semantics — wrapping integers and IEEE floats as plain values — for a scope or a type the
+author chooses, so hot arithmetic can shed the checks?
+
+**Evaluation.** The opt-in is exactly what its name says: machine-dependent behaviour.
+An integer that wraps, a float that carries `inf` or `NaN` as a value, a division whose
+answer depends on the target's rounding mode — a program written against one machine's
+answers works there and fails on another, silently.  That is the opening loft exists to
+close: the same program, the same answer, on the interpreter, `--native`, wasm and the
+browser, and the never-halts contract rests on the sentinel being produced and checked the
+same way everywhere.  A declaration cannot license trusting a value either (a non-nullable
+parameter is non-null at entry and nowhere else), so the only sound way to owe fewer
+checks is a proof about the VALUE: a mask or a bound makes overflow impossible, a divisor
+proven finite and non-zero cannot make `NaN` — value-range propagation over the P3
+non-sentinel facts, which already refuse arithmetic for this reason.  That recovers the
+hash-shaped hot code (`& 0xFFFFFFFF` bounds every operand of `seed_hash`) without any
+surface and without any machine in the semantics.
+
+**Decision.** Closed, 2026-09-08 (owner): no machine-dependent scope, type or mode.  The
+checks are the semantics; the compiler retires one only where it can PROVE the value cannot
+be the sentinel, and that proof is portable by construction.
+
+**Revisit when.** Never for the machine-dependent form.  The range-proof form is @PLN157's
+queue item 3 and needs no revisit here.

@@ -460,7 +460,68 @@ construct adding speculative parse could regress it silently.
    to type a name that says which question it is asking, because a table in a
    commit message is one reviewer away from being re-conflated.
 
-5. **Golden-IR regression tests** — we have golden PNGs for visual
+5. **A decoder that never learned one of the ways in.** The sibling of (4), and the
+   higher-yield one measured over 2026-09-08/09: not a predicate serving two questions, but one
+   question whose answer is right for every route anyone tested and blind to one more. It is
+   invisible precisely because the missed route is rare — a `matches!` that covers every shape
+   in the corpus reads as finished.
+
+   The commonest shape is a type asked BARE where the value arrives inside an `Optional` or a
+   `RefVar`. The general shape is wider, and the fifth row below is what widened it: a decoder
+   can also miss a way a FACT gets written, not only a way a type gets wrapped.
+
+   **Five instances in two days, in five subsystems, and none of them shared a mechanism:**
+
+   | site | what it never learned | what it cost |
+   |---|---|---|
+   | `scopes::collect_return_sources` | no `Value::FnRef` arm at all | the frame freed the closure record it had just returned (loft#1473/#1474) |
+   | `generation::dispatch`, 5 of 9 sites | `Type::Tuple` asked bare on the assignment slot | a `text` member emitted `&str` into a `String` slot; under it a nested member emitted a move where a clone was owed (loft#1478) |
+   | `parser::fields::vector_element_cursor_deps` | container matched only as `Value::Var` | the cursor was suppressed from its free AND typed as owning nothing — a per-function leak (loft#1479) |
+   | `state::codegen::gen_set_first_at_tos` | `Type::Function` asked bare on the destination | an `Optional(Function)` fell to a fall-through with no arm: an INTERNAL COMPILER ERROR on both backends |
+   | `Stores::enum_parent_size` | the variant's `parents` SET, written only at field containment | a variant linked through `set_variant_type` was absent, so the fast lookup answered `16` where the scan it replaced said `24` — a record allocation claiming less space than its largest variant needs. 17 of the debug-assertions gate's 22 failures (fixed at `c2b582af0`) |
+
+   The last row is a missing ROUTE rather than a missing peel, and it is the one that says what
+   the class actually is. A SCAN over every registered type was replaced by a lookup over a set,
+   on the reasoning that *"the variant's row already names its enum in `parents`"* — which was
+   true of the way the set is written and false of another way the link is made. A fast decoder
+   is a second answer to a question the slow one already answered; it inherits the obligation to
+   know every route, and nothing checks that it does.
+
+   The `gen_set_first_at_tos` row is the shape worth remembering for a different reason, because
+   **two independent defects had to meet**: `(N-Domain)` minted a `τ?` for a type `(N-Opt)`
+   forbids, and a bare test then hid the correct branch from the value. Either alone is harmless.
+   That is why the cure went to the FORMATION side — teaching codegen to carry a type the rules
+   forbid would have made the forbidden type survive quietly.
+
+   The last one is the shape worth remembering, because **two independent defects had to meet**:
+   `(N-Domain)` minted a `τ?` for a type `(N-Opt)` forbids, and a bare test then hid the correct
+   branch from the value. Either alone is harmless. That is why the cure went to the FORMATION
+   side — teaching codegen to carry a type the rules forbid would have made the forbidden type
+   survive quietly.
+
+   ⚠ **A CONSTANT index cannot reach any of them.** `@FR-N-Index` trusts a constant, an active
+   `for` variable, an `i < len(v)` guard and arithmetic over those BY CONTRACT, so the element
+   types non-null, no wrapper is ever built, and every bare test is right by accident. A matrix
+   that indexes by a constant measures nothing here — and so does an all-`integer` tuple corpus,
+   for the separate reason that the coercions missed are the ones only a non-`Copy` member needs.
+   Two blind populations, and `tuples.md`'s own cells sat in both.
+
+   **The queue is a grep**, and it is short enough to walk: a variable's declared type matched
+   without `.base()` is **20 sites** against **128** that peel. Two are already known suspects —
+   `scopes.rs`'s fn-ref free test and its tuple test, both in `get_free_vars`. Not every one is a
+   defect: some types cannot be wrapped, and some sites peel upstream. The walk is to ask each
+   *"can this slot arrive wrapped, and does the Rust type the emitter declares agree with what
+   this test believes?"* — the second half is the one that catches it, because the emitter
+   renders the bare tuple either way (`tuples.md (T-Absent)`) while the test does not.
+
+   The cure that lasts is (4)'s: **one home with a name**, not a peel per site.
+   `generation::var_tuple_elems`, `use_analysis::projection_container_var` and `data::has_null`
+   are the three added for this, and each doc block says what it exists to stop being restated.
+   For the fast-decoder shape the cure is the same one turned around: a replacement for a scan
+   owes a statement of which ROUTES write the fact it reads, and that statement belongs on the
+   fast path, where the next person to add a route will be standing.
+
+6. **Golden-IR regression tests** — we have golden PNGs for visual
    output (Brick Buster) and dump files for bytecode execution, but
    nothing pins the *shape* of the IR produced by the top parser
    constructs.  A small suite would catch silent IR drift that

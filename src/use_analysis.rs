@@ -1716,6 +1716,23 @@ pub enum Own {
     /// `??` / `if-else` whose arms split). The decision is per-execution — adopt iff
     /// the value's store ≠ `base`'s store (the owned branch ran), else materialise.
     Join { base: u16 },
+    /// The oracle could not derive an answer — @FR-O-Unknown, @PLN155 phase 2.
+    ///
+    /// It carries NO base, and that is the definition rather than an omission: the two
+    /// shapes that reach it are a `CallRef` whose target the caller cannot resolve and a
+    /// callee returning a borrow whose base the caller cannot NAME, so there is nothing to
+    /// witness. A reader needing a witness must therefore treat it as "no answer", never as
+    /// a `Borrowed` with a missing one.
+    ///
+    /// ⚠ **It is not a free licence and it is not a refusal.** It exists so that a reader
+    /// DECIDES: before it, both shapes answered `Owned` — the one verdict that licenses a
+    /// free — and a new reader inherited that by writing `_ =>`. Every reader now disposes of
+    /// it explicitly, and today every one of them disposes of it exactly as it disposed of
+    /// `Owned`, so introducing it changed no emitted program (IDENTICAL 1412/1412). Changing
+    /// what a reader DOES with it is a separate decision per reader, each with its own
+    /// measurement; folding that into the same change would spend the byte-identical gate
+    /// exactly where it is most needed.
+    Unknown,
 }
 
 impl Own {
@@ -1723,7 +1740,10 @@ impl Own {
     #[must_use]
     fn base(self) -> Option<u16> {
         match self {
-            Own::Owned => None,
+            // `Unknown` has no base BY DEFINITION (see the variant), so it answers `None`
+            // exactly as `Owned` does — the question is "which var does this alias", and
+            // "no answer" and "it aliases nothing" both mean there is no var to name.
+            Own::Owned | Own::Unknown => None,
             Own::Borrowed { base } | Own::Join { base } => Some(base),
         }
     }
@@ -1734,6 +1754,29 @@ impl Own {
     #[must_use]
     fn join(self, other: Own) -> Own {
         match (self, other) {
+            // An arm the oracle could not derive makes the JOIN underivable: a `Join`'s
+            // whole content is the witness its readers compare against, and an arm with no
+            // answer cannot supply or refute one.  Absorbing, so it cannot be lost in a
+            // reduce over many arms.
+            // @PLN155 phase 2 — an underivable arm joins as the `Owned` it used to BE, so
+            // introducing the variant changes no lattice result; two underivable arms stay
+            // underivable, which loses nothing.  Making `Unknown` ABSORBING is defensible —
+            // a `Join`'s whole content is a witness, and an arm with no answer can neither
+            // supply nor refute one — but it is a behaviour change (measured: it alone does
+            // not move the corpus, yet it would silently widen with every new reader), so it
+            // belongs to phase 2b with its own gate.
+            (Own::Unknown, Own::Unknown) => Own::Unknown,
+            // @PLN155 phase 2b — ABSORBING: a `Join`'s whole content is the witness its
+            // readers compare against, and an arm the oracle could not derive can neither
+            // supply one nor refute one, so the join has no answer either.
+            // Measured INERT on the 1412-file corpus (2026-09-08) — no emit moves — so the
+            // absorbing lattice cannot be scored yet.  That is the argument for keeping it
+            // behind the switch rather than making it the default on its plausibility: it
+            // would widen silently with every new reader, and nothing today would notice.
+            (Own::Unknown, _) | (_, Own::Unknown) if crate::keys::own_declines("join") => {
+                Own::Unknown
+            }
+            (Own::Unknown, o) | (o, Own::Unknown) => Own::Owned.join(o),
             (Own::Owned, Own::Owned) => Own::Owned,
             (Own::Borrowed { base: a }, Own::Borrowed { base: b }) if a == b => {
                 Own::Borrowed { base: a }
@@ -2361,26 +2404,37 @@ impl<'a> Ownership<'a> {
                     .copied()
                     .filter(|d| *d != u32::MAX)
                 else {
-                    return Own::Owned;
+                    // @PLN155 phase 2 — the target is not resolvable, so nothing about this
+                    // call's result has been derived.  It answered `Owned` before, which is
+                    // the one verdict that licenses a free.
+                    return Own::Unknown;
                 };
                 let callee_own = self.return_ownership(d);
                 let callee_base = match callee_own {
+                    // The CALLEE's own summary.  `Owned` there is a real derivation — the
+                    // callee mints — and passes straight through; `Unknown` is the callee's
+                    // fail-open reaching the caller, so it stays unknown rather than being
+                    // laundered into an owned result (@PLN155 phase 2).
                     Own::Owned => return Own::Owned,
+                    Own::Unknown => return Own::Unknown,
                     Own::Borrowed { base } | Own::Join { base } => base,
                 };
                 let mut base = self.caller_arg_base(d, callee_base, args, func, defs);
                 if base == u16::MAX {
                     base = self.closure_capture_base(d, callee_base, *fn_var, defs);
                 }
-                // ⚠ An UNNAMEABLE base answers `Owned` here, and that is a fallback readers
-                // must not take at face value: every site that would free on it gates on
-                // `callref_capture_blocks`, which asks the CALLEE's own verdict
-                // (`return_ownership`) rather than this one.  Answering `Borrowed { u16::MAX }`
-                // instead was measured to break the direct nullable-capture return
-                // (`fn(n) -> P? { return c; }`, guard 1114), whose delivery reads this arm.
+                // ⚠ An UNNAMEABLE base is not an owned value — @PLN155 phase 2.  The callee
+                // published a BORROW and the caller cannot say of WHAT, so the honest answer
+                // is that nothing was derived; it answered `Owned` before, and readers were
+                // told not to take that at face value (every site that would free on it gates
+                // on `callref_capture_blocks`, which asks the CALLEE's own verdict instead).
+                // Answering `Borrowed { u16::MAX }` was measured to break the direct
+                // nullable-capture return (`fn(n) -> P? { return c; }`, guard 1114) — which is
+                // the point: a missing witness is not a witness, and `Unknown` says so where
+                // both `Owned` and a sentinel `Borrowed` lied in opposite directions.
                 match callee_own {
                     Own::Join { .. } if base != u16::MAX => Own::Join { base },
-                    _ => Own::Owned,
+                    _ => Own::Unknown,
                 }
             }
             // Everything else is a literal, a scalar/void op, or control carrying no value
@@ -2404,7 +2458,11 @@ impl<'a> Ownership<'a> {
     ) -> Own {
         let callee_own = self.return_ownership(callee_d);
         let callee_base = match callee_own {
+            // The `Call` twin of the `CallRef` arm above, and it must answer alike: a callee
+            // whose own summary is underivable does not become an owned result by being
+            // called through the named spelling (@PLN155 phase 2, @FR-O-NoDiverge).
             Own::Owned => return Own::Owned,
+            Own::Unknown => return Own::Unknown,
             Own::Borrowed { base } | Own::Join { base } => base,
         };
         let base = self.caller_arg_base(callee_d, callee_base, caller_args, func, defs);
@@ -2450,7 +2508,9 @@ impl<'a> Ownership<'a> {
             // then no caller variable holds it.
             Err(arg) => match self.classify(arg, func, defs) {
                 Own::Borrowed { base } | Own::Join { base } => base,
-                Own::Owned => u16::MAX,
+                // `u16::MAX` is this function's "no caller variable holds it", which is what
+                // both an owned argument and an underivable one mean here (@PLN155 phase 2).
+                Own::Owned | Own::Unknown => u16::MAX,
             },
         }
     }
@@ -3300,6 +3360,10 @@ pub fn nullable_join_first_bind(
     }
     let base = match ownership_of(data, d_nr, value) {
         Own::Join { base } => base,
+        // @PLN155 phase 2 — no derivation, so no witness; this returns `None` (today's plain
+        // adopt) exactly as the `Owned` arm below does.  A witness invented for an
+        // underivable value would guard against the wrong store.
+        Own::Unknown => return None,
         // A pure BORROW is guarded only where the witness is the one argument the return
         // deps name: a return that may borrow EITHER of two arguments has two bases and one
         // witness would adopt the other, and a base the oracle resolved to an argument the
@@ -3378,6 +3442,239 @@ pub fn callref_join_first_bind(
         return None;
     }
     Some((*rec, base))
+}
+
+/// @PLN157 § V-g — the record locals of `body` that are only ever READ: every occurrence of
+/// the variable outside its one defining `Set` sits at arg 0 of a scalar getter
+/// (`OpGetFloat`, `OpGetInt`, …, a `len`) or of a PROJECTION chain that itself ends in a
+/// read.  Indexed by variable number.  Computed off the RAW body before the scan, like
+/// `multi_assigned_in`, because the answer is positional and the variable table carries
+/// only the last assignment.
+///
+/// The fallback is the conservative one, and it is the whole point: an occurrence in ANY
+/// position not named here removes the variable from the set — a call argument (a
+/// by-value struct parameter is written through, loft#894), a setter's target root
+/// (through any depth of projection), a bare copy source (`b = a`), a literal element
+/// (`out += [a]` carries the append's source-free bit), a return, a fn-ref, a loop or
+/// iteration subject, a tuple put.  So the set can only SHRINK on a shape the walk does not
+/// understand, never grow, and a variable that never occurs at all is read-only vacuously
+/// (its bind is then the only thing that happens to it).
+pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) -> Vec<bool> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Pos {
+        /// A pure read: the value is observed and nothing can reach the record.
+        Read,
+        /// The root of a setter, or a projection handed to something that may write.
+        Reach,
+    }
+    fn is_scalar_getter(name: &str) -> bool {
+        matches!(
+            name,
+            "OpGetBoolean"
+                | "OpGetByte"
+                | "OpGetByteNullable"
+                | "OpGetCharacter"
+                | "OpGetEnum"
+                | "OpGetFloat"
+                | "OpGetInt"
+                | "OpGetShort"
+                | "OpGetShortFull"
+                | "OpGetShortRaw"
+                | "OpGetSingle"
+                | "OpGetText"
+                | "OpGetTextSub"
+                | "OpGetStackText"
+                | "OpLengthVector"
+                | "t_6vector_len"
+        )
+    }
+    struct Cx<'a> {
+        data: &'a Data,
+        ok: Vec<bool>,
+        sets: Vec<u32>,
+    }
+    fn deny(cx: &mut Cx, v: u16) {
+        if let Some(slot) = cx.ok.get_mut(v as usize) {
+            *slot = false;
+        }
+    }
+    /// `arg` is an argument of the op whose classification gave it `pos`.
+    fn arg(cx: &mut Cx, arg: &Value, pos: Pos, under_getter: bool) {
+        match arg.unspan() {
+            Value::Var(v) => {
+                if !(under_getter && pos == Pos::Read) {
+                    deny(cx, *v);
+                }
+            }
+            other => walk(cx, other, pos),
+        }
+    }
+    fn walk(cx: &mut Cx, node: &Value, pos: Pos) {
+        match node.unspan() {
+            Value::Call(op, args) => {
+                let name = cx.data.def(*op).name().to_string();
+                let writer = is_first_arg_write_name(&name);
+                let scalar = is_scalar_getter(&name);
+                let projection = (!scalar && name.starts_with("OpGet"))
+                    || matches!(name.as_str(), "OpVectorRef" | "OpVectorRefNullable");
+                for (i, a) in args.iter().enumerate() {
+                    if i == 0 && writer {
+                        arg(cx, a, Pos::Reach, false);
+                    } else if i == 0 && scalar {
+                        arg(cx, a, Pos::Read, true);
+                    } else if i == 0 && projection {
+                        // A projection hands its result on: a read stays a read, a reach
+                        // (the root of a setter, an argument) reaches the record.
+                        arg(cx, a, pos, pos == Pos::Read);
+                    } else {
+                        // Any other argument position — including a user call's — may
+                        // write through what it is given.
+                        arg(cx, a, Pos::Reach, false);
+                    }
+                }
+            }
+            Value::Set(v, rhs) => {
+                if let Some(n) = cx.sets.get_mut(*v as usize) {
+                    *n += 1;
+                }
+                arg(cx, rhs, Pos::Reach, false);
+            }
+            Value::Var(v) => deny(cx, *v),
+            Value::Iter(v, a, b, c) => {
+                deny(cx, *v);
+                for x in [a, b, c] {
+                    arg(cx, x, Pos::Reach, false);
+                }
+            }
+            Value::TupleGet(v, _) | Value::FnRefDnr(v) => deny(cx, *v),
+            Value::TuplePut(v, _, val) => {
+                deny(cx, *v);
+                arg(cx, val, Pos::Reach, false);
+            }
+            Value::CallRef(v, args) => {
+                deny(cx, *v);
+                for a in args {
+                    arg(cx, a, Pos::Reach, false);
+                }
+            }
+            Value::Return(x) | Value::Drop(x) | Value::Yield(x) => arg(cx, x, Pos::Reach, false),
+            Value::Insert(items) | Value::Tuple(items) | Value::Parallel(items) => {
+                for a in items {
+                    arg(cx, a, Pos::Reach, false);
+                }
+            }
+            Value::If(c, t, e) => {
+                arg(cx, c, Pos::Reach, false);
+                walk(cx, t, Pos::Read);
+                walk(cx, e, Pos::Read);
+            }
+            // Blocks, loops, spans: every child is a statement in read position; a bare
+            // `Var` there is denied by the `Var` arm above.
+            _ => node.for_each_child(&mut |c| walk(cx, c, Pos::Read)),
+        }
+    }
+    let mut cx = Cx {
+        data,
+        ok: vec![true; n_vars],
+        sets: vec![0; n_vars],
+    };
+    walk(&mut cx, body, Pos::Read);
+    for (v, ok) in cx.ok.iter_mut().enumerate() {
+        if cx.sets[v] != 1 {
+            *ok = false;
+        }
+    }
+    cx.ok
+}
+
+/// @PLN157 § V-g — the three facts about a function BODY that [`view_elision_bind`] reads,
+/// each computed once off the raw body before the scan (`scopes` holds them).
+#[derive(Clone, Copy)]
+pub struct BodyFacts<'a> {
+    /// `read_only_record_locals`: the record locals only ever read, by variable number.
+    pub read_only: &'a [bool],
+    /// `scopes::multi_assigned_in`: variables with two or more `Set`s.
+    pub multi_assigned: &'a HashSet<u16>,
+    /// `scopes::assigned_in`: variables with any `Set` — a parameter's rebind test.
+    pub assigned: &'a HashSet<u16>,
+}
+
+/// @PLN157 § V-g — is `v = value` a record bind whose copy can be ELIDED: the callee's
+/// return borrows a nameable argument (`Own::Borrowed` / `Own::Join`), that argument is
+/// value-const and bound once (so it names the same store at every later free), and `v`
+/// is a dense record local bound once, never captured, and only ever read
+/// (`read_only_record_locals`)?  Then `(O-Move)`'s copy is unobservable: `v` keeps the
+/// dep — a view — and the join's per-execution minted store is released by identity
+/// against the base at scope exit, the route a COLLECTION join already takes
+/// (loft#1257).  Answers the base to witness against.
+///
+/// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` decides
+/// and marks the variable (`Function::mark_view_elided`); the two backends' copy arms
+/// read the mark.  A `CallRef` is not admitted — a closure's join has its own route
+/// (`callref_join_first_bind`) and its witness is not the argument's store.
+///
+/// The rule it keeps is @FR-O-Move — *the caller COPIES to obtain its own store* — as an
+/// elision of the copy where no program can observe it, and @FR-O-Borrow for what the
+/// local then is: a value aliasing the argument, carrying it in its deps, skip-free.
+#[must_use]
+pub fn view_elision_bind(
+    data: &Data,
+    d_nr: u32,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+    facts: &BodyFacts<'_>,
+) -> Option<u16> {
+    let BodyFacts {
+        read_only,
+        multi_assigned,
+        assigned,
+    } = *facts;
+    if !crate::keys::view_elision_enabled() {
+        return None;
+    }
+    // Bare, not `base()`: a nullable local's slot may hold the sentinel and takes the
+    // nullable join's own copy (`nullable_join_first_bind`).
+    if !matches!(function.tp(v), Type::Reference(_, _)) {
+        return None;
+    }
+    if function.is_argument(v)
+        || function.is_skip_free(v)
+        || function.is_captured(v)
+        || multi_assigned.contains(&v)
+        || !read_only.get(v as usize).copied().unwrap_or(false)
+    {
+        return None;
+    }
+    let Value::Call(fn_nr, _) = value.unspan() else {
+        return None;
+    };
+    if !data.def(*fn_nr).is_loft_defined() {
+        return None;
+    }
+    let base = match ownership_of(data, d_nr, value) {
+        Own::Borrowed { base } | Own::Join { base } => base,
+        // @PLN155 phase 2 — the elision is licensed by a POSITIVE fact: the return borrows
+        // an argument this frame can name, and that argument stands witness at the local's
+        // scope exit.  `Unknown` is "derived nothing", which supplies no base at all, so it
+        // declines exactly as `Owned` does and the bind keeps the copy `(O-Move)` asks for.
+        Own::Owned | Own::Unknown => return None,
+    };
+    // An ARGUMENT outlives every local of the frame, so it can stand witness at the
+    // local's scope exit; a value-const one is never written through in this frame
+    // (`Const-Value`), so the view reads what the copy would have.  One that is
+    // ASSIGNED at all is rebound after entry — its only bind is the call — and would
+    // name a different store at the free (`v = other` copies into a fresh buffer), so
+    // it is declined outright rather than snapshotted.
+    if base == u16::MAX
+        || !function.is_argument(base)
+        || !function.is_value_const(base)
+        || multi_assigned.contains(&base)
+        || assigned.contains(&base)
+    {
+        return None;
+    }
+    Some(base)
 }
 
 /// The caller variable a fn-ref's COLLECTION `??` return may still be aliasing — the base a
@@ -3459,7 +3756,25 @@ pub fn callref_collection_join_base(
         // dep is asked next.  It names the same kind of witness (a visible parameter mapped
         // to the caller's argument), which is why both answers feed one identity free rather
         // than two mechanisms.
-        Own::Owned => callref_declared_borrow_base(data, d_nr, value),
+        //
+        // @PLN155 phase 2 — **the second reader the empty-diff prediction found, and the
+        // sentence above is its own description of the defect.**  "The base the summary could
+        // not name" IS `Own::Unknown` now, so this arm's real trigger has a name; letting it
+        // fall to `_ => None` dropped the witness and with it the `OpFreeRefIfDistinct`, one
+        // leak per evaluation.  Kept joined for 2a — but `Unknown` is the SHARPER trigger
+        // here, and separating them (asking the declared dep only where the summary genuinely
+        // had no answer) is a phase-2b candidate with a real question behind it: how often is
+        // a plain `Owned` reaching this arm a derivation rather than the fallback?
+        // @PLN155 phase 2b — DECLINE means asking the declared dep ONLY where the summary
+        // genuinely had no answer, which is what the comment above describes; a plain `Owned`
+        // then stops reaching the dep, and the question that measures it is how often such an
+        // `Owned` is a real derivation rather than the fallback.
+        // Measured INERT on the 1412-file corpus (2026-09-08): no file's emit moves either
+        // way, so nothing here can fail and nothing is proved.  Kept as the A/B for the shape
+        // that does reach it — a `CallRef` whose summary answers a plain `Owned` at a site
+        // that also has a declared dep — which phase 3's matrix has to build by hand.
+        Own::Owned if crate::keys::own_declines("collection") => None,
+        Own::Owned | Own::Unknown => callref_declared_borrow_base(data, d_nr, value),
         _ => None,
     }
 }
@@ -3750,7 +4065,13 @@ pub fn text_return_orphan_risk(data: &Data, d_nr: u32) -> Option<&'static str> {
     std::iter::once(tail)
         .chain(own.early_return_ownerships(d_nr))
         .find_map(|o| match o {
-            Own::Owned => Some("owned-by-value"),
+            // @PLN155 phase 2 — **the reader the empty-diff prediction found.**  `Unknown` fell
+            // to the `_ => None` below, and `None` here means *no risky delivery site*, so the
+            // text return lost its caller buffer and went back to a frame-local `__ret_N`.
+            // That is a promotion decision changing on a verdict nobody chose: the arm was
+            // written when `Owned` was the only answer this shape could give.  Kept joined —
+            // an underivable tail is at least as risky as an owned one, never less.
+            Own::Owned | Own::Unknown => Some("owned-by-value"),
             Own::Borrowed { base } if !borrows_arg(base) => Some("view-of-local"),
             Own::Join { base } if !borrows_arg(base) => Some("join-of-local"),
             _ => None,
@@ -3774,7 +4095,11 @@ pub fn displaced_owned_slots(code: &Value, function: &Function, data: &Data) -> 
         .reassign_sites_of(code, function)
         .into_iter()
         .filter(|s| {
-            matches!(s.prior, Own::Owned)
+            // @PLN155 phase 2 — spelled, not inherited: the slot's PRIOR verdict decides
+            // whether a displaced store needs the strip, and an underivable prior kept the
+            // `Owned` answer it had.  Reading a bare `Own::Owned` would silently stop
+            // stripping there, which orphans the displaced store rather than protecting it.
+            matches!(s.prior, Own::Owned | Own::Unknown)
                 && matches!(s.rhs, Own::Borrowed { .. } | Own::Join { .. })
                 // A retbuf-promoted PARAM slot is NOT this fix's territory: the
                 // dep-strip would disable the dep-carrying explicit reassign-free
@@ -3812,6 +4137,76 @@ pub fn free_sites(data: &Data, d_nr: u32) -> Vec<FreeSite> {
 /// the same question (@FR-O-Proxy) that is unsound alone.  A chokepoint should read here.
 pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
+}
+
+/// WHY the oracle answers what it answers about a BINDING — @PLN155 phase 0.
+///
+/// [`ownership_of`] returns a verdict and hides how much evidence is under it, and the two
+/// are not the same fact.  Its `Value::Var` arm answers `Own::Owned` for a var with no local
+/// definition and no mint, which is a FALLBACK and not a derivation: nothing about that
+/// binding was read, and the permissive value was taken because it is the permissive value.
+/// A free licensed by such an answer rests on the deps PROXY alone.
+///
+/// The census that counts those cannot tell them apart from the verdict, and re-deriving
+/// "does this var have a definition" at the census site would be a second spelling of the
+/// question this function already owns — which is the defect @PLN155 exists to remove, so
+/// the evidence is published here instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnEvidence {
+    /// The verdict is joined from the binding's own defining right-hand sides.
+    Derived,
+    /// `OpDatabase` minted a store into this var — a positive fact, no `Set` needed.
+    Minted,
+    /// A parameter with no local definition: the caller owns it, so `Borrowed` of itself.
+    Parameter,
+    /// No definition and no mint, but the var IS a SYNTHESIZED delivery buffer
+    /// ([`is_synth_buffer`]) — a `__vdb`/`__ref`/`_mvcopy`/`__retbuf` whose store was minted
+    /// to back this var alone.  A POSITIVE fact reached without a `Set`: the callee mints
+    /// into the caller's buffer, so the caller's frame sees no definition, and reading that
+    /// silence as "nothing is known" is what made these two-thirds of @PLN155 phase 0's
+    /// `proxy-alone` population.
+    SynthBuffer,
+    /// No definition, no mint, not a parameter, not a delivery buffer — `Owned` because that
+    /// is the default.  This is the fail-open the plan's phase 2 is about.
+    Fallback,
+}
+
+/// [`ownership_of`] for a BINDING, with the evidence its verdict rests on, against an
+/// already-computed [`function_defs`].
+///
+/// Only the `_with` form exists: every caller asks about MANY bindings of one function (that
+/// is what a census is), and a one-shot spelling beside it would be the quadratic trap
+/// [`function_defs`] documents, sitting there waiting to be reached for.
+#[must_use]
+pub(crate) fn ownership_evidence_with(
+    data: &Data,
+    d_nr: u32,
+    v: u16,
+    defs: &Defs,
+) -> (Own, OwnEvidence) {
+    let own = ownership_of_with(data, d_nr, &Value::Var(v), defs);
+    // The same three questions the `Value::Var` arm asks, in the same order, read off the
+    // same `defs` — so the evidence cannot describe a branch the verdict did not take.
+    let has_def = defs
+        .rhs
+        .get(&v)
+        .is_some_and(|rhss| rhss.iter().any(|r| !holds_no_store(data, r)));
+    let minted = defs.db_vars.contains(&v);
+    let evidence = if has_def {
+        OwnEvidence::Derived
+    } else if minted {
+        OwnEvidence::Minted
+    } else if data.def(d_nr).variables.is_argument(v) {
+        OwnEvidence::Parameter
+    } else if is_synth_buffer(data.def(d_nr).variables.name(v)) {
+        // Asked AFTER the parameter test on purpose: a promoted `__retbuf` is an argument and
+        // the caller owns that store, so the parameter answer must win.  Only a frame-local
+        // delivery buffer reaches here.
+        OwnEvidence::SynthBuffer
+    } else {
+        OwnEvidence::Fallback
+    };
+    (own, evidence)
 }
 
 /// The whole-function half of [`ownership_of`]: every var's defining right-hand
@@ -3906,6 +4301,9 @@ fn own_kind(own: Own) -> &'static str {
         Own::Owned => "Owned",
         Own::Borrowed { .. } => "Borrowed",
         Own::Join { .. } => "Join",
+        // A dump, so it says what the verdict IS rather than folding it onto a neighbour —
+        // this is the one family of readers where `Unknown` must be visible on sight.
+        Own::Unknown => "Unknown",
     }
 }
 
@@ -3921,6 +4319,7 @@ pub fn fmt_own(own: Own, func: &Function) -> String {
     };
     match own {
         Own::Owned => "Owned".to_string(),
+        Own::Unknown => "Unknown".to_string(),
         Own::Borrowed { base: b } => format!("Borrowed(base={})", base(b)),
         Own::Join { base: b } => format!("Join(base={})", base(b)),
     }
@@ -3995,6 +4394,7 @@ pub fn render_own(own: Own, func: &Function, v: u16) -> String {
     };
     match own {
         Own::Owned => "Owned".to_string(),
+        Own::Unknown => "Unknown".to_string(),
         Own::Borrowed { base: b } if b == v => "Borrowed(caller-arg)".to_string(),
         Own::Borrowed { base: b } if b != u16::MAX && is_synth_buffer(func.name(b)) => {
             format!("Owned (backing={})", name(b))
@@ -4619,7 +5019,10 @@ pub fn warn_dead_stores(
             // `RefVar`, already excluded above.
             let owns = is_value_struct_local(func.tp(v), data)
                 || match ownership_of(data, d_nr, &Value::Var(v)) {
-                    Own::Owned => true,
+                    // A LINT screen, not an emitter: `owns` decides whether to look at `v`
+                    // at all, so keeping `Owned`'s answer costs at most a diagnostic that is
+                    // examined further, never a free (@PLN155 phase 2).
+                    Own::Owned | Own::Unknown => true,
                     Own::Borrowed { base } | Own::Join { base } => {
                         base == v
                             || (base != u16::MAX

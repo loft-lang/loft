@@ -1,0 +1,34 @@
+# What CodeQL analyses, and what it does not.
+#
+# The scope is the SHIPPED surface: the compiler and runtime (`src/`), the crates a
+# consumer links (`loft-ffi*`, `wasm-sync`, `lib/*/native`), the browser runtime an
+# `--html` export carries (`doc/*.js`), and the IDE plugin (`editors/`).  Everything
+# below is code that never leaves this repository, and analysing it produced only
+# findings whose fixture IS the flagged construct:
+#
+#   * `bench/12_drawing/bench.rs` — 11 `rust/hard-coded-cryptographic-value` alerts at
+#     CRITICAL, every one a call to `seed_hash`, a deterministic value-noise PRNG built
+#     from the Teschner spatial-hash constants.  It places leaves and branches
+#     reproducibly so two runs draw the same picture.  No key, no secret, and the
+#     constants are the point.
+#   * `tests/crash_report_*.rs` — `rust/access-invalid-pointer`.  They write to a null
+#     pointer with `write_volatile` ON PURPOSE: the test exists to fault and then assert
+#     what the crash report says.
+#   * `tests/data/slow_font_server.py`, `doc/claude/plans/**/probes/*.py` —
+#     `py/path-injection` in loopback fixture servers that serve one directory to a test.
+#   * `tests/wasm/*.html` — `js/xss` in a page the suite loads to prove the browser build
+#     keeps the UI responsive.
+#
+# A scanner that reports a benchmark's PRNG as a critical cryptographic finding trains
+# the reader to skip the board, which is the cost this file exists to avoid: what is
+# left is small enough to read, so a real finding is visible.  A new top-level directory
+# is analysed by DEFAULT — this is a deny-list, not an allow-list, so forgetting to
+# extend it costs noise rather than coverage.
+paths-ignore:
+  - bench/**
+  - tests/**
+  - fuzz/**
+  - tools/**
+  - scripts/**
+  - doc/claude/**
+  - .claude/**

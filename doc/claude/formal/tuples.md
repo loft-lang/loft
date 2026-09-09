@@ -172,12 +172,49 @@ or take the tuple by value and return a new one. The refusal message says both.
 
 - **D-tup-10** *(open, loft#1423 / loft#1451)* — `(T-Absent)` says no `Optional(Tuple)` exists,
   and the code still mints one wherever absence is synthesised: `Type::optional` wraps a
-  `Tuple` like any other type.  Measured (both backends unless said): `v[i].0` on a
-  `vector<(integer, integer)>` by a variable index is REFUSED by name where the rule types it
-  `integer?`; `w: (integer?, integer?) = v[i]` is refused as a type change from
-  `(integer, integer)?`, which is the landing type the rule names; `t == null` is refused
-  (*"No matching operator '=='"*) on BOTH spellings, `(integer?, integer?)` and the in-flight
-  one.  `v[i] ?? d` and `v[i]?` already answer right.  **Removal:** the identity lives in
+  `Tuple` like any other type.
+
+  ⚠ **RE-MEASURED 2026-09-09, both backends: three of the four cells this entry called REFUSED
+  now work, and only one still does.**  The entry read as a four-cell refusal and is a one-cell
+  one.  What still fails is the LANDING type: `w: (integer?, integer?) = v[i]` is refused as
+  *"cannot change type from `(integer?, integer?)` to `(integer, integer)?`"* — the two spellings
+  of one notion meeting, which is the deviation itself.  What now WORKS: `v[i].0` by a variable
+  index answers `null(oob)` where the entry says it is refused by name; `t == null` answers
+  `true` on BOTH spellings, the member-nullable and the in-flight one, where the entry says
+  *"No matching operator '=='"*.  `v[i] ?? d` and `v[i]?` still answer right (`1`, `0`).  The
+  three were carried along by loft#1450's `(N-Chain)` work and @PLN25's null model rather than
+  closed deliberately, which is exactly why a deviation's measured cells are a claim to
+  re-measure and not a record to cite.
+
+  ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
+  MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`
+  into a `String` slot), and under that a nested tuple member emitted a move where a clone was
+  owed (E0382).  Both from ONE omission: `generation::dispatch`'s assignment arm asks *"is this
+  slot a tuple?"* NINE times to pick a member's coercion, and five of them asked it BARE — so
+  the `Optional` this rule's own `(N-Domain)` wrapper puts on the slot hid the slot from its own
+  coercions, while the Rust type rendered is the bare tuple either way.  `generation::
+  var_tuple_elems` is the one home now.
+
+  **A CONSTANT index could not reach either refusal** (`(N-Index)` trusts it, so no wrapper is
+  built), and **an all-`integer` tuple could not reach them at all**, because the coercions
+  missed are the ones only a non-`Copy` member needs.  That is the blind population: this
+  entry's cells, and this doc's counts, have been read over `(integer, integer)` shapes.  **Any
+  cell added here should carry a `text` member.**
+
+  A third defect came out from under it — the same read through a struct FIELD's vector leaks
+  its work-ref record on `--native` (loft#1479) — which is newly REACHABLE rather than newly
+  broken, since that cell did not compile before.
+
+  ⚠ **And a cure that suggests itself is measured WRONG.**  `(N-Opt)`'s side condition got its
+  home in `data::has_null` on 2026-09-09 (loft#1478), and the obvious next step — have the `τ?`
+  constructors ask it, so the index stops minting `(integer, text)?` — makes this worse, not
+  better: the read then types `(integer, text)`, non-null members holding nulls, with no
+  diagnostic.  It trades a type the language cannot spell for one that LIES about what it holds.
+  "No `Optional(Tuple)`" is not "no absence"; the tuple's absence has a form and the cure is to
+  BUILD it.  `data::constructs_optional` is that carve-out, and it exists to be deleted when this
+  entry closes — the gap between the two predicates IS this deviation, in code.
+
+  **Removal:** the identity lives in
   `Type::optional` (one home — a `Tuple` maps to its member-nullable form); the null question
   then needs its one tuple home (`== null` / `??` agreeing on "every member null", as `1120-…`
   made them agree for a collection), and the typed decoder's tuple arm, when it grows one,

@@ -1,0 +1,223 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1469 — a `match` arm that yields a lambda, in every position a match value can stand.
+//
+// `(F-Block)` says a block ending in an expression YIELDS that expression, and the value flows
+// out to whatever reads it.  A fn-ref value is twenty bytes — an 8-byte `d_nr` then a 12-byte
+// closure `DbRef` — and one notion reaches the IR in TWO spellings: a capturing lambda arrives
+// as `FnRef(d_nr, closure_var, _)` carrying both halves, a non-capturing one as a bare
+// `Value::Int(d_nr)` carrying only the first.  A join that writes each arm at the width it
+// happens to find therefore leaves the arms of one choice at different depths, and the read
+// straddles.  The `if` spelling was always right because its arm is a BLOCK typed `function(…)`
+// whose result path completes the pair; the chain builders put the arm body in raw.
+//
+// Both spellings are widened at the arm now, so the emitters read one shape instead of each
+// re-deriving the padding.  The FALLBACK is the same question one step on: an exhaustive enum
+// match still BUILDS the un-taken fallback, and `null()` had no `Type::Function` arm, so it
+// answered a bare `Value::Null` that pushes nothing.  That is the failure `null_value`'s own
+// doc block describes — the consumer reads an uninitialised closure half, judges it non-null
+// and frees it.
+//
+// Axes this file MOVES:  the subject's KIND (boolean · integer with a wildcard · enum, whose
+//                        chain is a different builder) · the POSITION the match value stands in
+//                        (a return tail · a local bind · a call argument · nested inside an `if`
+//                        arm, which is not a return at all) · WHICH arm captures (neither ·
+//                        first · second · both), since the bare spelling is the non-capturing
+//                        one and a cell where every arm captures cannot see this defect · the
+//                        arm COUNT (2 · 3) · the lambda's own type (`fn() -> integer` ·
+//                        `fn(integer) -> integer` · `fn() -> text`) · and whether the match is
+//                        TOTAL by wildcard or by covering the variants, which is what decides
+//                        whether the fallback is a real arm or the typed null.
+// Axes it HOLDS FIXED:   the frame always owns a heap local, because a frame with no free takes
+//                        a different return path and would report green here (`fr_none` below
+//                        is the control that pins that).  One lambda per arm.
+//
+// @falsified-at: a2efc8720 — interpret exit 139 -> 0, native exit 1 -> 0.
+//   The control SIGSEGVs on `--interpret` (`fn_call_ref: d_nr=… out of range`, a different d_nr
+//   on every run — the tell that it is uninitialised stack and not a stale value) and fails to
+//   compile on `--native` (rustc E0308, `expected (u32, DbRef), found ()`).  The enum cells
+//   report `refused free of out-of-range store` before they abort.
+
+struct E69 { a: integer }
+enum W69 { One, Two }
+enum V69 { Ax, Bx, Cx }
+
+// e1 — the filed shape: a boolean-subject match in the RETURN tail, first arm capturing.
+fn ret_bool(p: boolean) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { true => fn() -> integer { 5 + e.a - e.a }, false => fn() -> integer { 7 } }
+}
+
+// e2 — which arm carries the bare spelling is an axis, not a detail: the defect lives in the
+// NON-capturing arm, so a cell whose capturing arm is second is a different cell.
+fn ret_second(p: boolean) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { true => fn() -> integer { 5 }, false => fn() -> integer { 5 + e.a } }
+}
+
+// e3 — BOTH arms capturing.  Neither arm is the bare spelling, so this cell pins that the
+// widening left the already-complete `FnRef` alone rather than overwriting its closure half.
+// Bound to a LOCAL rather than returned: two capturing arms in a RETURN carry a separate,
+// pre-existing store-lifetime defect (loft#1473) that has nothing to do with the widening, and
+// importing it here would leave this file red under `LOFT_STRICT_STORES=1` for a reason none of
+// its own axes name.  The `if` spelling of the same return leaks identically on a pristine
+// baseline, which is what says the two are independent.
+fn both_local(p: boolean) -> integer {
+  e: E69 = E69 { a: 2 };
+  g: fn() -> integer = match p { true => fn() -> integer { 3 + e.a }, false => fn() -> integer { 5 + e.a } };
+  g()
+}
+
+// e4 — NEITHER arm capturing: two bare spellings meeting each other.  It read green before the
+// fix, because two arms that are wrong by the same twelve bytes still agree.
+fn ret_none(p: boolean) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { true => fn() -> integer { 5 }, false => fn() -> integer { 7 } }
+}
+
+// e5 — an ENUM subject reaches `chain_pattern_arms`, a different builder from the scalar one.
+// Exhaustive by covering both variants and NOT by a wildcard, so the un-taken fallback is the
+// typed null — the half that needed `null()` to learn `Type::Function`.
+fn ret_enum(p: W69) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { One => fn() -> integer { 5 + e.a - e.a }, Two => fn() -> integer { 7 } }
+}
+
+// e6 — three variants, all covered, still no wildcard: the fallback again, one arm wider.
+fn ret_enum3(p: V69) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { Ax => fn() -> integer { 5 + e.a - e.a }, Bx => fn() -> integer { 7 }, Cx => fn() -> integer { 11 } }
+}
+
+// e7 — an integer subject made total by a WILDCARD instead: the fallback is a real arm, so this
+// is the control that separates "the fallback is built" from "the fallback is the typed null".
+fn ret_int3(p: integer) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { 0 => fn() -> integer { 5 + e.a - e.a }, 1 => fn() -> integer { 7 }, _ => fn() -> integer { 11 } }
+}
+
+// e8 — NOT a return at all: the match value is bound to a local.  A fix at the return hoist
+// alone reads green on every cell above and fails here, which is why this cell decides the
+// shape of the cure rather than merely adding coverage.
+fn local_bind(p: boolean) -> integer {
+  e: E69 = E69 { a: 2 };
+  g: fn() -> integer = match p { true => fn() -> integer { 5 + e.a - e.a }, false => fn() -> integer { 7 } };
+  g()
+}
+
+// e9 — nor a bind: the match value is a call ARGUMENT, consumed by a parameter slot.
+fn take69(f: fn() -> integer) -> integer { f() }
+fn as_argument(p: boolean) -> integer {
+  e: E69 = E69 { a: 2 };
+  take69(match p { true => fn() -> integer { 5 + e.a - e.a }, false => fn() -> integer { 7 } })
+}
+
+// e10 — a match nested INSIDE an `if` arm.  The outer `if` is hoisted and the inner match is
+// not, so this is the cell where a return-position fix and a join-position fix disagree.
+fn match_in_if(p: boolean, q: boolean = true) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  if p { match q { true => fn() -> integer { 5 + e.a - e.a }, false => fn() -> integer { 6 } } }
+  else { fn() -> integer { 7 } }
+}
+
+// e11 — the mirror, an `if` nested inside a match arm.  It was already correct; pinning it says
+// the widening did not disturb the spelling that worked.
+fn if_in_match(p: boolean, q: boolean = true) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { true => if q { fn() -> integer { 5 + e.a - e.a } } else { fn() -> integer { 6 } },
+            false => fn() -> integer { 7 } }
+}
+
+// e12 — the lambda TAKES an argument.  Its slot is the same twenty bytes, and a widening keyed
+// on the arity rather than on the type would miss it.
+fn ret_arg(p: boolean) -> fn(integer) -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { true => fn(x: integer) -> integer { x + e.a }, false => fn(x: integer) -> integer { x + 4 } }
+}
+
+// e13 — the lambda RETURNS text, which has its own delivery path; the fn-ref itself is
+// unchanged by that, and this cell says so.
+fn ret_text(p: boolean) -> fn() -> text {
+  e: E69 = E69 { a: 2 };
+  match p { true => fn() -> text { "x{e.a}" }, false => fn() -> text { "y" } }
+}
+
+// e14 — the capturing lambda in the LAST arm of a three-arm chain, bound locally.  e6/e7 keep
+// one capturing arm each so the return position stays clear of loft#1473, so this cell is what
+// carries "the widening reaches the final arm too".
+fn last_arm_local(p: integer) -> integer {
+  e: E69 = E69 { a: 2 };
+  g: fn() -> integer = match p { 0 => fn() -> integer { 5 }, 1 => fn() -> integer { 7 }, _ => fn() -> integer { 9 + e.a } };
+  g()
+}
+
+// c1 — CONTROL: the same choice written as an `if`.  Correct before the fix and after it; a
+// cure that changed this cell would have moved the spelling that was never broken.
+fn ctl_if(p: boolean) -> fn() -> integer {
+  e: E69 = E69 { a: 2 };
+  if p { fn() -> integer { 5 + e.a - e.a } } else { fn() -> integer { 7 } }
+}
+
+// c2 — CONTROL: no frame free.  The return path differs, and this cell is what stops a green
+// reading here being mistaken for coverage of the cells above.
+fn ctl_no_free(p: boolean) -> fn() -> integer {
+  match p { true => fn() -> integer { 5 }, false => fn() -> integer { 7 } }
+}
+
+// c3 — CONTROL: the same enum match shape with a NON-fn result type.  It shares the builder and
+// the fallback, so it pins that the `Type::Function` arm added to `null()` did not disturb the
+// answer every other type already had.
+fn ctl_enum_int(p: V69) -> integer {
+  e: E69 = E69 { a: 2 };
+  match p { Ax => 5 + e.a - e.a, Bx => 7, Cx => 9 + e.a }
+}
+
+fn main() {
+  assert(ret_bool(true)() == 5, "e1 capturing arm: {ret_bool(true)()}");
+  assert(ret_bool(false)() == 7, "e1b bare arm: {ret_bool(false)()}");
+  assert(ret_second(true)() == 5, "e2 bare arm first: {ret_second(true)()}");
+  assert(ret_second(false)() == 7, "e2b capturing arm second: {ret_second(false)()}");
+  assert(both_local(true) == 5, "e3 both capturing, first: {both_local(true)}");
+  assert(both_local(false) == 7, "e3b both capturing, second: {both_local(false)}");
+  assert(ret_none(true)() == 5, "e4 neither capturing, first: {ret_none(true)()}");
+  assert(ret_none(false)() == 7, "e4b neither capturing, second: {ret_none(false)()}");
+
+  assert(ret_enum(W69.One)() == 5, "e5 enum subject, capturing: {ret_enum(W69.One)()}");
+  assert(ret_enum(W69.Two)() == 7, "e5b enum subject, bare: {ret_enum(W69.Two)()}");
+  assert(ret_enum3(V69.Ax)() == 5, "e6 three variants, first: {ret_enum3(V69.Ax)()}");
+  assert(ret_enum3(V69.Bx)() == 7, "e6b three variants, bare: {ret_enum3(V69.Bx)()}");
+  assert(ret_enum3(V69.Cx)() == 11, "e6c three variants, capturing last: {ret_enum3(V69.Cx)()}");
+  assert(ret_int3(0)() == 5, "e7 wildcard-total, first: {ret_int3(0)()}");
+  assert(ret_int3(1)() == 7, "e7b wildcard-total, bare: {ret_int3(1)()}");
+  assert(ret_int3(2)() == 11, "e7c wildcard-total, the wildcard arm: {ret_int3(2)()}");
+
+  assert(local_bind(true) == 5, "e8 bound to a local, capturing: {local_bind(true)}");
+  assert(local_bind(false) == 7, "e8b bound to a local, bare: {local_bind(false)}");
+  assert(as_argument(true) == 5, "e9 as a call argument, capturing: {as_argument(true)}");
+  assert(as_argument(false) == 7, "e9b as a call argument, bare: {as_argument(false)}");
+
+  assert(match_in_if(true, true)() == 5, "e10 match inside if, capturing: {match_in_if(true, true)()}");
+  assert(match_in_if(true, false)() == 6, "e10b match inside if, bare: {match_in_if(true, false)()}");
+  assert(match_in_if(false, true)() == 7, "e10c match inside if, outer else: {match_in_if(false, true)()}");
+  assert(if_in_match(true, true)() == 5, "e11 if inside match, capturing: {if_in_match(true, true)()}");
+  assert(if_in_match(true, false)() == 6, "e11b if inside match, bare: {if_in_match(true, false)()}");
+  assert(if_in_match(false, true)() == 7, "e11c if inside match, outer arm: {if_in_match(false, true)()}");
+
+  assert(ret_arg(true)(3) == 5, "e12 lambda with a parameter, capturing: {ret_arg(true)(3)}");
+  assert(ret_arg(false)(3) == 7, "e12b lambda with a parameter, bare: {ret_arg(false)(3)}");
+  assert(ret_text(true)() == "x2", "e13 text-returning lambda, capturing: {ret_text(true)()}");
+  assert(ret_text(false)() == "y", "e13b text-returning lambda, bare: {ret_text(false)()}");
+
+  assert(last_arm_local(2) == 11, "e14 capturing lambda in the last arm: {last_arm_local(2)}");
+  assert(last_arm_local(0) == 5, "e14b bare lambda in the first arm: {last_arm_local(0)}");
+
+  assert(ctl_if(true)() == 5, "c1 the `if` spelling, capturing: {ctl_if(true)()}");
+  assert(ctl_if(false)() == 7, "c1b the `if` spelling, bare: {ctl_if(false)()}");
+  assert(ctl_no_free(true)() == 5, "c2 no frame free, first: {ctl_no_free(true)()}");
+  assert(ctl_no_free(false)() == 7, "c2b no frame free, second: {ctl_no_free(false)()}");
+  assert(ctl_enum_int(V69.Ax) == 5, "c3 non-fn result through the same builder: {ctl_enum_int(V69.Ax)}");
+  assert(ctl_enum_int(V69.Cx) == 11, "c3b non-fn result, last variant: {ctl_enum_int(V69.Cx)}");
+
+  println("1469-a-match-arm-yielding-a-lambda-carries-both-fn-ref-halves ok");
+}

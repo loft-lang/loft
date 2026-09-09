@@ -2374,6 +2374,9 @@ impl State {
                 // `generation/dispatch.rs` never reaches a bare-Var RHS either.)
                 && !matches!(value.unspan(), Value::Var(_))
                 && crate::keys::join_own_enabled()
+                // @PLN157 § V-g — an elided bind keeps the view; its minted arm is
+                // released by identity at scope exit, so nothing is materialised here.
+                && !stack.function.is_view_elided(v)
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
                 && base != u16::MAX
@@ -2490,6 +2493,10 @@ impl State {
                     // callee's argument field on this backend alone — `--native` copies
                     // through its own arm (loft#1346, @FR-O-NoDiverge).
                     && !(rhs_reads_v && stack.data.def(fn_nr).returns_borrowed_view())
+                    // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
+                    // the view, and `scopes` registered the identity free for the
+                    // minted arm.
+                    && !stack.function.is_view_elided(v)
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     // Plan-04 Phase B.3.f: allocate fresh store directly
@@ -2803,7 +2810,7 @@ impl State {
             // First allocation — slot pre-assigned by assign_slots.
             #[cfg(debug_assertions)]
             assert!(
-                !ir_contains_var(value, v),
+                !ir_reads_var(stack.data, value, v),
                 "[generate_set] first-assignment of '{}' (var_nr={v}) in '{}' contains \
                  a Var({v}) self-reference — storage not yet allocated, will produce a \
                  garbage DbRef at runtime. This is a parser bug. value={value:?}",
@@ -3098,12 +3105,18 @@ impl State {
             // same `OpBindOrCopy` store-identity guard the REASSIGNMENT path uses.
             if crate::keys::join_own_enabled()
                 && let Type::Reference(join_d_nr, _) = stack.function.tp(v).clone()
+                // @PLN157 § V-g — an elided bind keeps the view and takes the plain
+                // `OpPutRef` below; `scopes` registered the identity free for the
+                // minted arm, so the join guard is not needed here.
+                && !stack.function.is_view_elided(v)
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
                 && base != u16::MAX
             {
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
-            } else if stack.data.def(fn_nr).return_adopts_fresh_store() {
+            } else if stack.data.def(fn_nr).return_adopts_fresh_store()
+                || stack.function.is_view_elided(v)
+            {
                 // runtime tolerates double-free as a no-op so leaving
                 // __ref_N to be freed by scopes.rs's is_work_ref gate at
                 // scope exit is safe in both adoption and orphan cases.
@@ -3341,16 +3354,16 @@ impl State {
         // @PLN90's `use_analysis::move_elidable_source` states the same rule for the
         // move plans it builds — "never a view/projection, which owns no store to move".
         // This is the shortcut that predates it.
+        // @FR-O-Proxy asks free, so @FR-O-Override applies, and the two are asked as one
+        // ([`Function::proxy_says_owned`]).  A move is a free decision made one binding away:
+        // `v` takes `src`'s store and `v`'s scope-exit `OpFreeRef` releases it.  If the proxy
+        // was wrong about `src` that release lands on a store someone else owns — the same
+        // shape as the view this arm already refuses, reached through the flag instead of
+        // through the deps.
         if stack.function.uses(src) == 1
-            && stack.function.tp(src).depend().is_empty()
+            && stack.function.proxy_says_owned(src)
             && !stack.function.is_argument(src)
             && !stack.function.is_captured(src)
-            // @FR-O-Proxy asks free, so @FR-O-Override applies.  A move is a free
-            // decision made one binding away: `v` takes `src`'s store and `v`'s scope-exit
-            // `OpFreeRef` releases it.  If the proxy was wrong about `src` that release lands
-            // on a store someone else owns — the same shape as the view this arm already
-            // refuses, reached through the flag instead of through the deps.
-            && !stack.function.is_skip_free(src)
         {
             let src_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);
@@ -5351,14 +5364,51 @@ fn is_divergent(node: IrNode) -> bool {
     }
 }
 
-/// Recursively checks whether `value` contains a direct `Var(v)` reference.
-/// Used in debug builds to detect first-assignment self-reference bugs.
+/// Does `value` READ variable `v`'s storage — the first-assignment self-reference
+/// [`Codegen::generate_set`] refuses, where the slot holds no value yet and the read
+/// would yield a garbage `DbRef`?
+///
+/// A mention is not a read.  The scope machinery prepends a block's cleanup to every
+/// `Break` it finds, and a `for` over a SLICE puts the exhaustion test — and therefore
+/// that `Break` — inside the index expression, which is the loop variable's own first
+/// assignment: `x = v[{ idx = …; if hi <= idx { OpFreeText(x); break } ; idx }]`.  The
+/// free RELEASES the slot rather than reading a value out of it, and the slot is
+/// null-initialised before the loop, so the path is sound — measured on both backends,
+/// values correct and `State::free_text`'s own double-free assert silent, including on
+/// an EMPTY slice where the break fires before any assignment ever runs
+/// (`a-negative-slice-bound-counts-from-the-end`).  Counting it as a read reported a
+/// parser bug the compiler does not have.
+///
+/// Free-ness is asked of `OpSets::frees`, the one home for *"this op releases its first
+/// argument"* — a name list here would go blind to the next spelling exactly as the nine
+/// lists that set replaced did.  Only ARGUMENT 0 is the released place: a witness-guarded
+/// free names its witness second, and that one is an ordinary read.
 #[cfg(debug_assertions)]
-fn ir_contains_var(value: &Value, v: u16) -> bool {
-    // Pass-2 wave 2: descent now comes from `Value::any_node`.  The
-    // hand-rolled predecessor had no `Span` arm, so a Span-wrapped
-    // self-reference escaped this assertion entirely.
-    value.any_node(&mut |n| matches!(n, Value::Var(x) if *x == v))
+fn ir_reads_var(data: &crate::data::Data, value: &Value, v: u16) -> bool {
+    fn walk(value: &Value, v: u16, frees: &std::collections::HashSet<u32>) -> bool {
+        // The hand-rolled predecessor of this walk had no `Span` arm, so a Span-wrapped
+        // self-reference escaped the assertion entirely.
+        if let Value::Span(b) = value {
+            return walk(&b.1, v, frees);
+        }
+        if let Value::Var(x) = value {
+            return *x == v;
+        }
+        if let Value::Call(d, args) = value
+            && frees.contains(d)
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v)
+        {
+            return args.iter().skip(1).any(|a| walk(a, v, frees));
+        }
+        let mut found = false;
+        value.for_each_child(&mut |c| {
+            if !found && walk(c, v, frees) {
+                found = true;
+            }
+        });
+        found
+    }
+    walk(value, v, &data.op_sets().frees)
 }
 
 /// Recursively prints a `Value` IR tree to stderr in a loft-like syntax.
@@ -5502,5 +5552,77 @@ fn print_ir(value: &Value, data: &crate::data::Data, vars: &Function, depth: usi
         // debug-only dumper.  The catch-all also keeps `print_ir` exhaustive in
         // debug-assertions builds (e.g. under cargo-fuzz) as new variants land.
         _ => eprint!("<ir>"),
+    }
+}
+
+/// The first-assignment self-reference guard's own controls.
+///
+/// `debug_assertions` because [`ir_reads_var`] only exists there — which is also the one
+/// build that runs the assert it feeds, the nightly `-C debug-assertions=on` sweep.
+#[cfg(all(test, debug_assertions))]
+mod self_reference_guard {
+    use super::ir_reads_var;
+    use crate::data::{Data, DefType, Position, Value};
+
+    /// A `Data` holding just the two op definitions the predicate asks about.
+    fn ops() -> (Data, u32, u32) {
+        let mut data = Data::new();
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let free = data.add_def("OpFreeText", &pos, DefType::Function);
+        let read = data.add_def("OpGetText", &pos, DefType::Function);
+        (data, free, read)
+    }
+
+    /// The excused shape: the loop variable appears ONLY as the place a free releases.
+    #[test]
+    fn a_free_of_the_variable_is_not_a_read() {
+        let (data, free, _) = ops();
+        let ir = Value::Call(free, vec![Value::Var(7)]);
+        assert!(!ir_reads_var(&data, &ir, 7));
+    }
+
+    /// …and the guard is not vacuous: an ordinary read of the same variable, at the same
+    /// depth, still trips.  Without this cell the arm above would pass just as well if the
+    /// predicate answered `false` for everything.
+    #[test]
+    fn an_ordinary_read_of_the_variable_still_counts() {
+        let (data, _, read) = ops();
+        let ir = Value::Call(read, vec![Value::Var(7)]);
+        assert!(ir_reads_var(&data, &ir, 7));
+    }
+
+    /// A free's LATER arguments are ordinary reads — the witness of a guarded free names a
+    /// place the free compares against rather than releases.
+    #[test]
+    fn a_frees_witness_argument_is_a_read() {
+        let (data, free, _) = ops();
+        let ir = Value::Call(free, vec![Value::Var(3), Value::Var(7)]);
+        assert!(ir_reads_var(&data, &ir, 7));
+    }
+
+    /// Nested where the defect actually puts it: inside the index expression that IS the
+    /// first assignment, one read of another variable beside it.
+    #[test]
+    fn the_slice_loop_shape_is_excused_while_its_neighbours_are_read() {
+        let (data, free, read) = ops();
+        let brk = Value::Insert(vec![
+            Value::Call(free, vec![Value::Var(7)]),
+            Value::Break(0),
+        ]);
+        let idx = crate::data::v_block(
+            vec![brk, Value::Var(4)],
+            crate::data::I32.clone(),
+            "Iter range",
+        );
+        let ir = Value::Call(read, vec![idx]);
+        assert!(
+            !ir_reads_var(&data, &ir, 7),
+            "the freed loop var is not read"
+        );
+        assert!(ir_reads_var(&data, &ir, 4), "the index var beside it is");
     }
 }
