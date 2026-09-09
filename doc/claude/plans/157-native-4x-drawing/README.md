@@ -173,7 +173,8 @@ and the move, DESIGN.md § V-j's ceiling), then `lock_curved` 5.6× and `wide_li
 5.4× (profile WITH CALLERS on the § V-p runtime, as § V-k did), `lock` 4.39× a hair
 over.  The text readers off the hoist allow-list (P4c c17) and § V-o's leaf-only
 rule (a mirror of the pre-eval map onto the cloned operands) stay queued behind them.
-Check the GitHub gate dispatched on the § V-p commit before building on it.
+GitHub gate run 34334280254 is GREEN on the § V-p tip (ce1db5bb: the unit, the interpreter
+link re-point, the test-subject and walker-audit bookkeeping); build on that tip.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
