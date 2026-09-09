@@ -920,6 +920,12 @@ impl Stores {
         if displaced.store_nr == witness.store_nr {
             return;
         }
+        // ABSENT displaces nothing — the sentinel is a value, not a store.  Guarded here rather
+        // than at the callers for the reason `close_file_handle` states with the same test.
+        if displaced.store_nr == u16::MAX || (displaced.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
         // @FR-H-Free — `store(r) ≠ 0`.  Guarded by `stack_store_at_zero` for the same reason
         // `free_named`'s `#306` check is: store 0 is only the eval stack once the interpreter
         // has claimed it, and a durable/embedded `Stores` numbers its first real store 0.

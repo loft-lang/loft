@@ -1859,6 +1859,8 @@ or build a local and use that."
             // before the fn-ref escapes the defining scope.
             let fn_type = Type::Function(visible_params, Box::new(ret_tp.clone()), Deps::frame1(w));
             let mut alloc_steps: Vec<Value> = Vec::new();
+            // loft#1483 — the stores this rebuild DISPLACES, spliced in front below.
+            let mut displaced: Vec<Value> = Vec::new();
             // Allocate and populate the closure record w.
             alloc_steps.push(crate::data::v_set(w, Value::Null));
             alloc_steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp_nr)]));
@@ -1892,6 +1894,26 @@ or build a local and use that."
                         let backing = self.null_capture_backing(v_nr);
                         alloc_steps.extend(backing);
                     }
+                    // loft#1483, `@FR-L-CapOwn` — release the store this capture slot DISPLACES.
+                    if v_nr != u16::MAX
+                        && self.assign_target != v_nr
+                        && !crate::parser::vectors::is_collection(self.vars.tp(v_nr))
+                        && matches!(
+                            self.data.attr_type(closure_rec_d, aid).base(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _)
+                        )
+                    {
+                        let pos = self
+                            .database
+                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                        let held =
+                            self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+                        let release = self.cl("OpFreeRefIfDistinct", &[held, fill.clone()]);
+                        let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+                        let has_store = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+                        let exists = crate::data::v_if(is_null, Value::Boolean(false), has_store);
+                        displaced.push(crate::data::v_if(exists, release, Value::Null));
+                    }
                     alloc_steps.push(self.set_field_no_check(
                         closure_rec_d,
                         aid,
@@ -1910,6 +1932,9 @@ or build a local and use that."
                     // load-bearing `OpIncRc`; dropping it unblocks removing the
                     // ref-count entirely (Phase C).
                 }
+            }
+            if !displaced.is_empty() {
+                alloc_steps.splice(0..0, displaced);
             }
             self.last_closure_captured_vars = captured_var_nrs;
             // Block result: push d_nr (4B via OpConstInt) + closure DbRef (12B via OpVarRef).

@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 759 | 414 | 6 | **339** |
+| 759 | 415 | 6 | **338** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2616,6 +2616,13 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1483's capture release: the Optional row `759 · 414 · 6 · 339` →
+`759 · 415 · 6 · 338`, and the unspan row does not move.**  The OPAQUE column went DOWN, which is
+the direction the ratchet exists for and the first time it has: the release asks *is this capture
+a collection?* through `is_collection`, which peels, so the function it sits in answers for `τ?`
+as well.  No new discriminator arrived — the count moved because an existing one learned to see
+through the wrapper, which is the cheapest way this number ever improves.
 
 **2026-09-09, loft#1484's leaf test: the unspan row `434 · 410 · 24` → `435 · 411 · 24`, and
 the Optional row does not move.**  A net +1 — `every_return_leaf_views_var` arrived and
