@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A nested value block that BINDS the return buffer from a call must deliver into it.
+//
+// `{ v = head(n); v }` as a function's value gave the call its own `__ref_N` and rebound `v` to
+// that, so the callee filled one store while the buffer the caller handed in was adopted by
+// nobody: **one leaked store per CALL**, both backends, scaling exactly with the call count
+// (5 calls → 5 orphaned records, 20 → 20).  The same statements without the block have always
+// collapsed to `v = n_head(n, v)` — one store — which is the shape this restores.
+//
+// This is loft#1491 one construct over.  That issue fixed the BRANCH ARM spelling by teaching
+// the arm materialiser to ask `nrvo_collapse_tail_set`; a plain nested block reaches neither the
+// arm materialiser nor the function-tail collapse, because the collapse's step (1) wants a
+// `Var(cv)` tail and finds a `Block`.  It now descends into a value block's operators, where the
+// `Set(cv, Call(…))` actually sits.  No new rule is needed to keep it honest: step (1) still
+// requires the inner tail to be `Var(cv)` with `cv` one of the buffers, so a block yielding
+// anything else declines exactly as it did.
+//
+// ⚠ **The nested block is the forgotten spelling of every arm fix.**  loft#1493 → loft#1494 and
+// loft#1491 → this one, both within a day: the delivery machinery is organised per CONSTRUCT — a
+// function tail, an arm, a bind, a `for` — and the plain nested block is the construct with no
+// delivery of its own, so it inherits nothing and each per-construct fix leaves it behind.
+// `(F-Block)` promises a block yields its tail "wherever the block stands", which is the promise
+// that organisation cannot keep on its own.
+//
+// ⚠ **The corpus never covered this shape.**  `introspect_diff.sh` over 1455 files reads
+// IDENTICAL before and after, so the blast radius is zero AND nothing existing exercises it —
+// which is why a leak that scales per call survived. This file is that coverage.
+//
+// The controls say what route each other kind takes: a KEYED collection, a RECORD and a `text`
+// return never had this (each is delivered by its own materialiser), a local built from a
+// LITERAL has no call to redirect, the same statements with no block are the green shape, and a
+// bare-call tail (`{ head(n) }`) is handed the buffer directly and always was one store.
+//
+// @falsified-at: a7783d16f — interpret leaked kt=82 main_vector<integer(0, 255)>×20 -> clean,
+//   native the same -> clean.  20 records for 20 calls across four leaking cells.
+// @falsified-by: tests/falsified/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.patch
+//   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
+//   CHANNEL: LEAK, and only leak.  Every value, length and exit is equal on both trees — the
+//     elements and the counts were right before the fix, which is the whole shape of it and why
+//     no value cell could have found it.
+//   ARMED: `LOFT_NATIVE_LEAK_CHECK=1` for the native side (`falsify.sh` arms it); the
+//     interpreter reports at program exit unaided.  An unarmed native run reads CLEAN on both
+//     trees and the guard looks inert.
+//   WITNESS: the store SHAPE `main_vector<integer(0, 255)>×20` on the control — one orphaned
+//     record per call over 5 calls to each of four leaking cells.  The `kt=` number shifts with
+//     the type table between builds; the shape and the COUNT are the identity, and the COUNT is
+//     what says "per call" rather than "one tolerated store".
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
+
+struct ElmB { k: integer }
+struct BoxB { items: vector<u8>, name: text }
+
+fn headb(n: integer) -> vector<u8> {
+  v: vector<u8> = [];
+  for _i in 0..n { v += [1]; }
+  return v;
+}
+fn rowsb(n: integer) -> vector<ElmB> {
+  v: vector<ElmB> = [];
+  for i in 0..n { v += [ElmB { k: i }]; }
+  return v;
+}
+fn bagb(n: integer) -> hash<ElmB[k]> {
+  h: hash<ElmB[k]> = [];
+  for i in 0..n { h += [ElmB { k: i }]; }
+  return h;
+}
+fn mkb(n: integer) -> BoxB { BoxB { items: headb(n), name: "x" } }
+fn txtb(n: integer) -> text {
+  s = "";
+  for _i in 0..n { s += "a"; }
+  return s;
+}
+
+// --- the leaking cells -------------------------------------------------------------------
+
+// The filed shape: a nested block binds the buffer from a call and yields it.
+fn from_call(n: integer) -> vector<u8> { { v = headb(n); v } }
+// Two nested blocks, so depth is not the axis.
+fn nested_two(n: integer) -> vector<u8> { { { v = headb(n); v } } }
+// A vector of RECORDS, so the element former is not the axis.
+fn records(n: integer) -> vector<ElmB> { { v = rowsb(n); v } }
+// A statement before the bind, so being the block's FIRST operator is not the axis.
+fn with_stmt(n: integer) -> vector<u8> { { a = 1; v = headb(n + a - 1); v } }
+
+// --- controls: the kinds that take another route -----------------------------------------
+
+// A KEYED collection is delivered by its own materialiser and never had this.
+fn c_keyed(n: integer) -> hash<ElmB[k]> { { h = bagb(n); h } }
+// A RECORD likewise.
+fn c_record(n: integer) -> BoxB { { b = mkb(n); b } }
+// And `text`, whose buffer is a `String`.
+fn c_text(n: integer) -> text { { s = txtb(n); s } }
+// A local built from a LITERAL: there is no call to redirect.
+fn c_literal() -> vector<u8> { { v: vector<u8> = [1, 2, 3]; v } }
+// The same statements with NO block — the green shape the fix makes this equal to.
+fn c_no_block(n: integer) -> vector<u8> { v = headb(n); v }
+// A bare-call tail is handed the buffer directly, and was always one store.
+fn c_bare_call(n: integer) -> vector<u8> { { headb(n) } }
+
+fn main() {
+  // Called repeatedly on purpose: the defect is one orphaned store per CALL, so a single
+  // call leaks one record and reads as a tolerated store rather than as a leak that scales.
+  t = 0;
+  for _i in 0..5 {
+    t += len(from_call(3));
+    t += len(nested_two(3));
+    t += len(records(3));
+    t += len(with_stmt(3));
+  }
+  assert(t == 60, "four leaking cells over five rounds: got {t}");
+
+  c = 0;
+  for _i in 0..5 {
+    c += len(c_keyed(3));
+    c += len(c_record(3).items);
+    c += size(c_text(3));
+    c += len(c_literal());
+    c += len(c_no_block(3));
+    c += len(c_bare_call(3));
+  }
+  assert(c == 90, "six controls over five rounds: got {c}");
+
+  println("a-nested-block-buffer-bind OK cells={t} controls={c}");
+}

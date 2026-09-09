@@ -3538,6 +3538,24 @@ impl Parser {
         }
         let last = l.len() - 1;
 
+        // (0) loft#1491's sibling one construct over: the tail is a nested value BLOCK, so the
+        //     `Set(cv, Call(…))` this collapses sits in the BLOCK's operators rather than in
+        //     `l`.  `fn f(n) -> vector<u8> { { v = head(n); v } }` therefore declined at step
+        //     (1) — the tail is a `Block`, not a `Var` — and the callee filled its own
+        //     `__ref_N` while the buffer the caller handed in was adopted by nobody: one
+        //     leaked store per CALL, both backends, scaling with the call count.  The same
+        //     statements without the block have always collapsed (`v = n_head(n, v)`, one
+        //     store), which is the shape this restores.
+        //
+        //     Recursing needs no new rule to stay honest: step (1) below still requires the
+        //     inner tail to be `Var(cv)` with `cv` in `ls`, so a nested block yielding
+        //     anything else — or yielding a local that is not one of the buffers — declines
+        //     exactly as it does at this level.
+        if let Some(ops) = Self::tail_block_ops(&mut l[last]) {
+            self.nrvo_collapse_tail_set(ops, ls);
+            return;
+        }
+
         // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.
         let Some(cv) = Self::tail_var(&l[last]) else {
             return;
@@ -3883,6 +3901,23 @@ impl Parser {
     /// Walk past `Span` / `Return` wrappers to find a tail `Var(v)`.
     /// Used by `nrvo_collapse_tail_set` to recognise the two shapes the
     /// parser produces for "the body returns variable `v`".
+    /// The operator list of a value-yielding BLOCK tail, so a collapse aimed at a block's own
+    /// tail can be run on the list that actually holds it.
+    ///
+    /// `None` for every other tail shape, and for a `Void` / `Never` block — a block that
+    /// yields nothing has no tail value to deliver.
+    fn tail_block_ops(v: &mut Value) -> Option<&mut Vec<Value>> {
+        match v {
+            Value::Span(b) => Self::tail_block_ops(&mut b.1),
+            Value::Return(inner) => Self::tail_block_ops(inner),
+            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Never) => {
+                Some(&mut bl.operators)
+            }
+            Value::Insert(ops) => Some(ops),
+            _ => None,
+        }
+    }
+
     fn tail_var(v: &Value) -> Option<u16> {
         match v.unspan() {
             Value::Var(v) => Some(*v),
