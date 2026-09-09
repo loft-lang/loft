@@ -56,6 +56,11 @@
 //   — the two spellings of one element type refusing each other. The enum-variant cell does NOT
 //   move under that build, which is why the note above says what it says.
 //
+//   HOLDS: EVERY channel holds — exit, assertions, leak, panic, free-refusal and
+//   expectations are all equal on both trees.  That is this file's assertion rather than a
+//   failure to make one: it is the POSITIVE control beside the guard named above, here to
+//   stay correct while its twin tightens, so anything moving is the regression it watches
+//   for.  A patch receipt is therefore not applicable — there is no defect to reintroduce.
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.

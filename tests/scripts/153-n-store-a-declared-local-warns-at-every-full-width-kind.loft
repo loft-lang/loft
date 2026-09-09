@@ -15,6 +15,11 @@
 //   refuses every cell but the `&integer` parameter, which it stores in SILENCE (the
 //   `RefVar` peel in `change_var_type` carried the null without asking); no line below
 //   matches there.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 8498fdf1; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 struct S { n: integer }
 enum E { A, B }
 

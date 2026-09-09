@@ -32,6 +32,11 @@
 //   COMPILE: e1 and e2 both fail as field reads there, with the parse cascade after them.  The
 //   refusal half is `1430b`, scored on its own `@EXPECT_ERROR` channel, because a firing
 //   expectation stops a file and cannot share one with running cells.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 enum W30 { Wa30 { a: integer }, Wb30 { b: integer } }
 // e1 — the SECOND arm branches and the first returns a literal: the shape that was abandoned.

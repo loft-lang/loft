@@ -28,6 +28,11 @@
 //   COMPILE, because `a.per()`, `a.third()` and `a.lab()` are all read as field accesses there
 //   (four such errors and the parse cascade after them).  Recorded through the exit channel on
 //   purpose — a dispatcher that does not exist cannot be measured by a value.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 // e1/e2 — two methods, every variant implementing both.
 enum Sh35 { Ca35 { r: integer }, Sb35 { s: integer } }

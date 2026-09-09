@@ -66,8 +66,12 @@ FIELD = {
                           r"ASSERT channel", re.I | re.M),
     "ARMED":   re.compile(r"^//\s*ARMED:|LOFT_[A-Z_]+=|instrument armed|WITH THE INSTRUMENT|"
                           r"no instrument", re.I | re.M),
-    "WITNESS": re.compile(r"^//\s*WITNESS:|`[^`]*\d[^`]*`|×\d|answered|answers |reads |"
-                          r"against the \d|-> \d", re.I | re.M),
+    # A witness need not be numeric.  A quoted DIAGNOSTIC is just as concrete — "the parent
+    # build refuses it outright (`cannot change type from integer to integer?`)" is exactly the
+    # one thing a re-validation compares — and requiring a digit rejected seven receipts that
+    # already carried one.
+    "WITNESS": re.compile(r"^//\s*WITNESS:|`[^`]*\d[^`]*`|`[^`]{15,}\s[^`]*`|×\d|"
+                          r"answered|answers |reads |against the \d|-> \d", re.I | re.M),
     "HOLDS":   re.compile(r"^//\s*HOLDS:|unmoved|unchanged|passes on both|not exit|not asserts|"
                           r"only one|stays at|already correct|must not|B\.\.F", re.I | re.M),
 }

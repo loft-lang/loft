@@ -30,6 +30,11 @@
 // @falsified-at: d6e665ae — interpret exit 1 -> 0 and expectations FAIL/7 -> ok, native the
 //   same.  Each cell reports an "Expect token" cascade naming a comma, a paren or an angle
 //   bracket there, and none of the seven substrings appears.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against d6e665ae; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 // The initialiser is a real tuple, so the only report is the type's: with the `?` dropped the
 // declaration is an ordinary dense one and nothing else has anything to say.

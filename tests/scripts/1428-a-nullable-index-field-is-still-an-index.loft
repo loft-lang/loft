@@ -21,6 +21,11 @@
 // @falsified-at: e9f45817 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the
 //   suite's verdict, not a count of matches), native the same.  On the control only the DENSE
 //   pair is reported; the two nullable spellings are accepted in silence.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 struct E1428a { k: integer, v: integer }
 struct E1428b { k: integer, v: integer }

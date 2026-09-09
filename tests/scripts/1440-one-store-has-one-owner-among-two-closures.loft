@@ -39,6 +39,11 @@
 //   `USE AFTER FREE (read) store #N type=C40` for every cell here.  Plain mode reads INERT for
 //   the reason `1439` states at length: a released record keeps its bytes until something
 //   writes over them.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct C40 { a: integer }
 

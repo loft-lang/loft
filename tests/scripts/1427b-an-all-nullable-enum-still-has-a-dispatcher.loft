@@ -11,6 +11,11 @@
 //   *"field 'side' of 'Tri' has no storage in that type's layout"*, *"Field access not supported
 //   on type fn t_4Tri?_side"* and the parse cascade after them — the exit channel, which is why
 //   this cell is not in `1427`.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 enum Deep { Tri { t: integer }, Quad { q: integer } }
 fn side(self: Tri?) -> integer { if self == null { -1 } else { self.t + 1 } }

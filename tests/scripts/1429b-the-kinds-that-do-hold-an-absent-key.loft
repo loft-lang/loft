@@ -17,6 +17,11 @@
 // @falsified-at: e9f45817 — INERT by design: every cell is accepted and correct on both
 //   builds, and it is here to stay that way while `1429` tightens the two kinds beside it.
 //   Scored by hand, both backends.
+//   HOLDS: EVERY channel holds — exit, assertions, leak, panic, free-refusal and
+//   expectations are all equal on both trees.  That is this file's assertion rather than a
+//   failure to make one: it is the POSITIVE control beside the guard named above, here to
+//   stay correct while its twin tightens, so anything moving is the regression it watches
+//   for.  A patch receipt is therefore not applicable — there is no defect to reintroduce.
 
 struct Hk { k: text?, n: integer }
 struct Ok { k: integer?, n: integer }
