@@ -1051,6 +1051,18 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// @PLN157 § V-m: `v += [x]` on a plain vector of a scalar kind is ONE fused
+/// `OpAppend<Kind>` — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FUSED_APPEND` (read at PARSE
+/// time: the before-half of the A/B on one binary — the four-op form, five runtime calls
+/// per element — and the first bisect step for a wrong element or length out of a scalar
+/// append on either backend).  `Parser::new_record` fuses the shape; the ops live beside
+/// `OpAppendVector` in `default/01_code.loft`.
+#[must_use]
+pub fn fused_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FUSED_APPEND"))
+}
+
 /// @PLN157 § V-l: a loop that calls an IN-PLACE-ONLY writer keeps its hoisted vector
 /// headers — **DEFAULT ON**.  Opt OUT with `LOFT_NO_INPLACE_CALLEE_HOIST` (read at
 /// GENERATION time: the before-half of the A/B on one binary, and the first bisect step

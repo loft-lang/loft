@@ -378,6 +378,8 @@ fn is_mutating_op(name: &str) -> bool {
             | "OpFinishRecord"
             | "OpCopyRecord"
     )
+        // @PLN157 § V-m — the fused scalar appends.
+        || super::FUSED_PUSH_OPS.contains(&name)
 }
 
 /// A7.1: walk a body-tail expression and report whether it ends in

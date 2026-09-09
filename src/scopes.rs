@@ -710,6 +710,27 @@ fn grown_containers(
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let name = data.def(*d).name();
+        // @PLN157 § V-m — a fused scalar append (`OpPush<Kind>`) grows its container: the
+        // variable itself in the plain form, a FIELD of it when the container is the field
+        // access `OpGetField(var, off, _)` — the same two answers `OpNewRecord` gives below.
+        if name.starts_with("OpPush") {
+            match args.first().map(Value::unspan) {
+                Some(Value::Var(c)) => {
+                    out.insert((*c, ANY_FIELD));
+                }
+                Some(Value::Call(g, gargs))
+                    if data.def(*g).name() == "OpGetField"
+                        && let Some(Value::Var(c)) = gargs.first().map(Value::unspan)
+                        && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
+                        && let Ok(off) = u32::try_from(*off)
+                        && !cleared.contains(&(*c, off)) =>
+                {
+                    out.insert((*c, off));
+                }
+                _ => {}
+            }
+            return;
+        }
         if !matches!(
             name,
             "OpNewRecord" | "OpPreAllocVector" | "OpAppendVector" | "OpInsertVector" | "OpHashAdd"
@@ -3104,6 +3125,11 @@ fn move_elide(data: &mut Data) {
         op_clear: data.def_nr("OpClearVector"),
         op_new_record: data.def_nr("OpNewRecord"),
         op_finish_record: data.def_nr("OpFinishRecord"),
+        op_push: crate::parser::FUSED_PUSH_OPS
+            .iter()
+            .map(|n| data.def_nr(n))
+            .filter(|d| *d != u32::MAX)
+            .collect(),
     };
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
@@ -3693,7 +3719,8 @@ fn collect_multi_database(node: &Value, mo: &MoveOps) -> HashSet<u16> {
 }
 
 /// Does `src` ESCAPE its own construction — is it referenced anywhere OTHER than (a) as arg0 of a
-/// WRITE op that builds it (`OpPreAllocVector`/`OpNewRecord`/`OpFinishRecord`/`OpSetInt4`), or (b) as
+/// WRITE op that builds it (`OpPreAllocVector`/`OpNewRecord`/`OpFinishRecord`/`OpSetInt4`, or a
+/// fused `OpPush<Kind>`), or (b) as
 /// arg1 of the append copy that moves it? A source that is built, then READ (`"{out:j}"`, `out[i]`,
 /// passed to a fn), then moved is NOT dead-between-build-and-copy: building it directly into the
 /// destination would leave the intermediate read seeing the un-built source (`var_out` not in
@@ -3708,7 +3735,8 @@ fn source_escapes(node: &Value, src: u16, co: &ConstructOps) -> bool {
                         && (*d == co.op_prealloc
                             || *d == co.op_new_record
                             || *d == co.op_finish_record
-                            || *d == co.op_set_int4);
+                            || *d == co.op_set_int4
+                            || co.op_push.contains(d));
                     let copy_arg1 = i == 1 && *d == co.op_append;
                     if !(write_arg0 || copy_arg1) {
                         *bad = true;
@@ -3844,6 +3872,10 @@ struct ConstructOps {
     op_clear: u32,
     op_new_record: u32,
     op_finish_record: u32,
+    /// The fused scalar appends (@PLN157 § V-m, `OpPush<Kind>(container, val)`): a source's
+    /// element build in ONE op, so it counts as building the source exactly as
+    /// `OpNewRecord`/`OpFinishRecord` do, and retargets the same way.
+    op_push: Vec<u32>,
 }
 
 /// @PLN90 phase B (B1.3b) — the CONSTRUCT copy shape (`x.field += src`, lowered as a copying

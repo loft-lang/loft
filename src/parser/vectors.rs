@@ -3292,6 +3292,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             "OpFinishRecord",
             &[vec_expr.clone(), Value::Var(elm), known, fld],
         ));
+        // @PLN157 § V-m — the comprehension's per-element triple fuses exactly as
+        // `new_record`'s does; `fld` is `u16::MAX` here, so `vec_expr` IS the vector.
+        if !self.first_pass && crate::keys::fused_append_enabled() && !self.keyed_local_kind(vec) {
+            self.fuse_scalar_append(&mut lp, elm, vec_expr);
+        }
         let mut for_steps: Vec<Value> = Vec::new();
         if fill != Value::Null {
             for_steps.push(fill);
@@ -5014,6 +5019,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // Only a struct field reached directly — not through an index, not through a
         // capture — can use the field-numbered form.
         let field_form = is_field && vector_elem_target.is_none() && cap_target.is_none();
+        // @PLN157 § V-m — the vector reference a fused push addresses.  The plain form's
+        // `container` IS the vector; the field form addresses the vector through its parent
+        // record and field number, which `record_new` may REDIRECT (a `__nullable<S>`
+        // payload, an enum variant's owning field) — only when it would not is the field
+        // access `val` the same slot, and only then may the push take it.
+        let fused_container: Option<Value> = if !field_form {
+            Some(container.clone())
+        } else if let Value::Call(_, ps) = val.unspan()
+            && ps.len() >= 3
+            && let Value::Int(pos) = ps[1]
+            && let Value::Int(content) = ps[2]
+            && let (Ok(pos), Ok(content)) = (u16::try_from(pos), u16::try_from(content))
+        {
+            let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
+            (parent != u16::MAX
+                && self.database.key_owner(parent) == parent
+                && self.database.variant_owning_field(parent, pos, content) == parent)
+                .then(|| val.clone())
+        } else {
+            None
+        };
         for p in res {
             // route through `vector_of` so narrow integer
             // aliases (i32, u8) produce the same narrow-element vector
@@ -5291,8 +5317,108 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 )
             };
             ls.push(finish);
+            // @PLN157 § V-m — a scalar element on a plain vector: the three ops just
+            // pushed become ONE fused push (the switch and the ops' doc in
+            // `default/01_code.loft`; `keys::fused_append_enabled`).
+            if !self.first_pass
+                && crate::keys::fused_append_enabled()
+                && !self.keyed_local_kind(vec)
+                && let Some(target) = &fused_container
+            {
+                self.fuse_scalar_append(&mut ls, elm, target);
+            } else if std::env::var_os("LOFT_TRACE_FUSE").is_some() {
+                eprintln!(
+                    "[fuse] fn={} decline=gate first_pass={} keyed={} container={}",
+                    self.data.def(self.context).name(),
+                    self.first_pass,
+                    self.keyed_local_kind(vec),
+                    fused_container.is_some()
+                );
+            }
         }
         ls
+    }
+
+    /// The fused scalar append (@PLN157 § V-m): when `ls` ends in exactly
+    /// `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for one
+    /// of the seven scalar setter kinds, replace the three with `OpPush<Kind>(container,
+    /// val)` — `container` the vector reference the caller decided (`fused_container`).  `val` moves verbatim — every
+    /// conversion the literal lowering applied is already inside it.  A setter with a
+    /// `min` operand (the narrow-int kinds), a keyed container (`keyed_local_kind` at the
+    /// call site), a record or collection element (a different setter) and the field form
+    /// all fall through and keep the general path — the fallback is the shape as it was.
+    fn fuse_scalar_append(&mut self, ls: &mut Vec<Value>, elm: u16, container: &Value) {
+        let n = ls.len();
+        let trace = std::env::var_os("LOFT_TRACE_FUSE").is_some();
+        if n < 3 {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=short({n})",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        let name_of = |d: u32| self.data.def(d).name().to_string();
+        let new_ok = matches!(&ls[n - 3], Value::Set(v, inner)
+            if *v == elm
+                && matches!(inner.unspan(), Value::Call(d, args)
+                    if name_of(*d) == "OpNewRecord" && args.len() == 3));
+        let fin_ok = matches!(&ls[n - 1], Value::Call(d, args)
+            if name_of(*d) == "OpFinishRecord"
+                && args.len() >= 2
+                && args[1] == Value::Var(elm));
+        let Value::Call(set_d, set_args) = &ls[n - 2] else {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=no-setter-call",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        };
+        if !new_ok || !fin_ok || set_args.len() != 3 {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=shape new_ok={new_ok} fin_ok={fin_ok} nargs={}",
+                    self.data.def(self.context).name(),
+                    set_args.len()
+                );
+            }
+            return;
+        }
+        if set_args[0] != Value::Var(elm) || set_args[1] != Value::Int(0) {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=operands",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        let set_name = name_of(*set_d);
+        let Some((_, push)) = super::FUSED_PUSH_KINDS
+            .iter()
+            .find(|(set, _)| *set == set_name)
+        else {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=kind {set_name}",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        };
+        let val = set_args[2].clone();
+        ls.truncate(n - 3);
+        let fused = self.cl(push, &[container.clone(), val]);
+        ls.push(fused);
+        if trace {
+            eprintln!(
+                "[fuse] fn={} fused={push}",
+                self.data.def(self.context).name()
+            );
+        }
     }
 
     /// Return the database `known_type` of a `main_vector<T>` wrapper struct,

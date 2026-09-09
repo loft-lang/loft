@@ -14,11 +14,11 @@ SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
-`hash` 10.9× → **2.2×** consumer / 1.3–2.4× gate row (under the bar); `hair`
-4.3× → **2.1×** (under the bar); `lock` 30× → **5.2×** (3.4× gate row);
-`smooth` 262× → **16×**; `fronds` 49× → **13.8×**; `composite` 26× → **7.5×**;
-the fills 17× → **3.9–4.0×** (at the bar); `wide_line` 17× → 6.3×;
-`lock_curved` 11.9× → **7.0×** (2026-09-09, after § V-k).
+`hash` 10.9× → **2.2×** consumer / 1.2× gate row (under the bar); `hair` 4.3×
+→ **2.0×** (under the bar); `lock` 30× → **4.6×** (2.7× gate row); `smooth`
+262× → **15×**; `fronds` 49× → **12.9×**; `composite` 26× → **7.6×**; the fills
+17× → **3.7–3.8×** (under the bar); `wide_line` 17× → 5.5×; `lock_curved`
+11.9× → **5.8×** (2026-09-09, after § V-m).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -98,17 +98,24 @@ is ranked below 4b and 5.  **§ V-k came from profiling `lock` WITH CALLERS on
 the § V-j runtime** rather than from the queue: the append path's bookkeeping
 was 40 % of that row and reached every row that appends (`lock` 6.6× → 5.2×,
 `lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×) — so the next step is the
-same instrument on the rows still over the bar, starting with `composite`
-(7.5×, the one row § V-k did not move) and `lock`'s remaining raster
-arithmetic (`n_lock_layer` 30 % self, `n_raster_segment` inlined into it),
-before the queue's 4b / 5 / the move.  Both are now measured (DESIGN.md
-§ V-k, its last three paragraphs): **the fused scalar append** (`v += [x]` is
-five runtime calls per element, ~35 % of `lock_curved` — one typed
-`OpAppend<Scalar>` op on both backends, M) and **the in-place-only writer**
-(SHIPPED as § V-l the same day: the loop hoists, −21 % on a setter-calling
-loop, but `composite` itself did not move — its cost is the pixel methods'
-own unhoisted single reads (29 %) and the caller's per-pixel scalar field
-reads (8 %), the next unit for that row).  The
+same instrument on the rows still over the bar.  Both units that ranking named
+shipped the same day: **the fused scalar append** as § V-m (`lock` 5.2× → 4.6×,
+`lock_curved` 6.9× → 5.8×, `wide_line` 6.3× → 5.5×) and **the in-place-only
+writer** as § V-l (a setter-calling loop −21 %; `composite` hoists but did not
+move — its cost is the pixel methods' own unhoisted single reads, 29 %, and the
+caller's per-pixel scalar field reads, 8 %).  § V-m's full local gate (run
+before its commit, 2026-09-09) found three more op-name lists the fused push
+had to reach — the constant-store builder, the native fn-ref collector and the
+move elision's escape test, each already guarded (DESIGN.md § V-m, the
+classifier paragraph) — so a new writing op is now EIGHT lists, and
+`parser::FUSED_PUSH_KINDS` is their one home.  **The next unit is P4c** —
+loop-invariant scalar field reads hoisted as locals, designed in DESIGN.md § P4
+item 3 with the validity refinement § V-l wrote ((record type, offset) keys, a
+§ V-l callee's written offsets evicting the caller's scalars): the caller side
+of `composite`'s 8 % and `n_raster_segment`'s 15 reads per pixel.  After it,
+the pixel methods' own reads (29 % of `composite`), the 27 scalar `OpNewRecord`
+sites the fusion does not reach (`parse_*`, `text.split`, `File.lines` — S, no
+judged row), then the queue's 4b / 5 / the move.  The
 scratch clone's `bench/bench.loft` carries a `--only <routine>` switch (scratch
 only, never the consumer's tree): `scripts/profile.sh --engine --calls --
 --native-release <clone>/drawing/bench/bench.loft --n 4000 --only composite`
@@ -194,6 +201,7 @@ unless said otherwise.
 | **V-j** — the copy into a fresh element: `v += [f]` cleared a destination `OpNewRecord` had just defaulted, a walk allocating child lists to find nothing; the parser marks the copy's destination fresh (`COPY_FRESH_DEST`) and both runtimes skip the clear.  The move-append's ceiling was measured on the way (−8 %, P1) and the shared-arena variant found a runtime cliff (`coalesce_free` 29.5 %, P2) | [DESIGN.md § V-j](DESIGN.md) | a cell leaks or answers wrong on either backend | **Shipped 2026-09-09** — `fronds` 838–845k → 794–801k ns/op (−5.5 %), interpreter −7 %, hashes exact; 12 cells clean under warn/leak/poison |
 | **V-k** — the append path's bookkeeping: a top-level append to a plain vector took three type lookups, the general dispatch, a `Parts::clone` per insert and a `resize` call per element (40 % of `lock`); short paths in `record_new` / `record_finish`, a copied insert kind, and `resize` on the growth step only | [DESIGN.md § V-k](DESIGN.md) | a cell leaks or answers wrong on either backend; the gate rows' hashes | **Shipped 2026-09-09** — `lock` gate row 4.4× → 3.4×; consumer `lock` 6.6× → 5.2×, `lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×, `smooth` −10 %; 14/14 hashes agree |
 | **V-l** — a loop calling an IN-PLACE-ONLY writer keeps its hoisted headers: `in_place_only_writer` beside § V-c's `retbuf_only_writer`, admitted under the in-place tier (`LOFT_NO_INPLACE_CALLEE_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier); nine cells, five hoist and four must not | [DESIGN.md § V-l](DESIGN.md) | a cell hoists that must not (c2/c4/c6/c9), or the verifier panics on any cell | **Shipped 2026-09-09** — the setter-loop A/B −21 %; `composite` hoists but its cost is inside the pixel methods (next: their own reads + loop-invariant scalar fields) |
+| **V-m** — the fused scalar append: `v += [x]` on a plain vector was five runtime calls per element; seven typed `OpPush<Kind>` ops (one resolution, one capacity test, one write, one length bump, both backends), fused by the parser at `new_record` and the comprehension lowering; five writer classifiers taught the op | [DESIGN.md § V-m](DESIGN.md) | a cell leaks or answers wrong on either backend; `tests/fused_append.rs` | **Shipped 2026-09-09** — consumer `lock` 5.2× → 4.6×, `lock_curved` 6.9× → 5.8×, `wide_line` 6.3× → 5.5×, fills under the bar; 14/14 hashes agree |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

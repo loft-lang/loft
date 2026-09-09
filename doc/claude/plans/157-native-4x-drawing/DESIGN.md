@@ -1490,38 +1490,89 @@ a loop calling a setter that writes the hoisted field · a `&`-bound alias of th
 a rebind of the record inside the loop · a record that is an element view (`f = w[k]?`)
 with an element write beside it.
 
-## V-m — the fused scalar append: cells written (2026-09-09)
+## V-m — the fused scalar append (2026-09-09)
 
-The unit § V-k measured (five runtime calls per scalar element, ~35 % of `lock_curved`)
-starts the plan's way: `bytecode-comparisons/V-m-fused-append-cells.loft`, fifteen cells with
-hand-computed expectations, passing on both backends under `LOFT_STORES=warn` and the native
-leak check on today's four-op lowering — c1 a thousand integer appends (three growth steps) ·
-c2 floats · c3 booleans · c4 characters from a multi-byte text · c5 an enum · c6 a
-`vector<integer?>` with a null appended · c7 two vector FIELDS of a record · c8 a `&`-bound
-alias of a field vector · c9 a three-element literal per iteration · c10 a loop whose bound
-re-reads the length it grows · c11 `reserve` then appends · c12 the element a call result ·
-c13 a `sorted<K[k]>` (keyed — must keep the general path) · c14 a copy appended after the
-source · c15 an element read of the vector being appended.  Two of the expectations were
-wrong on the first pass and both backends agreed against them — a loop bound re-reads
-`len(v)` per iteration (c10), and c15's third append reads the element it appended — which
-is the oracle doing its job.
+**The unit § V-k measured**: `v += [x]` on a plain vector was `OpPreAllocVector · OpNewRecord
+· OpSet<Kind> · OpFinishRecord` — five runtime calls per scalar element, each resolving the
+store and re-reading the headers the previous one read, ~35 % of `lock_curved`.
 
-Writing c13 surfaced an ICE: `sorted<integer>` is refused at its declaration ("Expect token
-[", `(Col-Sorted)` keys on a field), but a SUBSCRIPT on the refused collection reached
-`Parser::parse_key` with an empty key list and `key_types[0]` panicked.  Fixed in
-`parse_key` (parse the key, leave the poisoned value, the declaration's diagnostic is the
-one the reader sees); `tests/keyless_sorted_subscript.rs` runs the CLI on the probe, because
-the test runner's recovery on that source never reaches the site.
+**Cells before the code** (`bytecode-comparisons/V-m-fused-append-cells.loft`, fifteen with
+hand-computed expectations): c1 a thousand integer appends (three growth steps) · c2 floats
+· c3 booleans · c4 characters from a multi-byte text · c5 an enum · c6 a `vector<integer?>`
+with a null appended · c7 two vector FIELDS of a record · c8 a `&`-bound alias of a field
+vector · c9 a three-element literal per iteration · c10 a loop whose bound re-reads the
+length it grows · c11 `reserve` then appends · c12 the element a call result · c13 a
+`sorted<K[k]>` (keyed — the general path) · c14 a copy appended after the source · c15 an
+element read of the vector being appended.  Two expectations were wrong on the first pass
+and both backends agreed against them (c10's bound re-reads `len(v)` per iteration; c15's
+third append reads the element it appended) — the oracle doing its job.  Writing c13
+surfaced the `parse_key` ICE (fixed in 91b15a44, `tests/keyless_sorted_subscript.rs`).
 
-The op design, for the code: one typed `OpAppend<Kind>(v: vector, val: <kind>)` per scalar
-setter kind (`Int`, `Int4`, `Float`, `Single`, `Boolean`, `Character`, `Byte`, `Short`,
-`Enum` — the `OpSet*` family's spelling), `#rust` template `s.database.append_<kind>(&v, val)`
-= one store resolution, one capacity test (growth on the ladder), one write, one length
-bump; emitted by `new_record`'s scalar arm for a `Parts::Vector` of that kind at
-`field == u16::MAX`, the keyed kinds and record elements keeping the four ops.  A new op
-renumbers `index/target_surface.json` (`make surface-gen` after the wasm rlib is rebuilt)
-and regenerates `fill.rs`.  The hoist gate needs nothing: an op absent from its allow-list
-blocks, which a growth must.
+**The ops.**  Seven typed `OpPush<Kind>(r: vector, val)` beside `OpAppendVector` in
+`default/01_code.loft` — `Int`, `Int4`, `Float`, `Single`, `Boolean`, `Enum`, `Character`,
+the `OpSet*` family's spelling (`OpAppendCharacter` was taken: it is the text op) — each a
+one-line `#rust` template over `Stores::append_<width>`: `append_slot` (`vector_append`,
+growth on the ladder) → the typed write → the length bump on the SAME resolved store
+(`append_done`).  A null or absent vector is the no-op the four-op path was.  Regenerated
+`fill.rs` (`make fill`) gives the interpreter the same seven; the native emitter inlines
+the template.  Every op carries `#impure(parent_write)`.
+
+**The peephole** (`Parser::fuse_scalar_append`, vectors.rs): where the per-element list ends
+in exactly `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for
+one of the seven setter kinds, the three become `OpPush<Kind>(container, val)`, `val` moving
+verbatim (every conversion the literal lowering applied is already inside it).  Two call
+sites: `new_record`'s element loop — the plain form's `container` IS the vector; the field
+form (`b.xs += [x]`) addresses the vector through its parent and field number, which
+`record_new` may REDIRECT (a `__nullable<S>` payload, an enum variant's owning field), so
+the field access `val` is taken as the container only when `key_owner` and
+`variant_owning_field` both answer the parent itself — and the COMPREHENSION lowering
+(`[for i in … { x }]`), whose own triple is the same shape with `fld == u16::MAX`.  A setter
+with a `min` operand (the narrow-int kinds), a record or collection element (another
+setter), a keyed container and a redirected field all fall through and keep the general
+path.  Switch `LOFT_NO_FUSED_APPEND` (parse time); `LOFT_TRACE_FUSE=1` prints one line per
+site, fused or declined with the reason — it is what found the comprehension: `lock_layer`'s
+seven scalar appends never reached the first site, because they are `[for …]` fills.
+
+**Eight classifiers had to learn the op**, and that is the finding worth keeping: a NEW
+writing op is invisible to every op-name list that says "this writes its first argument"
+or "this builds an element".  Five surfaced when the consumer bench refused to compile —
+the `&`-parameter lint (`op_writes_first_arg`: *"Parameter 'starts' has & but is never
+modified"*), `find_field_written_vars`, `use_analysis::is_first_arg_write_name`, the
+capture-mutation `is_mutating_op`, and `scopes::grown_containers` (where the field form's
+`OpGetField(var, off, _)` container names `(var, off)` as `OpNewRecord`'s field number did)
+— and three more only in the full gate, each behind a test that already existed: the
+CONSTANT-STORE builder (`compile::extract_literal_values` read a literal as
+`OpNewRecord`-delimited elements, so every file-scope scalar vector constant was refused as
+*"built from no elements the constant store can build"* — p127/p128/p175), the native
+FN-REF collector (`collect_fn_ref_literals`' @P299 recovery read the lambda d_nr out of
+`OpSetInt4`'s third operand; a `vector<fn(…)>` literal now writes it as `OpPushInt4`'s
+second, and the dispatch had no arm — `invalid fn-ref: 741`), and the move elision's
+ESCAPE test (`scopes::source_escapes` counted a push at arg 0 as a READ of the source, so
+`d.c += s` kept its copy and `s` its slot — loft#1241's guard).  The seven names now have
+ONE home, `parser::FUSED_PUSH_KINDS` / `FUSED_PUSH_OPS`, which `is_mutating_op`, the
+constant builder and `ConstructOps::op_push` read; the lists that test a prefix
+(`starts_with("OpPush")`) need no table.  Found by tests, not by reading — the drifted-list
+class PERFORMANCE.md § P8 names, and the reason the gate ran BEFORE the commit.
+
+**Measured** (shipped tier, hashes exact on both backends, the fifteen cells clean under
+warn/leak on both and with the switch off):
+
+| row | § V-k | § V-m |
+|---|---:|---:|
+| `lock` (consumer) | 5.19× (7.97M) | **4.59×** (7.07M) |
+| `lock_curved` | 6.92× (9.14M) | **5.76×** (7.62M) |
+| `fronds` | 13.8× (708k) | **12.9×** (676k) |
+| `wide_line` | 6.30× | **5.46×** |
+| `fill_star` / `fill_circle` | 4.04× / 3.91× | **3.72× / 3.84×** |
+| `render_lock` / `render_marks` | 37.8M / 17.0M | 33.8M / 14.5M |
+| `lock` gate row | 3.4× | **2.7×** |
+
+The consumer program carries 375 fused appends; 27 scalar `OpNewRecord` sites remain in
+lowerings the peephole does not see (`parse_*`, `text.split`, `File.lines` — none on a judged
+row).  `index/target_surface.json` moved by its builtin count only: the wasm rlib must be
+built with the Makefile's features (`--no-default-features --features random`) before
+`make surface-gen`, or the generator records the new ops as unavailable in the browser
+(it did, once, against the stale rlib).
 
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
