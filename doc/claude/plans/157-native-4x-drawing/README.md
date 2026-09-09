@@ -50,6 +50,14 @@ hash unchanged.
 
 ## Where to resume
 
+**Rebased onto `main` again on 2026-09-09 (e4c7db58, main's squash of this branch
+through § V-l together with 18 issues): § V-m, P4c, § V-n and § V-o were replayed
+with `git rebase --onto origin/main 91b15a44`; only the derived audit rows
+conflicted and were re-measured on the joined tree; the bundle and the surface
+index regenerated; the tip force-pushed with lease and the GitHub gate dispatched
+on it (run 34323456806).**  The four units below are the day's work; the
+scoreboard at the top is the joined tree's.
+
 Written 2026-09-08 after § V-g landed, updated the same evening: the branch
 was REBASED onto `main` (#1465 squashed this branch through § V-d together
 with 55 other issues; the 13 commits after it were replayed with `git rebase
