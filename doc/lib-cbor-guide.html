@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cbor guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library cbor — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-cbor-guide.html">
+<meta property="og:title" content="cbor guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library cbor — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-cbor-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="cbor guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library cbor — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>cbor guide</h1>
+<article>
+<p><a href="lib-cbor.html">← cbor</a> · <a href="lib-cbor-api.html">API reference</a> · <a href="lib-cbor-src.html">source</a></p>
+<p><code>cbor</code> is canonical CBOR (RFC 8949) in pure loft: build a <code>CborValue</code>, <code>encode</code> it to bytes, <code>decode</code> bytes back. Canonical is the whole point — the same record always produces the same bytes, on any target, however it was assembled — which is what makes a signature over those bytes mean something.</p>
+<p>It is not a JSON codec and not a schema system: there is no mapping from your structs to the wire and no validation beyond well-formedness. You build the value; the codec makes its bytes deterministic. Pure loft with no native crate, so it behaves identically on every target by construction.</p>
+<pre><code><span class="kw">use</span> cbor;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">hex</span>(b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+  s = <span class="st">""</span>;
+  <span class="kw">for</span> x <span class="kw">in</span> b { s += <span class="st">"{x:02x}"</span>; }
+  s
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  rec = <span class="en">CMap</span> { entries: [
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"id"</span> },  value: <span class="en">CInt</span> { value: <span class="nm">7</span> } },
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"ok"</span> },  value: <span class="en">CBool</span> { value: <span class="kw">true</span> } },
+  ] };
+  bytes = <span class="fn-call">encode</span>(rec);
+  back = <span class="fn-call">decode</span>(bytes);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"bytes  : {hex(bytes)}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ok     : {back.ok}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"consumed all: {back.next == len(bytes)}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(back.ok, <span class="st">"a record this codec wrote is a record it reads"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(back.next == <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes), <span class="st">"…and `next` says it consumed every byte"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">duplicate_keys_pass_silently</span>();
+  <span class="fn-call">the_order_you_built_in_does_not_reach_the_wire</span>();
+  <span class="fn-call">one_false_for_four_problems</span>();
+  <span class="fn-call">bytes_and_text_are_different_types</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  bytes  : a262696407626f6bf5
+  ok     : true
+  consumed all: true
+</code></pre>
+<h2 id="the-one-that-bites-canonical-is-about-order-not-uniqueness">The one that bites: canonical is about ORDER, not UNIQUENESS</h2>
+<p>A map with two entries under the same key encodes without complaint and decodes <code>ok = true</code>. Nothing here will tell you that a record carries two values for one field.</p>
+<p>And the duplicate survives a signature perfectly happily — the bytes are stable, so they verify — which means a reader that takes the FIRST match and a reader that takes the LAST disagree about a record both consider valid and both consider signed. That is the failure this package's own guarantee cannot catch for you.</p>
+<p><strong>Uniqueness is yours to enforce, before encoding.</strong></p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">duplicate_keys_pass_silently</span>() {
+  dup = <span class="en">CMap</span> { entries: [
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"k"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">1</span> } },
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"k"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">2</span> } },
+  ] };
+  enc = <span class="fn-call">encode</span>(dup);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(enc) == <span class="st">"a2616b01616b02"</span>, <span class="st">"both entries reach the wire: {hex(enc)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">decode</span>(enc).ok, <span class="st">"…and the decoder accepts them without a word"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"dup    : two values for one key, encoded and decoded, silently"</span>);
+}</code></pre>
+<h2 id="the-order-you-built-the-map-in-does-not-reach-the-wire">The order you built the map in does not reach the wire</h2>
+<p><code>encode</code> sorts a map's entries by their encoded key bytes (RFC 8949 §4.2.1) before emitting. So two maps built in different orders are byte-identical afterwards, and that is the property everything else rests on: a signature over the bytes stays valid however the record was assembled, on any target, in any release.</p>
+<p>It also means you cannot use entry order to carry meaning. If the order matters, it is an array, not a map.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_order_you_built_in_does_not_reach_the_wire</span>() {
+  ba = <span class="en">CMap</span> { entries: [
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"b"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">2</span> } },
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"a"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">1</span> } },
+  ] };
+  ab = <span class="en">CMap</span> { entries: [
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"a"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">1</span> } },
+    <span class="en">CborEntry</span> { key: <span class="en">CText</span> { value: <span class="st">"b"</span> }, value: <span class="en">CInt</span> { value: <span class="nm">2</span> } },
+  ] };</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(<span class="fn-call">encode</span>(ba)) == <span class="fn-call">hex</span>(<span class="fn-call">encode</span>(ab)), <span class="st">"built two ways, one set of bytes"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(<span class="fn-call">encode</span>(ba)) == <span class="st">"a2616101616202"</span>, <span class="st">"…sorted by key: {hex(encode(ba))}"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"canon  : built b-then-a, encoded a-then-b — same bytes either way"</span>);
+}</code></pre>
+<h2 id="one-ok-false-for-four-problems-and-one-of-them-will-surprise-you">One <code>ok = false</code> for four problems, and one of them will surprise you</h2>
+<p><code>decode</code> answers a <code>Decoded { value, next, ok }</code>. Check <code>ok</code> FIRST — on a failure <code>value</code> means nothing.</p>
+<p>The surprise is that it <strong>rejects well-formed CBOR that is not canonical</strong>. A permissive encoder elsewhere may write the integer <code>1</code> as the valid long form <code>18 01</code>; this decoder refuses it, because accepting it would mean two byte strings decode to one value and the signable-record property is gone. Truncated input, trailing bytes after the top-level value, and empty input are the other three — and <code>ok = false</code> does not say which. A failure here means *"these are not my bytes"*, never a diagnosis.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">one_false_for_four_problems</span>() {
+  canonical: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [<span class="nm">1</span>];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">decode</span>(canonical).ok, <span class="st">"the canonical spelling of 1 decodes"</span>);</code></pre>
+<pre><code>  long_form: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [<span class="nm">24</span>, <span class="nm">1</span>];      <span class="cm">// also a valid CBOR 1 — and refused here</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>(long_form).ok, <span class="st">"well-formed but NOT canonical: rejected"</span>);</code></pre>
+<pre><code>  empty: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>(empty).ok, <span class="st">"empty input is a failure, not an empty value"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"decode : `ok` first — and non-canonical input is refused, by design"</span>);
+}</code></pre>
+<h2 id="cbytes-and-ctext-are-different-wire-types"><code>CBytes</code> and <code>CText</code> are different wire types</h2>
+<p>They carry the same payload and encode differently: a text string is major type 3, a byte string major type 2. So the loft-side choice is a wire-format choice, and a peer decoding your record sees which one you picked. Use <code>CText</code> for something that IS text and <code>CBytes</code> for anything opaque — a key, a ciphertext, a nested encoded record.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">bytes_and_text_are_different_types</span>() {
+  as_text = <span class="fn-call">encode</span>(<span class="en">CText</span> { value: <span class="st">"hi"</span> });
+  as_bytes = <span class="fn-call">encode</span>(<span class="en">CBytes</span> { value: [<span class="nm">104</span>, <span class="nm">105</span>] });</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(as_text) == <span class="st">"626869"</span>, <span class="st">"text: major type 3 — {hex(as_text)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(as_bytes) == <span class="st">"426869"</span>, <span class="st">"bytes: major type 2 — {hex(as_bytes)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hex</span>(as_text) != <span class="fn-call">hex</span>(as_bytes), <span class="st">"same two payload bytes, different records"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"types  : CText 62.., CBytes 42.. — the choice is on the wire"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the full <code>CborValue</code> set (<code>CNull</code>, <code>CBool</code>, <code>CInt</code>, <code>CBytes</code>, <code>CText</code>, <code>CArray</code>, <code>CMap</code>) and what canonical encoding guarantees.</li>
+<li><code>tests/worked-examples.loft</code> — <code>@CBR-001</code> … <code>@CBR-004</code>, the four contracts above as running tests.</li>
+<li><code>crypto</code> for signing the bytes this produces, and <code>pluginabi</code> for a protocol built on both.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

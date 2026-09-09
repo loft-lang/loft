@@ -56,9 +56,11 @@
   <url><loc>https://loft-lang.org/loft/lib-assets-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-cbor-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-crypto-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-drawing-api.html</loc></url>

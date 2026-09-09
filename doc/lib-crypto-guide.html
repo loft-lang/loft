@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crypto guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library crypto — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-crypto-guide.html">
+<meta property="og:title" content="crypto guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library crypto — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-crypto-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="crypto guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library crypto — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>crypto guide</h1>
+<article>
+<p><a href="lib-crypto.html">← crypto</a> · <a href="lib-crypto-api.html">API reference</a> · <a href="lib-crypto-src.html">source</a></p>
+<p><code>crypto</code> is the primitives: SHA-256 and HMAC, base64 both ways, Ed25519 and ECDSA-P256 signatures, X25519 Diffie-Hellman, HKDF, AES-256-GCM, HPKE, and random bytes.</p>
+<p>It is not a protocol. There is no TLS here, no password hashing (no argon2, no bcrypt), no key store and no certificate handling — those are decisions a library should not make for you. It gives you the pieces and expects you to know which one you want.</p>
+<p>⚠ <strong>Read this before anything else: every argument and every answer is BASE64 TEXT.</strong> Keys, messages, nonces, ciphertexts, digests from the <code>_b64</code> doors — all of them. The signatures say <code>text -&gt; text</code> and cannot tell you that, which is why the section below exists and why it is the first one.</p>
+<pre><code><span class="kw">use</span> crypto;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
+<p>Hashing plain text, and the bridge every other call needs.</p>
+<pre><code>  digest = crypto::<span class="fn-call">sha256</span>(<span class="st">"hello"</span>);
+  encoded = crypto::<span class="fn-call">base64_encode</span>(<span class="st">"hello"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"sha256  : {digest}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"base64  : {encoded}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"rtrip   : {crypto::base64_decode(encoded) == "</span>hello<span class="st">"}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(digest) == <span class="nm">64</span>, <span class="st">"sha256 answers 64 lowercase HEX characters"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(encoded == <span class="st">"aGVsbG8="</span>, <span class="st">"base64_encode is the bridge to every other call"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">base64_decode</span>(encoded) == <span class="st">"hello"</span>, <span class="st">"…and it round-trips"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">sign_the_base64_never_the_message</span>();
+  <span class="fn-call">two_hashing_doors</span>();
+  <span class="fn-call">failure_is_a_value_never_a_halt</span>();
+  <span class="fn-call">a_length_you_did_not_ask_for</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  sha256  : 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+  base64  : aGVsbG8=
+  rtrip   : true
+</code></pre>
+<h2 id="the-one-that-bites-sign-the-base64-of-your-message-never-the-message">The one that bites: sign the BASE64 of your message, never the message</h2>
+<p><code>ed25519_sign(secret, message)</code> wants the message as <code>base64_encode(msg)</code>. Handing it the message text type-checks, runs, and signs whatever bytes that text happens to decode to <strong>as base64</strong>.</p>
+<p>And it stays silent, which is the whole problem: verifying with the SAME wrong spelling succeeds, so your own round-trip test passes. Only a peer who spelled it correctly ever sees the mismatch — in production, against someone else's implementation, long after.</p>
+<p>The same rule runs through the package. The Ed25519 secret key is the RFC 8032 32-byte SEED in base64, not a 64-byte expanded key; the public key comes from <code>ed25519_public_key</code>; nonces, AAD and plaintext for AES-GCM are base64; HKDF's salt, IKM and info are base64.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">sign_the_base64_never_the_message</span>() {
+  seed = <span class="st">"TM0Imyj/ltqdtsNG7BFOD1uKMZ81q6Yk2oz27U+4pvs="</span>;   <span class="cm">// RFC 8032 §7.1 TEST 2 seed</span>
+  pk = crypto::<span class="fn-call">ed25519_public_key</span>(seed);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pk == <span class="st">"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw="</span>, <span class="st">"the seed derives the key"</span>);</code></pre>
+<p>Correct: the message carried as base64.</p>
+<pre><code>  msg = crypto::<span class="fn-call">base64_encode</span>(<span class="st">"test"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(msg == <span class="st">"dGVzdA=="</span>, <span class="st">"base64_encode is the bridge"</span>);
+  sig = crypto::<span class="fn-call">ed25519_sign</span>(seed, msg);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">ed25519_verify</span>(pk, msg, sig), <span class="st">"and it verifies"</span>);</code></pre>
+<p>The trap: "test" is itself four valid base64 characters, so passing it raw signs the three bytes it decodes to instead of the four bytes of "test".</p>
+<pre><code>  wrong = crypto::<span class="fn-call">ed25519_sign</span>(seed, <span class="st">"test"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">ed25519_verify</span>(pk, <span class="st">"test"</span>, wrong),
+         <span class="st">"the same wrong spelling VERIFIES — which is why nothing tells you"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!crypto::<span class="fn-call">ed25519_verify</span>(pk, msg, wrong),
+         <span class="st">"…and a peer who spelled it right sees a signature that does not match"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"signing : base64_encode(msg), always — the wrong spelling self-verifies"</span>);
+}</code></pre>
+<h2 id="two-hashing-doors-and-why-there-are-two">Two hashing doors, and why there are two</h2>
+<p><code>sha256(text)</code> takes loft <code>text</code> and answers 64 lowercase HEX characters. <code>sha256_b64(b64)</code> takes the BASE64 of a byte string and answers the BASE64 of the same 32-byte digest. Both hash the same bytes the same way; they differ in how the input arrives and how the output is spelled, and comparing one spelling to the other can never match.</p>
+<p>Reach for <code>sha256_b64</code> whenever what you are hashing is not valid UTF-8 — a ciphertext, a canonical CBOR record, a compressed blob. Such a byte string cannot ride as <code>text</code> at all, so <code>sha256</code> cannot even see it. <code>bytes_to_base64</code> / <code>base64_to_bytes</code> are the bridge to a <code>vector&lt;u8&gt;</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">two_hashing_doors</span>() {
+  hex = crypto::<span class="fn-call">sha256</span>(<span class="st">"hello"</span>);
+  b64 = crypto::<span class="fn-call">sha256_b64</span>(crypto::<span class="fn-call">base64_encode</span>(<span class="st">"hello"</span>));</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(hex) == <span class="nm">64</span>, <span class="st">"the hex spelling is 64 characters"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(crypto::<span class="fn-call">base64_to_bytes</span>(b64)) == <span class="nm">32</span>, <span class="st">"the base64 one decodes to 32 bytes"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex != b64, <span class="st">"two spellings of ONE digest, and they are not equal"</span>);</code></pre>
+<p>A byte that is not valid UTF-8 can only go through the base64 door.</p>
+<pre><code>  raw = crypto::<span class="fn-call">bytes_to_base64</span>([<span class="nm">255</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(raw == <span class="st">"/w=="</span>, <span class="st">"raw bytes cross as base64"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(crypto::<span class="fn-call">sha256_b64</span>(raw)) == <span class="nm">44</span>, <span class="st">"…and hash fine there"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"hashing : sha256 -&gt; hex, sha256_b64 -&gt; base64, never comparable"</span>);
+}</code></pre>
+<h2 id="failure-is-a-value-never-a-halt">Failure is a VALUE, never a halt</h2>
+<p>Nothing here panics on malformed input. A producer answers <code>""</code> and a verifier answers <code>false</code> — so an unchecked <code>""</code> is a signature you never made, and a program that stores it has stored nothing while reporting success.</p>
+<p>Check the result of every producer before you use it. That is the whole error model; there is no exception to catch and no status code to read.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">failure_is_a_value_never_a_halt</span>() {
+  msg = crypto::<span class="fn-call">base64_encode</span>(<span class="st">"test"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">ed25519_sign</span>(<span class="st">"not-base64!!"</span>, msg) == <span class="st">""</span>,
+         <span class="st">"a malformed key answers the empty text, not an error"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!crypto::<span class="fn-call">ed25519_verify</span>(<span class="st">"nope"</span>, msg, <span class="st">"also-nope"</span>),
+         <span class="st">"…and a malformed verify answers false"</span>);</code></pre>
+<pre><code>  seed = <span class="st">"TM0Imyj/ltqdtsNG7BFOD1uKMZ81q6Yk2oz27U+4pvs="</span>;
+  good = crypto::<span class="fn-call">ed25519_sign</span>(seed, msg);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(good != <span class="st">""</span>, <span class="st">"the check that matters: a real signature is not empty"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"errors  : '' and false — an unchecked '' is a signature you never made"</span>);
+}</code></pre>
+<h2 id="a-length-you-did-not-ask-for">A length you did not ask for</h2>
+<p><code>random_bytes(16)</code> answers 16 bytes of randomness <strong>as base64</strong>, so the text you get is 24 characters long. Measuring the answer instead of asking for what you wanted is how a key ends up the wrong size — decode it, or count what you requested.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_length_you_did_not_ask_for</span>() {
+  r = crypto::<span class="fn-call">random_bytes</span>(<span class="nm">16</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(r) == <span class="nm">24</span>, <span class="st">"16 bytes of base64 is 24 characters, got {len(r)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(crypto::<span class="fn-call">base64_to_bytes</span>(r)) == <span class="nm">16</span>, <span class="st">"…and 16 bytes once decoded"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">random_bytes</span>(<span class="nm">16</span>) != r, <span class="st">"two draws differ"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"random  : random_bytes(16) is 24 characters of base64, 16 bytes decoded"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the whole surface: ECDSA-P256 (deterministic, flat JOSE encodings), X25519, HKDF's three doors, AES-256-GCM and HPKE.</li>
+<li><code>tests/</code> — <code>@CRY-001</code> … <code>@CRY-006</code>, six contracts a signature cannot state, each a running test: the two hashing doors, the signing spelling above, ES256's determinism, why a Diffie-Hellman output is NOT a key, where AES-GCM's tag lives, and the three things an HPKE recipient needs.</li>
+<li><code>cbor</code> for a canonical record to hash or sign, and <code>pluginabi</code> for a protocol built on both.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
