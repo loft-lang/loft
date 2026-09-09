@@ -1991,15 +1991,17 @@ impl Output<'_> {
         self.output_code_inner(&mut operand, &Value::Var(d))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         self.indent(w)?;
+        // The comment names the VIEW variable the header serves, which is what the emission
+        // audit (`scripts/emission_audit.py`, @PLN157 § V-r) keys the holder on.
         if let Some(held) = held {
             writeln!(
                 w,
-                "let {name} = {held}; //@PLN157 § V-n view header, copied from the held path (§ V-p)"
+                "let {name} = {held}; //@PLN157 § V-n view header for {operand}, copied from the held path (§ V-p)"
             )?;
         } else {
             writeln!(
                 w,
-                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header"
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header for {operand}"
             )?;
         }
         self.vec_headers.push(HashMap::from([(path, name)]));

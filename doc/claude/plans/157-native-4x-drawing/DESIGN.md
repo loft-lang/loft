@@ -2028,6 +2028,47 @@ agree): `lock` **3.57×**, `lock_curved` **3.89×**, `composite` 2.34×, the fil
 rasteriser's arithmetic) are what remain over the bar.  `hash` read 3.43× in that run
 against 2.2× before — re-timed alone below, since the table ran beside a build.
 
+## V-r — the emission audit: the emitted routines validated against their assumptions (2026-09-09)
+
+**The steer** (owner, 2026-09-09): keep the formal ruling as a goal of the plan — the
+emitted Rust grows with every rewrite, so its assumptions need a way to be validated.  Two
+instruments now do that.  At run time, the checking forms under `LOFT_HOIST_VERIFY=1`
+(R-Switch) re-derive every held fact at every use.  At EMISSION time, this unit:
+`scripts/emission_audit.py <emitted.rs>` reads a `--native-emit` output and checks each
+function against the hoist-state rules of `formal/rewrites.md` before anything runs.
+
+**What it checks, and how.**  Textually, by design: the emitter spells a path by ONE
+expression text wherever it names it, so string equality is the pairing.  Per function,
+with brace depth as the frame: a `let __vh_N = vector::vec_header(&(P), …)`, a `let mut
+__ph_N = vector::push_header(&(P), …)`, a view header (`//… view header for var_d` — the
+emitter now names the view variable in that comment for exactly this reader) and a `let
+__vs_N = <getter>` (its key read off the getter's `db = (var_x)` and `pos + (N_i64)`) each
+bind a HOLDER live until its frame closes; a twin's `__is_k` / `__ih_k` parameters are
+holders for the whole body.  R-State: a binding for a path already held in a live frame is a
+violation; every `get_elem_hoisted` / `vec_set_hoisted_or_raise_runtime` / `push_hoisted`
+names a live holder bound for the path it reads; every `(i64::from(H.len))` and `__vs_N`
+names a live holder; every twin call hands in live holders (R-Inputs).  R-Refresh: a
+template append, a `pre_alloc_vector` or a `vector_add` on a held path is a violation.  A
+runtime read (`vec_get_or_raise_runtime`, `length_vector`) on a held path is a NOTE — a
+missed hoist, never a wrong answer.  The summary counts holders bound and uses resolved, so
+a vacuous pass is visible.
+
+**Proven to fail before it was trusted.**  A hand-made second header for one path is
+refused (`R-State — __vh_999 binds path var_v already held by __vh_1`), and — the
+falsification that matters — the collector order that produced today's double holder
+(`hoistable`'s push block moved back before § V-p's callee inputs) makes the audit flag
+`n_outside_and_growing: __vh_2 binds path … already held by __ph_1` on the callee-inputs
+guard's emission, with no program run.  Restored, every corpus is clean: the six cell
+corpora, the three hoist guards and the in-repo `bench/12_drawing/bench.loft` (26–46
+holders, 39–46 uses each); `tests/emission_audit.rs` runs exactly that in the gate, and
+requires at least one holder per corpus and the refusal of the doubled emission.
+
+**What it cannot see.**  A twin's inputs are holders with no path text (the callee's own
+variables name them), so R-Inputs is checked for liveness, not for pairing; a `.len` read
+carries the holder and not the path, so it is checked for liveness only.  Both are where
+the state-builder refactor (next) and a path-carrying comment on those emissions would
+sharpen it.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
