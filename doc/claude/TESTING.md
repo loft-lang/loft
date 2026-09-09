@@ -1568,7 +1568,28 @@ cargo build --bin loft --target-dir /tmp/loft-dbg
 LOFT_MAX_OPS=100000 /tmp/loft-dbg/debug/loft --interpret --path . prog.loft
 ```
 
-(`--path .` because the stdlib is found relative to the binary.)  The same applies to
+(`--path .` because the stdlib is found relative to the binary.)
+
+⚠ **Running the nightly debug-assertions GATE locally: a separate `--target-dir` makes four
+tests fail for a reason that is not the code.**  The gate is
+
+```bash
+RUSTFLAGS='-C debug-assertions=on' LOFT_STORE_GUARD=1 CARGO_TARGET_DIR=/tmp/loft-da \
+  cargo test --release --no-fail-fast --lib --test issues --test wrap --test strings \
+  --test frame_vars -- --skip library_suite
+```
+
+and several of those tests SPAWN the built binary.  A spawned binary under a target dir outside
+the repo cannot find `default/` — the same stdlib-resolution trap the `--path .` note above is
+about — so the subprocess exits non-zero and the test's `assert!(out.status.success())` fires.
+Measured 2026-09-09: four failures (`issues.rs` ×3, plus `data.rs`'s `Unknown operator` from
+inside a spawned temp package) that are ALL this artifact — re-running two of the spawned
+programs by hand with `--path .` printed their expected `… ok` lines.  CI has no such artifact
+because it builds into the repo's own `target/`.
+
+So when reading that gate locally, separate the two populations before believing a red: an assert
+inside `src/` is the gate speaking, and a test-file `assert!` on a spawned process's exit status
+is probably the target dir.  The same applies to
 every other `#[cfg(debug_assertions)]` item in `src/` — **93 of them**, including
 `check_arg_ref_allocs` and `check_ref_leaks`.  The store LEAK check is unaffected because
 it is not gated at all.
