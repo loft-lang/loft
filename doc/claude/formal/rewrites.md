@@ -49,6 +49,82 @@ of an unmoved vector answer the same number, so agreement alone cannot tell a so
 rewrite from a lucky one.  `PERFORMANCE.md § Design: P2` and `NATIVE.md` list the
 switches; `hoist_verify` in `Output` is the one flag every checking form reads.
 
+## The hoist state — what the rewrites compose through
+
+A loop's rewrites do not compose pairwise.  They compose through ONE object, the loop's
+HOIST STATE: the map from a vector path to the holder the loop keeps for it, plus the record
+scalars it read once.  Each rewrite below is a claim on that state — what it may add, what it
+may read, what it must keep current — and the three rules here are what make a combination of
+rewrites decidable by a lookup instead of by the order their collectors happened to run in.
+Measured: the first emission of a push loop beside a twin call gave one path TWO holders,
+because the push collector ran before the twin-input collector; the verifier caught it and
+the ordering closed it, but nothing in the per-rewrite rules had said it was wrong
+([rewrites-history.md](rewrites-history.md)).
+
+### One path, one holder
+
+```
+  (R-State)      a loop's hoist state maps each vector path to AT MOST ONE holder per
+                 frame — a plain header (R-Header), a push header (R-Push) or a value
+                 handed in from outside (R-Inputs, a twin's parameter) — and every read,
+                 write, length and push of that path in the loop serves from that
+                 holder.  A nested loop re-uses an enclosing frame's holder for the
+                 same path rather than deriving a second; a view of a held path copies
+                 the holder (R-View).  Two holders for one path is a defect whatever
+                 the values say.
+```
+
+**In words.** The holder is the ONE definition of the path's `(store, record, length)` for
+the loop; a second one can only ever be the same or stale, and stale is silent.  The state
+is built by `hoist::hoistable` — the read candidates, § V-p's callee inputs, then the push
+paths, which REMOVE themselves from the read list — and `Output::begin_vector_hoist` binds
+one local per entry; today the rule is held by that order, and the closure by construction is
+the state-builder refactor queued in @PLN157 (one map, one insert path).  Sites:
+`hoist::hoistable` (the push paths leave the read list), `Output::begin_vector_hoist` (the
+frames), `Output::bind_view_header` (a view copies a held path's holder).
+
+### The op that changes a held fact refreshes the holder at its own site
+
+```
+  (R-Refresh)    a held fact — a header's record and length, a push header's capacity,
+                 a hoisted scalar — may be changed inside the loop ONLY by an op that
+                 the gate admitted for that purpose, and that op refreshes the holder
+                 at its own site before anything else can read it: a push bumps its
+                 header's length and re-derives the whole header after a growth; a
+                 scalar hoist is evicted at analysis time by the (type, offset) its
+                 writes reach (R-Scalar).  An op that could change a held fact and
+                 does not refresh it blocks the loop.
+```
+
+**In words.** This is why a push may be admitted and an `OpAppendVector`, a remove or a
+resize may not: not because they grow, but because only the push's emission refreshes what
+it changes.  The refresh includes the RECORD, not only the local: the length is written
+back per push so a runtime reader inside the loop (an admitted callee's `len(v)`) sees every
+push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::WriteSet::evicts`
+(the scalar half).
+
+### Two paths may name one vector only where ownership cannot rule it out
+
+```
+  (R-Alias)      a rewrite that MOVES a held vector (a push's growth) is admitted beside
+                 other holders only when no other held path can name the same vector,
+                 decided by OWNERSHIP: a root that is a local owning its store (its dep
+                 list empty or naming only its own `__vdb_N` witness, not a `&` link,
+                 not captured, not a parameter) or the function's return buffer is
+                 EXCLUSIVE; two exclusive roots are two stores.  A parameter cannot
+                 alias an owned local but can alias a return buffer the caller offered
+                 (§ V-d); a `&` link or a view can alias anything.  A single moving
+                 rewrite beside no other holder has nothing to alias with and is
+                 admitted whatever its root.
+```
+
+**In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
+witness, `is_argument`, `is_captured`, the hidden return-buffer attribute); this rule reads
+them and no rewrite re-derives them.  A rewrite that fails it declines the WHOLE loop — a
+mover left to its template would move a record a kept holder still describes.  Today only a
+push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
+`hoist::retbuf_var`, the admission block in `hoist::hoistable`.
+
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
@@ -56,9 +132,9 @@ switches; `hoist_verify` in `Output` is the one flag every checking form reads.
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
                  derives it once before the loop, and every element read, element
-                 write and len(P) in the body uses it.  A rebind of P's root inside
-                 the body removes P; a nested loop's prelude skips a path an outer
-                 one already holds.
+                 write and len(P) in the body uses it (R-State).  A rebind of P's root
+                 inside the body removes P; a nested loop's prelude skips a path an
+                 outer one already holds.
 ```
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
@@ -139,7 +215,8 @@ write the same `(Lay, 0)`.  Switch `LOFT_NO_SCALAR_HOIST`; falsifier
                  every d[i] and len(d) in the rest of the block — when the remainder
                  passes (R-InPlace), never rebinds d, and indexes d at least once.
                  A rebind of P's ROOT afterwards does not matter: d keeps the DbRef
-                 it was given.
+                 it was given.  Where P is already held by an enclosing frame, d's
+                 header is a COPY of that holder, not a second derivation (R-State).
 ```
 
 **In words.** @PLN157 § V-n: the loop hoist's promise applied to the statements
@@ -175,9 +252,11 @@ cannot see.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.  Sites:
                  argument variable c it passes for p, the value of (c, f) under
                  (R-Scalar) and the header of (c, g) under (R-Header) — EVERY input
                  of the callee — calls the callee's TWIN: the same body emitted with
-                 those values as extra parameters, read in place of the record.  A
-                 call missing any input keeps the plain form; the twin exists beside
-                 the original, never instead of it.
+                 those values as extra parameters, read in place of the record — the
+                 caller's holders handed in (R-State: a path held by a push header
+                 hands in that header, current at the call).  A call missing any
+                 input keeps the plain form; the twin exists beside the original,
+                 never instead of it.
 ```
 
 **In words.** @PLN157 § V-p.  The pixel methods read `self.width` / `self.height`
@@ -203,25 +282,22 @@ re-reads every input against the record.  Sites: `hoist::callee_inputs`,
                  header — (R-Header)'s triple plus the record's capacity — that the
                  push itself keeps current: a push that fits is a bounds test, one
                  store and a length bump written to the header AND the record; a
-                 growth step is the runtime's own append followed by a fresh header.
-                 Every read of P in the loop serves from that header.  Aliasing is
-                 decided by ownership: a single push beside no other candidate is
-                 admitted whatever its root; otherwise every push root must be a
-                 local that owns its store or the function's return buffer, and a
-                 read candidate is kept only when its root is an owned local, or a
-                 parameter while no push targets the return buffer.  A push that
-                 fails the rule declines the whole loop.
+                 growth step is the runtime's own append followed by a fresh header
+                 (R-Refresh).  Every read of P in the loop serves from that header
+                 (R-State).  The push is a MOVER, admitted beside other holders under
+                 (R-Alias); the OpPreAllocVector the parser emits before a push to a
+                 local claims a record only for an absent vector, never moves one,
+                 and is emitted as nothing under a held push header.
 ```
 
 **In words.** @PLN157 § V-q.  A growth moves the pushed vector's RECORD and nothing else
 — the container record, every other vector's record and every scalar keep their numbers —
-so the only header a push can invalidate is one naming the SAME vector, and the push's own
-is refreshed at the site.  The record's length is written per push so a runtime reader in
-the loop (an admitted callee's `len(v)`) sees every push.  Switch `LOFT_NO_PUSH_HOIST`;
-falsifier `LOFT_HOIST_VERIFY=1` (the push re-derives its header before each fast-path
-store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `hoist::hoistable` (the
-aliasing rule), `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`,
-`Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
+so the only holder a push can invalidate is one naming the SAME vector (R-Alias), and the
+push's own is refreshed at the site, the record's length included (R-Refresh).  Switch
+`LOFT_NO_PUSH_HOIST`; falsifier `LOFT_HOIST_VERIFY=1` (the push re-derives its header
+before each fast-path store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`,
+`hoist::pre_alloc_path`, `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`
+and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
 4.39× → 3.51× of Rust, hashes unchanged.
 
 ### A leaf carries no frame
@@ -238,6 +314,24 @@ aliasing rule), `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter
 and loses only the innermost frame NAME from the chain.  Switch
 `LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
 `Output::output_function`.
+
+## Validating the emitted routines against their assumptions
+
+Every rule above is an ASSUMPTION the emitted Rust makes about the loop it sits in, and the
+emitted routines grow with each rewrite — a push header beside a twin call beside a view.
+Two instruments check the assumptions, and the chapter is not complete without both:
+
+- **at run time**, the checking forms under `LOFT_HOIST_VERIFY=1` (R-Switch): every
+  holder-served read, write and push re-derives what it assumed and panics on a stale
+  value — the cell corpora and the script guards run under it;
+- **at emission time**, the EMISSION AUDIT (`scripts/emission_audit.py`, @PLN157 § V-r):
+  over a `--native-emit` output it reads each function's preludes and holder uses and
+  checks R-State (one `let __vh_N` / `__ph_N` per path expression per frame, every
+  `get_elem_hoisted` / `vec_set_hoisted` / `push_hoisted` / `.len` naming the holder bound
+  for its path), R-Refresh (no template append or growing op on a path while a holder for
+  it is live in an enclosing frame) and R-Inputs (a twin call hands in exactly the holders
+  its parameters name).  It runs over the cell corpora and the consumer bench in the gate
+  and is the instrument that would have flagged the double holder before any run.
 
 ## Deviations
 

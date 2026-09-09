@@ -1913,7 +1913,7 @@ impl Stores {
     }
 
     /// @PLN157 § V-q — ONE push through a hoisted [`crate::vector::PushHeader`]
-    /// (`@FR-R-Push`): when the element fits, a bounds test against the capacity, one
+    /// (`@FR-R-Push`, and the refresh `@FR-R-Refresh` asks for): when the element fits, a bounds test against the capacity, one
     /// typed store at the next slot and a length bump written to BOTH the header and the
     /// record (a runtime reader inside the loop — a callee's `len(v)` — sees every push);
     /// otherwise the runtime's own append (its growth ladder, its checks) and a fresh

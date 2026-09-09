@@ -1856,6 +1856,8 @@ impl Output<'_> {
         } = hoisted;
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
+        // `@FR-R-State` — one holder per path per frame: a pushed path binds its push header
+        // here and is absent from `candidates`; an enclosing frame's holder is re-used.
         for (path, expr) in pushes {
             // An enclosing loop that pushes the same path already holds its header (a push
             // anywhere in a body makes the path a push path at every enclosing level).
@@ -1979,7 +1981,7 @@ impl Output<'_> {
         let name = format!("__vh_{}", self.hoist_counter);
         // @PLN157 § V-p — a view of a path whose header is already held (a loop's prelude, or
         // a twin's input) copies that header: the binding's `DbRef` is the path's, so the
-        // header derived from either is the same one.
+        // header derived from either is the same one (`@FR-R-State`).
         let held = match stmts[at].unspan() {
             Value::Set(_, rhs) => hoist::vector_path(self.data, rhs)
                 .and_then(|p| self.active_vec_header(&p).map(str::to_owned)),
