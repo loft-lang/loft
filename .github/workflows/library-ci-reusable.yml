@@ -34,9 +34,16 @@ on:
         default: 14
         type: number
 
+# ⚠ A CALLED workflow can only REDUCE what the caller lends it — never elevate.  Asking
+# for a scope the caller has not granted is a STARTUP FAILURE: no job, no annotation, no
+# log, and GitHub says only "This run likely failed because of a workflow file issue".
+# Adding `pull-requests: read` here (for the `unreleased work` job) did exactly that in
+# every loft-libs-* repo for five days, because those repos default to `read`, which is
+# `contents` + `packages` and nothing else (loft#1492).  So the PR scope is lent by the
+# CALLER — `scripts/deploy-library-ci.sh` writes it into each stub — and this block stays
+# at what every caller already has.
 permissions:
   contents: read
-  pull-requests: read       # the unreleased-work job lists this repo's own PRs
 
 jobs:
   test:
