@@ -787,9 +787,11 @@ field it has no use for.
 The rule lives in `scripts/falsify-review.py --check` and nowhere else, so the review and the
 gate cannot disagree about what a receipt owes.  `doc_hygiene::every_guard_says_how_to_score_it
 _again` holds the line against `tests/falsified_docs.baseline`, a ratchet that only shrinks —
-331 of 382 receipts predate the standard, `HOLDS` missing from most of them, so the backlog is
-recorded honestly rather than fixed in one pass or pretended away.  A leak's `kt=` id shifts
-with the type table between builds, so a WITNESS names the store SHAPE, not the number.
+the debt began at 344 receipts and is now **zero**: every one of the 390 says which
+channel carries it, what instrument that needs, a concrete witness and what must NOT move.
+So the baseline is empty and the gate is a plain requirement rather than a ratchet — a new
+guard whose receipt does not say how to score it fails outright, and the cure is to write
+the fields, never to re-add a line to the baseline.
 
 ⚠ **Record the patch when you falsify, not when you need it.**  `falsify.sh <guard> <ref>`
 prints the durable receipt beside the ref one and writes the patch, because the derivation is

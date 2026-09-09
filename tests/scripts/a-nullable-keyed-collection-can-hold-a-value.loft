@@ -52,6 +52,11 @@
 // and each fails on the assert channel here.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct NkH { k: integer = 0, v: integer = 0 }
 struct NkO { k: integer = 0, v: integer = 0 }

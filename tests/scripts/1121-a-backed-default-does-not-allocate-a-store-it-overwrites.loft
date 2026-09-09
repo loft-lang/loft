@@ -33,6 +33,13 @@
 //   is INERT and that is the finding, not a gap: it frees the displaced store on its own
 //   assign path, which is why the defect was native-only and why `make falsify` reports NOT
 //   falsified overall for this file.  Values identical on both backends before and after.
+//   ARMED: none — the native leak is reported at exit and needs no instrument.
+//   HOLDS: the VALUES are identical on both backends before and after, and `--interpret` is
+//   INERT on every channel. That inertness IS the finding rather than a gap: the interpreter
+//   frees the displaced store on its own assign path, so the defect is native-only. NATIVE
+//   carries it, leaking `kt=82 main_vector<Bd1>×160` against clean. `make falsify` therefore
+//   prints NOT falsified overall, because its summary wants a channel moving on both
+//   backends.
 
 struct Bd1 { bd_k: integer = 0, bd_v: integer = 0 }
 struct BdH { bd_c: vector<Bd1>? }

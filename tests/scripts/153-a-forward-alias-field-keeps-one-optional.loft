@@ -20,6 +20,9 @@
 //   c1 is the first moving cell on both backends (the control build refuses it at compile
 //   time with the `integer??` message, so its assertion count is the refusal); c2 and c4
 //   were measured red on that build too, and c3 is the control that stays green.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Fwd1 { f: Maybe1? }
 type Maybe1 = integer?;

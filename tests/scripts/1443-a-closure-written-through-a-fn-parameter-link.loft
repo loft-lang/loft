@@ -75,6 +75,9 @@
 // @falsified-at: 8e242d34 (the lifetime half, under `LOFT_POISON=1`) — interpret 8 assertion
 //   failures -> 0, 13 passed both times WITHOUT poison.  That second number is the point: the
 //   control build is wrong and silent, and only the poison sweep separates the two.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct S1443 { a: integer }
 

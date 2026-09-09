@@ -6,32 +6,9 @@
 # `scripts/falsify-review.py` and doc/claude/TESTING.md.
 #
 # This is a RATCHET keyed by file name.  It only ever shrinks: a new guard must meet the
-1119-a-callees-var-slots-are-its-own.loft
-1121-a-backed-default-does-not-allocate-a-store-it-overwrites.loft
-1144-a-generic-ne-derives-from-the-bound-s-eq.loft
-1145-two-loops-bind-one-body-local-at-their-own-types.loft
-1152-a-vector-value-into-a-group-reaches-every-member.loft
-1183-a-delivered-fnref-buffer-has-an-owner.loft
-1213-an-absent-keyed-field-materialises-on-append.loft
-1232-a-nullable-element-of-a-vector-literal-is-diagnosed.loft
-1233-a-captured-keyed-collection-accumulates-its-appends.loft
-1245-a-fn-ref-bind-copies-like-its-named-twin.loft
-1248-a-capture-that-cannot-be-borrowed-from-does-not-decline-the-lift.loft
-1275-a-bound-offers-both-arities-of-minus.loft
-1300-a-generic-header-binds-its-own-type-variable.loft
-1339-the-parser-is-not-charged-for-a-prelude-that-never-existed.loft
-1378-a-generic-at-a-self-referential-struct-parses.loft
-1431-a-spatial-axis-decodes-with-its-declared-bias.loft
-1439-an-escaping-closure-keeps-its-nullable-capture.loft
-1442-a-view-into-a-nullable-local-is-materialised.loft
-1443-a-closure-written-through-a-fn-parameter-link.loft
-1476-a-record-delivered-on-some-paths-is-freed-on-the-others.loft
-153-a-forward-alias-field-keeps-one-optional.loft
-a-nullable-keyed-collection-can-hold-a-value.loft
-a-nullable-local-bound-from-a-borrow-returning-call-copies-it.loft
-a-null-answer-does-not-free-the-argument-the-other-arm-hands-up.loft
-a-null-element-of-a-linked-group-leaves-nothing.loft
-a-record-reassigned-from-a-value-branch-copies-the-chosen-arm.loft
-a-type-variable-is-found-under-every-former.loft
-a-vector-local-bound-from-a-value-branch-copies-the-chosen-arm.loft
-a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft
+# standard, and a line here must be deleted once its guard does.  Do not add to it.
+#
+# ⚠ IT IS NOW EMPTY, and that is the point: the debt started at 344 receipts and reached
+# zero, so `doc_hygiene::every_guard_says_how_to_score_it_again` is a plain requirement
+# rather than a ratchet — a guard whose receipt does not say how to score it fails the
+# gate outright.  Do not re-add a line here to get a new guard past it; write the fields.
