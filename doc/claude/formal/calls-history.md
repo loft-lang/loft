@@ -6,13 +6,13 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — `D-call-18` opened 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
-### D-call-18 — OPEN (2026-09-09, loft#1482): the DENSE half of D-call-17 aliases too, and D-call-17 closed on the belief that it does not
+### D-call-18 — OPENED AND CLOSED (2026-09-09, loft#1482): the DENSE half of D-call-17 aliases too, and D-call-17 closed on the belief that it does not
 
 `(F-Ret)`: *"a caller that mutates one call's result does not affect another call's result."*  Run
 as written, on both backends:
@@ -47,6 +47,63 @@ instrument asked *"do `τ` and `τ?` reach the store machinery by the same road?
 it reported was read by asking WHICH half was wrong instead of assuming the dense one was right.
 A deviation register entry that names an oracle is a claim to re-measure — the same warning
 `tuples.md` carries about its own `OPEN: 0`.
+
+**CLOSED** by `3ee333f94` + `7f0f123ab` (branch `tuxedo-1481-addr-alignment`, not yet on `main`).
+Measured by the peer stream; the commits were read here to confirm the change is where the entry
+says, and this plan re-measures its own channel table on the join rather than carrying it.
+
+**It did not land where either reading pointed.**  Not `classify_reference_delivery` — the fix is
+in `classify_ret_promotion`'s `allow_rename`, whose ladder already refuses the rename for a
+candidate viewing a LOCAL and stops at the frame boundary on purpose: a local's store dies with the
+frame, so renaming it would dangle.  **A parameter's store does not die, which is exactly why this
+read as sound** — the rename produces a perfectly live record, and it is the caller's.
+`var_views_an_argument` is the argument twin, one hop deep because a record bind COPIES (`e = p[0];
+e` still looks at the caller's record; `e2 = e` owns its own).  Refused, the candidate drops to the
+`Bind` copy leg and materialises into `__retbuf`.
+
+**The pass-stability requirement is met STRUCTURALLY, not by a better predicate.**  Refusing the
+rename is what stops the tail's local from BECOMING an argument, so the fact
+`return_views_an_argument` reads is no longer one the delivery itself created, and both passes
+answer alike.  `return_views_an_argument` now delegates to the per-var predicate, so the two
+spellings cannot drift.
+
+**A second half was needed, and only a LEAK found it.**  A candidate copied into the buffer must
+not have its deps walked into the return type — the copy severs the borrow.  Without that,
+`find_join(table, …)` in `496-borrowed-view-return-dep-prune` published `-> Mon["__retbuf",
+"table"]`; the caller read the stale `table`, bound the fresh copy as a view of its own vector and
+freed nobody's.  One record per call, every value correct, `make ci` green.  `jo_arm_skip`'s walk
+already says that sentence for the vector arm pre-pass; this is the record twin.
+
+**The boundary was wider than the eight rows the issue recorded**, in both directions: a field
+projection of a struct parameter, an explicit `return e`, a method receiver, a record ENUM, and a
+vector ELEMENT of a vector parameter (`fn f(o: vector<vector<S>>) -> vector<S> { e = o[0]; e }`),
+which appended to the argument.  Its sibling `e = b.v` — a vector FIELD of a struct parameter — was
+already right through the vector selector's own `CopyBorrow` leg, which is why the former looked
+settled.  The `if`-arm cell moved on `--native` ONLY: it answered a zeroed record where
+`--interpret` was accidentally right.
+
+⚠ **The methodological finding, and it is the reusable part.**  The first gate run was RED on six
+`tests/use_analysis.rs` oracle cells: the new refusal answers the same question as the
+`LOFT_JOIN_OWN` match-return pre-pass for a `_mv_` marked vector borrow.  With the pre-pass ON
+those candidates sit in `jo_arm_skip` and the legs never meet; under `LOFT_NO_JOIN_OWN` the caller
+has asked for the pre-pre-pass emission and the new leg handed back the post-pass answer anyway —
+**so the switch could no longer show its own before-half.**  Nothing about VALUES moved; the
+runtime was clean either way, and only the pinned dep in
+`join_own_match_return_strips_the_borrow` could see it.  `7f0f123ab` stands the refusal down for a
+binding `is_marked_vector_borrow` says the pre-pass owns — @PLN155's one-home predicate, reused
+rather than respelled.
+
+> **A new leg answering a question an A/B switch already answers makes that switch VACUOUS, and the
+> switch's own test is the only thing that says so.**  A bisect control that cannot fire is worth
+> nothing, and no value channel reports its loss.
+
+Evidence at `7f0f123ab`: `make ci` ALL GATES PASSED · `LOFT_POISON=1` 2016/2016 ·
+`LOFT_VERIFY_STACK=1` 2016/2016 · corpus emit diff DIFFERENT 18 of 1436, every one clean on both
+backends with `strict=0` **and** `exhausted=0` (the second grep matters — `LOFT_STRICT_STORES`
+implies `LOFT_NO_SLOT_REUSE`, so a store-churning program aborts with *"store table exhausted"* and
+a sweep grepping only for `strict-store` scores that CLEAN).  Guard
+`tests/scripts/1482-a-record-return-that-views-a-parameter-is-copied.loft`, 8 cells + 9 controls,
+falsified at `14ed307de` on both backends.
 
 ### D-call-17 — OPENED AND CLOSED (2026-09-08, loft#1468): a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller
 

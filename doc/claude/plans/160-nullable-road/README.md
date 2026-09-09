@@ -13,7 +13,12 @@ Tracker: [@PLN160](https://github.com/loft-lang/plans/issues/160).
 (2026-09-09).**  Nothing has been fixed here, deliberately: the issue's instruction is *"before
 designing anything: enumerate where the two spellings' lowerings diverge."*  Two bugs were filed
 along the way (**loft#1482**, **loft#1483**), both of them defects in the DENSE spelling that the
-nullable road was masking.
+nullable road was masking; loft#1482 is already fixed by the peer stream and `D-call-18` is closed.
+
+⚠ **The channel table below is a DERIVED row and predates that fix.**  loft#1482's cure changes the
+return delivery for a candidate viewing a parameter, which is exactly the `retbuf` channel
+`ret-view-of-param` and `element-over-param` count — so those numbers get re-measured on the join,
+never carried.
 
 `make nullable-road` is that enumeration. **5 of 6 shapes diverge** after the `?` itself is
 normalised away, and every one of the five moves ownership machinery rather than only the `??`
@@ -199,13 +204,21 @@ handed straight back is fresh, because the caller copies it.
 nullable half and was closed under the title *"the dense twin copies"*, which is false.  Filed as
 **loft#1482**.
 
-⚠ **Not fixed here, and the reason is measured rather than assumed.**  Both pass-2-only repairs
+⚠ **Not fixed here, and the reason was measured rather than assumed.**  Both pass-2-only repairs
 were built and run: by pass 2 the buffer var IS the tail's local, so the copy's source and
 destination are one var — `MaterializeView` answers an empty record and orphans a store (loft#848's
-collision), `ForwardCopy` answers an empty record.  The decision has to be made on PASS 1, which is
-exactly what the `!self.first_pass` guard exists to prevent, because a `??`-join local's deps are
-not pass-stable (the H5 two-pass contract).  Closing it means giving that guard a pass-stable
-predicate — a design call, so the finding is filed and the leg's false premise corrected in place.
+collision), `ForwardCopy` answers an empty record.
+
+**FIXED by the peer stream, and my conclusion about WHERE was wrong.**  I wrote that the decision
+"has to be made on PASS 1".  It did not: `3ee333f94` + `7f0f123ab` land it in
+`classify_ret_promotion`'s `allow_rename`, a different site entirely, and meet the pass-stability
+requirement **structurally** — refusing the rename is what stops the tail's local from BECOMING an
+argument, so the fact `return_views_an_argument` reads is no longer one the delivery created, and
+both passes answer alike without any predicate needing to be pass-stable.  I had reasoned from the
+site the symptom appeared at; the unsound step was one site over, which is the lesson
+`ownership-history.md` D-own-9 already records for this machinery.  Full entry, including the two
+things only a leak and a red gate could find: `D-call-18` in
+[formal/calls-history.md](../../formal/calls-history.md).
 
 ## The third classification — `captured-local-rebind` is an ACCIDENT with a one-line cure that CANNOT land yet
 
@@ -315,7 +328,7 @@ All five diverging pairs are classified, and **not one of them is required by C9
 |---|---|---|
 | `ret-view-of-param` (loft#1421) | accident — `ret_promo_base` peels `Optional(Vector)` only | open |
 | `ret-view-of-param-vector` | the CONTROL for the row above — it KEEPS its buffer, which is what proves the `?` is not what removes it | not a question of its own |
-| `element-over-param` (loft#1466) | accident, deviation on the DENSE side | **loft#1482** |
+| `element-over-param` (loft#1466) | accident, deviation on the DENSE side | **loft#1482 FIXED** (`7f0f123ab`, peer stream) — `D-call-18` closed |
 | `captured-local-rebind` (loft#1447) | accident — a `matches!` naming one spelling; cure known | blocked on **loft#1483** |
 | `local-rebound-by-mint` (loft#1422) | accident — two mechanisms for one question | @PLN155's queue |
 
