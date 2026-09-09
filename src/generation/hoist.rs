@@ -698,6 +698,89 @@ pub fn view_def_header(
     (indexed && !rebound).then_some(*d)
 }
 
+/// @PLN157 § V-o — is `d_nr` a stdlib ONE-OP wrapper: a loft function whose whole body is
+/// one native op over its own parameters (`pub fn len(both: vector) -> integer {
+/// OpLengthVector(both) }`, `sqrt` = `OpMathFuncFloat(9, both)`)?
+///
+/// Answers the op and the operand list to emit in the wrapper's place, each operand a
+/// PARAMETER INDEX or a constant the body spells.  A body that does anything else — a
+/// conversion (`exp` passes `E as single`), a second statement, a call to another loft
+/// function, a return buffer — answers `None` and the call is emitted as a call.
+/// Emitting the op instead of the call changes nothing the program can observe (the
+/// wrapper's Rust body IS the op's template) and lets the registry's header-aware emitters
+/// see the op: `len(d)` after a view binding or inside a hoisted loop reads the header's
+/// length instead of resolving the store.
+#[must_use]
+pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand>)> {
+    if (d_nr as usize) >= data.definitions.len() {
+        return None;
+    }
+    let def = data.def(d_nr);
+    if !def.rust().is_empty() || matches!(def.code(), Value::Null) {
+        return None;
+    }
+    if def.hidden_return_buffer_attr().is_some() {
+        return None;
+    }
+    // A text parameter or result takes the CALL's conversions (a `String` result handed to
+    // a `&str` parameter, a work buffer for the answer) that a template's operands do not
+    // get, so `len(t)` and `print(t)` stay calls.
+    if def
+        .attributes()
+        .iter()
+        .any(|a| matches!(a.typedef.base(), Type::Text(_)))
+        || matches!(def.returned().base(), Type::Text(_))
+    {
+        return None;
+    }
+    let params = def.attributes().len();
+    // The body: a block of exactly one statement (line markers aside), which is the op
+    // call, possibly under a `Return`.
+    let mut stmt: Option<&Value> = None;
+    match def.code().unspan() {
+        Value::Block(b) => {
+            for op in &b.operators {
+                if matches!(op.unspan(), Value::Line(_)) {
+                    continue;
+                }
+                if stmt.is_some() {
+                    return None;
+                }
+                stmt = Some(op);
+            }
+        }
+        other => stmt = Some(other),
+    }
+    let mut stmt = stmt?.unspan();
+    if let Value::Return(inner) = stmt {
+        stmt = inner.unspan();
+    }
+    let Value::Call(op, args) = stmt else {
+        return None;
+    };
+    let callee = data.def(*op);
+    if !matches!(callee.code(), Value::Null) || callee.rust().is_empty() {
+        return None;
+    }
+    let mut operands = Vec::with_capacity(args.len());
+    for a in args {
+        match a.unspan() {
+            Value::Var(v) if (*v as usize) < params => operands.push(WrapperOperand::Param(*v)),
+            Value::Int(n) => operands.push(WrapperOperand::Const(Value::Int(*n))),
+            _ => return None,
+        }
+    }
+    Some((*op, operands))
+}
+
+/// One operand of a [`one_op_wrapper`]'s op: the caller's argument at that parameter
+/// position, or a constant the wrapper body spells (a libm selector).
+#[derive(Clone, Debug, PartialEq)]
+pub enum WrapperOperand {
+    Param(u16),
+    Const(Value),
+}
+
 /// The typed getters an element read can be fused INTO, with the Rust type each reads and
 /// the null sentinel its `#rust` template answers at the absent element.
 ///

@@ -1717,6 +1717,70 @@ parameters could emit the op — an S item that would give every `len(v)` in a h
 after a view binding the header's length, and is the next step for the pixel methods (their
 `sp_idx < len(sp_d)` still resolves the store once per call).
 
+## V-o — a stdlib one-op wrapper is emitted as its op (2026-09-09)
+
+**The shape** (§ V-n's finding): `len(v)` is a CALL to the stdlib's `pub fn len(both:
+vector) -> integer { OpLengthVector(both) }` — `t_6vector_len(cell, var_d)` in the emitted
+Rust — so the registry's `HoistedLengthEmitter`, which serves `OpLengthVector` from a hoisted
+header, never saw it: the pixel methods' `sp_idx < len(sp_d)` still resolved the store once
+per call after § V-n, and every `len(v)` inside a hoisted loop did too.  A census of
+`default/*.loft` finds 43 such wrappers — `len` (three overloads), `abs`, the libm family
+(`sqrt` is `OpMathFuncFloat(9, both)`, a constant selector beside the parameter), `atan2`,
+`pow`, `log`.
+
+**Invariant.**  *A wrapper whose whole body is one native op over its own parameters
+computes exactly that op, so emitting the op with the caller's arguments in its operand
+positions changes nothing the program can observe* — the wrapper's compiled Rust body IS the
+op's template.  `hoist::one_op_wrapper` recognises the body (one statement, line markers
+aside, possibly under a `Return`; a native callee with a template; every operand a
+parameter index or an integer constant; no return buffer) and answers the op plus an
+operand map; `Output::wrapper_op` memoises it and substitutes the call's arguments;
+`output_call_inner` emits the op through its ordinary path, registry emitters included.
+`exp` — whose body passes `E as single` — is not a one-op wrapper and stays a call, as does
+every function with a real body.  Switch `LOFT_NO_WRAPPER_INLINE` (generation time).
+
+**Cells before the code** (`bytecode-comparisons/V-o-wrapper-op-cells.loft`, ten,
+hand-computed): c1 `len(v)` in a hoisted loop · c2 the set_pixel shape · c3 the text and
+character `len` · c4 the libm selectors · c5 a two-parameter wrapper · c6 a wrapper whose op
+answers the null sentinel (`sqrt(-1.0) ?? -1.0`) · c7 `exp` · c8 `trim`, a real body · c9
+`len` of a growing vector per iteration · c10 a wrapper feeding a wrapper.  All ten matched
+on both backends before the change.  Emission pinned in `tests/wrapper_op.rs`: no CALL to
+`t_6vector_len` / `t_5float_sin` / `t_5float_sqrt` / `t_5float_atan2` remains (their
+definitions may), `exp` keeps its one call, and the loop cell and the set_pixel cell read
+`__vh_1.len`.  **Falsified**: the operand map reversed puts a selector in a value position
+and the native build fails to compile (rustc E0308 inside `atan2`'s template); swapping only
+the two parameters turns the `pow` cell wrong (1024 → 100).
+`tests/scripts/157-wrapper-op.loft` carries the value cells.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree):
+
+| row | § V-n | § V-o |
+|---|---:|---:|
+| `composite` | 618k (6.10×) | **446k** (**4.41×**, −28 %) |
+| `composite`, one binary form, switch off vs on | 604k | **449k** (−26 %) |
+| `render_lock` / `render_marks` | 33.1M / 14.3M | 32.8M / 14.5M |
+| `hash` (re-timed alone, on vs off) | 239–243k | 239k (unchanged; the full run's 320k was the lane's swing) |
+| `lock` / `lock_curved` / fills / `wide_line` | | 4.47× / 5.69× / 3.87× · 3.83× / 5.64× — noise |
+
+`composite`'s move is the pixel methods' last store resolution: with § V-n's header and
+this op, `set_pixel` is one `vec_header`, one bounds test and one store, and `get_pixel`
+one `vec_header` and one `get_elem_hoisted`.  The `sin`/`sqrt` sites in `seed_wave` and the
+rasteriser emit the template's constant `match`, which LLVM folds; no row moved on them.
+
+**Two findings from the local gate, both narrowing the rule.**  (1) A TEXT-typed wrapper
+(`print(both: text)`, `len(both: text)`) stays a call: the user-call path converts a
+`String` result to the `&str` a parameter takes and hands a work buffer for a text answer,
+and a template's operands get neither — `p299_d3` failed to compile with a `String` where
+`print_or_capture` wanted `&str`.  (2) Only a call whose arguments are all LEAVES (a
+variable, a literal) is inlined: the op's operands are emitted from a fresh list, and the
+pre-evaluation map keys on the ORIGINAL nodes' addresses, so a cloned block or call
+argument missed its `_pre_N` binding and was emitted raw (`let` inside an expression — ten
+corpus scripts failed to compile) or ran a second time beside its pre-evaluation (two
+scripts answered wrong: a store minted twice).  `len(cv.data)` and `sqrt(-1.0)` therefore
+keep their calls; the pixel methods' `len(sp_d)` and every `len(v)` on a variable are the
+op.  A mirror of the pre-eval map onto the cloned tree would lift the restriction; nothing
+measured asks for it.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

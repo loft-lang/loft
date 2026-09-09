@@ -626,6 +626,13 @@ pub struct Output<'a> {
     /// again, as before @PLN157 § V-n.  The bisect step for a wrong element read through
     /// such a view outside a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
     pub view_hoist_disabled: bool,
+    /// `LOFT_NO_WRAPPER_INLINE=1` — a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`)
+    /// is emitted as the CALL again, as before @PLN157 § V-o, instead of as its op; the
+    /// bisect step for a wrong length or libm value on native, and the before-half of the
+    /// A/B.  See [`hoist::one_op_wrapper`].
+    pub wrapper_inline_disabled: bool,
+    /// Per-definition memo of [`hoist::one_op_wrapper`].
+    wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
     /// Names the hoisted headers of the function being emitted (`__vh_1`, `__vh_2`, …).
     pub hoist_counter: u32,
     /// `LOFT_HOIST_VERIFY=1` — emit the CHECKING form of every hoisted read, which
@@ -1524,6 +1531,9 @@ impl<'a> Output<'a> {
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
             view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
+            wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
+                .is_ok_and(|v| v != "0"),
+            wrapper_cache: HashMap::new(),
             hoist_cache: HashMap::new(),
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
@@ -1916,6 +1926,47 @@ impl Output<'_> {
         )?;
         self.vec_headers.push(HashMap::from([(path, name)]));
         Ok(true)
+    }
+
+    /// @PLN157 § V-o — the op a call to `def_nr` stands for, with the caller's `vals` put in
+    /// the op's operand positions, when `def_nr` is a stdlib one-op wrapper and the switch
+    /// is on; `None` otherwise.
+    pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
+        if self.wrapper_inline_disabled {
+            return None;
+        }
+        // Only LEAF arguments: the op's operands are emitted from a fresh list, and the
+        // pre-evaluation map keys on the original nodes' addresses — a cloned block or call
+        // argument would miss its `_pre_N` binding and be emitted raw (a `let` inside an
+        // expression) or run a second time.  A call whose argument is an expression stays a
+        // call, as before.
+        if !vals.iter().all(|v| {
+            matches!(
+                v.unspan(),
+                Value::Var(_)
+                    | Value::Int(_)
+                    | Value::Long(_)
+                    | Value::Float(_)
+                    | Value::Single(_)
+                    | Value::Boolean(_)
+            )
+        }) {
+            return None;
+        }
+        let data = self.data;
+        let (op, operands) = self
+            .wrapper_cache
+            .entry(def_nr)
+            .or_insert_with(|| hoist::one_op_wrapper(data, def_nr))
+            .as_ref()?;
+        let mut args = Vec::with_capacity(operands.len());
+        for o in operands {
+            match o {
+                hoist::WrapperOperand::Param(i) => args.push(vals.get(*i as usize)?.clone()),
+                hoist::WrapperOperand::Const(c) => args.push(c.clone()),
+            }
+        }
+        Some((*op, args))
     }
 
     /// The Rust local holding `key`'s hoisted scalar, when an enclosing loop read it once
