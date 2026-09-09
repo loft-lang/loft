@@ -29,10 +29,21 @@
 // All three answer exactly what they answered before, which is what says the fix is a
 // DELIVERY change and not a value one.
 //
-// @falsified-at: 656caffcc — interpret leaked kt=86 main_vector<integer(0, 255)>×15,
-//   kt=32 main_vector<text>×3 -> clean, native the same -> clean.  18 records for 3 rounds
-//   of 6 leaking calls, which is the scaling this is about.  The VALUE assertions pass on
-//   BOTH builds: this changed which store the answer lives in, never what the answer is.
+// @falsified-at: 4e1533b74 — interpret leaked kt=85 main_vector<integer(0, 255)>×15, kt=32
+//   main_vector<text>×3 -> clean, native the same -> clean.
+// @falsified-by: tests/falsified/1491-an-arm-that-binds-the-buffer-from-a-call-delivers-into-it.patch
+//   CHANNEL: LEAK, and only leak.  Every other channel is equal on both trees, which is the
+//     whole finding — the elements, the lengths and the exit were right before the fix.
+//   ARMED: `LOFT_NATIVE_LEAK_CHECK=1` for the native side (`falsify.sh` arms it); the
+//     interpreter reports at program exit unaided.  An unarmed native run reads CLEAN on
+//     both trees and the guard looks inert.
+//   WITNESS: 18 orphaned records on the control — `main_vector<integer(0, 255)>×15` plus
+//     `main_vector<text>×3` — for 3 rounds of 6 leaking calls, which is the scaling that
+//     makes this a leak per CALL rather than one tolerated store.  The `kt=` number shifts
+//     with the type table between builds; the store SHAPE is the identity.
+//   HOLDS: every assertion passes on BOTH trees, and exit, panic and free-refusal are equal
+//     on both.  A patch that moved the value channel would be some other fault of the same
+//     commit, not this one.
 
 enum Shape1491 { Bound { n: integer }, Direct { n: integer } }
 

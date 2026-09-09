@@ -27,7 +27,7 @@
 //
 // @EXPECT_WARNING: Warning[redundant-null-negation]
 //
-// ⚠ @falsified-at: none — `make falsify` reports INERT against `e6922e9fa`, and that is
+// ⚠ @falsified-at: none — `make falsify` reports INERT against `06f624ca5`, and that is
 //   CORRECT rather than a defect in it.  This is a LOCK, not a regression guard: every
 //   ASSERTION here passes on every build back to whenever these behaviours landed, because
 //   the point is that they must not START failing.  Row 3's local and element cells did

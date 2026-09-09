@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 445 | 422 | **23** |
+| 448 | 425 | **23** |
 
 
 
@@ -2617,10 +2617,12 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
 
-**2026-09-09, @PLN152 step 5: the unspan row `434 · 410 · 24` → `437 · 413 · 24`.**  Three
+**2026-09-09, @PLN152 step 5: the unspan row `445 · 422 · 23` → `448 · 425 · 23`.**  Three
 new `Value` discriminators, all in `src/parser/fit.rs`, and all peeling — the OPAQUE column
 does not move, and the Optional row does not move at all (these three ask about `Value`
-variants, not `Type` ones).
+variants, not `Type` ones).  ⚠ Re-measured on the JOINED tree: this row read
+`434 · 410 · 24` → `437 · 413 · 24` on the branch, and neither number survived the four-way
+join — the DELTA is what carries, never the endpoints.
 That is not luck: `same_place` and `guard_slot` compare an IR node the parser has just built
 against one it built a statement earlier, and a `Span` sits over exactly the fault-prone
 nodes those two ask about, so a bare match would have failed to recognise the pair on the
