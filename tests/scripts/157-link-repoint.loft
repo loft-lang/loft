@@ -1,0 +1,63 @@
+// `p = &q` on a `&` link RE-POINTS it (@FR-B-Ref-Repoint): the link's own slot takes the new
+// cell, nothing is written through the old link, nothing is freed — a link owns nothing
+// (@FR-B-Ref-Alias).  Found by @PLN157 § V-p's cell c18 (a plain-record `&` view rebound in a
+// loop), which the interpreter answered with a garbage word while native answered 13.  Before
+// the fix `set_var`'s link branch wrote the new cell THROUGH the link into the old source's
+// slot and ran the displaced-store free on a stack ref: a struct read garbage (2^35 + 3 for 5)
+// and lost the second record's field (909 for 299), a text was cleared through the link and
+// read empty (20 for 23), an integer kept its first source (22 for 23); a vector re-pointed,
+// and native re-pointed every kind.  Both backends must answer these alike.
+//
+// @falsified-at: hand-measured (2026-09-09, the binary before the re-point arm in
+// `state/codegen.rs::set_var`): --interpret answered p5 34359738371 / p9 20 / p10 22 /
+// p11 909 and printed `BUG (#306): refused to free the stack store`; --native answered the
+// values below.  After the arm: interpret / native / LOFT_STORES=warn / LOFT_NATIVE_LEAK_CHECK
+// all green.
+
+struct Cv { width: integer, data: vector<integer> }
+struct Wh { width: integer, height: integer, data: vector<integer> }
+
+fn readw(c: const Cv) -> integer { c.width }
+fn getp(self: const Wh, gx: integer, gy: integer) -> integer {
+  if gx < 0 or gx >= self.width or gy < 0 or gy >= self.height { 0 } else {
+    idx = gy * self.width + gx; d = &self.data; if idx < len(d) { d[idx] ?? 0 } else { 0 } }
+}
+
+// a struct link, re-pointed, read through the link before and after
+fn struct_repoint() -> integer { a = Cv { width: 2, data: [1] }; b = Cv { width: 3, data: [5] }; cur = &a; s = cur.width; cur = &b; s * 10 + cur.width }
+// a struct link re-pointed, then a field WRITTEN through it: the second source takes the
+// write, the first is untouched
+fn struct_repoint_then_write() -> integer { a = Cv { width: 2, data: [1] }; b = Cv { width: 3, data: [5] }; cur = &a; cur = &b; cur.width = 9; a.width * 100 + b.width * 10 + cur.width }
+// the write-through control: `cur = b` WITHOUT `&` replaces a's contents (B-Ref-Write)
+fn struct_write_through() -> integer { a = Cv { width: 2, data: [1] }; b = Cv { width: 3, data: [5] }; cur = &a; cur = b; a.width * 10 + cur.width }
+// a text link, re-pointed: the first source is not cleared
+fn text_repoint() -> integer { a = "ab"; b = "cde"; cur = &a; s = len(cur); cur = &b; s * 100 + len(a) * 10 + len(cur) }
+// an integer link, re-pointed
+fn int_repoint() -> integer { a = 2; b = 3; cur = &a; s = cur; cur = &b; s * 10 + cur }
+// a vector link, re-pointed
+fn vector_repoint() -> integer { a: vector<integer> = [1, 2]; b: vector<integer> = [5, 6, 7]; cur = &a; s = len(cur); cur = &b; s * 10 + len(cur) }
+// the shape that found it: a link re-pointed inside a loop, passed to two callees
+fn loop_repoint() -> integer {
+  a = Cv { width: 2, data: [1, 2, 3, 4] }; b = Cv { width: 3, data: [5, 6, 7] };
+  cur = &a; s = 0;
+  for _k in 0..2 { s += readw(cur) + (cur.data[1] ?? 0); cur = &b; }
+  s
+}
+fn loop_repoint_method() -> integer {
+  a = Wh { width: 2, height: 2, data: [1, 2, 3, 4] }; b = Wh { width: 3, height: 1, data: [5, 6, 7] };
+  cur = &a; s = 0;
+  for _k in 0..2 { s += cur.getp(1, 0); cur = &b; }
+  s
+}
+
+fn main() {
+  assert(struct_repoint() == 23, "a struct link re-points: 2 then 3");
+  assert(struct_repoint_then_write() == 299, "a write through the re-pointed link reaches the second source only");
+  assert(struct_write_through() == 33, "without `&` the write goes through: a's contents become b's");
+  assert(text_repoint() == 223, "a text link re-points and the first text is not cleared");
+  assert(int_repoint() == 23, "an integer link re-points");
+  assert(vector_repoint() == 23, "a vector link re-points");
+  assert(loop_repoint() == 13, "a link re-pointed in a loop: (2 + 2) + (3 + 6)");
+  assert(loop_repoint_method() == 8, "the same through a method: 2 + 6");
+  println("link-repoint ok");
+}
