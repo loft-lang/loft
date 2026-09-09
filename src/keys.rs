@@ -855,6 +855,25 @@ pub fn trace_ret_promotion() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_RETPROMO"))
 }
 
+/// `LOFT_NO_FNREF_BORROWED_RETURN=1` — the A/B switch for @PLN150's per-run channel.
+///
+/// The channel clears `COPY_FREE_SOURCE` for a bind whose source is a store the fn-ref frame
+/// did NOT mint, so the caller reads a capture instead of freeing it.  Every emission-changing
+/// mechanism owes a switch that puts the PREVIOUS form back: it is the first bisect step for a
+/// wrong answer or a changed store watermark in a program that calls through a fn-ref, and it
+/// is what separates "this mechanism" from "something else in the same commit" without a
+/// rebuild at another sha.
+///
+/// The measurement it was added for: a `fn(k) -> P { cap }` called in a loop kept one store per
+/// ITERATION alive to program exit rather than releasing it in the iteration, so a 70000-call
+/// loop exhausted the store table.  The allocation and free COUNTS were unchanged — only when
+/// the free happened — which is a shape no leak gate reports and only the watermark shows.
+#[must_use]
+pub fn no_fnref_borrowed_return() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FNREF_BORROWED_RETURN"))
+}
+
 /// `LOFT_LINK_WIDEN=1` — @PLN102 transparent-link widening. **OPT-IN, DEFAULT OFF** — built +
 /// validated (steps 1–4) but NOT defaulted on: step 5's copy-count measurement found the win is ~0
 /// in practice (the read-only-both field-bind pattern it targets is essentially absent in real loft

@@ -1284,9 +1284,36 @@ impl State {
         // argument) belonging to a frame further up, and no caller may free it as "the
         // callee's fresh temporary".  Carried to the bind rather than acted on here, because
         // the free this must refuse is the CALLER's.
+        //
+        // ⚠ **…unless it is a buffer THIS call site allocated for the callee**, and that is a
+        // second question `alloc_serial` cannot answer.  `fn_call_ref` allocates the hidden
+        // return buffers and records them BEFORE taking the snapshot, so their stamps are at
+        // or below it exactly as a capture's is — and they are the opposite case: the caller
+        // owns them outright and its `OpCopyRecord` is what releases them.  Read as captures,
+        // the caller's free was refused and each call's buffer survived to the CALLER's own
+        // return: `fn(k) -> P { cap }` in a 70000-call loop then exhausted the store table,
+        // with the allocation and free COUNTS unchanged and only the watermark moving
+        // (6 -> 13 concurrent on an 8-call probe), which is a shape no leak gate reports.
+        // `fnref_bufs` at this depth IS that list and is still intact here — the hand-up loop
+        // below is what drains it.
+        let own_buffer = returned.is_some_and(|r| {
+            self.fnref_bufs
+                .iter()
+                .any(|(d, b)| *d == depth && b.store_nr == r.store_nr)
+        });
         self.fnref_borrowed_return = match (snapshot, returned) {
-            (Some(_), Some(r)) if !minted_here && r.store_nr != u16::MAX && r.rec != 0 => Some(r),
-            _ => self.fnref_borrowed_return,
+            (Some(_), Some(r))
+                if !minted_here && !own_buffer && r.store_nr != u16::MAX && r.rec != 0 =>
+            {
+                Some(r)
+            }
+            // Cleared rather than kept, which is what this field's own contract says: *set only
+            // on a borrowed return and consumed by the next bind, so nothing stale outlives the
+            // value it describes*.  Keeping the previous marker left one standing whenever a
+            // borrowed return was not followed by a bind, where it could then clear the
+            // free-source bit for an unrelated copy.  Measured inert on the shape above — it is
+            // the contract being made true, not the fix.
+            _ => None,
         };
         if minted_here
             && let Some(r) = returned
