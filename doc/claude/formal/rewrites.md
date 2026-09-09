@@ -188,7 +188,8 @@ them invariant across the call (its write set includes what the callee writes), 
 the callee's own write set proves it does not write them either.  Measured before
 the code by hand-editing the emitted Rust: the twin and a full inline of the
 callee cost the same (`composite` 4.2× → 2.33× of Rust), because rustc inlines the
-small twin — so the rewrite passes values and never clones IR.  Switch
+small twin — so the rewrite passes values and never clones IR; shipped, the consumer's
+`composite` row measures 2.34× (446k → 237k ns/op), `render_lock` / `render_marks` −8 %.  Switch
 `LOFT_NO_CALLEE_INPUTS`; falsifier `LOFT_HOIST_VERIFY=1`, which inside the twin
 re-reads every input against the record.  Sites: `hoist::callee_inputs`,
 `hoist::hoistable` (the mapping through the argument), the twin's emission in

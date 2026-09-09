@@ -1,0 +1,124 @@
+// @PLN157 § V-p (loft#1426 M2) — a callee's INVARIANT INPUTS cross the call on the native
+// backend (@FR-R-Inputs): a callee admitted under @FR-R-Callee reads scalar fields of a
+// record parameter it never writes, and views or indexes vector fields of it; a caller
+// loop that hoisted those for the argument variable calls the callee's TWIN with the
+// hoisted values as extra parameters, and the twin reads them in place of the record.
+// The interpreter (no rewrite) is the oracle.  The cells pin the boundary from both sides:
+//   - the get_pixel / set_pixel shape, two records in one loop, two record parameters,
+//     float and boolean inputs, a transitive pass-through, a `&` alias and a one-read free
+//     function answer the same values through the twin;
+//   - a callee that writes the field, a caller loop that writes it, a writer through
+//     another parameter name, a field-path or rebound argument, a call outside a loop or
+//     beside a growth, a length-only view, a recursive reader and a nested-path read keep
+//     the plain call and their values.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-p-callee-inputs-cells.loft
+// (tests/callee_inputs.rs pins which callees earn a twin and which calls take it); this
+// file carries the VALUE cells that must hold whatever the emitter decides.
+// `LOFT_NO_CALLEE_INPUTS=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-09) — the twin's frames in
+// `Output::push_twin_frames` made to name a callee's two `OpGetInt` inputs ROTATED (`self.width`
+// served by the height's parameter and vice versa) turns the composite-shape cell red on
+// --native (the sum and the written pixels move) and LOFT_HOIST_VERIFY=1 panics at the twin's
+// first read (`hoisted record scalar is stale … hoisted 3, now 4`).  Two sabotages that stayed
+// GREEN are recorded in DESIGN.md § V-p: the callee's own write-set filter skipped (the
+// caller's write set already carries the callee's writes) and the rebound test on the input
+// candidates (a loop that re-points a link is declined by the gate itself).  Restored
+// byte-identically, interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_CALLEE_INPUTS all green.
+
+struct Cv { width: integer, height: integer, data: vector<integer> }
+struct Ph { scale: float, on: boolean, data: vector<float> }
+struct Sz { w: integer, h: integer }
+struct Box { size: Sz, data: vector<integer> }
+struct Other { n: integer }
+struct H { cv: Cv }
+
+fn getp(self: const Cv, gx: integer, gy: integer) -> integer {
+  if gx < 0 or gx >= self.width or gy < 0 or gy >= self.height {
+    0
+  } else {
+    idx = gy * self.width + gx;
+    d = &self.data;
+    if idx < len(d) { d[idx] ?? 0 } else { 0 }
+  }
+}
+fn setp(self: Cv, sx: integer, sy: integer, color: integer) {
+  if sx >= 0 and sx < self.width and sy >= 0 and sy < self.height {
+    idx = sy * self.width + sx;
+    d = &self.data;
+    if idx < len(d) { d[idx] = color; }
+  }
+}
+fn bumpw(self: Cv, i: integer) { self.width = self.width + i; }
+fn setw(o: Cv, w: integer) { o.width = w; }
+fn blend(src: const Cv, dst: Cv, i: integer) {
+  d = &dst.data;
+  if i < len(d) { d[i] = (src.data[i] ?? 0) + dst.width; }
+}
+fn samp(self: const Ph, i: integer) -> float { if self.on { (self.data[i] ?? 0.0) * self.scale } else { 0.0 } }
+fn cnt(self: const Cv) -> integer { d = &self.data; len(d) }
+fn getp2(self: const Cv, gx: integer, gy: integer) -> integer { self.getp(gx, gy) }
+fn readw(c: const Cv) -> integer { c.width }
+fn walk(self: const Cv, i: integer) -> integer { if i >= self.width { 0 } else { (self.data[i] ?? 0) + self.walk(i + 1) } }
+fn area(self: const Box) -> integer { self.size.w * self.size.h }
+fn poke(o: Other, v: integer) { o.n = v; }
+
+fn grid() -> Cv { c = Cv { width: 4, height: 3, data: [] }; for i in 0..12 { c.data += [i * 10] } c }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn small() -> Cv { Cv { width: 2, height: 2, data: [1, 2, 3, 4] } }
+fn wide() -> Cv { Cv { width: 3, height: 1, data: [5, 6, 7] } }
+
+fn composite_shape() -> integer {
+  cv = grid(); s = 0;
+  for j in 0..3 { for i in 0..4 { p = cv.getp(i, j); s += p; cv.setp(i, j, p + 1); } }
+  assert(total(cv.data) == 672 && cv.data[5]? == 51, "every element +1 through the setp twin");
+  assert(cv.getp(4, 0) == 0 && cv.getp(0, 3) == 0, "out-of-range reads answer 0");
+  s
+}
+fn callee_writes_it() -> integer { cv = grid(); s = 0; for i in 0..3 { cv.bumpw(i); s += cv.width; } s }
+fn loop_writes_it() -> integer { cv = grid(); s = 0; for i in 0..3 { cv.width = i + 2; s += cv.getp(1, 1); } s }
+fn other_name_writes_it() -> integer { cv = grid(); s = 0; for i in 0..3 { s += cv.getp(1, 1); setw(cv, i + 2); } assert(cv.width == 4, "the last write lands"); s }
+fn field_path_argument() -> integer { h = H { cv: small() }; s = 0; for _k in 0..3 { s += getp(h.cv, 1, 0); } s }
+fn rebound_argument() -> integer { cvs: vector<Cv> = [small(), wide()]; s = 0; for k in 0..2 { cur = cvs[k]?; s += getp(cur, 1, 0); } s }
+fn two_records() -> integer { a = small(); b = wide(); s = 0; for i in 0..2 { s += getp(a, i, 1) + getp(b, i, 0); } s }
+fn two_parameters() -> integer { a = small(); b = wide(); for i in 0..4 { blend(a, b, i); } assert(len(b.data) == 3, "the fourth index is off the end"); total(b.data) }
+fn outside_and_growing() -> integer { cv = grid(); x = cv.getp(1, 1); s = 0; for i in 0..2 { cv.data += [i]; s += cv.getp(0, 0); } assert(s == 0 && len(cv.data) == 14, "the growing loop reads data[0]"); x }
+fn float_and_boolean() -> integer {
+  ph = Ph { scale: 2.5, on: true, data: [1.0, 2.0, 4.0] }; ph2 = Ph { scale: 2.5, on: false, data: [1.0, 2.0, 4.0] };
+  t = 0.0; u = 0.0;
+  for i in 0..3 { t += ph.samp(i); }
+  for i in 0..3 { u += ph2.samp(i); }
+  assert((u * 10.0) as integer == 0, "the boolean input turns the read off");
+  (t * 10.0) as integer
+}
+fn length_only_view() -> integer { cv = grid(); s = 0; for _i in 0..3 { s += cv.cnt(); } s }
+fn transitive() -> integer { cv = grid(); s = 0; for i in 0..4 { s += cv.getp2(i, 2); } s }
+fn through_alias() -> integer { cv = grid(); v = &cv; s = 0; for i in 0..4 { s += v.getp(i, 0); } s }
+fn one_read_free_fn() -> integer { cv = grid(); s = 0; for _i in 0..3 { s += readw(cv); } s }
+fn recursive_reader() -> integer { cv = grid(); s = 0; for _k in 0..2 { s += cv.walk(0); } s }
+fn nested_path() -> integer { bx = Box { size: Sz { w: 4, h: 5 }, data: [] }; s = 0; for _i in 0..3 { s += bx.area(); } s }
+fn rebound_view() -> integer { a = small(); b = wide(); cur = &a; s = 0; for _k in 0..2 { s += readw(cur) + getp(cur, 1, 0); cur = &b; } s }
+fn other_type_same_offset() -> integer { cv = grid(); ot = Other { n: 0 }; s = 0; for i in 0..3 { s += cv.getp(i, 0); poke(ot, i); } assert(ot.n == 2, "the other record's writes land"); s }
+
+fn main() {
+  assert(composite_shape() == 660, "the composite shape reads every pixel through the twin");
+  assert(callee_writes_it() == 16, "a callee writing the field it reads keeps the plain call: 4, 5, 7");
+  assert(loop_writes_it() == 120, "a loop writing the field hoists nothing for it: 30 + 40 + 50");
+  assert(other_name_writes_it() == 120, "a write through another parameter name evicts the field: 50 + 30 + 40");
+  assert(field_path_argument() == 6, "a field-path argument keeps the plain call");
+  assert(rebound_argument() == 8, "an optional element view as the argument keeps the plain call: 2 + 6");
+  assert(rebound_view() == 13, "a `&` view rebound in the loop hoists nothing for it: (2 + 2) + (3 + 6)");
+  assert(two_records() == 18, "two records in one loop, each with its own inputs: 3 + 5 + 4 + 6");
+  assert(two_parameters() == 15, "two record parameters: [1+3, 2+3, 3+3]");
+  assert(outside_and_growing() == 50, "a call outside a loop keeps the plain call");
+  assert(float_and_boolean() == 175, "float and boolean inputs: (1 + 2 + 4) * 2.5");
+  assert(length_only_view() == 36, "a length-only view earns no input");
+  assert(transitive() == 380, "a pass-through callee hands its inputs on: 80 + 90 + 100 + 110");
+  assert(through_alias() == 60, "a `&` alias as the argument: 0 + 10 + 20 + 30");
+  assert(one_read_free_fn() == 12, "a one-read free function through its twin: 3 * 4");
+  assert(recursive_reader() == 120, "a recursive reader is not admitted: 2 * 60");
+  assert(nested_path() == 60, "a nested-path read is not a candidate: 3 * 20");
+  assert(other_type_same_offset() == 30, "another type's write at the same offset does not evict: 0 + 10 + 20");
+  println("callee-inputs ok");
+}

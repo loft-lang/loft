@@ -1795,6 +1795,138 @@ and `tests/scripts/157-wrapper-op.loft` carries the value.  The § P4c lesson in
 form: a peephole that matches an op SHAPE must also ask what the shape stands for — the
 TYPE (§ P4c), the CONTAINER (§ V-m), and now the ORIGIN.
 
+## V-p — a callee's invariant inputs cross the call (2026-09-09)
+
+**The shape** (§ V-o's closing profile): `composite` at 4.4× no longer spent its time in a
+runtime helper — `n_composite_layer` 37 % self, `get_pixel` 15 %, `set_pixel` 12 %.  The
+two pixel methods read `self.width` / `self.height` and view `self.data` PER CALL: single
+reads, so P4c cannot hoist them inside the callee, and the caller's hoisted `__vs_N` /
+`__vh_N` do not cross the call.  Six store resolutions and two header derivations per
+pixel, all of a record the caller's loop had already proved invariant.
+
+**The two designs, measured before choosing.**  The README named two: the pixel methods
+INLINED into the caller's loop (IR cloning, a variable-table merge, tail-return handling,
+the pre-eval map over cloned nodes — § V-o's finding 2 in full), or the parameter's
+invariant fields PASSED across the call.  Both were built by hand in the emitted Rust of
+the bench (`loft --native-release --native-emit`, rebuilt with the exact `rustc` line loft
+runs, captured with `strace`) and timed on the same binary form:
+
+| form | ns/op | vs Rust (101k) |
+|---|---:|---:|
+| the shipped emission | 421–428k | 4.2× |
+| a twin of each pixel method taking `w`, `h`, `hdr` as parameters | 235–236k | 2.33× |
+| both methods inlined into the loop by hand | 236–237k | 2.33× |
+
+Identical, hash unchanged: rustc inlines the small twin, so all of the win is the values
+crossing the call, none of it the call itself.  That settles the design as the cheaper
+machinery — pass values, never clone IR.  (`design-protocol`: the constructive instrument,
+a concrete instance of the answer, read before the first line of compiler code.)
+
+**Invariant** (`@FR-R-Inputs`, [formal/rewrites.md](../../formal/rewrites.md)).  *A callee
+admitted under (R-Callee) has, of a plain-struct parameter it never rebinds, invariant
+inputs: the scalar fields its own write set does not reach, and the vector paths it views
+or indexes.  A caller loop holding the value of each for its leaf argument variable —
+under (R-Scalar) and (R-Header), which proved them invariant across the call, its write
+set including what the callee writes — hands them to the callee's TWIN, the same body
+emitted with those values as extra parameters, read in place of the record.*  A call
+missing any input keeps the plain form (all-or-nothing keeps the twin's signature one
+per callee); the twin exists beside the original, never instead of it.
+
+**The code.**  `hoist::callee_inputs` (memoised, seeded `None` while open so a recursive
+edge sees nothing) answers a `CalleeInputs` — `(parameter, field, the getter as the body
+spells it)` and `(parameter, path, the path expression)` — for a loft body with no template,
+no return buffer, not a generator, store-free or in-place-only, whose write set
+`body_writes` can type; the scalar reads are `scalar_read` hits over a never-rebound
+plain-record parameter not evicted by that set, the headers the paths `is_element_address`
+indexes or `view_def_header` admits at a binding.  A callee this body passes the parameter
+on to contributes ITS inputs re-spelled over the parameter (`substitute_root`), filtered by
+this body's write set, which already carries what that callee writes — so `getp2(self) {
+self.getp(…) }` earns getp's inputs and its twin calls getp's twin.  `hoist::hoistable`
+adds, for every admitted callee a loop calls with a plain variable, the callee's inputs
+re-spelled over that variable to the loop's candidates, where the same eviction judges
+them.  `Output::output_functions` emits the twin right after the original (`fn_ident` +
+`__inv`, the extra parameters typed as each getter's result — `i64`, `f64`, `u8` — and
+`vector::VecHeader` by value); `output_function` pushes a scalar frame and a header frame
+naming `__is_k` / `__ih_k` around the body, so every existing consumer (the scalar read, the
+fused element read and write, the hoisted length) serves from the parameters; the twin
+re-uses the original's live-dispatch check (same flip flag, same interpreter entry — the
+inputs are derived from the declared parameters).  `bind_view_header` copies a held
+header when the view's path already has one (`let __vh_1 = __ih_0;`), which a plain
+loop that binds a view of a path it hoisted gets as well.  `user_fn_call_body` emits the
+twin form when `twin_call_inputs` finds every input active for the argument variable;
+the definition number reaches it through `current_call_def`, set by `output_call_inner`
+and identity-checked against the `Definition` the registry hands over.  Switch
+`LOFT_NO_CALLEE_INPUTS` (generation time); falsifier `LOFT_HOIST_VERIFY=1`, under which
+the twin re-reads every input against the record.
+
+**Cells before the code** (`bytecode-comparisons/V-p-callee-inputs-cells.loft`, seventeen,
+hand-computed, all matching the interpreter before the emitter existed): c1 the composite
+shape · c2 the callee writes the field it reads · c3 the caller's loop writes it · c4 a
+writer through another parameter name · c5 a field-path argument · c6 a rebound argument
+· c7 two records in one loop · c8 two record parameters · c9 outside a loop, and beside a
+growth · c10 float and boolean inputs · c11 a length-only view · c12 transitive · c13 a `&`
+alias · c14 a one-read free function (the § V-o refusal and this twin compose) · c15 a
+recursive reader · c16 a nested-path read · c17 another type written at the same offset.
+Predicted emission, matched exactly on the first run: twins for `getp`, `setp`, `blend`,
+`samp`, `getp2`, `readw`; none for `bumpw`, `setw`, `cnt`, `walk`, `area`, `poke`; twin
+calls at c1 (2), c7 (2), c8, c10 (2), c12 (and one inside getp2's twin), c13, c14, c17.
+`tests/callee_inputs.rs` pins it and the switch; `tests/scripts/157-callee-inputs.loft`
+carries the values.  **Falsified**: the twin's frames made to name a callee's two `OpGetInt`
+inputs ROTATED (`self.width` served by the height's parameter and vice versa) turns the
+composite-shape cell red on native and the verifier panics at the twin's first read
+(`hoisted 3, now 4`); restored byte-identically.  A blunter sabotage — every scalar input
+reversed — does not compile (c10's twin takes a `u8` and an `f64`), which is a refusal and
+not a measurement, and hid the same-typed swap until the rotation was restricted to it.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree):
+
+| row | § V-o | § V-p |
+|---|---:|---:|
+| `composite` | 446k (4.41×) | **237k** (**2.34×**, −47 %) |
+| `render_lock` / `render_marks` | 32.8M / 14.5M | **30.1M** / **13.3M** (−8 %) |
+| `lock` / `lock_curved` / `wide_line` | 4.47× / 5.69× / 5.64× | 4.39× / 5.64× / 5.36× |
+| fills / `hair` | 3.87× · 3.83× / 2.10× | 3.80× · 3.59× / 2.09× |
+| `smooth` / `fronds` | 15.4× / 12.9× | 15.5× / 12.9× |
+
+`composite` is under the bar with margin; the row's remaining 2.3× is its own arithmetic
+(three `i64` divisions per pixel with the sentinel test each, the `?? 0` discharges) and
+the per-pixel range test the reference does not do.  Twins also appear for a few stdlib
+readers of record parameters (`sum_of`, `File.exists`) — dead unless a hoisting loop
+calls them, and stripped by rustc when so.
+
+**Two findings from the cells.**  (1) c18 — a plain-record `&` view rebound inside the
+loop (`cur = &a; for … { … readw(cur) …; cur = &b }`), added because c6's rebound argument
+turned out to be an OPTIONAL element view, which the record-type check refuses before the
+rebound test ever decides — answered 13 on native and **34359738373 on the interpreter**,
+the oracle.  Re-pointing an existing `&` link to a second source was broken on
+`--interpret` at every kind but a vector: `set_var`'s link branch recognised the install
+value (`OpCreateStack`) only to keep a fn-ref off the write-through, and every other kind
+wrote the new cell THROUGH the link into the old source's slot and ran the displaced-store
+free on a stack ref (`BUG (#306)`) — a struct read garbage and lost the second record's
+field, a text was cleared and read empty, an integer kept its first source.  The rule was
+not written either: `(B-Ref-Write)` says a heap write does not re-point, and nothing said
+what `p = &q` does.  Fixed at that branch (the install now takes the link's own slot FIRST,
+for every kind), written as `(B-Ref-Repoint)` in `formal/binding.md` with D-bind-30 opened
+and closed, guarded by `tests/scripts/157-link-repoint.loft` (six kinds and the
+write-through control, both backends).  The hand computation was what caught it: an oracle
+that agrees with the emitter under test is only as good as the cell's expected value.
+(2) Two sabotages stayed GREEN, and each says where the invariant is actually held.  The
+callee's own write-set filter skipped (a field the callee writes still becomes an input):
+the caller's loop evicts `(Cv, 0)` on its own write set, which already carries the callee's
+writes through `callee_writes`, so the twin is never called for it — the callee-side filter
+is a second assertion of one invariant, kept because it keeps a twin's signature free of
+inputs no caller can ever hold.  The rebound test on the input candidates skipped: c18's
+loop re-points a link, and `OpCreateStack` takes a reference operand, so
+`native_op_is_store_free` declines it and the GATE hoists nothing in that loop — the
+rebound test on this path is reached by no cell, and stays as the same guard the loop's own
+candidates carry (P4c c6).
+
+**What it does not cover, by construction.**  A read through a nested record path
+(`self.size.w`, c16) is no `scalar_read` candidate anywhere in the family; a length-only
+view earns no header (c11) as § V-n decided; a return-buffer writer (§ V-c) is admitted
+by the caller's gate but earns no twin — nothing measured asks for it; and only a leaf
+argument variable qualifies (c5, c6), the same rule the loop's own candidates follow.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
