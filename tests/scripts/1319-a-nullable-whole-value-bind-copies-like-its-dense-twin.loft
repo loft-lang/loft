@@ -58,6 +58,9 @@
 //   on their own, in a file holding only that cell.  The null-source and control cells pass
 //   on the control build too, which is what makes them controls rather than further
 //   instances.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct B19S { b19_v: integer }
 struct B19R { b19_k: integer, b19_v: integer }

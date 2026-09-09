@@ -32,6 +32,9 @@
 // on the control the file does not COMPILE, so no assert runs to be counted.  That is also
 // why every cell below has to carry a value — a guard scored on exit alone would pass on a
 // build that compiled these declarations and answered them wrong.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Frec { n: integer }
 

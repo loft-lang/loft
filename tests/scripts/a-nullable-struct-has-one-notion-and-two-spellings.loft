@@ -32,6 +32,9 @@
 // it: the same question already has a working answer somewhere, and that answer is the oracle.
 //
 // @falsified-at: d6a21b73 — interpret exit 1 -> 0, native exit 1 -> 0 (the two refusals)
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Pn { x: integer = 3, y: integer = 0 }
 struct Hn { f: Pn?, g: Pn }

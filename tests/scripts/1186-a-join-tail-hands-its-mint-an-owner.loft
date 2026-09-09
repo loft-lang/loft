@@ -31,6 +31,12 @@
 // than a line in this one.  @PLN150 carries it.
 //
 // formal/closures.md D-clo-13, @PLN150.
+//   ARMED: `LOFT_STRICT_STORES=1` — the use-after-free reads are what the interpret side
+//   moves on.
+//   HOLDS: values are not the channel here. The both-arms cell moves on BOTH backends —
+//   `--interpret` reports use-after-free reads of the captured vector and `--native` leaks
+//   `kt=79 P2s×2`, each going to none — and the present-arm cell moves 6 use-after-free reads
+//   -> none. The absent arm is scored by the leak channel alone.
 
 struct P2s { v: integer }
 struct Q { xs: vector<integer> }

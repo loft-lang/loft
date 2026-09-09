@@ -45,6 +45,12 @@
 //   directions — a missing warning fails the file exactly as an extra one does, which is also
 //   what holds the quiet cells below quiet.
 //
+//   ARMED: none; the warning count is read by hand, or through the corpus runner's diagnostic
+//   check.
+//   HOLDS: every channel `falsify` scores — exit, asserts, leak, panic, refusals — is equal
+//   on BOTH backends, so its INERT verdict is correct for what it measures. On the parent the
+//   file compiles, runs and answers every value identically; what moves is the WARNING COUNT,
+//   0 -> 5 on interpret. No falsify signature can confirm or deny this guard.
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`

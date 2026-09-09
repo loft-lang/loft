@@ -38,6 +38,9 @@
 //   wanted, and the instrument names the cause (`USE AFTER FREE (read) store #4 type=E77`,
 //   created / freed / read-now pcs all reported).  The trailing-`return` control is INERT
 //   either side, which is the point: only the branch-borne `return` takes the blind route.
+//   HOLDS: exit, assertions, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct E77 { a: integer }
 enum W77 { One, Two }

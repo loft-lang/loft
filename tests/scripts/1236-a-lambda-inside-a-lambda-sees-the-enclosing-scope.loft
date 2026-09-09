@@ -45,6 +45,9 @@
 //   first cell answers 0 where it owes 62 and the file stops there.  The EXIT channel is the
 //   one that moves and the assertion channel does not: an `assert` that fires ends the run at
 //   the first cell, so the count `falsify.sh` reads is the same 0 on both trees.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Acc1236 {
   n: integer,

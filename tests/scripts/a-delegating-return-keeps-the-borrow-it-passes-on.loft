@@ -44,6 +44,11 @@
 // @falsified-at: 85bb936b — `dg_p` reads 299 instead of 7.  `--native` fails the tail, bound
 //   and `return` spellings; `--interpret` fails the fully DISCARDED call statement (its other
 //   spellings were already clean there, which is what made this read as native-only).
+//   CHANNEL: the assertions/exit channel, measured on --interpret against 85bb936b by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct DgS {
   x: integer = 1,

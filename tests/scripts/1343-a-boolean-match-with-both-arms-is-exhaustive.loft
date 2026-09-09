@@ -25,6 +25,10 @@
 // @falsified-at: dd46146c — warning stream 5 lines -> 0 on both backends, measured by
 // `tests/boolean_match_exhaustive.rs`; exit and assertions 0 -> 0 (the values were always
 // right), so `make falsify` reports this guard inert on the channels it scores.
+//   ARMED: none; the measurement is the Rust test `tests/boolean_match_exhaustive.rs`.
+//   HOLDS: exit and assertions are 0 -> 0 on both backends — the values were always right —
+//   so falsify reports inert on every channel it scores. What moves is the WARNING STREAM, 5
+//   lines -> 0, which only that Rust test reads. Re-validate there.
 fn lo(n: integer) -> text? { return "lo{n}"; }
 fn lo_n(n: integer) -> text { return "lo{n}"; }
 fn w1(w: boolean, n: integer) -> text { return match w { true => lo(n) ?? "", false => lo(n + 1) ?? "" }; }

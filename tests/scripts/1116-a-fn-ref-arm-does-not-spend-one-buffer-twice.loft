@@ -32,6 +32,10 @@
 // @falsified-at: c25f1f02 — native exit 1 -> 0 (`E0499: cannot borrow *_farg_0 as mutable
 //   more than once at a time` from the generated dispatch arm).  The interpret half is INERT
 //   by construction: only `--native` builds a dispatch table, so it always answered.
+//   HOLDS: the interpret half is INERT by construction — only `--native` builds a dispatch
+//   table, so the interpreter always answered and no channel of its can move. NATIVE carries
+//   this one (exit 1 -> 0, `E0499` from the generated dispatch arm). An interpret-only sweep
+//   reports nothing here however broken the emitter is.
 
 fn nb_two() -> text {
   nb_loc: text = "two-buffers";

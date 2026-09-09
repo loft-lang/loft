@@ -38,6 +38,9 @@
 //   on every run — the tell that it is uninitialised stack and not a stale value) and fails to
 //   compile on `--native` (rustc E0308, `expected (u32, DbRef), found ()`).  The enum cells
 //   report `refused free of out-of-range store` before they abort.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct E69 { a: integer }
 enum W69 { One, Two }

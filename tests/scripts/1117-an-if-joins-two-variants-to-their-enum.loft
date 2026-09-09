@@ -33,6 +33,9 @@
 //
 // @falsified-at: cd263f7c — interpret exit 1 -> 0, native exit 1 -> 0 (`expected A, got B
 //   on else`, both backends refusing at parse time)
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum Iv {
   Alpha { n: integer = 1 },

@@ -426,6 +426,21 @@ let g = (raw ^ (raw >> 13)).wrapping_mul(0x9E37_79B1);
    rule the story contains — not deletion. See
    [§ B2. Comments whose SUBJECT is the bug](#b2-comments-whose-subject-is-the-bug-not-the-code),
    and cite `@FR-<Rule>` wherever `doc/claude/formal/` already states the invariant.
+10. **A doc block belongs to the item BELOW it — so anchor an insertion on the block, never on
+   the `pub fn` line.** A `///` block, and the attributes under it, attach to whatever item comes
+   NEXT. Insert a new item at the signature and it adopts the block written for its neighbour,
+   leaving that neighbour bare. Put the new item ABOVE the previous item's `///`, or BELOW its
+   closing `}`. Twice measured, and the two forms are not equally dangerous. In `src/parallel.rs`
+   an inserted `static` swallowed `run_parallel_block`'s doc *and* its `#[allow(dead_code)]` and
+   `#[cfg_attr(…)]` — caught, because `cargo clippy --all-targets --all-features -- -D warnings`
+   failed. In `src/data.rs` the doc-only form left `is_dbref` documented by nothing while
+   `has_null` wore its eight-`DbRef` layout authority, and it **failed nothing**: fmt, both
+   clippy variants and 4773 tests all passed, because the code is unchanged and every comment
+   still attaches to *some* item. `cargo doc` rendered it that way, and it surfaced only as a
+   peer's cherry-pick conflict — on a clean pick it would have gone through silently. So for the
+   doc form the habit is the ONLY defence and a green gate is no evidence: after inserting near a
+   documented item, read the functions either side and check each still owns its block. The tell
+   is a block whose first line reads like a continuation of a different subject.
 
 ---
 

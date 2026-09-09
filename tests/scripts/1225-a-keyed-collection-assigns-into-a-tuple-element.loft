@@ -77,6 +77,9 @@
 //   guards loft#1224 is about.  On the control the file dies in `src/state/codegen.rs` before
 //   any assertion runs: the exit and panic channels score that it got that far at all, and the
 //   assertions below score the values once it does.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct E1225 { k: integer, nm: text }
 

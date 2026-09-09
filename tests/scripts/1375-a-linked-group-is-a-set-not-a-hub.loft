@@ -33,6 +33,9 @@
 // no longer matches by content.  Identical before and after this fix; loft#1385.
 //
 // @falsified-at: 7db6935f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 struct E { k: integer, n: integer }
 struct F { k: integer, n: integer }
 

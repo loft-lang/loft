@@ -27,6 +27,9 @@
 //   `10,20,30,40,` / `10,20,30,40,` / `10,20,30,40,` against a correct local column, the
 //   nested cell reads `10,20,50,0,`, and `text` and the struct are corrupt in their own
 //   widths — a `0` past the live data with `len` still 4 in every one of them.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct P { n: integer, t: text }
 

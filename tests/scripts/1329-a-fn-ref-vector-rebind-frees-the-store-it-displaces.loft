@@ -64,6 +64,9 @@
 //   no ceiling can see, and the reason the three controls are cells rather than a comment.
 //   The dense cell passing on the INTERPRETER is the same fact as its native failure:
 //   `owned_ref` has carried the bare `Vector` arm all along, and only this side was short.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn mk1329(i: integer) -> vector<integer> { [i, i + 1] }
 

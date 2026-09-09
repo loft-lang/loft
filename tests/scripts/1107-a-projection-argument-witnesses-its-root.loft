@@ -26,6 +26,11 @@
 //   (`the vector outlives the call, read back 39`) and [strict-store] USE AFTER FREE on the
 //   caller's container; the leak channel alone reads CLEAN on that build, which is the whole
 //   reason the over-free cells are here.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct S1107 { a: integer = 3 }
 struct W1107 { s: S1107 }

@@ -35,6 +35,9 @@
 //   number that matters — the fns that still PASS on the BROKEN build are exactly the signed
 //   controls, which is what proves they are controls and not cells that happen to co-vary
 //   with the defect.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 // @PLN9: the binary-I/O cell below does cwd-relative file I/O.
 #cwd

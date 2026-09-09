@@ -27,6 +27,9 @@
 //   variable. A file-scope `NAME: text = …` is a CONSTANT", about code this file does not
 //   contain.  The `integer` and `+=` cells run clean on that build, which is the measurement
 //   that says the text arm is a second reader of the same answer and not a second defect.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct It1211 { nm: text, k: integer }
 struct Nt1211 { i: It1211? }

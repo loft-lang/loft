@@ -37,6 +37,9 @@
 // `1158-a-group-forms-whichever-member-is-declared-first.loft`).
 //
 // @falsified-at: f26b708a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Cg1152V  { cg_k: integer, cg_n: text, cg_v: integer }
 struct Cg1152H  { cg_k: integer, cg_n: text }

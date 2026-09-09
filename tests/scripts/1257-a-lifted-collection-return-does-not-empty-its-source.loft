@@ -49,6 +49,11 @@
 //   len=0` in the first cell.  Scored by VALUE, not by the leak channel: the leak channel read
 //   `NO leak` on the broken build throughout, because a container emptied by a free of a store
 //   that IS freed is not a leak.  That is the whole reason this needed a value assertion.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn named1257(q: vector<integer>?) -> vector<integer> {
   q ?? [7, 8]

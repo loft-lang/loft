@@ -39,6 +39,9 @@
 //   keyed kinds was also measured on its own against the control — hash, sorted and index all
 //   panicked with `rec=4294967295` — because one file that stops at its first cell cannot say
 //   the other two were broken.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 struct E1213 { k: integer, nm: text }
 struct Nh1213 { h: hash<E1213[k]>? }

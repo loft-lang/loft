@@ -24,6 +24,10 @@
 // reached only after the direct stub lookup comes up empty.
 //
 // @falsified-at: e5bebfd7 — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: assertions, leak, panic, free-refusal and expectations are equal on both trees and
+//   both backends; the EXIT channel carries it, 1 -> 0 each side. Re-measured serially: a
+//   first run overlapping another falsify reported exit 127, a missing binary from the shared
+//   HERE build rather than any result.
 
 struct Ne1144P { ne_px: integer }
 fn OpEq(self: Ne1144P, other: Ne1144P) -> boolean { self.ne_px == other.ne_px }

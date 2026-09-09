@@ -30,6 +30,11 @@
 //   `1242 RAN` line is printed; the file still passes, which is exactly the defect. With the fix
 //   both lines print and a broken assertion in either cell fails the suite.
 //
+//   CHANNEL: the HARNESS, not the program. The change this guard catches is in
+//   `tests/wrap.rs` — the runner, not the compiler — so both binaries answer identically and
+//   falsify, which compares two BINARIES on one guard, structurally cannot score it.
+//   HOLDS: every channel is equal between the two builds, which is why the sweep says INERT.
+//   Re-validate through the corpus runner's own behaviour, by hand, as the receipt records.
 // @EXPECT_ERROR: cannot change type from hash
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.

@@ -26,6 +26,9 @@
 //   diagnostics that are not these, so the gating channel is `check_diagnostics` in
 //   `tests/wrap.rs` — both `@EXPECT_ERROR` lines below go unmatched there.  Measured per cell
 //   on the control binary: the `text` cell an ICE, the scalar cell the arithmetic message.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct Nb1212b { t: text?, n: integer? }
 

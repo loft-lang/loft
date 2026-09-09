@@ -32,6 +32,9 @@
 // removing a read that found nothing is behaviour-preserving BY CONSTRUCTION, which is
 // the claim they exist to pin. They are the control — if a later change makes `parse`
 // load a prelude again, the stdlib's own parse errors start landing in these counts.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 use parser;
 use docs;

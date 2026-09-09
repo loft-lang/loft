@@ -33,6 +33,9 @@
 //   cure at the top; the corpus harness DOES leak-check, so the file gates correctly in place.
 //   Values are asserted as well, so a cure that freed the store too early fails on value
 //   rather than passing quietly.
+//   HOLDS: the VALUES are correct on both trees; the LEAK channel carries this one, thirteen
+//   records (`kt=81 S×13`, twelve from the loop cell and one from the two-bindings cell)
+//   against clean here. An unarmed or value-only reading reports it inert.
 
 struct S { a: integer }
 

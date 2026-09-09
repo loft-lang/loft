@@ -182,8 +182,27 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
 }
 [ -n "$BULK" ] || entry_modes "$GUARD"
 
+# Every build here goes through this, and every build takes its target directory's LOCK.
+#
+# Two falsify runs are two cargo processes, and the target dirs are SHARED between runs by
+# design — `head-target` holds the HERE build for both the bulk and single paths, and a control
+# is cached per ref so a second guard against the same ref costs nothing.  That sharing is worth
+# keeping; two concurrent writers into one of them is not.  Cargo does not serialise itself
+# across processes, and what comes out is a partial or stale binary whose verdicts read as
+# FINDINGS rather than as breakage: measured 2026-09-09, an overlapping bulk sweep and single
+# run produced `this tree does not build` on a tree `cargo check` builds fine, a backend
+# reported INERT with its `here` column unclean — indistinguishable from a native regression
+# against a green suite — and an `exit 127`, a missing binary, in a bulk row.  Run serially
+# afterwards, all three guards reproduced their receipts exactly.
+#
+# So a run arriving mid-build WAITS for the finished binary instead of racing it.  The lock is
+# per target directory and held only across the one cargo invocation, so runs against different
+# refs still proceed in parallel and nothing nests.
 build() { # <dir> <target-dir> -> path to binary
-  ( cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
+  mkdir -p "$(dirname "$2")"
+  ( flock 9 || exit 1
+    cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
+  ) 9>"$2.lock" || return 1
   echo "$2/debug/loft"
 }
 
@@ -302,7 +321,11 @@ if [ -n "$BULK" ]; then
       git worktree add --detach "$wt" "$rsha" >/dev/null 2>&1 </dev/null || {
         awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-worktree\t\n", $1, r}' "$BULK"; continue; }
     fi
-    if ! ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); then
+    # Same lock as `build`: $SHARED is one target dir for every control in the sweep, so two
+    # sweeps at once would write it together.
+    if ! ( flock 9 || exit 1
+           cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
+         ) 9>"$SHARED.lock"; then
       awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-build\t\n", $1, r}' "$BULK"
       git worktree remove --force "$wt" >/dev/null 2>&1
       continue
@@ -376,7 +399,7 @@ for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   case "$old" in */head-target|*/shared-target) continue;; esac
   sha=${old##*/}; sha=${sha%-target}
   git -C "$ROOT" worktree remove --force "$CACHE/$sha" >/dev/null 2>&1 || rm -rf "$CACHE/$sha"
-  rm -rf "$old"
+  rm -rf "$old" "$old.lock"
 done
 git -C "$ROOT" worktree prune >/dev/null 2>&1
 # A separate target dir on purpose: the main one may be mid-`make ci`, and cargo's build

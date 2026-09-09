@@ -44,6 +44,11 @@
 //   does not score leaks at all, and the native binary prints the warning only under
 //   `LOFT_NATIVE_LEAK_CHECK=1`.  A bare `loft --native <file>` on the pre-fix build is
 //   silent, which is not the same as clean.
+//   CHANNEL: the leak channel, measured on --interpret against ed85013b by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: exit, assertions, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct VsN {
   x: integer = 1,

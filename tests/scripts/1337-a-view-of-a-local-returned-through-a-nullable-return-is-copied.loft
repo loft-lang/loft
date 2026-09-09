@@ -27,6 +27,9 @@
 // inline CALL's temporary (`mk().inn`, the H9 shape the dense route already copies).
 //
 // @falsified-at: c0a09c95 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Leaf { v: integer }
 struct Tree { l: Leaf, w: integer }

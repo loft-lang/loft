@@ -28,6 +28,9 @@
 //   -> clean.  The native half is INERT and that is the defect's shape, not a gap in the
 //   guard: `--native` already answered correctly on the control, which is exactly why no
 //   single-backend run could see this.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 fn cb_named(cb_n: integer) -> text {
   "named-{cb_n}"
