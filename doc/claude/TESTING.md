@@ -746,6 +746,51 @@ it reports a DIFFERENT one, which is indistinguishable from a bad patch until yo
 also that a leak's `kt=` id shifts with the type table between builds: the store SHAPE
 (`St1295×42`) identifies it, not the number.
 
+#### What a receipt owes its next reader
+
+Whether a recorded patch reintroduces THE defect cannot be gated: it costs an apply, a build
+and a run per guard, and the verdict is a judgement about which channel moved rather than a
+pass or a fail.  So it is a **read, once per release** — `make falsify-review`, checklist item
+`M-falsify-receipts` — and what decides whether that read takes an afternoon or a week is how
+well each guard documents itself.  **A guard whose receipt does not say how to score it again
+is defective on its own terms**: it claims to catch something and records no way to check the
+claim a second time.
+
+Four fields, each earned from a failure that cost real time in the 2026-09-09 retrofit:
+
+| field | what it says | what its absence cost |
+|---|---|---|
+| **CHANNEL** | which channel carries the defect | a good patch and a bad one look identical |
+| **ARMED** | the instrument the measurement needs — asked only of a leak-class guard | three leak guards read as flat contradictions until `LOFT_STRICT_STORES=1` was armed; an unarmed run gives a DIFFERENT channel, not a weaker one |
+| **WITNESS** | the concrete observation on the control — a value, a count, a leaked shape (`answers 99 where the file says 88`, `St1295×42`) | the re-read becomes a whole run instead of one comparison |
+| **HOLDS** | what must NOT move (*"every assertion passes on both trees"*) | the field that REJECTED a patch: `a-nullable-collection-local-takes-its-typed-null` moves exit and assertions where its guard was falsified on the FREE channel |
+
+Write them as LABELLED lines — that is the canonical form, and the labels satisfy the check
+directly:
+
+```text
+// @falsified-by: tests/falsified/1033-a-par-worker-gets-the-right-nested-vector.patch
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
+//   channel is the whole measurement here; a run scored on leaks would learn nothing.
+```
+
+The prose an older receipt already carries still counts, so a well-written one is not reported
+thin for missing a keyword.  But the label is what makes the standard WRITABLE: without it an
+author has to guess which words the heuristic likes, and 12 receipts documented in full read as
+thin until the labels were recognised.  A label owns its wrapped continuation lines, and the
+leak-class test that decides whether ARMED is owed reads everything EXCEPT the HOLDS section —
+`HOLDS` says what does not move, so "leak and panic are equal" is a statement that the guard is
+*not* leak-class, and reading it naively made documenting a value guard demand an instrument
+field it has no use for.
+
+The rule lives in `scripts/falsify-review.py --check` and nowhere else, so the review and the
+gate cannot disagree about what a receipt owes.  `doc_hygiene::every_guard_says_how_to_score_it
+_again` holds the line against `tests/falsified_docs.baseline`, a ratchet that only shrinks —
+331 of 382 receipts predate the standard, `HOLDS` missing from most of them, so the backlog is
+recorded honestly rather than fixed in one pass or pretended away.  A leak's `kt=` id shifts
+with the type table between builds, so a WITNESS names the store SHAPE, not the number.
+
 ⚠ **Record the patch when you falsify, not when you need it.**  `falsify.sh <guard> <ref>`
 prints the durable receipt beside the ref one and writes the patch, because the derivation is
 free exactly once: at that moment the control still resolves and the diff is the fix you just

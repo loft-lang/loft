@@ -57,6 +57,10 @@
 //   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
 //   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
 //   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
+//   HOLDS: the assertion channel does NOT move — the cells read the same on both
+//   trees — along with leak, panic, free-refusal and expectations.  The exit channel
+//   carries this one, so a patch that moves an assertion is reintroducing something
+//   else and must be rejected.
 
 struct Pt1277 { x: integer, y: integer }
 

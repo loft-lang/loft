@@ -1124,6 +1124,18 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="mid pre",
         ),
         Item(
+            "M-falsify-receipts",
+            "Can each guard still be re-validated, and quickly?",
+            "make falsify-review",
+            "a recorded patch reintroducing THE defect cannot be gated — an apply, a build "
+            "and a run per guard, and the verdict is a judgement about which channel moved "
+            "— so it is a read, here, once a cycle.  Score the patch receipts with the "
+            "instrument each names, and treat a control that went unreachable since last "
+            "cycle as the inflow rate: that number is what says whether recording a patch "
+            "at falsification time is taking",
+            cadence="mid pre",
+        ),
+        Item(
             "M-close-plans",
             "Close the plans this release shipped",
             "scripts/close-shipped-plans.sh --range <prev-tag>..HEAD",

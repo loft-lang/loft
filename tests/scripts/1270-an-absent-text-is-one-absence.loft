@@ -52,6 +52,9 @@
 //   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
 //   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
 //   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
+//   channel is the whole measurement here; a run scored on leaks would learn nothing.
 
 struct NT1270 { a: integer, t: text? }
 struct PT1270 { a: integer, t: text }

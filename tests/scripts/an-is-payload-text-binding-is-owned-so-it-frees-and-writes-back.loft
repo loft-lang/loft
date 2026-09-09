@@ -41,6 +41,12 @@
 //   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
 //   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
 //   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
+//   ARMED: scored UNARMED.  The subject has a leak half, but this receipt's measurement is
+//   the assert channel, which needs no instrument; arm `LOFT_STRICT_STORES=1` only to look
+//   at the leak half, which is not what this receipt records.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
+//   channel is the whole measurement here; a run scored on leaks would learn nothing.
 
 enum Subj { Holder { inner: Pay }, Empty { z: integer }, Many { xs: vector<integer> }, Lab { s: text } }
 struct Pay { a: integer }

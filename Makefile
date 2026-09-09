@@ -2467,3 +2467,15 @@ linkcheck:
 
 linkcheck-external:
 	scripts/linkcheck.sh --external
+
+# Per-release read (@FR receipts): can each guard still be re-validated, and quickly?  Whether
+# a recorded patch reintroduces THE defect cannot be gated — it costs a build per guard and the
+# answer is a judgement about channels — so it is a human pass once per cycle, and this hands
+# that human a bounded worklist.  A REPORT, never a gate; the DOCUMENTATION half is gated by
+# `doc_hygiene::every_guard_says_how_to_score_it_again` against tests/falsified_docs.baseline.
+#   make falsify-review                     # summary + the worklist
+#   make falsify-review ARGS=--all          # every under-documented receipt
+#   make falsify-review ARGS="--since <ref>"  # + how many controls went unreachable since
+.PHONY: falsify-review
+falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
+	@python3 scripts/falsify-review.py $(ARGS)
