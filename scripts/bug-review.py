@@ -63,6 +63,12 @@ KEYSTONES = [
     # keystone the review cannot see is a keystone whose class reads as a fresh candidate,
     # which is the reading @PLN155 arc A exists to refuse.
     ("Scopes::owns_freeable_store",   "keyed collections", 1260),
+    # @PLN155's own keystone: the @FR-O-Proxy / @FR-O-Override PAIR given one home, which six
+    # free sites had been spelling by hand.  Registered the day the plan's phases landed, with
+    # its payoff row necessarily blank — which is the POINT.  Without this row arc A reads the
+    # class as a fresh candidate and names it a PLAN again, one day after a plan finished on
+    # it; with it, the class reads MEASURING, which is what an unscored keystone means.
+    ("Function::proxy_says_owned",     "ownership/free",   1479, "PLN155"),
 ]
 
 # ⚠ **The fourth trap, and it is the one that reads as a verdict.**  A keystone whose plan

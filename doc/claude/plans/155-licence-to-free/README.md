@@ -82,7 +82,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-09 (re-aimed onto the derivation count; two reduction rounds; phase 4 done).
+- **Last touched:** 2026-09-09 (re-aimed; two reduction rounds; phase 4 done; phase 5 started and pending data).
 
 ## Why this family, measured
 
@@ -124,7 +124,7 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **3a** — where the refusal has to LIVE, and what `deny` costs | § Phase 3a | the ladder fires at all (a gate that never fires is not a gate); the default path byte-identical | ✅ **done — and it corrects the plan twice.**  `owns_freeable_store` is NOT the sweep's licence (the ladder attached there NEVER FIRED); and `deny` is not safe-by-direction — 31 of 140 files leak, and **one answers WRONG** |
 | **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | **Open, and phase 3a's own follow-up says `deny` cannot be the top rung.**  The refusal set was shrunk 77 % (6412 → 1464 frees) and the deny cost moved by four files: 27 of 140 still leak and one still answers wrong |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | ✅ **done — and the verify could not be met as written, which is the answer.**  The runtime already enforces three of the four at ONE chokepoint, so no cell was red before.  `(H-FreeLIFO)` is enforced nowhere and was deliberately retired — registered as **D-heap-LIFO**.  `tests/heap_free_discipline.rs`, 5 cells, each recording whether it was falsified: one was, two were not and say why |
-| **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
+| **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | ✅ **started 2026-09-09 — and it CANNOT conclude yet, which is the finding.**  The watermark is #1479 with nothing above it; the two-week window is 13 of its 14 days BEFORE the plan.  Its product is the keystone REGISTRATION that makes the class read `MEASURING` instead of earning another plan |
 
 ### Arc A — the reassessment instrument
 
@@ -630,6 +630,48 @@ not a guard, and two of five here are not — saying which is worth more than fi
 alike.  They are also the reason these live in a Rust test and not in `tests/scripts/`: **no
 loft program can express a double free, a stack free, or a free out of order**, which is
 precisely why the runtime's refusals had no coverage at all before this phase.
+
+## Phase 5 — started on a two-week window, and it cannot conclude yet (2026-09-09)
+
+**The first form of the Done criterion is unmeasurable, and the measurement is what shows it.**
+The plan's phases landed 2026-09-08/09.  The tracker's newest bug is **#1479, filed 2026-09-08**;
+nothing has been filed since.  There is no post-watermark population at all, so "did the
+ownership/free share fall after this plan's watermark" has no data on either side of the line.
+
+**The two-week window, which is what there is.**  286 bugs since 2026-08-26 (#1096-#1479)
+against 368 before it:
+
+| | before | last 2 weeks | move |
+|---|---|---|---|
+| ownership/free, raw | 48 (13.0 %) | 57 (**19.9 %**) | **+6.9pp** |
+| ownership/free, campaign's own finds removed | — | 12 of 241 (**5.0 %**) | **-8.0pp** |
+
+⚠ **Neither number is a verdict on this plan, because the window is 13 of 14 days OLDER than
+it.**  What the window does measure is worth having on its own: **79 % of the class in it — 45
+of 57 — was filed BY the stability work itself**, bodies naming a plan, a walk, or a
+`Found-via`.  Four ownership bugs in five over the last fortnight were found by the three of us
+looking, not met by a consumer.  The filing rate says the same thing from outside: 286 bugs in
+fourteen days against 368 in all prior history.  **The class's apparent size is largely a
+measure of where we were looking**, which is the bug review's own keystone-screen trap at
+whole-tracker scale.
+
+### What phase 5 actually produced: the keystone row that was missing
+
+Re-running arc A on the fresh population named **ownership/free a PLAN** — all four gates
+passing — one day after a plan finished on it.  That is arc A's own gate 4 failing to be loud,
+and the cause is exactly what it warns about: **@PLN155's keystone was not registered**, so the
+class read as a fresh candidate rather than as an unscored one.
+
+`Function::proxy_says_owned` is now in `bug-review.py`'s `KEYSTONES` at #1479, tagged `PLN155`
+so the payoff check prints the screened line beside the raw one when there is data.  With it,
+the class reads **MEASURING — "its keystone has not been scored yet, and ranking it would read
+three gates out of four"**, which is the honest state and the same one keyed collections and
+null/sentinel are in.
+
+**So phase 5 stays open by design, and it is now a one-command read** rather than a piece of
+work: when a cycle's worth of bugs has accumulated above #1479, `make bug-review` prints the
+row and `make campaign-review` stops saying MEASURING.  Nothing else is needed from this plan
+to answer it.
 
 ## Phase ordering
 
