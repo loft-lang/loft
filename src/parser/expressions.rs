@@ -1867,6 +1867,89 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// Copy a collection VALUE into a fresh local that owns its own buffer, and answer that
+    /// local.  `tail` becomes `Insert([<buffer alloc>, OpAppendVector(tmp, <value>, …), tmp])`,
+    /// so it still yields a collection wherever it stood.
+    ///
+    /// The collection counterpart of [`Parser::materialize_view_value`], and the way to make a
+    /// collection expression independent of the store it was read OUT of.  The copy itself
+    /// stays in [`Parser::lower_vec_copy_bind`] — its one home — rather than being restated
+    /// here: that routine owns the dep-strip, the buffer allocation and the two-pass counter
+    /// parity, and a second copy of any of the three would drift from it.
+    ///
+    /// Answers `u16::MAX` when no local could be minted, which leaves `tail` untouched.
+    pub(crate) fn materialize_collection_value(&mut self, tail: &mut Value, s_type: &Type) -> u16 {
+        let tmp = self.create_unique("__blk_val", &s_type.without_deps());
+        if tmp == u16::MAX {
+            return u16::MAX;
+        }
+        self.vars.defined(tmp);
+        // The KEYED kinds are not `Type::Vector`, and their deep copy is `OpReplaceKeyed`
+        // rather than an element append, so they take their own leg.  The temp is minted
+        // ABOVE this split, on both passes and for either kind: `create_unique`'s per-prefix
+        // counter has to advance identically across the two passes, and a leg that minted on
+        // pass 2 alone would shift every later `__blk_val` by one.
+        if crate::parser::vectors::is_keyed(s_type) {
+            return self.materialize_keyed_value(tail, s_type, tmp);
+        }
+        let to = Value::Var(tmp);
+        let mut code = std::mem::replace(tail, Value::Null);
+        // `CopyOwnedField` is what this IS — a projection read out of a record the caller
+        // owns — and it is the verdict that strips the inherited dep so the temp is given a
+        // buffer of its own instead of aliasing the field.
+        self.lower_vec_copy_bind(
+            &mut code,
+            &VecBind::CopyOwnedField,
+            &to,
+            tmp,
+            s_type,
+            &Type::Void,
+            false,
+        );
+        // Pass 1 emits nothing (it only advances the counters), so there is no `Insert` to
+        // extend and the tail keeps the value it had — the shape both passes must agree on.
+        if let Value::Insert(ops) = &mut code {
+            ops.push(Value::Var(tmp));
+            *tail = code;
+        } else {
+            *tail = code;
+            return u16::MAX;
+        }
+        tmp
+    }
+
+    /// The keyed half of [`Parser::materialize_collection_value`]: deep-copy a keyed
+    /// collection value into `tmp` through `OpReplaceKeyed`, the same copy a keyed local's
+    /// `s = other` bind takes.
+    ///
+    /// The leading `Set(tmp, Null)` is what gives a first-assigned keyed local its store
+    /// (codegen's `gen_set_first_keyed_null`), and the dep-strip is what stops scope analysis
+    /// reading `tmp` as a borrow of the record the value was read out of — the two halves the
+    /// keyed bind pairs for the same reason.
+    ///
+    /// No source-free bit and no @P290 bracket: the value here is a PROJECTION out of a
+    /// record, never a call or a join, so there is no callee-minted store to release and
+    /// nothing whose ownership a runtime witness would have to settle.
+    fn materialize_keyed_value(&mut self, tail: &mut Value, s_type: &Type, tmp: u16) -> u16 {
+        let Some(kt) = self.keyed_type_id(s_type) else {
+            return u16::MAX;
+        };
+        let src = std::mem::replace(tail, Value::Null);
+        let replace = self.cl(
+            "OpReplaceKeyed",
+            &[src, Value::Var(tmp), Value::Int(i32::from(kt))],
+        );
+        for d in self.vars.tp(tmp).depend() {
+            self.vars.make_independent(tmp, d);
+        }
+        *tail = Value::Insert(vec![
+            Value::Set(tmp, Box::new(Value::Null)),
+            replace,
+            Value::Var(tmp),
+        ]);
+        tmp
+    }
+
     /// `@FR-O-Complete` — a vector local bound from a value branch: write the bind out per
     /// arm, so every path binds the local the way a single bind of that arm's tail would.
     /// `true` when the rewrite happened; `false` where the branch has no arm a plain bind

@@ -1899,6 +1899,44 @@ impl Parser {
             let w = self.materialize_view_value(td, &mut l[last]);
             return self.vars.tp(w).clone();
         }
+        // loft#1494 — the COLLECTION half of the arm above, and the same rule: a block used
+        // as a VALUE whose tail reads a collection OUT OF a local defined inside it
+        // (`{ b = BoxF { … }; b.items }`) hands the consumer a reference into `b`'s store,
+        // which the block frees on the way out.  The consumer then copies from a released
+        // store — the right answer for as long as the bytes survive, `0xDEADBEEF` under
+        // `LOFT_POISON=1`.
+        //
+        // The arm above cannot serve it: a collection is not a `Reference`, and
+        // `OpCopyRecord` is not how a collection is copied.  Cure it the same way through the
+        // collection's own copy — bind the tail to a fresh local, which gives it a buffer of
+        // its own (`@FR-B-Copy`) — after which `b` is no longer what the block yields and
+        // takes the ordinary block-scope sweep.
+        //
+        // Both halves belong to the BLOCK rather than to a consumer.  Five consumers read
+        // such a block by wrapping it from OUTSIDE — a return delivery, a call argument, a
+        // struct-literal field, an operator, a field write — so a delivery sunk per consumer
+        // would have to be written five times and would still miss the sixth; the two that
+        // were already right (a plain bind, a `for`) are the ones that sink it.
+        //
+        // A tail reading an OUTER local is left alone, exactly as above: the block does not
+        // define it, so it outlives the block and the view is a borrow the consumer keeps.
+        if context != "return from block"
+            && crate::parser::vectors::is_collection(&tp)
+            && let Some(tail) = l.last()
+            && let Some((root, path)) = self.field_place(tail)
+            // A bare `Var` tail is the whole local, not a projection out of it: that is the
+            // ownership question `@FR-O-Move` answers, and copying it here would leave the
+            // local's own store to nobody.
+            && !path.is_empty()
+            && !self.vars.is_argument(root)
+            && Self::block_defines_var(&l[..l.len() - 1], root)
+        {
+            let last = l.len() - 1;
+            let w = self.materialize_collection_value(&mut l[last], &tp);
+            if w != u16::MAX {
+                return self.vars.tp(w).clone();
+            }
+        }
         // #416 — set when the vector match/if tail below was materialised into the
         // return buffer; gates the type-keyed vector arm (which is reached only in
         // the IMPLICIT-tail `t = Vector` case) so it doesn't re-process / re-promote
