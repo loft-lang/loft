@@ -44,6 +44,8 @@
 //   which the harness reports as a failing CELL rather than as an `assertion failed:` line
 //   or a process-level panic, so neither channel counts it.  The `exit 1 -> 0` column is the
 //   one that sees all three.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct R1269 { k: integer, v: text }
 

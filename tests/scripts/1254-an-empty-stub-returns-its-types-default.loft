@@ -67,6 +67,8 @@
 //   on its own against that build, it aborts with "index out of bounds: the len is 2 but
 //   the index is 8658".  A channel that never runs reads exactly like a channel that did
 //   not move.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct P1254 {
   n: integer,

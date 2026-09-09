@@ -40,6 +40,8 @@
 //   `k=0` for `k=3` (the scalar written at byte 16 and read at 24) — while every declared-local
 //   cell passes. That asymmetry is the measurement: a guard scored only on the parse would have
 //   called that build fixed.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct T9 { t9_a: integer, t9_b: integer }
 

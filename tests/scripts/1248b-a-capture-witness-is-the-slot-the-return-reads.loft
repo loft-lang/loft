@@ -34,6 +34,8 @@
 //   channel as unmoved, so the borrow-arm, direct-return and declined cells are not scored by
 //   it — they were correct before this change and must stay correct.  Each was measured on its
 //   own against the control, where it passes.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct P1248b { n: integer }
 

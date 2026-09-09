@@ -68,6 +68,8 @@
 // @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
 // @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
 // @EXPECT_WARNING: a nullable `Dense1432?` is stored into parameter 1 of `area` of the non-null type `Dense1432`
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Duo1432 { s: integer }
 fn area(self: Duo1432) -> integer { self.s * 10 }

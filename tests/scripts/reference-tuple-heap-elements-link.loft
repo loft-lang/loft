@@ -32,6 +32,8 @@
 //   every cell's VALUE was measured against the record-backed loop path the control already
 //   had (`reference-tuple-heap-element-through-a-record.loft`), which is what says the
 //   representation was right before the link could reach it.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S1 { n: integer, nm: text }
 struct K1 { k: integer, v: text }

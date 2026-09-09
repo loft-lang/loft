@@ -32,6 +32,11 @@
 //   every cell below it is unreachable.  That is the right red here — the defect WAS the
 //   refusal, and a guard whose first line is rejected is exactly what a lifted refusal has to
 //   turn green.
+// @falsified-by: tests/falsified/1471-a-value-struct-is-nullable-through-its-tag.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 value struct Pt1471 { x: integer, y: integer }
 struct Holder1471 { p: Pt1471?, n: integer }

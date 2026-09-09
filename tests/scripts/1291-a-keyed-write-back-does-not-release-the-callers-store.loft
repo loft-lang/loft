@@ -39,6 +39,8 @@
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  (The two backends recycle a freed
 //   slot differently, so the same defect fails four cells on one and one cell on the other —
 //   which is itself the reason the recycle has to be there.)
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1291 { k: integer, v: integer }
 struct Pad1291 { a: integer, b: integer, c: integer }

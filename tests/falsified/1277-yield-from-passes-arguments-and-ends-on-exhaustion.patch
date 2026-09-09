@@ -1,0 +1,63 @@
+diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
+index 63e392a58..d0acac685 100644
+--- a/src/generation/coroutine.rs
++++ b/src/generation/coroutine.rs
+@@ -895,16 +895,7 @@ impl Output<'_> {
+     /// generator function; we call the Rust factory directly to get a
+     /// `Box<dyn LoftCoroutine>` that we can store inline in the outer struct.
+     fn gen_inner_factory(&mut self, init: &Value) -> std::io::Result<String> {
+-        // `unspan()` — the parser wraps the factory call in a `Span` as soon as it has an
+-        // ARGUMENT to record a position for, so `yield from inner(4)` arrives as
+-        // `Span(_, Call(inner, [4]))` while `yield from inner()` arrives as a bare `Call`.
+-        // Matched unwrapped, only the argument-free spelling was recognised; every
+-        // parameterised sub-generator fell to the fallback below, which routes through the
+-        // ordinary expression path and wraps the call in `alloc_coroutine(…)`.  That answers
+-        // a `DbRef`, and the slot is an `Option<Box<dyn LoftCoroutine>>` — so the emitted
+-        // Rust did not compile at all (E0308) while `--interpret` ran the same program
+-        // correctly (loft#1277).
+-        if let Value::Call(d_nr, args) = init.unspan() {
++        if let Value::Call(d_nr, args) = init {
+             let fn_name = self.data.def(*d_nr).name().to_string();
+             // P199 — the factory now takes `&UnsafeCell<Stores>`; pass the
+             // caller's `cell` binding instead of `stores`.
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index ed6645b6c..97a507da0 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -1198,24 +1198,7 @@ impl Parser {
+             }
+             if self.lexer.has_keyword("from") {
+                 // CO1.4: yield from sub_gen — desugar to:
+-                //   __sub = sub;
+-                //   loop { __item = next(__sub); if exhausted(__sub) break; yield __item; }
+-                //
+-                // The break asks the SUB-GENERATOR whether it is exhausted.  It used to ask
+-                // whether the yielded VALUE is truthy (`if !__item break`), which is a
+-                // different question that only coincides with exhaustion for the types whose
+-                // falsy value happens to be their null sentinel.  Where it did not coincide,
+-                // the interpreter got it wrong twice over and `--native` — which compares
+-                // against a per-channel exhaust sentinel — stayed right:
+-                //
+-                //   iterator<boolean>  a delegation TRUNCATED at the first `false`
+-                //                      (`true,false,true` delivered `true`), silently
+-                //   iterator<float>    / `single`: NaN is not falsy, so the break never
+-                //                      fired and the loop ran forever
+-                //
+-                // `OpCoroutineExhausted` is the question actually being asked, and it is the
+-                // same pair the streaming for-loop uses (`parser/control.rs`), so the two
+-                // consumers of a generator cannot disagree about when one has ended.
++                //   __sub = sub; loop { __item = next(__sub); if !__item break; yield __item; }
+                 let mut sub = Value::Null;
+                 let sub_type = self.expression(&mut sub);
+                 if let Type::Iterator(inner, _) = &sub_type {
+@@ -1231,7 +1214,9 @@ impl Parser {
+                         op,
+                         vec![Value::Var(sub_var), Value::Int(i32::from(value_size))],
+                     );
+-                    let test = self.cl("OpCoroutineExhausted", &[Value::Var(sub_var)]);
++                    let mut test = Value::Var(item_var);
++                    self.convert(&mut test, &elem_tp, &Type::Boolean);
++                    test = self.cl("OpNot", &[test]);
+                     let lp = vec![
+                         crate::data::v_set(item_var, next_call),
+                         crate::data::v_if(

@@ -44,6 +44,8 @@
 // The field `assert` cells are checked the same way: a declared constraint that PARSES is
 // not one that FIRES, so `TfdCheck`'s default was set to `(0, 4)` against `t.0 > 0` and the
 // run is refused with *"field constraint failed"*.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct TfdPair { k: integer = 0, t: (integer, integer) = (1, 2) }
 struct TfdText { k: integer = 0, t: (text, text) = ("aa", "bbb") }

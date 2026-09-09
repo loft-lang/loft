@@ -40,6 +40,8 @@
 //   build — absent path 1 leaked before / 0 after, present path 1 before / 0 after — and it is
 //   the present-path cells above that exercise it.  A guard whose channel cannot see half its
 //   own fix should say so.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 value struct VPt1472 { x: integer, y: integer }
 struct RPt1472 { x: integer, y: integer }

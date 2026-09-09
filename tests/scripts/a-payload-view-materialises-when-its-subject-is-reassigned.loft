@@ -32,6 +32,8 @@
 //   INERT, which is expected of a backend-divergence guard: only one side can move.  Native
 //   answered the old payload already, so the VALUE channel moves on the interpreter alone and
 //   what the fix buys is that the two AGREE.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Pay { a: integer, b: text }
 

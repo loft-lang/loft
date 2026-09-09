@@ -50,6 +50,8 @@
 // about whether the VALUES are asserted, each assertion was also mutated in turn on the fixed
 // build (`nk_hash_empty()` to 1, `nk_hash_one()` to 34, `nk_trie()` to 56, `nk_append()` to 3)
 // and each fails on the assert channel here.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct NkH { k: integer = 0, v: integer = 0 }
 struct NkO { k: integer = 0, v: integer = 0 }

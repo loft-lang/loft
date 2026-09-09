@@ -47,6 +47,8 @@
 //   and the prefix cell trips the `#405` refused-free guard and leaks a store.  Every value
 //   cell is asserted AFTER a 40-record `churn1304()`, because the defect answers correctly
 //   until the store slot is handed out again (loft#1291's recycle).
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Money1304 { cents: integer }
 struct Pad1304 { a: integer, b: integer, c: integer }

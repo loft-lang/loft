@@ -40,6 +40,8 @@
 //   exit 1 -> 0, native 1 assertion failures -> 0.  Two controls because the file grew a cell
 //   for a defect the first control cannot express: at 26d17f4b a captured fn-ref did not
 //   resolve, so the arm was never lifted and the cell passes there for the wrong reason.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct P1323 { n: integer }
 struct K1323 { k: integer, v: integer }

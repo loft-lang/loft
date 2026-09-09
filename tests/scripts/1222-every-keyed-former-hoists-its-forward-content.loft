@@ -43,6 +43,11 @@
 //   reads green straight through it — the tool's own shape is filed as loft#1224.  The in-order
 //   and four-former control cells compile and pass on the parent too, so a build that merely
 //   stopped emitting the trie field would not satisfy them.
+// @falsified-by: tests/falsified/1222-every-keyed-former-hoists-its-forward-content.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 // ---- element structs declared AFTER the struct whose field names them ----
 struct Tr1222 { c: trie<Tk1222[k]> }

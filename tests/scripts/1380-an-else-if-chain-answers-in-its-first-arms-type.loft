@@ -29,6 +29,8 @@
 //   PARSE time, not on an assertion: the nested float chain's innermost `{ 3 } else { 4.5 }`
 //   was refused (*"expected integer, got float on else"*), because its then arm was typed from
 //   its own literal rather than from the `float` the whole chain answers in.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 enum Ch1380 {
   Alpha { n: integer = 1 },

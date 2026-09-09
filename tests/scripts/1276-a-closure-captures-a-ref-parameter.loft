@@ -49,6 +49,8 @@
 //   guard: on the control the file does not COMPILE, so no cell runs to fail an assertion.
 //   The exit column is the one that sees it, and it is what this file's own subject is —
 //   four refusals on a program that should build.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Pt1276 { x: integer, y: integer }
 

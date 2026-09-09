@@ -37,6 +37,8 @@
 //   (`--native`: `error[E0425]`), which is why both kinds are in one file — either alone would
 //   record only half of what the parent does.  The `=` control cells compile and pass on the
 //   parent, so a build that merely refused less would not satisfy them.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn main() {
   // ---- integer, three operators, each composed differently ----

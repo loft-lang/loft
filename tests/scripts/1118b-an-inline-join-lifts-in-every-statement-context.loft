@@ -32,6 +32,8 @@
 // condition, `??` — each leaked one record per evaluation on that build).  Measured BY HAND
 // against a main-ful copy, because `falsify.sh` reads its leak column off stderr and a
 // `main`-less guard runs under `--tests`, which does not leak-check at all.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S1118 { x: integer = 1 }
 

@@ -57,6 +57,8 @@
 // @EXPECT_ERROR: cannot use any on vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be used, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection the answer for an empty one
 // @EXPECT_WARNING: Variable refused_filter is never read
 // @EXPECT_WARNING: Variable refused_any is never read
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct It1453 { k: integer, v: integer }
 

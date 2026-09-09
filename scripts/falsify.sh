@@ -463,6 +463,41 @@ elif [ $falsified_any -eq 1 ]; then
     echo "// @falsified-by: $PATCHFILE — $CHANNELS"
   else
     echo "// @falsified-at: $SHA — $CHANNELS"
+    # A ref receipt starts decaying the moment its PR merges: the squash keeps no branch
+    # pointing at the control, and the count of unreachable ones grows on its own as merged
+    # branches are pruned — 124 to 133 over a few hours of one afternoon.  The patch that would
+    # rescue it is derivable exactly ONCE for free, here, where the control is still resolvable
+    # and the diff applies by construction; later it is hand-reconstruction, and for two thirds
+    # of the corpus it is already too late.  So the durable form is offered at the only moment
+    # it costs nothing.
+    pdir="$ROOT/tests/falsified"
+    pbase=$(basename "$GUARD" .loft)
+    mkdir -p "$pdir"
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ > "$pdir/$pbase.patch" 2>/dev/null || true
+    plines=$(wc -l < "$pdir/$pbase.patch" 2>/dev/null || echo 0)
+    # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit
+    # just before the fix — the documented use — the diff IS the fix and runs to a few dozen
+    # lines; run against a DISTANT control it becomes the whole source difference since, which
+    # reintroduces everything fixed in between and cannot say which one the guard caught.  A
+    # measured 47079-line "receipt" is the shape of that mistake.  The recorded receipts run
+    # 17 to 203 lines, so a bound well above them separates the two uses without tuning.
+    if [ "${plines:-0}" -eq 0 ]; then
+      rm -f "$pdir/$pbase.patch"
+      echo
+      echo "note: no durable patch written — the fix touches nothing under src/ or default/,"
+      echo "      so the control cannot be reconstructed from a source diff alone."
+    elif [ "$plines" -gt 800 ]; then
+      rm -f "$pdir/$pbase.patch"
+      echo
+      echo "note: no durable patch written — $SHA is $plines source lines from this tree, so a"
+      echo "      diff against it reintroduces everything fixed in between, not this defect."
+      echo "      Re-run against the commit immediately before the fix to get one."
+    else
+      echo
+      echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
+      echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
+      echo "// @falsified-by: tests/falsified/$pbase.patch — $CHANNELS"
+    fi
   fi
   exit 0
 else

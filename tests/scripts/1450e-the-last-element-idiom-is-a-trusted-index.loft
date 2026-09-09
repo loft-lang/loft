@@ -36,6 +36,8 @@
 //   it takes something that READS the type to make it observable, and `(N-Cast)`'s refusal of a
 //   possibly-null subject is that reader.  Said plainly because a file that falsifies is easy
 //   to read as a file whose every cell falsifies.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Holder1450e { xs: vector<integer>, ys: vector<integer> }
 

@@ -19,6 +19,8 @@
 //   (the control aborts on the 65535-store ceiling inside the first cell's loop, so the three
 //   cells after it are not scored by that line; each was measured on its own, and the `if`
 //   chain control passes on both trees).
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct K { k: integer, v: integer }
 

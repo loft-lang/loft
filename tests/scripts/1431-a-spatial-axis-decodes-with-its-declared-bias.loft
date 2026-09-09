@@ -26,6 +26,8 @@
 // and `test_integer_axis_stays_correct` PASS on the pre-fix build.  That split is the measurement
 // this guard exists to make — a version of it holding only the controls would have been green
 // throughout.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct B1 { const x: i8, const y: i8, n: integer }
 struct B2 { const x: i16, const y: i16, n: integer }

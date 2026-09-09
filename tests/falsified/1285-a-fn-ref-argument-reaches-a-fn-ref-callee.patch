@@ -1,0 +1,129 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 766b5490f..76bf78612 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -1119,21 +1119,7 @@ impl Output<'_> {
+             write!(w, "let __vc_seq = codegen_runtime::cr_alloc_serial(cell); ")?;
+         }
+         for (i, arg) in args.iter().enumerate() {
+-            // A `fn(…)` PARAMETER takes the whole `(u32, DbRef)` fn-ref pair, and a bare
+-            // fn-ref name emits the lone d_nr as an `i64`.  Bound raw, every match arm below
+-            // then passed that `i64` where the callee wants the pair — rustc E0308, so the
+-            // crate did not build at all (loft#1285).  `fn_ref_context` is the same channel
+-            // the tuple-element write opens for exactly this reason, and going through the
+-            // flag rather than wrapping the emitted text is what keeps an if-VALUED source
+-            // right: the pair is then built inside EACH branch.
+-            let is_fn_arg =
+-                i < param_types.len() && matches!(param_types[i].base(), Type::Function(_, _, _));
+-            let prev_fn_ref_ctx = self.fn_ref_context;
+-            if is_fn_arg {
+-                self.fn_ref_context = true;
+-            }
+             let expr = self.generate_expr_buf(arg)?;
+-            self.fn_ref_context = prev_fn_ref_ctx;
+             // P265: when the fn-ref's parameter at this index is text,
+             // coerce the binding to `&str` at the bind site so every
+             // match arm can pass `_farg_{i}` to a `&str` parameter
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index 4a014b1fe..6aa1d53a8 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -338,30 +338,6 @@ fn collect_fn_ref_literals(
+                 }
+             }
+         }
+-        // The fn-ref CALLEE half of the `Value::Call` arm above, and the last shape in this
+-        // list to be given one.  A call THROUGH a fn-ref is `Value::CallRef(v_nr, args)`, so
+-        // the arm that reads a NAMED callee's declared parameter types never saw it, and a
+-        // lambda passed as an argument to a fn-ref callee — `lf(fn(x: integer) -> integer
+-        // { x * 2 })` — was pruned as unreachable.  It then had no arm in the native fn-ref
+-        // dispatch and the call panicked `invalid fn-ref: <d_nr>` (loft#1285).
+-        //
+-        // The parameter types come from the fn-ref VARIABLE's own type, which is the only
+-        // place a lambda callee declares them.  Over-approximation is correctness-safe here
+-        // exactly as it is for @P299 and loft#1069 — it can only emit an unused candidate.
+-        Value::CallRef(v_nr, args) => {
+-            if let Type::Function(param_types, _, _) = variables.tp(*v_nr) {
+-                for (idx, a) in args.iter().enumerate() {
+-                    if idx < param_types.len()
+-                        && matches!(
+-                            param_types[idx].base(),
+-                            Type::Function(_, _, _) | Type::Routine(_)
+-                        )
+-                    {
+-                        collect_int_fn_refs(IrNode::Native(a), calls);
+-                    }
+-                }
+-            }
+-        }
+         Value::Return(v) => {
+             // #263: a fn-ref-returning fn whose return value is a bare d_nr
+             // (`return dbl` → `Int(d_nr)`) — pick the Int up as a reachable
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index aa6a6ee15..c51f7529b 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -13769,20 +13769,18 @@ impl Parser {
+                     self.fnref_param_hint(name, arg_idx)
+                 };
+                 if let Some(expected) = hinted {
+-                    if Self::seeds_lambda_hint(&expected) {
+-                        // A `fn(…)` parameter, so a SHORT-form lambda argument can infer its
+-                        // parameter types — the fn-ref position of the push the `fn_def_nr`
+-                        // block above makes for a named callee.
+-                        //
+-                        // This arm was held CLOSED when loft#1280 landed, because seeding it
+-                        // made the short form parse and land in a dispatch that could not
+-                        // carry a fn-ref argument at all (loft#1285: no output and exit 0 on
+-                        // `--interpret`, E0308 on `--native`).  With that dispatch fixed —
+-                        // the 20-byte pair at the interpreter's call site, the `fn_ref_context`
+-                        // binding in the native emitter, and the `CallRef` arm in the
+-                        // reachability walk — the refusal has nothing left to protect.
+-                        self.expected = expected;
+-                    } else if self.enum_context(&expected) {
++                    // ⚠ A `fn(…)` parameter is deliberately NOT admitted here, and the
++                    // omission is MEASURED rather than an oversight.  The fn-ref dispatch
++                    // cannot carry a fn-ref ARGUMENT at all: `lf(dbl)` and
++                    // `lf(fn(x: integer) -> integer { … })` already produce NO OUTPUT and
++                    // exit 0 on `--interpret` — the whole of `main` prints nothing and the
++                    // process reports success — and E0308 on `--native`, where an `i64` is
++                    // passed for the `(u32, DbRef)` fn-ref pair.  The long form needs no hint,
++                    // which is what says the gap is the dispatch and not this channel.
++                    // Seeding `fn(…)` here would only move the SHORT form from a clean
++                    // refusal into that silence, so it stays closed until the dispatch can
++                    // take the argument — loft#1285.
++                    if self.enum_context(&expected) {
+                         self.expected = expected;
+                     } else if Self::seeds_collection_hint(&expected) {
+                         // #432 — seed a bare vector-literal argument's element width
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 7ea64b31c..a56e50946 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -4103,24 +4103,8 @@ impl State {
+ 
+         // Generate all args: visible params, then work-buffer blocks (12B DbRefs each),
+         // then closure arg (12B DbRef).  Blocks produce the correct type/size automatically.
+-        //
+-        // A `fn(…)` PARAMETER takes the whole 20-byte pair, and a bare fn-ref name lowers to
+-        // the lone d_nr — eight bytes.  `declared_size` below counts the pair either way, so
+-        // the short push left the frame twelve bytes out and the call ran off it: on
+-        // `--interpret` the program produced NO OUTPUT AT ALL and exited 0 (not even the
+-        // print before the call), and `--native` passed an `i64` where the callee's parameter
+-        // is a `(u32, DbRef)` (loft#1285).  A fn-ref VARIABLE already holds the pair, which
+-        // is why `lf(v)` worked and `lf(dbl)` did not.
+-        //
+-        // `gen_fn_ref_value_node` is the same top-up the tuple-element write and the
+-        // first-Set path use, so the three spellings of "put a fn-ref in a 20-byte slot"
+-        // cannot drift (loft#1069's family).
+-        for (i, arg) in args.iter().enumerate() {
+-            if i < param_types.len() && matches!(param_types[i].base(), Type::Function(_, _, _)) {
+-                self.gen_fn_ref_value_node(arg, stack);
+-            } else {
+-                self.generate_node(arg, stack, false);
+-            }
++        for arg in args.iter() {
++            self.generate_node(arg, stack, false);
+         }
+ 
+         // fn-ref variable is below all pushed arguments.

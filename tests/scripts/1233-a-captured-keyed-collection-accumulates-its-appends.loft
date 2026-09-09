@@ -36,6 +36,8 @@
 //   EXIT one on both backends. On the shipped 2026.8.0 the refusal is absent and the same cells
 //   run and answer 1 where they owe 3 — the silent form of the same defect, which this file
 //   scores on its asserts. Both builds fail this guard; only the channel differs.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1233 { k: integer, nm: text }
 struct T1233 { k: text, nm: text }

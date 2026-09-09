@@ -31,6 +31,8 @@
 //   file unchanged and passes every assertion, while `--native` cannot build it at all. So the
 //   channel that moves is the native exit, and a verdict that ANDs the two backends reads NOT
 //   FALSIFIED for a guard doing exactly its job.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S1234 { n: integer }
 

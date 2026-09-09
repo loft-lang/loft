@@ -47,6 +47,8 @@
 // @falsified-at: 0b0cce48 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  The cell that moves is the
 //   RECYCLE one: on that build `a.items` answers the recycled record's bytes.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct B1287 { items: vector<integer> }
 struct C1287 { tag: text, vals: vector<integer> }

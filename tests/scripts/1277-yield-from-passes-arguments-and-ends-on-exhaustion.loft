@@ -52,6 +52,11 @@
 //   `rustc` refusing to compile the native crate at all.  The assertion columns read 0 -> 0
 //   on both because on the control this file never gets far enough to fail a cell — which is
 //   why `exit` is the column to read here, and why a guard for a HANG has to be scored on it.
+// @falsified-by: tests/falsified/1277-yield-from-passes-arguments-and-ends-on-exhaustion.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 struct Pt1277 { x: integer, y: integer }
 

@@ -37,6 +37,8 @@
 // @falsified-at: 2b992851 — interpret exit 1 -> 0, native exit 1 -> 0.  Every row asserts, and
 // an assert stops the run, so the count is one: on the control r1 fires first (`by_k[11]` reads
 // null with `len(by_k)` still 2); r2-r18 are broken there too, each on its own binary run.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 // ---- r1: replace by index write, dense holder ---------------------------------------------
 struct R1e { k: integer, n: text }

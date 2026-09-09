@@ -36,6 +36,11 @@
 //   `integer?`, `(N-Cast)` refuses a possibly-null subject, and the file does not compile.  The
 //   value cells are inert against that control by construction — the values were always right,
 //   and a too-conservative type is invisible to a value assertion.
+// @falsified-by: tests/falsified/1450g-the-divisor-guard-is-read-in-every-spelling.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 // The spelling that already worked — the control that says nothing was traded away.
 fn positive(a: integer, d: integer) -> integer {

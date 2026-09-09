@@ -41,6 +41,8 @@
 //   be measuring the wrong thing. What makes the file falsifiable is the opposite build — with
 //   the peel widened to admit an unholdable source, both `@EXPECT_ERROR` lines go unmatched and
 //   `tests/wrap.rs` fails the file.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Ek1207b { k: integer, nm: text }
 struct Fk1207b { j: integer }

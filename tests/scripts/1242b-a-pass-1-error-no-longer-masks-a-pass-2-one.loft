@@ -30,6 +30,8 @@
 //
 // @EXPECT_ERROR: Misplaced '_' in number literal
 // @EXPECT_ERROR: comprehension body must produce a value
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 // PASS 1 — the lexer refuses the literal before any body is re-parsed.
 fn test_1242b_a_pass_1_error() {

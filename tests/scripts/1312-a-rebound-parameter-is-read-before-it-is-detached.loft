@@ -32,6 +32,8 @@
 //   So the locality and mutation cells are not decoration: they are the half that says the
 //   value was not bought back by letting the rebind escape again, which is exactly the trade
 //   the pre-P2.1 build made.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Big { a: integer, b: integer, c: text }
 

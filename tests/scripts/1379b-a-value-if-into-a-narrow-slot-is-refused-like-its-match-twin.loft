@@ -20,6 +20,8 @@
 //   native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count
 //   of matches): on the control not one of the ten refusals fires, the file RUNS, and the first
 //   `unreached` assertion stops it.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Rf1379 { f: u8 }
 fn take1379b(x: u8) -> integer { x }

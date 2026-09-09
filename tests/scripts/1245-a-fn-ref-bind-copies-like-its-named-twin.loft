@@ -63,6 +63,8 @@
 //   still-open leak half releasing a capture, so it is GREEN on the control and green
 //   here, and only a bad fix turns it red.  A cell whose job is to stay green cannot be
 //   falsified against a build that predates the hazard.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 struct P2b {
   n: integer,
 }

@@ -35,6 +35,8 @@
 // @falsified-at: ebdc8801 — interpret exit 1 -> 0, native exit 1 -> 0.  (The pre-fix build
 //   REFUSES the file at parse time, so no assertion runs at all and the channel that moves is
 //   the exit status.)
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 // ---- the reported shapes -----------------------------------------------------------------
 

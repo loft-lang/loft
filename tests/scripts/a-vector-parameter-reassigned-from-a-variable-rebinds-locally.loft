@@ -14,6 +14,8 @@
 // and the proxy answers again.
 //
 // @falsified-at: faa38979 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn rebind_single(x: vector<integer>) -> text {
   va = [1, 2];

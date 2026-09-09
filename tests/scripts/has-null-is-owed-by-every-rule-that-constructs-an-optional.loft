@@ -57,6 +57,8 @@
 //   for first-Set of g`.  The tuple half of the same rule is a silent type-level wrong on that
 //   build and does not move the exit code by itself — `e5` is the cell that names it, and it is
 //   why this file asserts the VALUES a tuple read answers rather than only that it compiles.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn one78() -> integer { 1 }
 fn two78() -> integer { 2 }

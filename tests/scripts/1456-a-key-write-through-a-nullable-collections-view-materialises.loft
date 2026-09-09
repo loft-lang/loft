@@ -40,6 +40,12 @@
 // ASSERTS are what carry the contract, and the advice is the same sentence `146` already
 // scores on the dense side.  Pinning it twice would make this file fail on a rewording that
 // `146` would also catch.
+// @falsified-by: tests/falsified/1456-a-key-write-through-a-nullable-collections-view-materialises.patch
+//   — RE-SCORED against this patch, because the control above records its measurement in
+//   prose and carries no channel list to match against.  That control is reachable from no
+//   public ref, so the patch is the runnable form of this receipt: it reintroduces the fault
+//   on top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels here are this patch's own, and agree with what the prose above describes.
 
 struct Elm1456 { key: integer, tag: integer }
 

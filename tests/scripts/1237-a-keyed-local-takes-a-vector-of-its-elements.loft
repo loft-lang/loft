@@ -35,6 +35,8 @@
 // @falsified-at: c725561f — interpret exit 1 -> 0, native exit 1 -> 0
 //   On the parent the first cell is REFUSED at parse time, so the file does not run and no
 //   assertion is met; the channel is the process exit on both backends.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1237 { k: integer, nm: text }
 struct D1237 { h: hash<E1237[k]> }

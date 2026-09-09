@@ -1,0 +1,36 @@
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index 87e850dd5..1ffc872a5 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -3688,26 +3688,11 @@ extern crate loft;"
+                 // `init()`, i.e. the library simply failed to build (loft#797).
+                 let field_type = a.typedef.base();
+                 let dep_tp = match field_type {
+-                    // loft#1222 — every KEYED former belongs here, and `Trie` / `Radix` were
+-                    // missing.  Their field emitters build the collection inline exactly as
+-                    // Sorted / Hash / Index do (`db.trie(c_ref, key)`, `db.spatial(c_ref,
+-                    // keys)`), so they need the content type declared just as much; falling to
+-                    // `_ => None` meant no hoist, and a `trie<Tk[k]>` or `spatial<Pt[x,y]>`
+-                    // field whose element struct is declared LATER emitted `db.trie(t80, "k")`
+-                    // two lines before `let t80 = …`.  rustc rejected the generated `init()`
+-                    // with E0425 while the interpreter ran the same program — a backend
+-                    // divergence reported in a language the author never wrote.
+-                    //
+-                    // The set is the five store-backed keyed formers, which is what
+-                    // `emit_db_field`'s arms above already enumerate; keeping the two lists in
+-                    // step is the whole obligation here.
+-                    Type::Sorted(c_nr, _, _)
+-                    | Type::Hash(c_nr, _, _)
+-                    | Type::Index(c_nr, _, _)
+-                    | Type::Trie(c_nr, _, _)
+-                    | Type::Radix(c_nr, _, _) => (*c_nr != u32::MAX)
+-                        .then(|| self.data.def(*c_nr).known_type())
+-                        .filter(|t| *t != u16::MAX),
++                    Type::Sorted(c_nr, _, _) | Type::Hash(c_nr, _, _) | Type::Index(c_nr, _, _) => {
++                        (*c_nr != u32::MAX)
++                            .then(|| self.data.def(*c_nr).known_type())
++                            .filter(|t| *t != u16::MAX)
++                    }
+                     Type::Vector(c_type, _) => {
+                         let n = self.data.type_def_nr(c_type);
+                         (n != u32::MAX)

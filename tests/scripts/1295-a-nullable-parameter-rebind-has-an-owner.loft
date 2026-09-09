@@ -26,6 +26,14 @@
 // @falsified-at: 6d834cc7 — interpret leaked kt=79 St1295×42 -> clean, native leaked
 //   kt=79 St1295×42 -> clean.  The LEAK channel is the one that moves; every assertion
 //   passes on both trees, which is why the loop and the leak gate are the measurement here.
+// @falsified-by: tests/falsified/1295-a-nullable-parameter-rebind-has-an-owner.patch
+//   — RE-SCORED with `LOFT_STRICT_STORES=1`, which this guard's channel requires.  The LEAK
+//   channel moves on both backends with the control's own store shape, `St1295×42`; the `kt`
+//   id differs from the line above because store-kind numbering shifts with the type table,
+//   and the shape rather than the id is what identifies the leak.  The armed run also moves
+//   the exit channel, which an armed leak does.
+//   That control is on no public ref, so the patch is the runnable form of this receipt.
+//   Score it with `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
 
 struct St1295 { v: integer }
 struct W1295 { tag: text, n: integer }

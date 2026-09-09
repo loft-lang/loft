@@ -34,6 +34,8 @@
 // @falsified-at: c0c68084 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
 // exit 1 -> 0, native 1 assertion failures -> 0.  The count is 1 because a failed assert stops
 // the run: on the control the first `?`-keyed cell fires, and all six broken cells are there.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Na { na_k: integer, na_k2: integer, na_nm: text }
 struct Nb { nb_k: integer, nb_k2: integer, nb_nm: text }

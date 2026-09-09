@@ -41,6 +41,8 @@
 //   the only one that moves and a value-only reading learns nothing.  Dropping the
 //   `free_displaced` stack-ref guard instead turns `1085-ret-buffer-passthrough-free` red
 //   with a `#306` refusal at `OpFreeRefIfDistinct`.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct MintOnly { x: integer }
 struct JoinSelf { x: integer }

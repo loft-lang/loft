@@ -15,6 +15,8 @@
 //   native exit 1 -> 0, native expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of
 //   matches): on the control none of the seven refusals fires and the file runs into its first
 //   `unreached` assertion.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn take1380b(x: i16) -> integer { x }
 

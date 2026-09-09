@@ -28,6 +28,8 @@
 // `c = maybe_b(c ?? M {}, i)` a temp that died at the statement while `c` still named it.
 //
 // @falsified-at: 26d17f4b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct JS1321 { v: integer }
 struct E1321 { v: integer }

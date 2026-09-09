@@ -25,6 +25,8 @@
 // @falsified-at: 6f9c0886 — interpret exit 1 -> 0, interpret 14 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0 (a native run stops at its first).
 //   The VALUE channel is the one that moves; both builds are leak-free here.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct P { x: integer }
 struct O { items: vector<integer>, tag: text }

@@ -50,6 +50,8 @@
 //   pass every refusal cell here while breaking the builder idiom.  They RUN, and a
 //   deliberately broken assertion in one fails the file — checked, so they are not being
 //   skipped the way the trailing refusal cells are.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct CRow { k: text, n: integer }
 

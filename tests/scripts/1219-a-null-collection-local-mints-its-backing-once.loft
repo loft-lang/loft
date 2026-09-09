@@ -44,6 +44,8 @@
 //   rebuild — pass on the parent too, so a build that merely stopped minting would not satisfy
 //   them; `r1219` in particular fails on the naive always-guard form, which was written and
 //   measured before this one.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Sv1219 { k: integer, nm: text }
 

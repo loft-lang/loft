@@ -46,6 +46,8 @@
 //   the cells CRASH there (two SIGSEGV, one allocator panic) and the rest answer quietly with a
 //   wrong length, so an exit-status reading would score two different failures as one and would
 //   call the silent cells clean.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 enum Tg1215 { A1215, B1215 { n: integer } }
 

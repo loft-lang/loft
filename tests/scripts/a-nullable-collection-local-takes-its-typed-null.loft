@@ -40,6 +40,12 @@
 // already correct pre-fix, and `--interpret` prints one `BUG (#306)` stack-store free
 // refusal per nullable keyed local.  The assertions are live regardless — each was mutated
 // in turn on the fixed build (`n_hash()` to `false`, `p_dense()` to `45`) and each fails.
+//   ⚠ That control is on no public ref, so this receipt cannot be re-run.  A patch receipt
+//   was derived for it and REJECTED: reverting the fix's source diff moves the exit and
+//   assertion channels on both backends, where this guard was falsified on the FREE channel
+//   with every value already correct.  It therefore reintroduces some other fault of that
+//   commit, not this one, and a receipt that moves the wrong channel is worse than none.
+//   TESTING.md § The patch receipt.
 
 struct NcHS { k: integer = 0, v: integer = 0 }
 struct NcOS { k: integer = 0, v: integer = 0 }

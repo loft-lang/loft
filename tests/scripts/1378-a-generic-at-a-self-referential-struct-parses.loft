@@ -30,6 +30,8 @@
 //   the crash predates every cached falsify ref): interpret exit 139 -> 0, native exit 139 -> 0,
 //   a bare SIGSEGV with nothing on stderr; `introspect` dies the same way.  The `u8` stride
 //   cell fails on 2b992851 too (`200 0`), a value channel behind the crash.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Node1378 { value: integer, next: reference<Node1378>? }
 struct A1378 { n: integer, b: reference<B1378>? }

@@ -43,6 +43,8 @@
 //   control prints `source=93` on `--interpret` beside `source=7` on `--native`, which only a
 //   comparison BETWEEN the two runs can see.  Two channels, two homes, both measured against
 //   the same control build.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S1468 { a: integer }
 

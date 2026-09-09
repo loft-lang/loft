@@ -37,6 +37,8 @@
 //   ⚠ As in `1450e`, the EXIT channel moves on ONE cell — `cast_through_guard` — and the rest
 //   are inert against this control by construction.  They assert values that were always right;
 //   what was wrong was the type, and only a cast reads it.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Holder1450f { xs: vector<integer> }
 

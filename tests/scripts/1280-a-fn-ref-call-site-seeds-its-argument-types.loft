@@ -43,6 +43,8 @@
 //   Both assertion columns read 0 -> 0 because the control REFUSES this file at parse time —
 //   no cell runs to fail one.  `exit` is the column that sees it, and it is the same on both
 //   backends because the refusal is the parser's, which both share.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 enum D1280 { North, South }
 

@@ -51,6 +51,11 @@
 //   that says the container's spelling is the axis: the three cells that stay clean on the
 //   control are the LOCAL-vector read, the plain-STRUCT element (which never unboxes) and the
 //   out-of-range read (whose cursor is never populated).
+// @falsified-by: tests/falsified/1479-a-cursor-into-a-field-vector-borrows-that-field.patch
+//   — RE-SCORED with `LOFT_STRICT_STORES=1`, as the control line above was.  Same channels:
+//   native exit and the same two leaked tuple kinds, interpret INERT.
+//   That control is on no public ref, so the patch is the runnable form of this receipt.
+//   Score it with `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
 
 struct Bag79 { ts: vector<(integer, text)> }
 struct Ints79 { ts: vector<(integer, integer)> }

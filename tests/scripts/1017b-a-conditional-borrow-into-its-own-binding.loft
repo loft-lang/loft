@@ -26,6 +26,8 @@
 //   one that moves — both builds are leak-free here, so a run scored on leaks learns nothing —
 //   and the interpreter stays at 2 throughout, which is what says the fix did not "agree" the
 //   backends by breaking the reference one.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct M { x: integer }
 

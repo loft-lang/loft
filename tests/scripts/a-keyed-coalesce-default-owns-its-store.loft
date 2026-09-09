@@ -29,6 +29,8 @@
 // off stderr, which a `main`-less guard never prints.  A `main`-ful mirror of this file
 // reports `hash<KCD[k]>×8, ordered<KCD[k]>×8, index<KCD[k]>×8` at 04482989 and is clean
 // here, on BOTH backends; every assertion above passes on both trees.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct KCD { k: integer = 0, v: integer = 0 }
 

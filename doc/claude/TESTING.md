@@ -715,14 +715,52 @@ the commit that added the guard, so the reintroducing patch is that commit's own
 reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for
 **101**; the other 32 were falsified against something else and need the patch by hand.
 
-⚠ **A patch receipt degrades too, and differently — measure before promising it.**  Of the 41
-publicly-unreachable guards whose channel is a WRONG ANSWER rather than a crash, only **8** have
-a patch that still applies to today's tree, and of those **7** produce a control that compiles;
-the eighth applies and then fails to build, because the code the fix introduced has been built
+**Where the corpus stands: 20 of the 133 publicly-unreachable guards carry a patch receipt, and
+the other 113 carry a one-line marker** saying their control is gone so a reader learns it from
+the file rather than from `falsify` exiting 2.
+
+⚠ **A patch receipt degrades too, and differently — measure before promising it.**  Retrofitting
+one is only possible while the tree still resembles the fix.  Of the derivable candidates, 22 of
+100 still APPLIED to today's tree, and of those all but one produced a control that COMPILED —
+the exception applies and then fails to build, because the code its fix introduced has been built
 on since.  So a patch stops being runnable in two ways where a ref stops in one.  The difference
 is that both are DETECTED: `falsify.sh` exits 3 saying the patch no longer applies, where a
 dangling sha reports nothing at all.  A patch that no longer applies still RECORDS the defect in
 full, which a dead sha does not.
+
+⚠ **The channel check REJECTS patches, and that is the point of having it.**  A derived patch
+reverts the whole source diff of the commit that fixed the guard, so where that commit fixed more
+than one thing the patch reintroduces more than one thing.  One of the 21 verified this way was
+rejected outright: `a-nullable-collection-local-takes-its-typed-null` was falsified on the FREE
+channel with every value already correct, and its patch moves the exit and assertion channels
+instead — some other fault of the same commit.  A receipt that moves the WRONG channel is worse
+than no receipt, because it looks like proof.  So a patch is recorded only when its channels
+agree with the control's, and the guard keeps the marker when they do not.
+
+⚠ **Score a leak-channel guard with the instrument ARMED or the check misfires.**  All three
+leak/free-channel guards in the retrofit first read as contradictions — assertions moving where
+the control line says the LEAK channel moves — purely because the sweep ran without
+`LOFT_STRICT_STORES=1`.  Re-scored armed, two reproduced their control's own channel exactly and
+the third stayed a genuine contradiction.  An unarmed run does not report a weaker result here;
+it reports a DIFFERENT one, which is indistinguishable from a bad patch until you arm it.  Note
+also that a leak's `kt=` id shifts with the type table between builds: the store SHAPE
+(`St1295×42`) identifies it, not the number.
+
+⚠ **Record the patch when you falsify, not when you need it.**  `falsify.sh <guard> <ref>`
+prints the durable receipt beside the ref one and writes the patch, because the derivation is
+free exactly once: at that moment the control still resolves and the diff is the fix you just
+made, so it applies by construction.  Afterwards it is hand-reconstruction, and for two thirds
+of the corpus it is already too late.  The count of unreachable controls also grows on its own
+as merged branches are pruned — 124 to 133 over a few hours — so a receipt recorded the cheap
+way is the only one that stays ahead of it.
+
+⚠ **A patch is a receipt only while it isolates ONE defect**, which is why the emitted one is
+bounded.  Against the commit immediately before the fix the diff IS the fix, a few dozen lines;
+against a DISTANT control it becomes the whole source difference since, reintroducing everything
+fixed in between with nothing to say which defect the guard caught — measured at 47 079 lines
+for a control a few months back.  Over 800 source lines `falsify.sh` writes no patch and says to
+re-run against the commit before the fix; the recorded receipts run 17 to 203 lines, so the
+bound separates the two uses without needing to be tuned.
 
 ⚠ **A patch control is not the same experiment as a ref control.**  A ref rebuilds the whole
 tree as it was; a patch reverts one fix on the tree as it is.  That isolates the defect more

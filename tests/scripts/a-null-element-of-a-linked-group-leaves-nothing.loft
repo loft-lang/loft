@@ -37,6 +37,8 @@
 //   half: on ffae9ce6 they fail 2 runs in 40 (`LOFT_HASH_SEED=0x0044fd4163d6edde` and
 //   `0x006b40d5e63eb9d7` both reproduce), and the deterministic `index` cell is what makes the
 //   file fail on every run of the control.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct N1e { k: integer, n: text }
 struct NH { es: vector<N1e?>, by: hash<N1e[k]> }

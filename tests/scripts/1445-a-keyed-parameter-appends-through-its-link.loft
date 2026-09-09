@@ -44,6 +44,8 @@
 //   COMPILE error on that build — `&hash<Row,["id"]> to vector<Row>`, and the same line for
 //   sorted, index, trie and spatial — so the file does not run at all rather than failing an
 //   assertion.  The vector cells pass there, which is what makes them a control.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Row { id: integer, tag: text }
 struct Wrd { nm: text, n: integer }

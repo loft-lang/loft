@@ -36,6 +36,11 @@
 //   `test_a_write_through_the_binding_reaches_the_field`, which read `hi` instead of `xy` on
 //   both backends; the leak channel moved with it (8 bytes definitely lost under
 //   `scripts/valgrind-sweep.sh` -> 0), and every control was unmoved.
+// @falsified-by: tests/falsified/an-is-payload-text-binding-is-owned-so-it-frees-and-writes-back.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 enum Subj { Holder { inner: Pay }, Empty { z: integer }, Many { xs: vector<integer> }, Lab { s: text } }
 struct Pay { a: integer }
