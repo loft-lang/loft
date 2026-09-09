@@ -2349,6 +2349,9 @@ impl Output<'_> {
                 matches!(operators[i].unspan(), Value::Return(_))
                     || matches!(operators[i].tail(), Value::Return(_))
             });
+        // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
+        // before the block closes.
+        let mut view_frames = 0usize;
         for (vnr, v) in operators.iter().enumerate() {
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
@@ -2634,6 +2637,12 @@ impl Output<'_> {
             self.counter = counter_after_collect;
             // Restore the enclosing statement's pre-eval map (empty at top level).
             self.active_pre_eval = saved_pre_eval;
+            if self.bind_view_header(w, operators, vnr)? {
+                view_frames += 1;
+            }
+        }
+        for _ in 0..view_frames {
+            self.vec_headers.pop();
         }
         if has_trailing_void && !return_value_is_return {
             self.indent(w)?;

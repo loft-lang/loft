@@ -634,6 +634,70 @@ fn callee_writes(
     answer
 }
 
+/// @PLN157 § V-n — does statement `at` of `stmts` bind a VIEW of a vector whose header the
+/// rest of the block may derive once, right after the binding?
+///
+/// The shape is `d = &cv.data` (a `Set` of a vector-typed local from a pure path); the
+/// promise is the loop hoist's, applied to the statements AFTER the binding: none of them
+/// can write a store except in place (`allow_in_place`), none rebinds `d`, and at least
+/// one indexes `d` — a length read alone is cheaper through the runtime than through a
+/// header, so it earns none.  The binding's own value is what the header describes, so a
+/// rebind of the path's ROOT later in the block does not matter: `d` keeps the `DbRef` it
+/// was given (and a reassignment that replaces the record is a store write the gate sees).
+/// Answers the view variable, whose `Var` the prelude evaluates.
+pub fn view_def_header(
+    stmts: &[Value],
+    at: usize,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+) -> Option<u16> {
+    let Value::Set(d, rhs) = stmts.get(at)?.unspan() else {
+        return None;
+    };
+    let vars = data.def(def_nr).variables();
+    if !matches!(vars.tp(*d).peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    let (root, _) = vector_path(data, rhs)?;
+    if root == *d {
+        return None;
+    }
+    let rest = &stmts[at + 1..];
+    if rest.iter().any(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            cache,
+            &mut HashSet::new(),
+            allow_in_place,
+            Some(vars),
+        )
+    }) {
+        return None;
+    }
+    let mut rebound = false;
+    let mut indexed = false;
+    for op in rest {
+        op.any_node(&mut |n| {
+            match n {
+                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *d => rebound = true,
+                Value::Call(op_nr, args)
+                    if args.len() == 3
+                        && is_element_address(data, *op_nr)
+                        && matches!(args[0].unspan(), Value::Var(v) if *v == *d) =>
+                {
+                    indexed = true;
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+    (indexed && !rebound).then_some(*d)
+}
+
 /// The typed getters an element read can be fused INTO, with the Rust type each reads and
 /// the null sentinel its `#rust` template answers at the absent element.
 ///

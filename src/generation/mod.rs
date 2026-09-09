@@ -621,6 +621,11 @@ pub struct Output<'a> {
     /// answer in a loop that reads a record's fields; `LOFT_HOIST_VERIFY=1` is the
     /// falsifier (each hoisted read is re-derived and compared).
     pub scalar_hoist_disabled: bool,
+    /// `LOFT_NO_VIEW_HOIST=1` — a `&`-bound vector view (`d = &cv.data`) derives no header
+    /// at its binding, so every later `len(d)` / `d[i]` in the block resolves the store
+    /// again, as before @PLN157 § V-n.  The bisect step for a wrong element read through
+    /// such a view outside a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub view_hoist_disabled: bool,
     /// Names the hoisted headers of the function being emitted (`__vh_1`, `__vh_2`, …).
     pub hoist_counter: u32,
     /// `LOFT_HOIST_VERIFY=1` — emit the CHECKING form of every hoisted read, which
@@ -1518,6 +1523,7 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
+            view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
             hoist_cache: HashMap::new(),
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
@@ -1866,6 +1872,50 @@ impl Output<'_> {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// @PLN157 § V-n — after statement `at` of a block was emitted: if it bound a vector
+    /// VIEW whose header the rest of the block may share ([`hoist::view_def_header`]),
+    /// emit `let __vh_N = vector::vec_header(&var_d, …);` as the next statement and push a
+    /// frame for it.  Answers whether a frame was pushed; [`Self::output_block`] pops what
+    /// it pushed before the block closes, so the local's scope and the frame's agree.
+    pub(super) fn bind_view_header(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+        at: usize,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || self.view_hoist_disabled {
+            return Ok(false);
+        }
+        let Some(d) = hoist::view_def_header(
+            stmts,
+            at,
+            self.data,
+            self.def_nr,
+            &mut self.hoist_cache,
+            !self.write_hoist_disabled,
+        ) else {
+            return Ok(false);
+        };
+        let path: hoist::PathKey = (d, Vec::new());
+        if self.vec_headers.iter().any(|f| f.contains_key(&path))
+            || self.coroutine_persistent_fields.contains_key(&d)
+        {
+            return Ok(false);
+        }
+        self.hoist_counter += 1;
+        let name = format!("__vh_{}", self.hoist_counter);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(d))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header"
+        )?;
+        self.vec_headers.push(HashMap::from([(path, name)]));
+        Ok(true)
     }
 
     /// The Rust local holding `key`'s hoisted scalar, when an enclosing loop read it once
