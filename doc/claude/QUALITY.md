@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 440 | 417 | **23** |
+| 445 | 422 | **23** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 765 | 420 | 6 | **339** |
+| 766 | 422 | 6 | **338** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2616,6 +2616,23 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
+`tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →
+`445 · 422 · 23` and the Optional row `765 · 420 · 6 · 339` → `766 · 422 · 6 · 338`.**
+⚠ **The OPAQUE column FELL, and the ratchet is what earned it.** `make optional-ratchet` refused
+the join at `1510` and the two sites it named were both loft#1489's — and one of them was a
+DEFECT, not a style note: the capture bind's copy was written against a bare `Type::Reference`,
+so an ABSENT nullable capture was copied into a freshly allocated record and
+`c: S? = null; e = c; e.a ?? -1` answered 0 inside a closure where the same two lines outside one
+answer -1.  Peeling the scrutinee is what forced the absent guard `(F-Ret)`'s return-side twin
+has carried since loft#1337.  The instrument found a wrong ANSWER while asking about a wrapper.
+The second site (`bind_views_root`'s link test) peels too, which is what takes the column down.
+
+Measured ONCE on the union and taken from the run — neither branch's numbers survive a join,
+and the two rows arrived in the cherry-pick as a CONFLICT between two streams' answers, which
+is the shape that makes carrying one of them tempting.  Both `neither` / `opaque` columns are
+unchanged, so every discriminator the join added already peels.
 
 **2026-09-09, loft#1489's capture bind: the unspan row `438 · 414 · 24` → `439 · 415 · 24` and
 the Optional row `759 · 415 · 6 · 338` → `760 · 415 · 6 · 339`.**  One new discriminator on each

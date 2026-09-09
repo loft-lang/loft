@@ -38,6 +38,11 @@
 //   concrete twin already read 7.  The vector and keyed pairs answered 1 on that build too, so
 //   they are controls rather than cells; both independence controls and the mint control also
 //   already answered as they do here.  That is what says the pairs and not the harness moved.
+//   CHANNEL: value — exit and the assertion count.
+//   WITNESS: the three generic RECORD halves each read 99 where the concrete twin read 7.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and `falsify`
+//   requires HERE to be clean, so each is clean on both.  An aliasing return leaks nothing, so
+//   a run scored on leaks would learn nothing here.
 
 struct S1484 { a: integer }
 struct K1484 { k: integer, a: integer }

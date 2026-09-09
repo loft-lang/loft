@@ -38,6 +38,15 @@
 // @falsified-at: b379a9914 — interpret leaked `kt=81 P1487×50` -> clean, native leaked
 //   `kt=81 P1487×50` -> clean.  The LEAK is the only channel that moves: every value here was
 //   already right on the control build, which is the shape of the defect.
+//   CHANNEL: leak.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the leak channel moved
+//   anyway, so the instrument is not needed to see it.  The probe matrix behind the file WAS
+//   scored armed, because a single top-level bind leaks ONE store and the corpus check's floor
+//   is above that; the guard is a function called fifty times for exactly that reason.
+//   WITNESS: the store SHAPE `P1487×50` (the `kt=` number shifts with the type table between
+//   builds); the RECORD count is what scales with the call count, and the store count reads
+//   `1 stores` throughout.
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
 
 struct P1487 { n: integer }
 struct S1487 { a: integer }

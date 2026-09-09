@@ -43,6 +43,13 @@
 // @falsified-at: c6ad862bd — interpret leaked `kt=81 C1483×106` -> clean, native leaked
 //   `kt=81 C1483×106` -> clean.  The LEAK is the only channel that moves: every value here was
 //   already right on the control build, which is the shape of the defect.
+//   CHANNEL: leak.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the leak channel moved
+//   anyway, so the instrument is not needed to see it.
+//   WITNESS: the store SHAPE `C1483×106` (the `kt=` number shifts with the type table between
+//   builds); the RECORD count is what scales, not the store count, which reads `1 stores`
+//   throughout.
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
 
 struct C1483 { a: integer }
 struct S1483 { a: integer }

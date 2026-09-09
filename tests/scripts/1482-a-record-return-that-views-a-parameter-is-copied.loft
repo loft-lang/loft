@@ -41,6 +41,12 @@
 //   `--native` answered a zeroed record (0) where `--interpret` was accidentally right, so the
 //   interpret row is that cell's control and the native row is what scores it.  All nine
 //   controls passed on the same build, which is what says the cells and not the harness moved.
+//   CHANNEL: value — exit and the assertion count; the per-cell reading above is the witness.
+//   WITNESS: both backends answered `matcharm source=99` where 88 is right, and seven cells read
+//   99 or 2.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and `falsify`
+//   requires HERE to be clean, so each of those is clean on both.  A run scored on leaks would
+//   learn nothing here: this defect hands out a live ALIAS, and an alias leaks nothing.
 
 struct S1482 { a: integer }
 struct O1482 { inner: S1482 }

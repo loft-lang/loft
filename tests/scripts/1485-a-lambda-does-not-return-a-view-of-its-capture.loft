@@ -47,6 +47,13 @@
 //   both backends with the H5 contract before any assertion ran, so `asserts` reads 0 on both
 //   sides.  The other two record cells read 8 where they now read 7, measured one file at a time
 //   against the same build, because this file cannot reach them there.
+//   CHANNEL: panic — and the exit code with it; NOT the assertion count, which reads 0 on both
+//   sides because the abort precedes every assert.
+//   WITNESS: the H5 two-pass contract abort on `e = q[0]; e`, and 8 where 7 is right in the two
+//   record cells that can be reached one file at a time.
+//   HOLDS: leak, free-refusal and expectations are equal on both trees, and `falsify` requires
+//   HERE to be clean, so each is clean on both.  The three cells that do not abort hand out a
+//   live alias, which leaks nothing — a run scored on leaks would learn nothing here.
 
 struct S1485 { a: integer }
 

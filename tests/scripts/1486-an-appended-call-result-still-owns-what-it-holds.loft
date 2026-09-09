@@ -32,6 +32,12 @@
 //   the exit codes do not: every value here was already correct on the control build, which is
 //   the whole shape of the defect.  Twenty-one and not twenty — the loop's twenty calls plus the
 //   one before it — because the count is per CALL, not per iteration.
+//   CHANNEL: leak.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the leak channel moved
+//   anyway, so the instrument is not needed to see it.
+//   WITNESS: the store SHAPE `main_vector<S1486>×21` (the `kt=` number shifts with the type
+//   table between builds).
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
 
 struct S1486 { a: integer }
 
