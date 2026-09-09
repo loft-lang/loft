@@ -7344,6 +7344,46 @@ before observing is measuring the bind.**  `(F-Ret)`'s own sentence is written t
 round for exactly this reason — mutate THROUGH one call and read through another
 (`bump(f(q)); f(q).a`), which touches no binding and therefore cannot be swallowed by one.
 
+#### B8r — FOUR open issues, one absent generalisation: the owner witness stops at the call boundary (2026-09-09)
+
+Not a walk and not a fix — a count taken while closing loft#1482 and loft#1484, and the reason
+three separate point fixes were built, measured and REVERTED the same day.
+
+`@FR-O-Witness` (`__own_<name>`, loft#1336) answers *who releases this store* by IDENTITY at run
+time, for a LOCAL whose assignments mix ownership.  `(L-CapOwn)` states the same obligation one
+scope out — *a captured heap store is freed ONCE, by whichever of the two outlives the other* —
+and `(F-Ret)` a third time across a call.  **The mechanism exists only for the first.**  Every
+open store-lifetime issue on the board is a store whose owner is decided per RUN at a boundary
+the witness does not cross:
+
+| issue | the two parties | what a static answer costs |
+|---|---|---|
+| loft#1483 | a closure record rebuilt in a loop vs the frame | the frame stands down per `(L-CapOwn)`, the rebuild discards the record unfreed — `C×(n-1)`, and per CALL as well |
+| loft#1485 | a lambda's materialised capture return vs its caller | the callee copies correctly and nothing adopts it — 65535 live stores |
+| loft#1486 | a monomorph's minted vector return vs the caller's null-case buffer | exactly one of the two runs; only the buffer is freed |
+| loft#1489 | a capturing lambda's return buffer vs its own tail local | the buffer IS the local by pass 2, so there is nothing to copy into |
+
+**Each was attempted and each failed the same way**, which is what makes this a register entry
+rather than four notes.  loft#1483's unconditional release closed the leak on every cell and
+installed a USE-AFTER-FREE at the escaping one (`1446` `e10` reads `3` where `7` is right).
+loft#1485's copy is right and left the store unowned, because `inline_struct_return` declines to
+lift a capture-returning closure on a premise the copy itself inverts.  loft#1486's honest deps
+changed nothing, because the caller never had a static question: name the parameter and it
+declines to adopt, name nothing and it double-frees on the path where buffer and result are one
+store.  **In all three the static reading is wrong in BOTH directions, which is the signature of a
+question that is not static.**
+
+⚠ **The trade each point fix offers is a leak for a UAF**, and `ownership-history.md` D-own-9
+already refuses it: *"removed the wrong answer and left both leaks — a trade, not a closure"*.
+That is why all three are reverted rather than shipped behind a switch.
+
+**The generalisation, stated once:** a store handed ACROSS a boundary — a closure record's capture
+slot, a call's returned aggregate — needs the same per-run witness a local gets, released by store
+identity against what the other party names.  It is D-call-13's recorded residual (*"wanting the
+return buffer at instantiation"*) and loft#1188's (*"a lambda whose buffer was RESERVED between
+the passes"*) meeting in one mechanism.  Sizing it is design work, not a walk; recorded here so
+the next reader counts four issues rather than picking one.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
