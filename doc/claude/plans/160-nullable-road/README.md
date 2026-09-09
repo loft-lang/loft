@@ -13,9 +13,13 @@ Tracker: [@PLN160](https://github.com/loft-lang/plans/issues/160).
 Nothing is designed or fixed yet, deliberately: the issue's own instruction is *"before designing
 anything: enumerate where the two spellings' lowerings diverge."*
 
-`make nullable-road` is that enumeration. **4 of 5 shapes diverge** after the `?` itself is
-normalised away, and every one of the four moves ownership machinery rather than only the `??`
+`make nullable-road` is that enumeration. **5 of 6 shapes diverge** after the `?` itself is
+normalised away, and every one of the five moves ownership machinery rather than only the `??`
 operator's own lowering.
+
+Two are classified, and both are ACCIDENTS of the site rather than anything C90 requires — the
+second of them (`element-over-param`) turned out to be a `(F-Ret)` violation in the DENSE
+spelling, filed as **loft#1482**.
 
 ## The question
 
@@ -120,19 +124,97 @@ its own before/after — the value channel does not score it (@PLN153 batch 10),
 dense/nullable pair under `LOFT_STRICT_STORES=1` on both backends, which is this plan's stated
 verify.
 
-## The other three, enumerated but NOT yet classified
+## ⚠ The published `element-over-param` figures were taken on a pair that was NOT a pair
 
-Their channels are named and no two share a root — the retbuf asymmetry is unique to
-`ret-view-of-param`, so there is no single mechanism behind all four:
+Before classifying it, every pair was audited for fixture defects — `diff` of the two halves with
+comments stripped, which must show only the `?` and the `??` the nullable half needs.
+**`element-over-param` failed that audit:**
+
+```
+< fn head(p: vector<S>) -> integer { match p { [a, ..] => a.a, _ => 0 } }
+> fn head(p: vector<S>) -> S?      { match p { [a, ..] => a,   _ => null } }
+```
+
+The dense half returned a SCALAR where the nullable half returned a STRUCT, so its recorded
+divergence (work-ref +24, free-ref +6, materialise +4, mint +2, copy-record +2) was largely
+scalar-vs-struct and said nothing about the `?`.  **Those numbers are withdrawn.**  With both
+halves returning `S`, the work-ref channel INVERTS (+24 → −13) — the fixture defect had reversed
+the sign of the largest channel.  The other three pairs passed the audit.
+
+The lesson is the one this plan already paid for once at the instrument: a hand-written corpus
+needs its own control, and *"the pair is a pair"* is the control a pair corpus was missing.
+
+## The second classification — `element-over-param` is an ACCIDENT, and it is on the DENSE side
+
+Re-measured on the corrected pair:
+
+| channel | dense | nullable | |
+|---|---|---|---|
+| retbuf | 55 | 43 | −12 |
+| work-ref | 44 | 31 | −13 |
+| materialise | 0 | 4 | **+4** |
+| copy-record | 1 | 3 | +2 |
+| free-ref | 15 | 17 | +2 |
+
+**The five channels are ONE root, not five.**  `materialize_view_return` branches on
+`return_buffer().is_none()`, so the retbuf's absence (the accident already classified in
+`ret-view-of-param`) is what routes the nullable half into a per-arm copy.  The materialise,
+copy-record and free-ref asymmetries are all downstream of the missing buffer.
+
+**And reading which spelling is wrong inverted the expected answer.**  `classify_reference_delivery`
+carries the reason for stopping at the buffer-less case:
+
+> *"A dense heap return keeps the promise through its hidden `__retbuf` — the caller allocates and
+> `ref_return`'s copy leg writes into it — so `-> S` copies while `-> S?`, the SAME body, did not."*
+
+Measured on loft#1468's own shape, **the dense twin does not copy.**  Pass 1's `Rename` leg moves
+the tail's own local onto `__retbuf`, and the assignment then overwrites the buffer's `DbRef` with
+the view:
+
+```
+fn n_head(p: vector<ref(S)>, a: S) -> S["a", "p"]    ← `a` IS the buffer, renamed on pass 1
+  a(0): ref(S)["p"] = OpGetField(OpGetVector(_match_subj_1, …), …)   ← a VIEW assigned into it
+```
+
+`(F-Ret)`'s own stated test — *"a caller that mutates one call's result does not affect another
+call's result"* — run on both backends:
+
+| how the returned element is reached | dense `-> S` | nullable `-> S?` |
+|---|---|---|
+| `p[0]` | 7 | 7 |
+| `match p { [a, ..] => a, _ => … }` | **8** | 7 |
+| `e = p[0]; e` | **8** | 7 |
+| `for e in p { return e; }` | 7 | 7 |
+| `S { a: p[0].a }` (minted) | 7 | 7 |
+| `fn f(s: S) -> S { s }` (a DECLARED parameter) | 7 | 7 |
+
+The cells are `fret-boundary/`.  The boundary is **a named local whose deps name a parameter,
+returned as the bare tail** — wider than loft#1468's title, since `e = p[0]; e` is not a match arm.
+The last row is the control that leaves loft#1368's exemption standing: a *declared* parameter
+handed straight back is fresh, because the caller copies it.
+
+**Verdict: an accident of the site, and the deviation is on the DENSE side.**  loft#1468 fixed the
+nullable half and was closed under the title *"the dense twin copies"*, which is false.  Filed as
+**loft#1482**.
+
+⚠ **Not fixed here, and the reason is measured rather than assumed.**  Both pass-2-only repairs
+were built and run: by pass 2 the buffer var IS the tail's local, so the copy's source and
+destination are one var — `MaterializeView` answers an empty record and orphans a store (loft#848's
+collision), `ForwardCopy` answers an empty record.  The decision has to be made on PASS 1, which is
+exactly what the `!self.first_pass` guard exists to prevent, because a `??`-join local's deps are
+not pass-stable (the H5 two-pass contract).  Closing it means giving that guard a pass-stable
+predicate — a design call, so the finding is filed and the leg's false premise corrected in place.
+
+## The other two, enumerated but NOT yet classified
 
 | pair | asymmetric channels |
 |---|---|
-| `element-over-param` (loft#1466) | work-ref +24, free-ref +6, **materialise +4**, mint +2, copy-record +2 |
 | `captured-local-rebind` (loft#1447) | work-ref +23, free-ref +2 |
 | `local-rebound-by-mint` (loft#1422) | free-ref +3, work-ref −1 |
 
-`element-over-param` is the one to read next: it is the only pair where the nullable half
-MATERIALISES at all, which is a road with no dense counterpart.
+Neither shares the retbuf root: both keep their buffer.  `captured-local-rebind` is next — a
++23 work-ref asymmetry with no delivery difference under it is not explained by anything measured
+so far.
 
 ## Next
 

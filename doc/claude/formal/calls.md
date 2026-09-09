@@ -275,7 +275,14 @@ cannot see.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **`D-call-18`** (loft#1482, @PLN160) — a dense `-> S` return whose tail is a NAMED LOCAL whose
+  deps name a parameter hands the caller a view of that parameter, so mutating one call's result
+  changes another call's.  `D-call-17` closed the `-> S?` half on the belief that the dense twin
+  copies through its `__retbuf`; it does not — pass 1 renames the tail's local onto the buffer and
+  the view is assigned into it.  Blocked on moving the delivery decision to pass 1 without breaking
+  the H5 two-pass contract.
 
 The full register — every closed deviation with its dates and issue numbers, and the
 measurement that closed it — is the companion [calls-history.md](calls-history.md).

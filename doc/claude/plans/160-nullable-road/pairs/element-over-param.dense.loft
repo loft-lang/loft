@@ -1,4 +1,7 @@
 // loft#1466 shape — an element binding over a PARAMETER, in a loop.  Dense.
+// ⚠ The first version of this pair was NOT a pair: the dense half returned `integer` while the
+// nullable half returned `S?`, so its 176-line divergence was mostly scalar-vs-struct and said
+// nothing about the `?`.  Both halves return the STRUCT now, and only the `?` differs.
 struct S { a: integer }
-fn head(p: vector<S>) -> integer { match p { [a, ..] => a.a, _ => 0 } }
-fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { t = t + head(q); i = i + 1; } println("{t}"); }
+fn head(p: vector<S>) -> S { match p { [a, ..] => a, _ => S { a: 0 } } }
+fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { t = t + head(q).a; i = i + 1; } println("{t}"); }

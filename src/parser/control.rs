@@ -2845,6 +2845,14 @@ impl Parser {
             //
             // Both halves answer the same, which is what `@FR-N-Shape` asks: a shape question
             // answers alike for `τ` and `τ?`.
+            //
+            // ⚠ **And a pass-2-only delivery could not have closed it from here**, which
+            // @PLN160 measured while this leg still carried the opposite claim: by pass 2 the
+            // buffer var IS the tail's own local, so `MaterializeView` copies from its own
+            // destination and answers an empty record while orphaning a store, and
+            // `ForwardCopy` answers an empty record too.  Both measured.  That is why the
+            // decision is made at the RENAME on pass 1 and not here — the same reading
+            // loft#1489 arrived at from the collection side.
             RefDelivery::MaterializeView
         } else {
             // Owned / arg-borrow: rename the tail's work-ref(s) onto `__retbuf`.
