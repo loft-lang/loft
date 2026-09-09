@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 49 | **12** | 37 |
+| 50 | **12** | 38 |
 
 
 
@@ -7296,6 +7296,7 @@ uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs a
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
 
+@PLN157 § V-m adds one peeling site inside an existing function — **427 · 403 · 24** — `scopes::grown_containers` reads a fused `OpPush<Kind>`'s container through its `Span` to tell the variable form from the field form, and the same arm is `spellings`' 50th name-keyed site (**50 · 12 · 38**): it names `OpGetField` because a `TupleGet` cannot be an append's container, exactly as the `OpNewRecord` arm beside it does.
 @PLN157 § V-g adds one peeling site — **426 · 402 · 24** on the joined tree — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
 
 @PLN157 § V-g adds one more on the OPAQUE side, also on purpose — **751 · 403 · 6 · 342** on the joined tree — `use_analysis::view_elision_bind` matches the bound local's type BARE (`Type::Reference`), because a nullable local is excluded from the elision by design: its slot may hold the sentinel and it takes the nullable join's own copy (`nullable_join_first_bind`), so asking through `base()` would admit exactly the shape the rule keeps out (guard cell c13).

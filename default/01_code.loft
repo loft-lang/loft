@@ -1227,6 +1227,35 @@ fn OpFinishRecord(data: reference, rec: reference, parent_tp: const u16, fld: co
 // Add all elements of another vector with the same type
 fn OpAppendVector(r: vector, other: vector, tp: const u16);
 #rust"s.database.vector_add(&@r, &@other, @tp);"
+// @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
+// was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
+// per element each resolving the store and re-reading the headers the previous one
+// read (35 % of the drawing pass's `lock_curved` row).  Each of these is one
+// resolution, one capacity test, one write and one length bump, on both backends.
+// The parser's `new_record` fuses the three-op shape for a plain `Parts::Vector` at
+// `field == u16::MAX`; keyed kinds, record elements and the narrow-int kinds with a
+// `min` operand keep the general path.  A null (absent) vector is the no-op it was.
+#impure(parent_write)
+fn OpPushInt(r: vector, val: integer);
+#rust"s.database.append_i64(&@r, @val);"
+#impure(parent_write)
+fn OpPushInt4(r: vector, val: integer);
+#rust"{{let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; s.database.append_i32(&@r, v);}}"
+#impure(parent_write)
+fn OpPushFloat(r: vector, val: float);
+#rust"s.database.append_f64(&@r, @val);"
+#impure(parent_write)
+fn OpPushSingle(r: vector, val: single);
+#rust"s.database.append_f32(&@r, @val);"
+#impure(parent_write)
+fn OpPushBoolean(r: vector, val: boolean);
+#rust"s.database.append_byte(&@r, i32::from(@val));"
+#impure(parent_write)
+fn OpPushEnum(r: vector, val: enumerate);
+#rust"s.database.append_byte(&@r, i32::from(@val));"
+#impure(parent_write)
+fn OpPushCharacter(r: vector, val: character);
+#rust"s.database.append_u32(&@r, @val as u32);"
 #impure(parent_write)
 // Replace `r`'s content with `other`'s, aliasing-safe: a no-op when `r` and
 // `other` are the SAME backing vector (NRVO return-into-own-buffer), so the

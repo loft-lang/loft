@@ -17277,9 +17277,38 @@ fn collect_vars_in(val: &Value, result: &mut HashSet<u16>) {
 /// `Op` prefix.
 ///
 /// ⚠ `OpCopyRecord` is NOT here — it writes through its SECOND argument, and its callers
+/// The fused scalar appends (@PLN157 § V-m): each `OpSet<Kind>` an element literal writes at
+/// offset 0 of a fresh element, and the ONE op `Parser::fuse_scalar_append` folds the
+/// `OpNewRecord · OpSet<Kind> · OpFinishRecord` triple into.  The one home for the seven
+/// names: every classifier that lists the element-build ops reads them from here
+/// ([`FUSED_PUSH_OPS`]), so a kind added to the fusion reaches them all at once.
+pub const FUSED_PUSH_KINDS: [(&str, &str); 7] = [
+    ("OpSetInt", "OpPushInt"),
+    ("OpSetInt4", "OpPushInt4"),
+    ("OpSetFloat", "OpPushFloat"),
+    ("OpSetSingle", "OpPushSingle"),
+    ("OpSetBoolean", "OpPushBoolean"),
+    ("OpSetEnum", "OpPushEnum"),
+    ("OpSetCharacter", "OpPushCharacter"),
+];
+
+/// The push half of [`FUSED_PUSH_KINDS`].
+pub const FUSED_PUSH_OPS: [&str; 7] = [
+    "OpPushInt",
+    "OpPushInt4",
+    "OpPushFloat",
+    "OpPushSingle",
+    "OpPushBoolean",
+    "OpPushEnum",
+    "OpPushCharacter",
+];
+
 /// handle that separately.
 pub(crate) fn op_writes_first_arg(name: &str) -> bool {
     name.starts_with("OpSet")
+        // @PLN157 § V-m — the fused scalar appends (`OpPush<Kind>(v, x)`), the one-op form
+        // of `OpNewRecord` + `OpSet<Kind>` + `OpFinishRecord`.
+        || name.starts_with("OpPush")
         || name.starts_with("OpAppendStack")
         || name.starts_with("OpClearStack")
         || name == "OpNewRecord"
@@ -17664,6 +17693,7 @@ pub(crate) fn find_field_written_vars(code: &Value, data: &Data, written: &mut H
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);
             let first_arg_write = def.name().starts_with("OpSet")
+                || def.name().starts_with("OpPush")
                 || def.name() == "OpNewRecord"
                 || def.name() == "OpAppendCopy"
                 || def.name() == "OpAppendVector"

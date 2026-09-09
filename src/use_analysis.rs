@@ -147,6 +147,7 @@ fn projection_ops(data: &Data) -> HashSet<u32> {
 /// its SECOND arg (the dest), handled separately.
 fn is_first_arg_write_name(n: &str) -> bool {
     n.starts_with("OpSet")
+        || n.starts_with("OpPush")
         || n.starts_with("OpAppendStack")
         || n.starts_with("OpClearStack")
         || matches!(

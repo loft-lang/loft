@@ -328,8 +328,15 @@ fn collect_fn_ref_literals(
             // over-approximates (a plain int field equal to a fn d_nr would
             // mark that fn reachable too) but reachability over-approximation
             // is correctness-safe — it only ever emits an unused candidate.
-            if callee.name == "OpSetInt4"
-                && let Some(arg2) = args.get(2)
+            // The fused append (@PLN157 § V-m) writes the same d_nr as `OpPushInt4(vector,
+            // Int(<lambda d_nr>))` — a `vector<fn(…)>` literal's elements — one operand
+            // earlier.
+            let fn_ref_operand = match callee.name.as_str() {
+                "OpSetInt4" => args.get(2),
+                "OpPushInt4" => args.get(1),
+                _ => None,
+            };
+            if let Some(arg2) = fn_ref_operand
                 && let Value::Int(dn) = arg2.unspan()
                 && *dn >= 0
                 && (*dn as u32) < data.definitions()
