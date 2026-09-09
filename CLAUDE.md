@@ -685,7 +685,12 @@ view (`d = &cv.data`) derive no header at its binding — with it on, the rest o
 reads `d[i]` through one header derived once — and is the bisect step for a wrong element
 read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
 call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
-op — the bisect step for a wrong length or libm value on native.
+op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
+(@PLN157 § V-p) emits no callee TWIN — with it on, a callee that reads a record parameter's
+scalar fields or views its vector fields gets a `<fn>__inv` twin taking those as extra
+parameters, and a loop that hoisted them for the argument calls the twin — and is the bisect
+step for a wrong value read through a record parameter inside a callee a hoisting loop calls.
+The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`).
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a

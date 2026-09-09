@@ -1919,6 +1919,10 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let def_fn = self.data.def(def_nr);
         let name: &str = def_fn.name();
+        // @PLN157 § V-p — the number of the definition being called, for `user_fn_call_body`
+        // (the registry hands it the `Definition` alone).  Read there before any argument
+        // is emitted, so a nested call cannot overwrite it first.
+        self.current_call_def = def_nr;
         // Phase 09 phase 00 step 0.6: registry-first dispatch.  When a
         // custom emitter is registered for this Op, run it instead of
         // the special-case match arms below.  Today the registry is

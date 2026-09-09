@@ -359,6 +359,7 @@ pub fn hoistable(
     writes: &mut WriteCache,
     allow_in_place: bool,
     scalars: bool,
+    inputs: Option<&mut InputCache>,
 ) -> LoopHoist {
     if body_blocks_hoist(body, data, def_nr, cache, allow_in_place) {
         return LoopHoist::default();
@@ -367,26 +368,61 @@ pub fn hoistable(
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
     };
-    if !scalars {
-        return out;
-    }
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
     // (key, record type, the call) in first-appearance order.
     let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
-    for op in &body.operators {
-        op.any_node(&mut |n| {
-            if let Value::Call(d, args) = n
-                && (*d as usize) < data.definitions.len()
-                && let Some(key) = scalar_read(data.def(*d).name(), args)
-                && !rebound.contains(&key.0)
-                && let Some(tp) = plain_record_type(data, vars.tp(key.0))
-                && !found.iter().any(|(k, _, _)| *k == key)
-            {
-                found.push((key, tp, n.clone()));
-            }
-            false
-        });
+    if scalars {
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(key) = scalar_read(data.def(*d).name(), args)
+                    && !rebound.contains(&key.0)
+                    && let Some(tp) = plain_record_type(data, vars.tp(key.0))
+                    && !found.iter().any(|(k, _, _)| *k == key)
+                {
+                    found.push((key, tp, n.clone()));
+                }
+                false
+            });
+        }
+    }
+    // @PLN157 § V-p (`@FR-R-Inputs`) — what an admitted callee reads of a record the body
+    // passes it as a plain variable joins the candidates, re-spelled over that variable; the
+    // eviction below then judges each, since the write set carries what the callee writes.
+    if let Some(inputs) = inputs {
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(f, args) = n
+                    && (*f as usize) < data.definitions.len()
+                    && matches!(data.def(*f).code(), Value::Block(_))
+                    && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
+                {
+                    for (pf, offs, path) in &fi.headers {
+                        if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
+                            && !rebound.contains(c)
+                            && !out.vectors.iter().any(|(p, _)| p.0 == *c && p.1 == *offs)
+                        {
+                            out.vectors
+                                .push(((*c, offs.clone()), substitute_root(path, *pf, *c)));
+                        }
+                    }
+                    if scalars {
+                        for (pf, fld, getter) in &fi.scalars {
+                            if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
+                                && !rebound.contains(c)
+                                && let Some(tp) = plain_record_type(data, vars.tp(*c))
+                                && !found.iter().any(|(k, _, _)| *k == (*c, *fld))
+                            {
+                                found.push(((*c, *fld), tp, substitute_root(getter, *pf, *c)));
+                            }
+                        }
+                    }
+                }
+                false
+            });
+        }
     }
     if found.is_empty() {
         return out;
@@ -640,6 +676,191 @@ fn callee_writes(
     // A `None` reached on a recursive edge is memoised too: it only ever withholds a hoist.
     writes.insert(d_nr, answer.clone());
     answer
+}
+
+/// @PLN157 § V-p — a callee's INVARIANT INPUTS (`@FR-R-Inputs`): what a caller that already
+/// holds the hoisted values may hand it in place of the record.
+///
+/// Per plain-struct parameter the callee never rebinds: the scalar fields its own
+/// [`WriteSet`] does not reach, and the vector paths it indexes or binds to a view the rest of
+/// that block indexes (`@FR-R-View`).  Each carries the read as the callee's body spells it,
+/// over `Var(parameter)`, so a caller re-spells it over its argument variable.  The two lists
+/// are the twin's extra parameters, in this order.
+#[derive(Debug, Default)]
+pub struct CalleeInputs {
+    /// `(parameter, field offset, the getter call)`, in first-appearance order.
+    pub scalars: Vec<(u16, i64, Value)>,
+    /// `(parameter, path offsets, the path expression)`, in first-appearance order.
+    pub headers: Vec<(u16, Vec<i64>, Value)>,
+}
+
+/// The per-callee memo of [`callee_inputs`]: `None` is a callee that has no twin.
+pub type InputCache = HashMap<u32, Option<Rc<CalleeInputs>>>;
+
+/// @PLN157 § V-p — the invariant inputs of `d_nr`, or `None` when it has none or is not
+/// admitted (`@FR-R-Inputs`).
+///
+/// Admitted: a loft body (no template, no return buffer, not a generator) that is store-free
+/// or an in-place-only writer (`@FR-R-Callee`), whose write set this analysis can type.  A
+/// scalar read `p.f` of a plain-struct parameter `p` the body never rebinds is an input unless
+/// the body's own write set reaches `(type(p), f)`; a path `p.g` the body indexes, or binds to
+/// a view the rest of its block indexes, is a header input.  A callee this body passes `p` on
+/// to contributes ITS inputs re-spelled over `p` — transitively, and a cycle contributes
+/// nothing — filtered by this body's write set, which already carries what that callee
+/// writes.  Memoised per definition; the memo is seeded `None` while the walk is open, so a
+/// recursive edge sees no inputs and only ever withholds a twin.
+pub fn callee_inputs(
+    d_nr: u32,
+    data: &Data,
+    stores: &Stores,
+    cache: &mut HashMap<u32, bool>,
+    writes: &mut WriteCache,
+    inputs: &mut InputCache,
+) -> Option<Rc<CalleeInputs>> {
+    if let Some(known) = inputs.get(&d_nr) {
+        return known.clone();
+    }
+    inputs.insert(d_nr, None);
+    let answer = callee_inputs_inner(d_nr, data, stores, cache, writes, inputs).map(Rc::new);
+    inputs.insert(d_nr, answer.clone());
+    answer
+}
+
+fn callee_inputs_inner(
+    d_nr: u32,
+    data: &Data,
+    stores: &Stores,
+    cache: &mut HashMap<u32, bool>,
+    writes: &mut WriteCache,
+    inputs: &mut InputCache,
+) -> Option<CalleeInputs> {
+    if (d_nr as usize) >= data.definitions.len() {
+        return None;
+    }
+    let def = data.def(d_nr);
+    let Value::Block(body) = def.code().unspan() else {
+        return None;
+    };
+    if !def.rust().is_empty()
+        || def.hidden_return_buffer_attr().is_some()
+        || matches!(def.returned(), Type::Iterator(_, _))
+    {
+        return None;
+    }
+    let mut active = HashSet::new();
+    if call_writes_store(d_nr, data, cache, &mut active)
+        && !in_place_only_writer(d_nr, data, cache, &mut active)
+    {
+        return None;
+    }
+    let vars = def.variables();
+    let params = u16::try_from(def.attributes().len()).ok()?;
+    let rebound = rebound_vars(body);
+    let mut written = WriteSet::default();
+    for op in &body.operators {
+        written.extend(&body_writes(
+            op,
+            data,
+            stores,
+            vars,
+            cache,
+            writes,
+            &mut HashSet::new(),
+        )?);
+    }
+    // A parameter (never rebound) as a candidate root: its plain record type, or — for a
+    // header — whether it names a vector at all.
+    let record_param = |p: u16| -> Option<u16> {
+        if p < params && !rebound.contains(&p) {
+            plain_record_type(data, vars.tp(p))
+        } else {
+            None
+        }
+    };
+    let path_root = |root: u16, offs: &[i64]| -> bool {
+        root < params
+            && !rebound.contains(&root)
+            && (!offs.is_empty() || matches!(vars.tp(root).peel_link(), Type::Vector(_, _)))
+    };
+    let mut out = CalleeInputs::default();
+    def.code().any_node(&mut |n| {
+        match n {
+            Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
+                if let Some((p, fld)) = scalar_read(data.def(*g).name(), args) {
+                    if let Some(tp) = record_param(p)
+                        && !written.evicts(tp, fld)
+                        && !out.scalars.iter().any(|(q, f, _)| (*q, *f) == (p, fld))
+                    {
+                        out.scalars.push((p, fld, n.clone()));
+                    }
+                } else if args.len() == 3
+                    && is_element_address(data, *g)
+                    && let Some((root, offs)) = vector_path(data, &args[0])
+                    && path_root(root, &offs)
+                    && !out.headers.iter().any(|(r, o, _)| *r == root && *o == offs)
+                {
+                    out.headers.push((root, offs, args[0].clone()));
+                }
+            }
+            Value::Block(b) => {
+                for at in 0..b.operators.len() {
+                    if view_def_header(&b.operators, at, data, d_nr, cache, true).is_some()
+                        && let Value::Set(_, rhs) = b.operators[at].unspan()
+                        && let Some((root, offs)) = vector_path(data, rhs)
+                        && path_root(root, &offs)
+                        && !out.headers.iter().any(|(r, o, _)| *r == root && *o == offs)
+                    {
+                        out.headers.push((root, offs, (**rhs).clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    // What a callee this body passes a parameter on to reads of it.
+    def.code().any_node(&mut |n| {
+        if let Value::Call(f, args) = n
+            && (*f as usize) < data.definitions.len()
+            && matches!(data.def(*f).code(), Value::Block(_))
+            && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
+        {
+            for (pf, fld, getter) in &fi.scalars {
+                if let Some(Value::Var(p)) = args.get(*pf as usize).map(Value::unspan)
+                    && let Some(tp) = record_param(*p)
+                    && !written.evicts(tp, *fld)
+                    && !out.scalars.iter().any(|(q, f, _)| (*q, *f) == (*p, *fld))
+                {
+                    out.scalars
+                        .push((*p, *fld, substitute_root(getter, *pf, *p)));
+                }
+            }
+            for (pf, offs, path) in &fi.headers {
+                if let Some(Value::Var(p)) = args.get(*pf as usize).map(Value::unspan)
+                    && path_root(*p, offs)
+                    && !out.headers.iter().any(|(r, o, _)| *r == *p && o == offs)
+                {
+                    out.headers
+                        .push((*p, offs.clone(), substitute_root(path, *pf, *p)));
+                }
+            }
+        }
+        false
+    });
+    (!out.scalars.is_empty() || !out.headers.is_empty()).then_some(out)
+}
+
+/// `v` with every `Var(from)` renamed to `Var(to)` — a callee's read re-spelled over the
+/// caller's argument variable (@PLN157 § V-p).
+#[must_use]
+pub fn substitute_root(v: &Value, from: u16, to: u16) -> Value {
+    let mut out = v.clone();
+    out.map_nodes(&mut |n| {
+        if matches!(n, Value::Var(x) if *x == from) {
+            *n = Value::Var(to);
+        }
+    });
+    out
 }
 
 /// @PLN157 § V-n — does statement `at` of `stmts` bind a VIEW of a vector whose header the

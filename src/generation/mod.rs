@@ -633,6 +633,23 @@ pub struct Output<'a> {
     pub wrapper_inline_disabled: bool,
     /// Per-definition memo of [`hoist::one_op_wrapper`].
     wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
+    /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
+    pub input_cache: hoist::InputCache,
+    /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
+    /// form, as before @PLN157 § V-p (`@FR-R-Inputs`): the bisect step for a wrong value read
+    /// through a record parameter inside a callee that a hoisting loop calls.
+    /// `LOFT_HOIST_VERIFY=1` is the falsifier — inside the twin every input is re-read.
+    pub callee_inputs_disabled: bool,
+    /// The inputs of the TWIN being emitted — `Some` only while [`Self::output_function`]
+    /// emits one: the extra parameters, and the frames that serve the body's reads from them.
+    twin: Option<std::rc::Rc<hoist::CalleeInputs>>,
+    /// The live-dispatch entry check a definition's ORIGINAL emission produced, so its twin
+    /// re-uses the same table index instead of allocating a second one.
+    live_check_by_def: HashMap<u32, String>,
+    /// The definition of the user call being emitted, set by `output_call_inner` and read by
+    /// `user_fn_call_body` to decide the twin form — the emitter registry hands that only the
+    /// `Definition`, which carries no number.
+    current_call_def: u32,
     /// Names the hoisted headers of the function being emitted (`__vh_1`, `__vh_2`, …).
     pub hoist_counter: u32,
     /// `LOFT_HOIST_VERIFY=1` — emit the CHECKING form of every hoisted read, which
@@ -1534,6 +1551,11 @@ impl<'a> Output<'a> {
             wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
                 .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
+            input_cache: HashMap::new(),
+            callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
+            twin: None,
+            live_check_by_def: HashMap::new(),
+            current_call_def: u32::MAX,
             hoist_cache: HashMap::new(),
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
@@ -1812,6 +1834,7 @@ impl Output<'_> {
                 &mut self.scalar_write_cache,
                 !self.write_hoist_disabled,
                 !self.scalar_hoist_disabled,
+                (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             )
         };
         let hoist::LoopHoist {
@@ -1918,14 +1941,29 @@ impl Output<'_> {
         }
         self.hoist_counter += 1;
         let name = format!("__vh_{}", self.hoist_counter);
+        // @PLN157 § V-p — a view of a path whose header is already held (a loop's prelude, or
+        // a twin's input) copies that header: the binding's `DbRef` is the path's, so the
+        // header derived from either is the same one.
+        let held = match stmts[at].unspan() {
+            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs)
+                .and_then(|p| self.active_vec_header(&p).map(str::to_owned)),
+            _ => None,
+        };
         let mut operand: Vec<u8> = Vec::new();
         self.output_code_inner(&mut operand, &Value::Var(d))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         self.indent(w)?;
-        writeln!(
-            w,
-            "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header"
-        )?;
+        if let Some(held) = held {
+            writeln!(
+                w,
+                "let {name} = {held}; //@PLN157 § V-n view header, copied from the held path (§ V-p)"
+            )?;
+        } else {
+            writeln!(
+                w,
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header"
+            )?;
+        }
         self.vec_headers.push(HashMap::from([(path, name)]));
         Ok(true)
     }
@@ -1970,6 +2008,71 @@ impl Output<'_> {
             }
         }
         Some((*op, args))
+    }
+
+    /// @PLN157 § V-p — the invariant inputs of `def_nr` (`@FR-R-Inputs`), or `None` when it
+    /// has no twin or the mechanism is off.  A whole-hoist switch (`LOFT_NO_VECTOR_HOIST`)
+    /// leaves no caller holding anything to hand over, so it emits no twin either.
+    fn callee_inputs_of(&mut self, def_nr: u32) -> Option<std::rc::Rc<hoist::CalleeInputs>> {
+        if self.callee_inputs_disabled || self.hoist_disabled {
+            return None;
+        }
+        hoist::callee_inputs(
+            def_nr,
+            self.data,
+            self.stores,
+            &mut self.hoist_cache,
+            &mut self.scalar_write_cache,
+            &mut self.input_cache,
+        )
+    }
+
+    /// The Rust expressions a call to `def_nr` with arguments `vals` hands its twin — one
+    /// per invariant input, in the twin's parameter order — when the enclosing frames hold
+    /// EVERY one of them for the argument variable; `None` keeps the plain call.
+    fn twin_call_inputs(&mut self, def_nr: u32, vals: &[Value]) -> Option<Vec<String>> {
+        let inputs = self.callee_inputs_of(def_nr)?;
+        let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
+        for (p, fld, _) in &inputs.scalars {
+            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
+                return None;
+            };
+            args.push(self.active_scalar_hoist(&(*c, *fld))?.to_owned());
+        }
+        for (p, offs, _) in &inputs.headers {
+            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
+                return None;
+            };
+            args.push(self.active_vec_header(&(*c, offs.clone()))?.to_owned());
+        }
+        Some(args)
+    }
+
+    /// The frames a twin's body reads its inputs from: `(parameter, field)` → `__is_k`,
+    /// `(parameter, path)` → `__ih_k`.  Pushed around the body, popped after it.
+    fn push_twin_frames(&mut self) {
+        let Some(t) = self.twin.clone() else { return };
+        let scalars: HashMap<hoist::ScalarKey, String> = t
+            .scalars
+            .iter()
+            .enumerate()
+            .map(|(k, (p, fld, _))| ((*p, *fld), format!("__is_{k}")))
+            .collect();
+        let headers: HashMap<hoist::PathKey, String> = t
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ih_{k}")))
+            .collect();
+        self.scalar_hoists.push(scalars);
+        self.vec_headers.push(headers);
+    }
+
+    fn pop_twin_frames(&mut self) {
+        if self.twin.is_some() {
+            self.scalar_hoists.pop();
+            self.vec_headers.pop();
+        }
     }
 
     /// The Rust local holding `key`'s hoisted scalar, when an enclosing loop read it once
@@ -4423,6 +4526,13 @@ extern crate loft;"
                 continue;
             }
             self.output_function(w, dnr, program_store.as_ref())?;
+            // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
+            // with its invariant inputs as extra parameters.
+            if let Some(inputs) = self.callee_inputs_of(dnr) {
+                self.twin = Some(inputs);
+                self.output_function(w, dnr, program_store.as_ref())?;
+                self.twin = None;
+            }
         }
         Ok(())
     }
@@ -5130,15 +5240,33 @@ extern crate loft;"
         if !def.position().file.is_empty() {
             writeln!(w, "// loft:{}:{}", def.position().file, def.position().line)?;
         }
+        let twin = self.twin.clone();
         write!(
             w,
-            "{}fn {}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
             self.fn_inline_attr(),
-            self.fn_ident(def)
+            self.fn_ident(def),
+            if twin.is_some() { "__inv" } else { "" }
         )?;
         for a in def.attributes() {
             let tp = rust_type(&a.typedef, &Context::Argument);
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
+        }
+        if let Some(t) = &twin {
+            // @PLN157 § V-p — the invariant inputs: each scalar typed as its getter's result
+            // (the same type the caller's `__vs_N` local infers), each header by value.
+            for (k, (_, _, getter)) in t.scalars.iter().enumerate() {
+                let tp = match getter.unspan() {
+                    Value::Call(g, _) => {
+                        rust_type(self.data.def(*g).returned(), &Context::Variable)
+                    }
+                    _ => "i64".to_string(),
+                };
+                write!(w, ", __is_{k}: {tp}")?;
+            }
+            for k in 0..t.headers.len() {
+                write!(w, ", __ih_{k}: vector::VecHeader")?;
+            }
         }
         write!(w, ") ")?;
         if *def.returned() != Type::Void {
@@ -5396,7 +5524,16 @@ extern crate loft;"
                 // entirely (and, as a side effect, `self.live_fns` stays empty
                 // because `live_entry_check` — its sole producer — never runs).
                 let live_check = if self.emit_live {
-                    self.live_entry_check(def).unwrap_or_default()
+                    // A twin re-uses the ORIGINAL's check: the same flip flag, the same
+                    // interpreter entry (which takes the declared parameters only — the
+                    // inputs are derived from them).
+                    if let Some(s) = self.twin.as_ref().and(self.live_check_by_def.get(&def_nr)) {
+                        s.clone()
+                    } else {
+                        let s = self.live_entry_check(def).unwrap_or_default();
+                        self.live_check_by_def.insert(def_nr, s.clone());
+                        s
+                    }
                 } else {
                     String::new()
                 };
@@ -5463,7 +5600,9 @@ extern crate loft;"
                     "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\
                      {push}{fnref_guard}{vdb_prologue}"
                 ));
+                self.push_twin_frames();
                 self.output_block(w, body, returns_text, true)?;
+                self.pop_twin_frames();
                 self.call_stack_prefix = None;
             } else {
                 // Non-instrumented user-fn (e.g. `t_…` methods) — still
@@ -5472,7 +5611,9 @@ extern crate loft;"
                 self.call_stack_prefix = Some(format!(
                     "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};{vdb_prologue}"
                 ));
+                self.push_twin_frames();
                 self.output_block(w, body, returns_text, true)?;
+                self.pop_twin_frames();
                 self.call_stack_prefix = None;
             }
         } else if *def.code() == Value::Null {
