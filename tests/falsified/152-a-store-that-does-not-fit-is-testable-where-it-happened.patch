@@ -1,0 +1,580 @@
+diff --git b/src/data.rs a/src/data.rs
+index 5b2014e39..deec23bc3 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -335,42 +335,6 @@ impl IntegerSpec {
+         self.min < 0 && self.range() < (1_i64 << (8 * i64::from(size)))
+     }
+ 
+-    /// Can a value held in a NON-nullable slot of this spec ever read back as null?
+-    ///
+-    /// `!x` tests whether `x` is the null sentinel, so this is the question
+-    /// `redundant-null-negation` asks of its operand: a spec that answers `false` kept no
+-    /// code back for a failure, so `!x` on it is always false and a fit-failure leaves
+-    /// nothing in the value to see (@PLN152).
+-    ///
+-    /// Three families, and the split is about which code the type kept back rather than
+-    /// about the `?`:
+-    ///
+-    /// 1. `not_null` says the slot gave the sentinel up to widen its range by one, so
+-    ///    there is no code left for null whatever the width — this is how a struct field
+-    ///    declared `i: u8` (and one declared `x: integer`) reaches here;
+-    /// 2. the plain `integer` and `i32` templates reserve the BOTTOM code
+-    ///    (`i64::MIN` / `i32::MIN`), which is exactly what a non-null read reports as
+-    ///    null — so `!x` on either is a real test and must not be flagged;
+-    /// 3. every remaining spec is a declared range, and
+-    ///    [`Self::reserves_sentinel_unconditionally`] is the one home for whether it kept
+-    ///    a bottom code: `u8`/`i8`/`u16`/`i16` fill their fixed width, `u32`'s spare code
+-    ///    is at the TOP where no non-null read tests for it, and an un-annotated
+-    ///    `limit(lo, hi)` takes its own default rather than a sentinel.
+-    ///
+-    /// The store side of the same fact is `uncomputable_default`'s `dflt`, read through
+-    /// `Parser::compound_range`: a target whose `dflt` is `i64::MIN` is one this answers
+-    /// `true` for.  Two readers, one fact — kept apart only because one is handed a spec
+-    /// and the other a store target.
+-    #[must_use]
+-    pub fn non_null_reads_null(&self) -> bool {
+-        if self.not_null {
+-            return false;
+-        }
+-        self.is_wide_template()
+-            || self.is_signed32_template()
+-            || self.reserves_sentinel_unconditionally()
+-    }
+-
+     fn reserves_narrow_sentinel(&self, nullable: bool) -> bool {
+         if !nullable {
+             return false;
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 26979e2ef..106aae02e 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1813,26 +1813,7 @@ impl Parser {
+         // return is discarded, so nothing is judged or reported twice.
+         if op != "=" && !self.first_pass {
+             let holds_null = crate::parser::expressions::target_holds_null(f_type, parent_tp);
+-            let bounded = self.guard_compound_range(&mut code, f_type, holds_null);
+-            // `@FR-E-Uncomp-Seen` — offer this store's fit status to an `if !place { … }` that
+-            // may be the very next statement.  This is the one seam every compound
+-            // assignment passes through with `to` still the PLACE, so a local, a field and
+-            // an element are one case here and cannot come apart later.
+-            //
+-            // Offered only where the failure has nowhere else to live: a `dflt` of
+-            // `i64::MIN` means the target kept a code back for it (a nullable narrow, an
+-            // `i32`, a plain `integer`), and `!` reads that today with no help from here.
+-            self.fit_candidate = match bounded {
+-                Some((_, _, dflt)) if dflt != i64::MIN => match f_type.base() {
+-                    Type::Integer(spec) => Some(crate::parser::fit::FitFusion {
+-                        place: to.clone(),
+-                        spec: *spec,
+-                        fit_var: None,
+-                    }),
+-                    _ => None,
+-                },
+-                _ => None,
+-            };
++            self.guard_compound_range(&mut code, f_type, holds_null);
+         }
+         if let Value::Call(d_nr, args) = to.unspan() {
+             let name = self.data.def(*d_nr).name().to_string();
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 2f68059df..bfc761c26 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -684,14 +684,7 @@ impl Parser {
+                 }
+             }
+         }
+-        // @PLN152 step 5 — a nested block runs its own statement loop, which owns
+-        // `fit_armed`; without this the `if` BODY cleared the arming its own condition had
+-        // just used and the store was never split.  The fit belongs to the pair of
+-        // statements that produced it, so it is saved across every block this one contains
+-        // and restored for the loop that is still in the middle of that pair.
+-        let outer_fit = self.fit_armed.take();
+         let cc_ret = self.parse_block_inner(context, val, result);
+-        self.fit_armed = outer_fit;
+         if cc.is_some() {
+             self.cc_nest -= 1;
+         }
+@@ -750,13 +743,6 @@ impl Parser {
+         let dz_base = self.divisor_nonzero.len();
+         // T1.7: track the start-position of the last expression for not-null diagnostics.
+         let mut last_expr_peek = self.lexer.peek();
+-        // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
+-        // The fit-failure of a store lives across exactly one statement boundary: offered to
+-        // the statement that follows, and gone after it.  Held here rather than on the
+-        // parser because "the previous statement of THIS block" is a fact only this loop
+-        // has, and a nested block must not inherit it.
+-        let mut pending_fit: Option<crate::parser::fit::FitFusion> = None;
+-        let mut fit_store_at = 0usize;
+         loop {
+             let line = self.lexer.pos().line;
+             if line > self.line {
+@@ -920,11 +906,6 @@ impl Parser {
+             // it at each statement boundary; the within-statement `?? d` / `== null` tracking is
+             // untouched (both operand and consumer parse inside this one `self.expression`).
+             self.expr_not_null = false;
+-            // `@FR-E-Uncomp-Seen` — arm the preceding store's fit status for THIS statement, and
+-            // only when it opens with `if`: that is the whole of the adjacency rule, and the
+-            // `take` is what makes it one statement wide rather than "until someone asks".
+-            self.fit_armed = pending_fit.take().filter(|_| self.lexer.peek_token("if"));
+-            self.fit_candidate = None;
+             // loft#1382 — statement position, decided by the ONE reader that knows it.  A
+             // statement beginning with `if` or `match` has its value discarded
+             // (`@FR-F-Block`), so its arms need not agree with each other; a value-position
+@@ -936,31 +917,6 @@ impl Parser {
+             let pending_before = self.pending_arm_mismatch.take();
+             t = self.expression(&mut n);
+             self.stmt_if_pending = saved_stmt_if;
+-            // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
+-            // split the store that is already in `l`: the checked cast binds the temp, and
+-            // the store's own range guard now reads it.  Values are unchanged by
+-            // construction — an out-of-range subject casts to null and `OpRangeDefault`
+-            // answers the same default it answered for the raw value, and an in-range one
+-            // passes straight through.
+-            if let Some(fit) = self
+-                .fit_armed
+-                .take()
+-                .and_then(|f| f.fit_var.map(|v| (f, v)))
+-            {
+-                let (cand, fit_var) = fit;
+-                let mut composed = Value::Null;
+-                if let Some(slot) = crate::parser::fit::guard_slot(&self.data, &mut l[fit_store_at])
+-                    && let Value::Call(_, guard_args) = slot.unspan_mut()
+-                {
+-                    composed = std::mem::replace(&mut guard_args[0], Value::Var(fit_var));
+-                }
+-                debug_assert!(
+-                    !matches!(composed, Value::Null),
+-                    "@PLN152 armed a store whose range guard could not be found"
+-                );
+-                self.dn4_checked_cast(&mut composed, &Type::Integer(cand.spec), &crate::data::I64);
+-                l.insert(fit_store_at, v_set(fit_var, composed));
+-            }
+             // …and CONFIRM it here, where the `;` is finally visible.  `@FR-F-Block` discards
+             // a block's value *"only where the BLOCK itself is a statement — a `;`-terminated
+             // one"*, and a leading `if` does not prove that: a function TAIL also begins its
+@@ -1100,17 +1056,6 @@ impl Parser {
+             } else {
+                 l.push(n);
+             }
+-            // @PLN152 step 5 — offer this statement's narrow store to the next one, but only
+-            // once the pushed node really carries the `OpRangeDefault` guard the fused form
+-            // rewrites.  Asked of the node rather than assumed from the seam, so a shape this
+-            // cannot split can never reach the point where a `!` has already been redirected
+-            // to a temp nothing binds.  A candidate raised inside a nested block fails the
+-            // same test, because the node pushed here is the enclosing construct.
+-            pending_fit = self.fit_candidate.take().filter(|_| {
+-                l.last()
+-                    .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last))
+-            });
+-            fit_store_at = l.len().saturating_sub(1);
+             if self.lexer.peek_token("}") {
+                 break;
+             }
+@@ -4408,14 +4353,7 @@ impl Parser {
+         // same statement construct.
+         let is_stmt = std::mem::replace(&mut self.stmt_if_pending, false);
+         let outer_arms = std::mem::replace(&mut self.arms_of_statement_construct, is_stmt);
+-        // `@FR-E-Uncomp-Seen` — open the fused-fit window.  This is the one site that knows
+-        // STATEMENT position, which is what the adjacency rule is about: only an `if` that
+-        // IS the next statement stands where the preceding store's fit status is still
+-        // reachable.  `parse_if_expecting` closes it the moment the condition is complete,
+-        // so a `!place` in the BODY reads the slot exactly as it always did.
+-        self.fit_in_condition = is_stmt && self.fit_armed.is_some();
+         let r = self.parse_if_expecting(code, &Type::Unknown(0));
+-        self.fit_in_condition = false;
+         self.arms_of_statement_construct = outer_arms;
+         r
+     }
+@@ -4432,9 +4370,6 @@ impl Parser {
+         self.in_control_head = true;
+         let tp = self.expression(&mut test);
+         self.in_control_head = outer_head;
+-        // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+-        // the arms below, and an `else if` chain's own conditions, are past the pair.
+-        self.fit_in_condition = false;
+         self.convert_condition(&mut test, &tp);
+         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
+         // matching branch (then for `!= null`/truthy, else for `== null`).
+@@ -14208,36 +14143,13 @@ impl Parser {
+                 consumed.append(&mut cf);
+                 a || b2
+             }
+-            // loft#1491 — an arm that BINDS the buffer from a call before yielding it
+-            // (`{ buf = head(n); buf }`) has rebound `w` to the call's OWN `__ref_N`, so
+-            // the `Var(w)` tail below is no longer the buffer it names: the callee filled
+-            // one store, the caller handed in another, and the one the caller never
+-            // adopts is orphaned — one leaked store per call, on both backends.  The same
+-            // arm written as a bare `{ head(n) }` is clean, which is what says the value
+-            // is right and only the DELIVERY is wrong.
+-            //
+-            // `nrvo_collapse_tail_set` is the fix and already exists: it redirects a
+-            // `Set(cv, Call(…))` whose callee takes a hidden return buffer to deliver
+-            // into `cv` itself.  It was reached only at the FUNCTION tail, and this is the
+-            // same shape one block down.  Asking it here needs no new rule — its own
+-            // step (1) declines every block whose tail is not `Var(w)`, so passing `[w]`
+-            // gates it to exactly the arm this is for.
+-            Value::Block(bl) => {
+-                let mut ops = std::mem::take(&mut bl.operators);
+-                self.nrvo_collapse_tail_set(&mut ops, &[w]);
+-                bl.operators = ops;
+-                bl.operators.last_mut().is_some_and(|last| {
+-                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+-                })
+-            }
+-            Value::Insert(ops) => {
+-                let mut taken = std::mem::take(ops);
+-                self.nrvo_collapse_tail_set(&mut taken, &[w]);
+-                *ops = taken;
+-                ops.last_mut().is_some_and(|last| {
+-                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+-                })
+-            }
++            Value::Block(bl) => bl
++                .operators
++                .last_mut()
++                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
++            Value::Insert(ops) => ops
++                .last_mut()
++                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
+             // A local whose value is a VIEW OF `w` — `_vec_N: vector<T>["__vdb_1"]` where
+             // `__vdb_1` IS the buffer — already holds its answer in the buffer, so it is
+             // `w` one indirection down and the `*v != w` guard above does not see it.
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 94d52e939..56ec5dd97 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -7206,25 +7206,17 @@ use a separate collection or add after the loop"
+     /// (`is_narrowing_int_store`), and `declared_range`'s own comment records what happens
+     /// when a runtime default is added on top of a check that already holds — it handed 24
+     /// of the stdlib's own `i8` stores a `-128`.
+-    ///
+-    /// Answers the range it applied, so a caller that must know whether this store is
+-    /// bounded — and whether the bound has a code for its own failure — reads it off the
+-    /// one site that decided rather than asking again (@PLN152 step 5). `None` means no
+-    /// guard was added: an unbounded target, or a value already carrying one.
+-    pub(crate) fn guard_compound_range(
+-        &mut self,
+-        code: &mut Value,
+-        target: &Type,
+-        nullable: bool,
+-    ) -> Option<(i64, i64, i64)> {
+-        let (lo, hi, dflt) = Self::compound_range(target, nullable)?;
++    pub(crate) fn guard_compound_range(&mut self, code: &mut Value, target: &Type, nullable: bool) {
++        let Some((lo, hi, dflt)) = Self::compound_range(target, nullable) else {
++            return;
++        };
+         // Two seams can reach one store, so never wrap a guard in a guard: harmless
+         // arithmetically (the inner already answers a value in range) but it would judge
+         // the same write twice.  Mirrors `guard_declared_range`.
+         if let Value::Call(d, _) = code.unspan()
+             && self.data.def(*d).name() == "OpRangeDefault"
+         {
+-            return None;
++            return;
+         }
+         let guarded = self.cl(
+             "OpRangeDefault",
+@@ -7236,7 +7228,6 @@ use a separate collection or add after the loop"
+             ],
+         );
+         *code = guarded;
+-        Some((lo, hi, dflt))
+     }
+ 
+     /// The bounded range a compound assignment's target declares — `None` when it
+diff --git b/src/parser/fit.rs a/src/parser/fit.rs
+deleted file mode 100644
+index 25f17328c..000000000
+--- b/src/parser/fit.rs
++++ /dev/null
+@@ -1,175 +0,0 @@
+-// Copyright (c) 2026 Jurjen Stellingwerff
+-// SPDX-License-Identifier: LGPL-3.0-or-later
+-
+-//! @PLN152 step 5 (`@FR-E-Uncomp-Seen`) — let `!` read a fit-failure the value cannot hold.
+-//!
+-//! `u8`, `i8`, `u16`, `i16`, `u32` and every `integer limit(lo, hi)` fill their own range,
+-//! so a store whose value does not fit takes the type's default and leaves nothing behind:
+-//! `x: u8 = 250; x += 10` answers `0`, and `!x`, `x == null` and `x == 0` say exactly what
+-//! they say for a computed zero. The failure is a property of the STORE, never of the
+-//! expression — `x + 10` widens to `integer`, where `260` is a perfectly good value — so the
+-//! only place the question can be asked is beside an assignment that names a narrow slot.
+-//!
+-//! The answer is carried in a `__fit_N` temp that lives across exactly the pair the author
+-//! wrote:
+-//!
+-//! ```text
+-//! place op= expr;          __fit_N: integer? = (place op expr) as <narrow>?;
+-//! if !place { … }     ⟹    place = <the same range guard, reading __fit_N>;
+-//!                          if !__fit_N { … }
+-//! ```
+-//!
+-//! Nothing is stored. Not in the slot, not in a field, not in an element — which is the
+-//! constraint that keeps the types worth declaring: a `vector<u8>` of 200 000 elements is
+-//! 0.362 MB against `vector<integer>`'s 5.909 MB, and a status bit beside every element
+-//! would hand half of that back. The temp is an ordinary `integer?` local of the enclosing
+-//! function, minted only where an author wrote the test.
+-//!
+-//! **The temp is a full-width `integer?`, never the narrow `τ?`.** A `u8?` slot sacrifices
+-//! its top code to hold null (`@FR-N-Reserve`), so binding the fit to one turns the
+-//! perfectly good answer `255` into a reported failure — measured on the plan's own
+-//! hand-written target shape, which was proven on `300` and on `200` and is wrong on `255`.
+-//!
+-//! ## What is and is not fused
+-//!
+-//! Only a `!place` in the CONDITION of the `if` that is the very next statement, naming the
+-//! very place the store named. One statement further apart and there is nothing left to
+-//! carry the status but the slot, and the slot is storage. That boundary is invisible in the
+-//! source, so it is policed rather than documented: `redundant-null-negation` reports every
+-//! `!` on a value whose type keeps no code for null, so moving the `if` one line away makes
+-//! the check announce that it is always false instead of silently testing nothing.
+-//!
+-//! Everything below stays exactly as it was, and none of it is silent — each still draws
+-//! that warning wherever the `!` is always false:
+-//!
+-//! | shape | why it is not fused |
+-//! |---|---|
+-//! | a statement between the store and the `if` | only the PLACE could carry the status that far, and the place is storage |
+-//! | `!place` in the `if`'s BODY, or in a `while` | the body is past the pair; a `while` would spin on a status that cannot change |
+-//! | `!place` in an `else if` arm | it is not the condition of the statement's own `if` |
+-//! | a place whose read contains a call — `w[bump()]` | the fused form DROPS the second read, so a read that can do more than fetch must not match |
+-//! | a TUPLE element — `t.0` | its read is a [`Value::TupleGet`], not an `OpGet…` call, so [`same_place`] cannot name it |
+-//! | a KEYED element — `ks[k].v` | the read is already nullable (the key may be absent), so `!` has a meaning there and keeps it |
+-//! | `place = (place + 10) ?? d` | the author already chose the value; `range_guard_inside_discharge` owns that store |
+-//! | `integer`, `i32`, and every `τ?` | they keep a code for their own failure, and `!` reads it anywhere |
+-//!
+-//! Where no `!` names the place, nothing here runs and emission is byte-identical.
+-
+-use crate::data::{Data, IntegerSpec, Type, Value};
+-
+-/// A narrow store whose fit-failure the next statement may ask about.
+-///
+-/// Built at the compound-assignment seam — the one place a compound store passes through
+-/// with its target still a readable place — and consumed by the `!` in the following
+-/// condition.
+-#[derive(Debug, Clone)]
+-pub(crate) struct FitFusion {
+-    /// The place the store names, spelled as the expression that READS it: a `Var` for a
+-    /// local, an `OpGet…` chain for a field or an element. This is what a `!` operand is
+-    /// compared against, and comparing the read is what makes the three spellings one case.
+-    pub(crate) place: Value,
+-    /// The narrow target's spec — the bounds the checked cast tests against.
+-    pub(crate) spec: IntegerSpec,
+-    /// The `__fit_N` temp, minted the first time a `!place` asks for it and `None` while
+-    /// nobody has. `None` at the end of the statement means the author wrote no test, which
+-    /// is the ordinary case and the one that must emit exactly what it emitted before.
+-    pub(crate) fit_var: Option<u16>,
+-}
+-
+-/// Do these two expressions name the same place, using only nodes it is safe to READ ONCE?
+-///
+-/// Both questions at once, deliberately. The fused form deletes the second read of the
+-/// place — the `!` reads `__fit_N` instead — so a place whose read can do anything other
+-/// than fetch a value must not match, and the cheapest way to guarantee that is to admit no
+-/// node that could. `Var`, integer literals and `OpGet…` calls are the whole admitted set:
+-/// a user call, a `TupleGet`, a discharge block or an arithmetic op all fail to match and so
+-/// simply do not fuse.
+-///
+-/// The fallback is `false`, and that is the safe direction: a shape this cannot read leaves
+-/// the pair exactly as it is today, which is a missed opportunity and never a wrong answer.
+-pub(crate) fn same_place(data: &Data, a: &Value, b: &Value) -> bool {
+-    match (a.unspan(), b.unspan()) {
+-        (Value::Var(x), Value::Var(y)) => x == y,
+-        (Value::Int(x), Value::Int(y)) => x == y,
+-        (Value::Long(x), Value::Long(y)) => x == y,
+-        (Value::Call(dx, ax), Value::Call(dy, ay)) => {
+-            dx == dy
+-                && data.def(*dx).name().starts_with("OpGet")
+-                && ax.len() == ay.len()
+-                && ax
+-                    .iter()
+-                    .zip(ay.iter())
+-                    .all(|(p, q)| same_place(data, p, q))
+-        }
+-        _ => false,
+-    }
+-}
+-
+-/// The `OpRangeDefault(value, lo, hi, dflt)` a narrow store wraps its value in, inside the
+-/// statement node that performs the store.
+-///
+-/// Two shapes reach here and they are the two a store has: `Set(var, value)` for a local and
+-/// `Call(OpSet…, [place…, value])` for a field or an element, whose value is always the last
+-/// argument. Anything else answers `None` and the pair is left alone.
+-///
+-/// Asked BEFORE the fused form is armed, so a store shape this cannot recognise never
+-/// reaches the point where the `!` has already been rewritten to read a temp that was never
+-/// bound.
+-pub(crate) fn guard_slot<'a>(data: &Data, stmt: &'a mut Value) -> Option<&'a mut Value> {
+-    let slot = match stmt.unspan_mut() {
+-        Value::Set(_, value) => Some(&mut **value),
+-        Value::Call(_, args) => args.last_mut(),
+-        _ => None,
+-    }?;
+-    match slot.unspan() {
+-        Value::Call(d, args) if data.def(*d).name() == "OpRangeDefault" && args.len() == 4 => {
+-            Some(slot)
+-        }
+-        _ => None,
+-    }
+-}
+-
+-/// Does this statement carry a recognisable narrow-store guard? The read-only half of
+-/// [`guard_slot`], for the promotion test.
+-pub(crate) fn has_guard_slot(data: &Data, stmt: &Value) -> bool {
+-    let slot = match stmt.unspan() {
+-        Value::Set(_, value) => Some(&**value),
+-        Value::Call(_, args) => args.last(),
+-        _ => None,
+-    };
+-    matches!(slot.map(Value::unspan),
+-        Some(Value::Call(d, args)) if data.def(*d).name() == "OpRangeDefault" && args.len() == 4)
+-}
+-
+-/// The type a `__fit_N` temp is declared with: a full-width nullable `integer`.
+-///
+-/// Never `Optional(τ)` for the narrow τ being stored — see the module header. The checked
+-/// cast still tests τ's own bounds; only the temp that holds the outcome is wide.
+-pub(crate) fn fit_var_type() -> Type {
+-    Type::optional(crate::data::I64.clone())
+-}
+-
+-impl crate::parser::Parser {
+-    /// The `__fit_N` temp a `!place` in a fused position must read, or `None` when this `!`
+-    /// is not one — which is every `!` in a program that did not write the pair.
+-    ///
+-    /// Minted on demand and at most once per store, so `if !a and !a { … }` reads one temp
+-    /// and a condition naming a different place mints nothing.
+-    pub(crate) fn fuse_fit_test(&mut self, operand: &Value) -> Option<u16> {
+-        if self.first_pass || !self.fit_in_condition {
+-            return None;
+-        }
+-        let cand = self.fit_armed.as_ref()?;
+-        if let Some(v) = cand.fit_var {
+-            return same_place(&self.data, &cand.place, operand).then_some(v);
+-        }
+-        if !same_place(&self.data, &cand.place, operand) {
+-            return None;
+-        }
+-        let v = self.create_unique("_fit", &fit_var_type());
+-        if let Some(c) = self.fit_armed.as_mut() {
+-            c.fit_var = Some(v);
+-        }
+-        Some(v)
+-    }
+-}
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 7ff58b373..bdb13c619 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -393,27 +393,6 @@ pub struct Parser {
+     /// Read once by `parse_if`, which clears it so a nested value-`if` inside a statement one
+     /// does not inherit it.
+     pub(crate) stmt_if_pending: bool,
+-    /// @PLN152 step 5 — the narrow store the statement just parsed made, offered to an
+-    /// `if !place { … }` standing as the VERY NEXT statement.
+-    ///
+-    /// `u8`/`i8`/`u16`/`i16`/`u32` and every `limit(lo, hi)` range fill their own width, so
+-    /// a value that does not fit takes the type's default and nothing in the program can
+-    /// tell that answer from a computed one.  The fit status is therefore carried in a
+-    /// `__fit_N` temp beside the STORE and consumed by the `!` in the next statement's
+-    /// condition — never stored in the slot, an element or a field, which is what keeps a
+-    /// `vector<u8>` one byte per element.
+-    ///
+-    /// Set at the compound-assignment seam, promoted by [`Self::parse_block_inner`] when the
+-    /// pushed statement really carries the `OpRangeDefault` guard, and dropped at the next
+-    /// statement boundary — so nothing survives past the pair the author wrote.
+-    pub(crate) fit_candidate: Option<crate::parser::fit::FitFusion>,
+-    /// The promoted [`Self::fit_candidate`], live across exactly the following statement.
+-    pub(crate) fit_armed: Option<crate::parser::fit::FitFusion>,
+-    /// True only while the CONDITION of the `if` directly following such a store is parsed.
+-    /// `parse_if` opens the window (it is the one site that knows statement position) and
+-    /// `parse_if_expecting` closes it the moment the condition is complete, so a `!place`
+-    /// in the BODY reads the slot as it always did.
+-    pub(crate) fit_in_condition: bool,
+     /// loft#1382 — an arm-agreement mismatch found while parsing a construct that BEGAN its
+     /// statement, held until the `;` after it is visible.
+     ///
+@@ -1271,7 +1250,6 @@ pub(super) mod control;
+ pub(super) mod definitions;
+ pub(super) mod expressions;
+ pub(super) mod fields;
+-pub(super) mod fit;
+ pub(super) mod objects;
+ pub(super) mod operators;
+ pub(super) mod vectors;
+@@ -1395,9 +1373,6 @@ impl Parser {
+             pending_param_positions: Vec::new(),
+             amp_pending: false,
+             stmt_if_pending: false,
+-            fit_candidate: None,
+-            fit_armed: None,
+-            fit_in_condition: false,
+             pending_arm_mismatch: None,
+             arm_convert_reported: false,
+             arms_of_statement_construct: false,
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 6bcddd08b..0bf922095 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -529,50 +529,27 @@ impl Parser {
+             // The operand is a SUB-expression, so the assignment's destination hint does not
+             // reach it (loft#1304 — see `Parser::prefix_operand`).
+             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+-            let mut t = self.parse_part(var_tp, val, parent_tp);
++            let t = self.parse_part(var_tp, val, parent_tp);
+             self.prefix_operand = outer_prefix;
+             // A unary prefix operator must validate its operand like a binary
+             // one does, else an undefined name (a pass-1 placeholder Var with no
+             // slot) reaches codegen and panics instead of a clean "Unknown
+             // variable" diagnostic (@PLN53 F1-1).
+             self.known_var_or_type(val, &operand_pos);
+-            // `@FR-E-Uncomp-Seen` — `!place` in the condition of the `if` DIRECTLY after a store
+-            // to that same narrow place asks whether the store fit, which is a question the
+-            // slot cannot answer: `u8` fills its width, so the default it took is
+-            // indistinguishable from a computed one.  Read the `__fit_N` temp instead;
+-            // `parse_block_inner` splits the store to bind it once the statement is
+-            // complete.  The temp is a genuine `integer?`, so the always-false check below
+-            // sees a nullable operand and stays quiet without being taught this case.
+-            if let Some(fit) = self.fuse_fit_test(val) {
+-                *val = Value::Var(fit);
+-                t = crate::parser::fit::fit_var_type();
+-                // …and the operand really is nullable now, which is the fact the
+-                // transient field-read marker was still carrying from the place.
+-                self.expr_not_null = false;
+-            }
+             // #253: `!x` on a non-boolean reads as "is x null?" — the null
+-            // sentinel is in-band (LOFT.md "!value asymmetry").  On an operand whose
+-            // type kept no code back for null the value can never BE the sentinel, so
+-            // `!x` is *always false* — a silent no-op (`f = 0; if !f` never runs,
+-            // because 0 is a real value, not null).  Warn, don't error: a nullable
+-            // operand (`!both` in stdlib min/max) is a legitimate null test, and boolean
++            // sentinel is in-band (LOFT.md "!value asymmetry").  On a `not null`
++            // operand the value can never BE the sentinel, so `!x` is *always
++            // false* — a silent no-op (`f = 0; if !f` never runs, because 0 is a
++            // real value, not null).  Warn, don't error: a nullable operand
++            // (`!both` in stdlib min/max) is a legitimate null test, and boolean
+             // `!` is ordinary negation (`false` is a valid value there).
+             let eff = if let Type::RefVar(inner) = &t {
+                 (**inner).clone()
+             } else {
+                 t.clone()
+             };
+-            // @PLN152 step 5 — the question is `IntegerSpec::non_null_reads_null`, not
+-            // `not_null`.  That flag is set only where a DECLARATION gave the sentinel up
+-            // to widen the range — a struct field's spelling of it — so it answered the
+-            // field `!f.i` and left the two other spellings of the identical type silent:
+-            // `a: u8 = 250; if !a { … }` and `if !v[0] { … }` over a `vector<u8>` were
+-            // always-false code with nothing said about them.  This lint is the adjacency
+-            // gate the fused form above relies on, so a hole in it is a hole in that
+-            // promise: move the `if` one line away from its store and the check must start
+-            // reporting itself, whichever spelling of the place it names.
+-            let operand_not_null = self.expr_not_null
+-                || matches!(&eff, Type::Integer(spec) if !spec.non_null_reads_null());
++            let operand_not_null =
++                self.expr_not_null || matches!(&eff, Type::Integer(spec) if spec.not_null);
+             if !self.first_pass
+                 && operand_not_null
+                 && !matches!(eff, Type::Boolean | Type::Null | Type::Unknown(_))

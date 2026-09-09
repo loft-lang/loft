@@ -29,11 +29,20 @@
 // after the `+=` would test the unfused shape and pass on any build.  The unfused shape has
 // its own cells, in `152-the-fallback-and-failure-spellings-that-already-work.loft`.
 //
-// @falsified-at: e6922e9fa — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
-//   native exit 1 -> 0, native 1 assertion failures -> 0.  It stops at the FIRST `detected`
-//   assertion there, because the `!` is always false on a non-null narrow and the fused form
-//   does not exist; every VALUE assertion passes on both builds, which is the point — this
-//   plan changed what can be SEEN and nothing about what is stored.
+// @falsified-at: 06f624ca5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/152-a-store-that-does-not-fit-is-testable-where-it-happened.patch
+//   CHANNEL: ASSERTION (and the exit that follows it).  Not the leak channel: nothing here
+//     allocates, and both trees are leak-clean.
+//   ARMED: nothing.  A plain run on either backend reports it, because the control STOPS at
+//     the first `detected` assertion — the `!` is always false on a non-null narrow there,
+//     so the fused form does not exist.
+//   WITNESS: `assertion failed: a u8 that overflowed says so` on the control, at the first
+//     cell of `a_every_narrow_width_reports_its_own_fit_failure`.
+//   HOLDS: every VALUE assertion passes on BOTH trees — `a == 0`, `a == 255`, `c == 127`,
+//     every default — and leak, panic and free-refusal are equal on both.  That is the
+//     point of the plan: it changed what can be SEEN and nothing about what is stored, so a
+//     patch that moved a value would be a different fault.
 
 struct FitInner { i: u8 }
 struct FitOuter { inner: FitInner, n: u16 }

@@ -49,6 +49,8 @@ siblings="$(dirname "$root")"
 registry="$siblings/loft-registry/index.json"
 loft="$root/target/release/loft"
 work="${TMPDIR:-/tmp}/loft-revalidate-$$"
+here="$root/scripts"
+warn="$work/warn"
 self_test=0
 want=()
 for a in "$@"; do
@@ -61,7 +63,7 @@ done
 
 [ -x "$loft" ] || { echo "no release binary at $loft — run: cargo build --release --bin loft" >&2; exit 2; }
 [ -f "$registry" ] || { echo "no registry index at $registry — clone loft-lang/loft-registry beside this checkout" >&2; exit 2; }
-mkdir -p "$work"
+mkdir -p "$work" "$warn"
 trap 'rm -rf "$work"' EXIT
 
 # The matrix is only as current as the sibling CLONE of the registry, and a clone that
@@ -217,6 +219,12 @@ while IFS=$'\t' read -r n v repo tag sub; do
   fi
   log="$work/$n.log"
   if (cd "$p" && LOFT_TIMEOUT=240 "$loft" --interpret --tests tests) >"$log" 2>&1; then
+    # The WARNING reading, off the log the run already produced, so it costs nothing.
+    # CI has had this since the dashboard existed; this gate had not, which meant the
+    # same sweep answered two different questions depending on where it ran.
+    python3 "$here/lib_warning_scan.py" scan --from-log "$log" --root "$p" \
+      --name "$n" --ref "$v" --label published --json "$warn/$n-published.json" \
+      >/dev/null 2>&1 || true
     printf '%-18s %-9s %s\n' "$n" "$v" "PASS"; passed=$((passed + 1))
   elif still_compiles "$p" "$log"; then
     printf '%-18s %-9s %s\n' "$n" "$v" "runtime-fail, COMPILES (env/native-deps — VERIFY)"
@@ -229,6 +237,23 @@ while IFS=$'\t' read -r n v repo tag sub; do
   fi
 done < "$matrix"
 
+# The RELEASE-READINESS half, separate from the compile/test verdict above ON PURPOSE:
+# they answer different questions.  Above: does this loft retro-break a shipped library —
+# the freeze's question, and a break is this change's fault.  Here: can each library be
+# built and released as it STANDS — a fact about the ecosystem, true or false before you
+# started, and never a reason to abandon your change.
+#
+# RED whenever a library carries warnings, because a library with warnings cannot be
+# released: its own CI runs `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the
+# next PR to that repo is red before its author has typed anything.  Same rule as the
+# `release-ready` job in `revalidate-libs.yml`, through the same script, so the two readers
+# of this policy cannot drift — which is what loft#1315 cost when they did.
+echo
+release_rc=0
+if [ -n "$(ls -A "$warn" 2>/dev/null)" ]; then
+  python3 "$here/lib_warning_scan.py" collect "$warn" || release_rc=$?
+fi
+
 echo
 echo "$passed pass, $envfail runtime/env, $skipped skipped, $breaks COMPILE-BREAK"
 [ "$skipped" -gt 0 ] && echo "a SKIP is not a pass — clone the missing repo beside this one, or fetch its tags"
@@ -240,4 +265,8 @@ if [ ${#want[@]} -gt 0 ] && [ "$skipped" -gt 0 ]; then
   echo "asked about ${#want[@]} package(s) and could not check $skipped of them" >&2
   exit 2
 fi
-exit $((breaks > 0))
+# The two verdicts are reported apart, and only the COMPILE-BREAK one is this change's
+# fault.  `release_rc` is a fact about the libraries as they stand; the exit code carries it
+# so a script can read it, and the line above says which of the two went wrong.
+[ "$release_rc" -eq 0 ] || echo "…and one or more libraries cannot be released as they stand (above) — the ecosystem's state, not this change's"
+exit $(( (breaks > 0) || release_rc != 0 ))

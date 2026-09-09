@@ -273,6 +273,52 @@ def cmd_scan(args) -> int:
     return 0
 
 
+# ── the release-readiness verdict ─────────────────────────────────────────────────────
+#
+# One question, asked of the ecosystem rather than of this change: **can each published
+# library be built and released as it stands?**  A library carrying warnings cannot — its
+# own CI runs `LOFT_DENY_WARNINGS=1`, so the next PR to that repo is red before its author
+# has typed anything, and a release cut from it fails the same gate.
+#
+# So this is RED whenever any library warns, not when the set grows.  The absolute state is
+# the answer to the question; a delta is the answer to a different one.
+#
+# ⚠ It is ADVISORY and must stay so.  Warnings are non-contractual — a new deprecation must
+# never fail an already-shipped artifact, which is COMPATIBILITY.md's rule — and the
+# compile/test gate beside it is the one that speaks for the freeze.  This job says *"nine
+# libraries cannot be released today"*, which is a fact a reader wants on every PR and
+# never a reason to refuse the PR.
+#
+# An INCONCLUSIVE reading is red too, and deliberately: a package whose suite did not run
+# compiled no file, so nothing could warn, and reading that zero as "releasable" is the one
+# answer this verdict must never give.
+def releasable(dirty, inconclusive) -> int:
+    if not dirty and not inconclusive:
+        print("RELEASE-READY: every scanned library builds warning-clean against this loft.")
+        return 0
+    if dirty:
+        print(
+            f"NOT RELEASE-READY: {len(dirty)} librar(y/ies) carry warnings — "
+            + ", ".join(dirty)
+            + ".\n  Each fails its own `LOFT_DENY_WARNINGS=1` CI as it stands, so it cannot be\n"
+            "  released, and the next PR to that repo is red before its author changes\n"
+            "  anything.  Clean the source and republish, or fix the warning here if this\n"
+            "  loft is what introduced it."
+        )
+        print(
+            "::error title=libraries not release-ready::"
+            + ", ".join(dirty)
+            + " — carry warnings, so they cannot be released as they stand.",
+            file=sys.stderr,
+        )
+    if inconclusive:
+        print(
+            f"\nUNKNOWN: {len(inconclusive)} reading(s) compiled no file, so their zero is "
+            "not an all-clear — " + ", ".join(sorted(inconclusive)) + "."
+        )
+    return 1
+
+
 def cmd_collect(args) -> int:
     reports = []
     for path in sorted(Path(args.dir).rglob("*.json")):
@@ -393,7 +439,8 @@ def cmd_collect(args) -> int:
         )
     else:
         print("✅ every scanned library is warning-clean against this loft.")
-    return 0
+    print()
+    return releasable(dirty, inconclusive)
 
 
 def main() -> int:

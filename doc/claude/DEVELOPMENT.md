@@ -129,6 +129,35 @@ The branch is merged to main via a single PR when all items pass CI.
   policy on inputs each of its rules has to act on. A SKIP is not a pass — it means that
   repo is not cloned beside this one.
 
+  **It answers a SECOND question now, apart from the first: can each library be built and
+  RELEASED as it stands?** A library carrying warnings cannot — its own CI runs
+  `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the next PR to that repo is red
+  before its author has typed anything. So the run prints a `RELEASE-READY` /
+  `NOT RELEASE-READY` verdict naming the packages, and carries it in the exit code.
+
+  ⚠ **The two verdicts are apart because only one of them is your change's fault.** A
+  COMPILE-BREAK is a language change retro-breaking a shipped library — the freeze's
+  question, and yours to answer. `NOT RELEASE-READY` is a fact about the ecosystem that was
+  true before you started; the closing line says so, so a red never sends you looking for a
+  regression you did not cause.
+
+  ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
+  the absolute state; a delta answers a different one. On the CI side this is the
+  `Release-ready` STEP inside each library's own matrix leg in `revalidate-libs.yml` — one
+  pass per library, reading the log that pass already wrote, so the answer costs nothing.
+  It is **advisory and must never become a required check**: `main` requires Test ×3,
+  Clippy and Format, and a library's warning debt is information, never a veto on a loft
+  PR. On a RELEASE it is blocking, which is `release-gate.yml`'s standing rule —
+  *informational on a diff, blocking on a release* — and exactly right for a question that
+  is literally "can these be released".
+
+  ⚠ **Why it is a verdict and not a dashboard line**, in one sentence, because the dashboard
+  already existed: it printed the dirty set for weeks inside a GREEN check — measured over
+  `revalidate-libs`'s own history, **2 → 11 libraries in eight days, every run green** — and
+  the first anyone heard of it was a red check in the library repos on code those authors
+  had not touched, which is exactly what the step's own comment predicted. A report whose
+  default state nobody notices is not a report.
+
   **A clean run reads `42 pass, 0 runtime/env, 0 skipped, 0 COMPILE-BREAK` and exits 0.**
   It did not until loft#1315: the matrix policy was written twice, once in the workflow and
   once here, and the local copy was missing the workflow's skip of the `loft` package. That

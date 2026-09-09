@@ -2617,15 +2617,24 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
 
-**2026-09-09, the SECOND join (loft2's 1 + loft3's 6 new commits, rebased onto `main`
-`e4c7db58` after PR #1490 squash-merged) plus loft#1493: the unspan row `437 · 413 · 24` →
-`448 · 425 · 23`; the Optional row does not move.**  Re-measured on the union and taken from the
-run.  ⚠ **The two chains do not meet, and that is what a join is.**  This checkout's own history
-above reads `440 · 417 · 23 → 445 · 422 · 23`, and the incoming stream's reads
-`434 · 410 · 24 → 437 · 413 · 24` — two lineages of the same table, neither of which is the
-joined tree's.  The cherry-pick surfaced them as a CONFLICT between two answers, which is
-exactly the shape that makes carrying one of them tempting; the only honest row is the one the
-instrument prints afterwards.
+**2026-09-09, the THIRD join (loft2's 4 + loft3's 7 new commits) carrying @PLN152 step 5 and
+loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.**  Taken from
+`scripts/ir_walker_audit.py unspan` on the joined tree, not from either side.
+
+@PLN152 step 5 is three of the new discriminators, all in `src/parser/fit.rs`, and all
+peeling — which is why the OPAQUE column falls rather than rises, and why the Optional row is
+untouched (these three ask about `Value` variants, not `Type` ones).  That they peel is not
+luck: `same_place` and `guard_slot` compare an IR node the parser has just built against one it
+built a statement earlier, and a `Span` sits over exactly the fault-prone nodes those two ask
+about — a bare match would have recognised the pair on the spellings that carry no position and
+missed it on the ones that do, working for a local and silently not for a field.
+
+⚠ **The two chains do not meet, and that is what a join is.**  This checkout's history above
+reads `440 · 417 · 23 → 445 · 422 · 23`; the incoming stream's reads `434 · 410 · 24 →
+437 · 413 · 24`.  Two lineages of one table, neither of them the joined tree's.  Both arrived
+at the SAME endpoint by different routes and the merge surfaced them as a CONFLICT between two
+answers — the shape that makes carrying one of them tempting.  The DELTA is what carries across
+a join; the endpoint is only ever what the instrument prints afterwards.
 
 **2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
 `tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →
