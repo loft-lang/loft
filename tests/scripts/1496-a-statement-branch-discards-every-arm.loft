@@ -36,7 +36,8 @@
 // its arms (`value_position`, `bound_to_a_local`), and a DIVERGING arm is left alone —
 // `Never` is not a claim to yield, and loft#1495's guard is the rest of that case.
 //
-// @falsified-at: 4b7e9b99c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0.
+// @falsified-at: 4b7e9b99c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0;
+//   native INERT, which is expected and is the finding: only one backend was ever wrong.
 // @falsified-by: tests/falsified/1496-a-statement-branch-discards-every-arm.patch
 //   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
 //   CHANNEL: VALUE, on the INTERPRETER only.  `--native` is equal on both trees, which is the

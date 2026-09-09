@@ -32,21 +32,23 @@
 // (loft#1382's).  Both are the reason the fix excludes only a DIVERGING void arm rather than
 // switching the discard off.
 //
-// @falsified-at: b18c6d6ad — native exit 0 -> 1 with no output: the control does not COMPILE,
-//   which is the whole channel.
+// @falsified-at: b18c6d6ad — native exit 1 -> 0 (the control does not COMPILE), and interpret
+//   exit 1 -> 0 with 1 assertion failure.
 // @falsified-by: tests/falsified/1495-a-diverging-arm-beside-a-value-arm-still-yields.patch
-//   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
-//   CHANNEL: the native COMPILE, reported as exit with no output.  Not a value channel and not
-//     a leak one: nothing here ever ran on the control build, and the interpreter answers
-//     correctly on both trees — which is why every cell has to be exercised through `--native`
-//     for this guard to mean anything.
-//   ARMED: nothing.  A plain `--native` run fails to build.
-//   WITNESS: `error[E0308]: mismatched types … expected `DbRef`, found `()`` on generated Rust,
-//     at the `else {DbRef::NULL}` closing the arm chain, with rustc's own
-//     "help: remove this semicolon to return this value" pointing at the discard.
-//   HOLDS: the interpreter's exit, assertions, leak, panic and free-refusal are all equal on
-//     both trees, and so are native's once it builds.  A build that cannot run has no other
-//     channel to move, which is why this receipt has one and not four.
+//   — the same two channels.
+//   ⚠ CHANNEL: the two backends move for TWO DIFFERENT defects, and the receipt is only honest
+//     if it says so.  NATIVE is this issue's: the control does not build at all, so nothing
+//     ever ran on it.  INTERPRET is loft#1496's — the two statement CONTROLS below were what
+//     found that one, and `b18c6d6ad` predates both fixes, so the control build fails them
+//     too.  A reader scoring this guard on the interpreter alone would credit this fix with a
+//     defect it did not close.
+//   ARMED: nothing.  A plain `--native` run fails to build; a plain `--interpret` run fails an
+//     assertion.
+//   WITNESS: native — `error[E0308]: mismatched types … expected `DbRef`, found `()`` on
+//     generated Rust, at the `else {DbRef::NULL}` closing the arm chain, with rustc's own
+//     "help: remove this semicolon to return this value" pointing at the discard.  Interpret —
+//     `control, its value arm discards: got null`, which is loft#1496's witness.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees.
 
 struct Box1495 { items: vector<u8>, name: text }
 struct Inner1495 { items: vector<u8>, w: integer }
