@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library web — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-web-guide.html">
+<meta property="og:title" content="web guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library web — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-web-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="web guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library web — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>web guide</h1>
+<article>
+<p><a href="lib-web.html">← web</a> · <a href="lib-web-api.html">API reference</a> · <a href="lib-web-src.html">source</a></p>
+<p><code>web</code> is the client half: HTTP requests (<code>http_get</code> and friends, including byte-range reads of a large remote file), a WebSocket client that reconnects on its own, and a small binary packer for the frames you send over it.</p>
+<p>It is not the server — that is <code>server</code>, which is built on this package and whose guide does a live round trip between the two. It is not a browser DOM binding either; on wasm the same calls are routed through the host's <code>fetch()</code> and <code>WebSocket</code>, so a loft program compiled for the browser writes the code below unchanged.</p>
+<p>⚠ This guide runs WITHOUT a network, exactly as the package's CI does — the live HTTP examples live in <code>tests-network/http.loft</code>. That is not a gap being papered over: the contracts worth teaching here are what a call answers when the other end is NOT there, and having no server is what makes them demonstrable.</p>
+<pre><code><span class="kw">use</span> web;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  <span class="fn-call">a_request_that_cannot_reach_anything</span>();</code></pre>
+<p>Every section is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">a_handle_is_not_a_connection</span>();
+  <span class="fn-call">frames_that_carry_a_zero_byte</span>();
+  <span class="fn-call">reading_one_byte_back</span>();
+}</code></pre>
+<h2 id="an-unreachable-server-is-an-answer-not-an-error">An unreachable server is an ANSWER, not an error</h2>
+<p><code>http_get</code> returns an <code>HttpResponse { status, body, headers }</code> whatever happens. A server that is down, not started yet, or briefly unreachable answers <strong>status 0</strong> — so the shape of a retry is a plain loop over the status, and there is no error path to write.</p>
+<p><code>response.ok()</code> is the 2xx test, and it is false for 0 as it is for 404.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_request_that_cannot_reach_anything</span>() {
+  r = <span class="fn-call">http_get</span>(<span class="st">"http://127.0.0.1:18999/nothing"</span>);   <span class="cm">// nothing listens there</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.status == <span class="nm">0</span>, <span class="st">"an unreachable server answers 0, got {r.status}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!r.<span class="fn-call"><a href="stdlib-file-system.html">ok</a></span>(), <span class="st">"…and ok() is false, exactly as it is for a 404"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(r.body) == <span class="nm">0</span>, <span class="st">"…with an empty body"</span>);</code></pre>
+<pre><code>  n = <span class="fn-call">http_size</span>(<span class="st">"http://127.0.0.1:18999/nothing"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == -<span class="nm">1</span>, <span class="st">"http_size answers -1 when the length is unavailable, got {n}"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"http   : unreachable = status 0, size -1 — answers, never errors"</span>);
+}</code></pre>
+<p>That is the whole error model. A reachable server fills the same three fields:</p>
+<pre><code>  r = http_get("https://example.com/");
+  if r.ok() { println(r.body); }
+</code></pre>
+<p><code>http_post</code> / <code>http_put</code> / <code>http_delete</code> take a body; every one of them has an <code>_h</code> twin taking a <code>vector&lt;text&gt;</code> of <code>"Key: Value"</code> request headers. For a large remote file, <code>http_size(url)</code> then <code>http_get_range(url, offset, len)</code> reads a slice as <code>206 Partial Content</code> instead of pulling the whole thing.</p>
+<h2 id="a-handle-is-not-a-connection">A handle is not a connection</h2>
+<p><code>ws_handler(url)</code> answers null for ONE reason: a URL it cannot parse as a WebSocket address. A well-formed <code>ws://</code> whose server is down still hands back a usable handle, because reconnecting — with backoff — is the library's job and not the caller's. So a non-null handle means *"this address is usable"*, never *"a connection is open"*, and treating null as "the server is down" is the mistake this shape invites.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_handle_is_not_a_connection</span>() {
+  down = <span class="fn-call">ws_handler</span>(<span class="st">"ws://127.0.0.1:18999/ws"</span>);     <span class="cm">// nothing is listening</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(down != <span class="kw">null</span>, <span class="st">"a well-formed address is usable even with no server there"</span>);</code></pre>
+<pre><code>  malformed = <span class="fn-call">ws_handler</span>(<span class="st">"not a url"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(malformed == <span class="kw">null</span>, <span class="st">"null means the ADDRESS is unusable"</span>);</code></pre>
+<pre><code>  wrong_scheme = <span class="fn-call">ws_handler</span>(<span class="st">"http://127.0.0.1:18999/ws"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wrong_scheme == <span class="kw">null</span>, <span class="st">"…and an http:// URL is not a WebSocket address"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ws     : null means unusable ADDRESS, never a closed connection"</span>);
+}</code></pre>
+<h2 id="frames-that-carry-a-zero-byte">Frames that carry a zero byte</h2>
+<p>loft <code>text</code> is a UTF-8 byte buffer and codepoint 0 is the <code>character</code> null sentinel — so a blob assembled by interpolation, <code>"{a}{b}{c}"</code>, SILENTLY drops every NUL. A binary header with a small integer field (a type byte, a session id, a length) is mostly NULs, so that is not an edge case, it is the common one.</p>
+<p>The packer is why this library ships one: <code>pack_reset</code> empties a per-thread buffer, the <code>pack_u8</code> / <code>pack_u16_le</code> / <code>pack_u32_le</code> calls append in wire order, and <code>pack_take</code> hands the bytes back AND resets. So <code>take</code> is a MOVE, not a read — a second take answers nothing, and the bytes are only valid until the next one, so send or copy before building the next frame.</p>
+<p>Measure with <code>size()</code> (bytes). <code>len()</code> counts characters and will disagree.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">frames_that_carry_a_zero_byte</span>() {
+  <span class="fn-call">pack_reset</span>();
+  <span class="fn-call">pack_u8</span>(<span class="nm">1</span>);
+  <span class="fn-call">pack_u8</span>(<span class="nm">0</span>);          <span class="cm">// the field interpolation loses</span>
+  <span class="fn-call">pack_u8</span>(<span class="nm">2</span>);
+  blob = <span class="fn-call">pack_take</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(blob.<span class="fn-call"><a href="stdlib-text.html">size</a></span>() == <span class="nm">3</span>, <span class="st">"all three bytes survive the builder: {blob.size()}"</span>);</code></pre>
+<pre><code>  one = <span class="nm">1</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">character</a></span>;
+  zero = <span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">character</a></span>;
+  two = <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">character</a></span>;
+  interpolated = <span class="st">"{one}{zero}{two}"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(interpolated.<span class="fn-call"><a href="stdlib-text.html">size</a></span>() == <span class="nm">2</span>,
+         <span class="st">"the same three by interpolation: {interpolated.size()} bytes, and nothing said so"</span>);</code></pre>
+<pre><code>  again = <span class="fn-call">pack_take</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(again.<span class="fn-call"><a href="stdlib-text.html">size</a></span>() == <span class="nm">0</span>, <span class="st">"take is a MOVE — a second one answers nothing"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"pack   : 3 bytes built, 2 by interpolation — the NUL is the difference"</span>);
+}</code></pre>
+<h2 id="reading-one-byte-back">Reading one byte back</h2>
+<p><code>byte_at(idx, buf)</code> — note the argument order, which is <code>(index, text)</code> and not the <code>(text, index)</code> every other accessor takes. It is fixed by what the C-ABI auto-marshal supports, so it will not change to match.</p>
+<p>Out of range answers <strong>-1</strong>, and that matters BECAUSE 0 is a value the buffer legitimately carries. Using <code>== 0</code> as a bounds check reads a real NUL field as the end of the frame AND reads an overrun as a NUL field — wrong in both directions, in exactly the binary protocols this helper exists for. Test <code>&lt; 0</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">reading_one_byte_back</span>() {
+  <span class="fn-call">pack_reset</span>();
+  <span class="fn-call">pack_u8</span>(<span class="nm">65</span>);
+  <span class="fn-call">pack_u8</span>(<span class="nm">0</span>);
+  buf = <span class="fn-call">pack_take</span>();</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(<span class="nm">0</span>, buf) == <span class="nm">65</span>, <span class="st">"byte 0 is 'A'"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(<span class="nm">1</span>, buf) == <span class="nm">0</span>, <span class="st">"byte 1 is an honest NUL field, value 0"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(<span class="nm">2</span>, buf) == -<span class="nm">1</span>, <span class="st">"one past the end is -1, not 0"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(-<span class="nm">1</span>, buf) == -<span class="nm">1</span>, <span class="st">"a negative index is -1 too"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(<span class="nm">2</span>, buf) &lt; <span class="nm">0</span>, <span class="st">"`&lt; 0` separates an overrun from a NUL field"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"byte_at: (index, buf), and -1 for out of range — never 0"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the whole surface, including the byte-range client and the browser (<code>[wasm.bridge]</code>) routing.</li>
+<li><code>tests/worked-examples.loft</code> — <code>@WEB-001</code> … <code>@WEB-003</code>, the three contracts above as running tests, and the calls the doc comments cite.</li>
+<li><code>tests-network/http.loft</code> — the live HTTP examples, run by hand.</li>
+<li><code>server</code> — the other half, and a guide that fetches from a server it starts.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

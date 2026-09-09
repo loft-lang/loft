@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>server guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library server — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-server-guide.html">
+<meta property="og:title" content="server guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library server — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-server-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="server guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library server — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>server guide</h1>
+<article>
+<p><a href="lib-server.html">← server</a> · <a href="lib-server-api.html">API reference</a> · <a href="lib-server-src.html">source</a></p>
+<p><code>server</code> opens a TCP port and hands you one <code>Request</code> per connection. You answer each one with a <code>respond*</code> method, which sends the reply and closes the connection. It also carries a WebSocket server, for one client or many.</p>
+<p>It is not the client half — that is <code>web</code> (<code>http_get</code>, <code>ws_handler</code>), which this package depends on and which the round trip below uses. It is not a framework: there is no router, no middleware and no template engine, because a <code>for</code> loop over the server and an <code>if</code> on <code>req.path</code> are already those things. And it is not the game wire format — that is <code>game_protocol</code>, which is built on this.</p>
+<h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
+<p>A server that answers one request, and the client that asks — in one program, because that is the shortest thing you can actually run:</p>
+<pre><code><span class="kw">use</span> server;
+<span class="kw">use</span> web;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  port = <span class="nm">18741</span>;
+  parallel {
+    <span class="fn-call">serve_one</span>(port);
+    <span class="fn-call">ask</span>(port);
+  }</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">a_bind_that_fails_says_so</span>();
+  <span class="fn-call">the_accept_that_does_not_wait</span>();
+  <span class="fn-call">binary_bodies_need_respond_bytes</span>();
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">serve_one</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {
+  srv = server::<span class="fn-call">listen</span>(port);
+  <span class="kw">for</span> req <span class="kw">in</span> srv {                       <span class="cm">// one Request per connection; `next` blocks</span>
+    <span class="kw">if</span> req.path == <span class="st">"/hello"</span> { req.<span class="fn-call">respond_html</span>(<span class="st">"&lt;h1&gt;Hello from loft&lt;/h1&gt;"</span>); }
+    <span class="kw">else</span> { req.<span class="fn-call">respond_404</span>(); }
+    <span class="kw">break</span>;                               <span class="cm">// a real server keeps looping</span>
+  }
+  srv.<span class="fn-call">close</span>();
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">ask</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</code></pre>
+<p>A server that is not up yet answers status 0 rather than failing, so the retry is a plain loop rather than error handling.</p>
+<pre><code>  r = <span class="fn-call">http_get</span>(<span class="st">"http://127.0.0.1:{port}/hello"</span>);
+  <span class="kw">for</span> _try <span class="kw">in</span> <span class="nm">0..50</span> {
+    <span class="kw">if</span> r.status != <span class="nm">0</span> { <span class="kw">break</span>; }
+    <span class="fn-call">sleep_ms</span>(<span class="nm">20</span>);
+    r = <span class="fn-call">http_get</span>(<span class="st">"http://127.0.0.1:{port}/hello"</span>);
+  }
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"status : {r.status}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"body   : {r.body}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.status == <span class="nm">200</span>, <span class="st">"the route answered 200, got {r.status}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.body == <span class="st">"&lt;h1&gt;Hello from loft&lt;/h1&gt;"</span>, <span class="st">"…with the body it was given"</span>);
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  status : 200
+  body   : &lt;h1&gt;Hello from loft&lt;/h1&gt;
+</code></pre>
+<p><code>parallel { }</code> is only here because one program has to be both ends. Your server is the <code>serve_one</code> half, with no <code>break</code> and no second arm.</p>
+<h2 id="a-bind-that-fails-says-so-loudly-on-purpose">A bind that fails says so — loudly, on purpose</h2>
+<p><code>listen</code> HALTS when the port is not free. That is the design and not a rough edge: a <code>Server</code> built on a failed bind is indistinguishable from a healthy one at every call site, so the process would report itself up and serve nobody — and invisible from outside too, because a readiness probe that connects to the port reaches whoever DID win the bind.</p>
+<p>When losing the port is an outcome you mean to handle — retrying elsewhere, scanning a range — take the recoverable door. <code>try_listen</code> never halts, and <code>bound()</code> is the check that makes its answer usable: every other method on an unbound server quietly does nothing, so skipping it buys back exactly the silence <code>listen</code> exists to prevent.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_bind_that_fails_says_so</span>() {
+  srv = server::<span class="fn-call">try_listen</span>(<span class="nm">18742</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(srv.<span class="fn-call">bound</span>(), <span class="st">"a free port binds"</span>);</code></pre>
+<pre><code>  taken = server::<span class="fn-call">try_listen</span>(<span class="nm">18742</span>);     <span class="cm">// writes one line to stderr, and continues</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!taken.<span class="fn-call">bound</span>(), <span class="st">"a port already held reports bound() == false"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(taken.handle &lt; <span class="nm">0</span>, <span class="st">"…and keeps a negative handle"</span>);</code></pre>
+<pre><code>  srv.<span class="fn-call">close</span>();
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"bind   : one holder, and the loser says so"</span>);
+}</code></pre>
+<h2 id="the-accept-that-does-not-wait">The accept that does not wait</h2>
+<p><code>for req in srv</code> blocks until a client connects, which is what you want when serving is all the process does. <code>next_nonblocking()</code> answers <code>null</code> immediately when nothing is pending, so one loop can interleave HTTP accepts with other work — a game tick, a WebSocket pump, a queue drain.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_accept_that_does_not_wait</span>() {
+  srv = server::<span class="fn-call">try_listen</span>(<span class="nm">18743</span>);
+  pending = srv.<span class="fn-call">next_nonblocking</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pending == <span class="kw">null</span>, <span class="st">"nothing connected, so nothing to answer"</span>);
+  srv.<span class="fn-call">close</span>();
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"accept : null when idle, so the loop stays yours"</span>);
+}</code></pre>
+<h2 id="the-one-that-bites-a-text-response-drops-a-binary-body">The one that bites: a text response DROPS a binary body</h2>
+<p><code>respond</code> and <code>respond_typed</code> take loft <code>text</code>, and a <code>text</code> built from non-UTF-8 bytes is the EMPTY text. So serving a PNG through them answers <strong>200 OK with Content-Length: 0</strong> — a success the caller cannot tell from an empty file, a broken image in the browser, and nothing reported anywhere. Measured: that is how loft's own review viewer served every <code>doc/images/*.png</code> for a while.</p>
+<p><code>respond_bytes(status, bytes, content_type)</code> is the one that carries them. The check below is on the value that reaches the responder rather than on a served image, because the loss happens at the <code>text</code> conversion, before any header is written — which is exactly why nothing downstream can see it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">binary_bodies_need_respond_bytes</span>() {
+  png_magic: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [<span class="nm">137</span>, <span class="nm">80</span>, <span class="nm">78</span>, <span class="nm">71</span>, <span class="nm">13</span>, <span class="nm">10</span>, <span class="nm">26</span>, <span class="nm">10</span>];
+  as_text = <span class="fn-call"><a href="stdlib-text.html">text_from_bytes</a></span>(png_magic);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(as_text) == <span class="nm">0</span>, <span class="st">"a PNG header is not UTF-8, so `text` holds nothing of it"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(png_magic) == <span class="nm">8</span>, <span class="st">"…while the bytes themselves are all there"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"binary : respond_bytes, never respond — the text form loses it silently"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the whole surface: byte ranges and <code>serve_data</code>, CORS, the single-client and many-client WebSocket servers, and the header helpers.</li>
+<li><code>tests/server.loft</code> and <code>tests/worked-examples.loft</code> — the best-explained calls in the package, each one a running example rather than a snippet.</li>
+<li><code>web</code> — the client half, and the package this one is built on.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

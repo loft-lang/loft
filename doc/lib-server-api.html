@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>server API</h1>
 <article>
-<p><a href="lib-server.html">← server</a> · version 0.6.1</p>
+<p><a href="lib-server.html">← server</a> · version 0.7.0</p>
 <p class="lib-legend">42 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Server</span></code></pre>
@@ -50,6 +50,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span></code></pre>
+<p><code>listen_on</code> without the halt: an unbound server comes back instead.  Check <code>bound()</code> — every other method on an unbound server does nothing, quietly.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span></code></pre>
@@ -57,6 +58,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span></code></pre>
+<p><code>listen_tls</code> without the halt.  Check <code>bound()</code>; a bad certificate and a taken port are the same answer here, so log the port before deciding which it was.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span></code></pre>
@@ -67,14 +69,17 @@
 <p>True when this server actually owns its port.  Always true for a <code>listen()</code> result (that halts otherwise) — it is the check that makes a <code>try_listen()</code> result usable.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next_nonblocking</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next_nonblocking</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>?</code></pre>
 <p>Non-blocking variant of <code>next()</code>.  Returns null immediately if no connection is pending.  Use this when the server interleaves HTTP accept with multi-client WS polling on a single port (single_port audience demo / future TTT-style multi-tab apps).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>?</code></pre>
+<p>BLOCK until a client connects, and answer its request.  The heart of stack 1: call it in a loop, respond exactly once, and the connection closes.</p>
+<p>⚠ Declared <code>-&gt; Request</code> rather than <code>-&gt; Request?</code>, which is why <code>for req in srv</code> does not compile (loft#1310).  <code>next_nonblocking</code> is the variant that answers null immediately when nobody is waiting.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
+<p>Answer with <code>text/plain</code> and CLOSE the connection.  Exactly one respond per request — a second is not an error, it just has no connection left to write to.  <code>respond_typed</code> is this with a Content-Type you choose.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
@@ -112,27 +117,38 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_css</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
+<p>200 as <code>text/css</code>.</p>
+<p>⚠ A stylesheet written as a loft literal needs its braces DOUBLED — <code>{</code> opens an interpolation, so <code>&quot;body {{ color: red }}&quot;</code> is what produces <code>body {</code>. Reading the file instead (<code>file(path).content()</code>) sidesteps it entirely.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_js</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
+<p>200 as <code>application/javascript</code>.  Same brace-doubling trap as <code>respond_css</code>, and script bodies hit it on the first function they declare.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_loft</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
+<p>200, serving loft SOURCE.  There is no registered MIME type for it, so this goes out as <code>text/plain</code> — which is what makes it read in a browser tab rather than download.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Request</span>)</code></pre>
+<p>The not-found answer.  Worth calling on every unmatched path: a request with no respond at all leaves the client waiting for a body that never comes.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">Server</span>)</code></pre>
+<p>Give the port back.  A server that is never closed holds its port until the process exits, which is what makes a restarted program fail to bind.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_upgrade</span>() -&gt; <span class="en">WebSocket</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_upgrade</span>() -&gt; <span class="en">WebSocket</span>?</code></pre>
+<p>Turn the connection the last <code>next</code> handed over into a WebSocket.  Answers null if the request was not a valid upgrade — check before using it.</p>
+<p>Takes no request argument because it acts on the one parked connection: this is the single-client stack, where there is only ever one.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next</span>(self: <span class="en">WebSocket</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>?</code></pre>
+<p>The next frame's payload, or null when the socket is done.  Nullable here, which is what lets a <code>while</code> over it end cleanly.</p>
+<p>Ask <code>last_opcode()</code> afterwards to tell a text frame from a binary one.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Send a TEXT frame.  False means the peer is gone — the return is the disconnect notice, since nothing else reports one.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
@@ -144,6 +160,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">WebSocket</span>)</code></pre>
+<p>Close the socket.  The peer sees a clean close rather than a dropped connection, which is the difference between a reconnect and an error.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsEvent</span></code></pre>
@@ -154,7 +171,7 @@
 <p>Block forever, draining events and calling the handler. Malformed message frames are logged at warn level and silently dropped — the handler never sees them.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll_event</span>(self: <span class="en">Server</span>) -&gt; <span class="en">WsEvent</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll_event</span>(self: <span class="en">Server</span>) -&gt; <span class="en">WsEvent</span>?</code></pre>
 <p>Non-blocking single-event drain — returns the next WsEvent, or null when nothing is pending.  Lets a server that also needs a periodic tick (timers, decay, snapshots) run its OWN loop while still using the efficient Rust-side event pump: drain <code>poll_event</code> in a batch, do the periodic work, idle-sleep when a pass produced nothing.  <code>run</code> above is the convenience wrapper for servers that only react to events.</p>
 <p>Disconnect (kind 2) and malformed message frames are skipped internally (the caller never sees them), so a null return always means &quot;idle&quot;.</p>
 </div>
@@ -164,9 +181,11 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Server</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
+<p>The <code>Server</code> twin of <code>Request::respond_typed</code>, for replying to the request parked by an <code>http</code> WsEvent inside a <code>run</code> handler.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Server</span>)</code></pre>
+<p>The same not-found answer, from inside a <code>run</code> handler.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_to</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
