@@ -14,6 +14,34 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A block that hands back part of something it built keeps it alive.**  A `{ … }` used as a
+value can build a struct and hand back one of its collections:
+
+```loft
+items = { b = Basket { rows: load(), tag: 1 }; b.rows }
+println("{len(items)}");
+```
+
+The block used to give you a pointer into storage it released on the way out.  You usually got
+the right answer — the bytes were still there — and sometimes another value had already moved
+in.  Now the block hands back a copy of its own, so what you read is what it built.  Nothing to
+change in your code.
+
+**And a branch used as a statement no longer disturbs the variables around it.**  Where one
+arm ends in a value and another does not, the value is discarded — that part was always the
+intent — but the discard used to leave the interpreter's bookkeeping one step out of line, so
+locals near the branch could read back as `null`:
+
+```loft
+total = 0;
+if n > 0 { total += 1; } else { 5 }      // the 5 is discarded
+println("{total}");                      // read 0, as it should
+```
+
+Both backends now agree here, and a branch whose arm leaves early through `return` compiles on
+`--native` instead of failing to build.
+
+
 **You can now ask whether a small-width number actually fitted.**  `u8`, `i8`, `u16`, `i16`,
 `u32` and any `integer limit(lo, hi)` use every value they have room for, so when a result
 does not fit, the slot quietly takes the type's default — and a `0` that arrived that way

@@ -9,6 +9,64 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A statement branch discards every arm, in the body and in the type (2026-09-10)
+
+`(F-Block)` says a block in statement position discards its tail.  An arm of a statement `if`
+was left disagreeing with itself: `else { 5 }` had its tail wrapped in a `Drop` while its block
+still claimed `integer`, and the value-carrying middle arm of an `else if` chain kept both its
+value and its type.  The interpreter balances its eval stack against the block's TYPE, so each
+shape left it off by one in its own direction — the first promised a value it never pushed, the
+second pushed one nothing pops — and every read after the branch was misaligned.
+`t = 0; if n > 0 { t += 1; } else { 5 }; return t` answered **null** for `n == 0`, and with two
+locals live across the branch both read null (loft#1496).
+
+`--native` compensates at emit time (`generation::emit`'s `stmt_discard`), so only the
+interpreter was wrong: a program tested on the default backend was wrong when interpreted.
+
+Normalised in `parse_block_inner`'s statement loop, past the point that breaks out at `}` —
+there another statement follows, so nothing reads what the branch yields.  Three arm-side
+discriminators were disproven by measurement first (the arm's `result` being Void, the arm's
+tail being a `Drop`, and un-dropping instead): the else arm of
+`if n > 0 { …; return b.items; } else { head(n) }` carries the same two facts while its value IS
+the function's, and un-dropping a genuine statement reopens loft#725's leak.  Whether anything
+FOLLOWS the branch is the only fact that separates the cases, and the arm cannot see it.
+
+### A diverging branch arm is not evidence that the branch is a statement (2026-09-10)
+
+The native emitter discards both arms of an `if` with exactly one `Void` arm (loft#1381).  An arm
+that leaves through `return` types `Void` because control LEFT, not because the `if` is a
+statement, and its sibling still carries the value — so discarding both emitted
+`let … : DbRef = if … { … ; } else { … ; };` and rustc refused a program the interpreter runs
+(loft#1495).  Rust types a diverging arm `!`, which coerces to the sibling's type, so the
+ordinary value emission was already right: `arm_diverges` (asking `Value::tail`, the one home for
+*where control leaves*) excludes it, and the `else if` chain leg of `arm_result` takes the same
+exclusion so a chain does not answer `Void` upward.
+
+Only a PROJECTION return reached it — `return x` and `return head(n)` always compiled — because
+that is the return shape whose retbuf delivery leaves the arm's block multi-statement and `Void`.
+
+### A nested block yielding a local's collection copies it out before the frees (2026-09-10)
+
+A value block whose tail read a COLLECTION out of a local the block defined
+(`{ b = BoxF { … }; b.items }`) handed out a reference into `b`'s store, and the block's exit
+frees `b` before the enclosing consumer copies — right for as long as the freed bytes survived,
+`0xDEADBEEF` under `LOFT_POISON=1`, and a genuinely wrong value where a second block reused the
+slot (loft#1494).
+
+`block_result` has carried this rule for the RECORD case since @PLN85 and cures it by copying the
+tail into a local of its own; a collection is not a `Reference` and `OpCopyRecord` is not how one
+is copied, so the collection half is a second arm beside it — `materialize_collection_value`,
+routing to `lower_vec_copy_bind` for a vector and `OpReplaceKeyed` for the keyed kinds rather than
+restating either copy.
+
+The invariant belongs to the BLOCK: five consumers read such a block by wrapping it from outside
+(a return delivery, a call argument, a struct-literal field, an operator, a field write) and all
+five were wrong, while the two that were right — a plain bind and a `for` — are the two that sink
+their copy into the block.  The filed boundary named the nested-block spelling; nesting depth,
+whether a call filled the field, the element former and the projection's depth are all free, and
+what decides it is whether the projection's root is defined inside the block.
+
+
 ### A branch arm that binds the return buffer from a call now delivers into it (2026-09-09)
 
 An arm whose tail is a bare call (`{ head(n) }`) is handed the function's own return buffer
