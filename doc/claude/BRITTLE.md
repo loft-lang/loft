@@ -460,7 +460,47 @@ construct adding speculative parse could regress it silently.
    to type a name that says which question it is asking, because a table in a
    commit message is one reviewer away from being re-conflated.
 
-5. **Golden-IR regression tests** — we have golden PNGs for visual
+5. **A type predicate asked BARE where the slot can be WRAPPED.** The sibling of (4), and
+   the higher-yield one measured over 2026-09-08/09: not a predicate serving two questions,
+   but one question asked of `Type` directly where the value arrives inside an `Optional`
+   or a `RefVar`. It is invisible because the wrapper is usually absent — a `matches!` that
+   is right for every shape anyone tested reads as finished.
+
+   **Four instances in two days, in four subsystems, and none of them shared a mechanism:**
+
+   | site | asked bare | what it cost |
+   |---|---|---|
+   | `scopes::collect_return_sources` | no `Value::FnRef` arm at all | the frame freed the closure record it had just returned (loft#1473/#1474) |
+   | `generation::dispatch`, 5 of 9 sites | `Type::Tuple` on the assignment slot | a `text` member emitted `&str` into a `String` slot; under it a nested member emitted a move where a clone was owed (loft#1478) |
+   | `parser::fields::vector_element_cursor_deps` | container matched only as `Value::Var` | the cursor was suppressed from its free AND typed as owning nothing — a per-function leak (loft#1479) |
+   | `state::codegen::gen_set_first_at_tos` | `Type::Function` on the destination | an `Optional(Function)` fell to a fall-through with no arm: an INTERNAL COMPILER ERROR on both backends |
+
+   The last one is the shape worth remembering, because **two independent defects had to meet**:
+   `(N-Domain)` minted a `τ?` for a type `(N-Opt)` forbids, and a bare test then hid the correct
+   branch from the value. Either alone is harmless. That is why the cure went to the FORMATION
+   side — teaching codegen to carry a type the rules forbid would have made the forbidden type
+   survive quietly.
+
+   ⚠ **A CONSTANT index cannot reach any of them.** `@FR-N-Index` trusts a constant, an active
+   `for` variable, an `i < len(v)` guard and arithmetic over those BY CONTRACT, so the element
+   types non-null, no wrapper is ever built, and every bare test is right by accident. A matrix
+   that indexes by a constant measures nothing here — and so does an all-`integer` tuple corpus,
+   for the separate reason that the coercions missed are the ones only a non-`Copy` member needs.
+   Two blind populations, and `tuples.md`'s own cells sat in both.
+
+   **The queue is a grep**, and it is short enough to walk: a variable's declared type matched
+   without `.base()` is **20 sites** against **128** that peel. Two are already known suspects —
+   `scopes.rs`'s fn-ref free test and its tuple test, both in `get_free_vars`. Not every one is a
+   defect: some types cannot be wrapped, and some sites peel upstream. The walk is to ask each
+   *"can this slot arrive wrapped, and does the Rust type the emitter declares agree with what
+   this test believes?"* — the second half is the one that catches it, because the emitter
+   renders the bare tuple either way (`tuples.md (T-Absent)`) while the test does not.
+
+   The cure that lasts is (4)'s: **one home with a name**, not a peel per site.
+   `generation::var_tuple_elems`, `use_analysis::projection_container_var` and `data::has_null`
+   are the three added for this, and each doc block says what it exists to stop being restated.
+
+6. **Golden-IR regression tests** — we have golden PNGs for visual
    output (Brick Buster) and dump files for bytecode execution, but
    nothing pins the *shape* of the IR produced by the top parser
    constructs.  A small suite would catch silent IR drift that
