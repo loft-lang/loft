@@ -7,6 +7,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 Tracker: [@PLN150](https://github.com/loft-lang/plans/issues/150).
 
+## Status
+
+**CLOSED 2026-09-09.**  The question is answered on both backends and across the whole destination
+axis the issue's Scope names, with the guard falsified once per backend.  The channel the plan
+asked for exists: the per-run MINTED-or-BORROWED verdict, computed where it always was and carried
+one hop to the caller's bind.
+
+Two things routed OUT rather than done: loft#1487 (a `??` inside a lambda leaks its unused fallback
+arm) is a different mechanism — it reproduces with no forwarder at forwarding depth 0 — and the
+nine unaudited `is_struct_returning_call` sites are the general free-source LICENCE question, which
+is [@PLN155](../155-licence-to-free/README.md)'s, not fn-ref return ownership.
+
+No keystone registered, deliberately: `ownership/free` already carries two this cycle (@PLN155 at
+\#1479, @PLN160 at \#1485), and a third would leave all three unjudgeable, since each one's BEFORE
+window would contain the others' effect.
+
 ## ⚠ The issue's own premises are STALE — read this first
 
 The plan was filed against loft#1185 and loft#1186 with a table measured on
@@ -17,7 +33,7 @@ SHIPPED.**  Re-measured here on `e4c7db584`:
 |---|---|
 | loft#1185 / loft#1186 open, this plan is "the mechanism they need" | both CLOSED |
 | candidate channel 1: a monotonic `Store::alloc_serial` snapshot | **shipped** — `store.rs:387`, used by `release_fnref_bufs` and `cr_fnref_minted` |
-| "OWNED (today) → use-after-free … both backends" | native is CLEAN; the interpreter is not |
+| "OWNED (today) → use-after-free … both backends" | ⚠ **both are affected, in DIFFERENT SHAPES** — see below.  This row first read "native is CLEAN", which was true of the shape measured at the time (a LOCAL destination) and false in general: native froze the capture for a FIELD destination.  A backend reading is only as wide as the destinations it was taken over |
 
 What is actually live is named in `formal/closures-history.md`, in D-clo-12's own closing entry:
 
