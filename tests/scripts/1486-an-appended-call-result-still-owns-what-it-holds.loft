@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A collection local bound from a CALL and then APPENDED to still owns the store it holds.
+//
+// `ownership.md` `(O-Proxy)` lets a free read the dep list as a stand-in for *does this binding
+// own its store?*, and the append is where that stand-in breaks.  `v += […]` on a local whose
+// dep list is empty mints a BACKING for it, guarded at run time (`if OpVectorIsNull(v)`) because
+// the local may already hold one — loft#1219's cure.  The guard is right and does not mint here.
+// The DEP was attached anyway, and a non-empty dep list is what `proxy_says_owned` reads as
+// *borrows, do not free*, so the store the callee returned was released by nobody: one per call,
+// unbounded in a loop, every value correct.
+//
+// **One list was answering two questions.**  The dep has to keep naming the backing — the
+// element writes resolve through it, and stripping it makes the append lose its elements
+// (measured: `len` 1 where 2 is right).  It cannot also answer the ownership question, whose
+// answer is YES on both paths: the backing's store where the mint ran, the callee's where it did
+// not.  So the ownership half is derived from the two marks the guarded mint already sets —
+// `skip_free` on the backing (nobody but this local releases it) and `inline_ref` (its null-init
+// allocates nothing, because the mint is conditional) — rather than from a sharper reading of the
+// list.  Freeing what the LOCAL NAMES is already per-run, which is why no witness is needed.
+//
+// A REBOUND PARAMETER's backing carries those same two marks, set by `vector_db_init`'s rebind
+// arm for its own reason, and its release is already emitted as the parameter's
+// `OpFreeRefIfDistinct(v, witness)`.  Reading it as owned there is a SECOND free of one store —
+// `87-p2-reassign-locality`'s repeated-rebind cell read a length of 0 where 3 is right — so
+// `rebind_orig` separates the two mechanisms that set the same marks.  That cell is this file's
+// most important control and it lives in that file, not this one.
+//
+// @falsified-at: eb2c9e5de — interpret leaked `kt=83 main_vector<S1486>×21` -> clean, native
+//   leaked `kt=83 main_vector<S1486>×21` -> clean.  The LEAK is the only channel that moves and
+//   the exit codes do not: every value here was already correct on the control build, which is
+//   the whole shape of the defect.  Twenty-one and not twenty — the loop's twenty calls plus the
+//   one before it — because the count is per CALL, not per iteration.
+
+struct S1486 { a: integer }
+
+fn idv_1486<T>(x: T) -> T { x }
+fn mk_1486() -> vector<S1486> { [S1486 { a: 7 }] }
+
+fn main() {
+  // The filed shape: a generic instance's collection return, bound and then appended to.  The
+  // callee copies (loft#1484 / `(F-Ret)`), so the store handed back is the callee's own and the
+  // caller is the only thing that can release it.
+  g1: vector<S1486> = [S1486 { a: 7 }];
+  r1 = idv_1486(g1);
+  r1 += [S1486 { a: 1 }];
+  assert(len(r1) == 2, "the append lands: got {len(r1)}");
+  assert(len(g1) == 1, "and does not reach the argument: got {len(g1)}");
+
+  // The same with a plain (non-generic) minting call, which is the shape the dep list was
+  // already right about — it must not move.
+  r2 = mk_1486();
+  r2 += [S1486 { a: 1 }];
+  assert(len(r2) == 2, "a minting call's result appends: got {len(r2)}");
+
+  // loft#1219's own shape, which is why the mint is guarded at all: a local declared `null`,
+  // appended to INSIDE a loop, mints its backing ONCE and keeps every element.
+  v3: vector<integer>? = null;
+  for i in 0..3 { v3 += [i]; }
+  assert(len(v3?) == 3, "the guarded mint runs once: got {len(v3?)}");
+  assert((v3[2] ?? -1) == 2, "and keeps the last element: got {v3[2] ?? -1}");
+
+  // A local appended to WITHOUT a prior store — the unguarded path, untouched here.
+  v4: vector<integer> = [];
+  v4 += [9];
+  assert(len(v4) == 1 && (v4[0] ?? 0) == 9, "a fresh local appends: got {len(v4)}");
+
+  // The leak channel, which is what this file is really for: twenty calls, each binding a
+  // returned collection and appending to it.  A store per call is what the defect was, so a
+  // count that does not grow is the assertion `LOFT_STRICT_STORES` makes for us.
+  g5: vector<S1486> = [S1486 { a: 7 }];
+  i = 0;
+  while i < 20 {
+    r5 = idv_1486(g5);
+    r5 += [S1486 { a: i }];
+    assert(len(r5) == 2, "loop {i}: the append lands");
+    assert(len(g5) == 1, "loop {i}: the argument is untouched");
+    i = i + 1;
+  }
+
+  println("1486 OK r1={len(r1)} g1={len(g1)}");
+}

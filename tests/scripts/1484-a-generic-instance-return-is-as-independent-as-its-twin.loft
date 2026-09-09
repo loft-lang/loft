@@ -28,16 +28,8 @@
 // first — `r = f(q); r.a = 99` — measures the bind, because a record bind copies, and that is
 // why the 48-cell matrix in QUALITY.md § B7t reads green over all of this.
 //
-// ⚠ **The vector control is written INLINE because the BOUND spelling of it leaks
-//   (loft#1486).**  `r = idvg(g)` is the sharper control — it can see an append reaching the
-//   argument — but the store the monomorph mints for its copy is adopted by nobody, one per
-//   call and unbounded in a loop.  Measured identical on `2abf9483d` and here, so it is not
-//   this fix's; it is also not something to hide behind `SCRIPTS_LEAK_ALLOW`, which is for an
-//   intentional program-end allocation.  So the collection former is held still by the weaker
-//   question this file can ask cleanly — *does the generic still answer the argument's own
-//   contents* — and the bound spelling comes back in the commit that closes loft#1486.  The
-//   KEYED pair keeps the bound spelling, which is what says the choice is about that leak and
-//   not about collections.
+// The vector control is the BOUND spelling, restored now that loft#1486 is closed: it is the
+//   sharper question — an append reaching the argument is visible where a length alone is not.
 //
 // @falsified-at: 2abf9483d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
 //   exit 1 -> 0, native 1 assertion failures -> 0.  Per-cell on that build, taken by replacing
@@ -105,15 +97,15 @@ fn main() {
   bindn_1484(n3).a = 99;
   assert(bindn_1484(n3).a == 7, "concrete element bind (the oracle): got {bindn_1484(n3).a}");
 
-  // The collection binding, INLINE for the reason the header gives: the generic answers the
-  // argument's own contents, called repeatedly, and neither call disturbs it.
+  // The collection binding: appending to one call's result must not grow the argument.
   g4: vector<S1484> = [S1484 { a: 7 }];
+  r4 = idvg_1484(g4);
+  r4 += [S1484 { a: 1 }];
   assert(len(idvg_1484(g4)) == 1, "generic vector: the argument keeps 1, got {len(idvg_1484(g4))}");
-  assert(idvg_1484(g4)[0].a == 7, "generic vector: the element is the argument's, got {idvg_1484(g4)[0].a}");
-  assert(len(g4) == 1 && g4[0].a == 7, "generic vector: two calls left the argument alone");
   n4: vector<S1484> = [S1484 { a: 7 }];
+  s4 = idvn_1484(n4);
+  s4 += [S1484 { a: 1 }];
   assert(len(idvn_1484(n4)) == 1, "concrete vector (the oracle): got {len(idvn_1484(n4))}");
-  assert(len(n4) == 1 && n4[0].a == 7, "concrete vector (the oracle): the argument is alone");
 
   // The keyed binding, whose delivery is its own and must stay where it is.
   g5: hash<K1484[k]> = [K1484 { k: 1, a: 7 }];

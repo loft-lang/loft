@@ -3669,6 +3669,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // marks it, for the same conditional shape.
                 if let Some(&db) = self.vars.tp(vec).depend().last() {
                     self.vars.mark_inline_ref(db);
+                    // loft#1486, `@FR-O-Proxy` — and the local OWNS its store on both paths,
+                    // which the dep list cannot say because it must keep naming the backing for
+                    // the element writes to resolve it.  The mint is exactly the thing that may
+                    // not run: where it did, the local names the backing's store; where it did
+                    // not, it still holds what it was bound from — a callee's returned
+                    // collection, which was then released by nobody, one store per call and
+                    // unbounded, every value correct.
+                    //
+                    // Freeing what the LOCAL names is already per-run, so no witness is needed:
+                    // the local keeps its free and the backing is `skip_free`'d so scopes does
+                    // not free the same store twice.  That is `vector_db_init`'s own REBIND arm
+                    // five lines up, which reaches for the same pair for the same reason.
+                    self.vars.set_skip_free(db);
                 }
                 let absent = self.cl("OpVectorIsNull", &[Value::Var(vec)]);
                 ls.push(v_if(absent, Value::Insert(db_ops), Value::Null));
