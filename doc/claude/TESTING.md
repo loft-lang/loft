@@ -4037,6 +4037,33 @@ region; a correct program never observes the sentinel, because definite assignme
 slot before it is read.  So a hit there is a claim about ASSIGNMENT, and a hit in the arena half
 is a claim about LIFETIME.
 
+**A control that cannot DISCRIMINATE reads exactly like a control that passes.**  The entries
+above are about a vacuous ASSERTION — the value cannot witness the defect.  This is its twin one
+level out: the assertion is fine, the cell is green, and the green means nothing because the cell
+could not have come out any other way.  Measured twice on 2026-09-09, in two subsystems, at two
+altitudes, and **neither was found by looking for it**:
+
+- **The cells bind before observing.**  `a-generic-instance-returns-what-its-concrete-twin-returns`
+  passes every cell while the monomorph it guards hands back its argument (loft#1484,
+  `D-call-19`).  Each cell reads `r = g_struct_whole(src); r.n = 99` — and a record BIND COPIES, so
+  the cell measures the caller's copy and never the callee's return.  The same shape made the first
+  three @PLN160 alias probes answer identically for the aliasing case, the fresh case and the
+  control.  The discriminating shape is `(F-Ret)`'s own: mutate THROUGH one call and re-read
+  through another — `bump(f(q)); println("{f(q).a}")` — which never touches a binding.
+- **A new leg answers the question an A/B switch already answered.**  loft#1482's argument-view
+  refusal duplicated the `LOFT_JOIN_OWN` pre-pass for a marked vector borrow, so under
+  `LOFT_NO_JOIN_OWN` the switch could no longer emit its own before-half.  Values did not move —
+  the runtime was clean either way — and the only thing that could see it was
+  `join_own_match_return_strips_the_borrow`, a test that exists to pin the switch's own effect.
+
+So two rules follow, and they cost nothing to apply.  **Before believing a green cell, ask what
+would have to change for it to go red** — if the answer is "nothing the guard is about", the cell
+is measuring something else.  And **when adding a leg near a `LOFT_NO_*` switch, run that switch's
+own test**: every one of them in CLAUDE.md is a bisect control whose whole value is that it can
+still show its before-half, and no value channel reports the loss when it stops.  A guard that
+cannot fail proves nothing, and a control that cannot discriminate is the version of that which
+still looks like evidence.
+
 So when the symptom is layout-fragile, assert what the fix DETERMINES rather than what the
 program happens to compute: the emitted IR.  `OpFreeRef(_tuphold` must not appear, because the
 nested-tuple hold borrows its source and nothing may free through it.  That is deterministic,
