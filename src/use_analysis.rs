@@ -3654,7 +3654,11 @@ pub fn view_elision_bind(
     }
     let base = match ownership_of(data, d_nr, value) {
         Own::Borrowed { base } | Own::Join { base } => base,
-        Own::Owned => return None,
+        // @PLN155 phase 2 — the elision is licensed by a POSITIVE fact: the return borrows
+        // an argument this frame can name, and that argument stands witness at the local's
+        // scope exit.  `Unknown` is "derived nothing", which supplies no base at all, so it
+        // declines exactly as `Owned` does and the bind keeps the copy `(O-Move)` asks for.
+        Own::Owned | Own::Unknown => return None,
     };
     // An ARGUMENT outlives every local of the frame, so it can stand witness at the
     // local's scope exit; a value-const one is never written through in this frame
