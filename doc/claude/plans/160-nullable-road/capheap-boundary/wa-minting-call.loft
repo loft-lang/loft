@@ -1,0 +1,4 @@
+struct C { a: integer }
+fn mk(n: integer) -> C { C { a: n } }
+fn probe() -> integer { t = 0; for i in 0..3 { s: C = mk(5 + i); k = fn() -> integer { s.a }; t = t + k(); } t }
+fn main() { println("{probe()}"); }

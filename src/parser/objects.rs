@@ -3716,6 +3716,22 @@ impl Parser {
             && hint_is_the_whole_value
         {
             let var_tp = self.vars.tp(*v_nr).clone();
+            // ⚠ @FR-N-Shape (@PLN160) — this names ONE spelling: `x: S?` is
+            // `Optional(Reference(S))` and does not match, so every nullable local bound from a
+            // struct literal declines the in-place hint and builds into a work-ref instead,
+            // while its dense twin builds in place.  C90 makes the two the same slot, so the
+            // divergence is an accident of this test and the cure is `var_tp.base()`, which
+            // peels the `?` and not the `&`.
+            //
+            // **Not applied, and the reason is measured.**  The peel was built and run over the
+            // corpus: 45 of 1435 files change emission, 44 of them a `?`-typed local taking its
+            // dense twin's road — and one shipped guard goes from green to RED,
+            // `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity`.  Its
+            // leaking cell is `built_in_loop`, and the DENSE twin of that cell ALREADY leaks on
+            // both backends, before the peel and after it (loft#1483).  So the nullable
+            // spelling was accidentally leak-free only because the work-ref road it was pushed
+            // onto frees correctly, and converging it inherits the dense road's defect.  The
+            // peel lands once loft#1483 is closed, not before.
             let type_matches =
                 var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
             // loft#660 — a vector-literal ELEMENT alias is never an in-place

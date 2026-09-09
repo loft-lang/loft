@@ -205,16 +205,68 @@ exactly what the `!self.first_pass` guard exists to prevent, because a `??`-join
 not pass-stable (the H5 two-pass contract).  Closing it means giving that guard a pass-stable
 predicate — a design call, so the finding is filed and the leg's false premise corrected in place.
 
-## The other two, enumerated but NOT yet classified
+## The third classification — `captured-local-rebind` is an ACCIDENT with a one-line cure that CANNOT land yet
+
+**The site.**  `src/parser/objects.rs:3715` decides whether a struct literal is built directly into
+its target local:
+
+```rust
+let type_matches =
+    var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
+```
+
+`x: S` is `Type::Reference(S)` and matches; `x: S?` is `Type::Optional(Reference(S))` and does not.
+So **every nullable local bound from a struct literal silently declines the in-place hint** and
+builds into a work-ref, while its dense twin builds in place.  The closure in the pair is
+incidental — a two-line program with no closure reaches it.  This is the `@FR-N-Shape` blindness
+`ir_walker_audit.py optional` exists to find: a shape question resolved by naming `Type` variants,
+so the same shape wrapped in `τ?` is invisible.
+
+**And it corrects how the +23 reads.**  The channel counter counts TEXT OCCURRENCES, so "work-ref
++23" is one extra work-ref VARIABLE (`__ref_p2_2`) mentioned 23 times in the dump — not 23
+operations.  A channel count is a pointer to a divergence, never its size.
+
+**The cure is `var_tp.base()`**, which peels the `?` and not the `&`.  Built and measured:
+`introspect_diff.sh` reads **DIFFERENT 45 of 1435**, and 44 of the 45 are a `?`-typed local taking
+its dense twin's road — many of them named *"…like its dense twin"*, which is `@FR-N-Shape`'s own
+test family.  Each such file loses one variable and one indirection and is otherwise identical.
+
+⚠ **It cannot land, and the reason is the plan's second inversion.**  The 45th file is
+`1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity`, a SHIPPED guard, and the
+peel turns it RED at its `built_in_loop` cell.  Measured on the dense twin of that cell:
+
+| | before the peel | after |
+|---|---|---|
+| dense `s: C = C { a: 5 + i }` in a loop, captured | **leaks 1** | leaks 1 |
+| nullable `s: C? = …`, the same | 0 | **leaks 1** |
+
+**The dense half already leaked, on both backends, with or without my change** — filed as
+**loft#1483**.  The nullable spelling was accidentally leak-free *because* it declined the hint:
+the work-ref road it was pushed onto frees correctly.  Converging the two inherits the dense road's
+defect, so the `@FR-N-Shape` fix is blocked on loft#1483 and the peel is recorded at the site
+rather than applied.  Cells: `capheap-boundary/`.
+
+**Verdict: an accident of the site, cure known and written down, blocked on loft#1483.**
+
+## The pattern both classifications produced
+
+Twice now the divergence has been real and **the deviation has been on the DENSE side**, with the
+nullable spelling already correct — loft#1482 (the dense return aliases; the nullable half was
+fixed by loft#1468) and loft#1483 (the dense loop capture leaks; the nullable half declines the
+hint that causes it).
+
+So **a divergence is not evidence about which half is right.**  `@FR-N-Shape` says only that the
+two must AGREE.  What settles which answer they agree ON is a rule about the thing itself —
+`(F-Ret)` for loft#1482, the store-lifetime rules for loft#1483 — and reading the dense spelling as
+the oracle because it is the ordinary one is what closed loft#1468 on a false premise.
+
+## The last one, enumerated but NOT yet classified
 
 | pair | asymmetric channels |
 |---|---|
-| `captured-local-rebind` (loft#1447) | work-ref +23, free-ref +2 |
 | `local-rebound-by-mint` (loft#1422) | free-ref +3, work-ref −1 |
 
-Neither shares the retbuf root: both keep their buffer.  `captured-local-rebind` is next — a
-+23 work-ref asymmetry with no delivery difference under it is not explained by anything measured
-so far.
+It keeps its buffer, so it shares neither the retbuf root nor the in-place-hint root.
 
 ## Next
 

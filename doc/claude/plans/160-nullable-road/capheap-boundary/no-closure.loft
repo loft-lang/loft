@@ -1,0 +1,3 @@
+struct C { a: integer }
+fn probe() -> integer { t = 0; for i in 0..3 { s: C = C { a: 5 + i }; t = t + s.a; } t }
+fn main() { println("{probe()}"); }
