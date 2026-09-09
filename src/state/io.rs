@@ -1895,6 +1895,17 @@ impl State {
             return;
         }
         let dst = self.get_var::<DbRef>(pos);
+        // @PLN150 — `COPY_FREE_SOURCE` claims the source is a callee's fresh temporary nobody
+        // else frees.  When the value came back through a fn-ref that is a PER-RUN fact, and
+        // `release_fnref_bufs` has just answered it with the `alloc_serial` comparison no
+        // static dep list can make.  A store that predates the call is a capture: copy from it
+        // and leave it alone.  Measured without this: `fn fwd(f, v) -> P { r = f(v); r }` over
+        // a capture-returning lambda frees the CALLER'S capture on the first call and reads
+        // freed bytes on every one after (`plans/150-fnref-return-ownership`).
+        let raw_tp = match self.take_fnref_borrowed_return() {
+            Some(b) if b.store_nr == src.store_nr => raw_tp & !crate::keys::COPY_FREE_SOURCE,
+            _ => raw_tp,
+        };
         self.do_copy_record(src, dst, raw_tp);
     }
 

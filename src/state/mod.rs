@@ -354,6 +354,20 @@ pub struct State {
     /// one loft#1185 turns on: a capture handed back belongs to a frame further up and must be
     /// left alone, while a mint handed back belongs to nobody until this says so.
     fnref_calls: Vec<(u32, u64)>,
+    /// @PLN150 — the store a fn-ref frame handed back that it did NOT mint.
+    ///
+    /// *Does a fn-ref call hand back a store the caller may free?*  The callee answers it PER
+    /// RUN — a capture on one arm, its own mint on the other — and `COPY_FREE_SOURCE`, which
+    /// means *"the source is a callee's fresh temporary nobody else frees"*, is decided
+    /// statically at the bind.  For a forwarded fn-ref result no static dep list can answer it,
+    /// which is this plan's whole thesis.
+    ///
+    /// `release_fnref_bufs` already computes the answer — `alloc_serial` against the snapshot
+    /// taken when the call began — and threw it away.  This carries it the one hop to the
+    /// caller's bind, where `copy_ref_or_null` clears the bit rather than freeing a store that
+    /// belongs to a frame further up.  Set only on a BORROWED return and consumed by the next
+    /// bind, so nothing stale outlives the value it describes.
+    fnref_borrowed_return: Option<DbRef>,
     /// Raw pointer to the `Data` the running program was compiled from, or null before
     /// any program has run.
     ///
@@ -669,6 +683,7 @@ impl State {
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
             fnref_calls: Vec::new(),
+            fnref_borrowed_return: None,
             data_ptr: std::ptr::null(),
             stack_trace_lib_nr: u16::MAX,
             coroutines: vec![None], // index 0 = null sentinel
@@ -1203,6 +1218,14 @@ impl State {
     /// [`Self::release_fnref_bufs`] carries it up on the way out by the rule it already
     /// applies: the store is owned by the frame that holds it, and ownership travels with the
     /// return value.  Nothing new decides when it dies.
+    /// Take the @PLN150 borrowed-return marker, clearing it.
+    ///
+    /// Consumed by the bind that follows the call, so it describes exactly one value and
+    /// cannot outlive it.
+    pub(crate) fn take_fnref_borrowed_return(&mut self) -> Option<DbRef> {
+        self.fnref_borrowed_return.take()
+    }
+
     pub fn hand_up_returned(&mut self, returned: DbRef) {
         if returned.store_nr == u16::MAX || returned.rec == 0 {
             return;
@@ -1249,12 +1272,22 @@ impl State {
         // call began; a CAPTURE's is not, and a capture belongs to a frame further up and is
         // not ours to place.  That comparison is the whole of what no static dep list could
         // answer, and it costs one `u64` per allocation and one lookup per fn-ref return.
-        let minted_here = self.fnref_call_snapshot(depth).is_some_and(|since| {
+        let snapshot = self.fnref_call_snapshot(depth);
+        let minted_here = snapshot.is_some_and(|since| {
             returned.is_some_and(|r| {
                 (r.store_nr as usize) < self.database.allocations.len()
                     && self.database.allocations[r.store_nr as usize].alloc_serial > since
             })
         });
+        // @PLN150 — the frame was entered through a fn-ref and is handing back a store whose
+        // stamp is at or below the snapshot: it predates the call, so it is a CAPTURE (or an
+        // argument) belonging to a frame further up, and no caller may free it as "the
+        // callee's fresh temporary".  Carried to the bind rather than acted on here, because
+        // the free this must refuse is the CALLER's.
+        self.fnref_borrowed_return = match (snapshot, returned) {
+            (Some(_), Some(r)) if !minted_here && r.store_nr != u16::MAX && r.rec != 0 => Some(r),
+            _ => self.fnref_borrowed_return,
+        };
         if minted_here
             && let Some(r) = returned
             && !self
@@ -6775,6 +6808,7 @@ impl State {
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
             fnref_calls: Vec::new(),
+            fnref_borrowed_return: None,
             data_ptr: std::ptr::null(),
             stack_trace_lib_nr: u16::MAX,
             coroutines: vec![None],

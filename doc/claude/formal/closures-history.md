@@ -502,10 +502,33 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > Guard: `tests/scripts/1185-a-forwarded-fnref-result-is-not-the-callers.loft`, with the mint
 > row as its control.
 >
-> ⚠ **The BOUND spelling is not closed**: `{ r = f(v); r }` binds before returning, so the tail
-> is a `Var` and no tail-shaped rule reaches it — 4 use-after-free reads either side. Reaching
-> it means unpicking NRVO, since `r` is itself the return buffer there and a copy would target
-> its own source. @PLN150.
+> ⚠ **The BOUND spelling was not closed here**: `{ r = f(v); r }` binds before returning, so the
+> tail is a `Var` and no tail-shaped rule reaches it. Reaching it looked like unpicking NRVO,
+> since `r` is itself the return buffer there and a copy would target its own source. @PLN150.
+>
+> **CLOSED 2026-09-09 (@PLN150), and NRVO never had to be unpicked** — the fix is not at the
+> return at all, it is at the caller's BIND. `COPY_FREE_SOURCE` (`0x8000` on `OpCopyRecord`)
+> claims *"the source is a callee's fresh temporary nobody else frees"*, and for a forwarded
+> fn-ref result that is a per-run fact. `release_fnref_bufs` was ALREADY computing the answer —
+> the `alloc_serial` stamp against the snapshot taken when the call began — and discarding it;
+> `State::fnref_borrowed_return` carries it the one hop to `copy_ref_or_null`, which clears the
+> bit for a store that predates the call. That store is a capture, and the copy leaves it alone.
+>
+> **What makes it the CHANNEL this question needed rather than another trade**: the MINT arm
+> still frees. The table below shows every static reading buying one defect with the other; this
+> one closes the capture arm with the mint arm untouched, measured across 18 cells (spelling ×
+> tail shape × forwarding depth 0/1/2) on both backends.
+>
+> ⚠ **And the entry's own "4 use-after-free reads EITHER SIDE" had gone stale.** Re-measured, the
+> defect was INTERPRETER-ONLY: native reaches the same rule through an adopt-vs-copy runtime test
+> its emitter wraps around the same op, which `State::copy_ref_or_null` had no equivalent of. The
+> free-source guard itself is byte-identical between `codegen_runtime.rs` and `state/io.rs` —
+> one notion, two spellings, and only one of them carried the test.
+>
+> Guard: `tests/scripts/1185b-a-forwarded-fnref-result-bound-before-return-is-not-the-callers.loft`
+> (2 cells + 3 controls: the mint arm, the tail spelling, and depth 0), falsified at `31c4e04da`
+> — interpret exit 1 → 0 and 2 assertion failures → 0, native INERT, which is what a
+> backend-divergence guard must read.
 
 > **D-clo-12 / D-clo-13 — the two are ONE question, and every static reading of it has now
 > been measured in both directions (2026-08-30).** The question is: *does a fn-ref call hand
