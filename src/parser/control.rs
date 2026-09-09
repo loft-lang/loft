@@ -14208,13 +14208,36 @@ impl Parser {
                 consumed.append(&mut cf);
                 a || b2
             }
-            Value::Block(bl) => bl
-                .operators
-                .last_mut()
-                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
-            Value::Insert(ops) => ops
-                .last_mut()
-                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
+            // loft#1491 — an arm that BINDS the buffer from a call before yielding it
+            // (`{ buf = head(n); buf }`) has rebound `w` to the call's OWN `__ref_N`, so
+            // the `Var(w)` tail below is no longer the buffer it names: the callee filled
+            // one store, the caller handed in another, and the one the caller never
+            // adopts is orphaned — one leaked store per call, on both backends.  The same
+            // arm written as a bare `{ head(n) }` is clean, which is what says the value
+            // is right and only the DELIVERY is wrong.
+            //
+            // `nrvo_collapse_tail_set` is the fix and already exists: it redirects a
+            // `Set(cv, Call(…))` whose callee takes a hidden return buffer to deliver
+            // into `cv` itself.  It was reached only at the FUNCTION tail, and this is the
+            // same shape one block down.  Asking it here needs no new rule — its own
+            // step (1) declines every block whose tail is not `Var(w)`, so passing `[w]`
+            // gates it to exactly the arm this is for.
+            Value::Block(bl) => {
+                let mut ops = std::mem::take(&mut bl.operators);
+                self.nrvo_collapse_tail_set(&mut ops, &[w]);
+                bl.operators = ops;
+                bl.operators.last_mut().is_some_and(|last| {
+                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+                })
+            }
+            Value::Insert(ops) => {
+                let mut taken = std::mem::take(ops);
+                self.nrvo_collapse_tail_set(&mut taken, &[w]);
+                *ops = taken;
+                ops.last_mut().is_some_and(|last| {
+                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+                })
+            }
             // A local whose value is a VIEW OF `w` — `_vec_N: vector<T>["__vdb_1"]` where
             // `__vdb_1` IS the buffer — already holds its answer in the buffer, so it is
             // `w` one indirection down and the `*v != w` guard above does not see it.
