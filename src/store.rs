@@ -3006,8 +3006,9 @@ impl Store {
         // 2026-09-09).  The report is right and the ACCESS is the bug, so the cure is not to
         // move the deref back out of sight: [`Store::read`] is the sound form for the callers
         // that immediately copy the value out, which is nearly all of them, and the remaining
-        // `&String` / `&Str` callers want a layout ruling.  Until those are migrated this keeps
-        // the spelling `main` has always had.
+        // `&String` / `&Str` callers want a layout ruling — loft#1481 carries the split and the
+        // ruling it owes.  Until those are migrated this keeps the spelling `main` has always
+        // had.
         unsafe {
             let off = self.ptr.offset(at).cast::<T>();
             off.as_mut().expect("Reference")
@@ -3024,6 +3025,9 @@ impl Store {
     /// nothing — and it drops `as_mut()`'s null test and panic path, which is what made `addr`
     /// expensive on the hottest read in the language (`get_elem_hoisted` is 15 % of the drawing
     /// library's bench, loft#1426).
+    ///
+    /// Migrating the rest of `addr`'s `Copy` readers here is loft#1481's mechanical half; its
+    /// `&String` / `&Str` callers are the other half and need a layout ruling first.
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
