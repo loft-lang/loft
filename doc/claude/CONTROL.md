@@ -153,6 +153,7 @@ neither has an instrument yet, which is what puts them in the first table.
 - [STRONG_POINTS.md](STRONG_POINTS.md) § 12 (null provenance) and § 13 (layout control) —
   the two turn-offs items 1 and 5 belong to.
 - [plans/152-validity-flag-null-model](plans/152-validity-flag-null-model/README.md) — the
-  plan that closes item 1.
+  plan that closed the SECOND half of item 1 (the substituted default is now testable at the
+  store); the provenance half is P1 above.
 - [COPY_DIAGNOSTICS.md](COPY_DIAGNOSTICS.md) · [PLACEMENT.md](PLACEMENT.md) ·
   [LAZY_STORES.md](LAZY_STORES.md) · [DIAGNOSTICS.md](DIAGNOSTICS.md)

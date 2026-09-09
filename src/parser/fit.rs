@@ -39,6 +39,20 @@
 //! `!` on a value whose type keeps no code for null, so moving the `if` one line away makes
 //! the check announce that it is always false instead of silently testing nothing.
 //!
+//! Everything below stays exactly as it was, and none of it is silent — each still draws
+//! that warning wherever the `!` is always false:
+//!
+//! | shape | why it is not fused |
+//! |---|---|
+//! | a statement between the store and the `if` | only the PLACE could carry the status that far, and the place is storage |
+//! | `!place` in the `if`'s BODY, or in a `while` | the body is past the pair; a `while` would spin on a status that cannot change |
+//! | `!place` in an `else if` arm | it is not the condition of the statement's own `if` |
+//! | a place whose read contains a call — `w[bump()]` | the fused form DROPS the second read, so a read that can do more than fetch must not match |
+//! | a TUPLE element — `t.0` | its read is a [`Value::TupleGet`], not an `OpGet…` call, so [`same_place`] cannot name it |
+//! | a KEYED element — `ks[k].v` | the read is already nullable (the key may be absent), so `!` has a meaning there and keeps it |
+//! | `place = (place + 10) ?? d` | the author already chose the value; `range_guard_inside_discharge` owns that store |
+//! | `integer`, `i32`, and every `τ?` | they keep a code for their own failure, and `!` reads it anywhere |
+//!
 //! Where no `!` names the place, nothing here runs and emission is byte-identical.
 
 use crate::data::{Data, IntegerSpec, Type, Value};
