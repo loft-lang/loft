@@ -1,0 +1,168 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A branch arm that DIVERGES is not evidence that the branch is a statement.
+//
+// The native emitter discards both arms of an `if` with exactly one `Void` arm, because that
+// is what a statement `if` means (loft#1381: `if c { println("x") } else { 5 }` handed rustc a
+// `()` beside an `i64`).  The premise it rested on — *"an `if` used as a VALUE has arms the
+// parser already made agree, and a void one could not be read"* — does not hold for an arm that
+// leaves through `return`: it types `Void` because control LEFT, not because the `if` is a
+// statement, and its sibling still carries the value the `if` is there to produce.  Discarding
+// both then produced `let mut var___ret_tail_1: DbRef = if … { … ; } else { … ; };` — `()` where
+// a `DbRef` was wanted — so a program the interpreter runs correctly did not compile at all.
+//
+// Rust types a diverging arm `!`, which coerces to whatever the sibling yields, so the ordinary
+// VALUE emission was already right for it: the cure is to stop discarding, not to add a cast.
+// `Value::tail` answers *where does control leave* — through a `Span`, a value block and an
+// argument-lift `Insert` alike — and is the same helper the diverging-return capture beside it
+// asks, so the two cannot drift.
+//
+// ⚠ **The filed repro pinned two axes that are not the boundary, and one that is.**  It reads as
+// a `match` arm returning a struct's collection field.  The construct is free (`if_arm`), and so
+// is which arm diverges (`second_arm`) and the arm count (`three_arms`).  What is NOT free is
+// what the diverging arm RETURNS: a plain local (`return_local`) and a bare call
+// (`return_call`) always compiled, and only a PROJECTION reached the discard — because that is
+// the return shape whose retbuf delivery leaves the arm's block multi-statement and `Void`.
+// A one-cell repro therefore reads as a defect about `match` and about collections, and it is
+// about neither.
+//
+// The controls hold the rule the discard exists for: a genuinely statement `if` still discards
+// both arms (loft#1381's own shape), and so does an `else if` CHAIN containing one
+// (loft#1382's).  Both are the reason the fix excludes only a DIVERGING void arm rather than
+// switching the discard off.
+//
+// @falsified-at: b18c6d6ad — native exit 0 -> 1 with no output: the control does not COMPILE,
+//   which is the whole channel.
+// @falsified-by: tests/falsified/1495-a-diverging-arm-beside-a-value-arm-still-yields.patch
+//   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
+//   CHANNEL: the native COMPILE, reported as exit with no output.  Not a value channel and not
+//     a leak one: nothing here ever ran on the control build, and the interpreter answers
+//     correctly on both trees — which is why every cell has to be exercised through `--native`
+//     for this guard to mean anything.
+//   ARMED: nothing.  A plain `--native` run fails to build.
+//   WITNESS: `error[E0308]: mismatched types … expected `DbRef`, found `()`` on generated Rust,
+//     at the `else {DbRef::NULL}` closing the arm chain, with rustc's own
+//     "help: remove this semicolon to return this value" pointing at the discard.
+//   HOLDS: the interpreter's exit, assertions, leak, panic and free-refusal are all equal on
+//     both trees, and so are native's once it builds.  A build that cannot run has no other
+//     channel to move, which is why this receipt has one and not four.
+
+struct Box1495 { items: vector<u8>, name: text }
+struct Inner1495 { items: vector<u8>, w: integer }
+struct Outer1495 { inner: Inner1495, tag: integer }
+enum Shape1495 { A1495 { n: integer }, B1495 { n: integer } }
+
+fn head1495(n: integer) -> vector<u8> {
+  v: vector<u8> = [];
+  for _i in 0..n { v += [1]; }
+  return v;
+}
+
+// --- the filed shape, and the axes it pinned -------------------------------------------
+
+// A `match` arm that returns a projection, beside an arm that yields a value.
+fn match_arm(s: Shape1495) -> vector<u8> {
+  match s {
+    A1495 { n } => { b = Box1495 { items: head1495(n), name: "x" }; return b.items; },
+    B1495 { n } => { head1495(n) },
+  }
+}
+// An `if` arm does the same — the construct is not the axis.
+fn if_arm(n: integer) -> vector<u8> {
+  if n > 0 { b = Box1495 { items: head1495(n), name: "x" }; return b.items; } else { head1495(n) }
+}
+// The SECOND arm diverges — which arm it is is not the axis either.
+fn second_arm(s: Shape1495) -> vector<u8> {
+  match s {
+    A1495 { n } => { head1495(n) },
+    B1495 { n } => { b = Box1495 { items: head1495(n), name: "x" }; return b.items; },
+  }
+}
+// An `else if` CHAIN with the diverging arm at its head: the chain must still answer the value
+// its later arms carry, or the enclosing `if` discards one that does.
+fn three_arms(n: integer) -> vector<u8> {
+  if n > 3 { b = Box1495 { items: head1495(n), name: "x" }; return b.items; }
+  else if n > 1 { head1495(n) }
+  else { head1495(1) }
+}
+// A two-level projection, and a diverging arm with no statement before the `return`.
+fn deep_projection(n: integer, o: Outer1495) -> vector<u8> {
+  if n > 0 { return o.inner.items; } else { head1495(n) }
+}
+
+// --- the axis that IS the boundary: what the diverging arm returns ----------------------
+
+// A plain LOCAL: compiled before this fix, and must keep compiling.
+fn return_local(n: integer) -> vector<u8> { if n > 0 { x = head1495(n); return x; } else { head1495(n) } }
+// A bare CALL: the same.
+fn return_call(n: integer) -> vector<u8> { if n > 0 { return head1495(n); } else { head1495(n) } }
+
+// --- the other return types, none of which reached the discard --------------------------
+
+fn scalar(n: integer) -> integer { if n > 0 { return n + 2; } else { n } }
+fn textual(n: integer) -> text { if n > 0 { return "ab"; } else { "cd" } }
+fn record(n: integer) -> Box1495 {
+  if n > 0 { b = Box1495 { items: head1495(n), name: "x" }; return b; } else { Box1495 { items: [], name: "y" } }
+}
+
+// --- controls: the discard this fix must NOT switch off ---------------------------------
+
+// ⚠ loft#1381's own shape — a genuinely STATEMENT `if`, whose void arm does not diverge.  Both
+// arms are discarded and the work still runs, which is what `(F-Block)` says of a statement.
+fn c_statement_if(n: integer) -> integer {
+  t = 0;
+  if n > 0 { t += 1; } else { 5 }
+  return t;
+}
+// ⚠ loft#1382's own shape — the same, reached through an `else if` CHAIN.
+fn c_statement_chain(n: integer) -> integer {
+  t = 0;
+  if n > 3 { t += 1; } else if n > 1 { 5 } else { 7 }
+  return t;
+}
+// Both arms diverge: no value arm to disagree with, and never affected.
+fn c_both_diverge(n: integer) -> vector<u8> {
+  if n > 0 { return head1495(n); } else { return head1495(n + 1); }
+}
+// No `return` keyword at all: the arm yields, and this is the shape loft#1494 covers.
+fn c_no_return(s: Shape1495) -> vector<u8> {
+  match s {
+    A1495 { n } => { b = Box1495 { items: head1495(n), name: "x" }; b.items },
+    B1495 { n } => { head1495(n) },
+  }
+}
+
+fn main() {
+  assert(len(match_arm(A1495 { n: 5 })) == 5, "the filed shape: got {len(match_arm(A1495 { n: 5 }))}");
+  assert(len(match_arm(B1495 { n: 4 })) == 4, "the filed shape, value arm: got {len(match_arm(B1495 { n: 4 }))}");
+  assert(len(if_arm(5)) == 5, "an if arm: got {len(if_arm(5))}");
+  assert(len(second_arm(B1495 { n: 5 })) == 5, "the second arm diverges: got {len(second_arm(B1495 { n: 5 }))}");
+  assert(len(second_arm(A1495 { n: 3 })) == 3, "its value arm: got {len(second_arm(A1495 { n: 3 }))}");
+  assert(len(three_arms(5)) == 5, "a chain, diverging head: got {len(three_arms(5))}");
+  assert(len(three_arms(2)) == 2, "a chain, middle arm: got {len(three_arms(2))}");
+  assert(len(three_arms(0)) == 1, "a chain, last arm: got {len(three_arms(0))}");
+  assert(len(deep_projection(5, Outer1495 { inner: Inner1495 { items: head1495(5), w: 1 }, tag: 2 })) == 5,
+         "a two-level projection returned");
+
+  assert(len(return_local(5)) == 5, "the local spelling still compiles: got {len(return_local(5))}");
+  assert(len(return_call(5)) == 5, "the call spelling still compiles: got {len(return_call(5))}");
+  assert(scalar(5) == 7, "a scalar return: got {scalar(5)}");
+  assert(size(textual(5)) == 2, "a text return: got {size(textual(5))}");
+  assert(len(record(5).items) == 5, "a record return: got {len(record(5).items)}");
+
+  // ⚠ The VOID arm of each statement control is asserted; the arm that CARRIES a value is
+  // loft#1496 and is asserted in that issue's own guard, not here.  Building these two cells
+  // is what found it: a statement `if` whose arms disagree about yielding leaves the
+  // interpreter's eval stack short, so `c_statement_if(0)` answers null and
+  // `c_statement_chain(2)` answers 5 where both must answer 0.  That is a defect of the
+  // INTERPRETER's statement discard, not of this emitter fix — it reproduces on `main` and on
+  // every build before it — and asserting it here would make this guard fail for a reason it
+  // does not measure.
+  assert(c_statement_if(5) == 1, "control, a statement if still discards: got {c_statement_if(5)}");
+  assert(c_statement_chain(5) == 1, "control, a statement chain discards: got {c_statement_chain(5)}");
+  assert(len(c_both_diverge(5)) == 5, "control, both arms diverge: got {len(c_both_diverge(5))}");
+  assert(len(c_no_return(A1495 { n: 5 })) == 5, "control, no return keyword: got {len(c_no_return(A1495 { n: 5 }))}");
+
+  println("1495 OK match={len(match_arm(A1495 { n: 5 }))} chain={len(three_arms(5))} stmt={c_statement_if(5)}");
+}

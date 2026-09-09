@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 448 | 425 | **23** |
+| 449 | 425 | **24** |
 
 
 
@@ -2620,6 +2620,18 @@ column's `neither` did not move.
 **2026-09-09, the THIRD join (loft2's 4 + loft3's 7 new commits) carrying @PLN152 step 5 and
 loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.**  Taken from
 `scripts/ir_walker_audit.py unspan` on the joined tree, not from either side.
+
+loft#1494 and loft#1495 then move it to **`449 · 425 · 24`**, and the OPAQUE column is the one
+that rises — the only time in this table's history that a fix has added a blind site rather than
+a peeling one, so it is worth saying why it is not one.  `generation::emit::arm_diverges` asks
+whether a branch arm leaves through `return` / `break` / `continue`, and it asks it of
+`Value::tail()` — whose own first arm is `Value::Span(b) => b.1.tail()`, so the peel happens one
+call down and the audit's regex cannot see it.  Measured rather than argued: the `match`-arm
+cells of `tests/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` are the
+span-wrapped spelling, and they pass.  Writing a redundant `.unspan()` at the site to move the
+column would make the metric agree and the code worse — `tail` is the one home for *descend to
+where control leaves*, and a second peel beside it is exactly the restated predicate this
+document is otherwise about.
 
 @PLN152 step 5 is three of the new discriminators, all in `src/parser/fit.rs`, and all
 peeling — which is why the OPAQUE column falls rather than rises, and why the Optional row is
