@@ -2435,7 +2435,7 @@ impl Parser {
                 // free the capture — @FR-L-CapHeap, whose *"a captured heap value is
                 // SHARED"* this arm is what enforces for a record return (loft#1202,
                 // `formal/closures.md` D-clo-17).
-                let delivery = self.classify_reference_delivery(&t.base().depend(), l);
+                let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
                 self.dispatch_reference_delivery(delivery, td, l);
             } else if crate::parser::vectors::is_keyed(t) {
                 // Enforces @FR-O-Move's second clause for the keyed kinds — *if the return
@@ -2707,7 +2707,7 @@ impl Parser {
     /// the deps fact `ls` + the tail shape ONCE and pick a [`RefDelivery`]. Pure
     /// (`&self`). Replaces the three inline branches the Reference arm of
     /// `block_result` carried; mirrors `classify_vector_delivery`.
-    fn classify_reference_delivery(&self, ls: &[u16], l: &[Value]) -> RefDelivery {
+    fn classify_reference_delivery(&self, ls: &[u16], l: &[Value], context: &str) -> RefDelivery {
         if l.last()
             .is_some_and(|tail| Self::tail_calls_a_fnref_parameter(tail, &self.vars))
         {
@@ -2747,6 +2747,12 @@ impl Parser {
             // it cannot see that the tail merely projects into `b`.
             return RefDelivery::MaterializeView;
         }
+        if context == "return from block" && self.return_views_a_capture(ls, l) {
+            // loft#1485, `@FR-F-Ret` — the tail reads out of the CLOSURE RECORD, so the value
+            // belongs to the frame that built the closure.  Asked above the empty-`ls` branch,
+            // because a bare capture tail publishes no dep at all on pass 1.
+            return RefDelivery::MaterializeView;
+        }
         if ls.is_empty() {
             // Issue #120: deps stripped — recover the tail's hidden work-refs so the
             // site still binds to the one buffer. No work-ref to recover → AsIs.
@@ -2779,7 +2785,10 @@ impl Parser {
                 }
             }
             RefDelivery::AsIs
-        } else if self.return_views_local(ls) || !self.ls_can_be_record_buffer(ls) {
+        } else if self.return_views_local(ls)
+            || (context == "return from block" && self.return_views_a_capture(ls, l))
+            || !self.ls_can_be_record_buffer(ls)
+        {
             // #306: the tail borrows a LOCAL's store — copy it before it escapes.
             RefDelivery::MaterializeView
         } else if !self.first_pass
@@ -12652,6 +12661,139 @@ impl Parser {
     /// An ARGUMENT dep is deliberately not a borrow here: the CALLER owns that store,
     /// so it outlives the call, and `classify_vector_delivery`'s `CopyBorrow` leg
     /// already gives that shape value semantics.
+    /// loft#1485, `@FR-F-Ret` — does this candidate view a store the ENCLOSING frame holds?
+    ///
+    /// The CAPTURE twin of [`Self::var_views_local`] and [`Self::var_views_an_argument`]: the
+    /// local case DANGLES, the argument case ALIASES the caller, and this one aliases the frame
+    /// that built the closure.  `(L-CapHeap)` shares the store in the direction the closure
+    /// READS and says nothing about what it RETURNS, so `(F-Ret)` is unopposed.
+    ///
+    /// TWO SPELLINGS, because the two PASSES represent a capture differently: on pass 1 it is a
+    /// NAME (`captured_names`, empty again by pass 2), and by pass 2 it is a read out of the
+    /// closure RECORD, so the fact has moved into a dep naming `__closure`.  A matcher keyed on
+    /// either alone fires on one pass and not the other.
+    fn var_views_a_capture(&self, v: u16, body: &[Value]) -> bool {
+        if v >= self.vars.count() {
+            return false;
+        }
+        // A MINT owns its store whatever its fields were READ from — the same reasoning
+        // `var_views_local` applies when it walks through one.
+        if self.var_is_mint(v) {
+            return false;
+        }
+        let named = |v: u16| {
+            v < self.vars.count()
+                && self
+                    .captured_names
+                    .iter()
+                    .any(|(name, _)| name == self.vars.name(v))
+        };
+        let from_closure = |v: u16| {
+            v < self.vars.count()
+                && self
+                    .vars
+                    .tp(v)
+                    .depend()
+                    .iter()
+                    .any(|&d| d < self.vars.count() && self.vars.name(d) == "__closure")
+        };
+        if named(v) || from_closure(v) {
+            return true;
+        }
+        // A LOCAL bound from either spelling.  On pass 1 `e = q` gives `e` no deps at all, so
+        // the binding has to be read off the BODY.
+        body.iter()
+            .any(|op| Self::set_rhs_names(&self.data, op, v, &named))
+    }
+
+    /// Is `v` assigned anywhere in this op from a PLACE whose root satisfies `pred`?
+    fn set_rhs_names(
+        data: &crate::data::Data,
+        op: &Value,
+        v: u16,
+        pred: &dyn Fn(u16) -> bool,
+    ) -> bool {
+        match op.unspan() {
+            Value::Set(w, rhs) => {
+                (*w == v && Self::place_root(data, rhs).is_some_and(pred))
+                    || Self::set_rhs_names(data, rhs, v, pred)
+            }
+            Value::Return(inner) | Value::Drop(inner) => Self::set_rhs_names(data, inner, v, pred),
+            Value::If(c, t, e) => {
+                Self::set_rhs_names(data, c, v, pred)
+                    || Self::set_rhs_names(data, t, v, pred)
+                    || Self::set_rhs_names(data, e, v, pred)
+            }
+            Value::Block(bl) | Value::Loop(bl) => bl
+                .operators
+                .iter()
+                .any(|o| Self::set_rhs_names(data, o, v, pred)),
+            Value::Insert(ops) | Value::Parallel(ops) => {
+                ops.iter().any(|o| Self::set_rhs_names(data, o, v, pred))
+            }
+            _ => false,
+        }
+    }
+
+    /// The variable a value is a PLACE of — itself, or the container a projection chain reads
+    /// out of.  `None` for anything that is not a place, a CALL above all: walking a general
+    /// call's first argument as a projection base reads `f(__closure, …)` as a view of the
+    /// capture.
+    fn place_root(data: &crate::data::Data, val: &Value) -> Option<u16> {
+        match val.unspan() {
+            Value::Var(u) => Some(*u),
+            Value::Return(inner) | Value::Drop(inner) => Self::place_root(data, inner),
+            Value::Block(bl) => bl.operators.last().and_then(|t| Self::place_root(data, t)),
+            Value::Insert(ops) => ops.last().and_then(|t| Self::place_root(data, t)),
+            other => crate::use_analysis::projection_container_var(data, other),
+        }
+    }
+
+    /// Is this tail, itself, a `DbRef` read out of the closure record?  The pass-2 spelling of a
+    /// bare capture tail, and deliberately NOT reached through a block: an object literal's
+    /// block also bottoms out in the closure when one of its FIELDS reads a capture, and
+    /// materialising that copies a freshly minted record per call.
+    fn tail_is_closure_read(&self, tail: Option<&Value>) -> bool {
+        let mut node = match tail {
+            Some(t) => t.unspan(),
+            None => return false,
+        };
+        loop {
+            match node {
+                Value::Return(inner) | Value::Drop(inner) => node = inner.unspan(),
+                Value::Call(d, args) if self.data.def(*d).name() == "OpGetDbRef" => {
+                    // The BASE must be the closure record.  `OpGetDbRef` is also how an
+                    // auto-Reference POINTER FIELD is read (`h.link`), so the op alone names
+                    // two notions: without this the control in
+                    // `1374-an-absent-pointer-leaves-its-slot-as-nullref` materialised an
+                    // absent pointer field and stopped answering null, on both backends.
+                    return matches!(
+                        args.first().map(Value::unspan),
+                        Some(Value::Var(v)) if *v < self.vars.count()
+                            && self.vars.name(*v) == "__closure"
+                    );
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// [`Self::var_views_a_capture`] over a dep LIST, plus the TAIL — a bare capture tail
+    /// publishes no dep at all on pass 1, so `ls` is empty and only the tail names it.
+    ///
+    /// ⚠ Only meaningful at the FUNCTION's return: `block_result` runs for every block, so the
+    /// caller asks this under `context == "return from block"`.
+    fn return_views_a_capture(&self, ls: &[u16], body: &[Value]) -> bool {
+        if self.tail_is_closure_read(body.last()) {
+            return true;
+        }
+        ls.iter().any(|&v| self.var_views_a_capture(v, body))
+            || body
+                .last()
+                .and_then(|t| Self::place_root(&self.data, t))
+                .is_some_and(|v| self.var_views_a_capture(v, body))
+    }
+
     /// loft#1482, `@FR-F-Ret` — does this candidate BORROW a store the CALLER still holds?
     ///
     /// The ARGUMENT twin of [`Self::var_views_local`], and the question that one

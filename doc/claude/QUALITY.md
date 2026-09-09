@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 435 | 411 | **24** |
+| 438 | 414 | **24** |
 
 
 
@@ -2616,6 +2616,12 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1485's capture return: the unspan row `435 · 411 · 24` → `438 · 414 · 24`,
+and the Optional row does not move.**  Three new `Value` discriminators, all peeling and all one
+question — `set_rhs_names`, `place_root` and `tail_is_closure_read`, the three shapes a capture
+reaches a return through.  The `neither` column is unchanged, which is the one that matters: a
+capture is named through `__closure` and a `Span` cannot hide that.
 
 **2026-09-09, loft#1483's capture release: the Optional row `759 · 414 · 6 · 339` →
 `759 · 415 · 6 · 338`, and the unspan row does not move.**  The OPAQUE column went DOWN, which is
