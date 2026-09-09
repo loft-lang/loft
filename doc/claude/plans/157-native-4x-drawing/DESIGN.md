@@ -1472,6 +1472,57 @@ own reads** — `if idx < len(d) { d[idx] }` resolves the store three times and 
 length twice per call — and **loop-invariant scalar field reads hoisted as locals** (P4's
 third item, still open): together the two are the 45 % above.
 
+**P4c after § V-l — the validity rule it now needs.**  The emitted hot loops read a
+record parameter's scalar fields per iteration through a store resolution each:
+`n_raster_segment` 15 (`lay.*`), `n_lock_layer` 9 (`st.*`, `br.*`), `n_composite_layer` 7
+(`lay.*`).  P4c's design (§ P4 item 3) invalidates a hoisted `(v, fld)` scalar on any
+in-place write at const offset `fld`, offset-keyed.  Two refinements before building it:
+(1) an ELEMENT write `OpSet*(OpGetVector(w, i), o, x)` writes offset `o` INSIDE an element,
+which can alias a record ref only when that ref views an element of the same element type
+(`f = w[k]?` is a `ref(T)` into `vector<T>`), so the key is (record type, offset), not
+offset alone — a `vector<integer>` element write at offset 0 must not evict `lay.x0`; and
+(2) a callee admitted by § V-l writes at offsets the caller's collector cannot see, so
+`in_place_only_writer` should also answer the SET of (type, offset) it writes, memoised
+beside its verdict, and the caller evicts those; a callee the gate cannot classify keeps
+every scalar out, as it keeps the headers out today.  Cells: the composite shape · a loop
+writing the hoisted field itself · a loop writing the same offset of ANOTHER record type ·
+a loop calling a setter that writes the hoisted field · a `&`-bound alias of the record ·
+a rebind of the record inside the loop · a record that is an element view (`f = w[k]?`)
+with an element write beside it.
+
+## V-m — the fused scalar append: cells written (2026-09-09)
+
+The unit § V-k measured (five runtime calls per scalar element, ~35 % of `lock_curved`)
+starts the plan's way: `bytecode-comparisons/V-m-fused-append-cells.loft`, fifteen cells with
+hand-computed expectations, passing on both backends under `LOFT_STORES=warn` and the native
+leak check on today's four-op lowering — c1 a thousand integer appends (three growth steps) ·
+c2 floats · c3 booleans · c4 characters from a multi-byte text · c5 an enum · c6 a
+`vector<integer?>` with a null appended · c7 two vector FIELDS of a record · c8 a `&`-bound
+alias of a field vector · c9 a three-element literal per iteration · c10 a loop whose bound
+re-reads the length it grows · c11 `reserve` then appends · c12 the element a call result ·
+c13 a `sorted<K[k]>` (keyed — must keep the general path) · c14 a copy appended after the
+source · c15 an element read of the vector being appended.  Two of the expectations were
+wrong on the first pass and both backends agreed against them — a loop bound re-reads
+`len(v)` per iteration (c10), and c15's third append reads the element it appended — which
+is the oracle doing its job.
+
+Writing c13 surfaced an ICE: `sorted<integer>` is refused at its declaration ("Expect token
+[", `(Col-Sorted)` keys on a field), but a SUBSCRIPT on the refused collection reached
+`Parser::parse_key` with an empty key list and `key_types[0]` panicked.  Fixed in
+`parse_key` (parse the key, leave the poisoned value, the declaration's diagnostic is the
+one the reader sees); `tests/keyless_sorted_subscript.rs` runs the CLI on the probe, because
+the test runner's recovery on that source never reaches the site.
+
+The op design, for the code: one typed `OpAppend<Kind>(v: vector, val: <kind>)` per scalar
+setter kind (`Int`, `Int4`, `Float`, `Single`, `Boolean`, `Character`, `Byte`, `Short`,
+`Enum` — the `OpSet*` family's spelling), `#rust` template `s.database.append_<kind>(&v, val)`
+= one store resolution, one capacity test (growth on the ladder), one write, one length
+bump; emitted by `new_record`'s scalar arm for a `Parts::Vector` of that kind at
+`field == u16::MAX`, the keyed kinds and record elements keeping the four ops.  A new op
+renumbers `index/target_surface.json` (`make surface-gen` after the wasm rlib is rebuilt)
+and regenerates `fill.rs`.  The hoist gate needs nothing: an op absent from its allow-list
+blocks, which a growth must.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

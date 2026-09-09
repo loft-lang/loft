@@ -1,0 +1,26 @@
+// @PLN157 V-m cells — `v += [scalar]` as ONE fused append.  Every cell passes today on the
+// four-op lowering; the fused op must keep every line on both backends (value, length, leak).
+enum Col { Red, Green, Blue }
+struct Box { xs: vector<integer>, ws: vector<float>, tag: text }
+
+fn isum(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn fsum(v: const vector<float>) -> float { s = 0.0; for x in v { s += x; } s }
+
+fn c1() { v: vector<integer> = []; for i in 0..1000 { v += [i]; } println("c1 {len(v)} {isum(v)} {v[999]?}"); }
+fn c2() { v: vector<float> = []; for i in 0..25 { v += [(i as float) * 0.5]; } println("c2 {len(v)} {fsum(v)}"); }
+fn c3() { v: vector<boolean> = []; for i in 0..13 { v += [i % 3 == 0]; } t = 0; for b in v { if b { t += 1; } } println("c3 {len(v)} {t}"); }
+fn c4() { v: vector<character> = []; for c in "héllo wörld" { v += [c]; } println("c4 {len(v)} {v[1]?} {v[7]?}"); }
+fn c5() { v: vector<Col> = []; v += [Col::Red]; v += [Col::Blue]; v += [Col::Green]; n = 0; for c in v { if c == Col::Blue { n += 1; } } println("c5 {len(v)} {n} {v[2]?}"); }
+fn c6() { v: vector<integer?> = []; v += [4]; v += [null]; v += [6]; n = 0; s = 0; for x in v { if x == null { n += 1; } else { s += x ?? 0; } } println("c6 {len(v)} {n} {s}"); }
+fn c7() { b = Box { xs: [], ws: [], tag: "t" }; for i in 0..40 { b.xs += [i * 2]; b.ws += [1.5]; } println("c7 {len(b.xs)} {isum(b.xs)} {len(b.ws)} {fsum(b.ws)} {b.tag}"); }
+fn c8() { b = Box { xs: [1], ws: [], tag: "" }; d = &b.xs; for i in 0..30 { d += [i]; } println("c8 {len(b.xs)} {isum(b.xs)}"); }
+fn c9() { v: vector<integer> = []; for i in 0..5 { v += [i, i * 10, i * 100]; } println("c9 {len(v)} {isum(v)}"); }
+fn c10() { v: vector<integer> = [7, 8, 9]; s = 0; for i in 0..len(v) { s += v[i]?; v += [s]; if len(v) > 12 { break; } } println("c10 {len(v)} {isum(v)}"); }
+fn c11() { v: vector<integer> = []; reserve(v, 100); for i in 0..50 { v += [i]; } println("c11 {len(v)} {isum(v)}"); }
+fn twice(x: integer) -> integer { x * 2 }
+fn c12() { v: vector<integer> = []; for i in 0..20 { v += [twice(i)]; } println("c12 {len(v)} {isum(v)}"); }
+struct K { k: integer }
+fn c13() { s: sorted<K[k]> = []; s += [K { k: 5 }]; s += [K { k: 1 }]; s += [K { k: 3 }]; first = 0; for e in s { first = e.k; break; } three = s[3]?; println("c13 {len(s)} {first} {three.k}"); }
+fn c14() { v: vector<integer> = []; for i in 0..3 { v += [i]; } w = v; w += [99]; println("c14 {len(v)} {len(w)} {isum(v)} {isum(w)}"); }
+fn c15() { v: vector<integer> = [1, 2]; for i in 0..3 { v += [v[i]? + 1]; } println("c15 {len(v)} {isum(v)}"); }
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); }

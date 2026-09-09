@@ -2798,6 +2798,19 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     }
 
     pub(crate) fn parse_key(&mut self, code: &mut Value, typedef: &Type, key_types: &[Type]) {
+        // A keyed kind with NO key only arrives after its declaration was refused
+        // (`sorted<integer>` is "Expect token [" — `(Col-Sorted)` keys on a field), so the
+        // lookup below has nothing to convert the key against.  Indexing `key_types[0]`
+        // here was an internal compiler error on a program that had already been told
+        // what was wrong; consume the subscript and leave the poisoned value instead.
+        let Some(key_0) = key_types.first() else {
+            let mut p = Value::Null;
+            if !(self.lexer.peek_token("..") || self.lexer.peek_token("..=")) {
+                self.expression(&mut p);
+            }
+            *code = Value::Null;
+            return;
+        };
         // detect open-start `col[..hi]` or `col[..]` before parsing expression.
         let open_start = self.lexer.peek_token("..") || self.lexer.peek_token("..=");
         let mut p = Value::Null;
@@ -2806,9 +2819,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else {
             let t = self.expression(&mut p);
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
-            if !self.convert_store_lenient(&mut p, &t, &key_types[0], "the key", None)
-                && !self.first_pass
-            {
+            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
                 // a `(integer, integer)` key is a plain miscount, and "Invalid index key"
                 // leaves the reader comparing the two spellings by eye.
