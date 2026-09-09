@@ -529,27 +529,50 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
-            let t = self.parse_part(var_tp, val, parent_tp);
+            let mut t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // A unary prefix operator must validate its operand like a binary
             // one does, else an undefined name (a pass-1 placeholder Var with no
             // slot) reaches codegen and panics instead of a clean "Unknown
             // variable" diagnostic (@PLN53 F1-1).
             self.known_var_or_type(val, &operand_pos);
+            // `@FR-E-Uncomp-Seen` — `!place` in the condition of the `if` DIRECTLY after a store
+            // to that same narrow place asks whether the store fit, which is a question the
+            // slot cannot answer: `u8` fills its width, so the default it took is
+            // indistinguishable from a computed one.  Read the `__fit_N` temp instead;
+            // `parse_block_inner` splits the store to bind it once the statement is
+            // complete.  The temp is a genuine `integer?`, so the always-false check below
+            // sees a nullable operand and stays quiet without being taught this case.
+            if let Some(fit) = self.fuse_fit_test(val) {
+                *val = Value::Var(fit);
+                t = crate::parser::fit::fit_var_type();
+                // …and the operand really is nullable now, which is the fact the
+                // transient field-read marker was still carrying from the place.
+                self.expr_not_null = false;
+            }
             // #253: `!x` on a non-boolean reads as "is x null?" — the null
-            // sentinel is in-band (LOFT.md "!value asymmetry").  On a `not null`
-            // operand the value can never BE the sentinel, so `!x` is *always
-            // false* — a silent no-op (`f = 0; if !f` never runs, because 0 is a
-            // real value, not null).  Warn, don't error: a nullable operand
-            // (`!both` in stdlib min/max) is a legitimate null test, and boolean
+            // sentinel is in-band (LOFT.md "!value asymmetry").  On an operand whose
+            // type kept no code back for null the value can never BE the sentinel, so
+            // `!x` is *always false* — a silent no-op (`f = 0; if !f` never runs,
+            // because 0 is a real value, not null).  Warn, don't error: a nullable
+            // operand (`!both` in stdlib min/max) is a legitimate null test, and boolean
             // `!` is ordinary negation (`false` is a valid value there).
             let eff = if let Type::RefVar(inner) = &t {
                 (**inner).clone()
             } else {
                 t.clone()
             };
-            let operand_not_null =
-                self.expr_not_null || matches!(&eff, Type::Integer(spec) if spec.not_null);
+            // @PLN152 step 5 — the question is `IntegerSpec::non_null_reads_null`, not
+            // `not_null`.  That flag is set only where a DECLARATION gave the sentinel up
+            // to widen the range — a struct field's spelling of it — so it answered the
+            // field `!f.i` and left the two other spellings of the identical type silent:
+            // `a: u8 = 250; if !a { … }` and `if !v[0] { … }` over a `vector<u8>` were
+            // always-false code with nothing said about them.  This lint is the adjacency
+            // gate the fused form above relies on, so a hole in it is a hole in that
+            // promise: move the `if` one line away from its store and the check must start
+            // reporting itself, whichever spelling of the place it names.
+            let operand_not_null = self.expr_not_null
+                || matches!(&eff, Type::Integer(spec) if !spec.non_null_reads_null());
             if !self.first_pass
                 && operand_not_null
                 && !matches!(eff, Type::Boolean | Type::Null | Type::Unknown(_))

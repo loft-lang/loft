@@ -9,6 +9,58 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `@FR-E-Uncomp-Seen`: a fit-failure into a narrow slot is testable where it happened (2026-09-09)
+
+@PLN152 step 5, the arc-B half of *"a fit-failure the author can choose, and can see"*.
+`u8`, `i8`, `u16`, `i16`, `u32` and every `integer limit(lo, hi)` use every code they have, so
+`(E-Uncomp-NN)` writes the type's DEFAULT into them and the fault becomes indistinguishable
+from an answer: `x: u8 = 250; x += 10` and `x: u8 = 250; x -= 250` both leave `0`, and `!x`,
+`x == null` and `x == 0` say exactly what they say for a computed zero.  `!place` in the
+condition of the `if` that is the statement immediately after such a store now answers
+whether the store fit.
+
+Nothing is stored to make that work.  A narrow store already lowers to
+`OpRangeDefault(value, lo, hi, dflt)` on both backends; where the pair is written, the parser
+splits that one node — the composed value goes into a `__fit_N` temp through the checked
+cast, and the guard reads the temp.  `OpRangeDefault` answers `dflt` for the null the cast
+produces and passes an in-range value through, so the stored value is unchanged **by
+construction** rather than by two behaviours agreeing.  `src/parser/fit.rs` is the one home;
+the seam that offers the candidate is the compound-assignment site every local, field and
+element passes through with the target still a readable place.
+
+**The temp is a full-width `integer?`, never `Optional(τ)`.**  A `u8?` sacrifices its TOP
+code to hold null (`@FR-N-Reserve`), so a `u8?` temp reports `255` — an ordinary `u8` — as a
+failure and writes `0`.  That is what the plan's own hand-written "proven" target shape did:
+it was checked at 300 and at 200, which straddle the boundary without touching it.
+
+**Opt-in, measured not argued.**  `scripts/introspect_diff.sh` over the corpus reads
+**DIFFERENT 2 of 1437**, and both are this plan's own guard files — 1435 files emit
+byte-identically, diagnostics included.  Cost where it IS live: roughly 2× on a deliberately
+minimal interpreter loop (three source operations in the body), and no measurable cost on
+`--native`, which is the default backend.
+
+Guard: `tests/scripts/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft`,
+falsified at `e6922e9fa`.
+
+### `redundant-null-negation` asked the wrong question, and was silent on two spellings of three (2026-09-09)
+
+The lint tested `IntegerSpec::not_null`, a flag only a FIELD declaration sets.  So `if !f.i`
+on a `u8` field reported *"always false"* while `if !a` on a `u8` LOCAL and `if !v[0]` over a
+`vector<u8>` — the same type, equally always false — said nothing at all, and that code was
+dead with no diagnostic.
+
+The question is now `IntegerSpec::non_null_reads_null`: *can a value held in a non-nullable
+slot of this spec ever read back as null?*  `true` for the two templates that keep a bottom
+code (`integer`, `i32`); `false` for `not null`, for every narrow alias that fills its width,
+for `u32` (spare code at the top, which no non-null read tests for) and for an un-annotated
+`limit(lo, hi)`.  The store side of the same fact is `uncomputable_default`'s `dflt`, and the
+two are documented as one fact with two readers.
+
+This is what makes `@FR-E-Uncomp-Seen` safe: the fused pair is invisible in the source, so
+moving the `if` one line away has to REPORT itself rather than go quiet.  Blast radius of the
+widening, over `tests/scripts` + `tests/docs` + `examples` + `tools` + `lib` + `default`: one
+site, and it is the deliberate one in @PLN152's own step-1 guard.
+
 ### `@FR-N-Shape`: a shape question answers alike for `τ` and `τ?` (2026-09-08)
 
 Ten @PLN153 batches cured one mechanism — a `matches!` / `if let` / catch-all `match` over a

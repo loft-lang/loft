@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 445 | 422 | **23** |
+| 437 | 413 | **24** |
 
 
 
@@ -2661,6 +2661,17 @@ the Optional row does not move.**  A net +1 — `every_return_leaf_views_var` ar
 that fix: the leaf question has one home, and the widened test peels like the one it replaces.
 The Optional column is untouched because nothing in it discriminates on a `Type` variant; the
 new walker asks the RULES (`(B-View)` / `(B-Copy)`) about a `Value`, not a former about a type.
+**2026-09-09, @PLN152 step 5: the unspan row `434 · 410 · 24` → `437 · 413 · 24`.**  Three
+new `Value` discriminators, all in `src/parser/fit.rs`, and all peeling — the OPAQUE column
+does not move, and the Optional row does not move at all (these three ask about `Value`
+variants, not `Type` ones).
+That is not luck: `same_place` and `guard_slot` compare an IR node the parser has just built
+against one it built a statement earlier, and a `Span` sits over exactly the fault-prone
+nodes those two ask about, so a bare match would have failed to recognise the pair on the
+spellings that carry a position and recognised it on the ones that do not — the fused form
+would have worked for a local and silently not for a field.  Written peeling from the first
+line, because `Value::unspan`'s own doc block says so and this table is what makes that
+readable.
 
 **2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
 and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`

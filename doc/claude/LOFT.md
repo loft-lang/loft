@@ -206,6 +206,34 @@ round-trips, at every width.  `not null` on the field unlocks the full
 range (256 / 65 536 / 2³²) when it never carries null.  Typical `u32` use:
 RGBA pixels, large file offsets, bitmasks wider than i32.
 
+**A NON-nullable narrow slot has no code for a failure, so `!` reads it beside the
+store.**  `u8`, `i8`, `u16`, `i16`, `u32` and every `limit(lo, hi)` range use every code
+they have, so a value that does not fit takes the type's default and is
+indistinguishable from a computed one — `x: u8 = 250; x += 10` answers `0`, and so does
+`x: u8 = 250; x -= 250`.  An author who cares about that edge writes the test on the
+line after the store:
+
+```loft
+health: u8 = 250;
+health += 10;
+if !health { println("the boost did not fit — health is {health}"); }
+```
+
+The value is unchanged — the slot still takes `0`, exactly as it does with no test
+written — and `!health` answers whether the store fit.  Two rules bound it:
+
+- **The `if` must be the very next statement.** Past that there is nothing left to carry
+  the status but the slot itself, and writing it there would cost every element of a
+  `vector<u8>` the byte the type was chosen for.  Move the line and the check goes back
+  to meaning *is this null*, which on such a type is always false — the compiler says so
+  (`redundant-null-negation`), so a moved line reports itself rather than going quiet.
+- **Only where the type has no code of its own.** `integer`, `i32` and every nullable
+  spelling (`u8?`) keep a sentinel, so `!x` already reads their failure anywhere, and
+  nothing about them changes.
+
+`?? <value>` is the other half of the same edge and works in the same place: it names
+what the slot takes instead of the type's default (`health = (health + 10) ?? 255`).
+
 **Migration note:** the `long` type keyword and the `l` literal
 suffix (e.g. `42l`) were removed in 0.9.0.  There are no external
 users of pre-0.9.0 loft, so no migration path is needed in

@@ -684,7 +684,14 @@ impl Parser {
                 }
             }
         }
+        // @PLN152 step 5 — a nested block runs its own statement loop, which owns
+        // `fit_armed`; without this the `if` BODY cleared the arming its own condition had
+        // just used and the store was never split.  The fit belongs to the pair of
+        // statements that produced it, so it is saved across every block this one contains
+        // and restored for the loop that is still in the middle of that pair.
+        let outer_fit = self.fit_armed.take();
         let cc_ret = self.parse_block_inner(context, val, result);
+        self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;
         }
@@ -743,6 +750,13 @@ impl Parser {
         let dz_base = self.divisor_nonzero.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
+        // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
+        // The fit-failure of a store lives across exactly one statement boundary: offered to
+        // the statement that follows, and gone after it.  Held here rather than on the
+        // parser because "the previous statement of THIS block" is a fact only this loop
+        // has, and a nested block must not inherit it.
+        let mut pending_fit: Option<crate::parser::fit::FitFusion> = None;
+        let mut fit_store_at = 0usize;
         loop {
             let line = self.lexer.pos().line;
             if line > self.line {
@@ -906,6 +920,11 @@ impl Parser {
             // it at each statement boundary; the within-statement `?? d` / `== null` tracking is
             // untouched (both operand and consumer parse inside this one `self.expression`).
             self.expr_not_null = false;
+            // `@FR-E-Uncomp-Seen` — arm the preceding store's fit status for THIS statement, and
+            // only when it opens with `if`: that is the whole of the adjacency rule, and the
+            // `take` is what makes it one statement wide rather than "until someone asks".
+            self.fit_armed = pending_fit.take().filter(|_| self.lexer.peek_token("if"));
+            self.fit_candidate = None;
             // loft#1382 — statement position, decided by the ONE reader that knows it.  A
             // statement beginning with `if` or `match` has its value discarded
             // (`@FR-F-Block`), so its arms need not agree with each other; a value-position
@@ -917,6 +936,31 @@ impl Parser {
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
             self.stmt_if_pending = saved_stmt_if;
+            // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
+            // split the store that is already in `l`: the checked cast binds the temp, and
+            // the store's own range guard now reads it.  Values are unchanged by
+            // construction — an out-of-range subject casts to null and `OpRangeDefault`
+            // answers the same default it answered for the raw value, and an in-range one
+            // passes straight through.
+            if let Some(fit) = self
+                .fit_armed
+                .take()
+                .and_then(|f| f.fit_var.map(|v| (f, v)))
+            {
+                let (cand, fit_var) = fit;
+                let mut composed = Value::Null;
+                if let Some(slot) = crate::parser::fit::guard_slot(&self.data, &mut l[fit_store_at])
+                    && let Value::Call(_, guard_args) = slot.unspan_mut()
+                {
+                    composed = std::mem::replace(&mut guard_args[0], Value::Var(fit_var));
+                }
+                debug_assert!(
+                    !matches!(composed, Value::Null),
+                    "@PLN152 armed a store whose range guard could not be found"
+                );
+                self.dn4_checked_cast(&mut composed, &Type::Integer(cand.spec), &crate::data::I64);
+                l.insert(fit_store_at, v_set(fit_var, composed));
+            }
             // …and CONFIRM it here, where the `;` is finally visible.  `@FR-F-Block` discards
             // a block's value *"only where the BLOCK itself is a statement — a `;`-terminated
             // one"*, and a leading `if` does not prove that: a function TAIL also begins its
@@ -1056,6 +1100,17 @@ impl Parser {
             } else {
                 l.push(n);
             }
+            // @PLN152 step 5 — offer this statement's narrow store to the next one, but only
+            // once the pushed node really carries the `OpRangeDefault` guard the fused form
+            // rewrites.  Asked of the node rather than assumed from the seam, so a shape this
+            // cannot split can never reach the point where a `!` has already been redirected
+            // to a temp nothing binds.  A candidate raised inside a nested block fails the
+            // same test, because the node pushed here is the enclosing construct.
+            pending_fit = self.fit_candidate.take().filter(|_| {
+                l.last()
+                    .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last))
+            });
+            fit_store_at = l.len().saturating_sub(1);
             if self.lexer.peek_token("}") {
                 break;
             }
@@ -4353,7 +4408,14 @@ impl Parser {
         // same statement construct.
         let is_stmt = std::mem::replace(&mut self.stmt_if_pending, false);
         let outer_arms = std::mem::replace(&mut self.arms_of_statement_construct, is_stmt);
+        // `@FR-E-Uncomp-Seen` — open the fused-fit window.  This is the one site that knows
+        // STATEMENT position, which is what the adjacency rule is about: only an `if` that
+        // IS the next statement stands where the preceding store's fit status is still
+        // reachable.  `parse_if_expecting` closes it the moment the condition is complete,
+        // so a `!place` in the BODY reads the slot exactly as it always did.
+        self.fit_in_condition = is_stmt && self.fit_armed.is_some();
         let r = self.parse_if_expecting(code, &Type::Unknown(0));
+        self.fit_in_condition = false;
         self.arms_of_statement_construct = outer_arms;
         r
     }
@@ -4370,6 +4432,9 @@ impl Parser {
         self.in_control_head = true;
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
+        // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+        // the arms below, and an `else if` chain's own conditions, are past the pair.
+        self.fit_in_condition = false;
         self.convert_condition(&mut test, &tp);
         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
         // matching branch (then for `!= null`/truthy, else for `== null`).

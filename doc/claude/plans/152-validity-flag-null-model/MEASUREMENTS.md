@@ -432,3 +432,143 @@ carrying arc B as an obligation.
 proposed. None tested whether the existing surface could already express the case, and that
 question was one build away the entire time — the same cached falsify worktree that answered it
 in the end had been sitting there since step 2.
+
+## Step 5 — the adjacent form, measured 2026-09-09
+
+### The hand-written target shape was wrong at 255, and two cells could not see it
+
+The shape [`probes/step5-target-shape.loft`](probes/step5-target-shape.loft) had recorded as
+*proven, so the peephole is translation not invention* was run at the top of the range before
+any compiler edit:
+
+```loft
+a: u8 = 250;
+fit = (a + 5) as u8?;   // 255 — an ordinary u8
+a = fit ?? 0;
+```
+
+| `a` before | `a += 5` today | the hand-written shape | `!fit` |
+|---|---|---|---|
+| 0, 100, 245, 246 | 5, 105, 250, 251 | same | false |
+| **250** | **255** | **0** | **TRUE** |
+
+A `u8?` gives its TOP code up to hold null (`@FR-N-Reserve`), so the inferred `fit` cannot
+hold `255` and reports it as a failure. The probe's two cells — 300 (does not fit) and 200
+(fits, mid-range) — straddle the boundary without touching it, which is exactly the
+counting failure `scripts/matrix_axes.py` exists for: one axis varied, its BOUNDARY not
+among the values. Declaring the temp `integer?` answers correctly at every value 0..=255 on
+both backends, and is what shipped.
+
+### The lint the design leans on had holes in two of its three spellings
+
+README § *The adjacency rule polices itself, with a lint that already ships* rested on
+`redundant-null-negation` reporting a `!` that is always false. Measured on the three
+spellings of one type:
+
+| `if !` on a non-null `u8` | before | after |
+|---|---|---|
+| a struct FIELD — `!f.i` | warns | warns |
+| a LOCAL — `!a` | **silent** | warns |
+| a vector ELEMENT — `!v[0]` | **silent** | warns |
+
+The predicate was `spec.not_null`, a flag only a FIELD declaration sets; the local and the
+element carry the same `u8` with the flag clear. So two thirds of the guard rail the design
+depends on did not exist, and `a: u8 = 250; if !a { … }` was dead code with nothing said
+about it. The question is now `IntegerSpec::non_null_reads_null` — *can a non-nullable slot
+of this spec read back as null?* — which answers `true` for the two templates that keep a
+bottom code (`integer`, `i32`) and `false` for every range that fills its own width.
+
+Blast radius of widening it, over `tests/scripts` + `tests/docs` + `examples` + `tools` +
+`lib` + `default`: **one** site draws the new warning, and it is the deliberate one in this
+plan's own step-1 guard.
+
+### The value matrix — both backends, hand-computed first
+
+`probes/` plus the graduated guard. Every cell asserts the VALUE the slot holds as well as
+what the test answered, because the mechanism's whole claim is that it changes only the
+second.
+
+| axis | cells | result |
+|---|---|---|
+| width | `u8` `i8` `u16` `i16` `u32` `limit(0,100)` | all report; all store the same default as before |
+| fits | `u8` at 255, `i8` at 127, an ordinary 110 | none reports; values unchanged |
+| fault shape | out of range high, below the low bound, landing exactly on the sentinel | all three report |
+| place | local · field · nested field · element (const index) · element (variable index) | all report |
+| condition | `!a` · `!a and c` · `c and !a` · `!a or !a` | all read the fit; the last mints one temp |
+| controls | `i32` `integer` `u8?` | unchanged — they keep their own code and `!` reads it |
+| adjacency | one statement apart · in the `if` body · in a `while` · in an `else if` arm | none fuses, all four warn |
+| purity | `w[bump()] += 10; if !w[bump()]` | does not fuse — the read is not a fetch |
+| nesting | a fused pair inside an `if` body, inside a `for` body, inside a lambda | all fuse, per iteration |
+
+Both backends agree on every cell. `LOFT_STORES=warn` and `LOFT_NATIVE_LEAK_CHECK=1` are
+clean.
+
+The strongest value check is not in the matrix: `probes/step6-cost/`'s two arms differ only
+by the `if !acc { … }` line and run 20 000 000 iterations with 271 739 fit failures, and
+they print the same accumulated result.
+
+### The opt-in claim, proven rather than argued
+
+`scripts/introspect_diff.sh <pre-change> <post-change>` over the whole corpus (IR + bytecode
++ generated Rust + stderr, per file):
+
+```
+DIFF tests/scripts/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft
+DIFF tests/scripts/152-the-fallback-and-failure-spellings-that-already-work.loft
+DIFFERENT 2 of 1437
+```
+
+Both are this plan's own guards — one new, one rewritten by step 5. **1435 corpus files
+emit byte-identically**, diagnostics included.
+
+### The reporting channel: a fused store is a defended one
+
+```
+$ loft --interpret --dev-soft-halt report.loft
+fused: detected a=0
+soft-halt: value 260 is outside the declared range 0..=255, so the slot took its default instead
+unfused b=0
+```
+
+The undefended store still announces its fault; the fused one does not, because the author
+said what happens — `(E-Report)`'s guarded-site rule, the same one the `??` path follows
+(`152-the-narrowing-message-names-cures-that-work.loft` § `d_a_defended_store_reports_nothing`).
+
+### Step 6 — what it costs where it is live
+
+A REPORT, never a gate. `probes/step6-cost/run.sh`, three arms interleaved, medians of nine
+reps. Two of the arms compare two BINARIES on one program and must read 0 % — their emission
+is byte-identical — so whatever they show is the box, and that is the noise bound. The
+`mechanism` row compares two PROGRAMS on ONE binary, which is the cost itself.
+
+| run | narrow-plain (noise) | integer-ctrl (noise) | **mechanism** |
+|---|---|---|---|
+| 1 | +1.1 % | +3.9 % | **+85 %** |
+| 2 | −3.6 % | −23.6 % | **+110 %** |
+| 3 | −35.9 % | +18.9 % | **+97 %** |
+
+**The interpreter arm roughly DOUBLES**, and the box it was measured on was running two
+other checkouts' gates throughout (load 9–40), which is what the wandering controls say. The
+effect is far outside that noise and it is also predictable from op count: the loop body is
+three source operations, the fused form adds a temp bind, two `OpLeInt` comparisons and the
+`!` test, and every one of those is an interpreter dispatch. **This is close to the worst
+case by construction** — a body that did any real work would divide the same fixed addition
+by a larger number.
+
+**On `--native` no slowdown was measurable at all.** Medians over three reps, and a
+`nofault` twin of each arm (the accumulator is reset every iteration, so no store ever fails
+and no `RangeDefaulted` raise fires in either arm) to separate the checks from the
+reporting:
+
+| | plain | tested |
+|---|---|---|
+| native, faults present | 335 ms | 217 ms |
+| native, no faults | 620 ms | 449 ms |
+| interpret, no faults | 4360 ms | 7294 ms |
+
+The tested arm ran at or below the untested one on every native rep, in both the faulting
+and the non-faulting twin. Two integer comparisons are something rustc schedules; the
+interpreter has to dispatch them. **The honest statement is therefore backend-shaped**: the
+mechanism is a real per-iteration cost on the interpreter, near-free on the backend that is
+the default, and paid only where an author wrote the test — the corpus diff above says
+1435 of 1437 files pay nothing at all.

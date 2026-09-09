@@ -42,6 +42,17 @@ tables.
   because exhaustion and the scope end both call it. When testing one, note that a same-scope
   test proves little — the source dies last there anyway, so a mistake only shows once the
   container OUTLIVES it (a return).
+- **The fit test after a narrow store is ADJACENCY-SENSITIVE, and that is the trade
+  (`@FR-E-Uncomp-Seen`, @PLN152).**  `x += 10; if !x { … }` on a `u8` / `i8` / `u16` / `i16` /
+  `u32` / `limit(lo, hi)` slot answers whether the store fit; put ONE statement between them
+  and `!x` goes back to meaning *is this null*, which on such a type is always false.  The
+  boundary is not stylistic: past the next statement the only thing that could carry the
+  status is the slot, and writing it there would cost every element of a `vector<u8>` the
+  byte the narrow type was declared for (0.362 MB against 5.909 MB over 200 000 elements).
+  It does not fail silently — `redundant-null-negation` reports the moved test — and it
+  reaches only a place whose read is a plain fetch, so `w[bump()]` and a keyed `ks[k].v` (whose
+  read is already nullable) keep their existing meaning.  The value stored is identical either
+  way.
 - **C3** — WASM `par()` runs sequentially.
   See [DESIGN_DECISIONS.md § C3](DESIGN_DECISIONS.md#c3--wasm-par-runs-sequentially).
 - **C38** — Closure capture was copy-at-definition.
