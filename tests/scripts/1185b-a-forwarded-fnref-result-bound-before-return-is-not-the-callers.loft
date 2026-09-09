@@ -142,3 +142,26 @@ fn test_the_direct_call_is_unchanged() {
   }
   assert(cap.n == 5, "the capture survives a direct call: got {cap.n}");
 }
+
+// ⚠ THE CELL THAT SAYS THE CHANNEL DID NOT OVER-REACH, added after the fix cost a regression.
+//
+// "The store predates the call" was read as "it belongs to a frame further up", and the two
+// come apart at exactly one store: the hidden return BUFFER this call site allocated for the
+// callee.  `fn_call_ref` records it before taking the snapshot, so its stamp is at or below the
+// snapshot as a capture's is — and it is the opposite case, the one store the caller certainly
+// owns.  Refusing the caller's free of it left one buffer per CALL alive to the caller's own
+// return.
+//
+// It is a WATERMARK defect, and that is why it needs a cell of its own: the allocation and free
+// COUNTS were unchanged, every value was right, and the leak gate saw nothing — the only signal
+// is how many stores are live at once.  The scale is the assertion: at 70000 calls the store
+// table (a `u16`, 65535 slots) is exhausted and the run stops, where a released buffer keeps
+// the working set flat.  A four-iteration cell like the ones above cannot see it.
+fn test_a_borrowed_return_still_releases_the_calls_own_buffer() {
+  cap = P1185 { n: 3 };
+  g = fn(k: integer) -> P1185 { cap };
+  s = 0;
+  for _ in 0..70000 { s += g(0).n; }
+  assert(s == 210000, "70000 calls each answering the captured struct, got {s}");
+  assert(cap.n == 3, "the capture survives all of them: got {cap.n}");
+}

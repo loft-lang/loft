@@ -1903,7 +1903,9 @@ impl State {
         // a capture-returning lambda frees the CALLER'S capture on the first call and reads
         // freed bytes on every one after (`plans/150-fnref-return-ownership`).
         let raw_tp = match self.take_fnref_borrowed_return() {
-            Some(b) if b.store_nr == src.store_nr => raw_tp & !crate::keys::COPY_FREE_SOURCE,
+            Some(b) if b.store_nr == src.store_nr && !crate::keys::no_fnref_borrowed_return() => {
+                raw_tp & !crate::keys::COPY_FREE_SOURCE
+            }
             _ => raw_tp,
         };
         self.do_copy_record(src, dst, raw_tp);
