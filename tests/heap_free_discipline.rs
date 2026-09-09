@@ -148,7 +148,10 @@ fn lifo_order_is_not_a_fault() {
     // Free the OLDER store while the newer one is live — the shape `(H-FreeLIFO)` calls a
     // fault.  It succeeds, and the newer store is untouched.
     stores.free_named(&first, "first");
-    assert!(is_free(&stores, &first), "the older store frees out of order");
+    assert!(
+        is_free(&stores, &first),
+        "the older store frees out of order"
+    );
     assert!(
         !is_free(&stores, &second),
         "and the newer store, allocated after it, is unaffected"
