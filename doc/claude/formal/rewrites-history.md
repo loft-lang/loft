@@ -56,15 +56,16 @@ this is where it is written down.
   [collections.md](collections.md), not here; noted so the next reader does not look for it
   in the emitter.
 
-## Queued: the emission audit, then the state builder
+## Shipped: the emission audit (2026-09-09).  Queued: the state builder
 
-1. **The emission audit** (@PLN157 § V-r, S–M): `scripts/emission_audit.py <emitted.rs>`
-   checks R-State, R-Refresh and R-Inputs structurally over a `--native-emit` output — the
-   prelude lines bind holders keyed by their path EXPRESSION text, the reads, writes, pushes,
-   `.len` uses and twin calls name them, and a template append on a held path is a
-   violation — so a defect of the double-holder kind is flagged at emission, before a run;
-   a test runs it over every cell corpus and the consumer bench.  This is the plan's
-   validation goal: as the emitted routines grow, their assumptions stay checkable.
+1. **The emission audit** (@PLN157 § V-r, SHIPPED 2026-09-09): `scripts/emission_audit.py
+   <emitted.rs>` checks R-State, R-Refresh and R-Inputs structurally over a `--native-emit`
+   output — the prelude lines bind holders keyed by their path EXPRESSION text, the reads,
+   writes, pushes, `.len` uses and twin calls name them, and a template append on a held
+   path is a violation; `tests/emission_audit.rs` runs it over every cell corpus and the
+   in-repo bench in the gate.  Falsified against the collector order that produced the
+   double holder: flagged at emission, with no run.  This is the plan's validation goal: as
+   the emitted routines grow, their assumptions stay checkable.
 2. **The state builder** (M): `hoist::hoistable` today is three collectors and two `retain`s
    whose ORDER holds R-State.  A `LoopState` with `hold(path, Holder)` as the only insert (a
    second holder for a path is an error, not a shadow), `evict(scalar)`, and

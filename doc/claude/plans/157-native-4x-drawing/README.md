@@ -57,7 +57,7 @@ its assumptions are written as a rule and checkable by both.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-09 (§ V-q)
+- **Last touched:** 2026-09-09 (§ V-r)
 
 ## Where to resume
 
@@ -203,15 +203,19 @@ path a second, stale header until the order was fixed; the verifier caught it). 
 rows still over the bar are `smooth` 15.5× and `fronds` 12.9× (the allocation class, queue
 items 4b / 5 / the move) and `wide_line` 5.4× (its rasteriser's own arithmetic — profile at
 `--n 200000` to rank; the 4000-rep profile is half compile).  Check the GitHub gate dispatched
-on the § V-q commit before building on it.  **The next unit is § V-r, the EMISSION AUDIT**
-(the plan's validation goal, above): `scripts/emission_audit.py` over a `--native-emit`
-output checks `R-State` (one holder per path expression per frame, every hoisted read /
-write / push / `.len` / twin argument naming the holder bound for its path), `R-Refresh`
-(no template append or growing op on a held path) and `R-Inputs` (a twin call hands in
-exactly the holders its parameters name), run by a test over every cell corpus and the
-consumer bench — the instrument that would have flagged the double holder before any run.
-After it the hoist-STATE builder (`hoistable` holds `R-State` by collector ORDER today; one
-`LoopState` with a single insert path, behaviour-preserving, M), then the rows.
+on the § V-q commit before building on it.  **§ V-r SHIPPED the same day** (DESIGN.md
+§ V-r): `scripts/emission_audit.py` validates a `--native-emit` output against the
+hoist-state rules — `R-State` (one holder per path expression per frame, every hoisted
+read / write / push / `.len` / twin argument naming a live holder bound for its path),
+`R-Refresh` (no template append, pre-alloc or `vector_add` on a held path), `R-Inputs` (a
+twin handed only live holders) — and `tests/emission_audit.rs` runs it over the six cell
+corpora, the three hoist guards and `bench/12_drawing/bench.loft` in the gate, requiring a
+holder per corpus and the refusal of a doubled emission.  Proven to fail on the collector
+order that produced the double holder, at emission, with no run.  **Next:** the hoist-STATE
+builder (`hoistable` holds `R-State` by collector ORDER today; one `LoopState` with a single
+insert path, behaviour-preserving — byte-identical emission over the corpora, and the audit
+green — M), then the rows: `smooth` 14.3× / `fronds` 12.1× (allocation class) and
+`wide_line` 5.3×.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -298,6 +302,7 @@ unless said otherwise.
 | **V-o** — a stdlib ONE-OP wrapper (`len(v)`, `sqrt(x)`, 43 of them) is emitted as its op with the caller's arguments in the operand positions (`hoist::one_op_wrapper`, `Output::wrapper_op`), so the header-aware emitters see `len(d)` after a view binding and inside a hoisted loop; `LOFT_NO_WRAPPER_INLINE` off-switch | [DESIGN.md § V-o](DESIGN.md) | a wrapper call is left, or an operand lands in the wrong position (the reversed map fails to compile; the parameter swap turns `pow` wrong) | **Shipped 2026-09-09** — 10 cells exact on both backends, emission pinned (`tests/wrapper_op.rs`); consumer `composite` 6.1× → **4.4×** (−28 %), 14/14 hashes agree |
 | **V-p** — a callee's INVARIANT INPUTS cross the call: a callee admitted under `@FR-R-Callee` gets a TWIN (`<fn>__inv`) taking its record parameter's invariant scalars and vector headers as extra parameters (`hoist::callee_inputs`, transitively through pass-through callees), and a loop that hoisted them for the argument variable calls the twin (`Output::twin_call_inputs`); `LOFT_NO_CALLEE_INPUTS` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-p](DESIGN.md) | a c1–c17 cell moves; `tests/callee_inputs.rs` no longer sees a twin or a twin call; a consumer hash disagrees | **Shipped 2026-09-09** — `composite` 4.41× → 2.34× (under the bar), `render_lock` / `render_marks` −8 %; the two candidate designs measured equal by hand before the code, so the cheaper machinery was built |
 | **V-q** — a loop that PUSHES to a vector path keeps a PUSH header: (R-Header)'s triple plus the capacity, the push writes through it and refreshes it at a growth step, every read of the path serves from it (`hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `Stores::push_hoisted`, the ownership rule in `hoist::hoistable`); `LOFT_NO_PUSH_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-q](DESIGN.md) | a c1–c18 cell moves; `tests/push_hoist.rs` no longer sees a push header; a consumer hash disagrees | **Shipped 2026-09-09** — `lock_curved` 5.64× → 3.84×, `lock` 4.39× → 3.51× (both under the bar); ceiling measured by hand first at −33 % |
+| **V-r** — the EMISSION AUDIT: `scripts/emission_audit.py` validates a `--native-emit` output against the hoist-state rules (`R-State` one holder per path per frame, `R-Refresh` no mover on a held path, `R-Inputs` a twin handed only live holders); `tests/emission_audit.rs` runs it over every hoist corpus and the in-repo bench | [DESIGN.md § V-r](DESIGN.md) | a corpus audits with a violation; a corpus resolves no holder; the doubled emission is not refused | **Shipped 2026-09-09** — flags the § V-p × § V-q double holder at emission when the collector order is re-introduced; every corpus clean |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

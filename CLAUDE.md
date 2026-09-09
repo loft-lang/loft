@@ -694,7 +694,10 @@ step for a wrong value read through a record parameter inside a callee a hoistin
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
 serves from it — and is the bisect step for a wrong element or length out of an appending loop.
-The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`).
+The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
+**`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
+them (one holder per path per frame, no mover on a held path, a twin handed only live
+holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
