@@ -33,6 +33,14 @@
 //   kt=32 main_vector<text>×3 -> clean, native the same -> clean.  18 records for 3 rounds
 //   of 6 leaking calls, which is the scaling this is about.  The VALUE assertions pass on
 //   BOTH builds: this changed which store the answer lives in, never what the answer is.
+//   CHANNEL: leak.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the leak channel moved
+//   anyway, so the instrument is not needed to see it.
+//   WITNESS: the store SHAPES `main_vector<integer(0, 255)>×15` and `main_vector<text>×3` —
+//   18 records for 3 rounds of 6 leaking calls (the `kt=` numbers shift with the type table
+//   between builds, so the shape and the COUNT are what identify it, not the id).
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees —
+//   which is the whole shape of the defect and why no value cell could have found it.
 
 enum Shape1491 { Bound { n: integer }, Direct { n: integer } }
 

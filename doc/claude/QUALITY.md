@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 437 | 413 | **24** |
+| 448 | 425 | **23** |
 
 
 
@@ -2616,6 +2616,16 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, the SECOND join (loft2's 1 + loft3's 6 new commits, rebased onto `main`
+`e4c7db58` after PR #1490 squash-merged) plus loft#1493: the unspan row `437 · 413 · 24` →
+`448 · 425 · 23`; the Optional row does not move.**  Re-measured on the union and taken from the
+run.  ⚠ **The two chains do not meet, and that is what a join is.**  This checkout's own history
+above reads `440 · 417 · 23 → 445 · 422 · 23`, and the incoming stream's reads
+`434 · 410 · 24 → 437 · 413 · 24` — two lineages of the same table, neither of which is the
+joined tree's.  The cherry-pick surfaced them as a CONFLICT between two answers, which is
+exactly the shape that makes carrying one of them tempting; the only honest row is the one the
+instrument prints afterwards.
 
 **2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
 `tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →

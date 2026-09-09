@@ -41,7 +41,11 @@
 // `--native`).  Neither is this issue's family, and the axis that found them — the construct
 // the projection sits in — is the one the filed repro pinned.
 //
-// @falsified-at: PLACEHOLDER
+// @falsified-at: a6711ba15 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.patch
+//   — same four channels, so the patch reintroduces THIS defect and not another of the
+//   commit's.
 //   CHANNEL: value — every cell answers a LENGTH, and the wrong one is 0.
 //   WITNESS: `first_arm` answers 0 where 5 is right; so do `if_arm`, `literal_filled`,
 //   `outer_local`, `records`, `nested`, `from_call`, `nullable` and `element_of_a_local`.
