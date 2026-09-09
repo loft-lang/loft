@@ -37,6 +37,9 @@
 // comprehension, which is why the two spellings now agree.
 //
 // @falsified-at: 7b728cc0 — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Holder { v: vector<integer>, w: vector<integer> }
 

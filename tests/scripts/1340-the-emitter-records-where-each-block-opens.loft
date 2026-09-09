@@ -46,6 +46,9 @@
 // instruction 0 and both spans stay 0 — the empty stack hides the arithmetic behind it.
 // With the pushes present and only `end_if` reverted the header reads `yes:3,no:2`: two
 // else-instructions claimed where there is one, which is the cell that pins `no:1`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 use code;
 

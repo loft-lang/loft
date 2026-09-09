@@ -40,6 +40,9 @@
 // loft#1252 cell was VACUOUS on the first pass — it declared the same substring as the cell
 // above it, and the suite matches the UNION of every round, so either annotation consumed
 // either diagnostic.  Renaming its local to `r` is what made the two cells distinguishable.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct B1250 { n: integer }
 

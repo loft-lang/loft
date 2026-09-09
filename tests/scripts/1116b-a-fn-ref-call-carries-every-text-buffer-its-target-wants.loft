@@ -32,6 +32,9 @@
 //   that commit (`=== loft crash (loft) SIGSEGV caught ===`); `--native` already answered, so
 //   the native column is legitimately INERT for this file and the interpret column is the
 //   whole gate.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn fr_wide(fr_k: boolean) -> text {
   fr_a: text = "AAA";

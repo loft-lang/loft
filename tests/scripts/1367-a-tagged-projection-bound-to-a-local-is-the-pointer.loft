@@ -17,6 +17,11 @@
 // @falsified-at: 7a93a7b3 (+ faa38979) → here (hand-measured): c1, w1, e2 were UAF under
 //   LOFT_STRICT_STORES=1 LOFT_POISON=1 on the interpreter (garbage in `y.n`), d1 and f1
 //   were refused, `dn` was silent and read a present record of zeroes for an absent slot.
+//   CHANNEL: the exit channel, measured on --interpret against 7a93a7b3 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 struct S { n: integer }
 struct O { inner: S, opt: S? }
 fn rdn(s: S?) -> integer { if s != null { s.n } else { -1 } }

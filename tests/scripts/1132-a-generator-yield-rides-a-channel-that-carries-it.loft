@@ -21,6 +21,9 @@
 // @falsified-at: 6bb9918d — native exit 0 -> 1: `error[E0308]`/`error[E0605]` against the
 // generated source for the keyed, tuple-in-loop and boolean-member cells; `--interpret` was
 // green throughout, which is why only a cross-backend cell could see it.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Ck { k: integer, v: integer }
 

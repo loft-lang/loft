@@ -30,6 +30,11 @@
 //   ASSERT channel for the three empty-collection cells and leaks
 //   `__tuple<vector<integer>,integer>`; and each remaining assertion was mutated in turn on the
 //   fixed build (`… .1 == 8`, `len(…) == 1`) and each fails here.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum TpShape { Dot, Circle { r: integer } }
 

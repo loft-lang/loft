@@ -67,6 +67,11 @@
 //   `n___lambda_3` grew a pass-2-only attribute `__ref_2``.  The ICE fires before the wrong
 //   answers can be reached, so the pre-fix run cannot show them; taken one cell at a time on
 //   that build, `p2_h`/`p2_h4` answer 4294967199 and `p2_b`/`p2_h4` are refused.
+//   CHANNEL: the exit/panic channel, measured on --interpret against 64b95b68 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 struct P2s {
   v: integer,

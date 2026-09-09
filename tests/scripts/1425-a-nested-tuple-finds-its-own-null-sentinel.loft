@@ -27,6 +27,9 @@
 //   own shape: native refuses to COMPILE the file (E0308, so 0 assertions run), while the
 //   interpreter compiles it and answers wrong from raw bytes — three cells' worth.  A guard
 //   scored on native alone would have read this as a parse problem.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn a_nested_tuple_element_discharges_to_its_default() {
   n: vector<((integer, integer), integer)> = [((1, 2), 3)];

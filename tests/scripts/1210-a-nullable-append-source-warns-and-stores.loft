@@ -51,6 +51,9 @@
 //   cell needs its own reading: it COMPILES there and answers silently, so for that one the
 //   channel is the warning count, not the exit.
 //
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
 // loft#1434 / loft#1449 — the keyed type is named as the SOURCE writes it (`hash<E1210[k]>`),

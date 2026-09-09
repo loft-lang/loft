@@ -45,6 +45,9 @@
 // nine flip: `+` 1, `-` 20, `*` 2, `/` 70, `%` 70, `==` false, `>` false, `||` null, and `&&`
 // a SIGSEGV.  The five controls answer the same on both builds, which is what makes them
 // controls.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 fn late(k: integer) -> integer { return k + 7; }
 
 fn plus(b: integer = 1 + slow(0)) -> integer { return b; }

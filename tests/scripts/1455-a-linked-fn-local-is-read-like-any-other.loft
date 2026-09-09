@@ -43,6 +43,9 @@
 // @falsified-at: 154f9f522 (the READ) — interpret exit 1 -> 0, native exit 101 -> 0.  On the control every
 //   cell but the dense one is the ICE, so the file cannot reach an assertion there.  Values are
 //   hand-computed; the backends agreeing is not the test.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn call1455(f: fn() -> integer) -> integer { f() }
 fn call_arg1455(f: fn(integer) -> integer, x: integer) -> integer { f(x) }

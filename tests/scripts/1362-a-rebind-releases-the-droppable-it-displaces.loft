@@ -30,6 +30,9 @@
 //   from, and the two hand-off cells read a double release there.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn trace_path() -> text { return "loft_1362_trace.tmp"; }
 

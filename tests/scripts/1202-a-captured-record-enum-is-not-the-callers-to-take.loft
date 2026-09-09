@@ -43,6 +43,10 @@
 // ⚠ The value cell below is the one that moves WITHOUT the guard, and it needs a second
 // capturing lambda to reuse the released slot — the same construction loft#1181 needed
 // for its `Reference` twin, and for the same reason.
+//   HOLDS: NATIVE does not move at all — exit 0 -> 0 — so the native side is not the
+//   measurement here. The interpreter carries it, moving exit 101 and a panic (`Freed record
+//   1 (size=-99) accessed at fld 8`). A guard scored on the native side alone reads this as
+//   catching nothing.
 
 enum Shape {
   Circle { radius: integer },
