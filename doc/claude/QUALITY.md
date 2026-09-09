@@ -7381,8 +7381,22 @@ That is why all three are reverted rather than shipped behind a switch.
 slot, a call's returned aggregate — needs the same per-run witness a local gets, released by store
 identity against what the other party names.  It is D-call-13's recorded residual (*"wanting the
 return buffer at instantiation"*) and loft#1188's (*"a lambda whose buffer was RESERVED between
-the passes"*) meeting in one mechanism.  Sizing it is design work, not a walk; recorded here so
-the next reader counts four issues rather than picking one.
+the passes"*) meeting in one mechanism.
+
+⚠ **And the register already narrows it, which is worth reading BEFORE the next attempt.**
+`owner_witness_locals` is RECORD-ONLY, and its own comment says the collection half was built and
+measured wrong: *"A vector witness was built — a `Vector`-typed `__own_` handle, admitted here and
+released by the same identity guard — and it answers WRONG … because the witness releases a store
+the record still holds.  A leak is the better trade … until the release the record owes is decided
+per SLOT rather than per local."*  So the mechanism is not simply absent; **its per-LOCAL form has
+already failed at a collection**, and the recorded cure — per SLOT — is the same shape all four
+issues want: loft#1483 is a capture SLOT rebound in a loop, loft#1486 is a call-result SLOT that
+holds either the caller's buffer or the callee's mint, loft#1489 is a return buffer SLOT that is
+also the tail's local.  A fifth attempt keyed on the LOCAL is the one already measured wrong.
+
+Sizing it is design work, not a walk; recorded here so the next reader counts four issues rather
+than picking one, and starts from the per-slot statement rather than rediscovering why per-local
+fails.
 
 #### B2 — open, and the owner's call
 
