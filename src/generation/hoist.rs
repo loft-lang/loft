@@ -112,6 +112,7 @@ const READ_ONLY_COLLECTION_OPS: [&str; 23] = [
 /// hand records to owners, `OpSetText` re-allocates, `OpSetKeyed` re-keys — excluded,
 /// and the allow-list doctrine holds: an op missing here costs the hoist, never
 /// correctness.
+/// Enforces `@FR-R-InPlace` (formal/rewrites.md): the allow-list of fixed-width scalar sets.
 pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetBoolean",
     "OpSetInt",
@@ -137,6 +138,7 @@ pub type PathKey = (u16, Vec<i64>);
 /// The path for a vector operand, or `None` when it is not a `Var` or a
 /// `OpGetField(path, const fld, const tp)` chain over one.
 #[must_use]
+/// Enforces `@FR-R-Header`: the pure path a header is keyed on.
 pub fn vector_path(data: &Data, v: &Value) -> Option<PathKey> {
     match v.unspan() {
         Value::Var(var) => Some((*var, Vec::new())),
@@ -181,6 +183,7 @@ pub fn hoistable_vectors(
 /// headers and the scalar hoist (@PLN157 P4c) stand behind: a scalar hoist is admitted only
 /// in a loop whose store writes are all in place, so the two cannot disagree about which
 /// loops qualify.
+/// Enforces `@FR-R-InPlace` as the ONE gate `@FR-R-Header` and `@FR-R-Scalar` stand behind.
 fn body_blocks_hoist(
     body: &Block,
     data: &Data,
@@ -219,6 +222,7 @@ fn rebound_vars(body: &Block) -> HashSet<u16> {
 /// The vector paths `body` indexes, in the order they appear, minus those whose root the
 /// body rebinds (a field path's header describes the record the ROOT named; repointing the
 /// field itself is an `OpSetRef`, which is not in [`IN_PLACE_SET_OPS`] and blocks outright).
+/// Enforces `@FR-R-Header`: which paths a loop derives a header for.
 fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
     let rebound = rebound_vars(body);
     let mut found: Vec<(PathKey, Value)> = Vec::new();
@@ -297,6 +301,7 @@ pub fn scalar_read(getter: &str, args: &[Value]) -> Option<ScalarKey> {
 /// offset, never the variable: aliasing is decided by what a write can reach, and a
 /// `vector<integer>` element written at offset 0 reaches no record's field.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
+/// Enforces `@FR-R-Scalar`: the write set keyed by (record type, offset).
 pub struct WriteSet {
     /// `(record type, offset)` pairs a scalar setter wrote through a classified target.
     pub offsets: HashSet<(u16, i64)>,
@@ -344,6 +349,7 @@ pub struct LoopHoist {
 // the two memos shared across every loop of the program, and the two switches; a struct
 // would put a name between each and the one call site without removing anything.
 #[allow(clippy::too_many_arguments)]
+/// Enforces `@FR-R-Scalar` (the candidates and the write set) beside `@FR-R-Header`.
 pub fn hoistable(
     body: &Block,
     data: &Data,
@@ -514,6 +520,7 @@ fn element_target(
 /// store-free op contributes nothing.  Anything else — a native writer the gate would have
 /// blocked, a `CallRef`, a `Parallel`, a `Yield` — answers `None`, as does a setter whose
 /// offset is not a constant.
+/// Enforces `@FR-R-Scalar`: the write set of a body that passed the gate.
 fn body_writes(
     node: &Value,
     data: &Data,
@@ -591,6 +598,7 @@ fn body_writes(
 /// passed; a return-buffer writer (§ V-c) answers its buffer's record type WHOLE, because the
 /// buffer may be a record the caller offered (§ V-d).  A callee that is neither, or one met
 /// while its own verdict is still open (recursion), answers `None`.  Memoised per callee.
+/// Enforces `@FR-R-Scalar` through `@FR-R-Callee`: what an admitted callee reaches.
 fn callee_writes(
     d_nr: u32,
     data: &Data,
@@ -645,6 +653,7 @@ fn callee_writes(
 /// rebind of the path's ROOT later in the block does not matter: `d` keeps the `DbRef` it
 /// was given (and a reassignment that replaces the record is a store write the gate sees).
 /// Answers the view variable, whose `Var` the prelude evaluates.
+/// Enforces `@FR-R-View`.
 pub fn view_def_header(
     stmts: &[Value],
     at: usize,
@@ -711,6 +720,7 @@ pub fn view_def_header(
 /// see the op: `len(d)` after a view binding or inside a hoisted loop reads the header's
 /// length instead of resolving the store.
 #[must_use]
+/// Enforces `@FR-R-Wrapper`, the STDLIB qualifier included.
 pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand>)> {
     if (d_nr as usize) >= data.definitions.len() {
         return None;
@@ -720,6 +730,16 @@ pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand
         return None;
     }
     if def.hidden_return_buffer_attr().is_some() {
+        return None;
+    }
+    // Only the STDLIB's wrappers.  A user function's CALL is itself observable: the live
+    // tier may flip it to the interpreter (`live_flipped`), and its frame is on the shadow
+    // call stack — emitting its op in place of the call skips both.  A stdlib wrapper has
+    // neither (a `t_` method carries no frame and no live check), so for it and only for
+    // it the op IS the call.  Measured: a one-op user function (`fn reader(w: W) -> integer
+    // { w.a }`) flipped to the interpreter ran compiled, and the wasm live-dispatch probe
+    // counted 0 dispatches where it expected 2.
+    if def.source() != crate::data::STD_SOURCE {
         return None;
     }
     // A text parameter or result takes the CALL's conversions (a `String` result handed to
@@ -981,6 +1001,7 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
 /// either of them blocks on its own).  A user CALL that writes stays blocking even
 /// when its writes happen to be in-place — interprocedural in-place classification
 /// is not worth its soundness surface here.
+/// Enforces `@FR-R-InPlace` and admits a callee under `@FR-R-Callee`.
 fn blocks_header_hoist(
     node: &Value,
     data: &Data,
@@ -1065,6 +1086,7 @@ fn call_writes_store(
 /// under [`IN_PLACE_KEY`]; `LOFT_HOIST_VERIFY=1` is the falsifier.
 const IN_PLACE_KEY: u32 = 1 << 31;
 
+/// Enforces `@FR-R-Callee` (the in-place-only half).
 fn in_place_only_writer(
     d_nr: u32,
     data: &Data,
@@ -1114,6 +1136,7 @@ fn in_place_only_writer(
 /// record with a vector field (it grows), a write to any other place (a parameter, a
 /// local), a native op that is neither store-free nor one of those setters, a user call
 /// that writes, and a `CallRef` / `Parallel` / `Yield` (what runs is not this body).
+/// Enforces `@FR-R-Callee` (the return-buffer half).
 fn retbuf_only_writer(
     d_nr: u32,
     data: &Data,

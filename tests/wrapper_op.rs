@@ -85,6 +85,13 @@ fn a_wrapper_call_is_its_op_and_the_header_serves_its_length() {
         1,
         "`exp` converts a constant in its body and is not a one-op wrapper: it stays a call"
     );
+    // A USER one-op function is not a wrapper: its call is observable (the live tier's
+    // flip, the shadow call stack), so `dbl(21)` in c11 stays a call.
+    assert_eq!(
+        calls(&rust, "n_dbl"),
+        1,
+        "a user function whose body is one op keeps its call"
+    );
     for name in ["n_h1", "n_setp"] {
         let b = body(&rust, name);
         assert!(

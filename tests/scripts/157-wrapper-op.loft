@@ -26,6 +26,9 @@ fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) 
 /// `len` of a growing vector, per iteration: 2 + 3 + 4.
 fn len_growing(v: vector<integer>) -> integer { s = 0; for i in 0..3 { v += [i]; s += len(v); } s }
 
+// A user function whose body is one op: the live tier may flip it, so it keeps its call.
+fn user_dbl(x: integer) -> integer { x * 2 }
+
 fn main() {
   v: vector<integer> = [10, 20, 30];
   r1 = len_in_loop(v, 3);
@@ -52,6 +55,7 @@ fn main() {
 
   w: vector<integer> = [1, 2, 3, 4];
   assert(abs(len(w) - 10) == 6, "a wrapper feeding a wrapper");
+  assert(user_dbl(21) == 42, "a user one-op function is called, not inlined");
 
   println("wrapper-op ok");
 }
