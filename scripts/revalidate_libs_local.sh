@@ -49,6 +49,8 @@ siblings="$(dirname "$root")"
 registry="$siblings/loft-registry/index.json"
 loft="$root/target/release/loft"
 work="${TMPDIR:-/tmp}/loft-revalidate-$$"
+here="$root/scripts"
+warn="$work/warn"
 self_test=0
 want=()
 for a in "$@"; do
@@ -61,7 +63,7 @@ done
 
 [ -x "$loft" ] || { echo "no release binary at $loft — run: cargo build --release --bin loft" >&2; exit 2; }
 [ -f "$registry" ] || { echo "no registry index at $registry — clone loft-lang/loft-registry beside this checkout" >&2; exit 2; }
-mkdir -p "$work"
+mkdir -p "$work" "$warn"
 trap 'rm -rf "$work"' EXIT
 
 # The matrix is only as current as the sibling CLONE of the registry, and a clone that
@@ -217,6 +219,12 @@ while IFS=$'\t' read -r n v repo tag sub; do
   fi
   log="$work/$n.log"
   if (cd "$p" && LOFT_TIMEOUT=240 "$loft" --interpret --tests tests) >"$log" 2>&1; then
+    # The WARNING reading, off the log the run already produced, so it costs nothing.
+    # CI has had this since the dashboard existed; this gate had not, which meant the
+    # same sweep answered two different questions depending on where it ran.
+    python3 "$here/lib_warning_scan.py" scan --from-log "$log" --root "$p" \
+      --name "$n" --ref "$v" --label published --json "$warn/$n-published.json" \
+      >/dev/null 2>&1 || true
     printf '%-18s %-9s %s\n' "$n" "$v" "PASS"; passed=$((passed + 1))
   elif still_compiles "$p" "$log"; then
     printf '%-18s %-9s %s\n' "$n" "$v" "runtime-fail, COMPILES (env/native-deps — VERIFY)"
@@ -229,6 +237,23 @@ while IFS=$'\t' read -r n v repo tag sub; do
   fi
 done < "$matrix"
 
+# The warning half.  Separate from the compile/test verdict above ON PURPOSE: warnings do
+# not break a shipped artifact and must never fail it (COMPATIBILITY.md), but a library that
+# was clean and now warns will fail its OWN CI on its next PR, for an author who did not
+# touch the code.  The ratchet is what makes that visible at the change that caused it —
+# see `lib_warning_scan.py` for the eight days of green runs that earned it.
+echo
+ratchet_rc=0
+if [ -n "$(ls -A "$warn" 2>/dev/null)" ]; then
+  # PARTIAL means "this run did not read every package", and there are two ways to be
+  # partial: something SKIPPED (a clone or a tag missing), or you NAMED a subset.  Missing
+  # the second reported the whole rest of the registry as `cleaned` on a three-package run
+  # — a re-pin request that would have thrown the baseline away.
+  partial=""
+  { [ "$skipped" -gt 0 ] || [ ${#want[@]} -gt 0 ]; } && partial="--partial"
+  python3 "$here/lib_warning_scan.py" collect "$warn" ${partial:+$partial} || ratchet_rc=$?
+fi
+
 echo
 echo "$passed pass, $envfail runtime/env, $skipped skipped, $breaks COMPILE-BREAK"
 [ "$skipped" -gt 0 ] && echo "a SKIP is not a pass — clone the missing repo beside this one, or fetch its tags"
@@ -240,4 +265,5 @@ if [ ${#want[@]} -gt 0 ] && [ "$skipped" -gt 0 ]; then
   echo "asked about ${#want[@]} package(s) and could not check $skipped of them" >&2
   exit 2
 fi
-exit $((breaks > 0))
+[ "$ratchet_rc" -eq 0 ] || echo "a library that was warning-clean now warns — see the ratchet above"
+exit $(( (breaks > 0) || ratchet_rc != 0 ))

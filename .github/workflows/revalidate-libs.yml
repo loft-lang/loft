@@ -255,19 +255,36 @@ jobs:
           path: warn
           merge-multiple: true
 
-      # One table for the whole ecosystem: which libraries warn against THIS loft,
-      # in their published artifact and in their source.  Informational — it is the
-      # advance notice that those repos' own CI will go red on their next PR.
-      - name: Warning dashboard
-        continue-on-error: true
-        run: python3 scripts/lib_warning_scan.py collect warn >> "$GITHUB_STEP_SUMMARY"
+      # One table for the whole ecosystem: which libraries warn against THIS loft, in
+      # their published artifact and in their source — plus the RATCHET over that set.
+      #
+      # ⚠ This step used to be `continue-on-error: true`, and the report it produced was
+      # correct and unread.  Measured on this workflow's own history: the dirty set went
+      # **2 -> 11 libraries over eight days and every run stayed GREEN**, so the finding
+      # lived inside a passing check nobody opens, and the first anyone heard of it was a
+      # red check in the library repos on code those authors had not touched.  The step's
+      # own comment predicted exactly that.  A report with no channel whose default state
+      # a reader notices is not a report.
+      #
+      # It still does not gate on warnings EXISTING — a new deprecation must never fail an
+      # already-shipped artifact, which is COMPATIBILITY.md's rule and the hard gate above
+      # keeps it.  It gates on the set GROWING: a library that was clean and now warns is
+      # red at the change that did it.  Accepting a new one is a deliberate re-pin, in the
+      # same commit, where a reviewer sees it.
+      - name: Warning dashboard + ratchet
+        run: python3 scripts/lib_warning_scan.py collect warn | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verdict
         run: |
           r='${{ needs.revalidate.result }}'
           echo "revalidation: $r" >> "$GITHUB_STEP_SUMMARY"
           if [ "$r" = "success" ] || [ "$r" = "skipped" ]; then
-            echo "✅ every published library still compiles + tests green against this loft"
+            # Say what was actually checked.  This line used to read "every published
+            # library still compiles + tests green against this loft", one line under an
+            # annotation naming nine libraries that warn — a reader takes that as an
+            # all-clear for the ecosystem, and it never was one: warnings are the step
+            # above's question, and it has its own verdict.
+            echo "✅ no published library FAILS to compile or test against this loft (warnings: see the dashboard above)"
           else
             echo "::error::a PUBLISHED library FAILS against this loft — a language change is retro-breaking a shipped lib. See the failed matrix legs; fix the lib (bump + republish) or reconsider the change (pre-freeze) — the stdlib may only grow additively."
             exit 1
