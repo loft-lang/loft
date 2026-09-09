@@ -46,7 +46,7 @@
 //     trees and the guard looks inert.
 //   WITNESS: the store SHAPES on the control — `main_vector<integer(0, 255)>×15` from the three
 //     `vector<u8>` cells and `main_vector<ElmB>×5` from the record-element one, twenty records
-//     for twenty calls.  The `kt=` numbers shift with the type table between builds; the shapes
+//     for twenty-five calls.  The `kt=` numbers shift with the type table between builds; the shapes
 //     and the COUNTS are the identity, and the COUNT is what says "per call" rather than "one
 //     tolerated store".
 //   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
@@ -86,6 +86,12 @@ fn nested_two(n: integer) -> vector<u8> { { { v = headb(n); v } } }
 fn records(n: integer) -> vector<ElmB> { { v = rowsb(n); v } }
 // A statement before the bind, so being the block's FIRST operator is not the axis.
 fn with_stmt(n: integer) -> vector<u8> { { a = 1; v = headb(n + a - 1); v } }
+// ⚠ A NULLABLE collection return.  `tail_block_ops` asks "does this block yield a value" by
+// testing its result against `Void | Never` WITHOUT peeling `Optional`, which the `optional`
+// audit flags as opaque to a wrapped shape — so the answer is measured here rather than argued:
+// `@FR-L-Null` gives `τ?` the same storage as `τ`, the collapse fires, and this cell leaked ×5
+// on the control exactly like its dense twin.
+fn nullable(n: integer) -> vector<u8>? { { v = headb(n); v } }
 
 // --- controls: the kinds that take another route -----------------------------------------
 
@@ -111,8 +117,9 @@ fn main() {
     t += len(nested_two(3));
     t += len(records(3));
     t += len(with_stmt(3));
+    t += len(nullable(3) ?? []);
   }
-  assert(t == 60, "four leaking cells over five rounds: got {t}");
+  assert(t == 75, "five leaking cells over five rounds: got {t}");
 
   c = 0;
   for _i in 0..5 {

@@ -1492,6 +1492,37 @@ one, left thirteen matrix cells wrong with several converting a SIGSEGV into a q
 answer. A general fix that trades a loud failure for a quiet one can be worse than the bug; that
 measurement is what made both halves ship together.
 
+**The nested `{ … }` block is the forgotten spelling of every ARM fix.** When a delivery or
+store-lifetime defect is fixed for an `if` / `match` ARM, the same defect is almost always still
+live in the plain nested value block — measured twice inside one day, from two unrelated arm
+fixes. loft#1493 (an arm yielding a struct's collection field answered EMPTY) has loft#1494 as its
+nested-block sibling, a use-after-free by a different mechanism; and loft#1491 (an arm binding the
+return buffer from a call leaks one store per call) has the identical per-call leak in
+`{ v = head(n); v }`. The reason is structural: the delivery machinery is organised per CONSTRUCT
+— a function tail, a branch arm, a bind, a `for` — and the plain nested block is the construct
+with no delivery of its own, so it inherits nothing and each per-construct fix leaves it behind,
+while `(F-Block)` promises a block yields its tail *wherever the block stands*. After any arm-side
+fix, re-run the repro with the arm replaced by a bare `{ … }`. And check the CONSUMER axis
+separately: loft#1494 had five red consumers (a return delivery, a call argument, a struct-literal
+field, an operator, a field write) and two green ones, and the green ones were green because they
+SINK their copy into the block — so a per-consumer cure would have had to be written five times
+and would still have missed the sixth. That is what makes the BLOCK, not any consumer, the
+chokepoint.
+
+**A "statement or value?" question is not decidable where the construct is built.** Three
+arm-side discriminators for *is this branch a statement* were each disproven by building the
+counter-example (loft#1496): the arm's expected `result` being `Void`, the arm's tail being a
+`Value::Drop`, and un-dropping the tail instead. All three are carried by the else arm of
+`if n > 0 { …; return b.items; } else { head(n) }`, whose value IS the function's — so each cure
+made that function return nothing. The fact that works is *does anything FOLLOW the construct*,
+and it is known only at the enclosing level: in `parse_block_inner`'s statement loop, past the
+point that breaks out at `}`. When a defect turns on value-vs-statement position, look for the
+parser point that has already seen what follows rather than trying to infer it from the
+construct's own type or lowering — both are set before that is known. And note the interpreter
+balances its eval stack against a block's declared TYPE, so a discard has to be total: an arm
+keeping either the value or the type alone is off by one in that half's direction, and corrupts
+every local live across the branch.
+
 **One question with several DECODERS: the defect sits in whichever one the failing route
 consults.** Three times in one cycle (loft#1444, loft#1474, loft#1477), all in the neighbourhood
 of *"which closure records does this return deliver?"* — a fn-ref variable's free read one
