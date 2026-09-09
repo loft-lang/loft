@@ -37,7 +37,9 @@ fn fn_of<'a>(rs: &'a str, name: &str) -> &'a str {
         .find(&format!("fn {name}("))
         .unwrap_or_else(|| panic!("no emitted fn {name}"));
     let rest = &rs[start..];
-    let end = rest.find("\n}").unwrap_or(rest.len());
+    // Up to the next emitted function: a function's own closing brace is indented (`} /*…*/`)
+    // wherever it ends a block, so the first column-zero `}` may lie in a LATER function.
+    let end = rest[1..].find("\nfn ").map_or(rest.len(), |i| i + 1);
     &rest[..end]
 }
 
