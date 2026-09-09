@@ -24,6 +24,9 @@
 // @falsified-at: d9aa10ac — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 // native exit 1 -> 0, native 1 assertion failures -> 0.  The count is 1 because a failed
 // assert stops the run; on the control the cell that fires is `null(/0)` left-alignment.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn main() {
   // ---- F-Spec: "the flags may be written in any ORDER" ----------------------------------

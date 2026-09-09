@@ -30,6 +30,11 @@
 //   trie<Kd5[kd_w]>×80 -> clean, native the same five ×40 -> clean.  Interpret counts BOTH
 //   arms and native only the null one, which is the two halves of the same mint seen through
 //   two free paths; values identical before and after on both.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: exit, assertions, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Kd1 { kd_k: integer = 0, kd_v: integer = 0 }
 struct Kd2 { kd_k: integer = 0, kd_v: integer = 0 }

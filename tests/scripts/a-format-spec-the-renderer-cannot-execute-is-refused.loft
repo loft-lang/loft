@@ -42,6 +42,9 @@
 // reads as an i64 width, which is ~4.6e18 pad characters and an OOM-killed process, and the bare
 // `{n:.4}` quietly rendered a four-wide field instead.  So the question is now asked as "which
 // radixes does THIS renderer have an arm for", which every type answers.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 // @EXPECT_ERROR: a format width must be a number
 fn test_a_comparison_is_not_a_width() {

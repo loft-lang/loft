@@ -41,6 +41,9 @@
 //   `45` and the descending row read `321` for `21`, while every single-removal row and every
 //   unbounded row already passed.  That is the separation the two halves need -- one is a
 //   compile failure, the other a wrong answer, and only the second has numbers on both sides.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Rec  { nr: integer }
 struct Asc  { m: index<Rec[nr]> }

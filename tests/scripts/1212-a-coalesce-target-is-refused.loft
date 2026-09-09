@@ -35,6 +35,9 @@
 //   FALSIFIED anyway and names this tree "not clean": a passing `@EXPECT_ERROR` guard exits 1,
 //   which its exit channel cannot tell from a broken one.  The pair it reports is the
 //   measurement; the gate is `check_diagnostics` in `tests/wrap.rs`.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct Et1212 { k: integer, nm: text }
 struct Gp1212 { look: hash<Et1212[k]>, data: vector<Et1212>? }

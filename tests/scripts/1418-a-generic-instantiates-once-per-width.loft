@@ -29,6 +29,9 @@
 //   `i32_first_then_integer` is refused ("cannot implicitly narrow integer to i32"), so no
 //   cell runs to fail.  An exit-only move is the weaker falsification, which is why the value
 //   assertions are here — they are what makes a pass mean more than "it compiled".
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn i32_first_then_integer() {
   a: i32 = 7;

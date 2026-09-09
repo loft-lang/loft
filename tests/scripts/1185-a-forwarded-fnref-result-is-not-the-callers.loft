@@ -37,6 +37,12 @@
 // @PLN150 carries it.
 //
 // formal/closures.md D-clo-12, @PLN150.
+//   ARMED: `LOFT_STRICT_STORES=1` for the interpret half, which is INERT without it; the
+//   native half needs nothing.
+//   HOLDS: unarmed, `--interpret` is equal on every channel. NATIVE moves the ASSERT channel
+//   (the control answers a wrong value and exits 1); armed, the interpreter reports 7
+//   use-after-free reads against none here. An unarmed interpret row is the instrument's
+//   silence.
 
 struct P { n: integer }
 

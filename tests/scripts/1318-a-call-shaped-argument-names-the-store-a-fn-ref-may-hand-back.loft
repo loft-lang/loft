@@ -52,6 +52,9 @@
 //   function — a floor, not a census.  The six cells that PASS on that build are the controls:
 //   field spelling, minting argument, the ceiling, the branch arm, the capture and the named
 //   spelling.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Rk1318 { k: integer, v: vector<integer> }
 struct Bx1318 { rows: vector<integer> }

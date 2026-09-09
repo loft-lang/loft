@@ -29,6 +29,9 @@
 //   * VALUES as well as lengths: a length alone passes on a copy landing in the wrong order.
 // The last two are the CONTROLS.  This is an optimisation, so a fix that merely switched it
 // off would pass every cell above them.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct AoBag { c: vector<integer> }
 

@@ -19,6 +19,9 @@
 //   The `as_text` half is deliberately not falsifiable, and that is why it is written down.
 //   Its behaviour never moved; only the sentence describing it did, so no build answers
 //   differently and nothing but a cell asserting `!(bad == "")` could catch the claim.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn json_fixture() -> JsonValue {
   json_parse("{{\"t\": \"true\", \"n\": 1, \"b\": false, \"e\": \"\"}}")

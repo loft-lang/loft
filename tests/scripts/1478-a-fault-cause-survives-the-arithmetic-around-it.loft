@@ -38,6 +38,11 @@
 //   overrun, the overrun under a `/`, and the two controls all stay green — so the tagging
 //   mechanism worked end to end and only the condition that ARMED it was wrong.  That is also
 //   why `src/ops.rs`'s comment read as evidence: it cited `{v[9] / 2}`, one of the three.
+//   CHANNEL: the assertions/exit channel, measured on --interpret against d64d51f3 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn test_a_bare_overrun_reports_its_cause() {
   v = [1, 2, 3];

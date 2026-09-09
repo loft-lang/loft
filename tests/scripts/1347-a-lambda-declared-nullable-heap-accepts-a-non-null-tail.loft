@@ -24,6 +24,9 @@
 // @falsified-at: dd46146c — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
 // the file at parse time: "Variable 'hv' cannot change type"); assertions 0 -> 0 because
 // nothing ran on the control.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 struct P { x: integer }
 struct Bag { items: vector<integer>, rec: P }
 fn nv(q: Bag) -> vector<integer>? { q.items }

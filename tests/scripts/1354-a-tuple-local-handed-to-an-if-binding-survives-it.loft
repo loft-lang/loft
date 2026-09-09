@@ -27,6 +27,11 @@
 // this same build, so the two runs differ in exactly that predicate and nothing else.
 // The interpreter answers `d d` before and after: this was never a wrong value, only a
 // refusal, which is why no cell asserts a CHANGED result.
+//   HOLDS: `--interpret` exits 0 either way — every interpret channel is equal. The NATIVE
+//   BUILD is the channel: it fails with two `error[E0382]: borrow of moved value`, one per
+//   tuple-with-text cell, and succeeds with the fix. Measured by toggling
+//   `arm_moves_a_live_tuple_local` alone, so the two runs differ in that predicate and
+//   nothing else.
 
 struct Holder {
   n: integer,

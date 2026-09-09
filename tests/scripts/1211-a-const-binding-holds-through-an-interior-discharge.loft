@@ -36,6 +36,9 @@
 //   exit channel reads as "THIS TREE IS NOT CLEAN".  The gating channel is `check_diagnostics`
 //   in `tests/wrap.rs`: the `@EXPECT_ERROR` above goes unmatched on the control, because there
 //   is nothing to match.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct Ic1211 { x: integer }
 struct Nc1211 { i: Ic1211? }

@@ -24,6 +24,12 @@
 // side passed while the native side could not produce a binary.  The narrowed entry LOOKUP
 // added in that same commit is not enough on its own: it picks the right definition and
 // the emit still fails, because the duplicate name is what drives the mangling.
+//   CHANNEL: the NATIVE BUILD — `1 compile failed` -> 0. On the pre-fix harness the file did
+//   not build at all (`error[E0425]: cannot find function n_main`), so the interpret side
+//   passed while the native side could not produce a binary.
+//   HOLDS: the interpret side is equal throughout and cannot carry this. A sweep that scores
+//   `--interpret` reads the guard as inert, and a whole-tree verdict reads `here-not-clean`
+//   because the native leg is the subject rather than a program value.
 
 use entrylib;
 

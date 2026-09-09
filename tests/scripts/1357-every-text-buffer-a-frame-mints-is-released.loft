@@ -45,6 +45,11 @@
 // value was always right on both backends; measured by hand under LOFT_TEXT_TIMELINE=1 on
 // the joined tree's release binary (139b02ac, the same code for these paths): 99 orphaned
 // text buffers -> 0.
+//   ARMED: `LOFT_TEXT_TIMELINE=1`; without it there is nothing to see.
+//   HOLDS: every VALUE is right on both backends, so all six channels falsify scores are
+//   equal and the row is INERT. The measurement is a text-buffer census — 99 orphaned buffers
+//   -> 0 — which is not a scored channel, so no falsify signature can confirm or deny this
+//   guard.
 struct S { name: text? }
 struct Row { names: vector<text>, values: vector<integer> }
 

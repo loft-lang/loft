@@ -28,6 +28,10 @@
 //   all; add it to the whole-collection comparison as well and the nullable-concat cell is
 //   refused instead of warned.
 //
+//   HOLDS: EVERY channel holds on both backends, which is the correct answer for a CONTROL
+//   file — every cell passes on the parent commit too, and a cell that MOVED would mean the
+//   refusal had reached past the shape it was scoped to. There is no defect to reintroduce,
+//   so no patch receipt applies.
 // @EXPECT_WARNING: a nullable `vector<integer>?` is stored into the appended value of the non-null type `vector<integer>`
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.

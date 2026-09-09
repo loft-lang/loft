@@ -65,6 +65,9 @@
 // ⚠ Every cell binds to its OWN local.  Two lambda results sharing one local across sibling
 // loops loses a free (loft#1183, whose native half loses both), which would score this file on
 // a channel it does not answer.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 fn mk(v: integer) -> vector<integer> { [v, v * 2] }
 
