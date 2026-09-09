@@ -26,6 +26,13 @@
 // @falsified-at: 139b02ac — interpret 1 stack-store free refusal(s) (BUG #306) -> 0 (the
 //   `yield from` inside an `if` freed the sub-generator's frame through its item binding),
 //   native exit 1 -> 0 (the loop-body record yield was refused with a compile error)
+//   HOLDS: on --interpret, assertions, leak, panic, expectations, exit are equal on both
+//   trees, measured by `scripts/falsify.sh --bulk` against 139b02ac; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   free-refusal channel carries this one on that backend. The native side was not scored in
+//   that run.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
 
 struct Pt { x: integer, y: integer }
 

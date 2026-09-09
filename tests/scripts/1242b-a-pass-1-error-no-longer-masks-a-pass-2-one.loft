@@ -28,6 +28,16 @@
 //   `expected error not emitted`, because pass 1 stopped the parse before that diagnostic could
 //   be produced. With the fix both match and `1242b RAN` prints.
 //
+//   CHANNEL: the EXPECTATIONS channel, and it is the HARNESS's, not the program's — the
+//   subject is whether a pass-1 error still masks a pass-2 one, so what moves is which
+//   declarations match, never a value the program computed.
+//   ARMED: no instrument; it is scored by hand, on the declarations.
+//   HOLDS: `scripts/falsify.sh --bulk` cannot score this file and reports it
+//   `here-not-clean` with `1|0|none|none|0|FAIL/2`.  That is the EXPECTED reading, not a
+//   regression: the automated entry point does not reproduce the two-pass declaration
+//   matching this file is about, while the corpus runner does and passes it.  A
+//   re-validation compares the two `@EXPECT_ERROR` declarations by hand against the
+//   control; a bulk verdict here means nothing either way.
 // @EXPECT_ERROR: Misplaced '_' in number literal
 // @EXPECT_ERROR: comprehension body must produce a value
 //   ⚠ That control is on no public ref, so this receipt records a falsification that

@@ -46,6 +46,11 @@
 //   SIX reported a store not freed at program exit before this change and none do after: the
 //   straight-line vector, two reassignments, the short-lambda spelling, the two-capture record,
 //   the escaping closure and the loop.  The five that did not are this file's controls.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Cell1324 { v: integer }
 struct Row1324 { k: integer, v: integer }

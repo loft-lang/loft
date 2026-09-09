@@ -40,6 +40,9 @@
 //   main_vector<integer>×1` -> clean.  Every control unmoved.  With the four witness cells
 //   added, the whole file re-falsifies at cb2dca92: `kt=81 S×9, kt=25 main_vector<integer>×1`
 //   -> clean on BOTH backends, values already right there — the leak was the entire symptom.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 struct S { a: integer, b: text }
 

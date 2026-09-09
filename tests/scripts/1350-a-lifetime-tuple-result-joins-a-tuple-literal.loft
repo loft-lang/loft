@@ -28,6 +28,11 @@
 // @falsified-at: 1bb5e1b8 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
 // the join at parse time: "expected __tuple<…>, got (…) on else"); assertions 0 -> 0
 // because nothing ran on the control.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 1bb5e1b8; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 struct Bag { items: vector<integer>, nm: text }
 fn mk(n: integer) -> Bag { Bag { items: [n, n + 1], nm: "n{n}" } }
 fn np(q: Bag) -> (vector<integer>, text) { (q.items, q.nm) }

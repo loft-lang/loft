@@ -67,6 +67,11 @@
 //   `a_boolean_item` yields nothing with all three defects but the last one fixed.  The
 //   scalar, struct and falsy cells pass throughout — they are the controls that say the
 //   cure did not disturb the half that already worked.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 1cbbe864; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 struct It1310 { v: integer }
 enum Sh1310 { A { k: integer }, B { k: integer } }

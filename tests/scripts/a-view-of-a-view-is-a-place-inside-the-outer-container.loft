@@ -49,6 +49,11 @@
 //   `test_a_two_step_chain`, `test_a_three_step_chain` and `test_a_chain_inside_an_if_arm`,
 //   each reading the CURRENT pass's value — `-1,20,30,` where `-1,10,20,` is right — with no
 //   advice.  The three controls passed there and pass here.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 00ff5bb5; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct Tiles { proto: vector<integer>, n: integer }
 struct Derived { tiles: Tiles, covered: integer }

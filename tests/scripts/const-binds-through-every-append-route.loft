@@ -52,6 +52,11 @@
 //   skipped the way the trailing refusal cells are.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: the WHOLE-FILE verdict is unusable, not merely inert — falsify reports `expect
+//   8/8` and INERT on the very build the defect was measured on, because every
+//   `@EXPECT_ERROR` after a firing one is credited without matching (loft#1261). Nothing
+//   about this file's channels can be read off a bulk row. Score it CELL BY CELL, each run
+//   alone, as the receipt above records.
 
 struct CRow { k: text, n: integer }
 

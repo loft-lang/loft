@@ -52,6 +52,11 @@
 // built with your rustc").  An exit code is not the outcome you asked about — the native
 // falsification above is from the run before the toolchain moved, and re-running it needs the
 // control tree rebuilt.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0168e42f; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct Vb { vb_k: integer, vb_nm: text }
 

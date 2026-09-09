@@ -26,6 +26,10 @@
 //   file.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   CHANNEL: `check_diagnostics`, not the exit — as for every control here, both cells report
+//   the same diagnostic on the parent commit as on the fixed build, which is the point: this
+//   is the cell that must NOT move. It falsifies on the opposite build, with the peel applied
+//   to a LOCAL.
 
 // The nullable source — the shape loft#1210 fixed one place-kind over.
 // @EXPECT_ERROR: cannot change type from vector<integer>

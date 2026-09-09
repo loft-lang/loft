@@ -40,6 +40,11 @@
 //   holds its bytes, so the answer is right and nothing says otherwise until the instrument is
 //   armed.  Under `LOFT_POISON=1` the control answers `-2401053088876216588` for the arm whose
 //   record was demoted to a borrow.
+//   HOLDS: on --interpret, assertions, panic, free-refusal, expectations, exit are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 15fc37df3; falsify prints
+//   only the channels that MOVE, and requires HERE to be clean, so each of those is clean on
+//   both. The leak channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct E73 { a: integer }
 enum W73 { One, Two }

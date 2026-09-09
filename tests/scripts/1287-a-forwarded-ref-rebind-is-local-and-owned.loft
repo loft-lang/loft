@@ -49,6 +49,11 @@
 //   RECYCLE one: on that build `a.items` answers the recycled record's bytes.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0b0cce48; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct B1287 { items: vector<integer> }
 struct C1287 { tag: text, vals: vector<integer> }

@@ -33,6 +33,9 @@
 // reports `1 stores not freed` on 7de367d9 and nothing here.  A guard whose first cell aborts
 // hides every later channel behind that abort, so an unmoved channel there is a silence, not a
 // pass.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 struct Rk { k: integer, v: integer }
 

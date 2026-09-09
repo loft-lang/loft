@@ -40,6 +40,13 @@
 //   on both backends, because every store the wrong answer reads is live.  The underlying
 //   values move `e1` 104 -> 102, `e3` `103 203 303` -> `101 202 303`, `e4` `101 201 301` ->
 //   `103 202 301`; without the assertions this file would run clean over all three.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0dd1ad660; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
 
 struct E74 { a: integer }
 

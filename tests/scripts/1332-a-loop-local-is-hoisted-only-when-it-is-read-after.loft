@@ -52,6 +52,12 @@
 // `test_a_later_loop_that_reads_before_it_assigns` are the cells that must still HOIST. Each
 // of them reads a value the loop produced, on at least one path; drop the hoist for any of
 // them and the read is a use-after-free again.
+//   ARMED: `LOFT_POISON`. Falsify does not arm it, so every cell answers correctly on the
+//   control and the sweep reports INERT — an honest verdict about an unarmed run, not a
+//   defect in the guard.
+//   HOLDS: unarmed, EVERY channel is equal on both trees, which is why the bulk row says
+//   INERT. The census below is the measurement, taken on the same control build under the
+//   poison; a re-validation must arm it or it will reproduce the INERT and learn nothing.
 
 struct Q1332 { xs: vector<integer> }
 struct A1332 { n: integer }

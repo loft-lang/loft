@@ -14,6 +14,11 @@
 //
 // @falsified-at: 32e36462 — the program compiled and printed `v.r=7`, a `Square`'s `s` read
 //   through `Circle`'s `r`.
+//   CHANNEL: the exit/expectations channel, measured on --interpret against 32e36462 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 enum Sh { Circle { r: integer }, Square { s: integer, extra: text } }
 

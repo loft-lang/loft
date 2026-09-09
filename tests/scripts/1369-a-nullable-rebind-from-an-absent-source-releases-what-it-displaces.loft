@@ -20,6 +20,9 @@
 // @falsified-at: 964bab93 — native leaked kt=81 S1369×2 -> clean; interpret INERT, which is
 //   expected for a backend-divergence guard: only one side can move.  The VALUES were right
 //   on both backends before the fix, so the leak is the whole channel.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 struct S1369 { n: integer }
 

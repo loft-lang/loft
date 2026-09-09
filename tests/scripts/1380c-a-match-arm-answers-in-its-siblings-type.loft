@@ -26,6 +26,11 @@
 // @falsified-at: 14b50b1f — interpret exit 1 -> 0, native exit 1 -> 0.  The control fails at
 //   PARSE time: with no expected type reaching the arm, the boolean-subject cell's `fb`
 //   was typed `float?` by the join and refused as a nullable store.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 14b50b1f; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 enum Ch1380c {
   Alpha { n: integer = 1 },

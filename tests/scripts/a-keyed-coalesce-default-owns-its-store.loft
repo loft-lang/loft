@@ -31,6 +31,10 @@
 // here, on BOTH backends; every assertion above passes on both trees.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   ARMED: `LOFT_STRICT_STORES=1`. This file has no `main`, so falsify routes it through
+//   --tests, where the leak column is BLIND — an unarmed run reports `leak none` on BOTH
+//   trees whatever it leaks, which records a leak guard as INERT instead of failing loudly.
+//   TESTING.md § A guard that never failed is not a guard.
 
 struct KCD { k: integer = 0, v: integer = 0 }
 

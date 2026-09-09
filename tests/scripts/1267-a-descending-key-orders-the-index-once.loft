@@ -41,6 +41,9 @@
 //   declaration: `54321` read `12345`, `rev` read `54321`, `[4..2]` read empty, `[..3]` read
 //   `12` instead of `54`, `[-nr, key]` read `1b1a2b` instead of `2b1a1b`, and the `u8` key
 //   read `3,17,250` instead of `250,17,3`.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Row  { nr: integer, key: text }
 struct Solo { snr: integer, skey: text }

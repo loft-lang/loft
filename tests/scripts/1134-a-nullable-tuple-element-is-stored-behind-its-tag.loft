@@ -36,6 +36,9 @@
 //   not a parity bug; `make falsify` moves the same two channels on each.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct T4Pair { t4_a: integer, t4_b: integer }
 struct T4Wide { t4_p: integer, t4_q: integer, t4_r: integer }

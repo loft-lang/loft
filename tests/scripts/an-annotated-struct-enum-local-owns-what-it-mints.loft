@@ -31,6 +31,9 @@
 //
 // @falsified-at: 32e36462 — interpret leak `kt=82 Circle×6` -> clean, native the same.
 //   Every control unmoved.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 enum Sh { Circle { r: integer }, Square { s: integer } }
 struct S { a: integer }

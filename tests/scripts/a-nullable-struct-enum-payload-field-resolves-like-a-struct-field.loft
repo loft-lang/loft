@@ -14,6 +14,11 @@
 // @falsified-at: 12e58a4d — interpret exit 1 -> 0, native exit 1 -> 0.  The channel is the
 //   REFUSAL: on that build the file does not compile ("cannot change type from NeSh? to
 //   integer"), so no assertion ever ran.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 12e58a4d; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 struct NeIn { v: integer }
 enum NeSh { NeCi { n: integer }, NeSq { n: integer } }

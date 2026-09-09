@@ -51,6 +51,9 @@
 // the capture cell and re-running: the control then leaks `kt=79 P×14` on both backends and
 // this tree is clean.  A guard whose earlier cell aborts hides every later channel behind
 // that abort, so an unmoved channel there is a silence, not a pass.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 struct P { n: integer }
 

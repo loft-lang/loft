@@ -43,6 +43,9 @@
 //   trie coalesce and condition cells and both lookup cells all fail, the `hash` and `index`
 //   cells panic ("Store access out of bounds: rec=4294967295") rather than answering, and
 //   `--native` does not compile at all (E0308, `if <DbRef>` in the spatial and trie arms).
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct NqSv {
   nq_k: integer = 0,

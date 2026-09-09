@@ -11,6 +11,9 @@
 //
 // @EXPECT_WARNING
 // @falsified-at: 3614bd3c — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses the variable-index read before the receiver is reached)
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 struct S { n: integer }
 fn nm(self: S) -> integer { self.n * 2 }
 fn main() {

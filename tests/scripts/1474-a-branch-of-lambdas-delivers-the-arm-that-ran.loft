@@ -53,6 +53,11 @@
 //
 // Written by the `loft2-1b` session against its own branch and taken over here, where the fixes
 // live; a guard only means something on a tree that passes it.
+//   HOLDS: on --interpret, assertions, panic, free-refusal, expectations, exit are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 0dd1ad660; falsify prints
+//   only the channels that MOVE, and requires HERE to be clean, so each of those is clean on
+//   both. The leak channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct E74 { a: integer }
 enum W74 { Ax, Bx, Cx }

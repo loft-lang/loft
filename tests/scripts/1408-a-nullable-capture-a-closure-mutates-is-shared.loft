@@ -30,6 +30,9 @@
 //   c3/c4/c5/c6/c7 and the text half of c2 are the moving cells; on the control build the
 //   nullable twin answers its stale copy while the dense twin answers the write.  c1, c8 and
 //   c9 are green on both builds and are the controls.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 enum Colour { Red, Green, Blue }
 
