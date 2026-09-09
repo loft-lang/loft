@@ -11435,39 +11435,147 @@ impl Parser {
             _ => {}
         }
     }
-    /// Is EVERY return leaf of the body — the tail, each `return`, each arm of a branch in
-    /// either position — the variable `x` itself?  A body with no leaf at all answers no.
-    pub(crate) fn every_return_leaf_is_var(ops: &[Value], x: u16) -> bool {
-        // (found, all) over the leaves reached.
-        fn walk(v: &Value, x: u16, tail: bool, acc: &mut (bool, bool)) {
+    /// loft#1484, `@FR-F-Ret` — does EVERY return leaf of the body hand back a value that
+    /// still VIEWS the parameter `x`?
+    ///
+    /// Every return leaf is asked: the tail, each `return`, and each arm of a branch in either
+    /// position.  A body with no leaf at all answers no.
+    ///
+    /// The RULES decide each leaf rather than a walk of the emitter: `(B-View)` says a
+    /// struct-typed PROJECTION (`p[0]`, `o.inner`) aliases without `&`, and `(B-Copy)` says a
+    /// plain bind of a WHOLE heap value does not.  So a leaf borrows when it is the parameter itself, a projection ROOTED at
+    /// it, or a local every one of whose definitions is such a projection.  A local bound
+    /// from the whole parameter (`y: T = x; y`) is the copy D-call-13 narrowed this test to
+    /// exclude, and it still answers no — declaring THAT a borrow made the caller decline its
+    /// lift and free nothing, three corpus generics leaking one record per call.
+    ///
+    /// Transitive through projections and through NOTHING else, which is the same rule twice:
+    /// `e = p[0]; e2 = e.inner` still views `p`, while `e2 = e` copies and ends the chain.
+    ///
+    /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
+    /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
+    /// copy where the value was owned and orphan the store it was handed.
+    pub(crate) fn every_return_leaf_views_var(
+        data: &crate::data::Data,
+        ops: &[Value],
+        x: u16,
+    ) -> bool {
+        // Every definition of every local, so a leaf naming one can be resolved to the
+        // right-hand sides it was bound from.
+        fn collect_sets<'a>(v: &'a Value, out: &mut Vec<(u16, &'a Value)>) {
             match v.unspan() {
-                Value::Return(inner) => walk(inner, x, true, acc),
+                Value::Set(y, rhs) => {
+                    out.push((*y, rhs));
+                    collect_sets(rhs, out);
+                }
+                Value::Return(inner) | Value::Drop(inner) => collect_sets(inner, out),
+                Value::If(c, t, e) => {
+                    collect_sets(c, out);
+                    collect_sets(t, out);
+                    collect_sets(e, out);
+                }
+                Value::Block(b) | Value::Loop(b) => {
+                    for op in &b.operators {
+                        collect_sets(op, out);
+                    }
+                }
+                Value::Insert(o) | Value::Parallel(o) => {
+                    for op in o {
+                        collect_sets(op, out);
+                    }
+                }
+                Value::Call(_, args) => {
+                    for a in args {
+                        collect_sets(a, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut sets: Vec<(u16, &Value)> = Vec::new();
+        for op in ops {
+            collect_sets(op, &mut sets);
+        }
+        // Does this local, through projections alone, still view `x`?  `seen` is the cycle
+        // guard a work-list over user code needs; a local reached twice answers no rather
+        // than looping.
+        fn local_views(
+            data: &crate::data::Data,
+            sets: &[(u16, &Value)],
+            y: u16,
+            x: u16,
+            seen: &mut Vec<u16>,
+        ) -> bool {
+            if y == x {
+                return true;
+            }
+            if seen.contains(&y) {
+                return false;
+            }
+            seen.push(y);
+            let mut any = false;
+            for (v, rhs) in sets.iter().filter(|(v, _)| *v == y) {
+                let _ = v;
+                // The one home for *which container did this view come out of* — it peels the
+                // whole chain, both projection spellings and a struct-enum payload base.
+                let Some(base) = crate::use_analysis::projection_container_var(data, rhs) else {
+                    return false;
+                };
+                if !local_views(data, sets, base, x, seen) {
+                    return false;
+                }
+                any = true;
+            }
+            any
+        }
+        fn leaf_views(
+            data: &crate::data::Data,
+            sets: &[(u16, &Value)],
+            leaf: &Value,
+            x: u16,
+        ) -> bool {
+            if let Value::Var(y) = leaf.unspan() {
+                return local_views(data, sets, *y, x, &mut Vec::new());
+            }
+            match crate::use_analysis::projection_container_var(data, leaf) {
+                Some(base) => local_views(data, sets, base, x, &mut Vec::new()),
+                None => false,
+            }
+        }
+        // (found, all) over the leaves reached: a body with no leaf answers no, and one
+        // leaf that does not view `x` refuses the whole body.
+        fn walk(
+            data: &crate::data::Data,
+            sets: &[(u16, &Value)],
+            v: &Value,
+            x: u16,
+            tail: bool,
+            acc: &mut (bool, bool),
+        ) {
+            match v.unspan() {
+                Value::Return(inner) => walk(data, sets, inner, x, true, acc),
                 Value::If(_, t, e) => {
-                    walk(t, x, tail, acc);
-                    walk(e, x, tail, acc);
+                    walk(data, sets, t, x, tail, acc);
+                    walk(data, sets, e, x, tail, acc);
                 }
                 Value::Block(b) | Value::Loop(b) => {
                     let n = b.operators.len();
                     for (i, op) in b.operators.iter().enumerate() {
-                        walk(op, x, tail && i + 1 == n, acc);
+                        walk(data, sets, op, x, tail && i + 1 == n, acc);
                     }
                 }
                 Value::Insert(ops) => {
                     let n = ops.len();
                     for (i, op) in ops.iter().enumerate() {
-                        walk(op, x, tail && i + 1 == n, acc);
-                    }
-                }
-                Value::Var(y) if tail => {
-                    acc.0 = true;
-                    if *y != x {
-                        acc.1 = false;
+                        walk(data, sets, op, x, tail && i + 1 == n, acc);
                     }
                 }
                 Value::Null if tail => {}
-                _ if tail => {
+                other if tail => {
                     acc.0 = true;
-                    acc.1 = false;
+                    if !leaf_views(data, sets, other, x) {
+                        acc.1 = false;
+                    }
                 }
                 _ => {}
             }
@@ -11475,10 +11583,11 @@ impl Parser {
         let mut acc = (false, true);
         let n = ops.len();
         for (i, op) in ops.iter().enumerate() {
-            walk(op, x, i + 1 == n, &mut acc);
+            walk(data, &sets, op, x, i + 1 == n, &mut acc);
         }
         acc.0 && acc.1
     }
+
     /// Does the body hand `x` up — as the tail or through a `return`?
     fn yields_var(ops: &[Value], x: u16) -> bool {
         fn leaf(v: &Value, x: u16, tail: bool) -> bool {

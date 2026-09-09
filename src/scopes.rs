@@ -13071,10 +13071,23 @@ impl Scopes<'_> {
             // backends — while `__retbuf`'s exemption made it worse: `{ f(x) }` never
             // delivers INTO that buffer, so the premise that the lifted temp is the
             // caller's own allocation is simply false here.
+            // loft#1484 — and a monomorph whose return BORROWS a visible parameter, which is
+            // the shape the `t_` gate above was written when it could not exist.  #549's
+            // reason is *"a monomorph LOSES its return dep during specialization, so the
+            // dep-based ownership guards cannot tell a fresh-owned return from a
+            // borrowed-arg one"* — D-call-13 gave the instance its deps back from the
+            // oracle, so `id<T>(x) -> T { x }` now publishes `["x"]` and reads as the borrow
+            // it is.  Unlifted, an inline `idg(q).a = 99` wrote straight through the returned
+            // DbRef into the caller's own record, where the concrete twin — lifted through
+            // the `__retbuf` exemption below — copies at its `Set` and stays independent
+            // (`(F-Ret)`: *the concrete twin is the oracle for the instance*).
+            let monomorph_returns_a_borrow =
+                def.name.starts_with("t_") && def.returns_borrowed_view();
             let lift_owned_return = if def.has_fnref_return_site() {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
                 def.name.starts_with("n_")
+                    || monomorph_returns_a_borrow
                     || (def.name.starts_with("t_")
                         && (def.attr_names.contains_key("__retbuf")
                             || def.monomorph_return_is_fresh()
@@ -13150,6 +13163,16 @@ impl Scopes<'_> {
                 if returned.heap_def_nr().is_some()
                     && (!def.returns_borrowed_view()
                         || def.attr_names.contains_key("__retbuf")
+                        // loft#1484 — the monomorph twin of the `__retbuf` exemption beside
+                        // it, and it is the SAME reason rather than a second one.  What makes
+                        // that exemption safe is not the buffer but the guarded copy the
+                        // lift's own `Set` emits for a borrow-returning callee: it adopts
+                        // when the store that came back is fresh and deep-copies when it is
+                        // the argument's, which is decided per execution by identity.  A
+                        // monomorph has no buffer and the same guard, so the same lift is
+                        // safe — and it is the only thing that gives the inline spelling
+                        // anywhere to put the copy.
+                        || monomorph_returns_a_borrow
                         || lift_by_oracle)
                 {
                     return Some(Self::reopt(opt, returned.with_deps(&Deps::none())));

@@ -7219,7 +7219,7 @@ impl Parser {
                 && (base as usize) < attrs_n
                 && !self.data.def(d_nr).attributes()[base as usize].hidden
                 && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                    if Self::every_return_leaf_is_var(&bl.operators, base))
+                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base))
             {
                 // Written directly: `set_returned` refuses a second write on purpose (a return
                 // type must not change), and this does not change it — it adds the deps the
