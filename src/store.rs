@@ -2947,9 +2947,18 @@ impl Store {
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
         }
+        // `offset_in_bounds` has just proved `at` addresses a byte of this store's live
+        // allocation, so the pointer cannot be null and the `Option` `as_mut` returns can only
+        // ever be `Some` — a branch and a panic path on the hottest read in the language
+        // (`get_elem_hoisted` is 15 % of the drawing library's bench, loft#1426).  Take the
+        // shared reference directly.
+        //
+        // It is also the better-formed borrow: `as_mut()` mints a `&mut T` inside a `&self`
+        // method and hands it out as `&T`, which Stacked Borrows is right to object to — this
+        // is the read path, and the `&mut` twin below is a `&mut self` method where it is fine.
         unsafe {
             let off = self.ptr.offset(at).cast::<T>();
-            off.as_mut().expect("Reference")
+            &*off
         }
     }
 
