@@ -2801,11 +2801,17 @@ impl Parser {
             // and outlives the frame.  It aliases instead, and a write through the result
             // lands on the argument the caller passed.
             //
-            // Only a BUFFER-LESS return arrives here with an argument borrow.  A dense heap
-            // return keeps the promise through its hidden `__retbuf` — the caller allocates
-            // and `ref_return`'s copy leg writes into it — so `-> S` copies while `-> S?`,
-            // the SAME body, did not.  That asymmetry is what `@FR-N-Shape` refuses: a shape
-            // question answers alike for `τ` and `τ?`.
+            // Only a BUFFER-LESS return arrives here, and that is a division of labour rather
+            // than a claim that the other half is safe.  A dense return has a `__retbuf` and
+            // keeps the promise there instead: `classify_ret_promotion` refuses to RENAME a
+            // candidate that views an argument (`var_views_an_argument`, loft#1482) and the
+            // copy leg then fills the caller's buffer.  Deciding it there is what makes it
+            // decidable at all — by the time this selector runs on pass 2 the rename has
+            // already made the tail's local an argument, so `return_views_an_argument` would
+            // be reading a fact the delivery itself created.
+            //
+            // Both halves answer the same, which is what `@FR-N-Shape` asks: a shape question
+            // answers alike for `τ` and `τ?`.
             RefDelivery::MaterializeView
         } else {
             // Owned / arg-borrow: rename the tail's work-ref(s) onto `__retbuf`.
@@ -12537,6 +12543,34 @@ impl Parser {
     /// An ARGUMENT dep is deliberately not a borrow here: the CALLER owns that store,
     /// so it outlives the call, and `classify_vector_delivery`'s `CopyBorrow` leg
     /// already gives that shape value semantics.
+    /// loft#1482, `@FR-F-Ret` — does this candidate BORROW a store the CALLER still holds?
+    ///
+    /// The ARGUMENT twin of [`Self::var_views_local`], and the question that one
+    /// deliberately does not ask: it walks PAST an argument dep because the caller's store
+    /// outlives the frame, so nothing dangles.  Nothing dangles here either — the value
+    /// ALIASES.  Renaming such a local onto `__retbuf` publishes *the result IS the buffer
+    /// you allocated* over a record the caller already owns, so a write through one call's
+    /// result lands in the argument the next call reads.
+    ///
+    /// Shallow on purpose, and the depth is the rule rather than a budget: a record bind
+    /// COPIES (`(B-Copy)`), so a local one hop further along (`e = p[0]; e2 = e; e2`) owns
+    /// its own store and is free to carry the rename.  Only a local whose OWN deps name a
+    /// parameter is still looking at the caller's record.
+    ///
+    /// The one home for the notion — [`Self::return_views_an_argument`] is this predicate
+    /// over a dep LIST, and the two must answer alike or a delivery and a promotion would
+    /// disagree about the same variable.
+    fn var_views_an_argument(&self, v: u16) -> bool {
+        v < self.vars.count()
+            && !self.vars.is_argument(v)
+            && self
+                .vars
+                .tp(v)
+                .depend()
+                .iter()
+                .any(|&d| d < self.vars.count() && self.vars.is_argument(d))
+    }
+
     fn var_views_local(&self, v: u16) -> bool {
         let mut work: Vec<u16> = vec![v];
         let mut seen: std::collections::HashSet<u16> = work.iter().copied().collect();
@@ -13563,16 +13597,7 @@ impl Parser {
         ) {
             return false;
         }
-        ls.iter().any(|&v| {
-            v < self.vars.count()
-                && !self.vars.is_argument(v)
-                && self
-                    .vars
-                    .tp(v)
-                    .depend()
-                    .iter()
-                    .any(|&d| d < self.vars.count() && self.vars.is_argument(d))
-        })
+        ls.iter().any(|&v| self.var_views_an_argument(v))
     }
 
     fn site_value_ref(&self, tail: &Value) -> Option<u16> {
@@ -14620,11 +14645,31 @@ impl Parser {
         // `return_views_local` leg (#306).
         let views_local = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
             && (self.var_views_local(v) || self.var_defined_by_projection(body, v));
+        // loft#1482, `@FR-F-Ret` — the candidate views an ARGUMENT.  The rung above is the
+        // LOCAL half of one question, and it stops at the frame boundary on purpose: a
+        // local's store dies with the frame, so the rename would dangle.  A parameter's
+        // store does not die, and that is why nothing here read as a defect for so long —
+        // the rename produces a perfectly live record.  It is the CALLER'S record.  The
+        // promotion says *the result is the buffer you handed me*, so the caller adopts a
+        // view of its own argument, and `bump(f(q))` was measured landing on `q`.
+        //
+        // Suppressing the rename drops the candidate to the `Bind` rung below, which
+        // deep-copies a named local into the separate `__retbuf` — the delivery
+        // `p[0]` already gets from `MergeAttr` publishing the borrow, and the one a
+        // parameter handed straight back (loft#1368) gets from the caller's own copy.
+        //
+        // Decided on the SAME fact on both passes, which is what `classify_reference_delivery`
+        // could not do from where it stands: by the time it runs on pass 2 the rename has
+        // already made the tail's local an argument, so its `return_views_an_argument` reads
+        // a fact the delivery itself created.  Refusing the rename is what stops that fact
+        // from existing.
+        let views_argument = self.var_views_an_argument(v);
         let allow_rename = !(bound_already
             || reassigned
             || returns_own_field
             || bound_to_vector_join
             || views_local
+            || views_argument
             // A1b — the site-value (g's buffer) must NOT rename onto __retbuf (that
             // aliases the borrowed subject into the return); fall through to Bind so
             // the return materialises an owned copy into a distinct __retbuf.
@@ -14900,6 +14945,27 @@ impl Parser {
             // machinery cannot host (e.g. a call-result vector), breaking callers.
             let mut expanded: Vec<u16> = ls.to_vec();
             let direct_count = expanded.len();
+            // loft#1482 — a candidate the ladder is about to COPY into `__retbuf` is no
+            // longer the return either, so its deps must not be walked in.  The copy
+            // SEVERS the borrow: what comes back is the buffer, which aliases nothing the
+            // caller passed.  Walking them anyway republishes an alias the value does not
+            // have, and the caller reads that as *this result is a view of my own store* —
+            // it then binds the fresh record as a borrow and frees nobody's, one leaked
+            // record per call (`496-borrowed-view-return-dep-prune`, measured).  The
+            // `jo_arm_skip` skip below says the same sentence for the vector arm pre-pass;
+            // this is the record twin, and only a DIRECT candidate can be delivered — a
+            // transitively-reached one is `MergeOnly` by construction.
+            let copies_into_buffer: std::collections::HashSet<u16> = if signature_only {
+                std::collections::HashSet::new()
+            } else {
+                ls.iter()
+                    .copied()
+                    .filter(|&v| {
+                        self.var_views_an_argument(v)
+                            && self.return_buffer().is_some_and(|(_, buf)| buf != v)
+                    })
+                    .collect()
+            };
             let mut seen: std::collections::HashSet<u16> = expanded.iter().copied().collect();
             let mut i = 0;
             while i < expanded.len() {
@@ -14912,7 +14978,7 @@ impl Parser {
                 // longer the return — do NOT walk its deps into the return type, else
                 // the owned copy's return re-acquires the `["e"]` borrow (the caller then
                 // skips freeing `e`'s owner → leak).
-                if jo_arm_skip.contains(&v) {
+                if jo_arm_skip.contains(&v) || copies_into_buffer.contains(&v) {
                     continue;
                 }
                 for d in self.vars.tp(v).depend() {

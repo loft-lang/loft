@@ -1,0 +1,193 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record return whose value is reached through a NAMED LOCAL that views a parameter hands
+// the caller a fresh record, not a second name for the caller's own argument.
+//
+// `calls.md` `(F-Ret)` states its own test: *a caller that mutates one call's result does not
+// affect another call's result*.  A `-> S` return earns that through its hidden `__retbuf` —
+// the caller allocates a record and the callee fills it.  It did not: the tail's local was
+// RENAMED onto that buffer, so the assignment overwrote the buffer's `DbRef` with the view and
+// the caller adopted a record it already owned.  `f(q).a = 99` then wrote into `q`, and the
+// next `f(q)` read 99 back, on both backends with no diagnostic.
+//
+// The rename is refused where the candidate views an argument (`var_views_an_argument`, the
+// argument twin of `var_views_local`).  Both were right about DANGLING and neither asked about
+// FRESHNESS: a local bound to a parameter's element does not dangle — the caller's store
+// outlives the frame — it ALIASES, which is why the shape read as sound for so long.  Refused,
+// the candidate drops to the copy leg that materialises into `__retbuf`, which is the delivery
+// a tail viewing a LOCAL has taken since #306.
+//
+// The BOUNDARY is wider than the filed `match` spelling, and the controls are what say where it
+// stops.  Every route through a named local is a cell: a slice binding, a plain bind, a field
+// projection, an explicit `return`, a bind inside an `if` arm, a method receiver, a record ENUM,
+// and — the former the filed report does not mention — a VECTOR element of a vector parameter.
+// The controls are the routes that were already fresh and must stay so: `p[0]` and a declared
+// parameter handed straight back (loft#1368) publish the borrow and the CALLER copies; a `for`
+// binding, a struct literal and a two-hop bind own their store, because a record bind COPIES
+// (`(B-Copy)`), which is also why the predicate is one hop deep and not transitive.
+//
+// The mutation is spelled `f(q).a = 99` rather than `bump(f(q))` on purpose: both write through
+// the returned temporary, and the second one draws the `lost-write` warning, whose subject is
+// this same statement.  That diagnostic is telling the truth once the return is fresh, and a
+// guard should not have to pin a warning to ask its own question.
+//
+// @falsified-at: 14ed307de — against a build where the rename still fired, both backends
+//   answered `matcharm source=99` and SEVEN cells read 99 (match arm, plain bind, field bind,
+//   explicit return, method receiver, record enum) or 2 (vector element).  The `if` arm is the
+//   eighth and moves on ONE backend only: `--native` answered a zeroed record (0) where
+//   `--interpret` was accidentally right, so the interpret row is that cell's control and the
+//   native row is what scores it.  All nine controls passed on the same build, which is what
+//   says the cells and not the harness moved.
+
+struct S1482 { a: integer }
+struct O1482 { inner: S1482 }
+enum E1482 { Full1482 { n: integer }, Empty1482 { n: integer } }
+
+// --- the cells: every route to the value runs through a NAMED LOCAL that views a parameter ---
+
+// The filed spelling: a slice binding is a local of the callee and a view of `p`.
+fn head_1482(p: vector<S1482>) -> S1482 { match p { [a, ..] => a, _ => S1482 { a: 0 } } }
+
+// The same fact with no `match` in sight — the boundary is the BINDING, not the arm.
+fn bind_1482(p: vector<S1482>) -> S1482 { e = p[0]; e }
+
+// A FIELD projection rather than an index: the route differs, the fact does not.
+fn field_1482(o: O1482) -> S1482 { e = o.inner; e }
+
+// An explicit `return` is a different return SITE (`MidReturn`) and takes the same answer.
+fn early_1482(p: vector<S1482>) -> S1482 { e = p[0]; return e; }
+
+// The bind sits inside an `if` arm, so the tail is a join rather than the binding itself.
+// This cell also carried a BACKEND DIVERGENCE: `--native` answered a zeroed record here.
+fn arm_1482(p: vector<S1482>, t: boolean) -> S1482 {
+  if t { e = p[0]; e } else { S1482 { a: 0 } }
+}
+
+// A method's receiver is a parameter like any other.
+fn grab_1482(self: O1482) -> S1482 { e = self.inner; e }
+
+// A record ENUM is the second spelling of a heap record, and it took the same rename.
+fn firste_1482(p: vector<E1482>) -> E1482 { x = p[0]; x }
+
+// --- the controls: routes that were already fresh, and must stay fresh ---
+
+// The borrow is PUBLISHED (`-> S1482["p"]`) and the caller copies — the oracle the cells
+// above now agree with.
+fn index_1482(p: vector<S1482>) -> S1482 { p[0] }
+
+// loft#1368's settled shape: a declared parameter handed straight back.  Its store is the
+// caller's, the caller copies, and the fix must not reach it.
+fn keep_1482(s: S1482) -> S1482 { s }
+
+// A `for` binding, a minted literal and a two-hop bind each OWN the record they hand up.
+// The last one is the depth control: `e2 = e` copies, so one hop further along the chain the
+// local is an owner and the rename is sound.
+fn loop_1482(p: vector<S1482>) -> S1482 { for e in p { return e; } S1482 { a: 0 } }
+fn mint_1482(p: vector<S1482>) -> S1482 { S1482 { a: p[0].a } }
+fn twohop_1482(p: vector<S1482>) -> S1482 { e = p[0]; e2 = e; e2 }
+
+// The NULLABLE twin (loft#1468), which reaches its freshness by its own route and is here so a
+// repair aimed at the record return cannot quietly move it — `(N-Shape)` asks that `S` and `S?`
+// answer alike.
+fn headq_1482(p: vector<S1482>) -> S1482? { match p { [a, ..] => a, _ => null } }
+
+// The VECTOR former, and it is a CELL rather than a control: an ELEMENT of a vector parameter
+// took the same rename and the caller's inner vector grew when the result did.  Its sibling
+// spelling — a vector FIELD of a struct parameter — was already copied by the vector selector's
+// own `CopyBorrow` leg, which is why the former looked settled.
+fn vec_1482(o: vector<vector<S1482>>) -> vector<S1482> { e = o[0]; e }
+
+// A tail that views a LOCAL (#306) and a `??` join local: neither is an argument view, and both
+// were already delivered correctly.  The `??` cell is also the PASS-STABILITY control — its
+// deps read differently on the two parser passes, which is why the decision cannot be made from
+// a dep list read on pass 2 alone.
+fn mk_1482() -> vector<S1482> { [S1482 { a: 7 }] }
+fn local_1482() -> S1482 { v = mk_1482(); e = v[0]; e }
+fn join_1482(q: S1482?) -> S1482 { d = q ?? S1482 { a: 0 }; d }
+
+fn main() {
+  // Each cell writes 99 THROUGH the returned temporary, then reads the source back.  7 means
+  // the return was a fresh record; 99 means the two calls were one record.
+  q1: vector<S1482> = [S1482 { a: 7 }];
+  head_1482(q1).a = 99;
+  assert(head_1482(q1).a == 7, "match arm: the source keeps 7, got {head_1482(q1).a}");
+
+  q2: vector<S1482> = [S1482 { a: 7 }];
+  bind_1482(q2).a = 99;
+  assert(bind_1482(q2).a == 7, "plain bind: the source keeps 7, got {bind_1482(q2).a}");
+
+  q3: O1482 = O1482 { inner: S1482 { a: 7 } };
+  field_1482(q3).a = 99;
+  assert(field_1482(q3).a == 7, "field bind: the source keeps 7, got {field_1482(q3).a}");
+
+  q4: vector<S1482> = [S1482 { a: 7 }];
+  early_1482(q4).a = 99;
+  assert(early_1482(q4).a == 7, "explicit return: the source keeps 7, got {early_1482(q4).a}");
+
+  q5: vector<S1482> = [S1482 { a: 7 }];
+  arm_1482(q5, true).a = 99;
+  assert(arm_1482(q5, true).a == 7, "if arm: the source keeps 7, got {arm_1482(q5, true).a}");
+
+  q6: O1482 = O1482 { inner: S1482 { a: 7 } };
+  q6.grab_1482().a = 99;
+  assert(q6.grab_1482().a == 7, "method receiver: the source keeps 7, got {q6.grab_1482().a}");
+
+  // Both variants declare `n`, so the access is the one shared slot and
+  // `variant-field-unchecked` (loft#980) has nothing to say about it — the question here is
+  // the RETURN, and a second diagnostic in the way would only obscure it.
+  q7: vector<E1482> = [Full1482 { n: 7 }];
+  firste_1482(q7).n = 99;
+  assert(firste_1482(q7).n == 7, "record enum: the source keeps 7, got {firste_1482(q7).n}");
+
+  // --- the controls ---
+  c1: vector<S1482> = [S1482 { a: 7 }];
+  index_1482(c1).a = 99;
+  assert(index_1482(c1).a == 7, "control p[0]: the source keeps 7, got {index_1482(c1).a}");
+
+  c2: S1482 = S1482 { a: 7 };
+  keep_1482(c2).a = 99;
+  assert(keep_1482(c2).a == 7, "control keep: the source keeps 7, got {keep_1482(c2).a}");
+
+  c3: vector<S1482> = [S1482 { a: 7 }];
+  loop_1482(c3).a = 99;
+  assert(loop_1482(c3).a == 7, "control for: the source keeps 7, got {loop_1482(c3).a}");
+
+  c4: vector<S1482> = [S1482 { a: 7 }];
+  mint_1482(c4).a = 99;
+  assert(mint_1482(c4).a == 7, "control mint: the source keeps 7, got {mint_1482(c4).a}");
+
+  c5: vector<S1482> = [S1482 { a: 7 }];
+  twohop_1482(c5).a = 99;
+  assert(twohop_1482(c5).a == 7, "control two-hop: the source keeps 7, got {twohop_1482(c5).a}");
+
+  // The nullable twin: `(N-Shape)` asks it to answer exactly as the dense cells above do.
+  c6: vector<S1482> = [S1482 { a: 7 }];
+  t6 = headq_1482(c6);
+  if t6 != null { t6.a = 99; }
+  assert(c6[0].a == 7, "control nullable: the source keeps 7, got {c6[0].a}");
+
+  // The vector cell: appending to one call's result must not grow the argument.
+  c7: vector<vector<S1482>> = [[S1482 { a: 7 }]];
+  g7 = vec_1482(c7);
+  g7 += [S1482 { a: 1 }];
+  assert(len(vec_1482(c7)) == 1, "vector element: the source keeps 1, got {len(vec_1482(c7))}");
+
+  // A view of a LOCAL (#306) — the delivery this fix routes the argument case into.
+  local_1482().a = 99;
+  assert(local_1482().a == 7, "control local view: fresh per call, got {local_1482().a}");
+
+  // The `??` join, on BOTH arms.  Its deps are not the same on the two parser passes, so a
+  // decision read off them alone would fire on one pass and not the other.
+  c8: S1482 = S1482 { a: 7 };
+  join_1482(c8).a = 99;
+  assert(join_1482(c8).a == 7, "control join subject: the source keeps 7, got {join_1482(c8).a}");
+  assert(join_1482(null).a == 0, "control join fallback: got {join_1482(null).a}");
+
+  // Printed as well as asserted: the two backends answering different members of `{7, 99}` is
+  // the shape this file's class keeps taking, and only a comparison between the two runs sees
+  // it (`tests/wrap.rs` runs the file on both).
+  q9: vector<S1482> = [S1482 { a: 7 }];
+  head_1482(q9).a = 99;
+  println("1482 OK matcharm source={head_1482(q9).a}");
+}
