@@ -40,6 +40,24 @@
 // the price of being wrong in that direction is one copy and never a wrong answer — which is
 // also why no cell here can witness the over-copy.
 
+// @falsified-at: bd0e795f3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1494-a-nested-block-yielding-a-locals-collection-copies-it.patch
+//   — the same four channels, so the patch reintroduces THIS defect and not another of the
+//   commit's.
+//   CHANNEL: VALUE, on a plain run of both backends.  That is what `two_blocks` exists for:
+//     every other cell reads freed bytes that still hold the right answer, so a matrix without
+//     it moves only the panic channel and needs `LOFT_POISON=1` to see anything at all.
+//   ARMED: nothing.  A plain run on either backend fails the assertion.
+//   WITNESS: `two_blocks` answers **7222922** where 3111922 is right.  Read out:
+//     `len(p) * 1000000 + p[0] * 1000 + len(q) * 100 + q[0]` gives `len(p) = 7` and
+//     `p[0] = 222`, which are `q`'s length and `q`'s element — the FIRST block's store was
+//     freed at its exit, the second block was handed the same slot, and the callee read the
+//     second collection through its first argument.
+//   HOLDS: leak, free-refusal, panic and expectations are equal on both trees, and every
+//     other assertion passes on both — the 23 remaining cells are the boundary, not the
+//     measurement.
+
 struct Box1494 { items: vector<integer>, name: text }
 struct Two1494 { a: vector<integer>, b: vector<integer> }
 struct Elm1494 { k: integer }
