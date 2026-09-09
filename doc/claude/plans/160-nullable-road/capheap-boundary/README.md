@@ -31,3 +31,20 @@ the nullable half had already been fixed.
 So a divergence is not evidence about WHICH half is right.  `@FR-N-Shape` says only that the two
 must agree; what settles which answer they should agree ON is a rule about the thing itself —
 `(F-Ret)` for loft#1482, the store-lifetime rules for this one.
+
+## ⚠ A leak sweep on `LOFT_STRICT_STORES` alone reads a PANIC as clean
+
+`LOFT_STRICT_STORES=1` implies `LOFT_NO_SLOT_REUSE` (`keys.rs`: *"which needs the no-reuse
+guarantee"*), so a leak-FREE program that churns more than 65535 stores aborts with *"store table
+exhausted"* instead of finishing.  A sweep that greps its output for `strict-store` — the obvious
+thing to grep — sees no such line and scores that file **clean**.
+
+Measured while sweeping the 45 files the `@FR-N-Shape` peel changes: 1 of the 45
+(`1320-a-branch-joined-binding-frees-the-arm-that-minted`) aborts that way.  Under an oracle that
+keeps slot reuse it is clean and not close to a leak — `LOFT_STORES=timeline` reports *986546
+allocs, 986544 frees, peak 9 concurrently-live — NO leak*.  So the blind spot hid nothing here, but
+it would have hidden anything.
+
+**So a leak sweep needs two greps, not one**: the `strict-store` line AND `store table exhausted`,
+with the second re-measured under `LOFT_STORES=timeline` or `LOFT_NATIVE_LEAK_CHECK` (both keep
+reuse).  The same applies to any sweep that treats "no leak line" as a pass.

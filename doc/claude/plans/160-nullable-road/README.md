@@ -9,9 +9,11 @@ Tracker: [@PLN160](https://github.com/loft-lang/plans/issues/160).
 
 ## Status
 
-**Open — the measurement the issue asks to open on is BUILT and has run once (2026-09-09).**
-Nothing is designed or fixed yet, deliberately: the issue's own instruction is *"before designing
-anything: enumerate where the two spellings' lowerings diverge."*
+**Open — the enumeration the issue asks for is COMPLETE and every divergence is CLASSIFIED
+(2026-09-09).**  Nothing has been fixed here, deliberately: the issue's instruction is *"before
+designing anything: enumerate where the two spellings' lowerings diverge."*  Two bugs were filed
+along the way (**loft#1482**, **loft#1483**), both of them defects in the DENSE spelling that the
+nullable road was masking.
 
 `make nullable-road` is that enumeration. **5 of 6 shapes diverge** after the `?` itself is
 normalised away, and every one of the five moves ownership machinery rather than only the `??`
@@ -260,13 +262,66 @@ two must AGREE.  What settles which answer they agree ON is a rule about the thi
 `(F-Ret)` for loft#1482, the store-lifetime rules for loft#1483 — and reading the dense spelling as
 the oracle because it is the ordinary one is what closed loft#1468 on a false premise.
 
-## The last one, enumerated but NOT yet classified
+## The fourth classification — `local-rebound-by-mint` is TWO MECHANISMS for one question
 
-| pair | asymmetric channels |
+The sharpest of the four, and it lands on @PLN155's question rather than this plan's.  The same
+mixed-ownership local — `d: S = p; if c { d = mint(9); }` — has its ownership tracked two
+different ways, and the only thing that selects between them is the spelling:
+
+| spelling | how *"does `d` own a store to release?"* is answered |
 |---|---|
-| `local-rebound-by-mint` (loft#1422) | free-ref +3, work-ref −1 |
+| dense `d: S` | **store identity** — `OpFreeRefIfDistinct(__ref_1, d)`, plus `_old_d.store_nr != d.store_nr` at the rebind |
+| nullable `d: S?` | **a runtime boolean** — `__lbo_d`, false at entry, true after the mint, guarding `if __lbo_d { OpFreeRef(d) }` |
 
-It keeps its buffer, so it shares neither the retbuf root nor the in-place-hint root.
+The site is `scopes.rs:2678`, fed by `nullable_locals_that_displace` (loft#1200) — **nullable by
+construction**, so the dense spelling can never reach it.  C90 makes the two spellings the same
+slot and store identity answers identically for both, so nullability does not require the flag.
+
+That is three parallel ownership mechanisms in one function's prologue — `__rbo_` (loft#1128),
+`__lbo_` (loft#1200), `__own_` (loft#1336 `@FR-O-Witness`) — and the dense road uses none of them.
+The code already works to keep them from overlapping (*"one release mechanism per local, and no
+dead free in the IR"*); what it does not ask is why the nullable spelling needs a mechanism at all
+where the dense one uses store identity.
+
+**Reach: 5 of 1311 corpus files emit a `__lbo_` flag.**  In this pair's own program its guarded
+free is provably dead — the flag is false at entry and set true only *after* the mint, while the
+check is the first statement of the same `if`, which runs at most once.  That is a property of
+this program, not of the mechanism; a loop would exercise it, and one of the five is named
+*"first assigned inside a branch or loop"*.
+
+⚠ **Whether it is foldable onto store identity is NOT measured.**  The falsification — return
+empty from `nullable_locals_that_displace` and re-run the five — was attempted twice and killed
+both times by memory pressure from a sibling checkout's gate.  The second attempt's own CONTROL
+caught it: `__lbo_` mentions read `on=14 off=14`, i.e. the probe build never finished and the run
+would have scored "no change" on a binary that still had the mechanism.  Recorded as open rather
+than guessed.
+
+**Verdict: an accident of the site — a second free-licence derivation reachable from one spelling
+only.**  It belongs to [@PLN155](../155-licence-to-free/README.md)'s question (*"there should be a
+limited amount of code that verifies if a free is needed"*) more than to this plan's, and it is
+the natural next entry in that reduction: @PLN155 took hand-written proxy+veto pairs from 12 to 7,
+and this is a whole parallel mechanism beside them.
+
+Smaller finding at the same site: `__own_` has `LOFT_NO_OWNER_WITNESS=1` and `__rbo_`'s machinery
+is switchable, but **`__lbo_` has no `LOFT_NO_*` switch** — so the one of the three with no bisect
+step is the one whose necessity is unmeasured.  CLAUDE.md's convention asks every default-on
+mechanism to ship one.
+
+## The enumeration is COMPLETE
+
+All five diverging pairs are classified, and **not one of them is required by C90**:
+
+| pair | verdict | where it stands |
+|---|---|---|
+| `ret-view-of-param` (loft#1421) | accident — `ret_promo_base` peels `Optional(Vector)` only | open |
+| `ret-view-of-param-vector` | the CONTROL for the row above — it KEEPS its buffer, which is what proves the `?` is not what removes it | not a question of its own |
+| `element-over-param` (loft#1466) | accident, deviation on the DENSE side | **loft#1482** |
+| `captured-local-rebind` (loft#1447) | accident — a `matches!` naming one spelling; cure known | blocked on **loft#1483** |
+| `local-rebound-by-mint` (loft#1422) | accident — two mechanisms for one question | @PLN155's queue |
+
+The issue's opening question is answered: `τ` and `τ?` do **not** reach the store machinery by the
+same road, in five shapes out of six, and every divergence is an accident of the site that
+introduced it rather than a consequence of the marker.
 
 ## Next
 
