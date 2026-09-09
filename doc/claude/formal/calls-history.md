@@ -6,11 +6,66 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **2** — `D-call-20` opened 2026-09-09 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
+
+### D-call-20 — OPEN (2026-09-09, loft#1485): a lambda's heap return that reaches a CAPTURE is handed out as a view
+
+`(F-Ret)` again, at the capture boundary.  Found by the peer stream while measuring loft#1482;
+re-measured here on `e4c7db584` before recording, on both backends, with `(F-Ret)`'s own test
+(`bump(g()); println("{g().a}")` — no binding anywhere in it, so a copy cannot swallow the answer):
+
+| lambda tail, over a capture `q` | answer | wanted |
+|---|---|---|
+| `fn() -> S { q }` | **8** | 7 |
+| `fn() -> S { e = q; e }` | **8** | 7 |
+| `fn() -> vector<S> { q }`, appended through | **len 2** | len 1 |
+| `fn() -> S { e = q[0]; e }` | **ICE** — H5 two-pass abort | 7 |
+| `fn() -> S { q[0] }` — the CONTROL | 7 | 7 |
+
+The control is what makes the rest readable: a DIRECT projection tail reaches
+`return_projects_into_local`, whose base is not an argument, so it materialises and the shape is
+already right.  What escapes is the tail that NAMES the capture, directly or through a local.
+
+The ICE is verbatim: *"H5 two-pass contract: def `n___lambda_0` (#736) grew a pass-2-only attribute
+`e` (pass1=1, pass2=3) that is not a documented lazy append"*.  It is the same rename that grows
+the attribute, but a capture is not an argument, so loft#1482's `var_views_an_argument` does not
+reach it and that fix leaves this exactly as it was.
+
+⚠ **`(L-CapHeap)` does not license this.**  It shares the store in the direction the closure READS
+and says nothing about what the closure RETURNS, so `(F-Ret)` is unopposed here — checked before
+recording rather than assumed.
+
+### D-call-19 — OPEN (2026-09-09, loft#1484): a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies
+
+`(F-Ret)` says a returned whole heap value is fresh, and *"nothing in the rule distinguishes a
+generic's instance"* — this doc's own sentence, two paragraphs above the deviation list.
+Re-measured here on `e4c7db584`, both backends:
+
+```loft
+fn idg<T>(x: T) -> T { x }      bump(idg(q)); idg(q).a  →  8    ← aliases
+fn idn(x: S)   -> S { x }       bump(idn(r)); idn(r).a  →  7    ← its concrete twin is fresh
+```
+
+`p[0]` and `e = p[0]; e` fail the same way.  The monomorph publishes `ref(S)` with an EMPTY dep
+list: D-call-13's `Own::Borrowed` re-derivation in `try_generic_instantiation` is not firing.  This
+is the residual D-call-13 itself named — *"a `-> T` that MIXES a mint and the argument … wanting
+the return buffer at instantiation"*.
+
+⚠ **And D-call-13's own guard reads GREEN over it**, which is the finding worth keeping.  Every
+cell in `a-generic-instance-returns-what-its-concrete-twin-returns.loft` binds the result before
+mutating it (`r = g_struct_whole(src); r.n = 99`) — and a record bind COPIES, so the cell measures
+the CALLER'S COPY, not the callee's return.  `t_3Ctr_g_struct_whole` publishes an empty dep list
+with every cell passing.
+
+> **A guard whose cells all bind before observing is measuring the bind, not the return.**
+
+The shape that discriminates is `(F-Ret)`'s own: mutate THROUGH one call and re-read through
+another — `bump(f(q)); println("{f(q).a}")` — which never touches a binding.  The same blindness
+cost two probes in @PLN160 before it was named; it applies to QUALITY.md § B7t's 48-cell matrix.
 
 ### D-call-18 — OPENED AND CLOSED (2026-09-09, loft#1482): the DENSE half of D-call-17 aliases too, and D-call-17 closed on the belief that it does not
 
