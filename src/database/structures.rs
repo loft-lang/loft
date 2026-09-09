@@ -507,11 +507,38 @@ impl Stores {
     }
 
     pub(super) fn insert_record(&mut self, data: &DbRef, rec: &DbRef, tp: u16, secondary: bool) {
-        match self.types[tp as usize].parts.clone() {
-            Parts::Vector(_) => {
+        // WHICH collection kind, plus the one `Copy` payload the arms below use.  Read under a
+        // borrow that ends here, so the `&mut self` calls can follow — a `Parts` CLONE on this
+        // path allocates and memcpys the type's field/variant `Vec`s on EVERY inserted element,
+        // and the commonest arm (`Vector`) never reads what it cloned.  Measured on the drawing
+        // library's bench (loft#1426): `insert_record` was 3.5 % of the run with the clone in it.
+        enum Kind {
+            Vector,
+            Sorted(u16),
+            Array,
+            Hash(u16),
+            Index(u16),
+            Ordered,
+            Trie,
+            Radix,
+            Other,
+        }
+        let kind = match &self.types[tp as usize].parts {
+            Parts::Vector(_) => Kind::Vector,
+            Parts::Sorted(c, _) => Kind::Sorted(*c),
+            Parts::Array(_) => Kind::Array,
+            Parts::Hash(c, _) => Kind::Hash(*c),
+            Parts::Index(c, _, _) => Kind::Index(*c),
+            Parts::Ordered(_, _) => Kind::Ordered,
+            Parts::Trie(_, _) => Kind::Trie,
+            Parts::Radix(_, _) => Kind::Radix,
+            _ => Kind::Other,
+        };
+        match kind {
+            Kind::Vector => {
                 vector::vector_finish(data, &mut self.allocations);
             }
-            Parts::Sorted(c, _) => {
+            Kind::Sorted(c) => {
                 let size = u32::from(self.size(c));
                 vector::sorted_finish(
                     data,
@@ -520,19 +547,19 @@ impl Stores {
                     &mut self.allocations,
                 );
             }
-            Parts::Array(_) => {
+            Kind::Array => {
                 let reference = vector::vector_append(data, 4, &mut self.allocations);
                 self.store_mut(data)
                     .set_u32_raw(reference.rec, reference.pos, rec.rec);
                 vector::vector_finish(data, &mut self.allocations);
             }
-            Parts::Hash(c, _) => {
+            Kind::Hash(c) => {
                 // @P306 — replace any existing record with this key (dedup).
                 self.dedup_keyed(data, rec, tp, c, secondary);
                 let keys = self.types[tp as usize].keys.clone();
                 hash::add(data, rec, &mut self.allocations, &keys);
             }
-            Parts::Index(c, _, _) => {
+            Kind::Index(c) => {
                 // @P306 — replace any existing record with this key (dedup);
                 // tree::add otherwise rejects the duplicate and keeps the old.
                 self.dedup_keyed(data, rec, tp, c, secondary);
@@ -540,7 +567,7 @@ impl Stores {
                 let keys = self.types[tp as usize].keys.clone();
                 tree::add(data, rec, left, &mut self.allocations, &keys);
             }
-            Parts::Ordered(_, _) => {
+            Kind::Ordered => {
                 vector::ordered_finish(
                     data,
                     rec,
@@ -548,20 +575,20 @@ impl Stores {
                     &mut self.allocations,
                 );
             }
-            Parts::Trie(_, _) => {
+            Kind::Trie => {
                 // Same no-dedup contract as the spatial side: two records may share a
                 // key, differing in the id suffix, and land adjacent (`r8b`).
                 let keys = self.types[tp as usize].keys.clone();
                 crate::trie_db::add(data, rec, &mut self.allocations, &keys);
             }
-            Parts::Radix(_, _) => {
+            Kind::Radix => {
                 // @PLN48 S2 — no dedup: two records may share a cell (they differ in
                 // the id suffix and land adjacent), which is what a spatial index
                 // needs.  A future `radix<T[k]>` map surface can layer dedup on top.
                 let keys = self.types[tp as usize].keys.clone();
                 crate::radix_db::add(data, rec, &mut self.allocations, &keys);
             }
-            _ => (),
+            Kind::Other => (),
         }
     }
 
