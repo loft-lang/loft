@@ -94,7 +94,11 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  run and a borrow there would leave that run's store with no release.  Being
                  CONDITIONAL is not being exclusive — two sequential `if`s over one store can
                  both run — so the condition is mutual exclusion, not "the build might not
-                 happen".  An arm that TERMINATES is exclusive with everything after the branch
+                 happen".  A record leaves by two routes, the RETURN and a `&fn(…)` LINK, and
+                 they are symmetric for KEEPING it and asymmetric for RELEASING it: an arm is a
+                 path, so an arm can witness that the return did not deliver, while nothing in
+                 the arms speaks for the link.  A per-arm release therefore SUBTRACTS the link
+                 route where a keep-decision would union it.  An arm that TERMINATES is exclusive with everything after the branch
                  and not only with its sibling: `if p { return |…| e.a; } return |…| e.a;`
                  builds one record inside the arm and one after it, never in opposite arms, and
                  the arm's return is what says the second cannot follow the first.

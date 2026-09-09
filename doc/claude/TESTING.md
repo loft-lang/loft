@@ -612,6 +612,13 @@ which is how this one was found.
 
 ### A guard that never failed is not a guard — `make falsify`
 
+**A leak-channel guard needs the INSTRUMENT ARMED, or `make falsify` scores it unfalsifiable.**
+A leaked store is not an exit code, so a plain run reads `leak none -> none` and the tool reports
+that the guard proves nothing — correctly. `LOFT_STRICT_STORES=1 make falsify …` (add
+`LOFT_POISON=1` where the defect is a use-after-free rather than a leak) moves both channels at
+once, and that PAIR is the evidence. Record the invocation in the guard's `@falsified-at:` line,
+not just the verdict: the next reader has to know which instrument the numbers came from.
+
 **`make falsify` REFUSES a tree the guard does not pass, and that refusal is the useful half.**
 It reports `THIS TREE IS NOT CLEAN` and scores nothing, because a guard that the current tree
 fails says nothing about what it can CATCH. Measured 2026-09-09: a new guard carried cells with
