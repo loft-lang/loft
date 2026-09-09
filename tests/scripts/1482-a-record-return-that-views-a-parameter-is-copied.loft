@@ -32,13 +32,15 @@
 // this same statement.  That diagnostic is telling the truth once the return is fresh, and a
 // guard should not have to pin a warning to ask its own question.
 //
-// @falsified-at: 14ed307de — against a build where the rename still fired, both backends
-//   answered `matcharm source=99` and SEVEN cells read 99 (match arm, plain bind, field bind,
-//   explicit return, method receiver, record enum) or 2 (vector element).  The `if` arm is the
-//   eighth and moves on ONE backend only: `--native` answered a zeroed record (0) where
-//   `--interpret` was accidentally right, so the interpret row is that cell's control and the
-//   native row is what scores it.  All nine controls passed on the same build, which is what
-//   says the cells and not the harness moved.
+// @falsified-at: 14ed307de — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  `make falsify` counts ONE assertion because
+//   the first one aborts the run; the per-cell reading, taken by replacing every assert with a
+//   println of its own message, is that both backends answered `matcharm source=99` and SEVEN
+//   cells read 99 (match arm, plain bind, field bind, explicit return, method receiver, record
+//   enum) or 2 (vector element).  The `if` arm is the eighth and moves on ONE backend only:
+//   `--native` answered a zeroed record (0) where `--interpret` was accidentally right, so the
+//   interpret row is that cell's control and the native row is what scores it.  All nine
+//   controls passed on the same build, which is what says the cells and not the harness moved.
 
 struct S1482 { a: integer }
 struct O1482 { inner: S1482 }

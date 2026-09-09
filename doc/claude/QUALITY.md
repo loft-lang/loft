@@ -7281,6 +7281,62 @@ same drift shape and is worth its own walk.
 refuses *for the bound* (`'text' does not satisfy interface 'Addable'`) rather than for the
 unification — which is what says the generic fix did not slip past `check_satisfaction`.
 
+#### B8q — loft#1482 closed: the DENSE half of `@FR-F-Ret`, and a matrix that measured the bind instead of the return (2026-09-09)
+
+`(F-Ret)` states its own test — *a caller that mutates one call's result does not affect another
+call's result* — and B7t built the 48-cell matrix for it four days earlier.  A `-> S` return was
+still failing that test wherever the value arrived through a NAMED LOCAL: `f(q).a = 99` wrote into
+`q`, and the next `f(q)` read 99 back, on both backends with no diagnostic.
+
+**Where it was, and why it read as sound.**  The tail's local is RENAMED onto `__retbuf`, so the
+assignment overwrites the buffer's `DbRef` with the view and the caller adopts a record it already
+owned.  `classify_ret_promotion` already refuses that rename for a local viewing another LOCAL and
+stops at the frame boundary deliberately: a local's store dies with the frame, so the rename would
+DANGLE.  A parameter's store does not die.  The rename produces a perfectly live record — it is the
+caller's — so every instrument that asks *does this dangle* answers correctly and the value is
+wrong anyway.  That is the same split B7t's own D-call-17 named for the nullable half: both sites
+were right about dangling and neither was asking about FRESHNESS.
+
+`var_views_an_argument` is the argument twin, ONE HOP deep because a record bind copies
+(`(B-Copy)`): `e = p[0]; e` still looks at the caller's record, `e2 = e` owns its own.
+`return_views_an_argument` delegates to it, so the delivery selector and the promotion ladder
+cannot drift on one question.
+
+**Two things the value channel could not see.**  A candidate copied into the buffer must not have
+its deps walked into the return type — the copy SEVERS the borrow — and without that half a caller
+read the stale dep, bound the fresh copy as a view of its own store and freed nobody's: one record
+per call under `LOFT_STRICT_STORES`, every value correct, `make ci` green.  And the refusal
+answered a question `LOFT_JOIN_OWN`'s match-return pre-pass already answers, which left that
+switch unable to show its own before-half; six `tests/use_analysis.rs` oracle tests said so, and
+the refusal now stands down for a binding `is_marked_vector_borrow` says the pre-pass owns.  **A
+new leg answering a question an A/B switch already answers makes that switch vacuous, and the
+switch's own test is the only thing that can say so.**
+
+**Eight cells, nine controls, both backends.**  The filed `match` arm, a plain bind, a field
+projection of a struct parameter, an explicit `return`, a bind inside an `if` arm, a method
+receiver, a record ENUM, and a VECTOR element of a vector parameter — a former the report does not
+mention, whose sibling `e = b.v` was already right through the vector selector's own `CopyBorrow`
+leg, which is why the former looked settled.  The `if` arm moved on `--native` only, where it
+answered a zeroed record.  Controls: `p[0]` and a parameter handed straight back publish the
+borrow and the CALLER copies (loft#1368); a `for` binding, a literal and a two-hop bind own their
+store; the nullable twin, a view of a LOCAL and both arms of the `??` join were already right.
+Guard `1482-a-record-return-that-views-a-parameter-is-copied.loft`, falsified at `14ed307de` on
+both backends.  Corpus `introspect` moved in 18 of 1436 files, all in the return delivery, every
+one green on both backends with nothing unfreed and nothing exhausting the store table.
+
+⚠ **The correction this row owes B7t: its 48-cell matrix measures the BIND, not the return.**
+Every cell is `r = f(src); r.n = 99; …` — and a record bind COPIES, so the caller's own copy
+answers the question before the callee's return is ever consulted.  The three shapes that read
+green there and are wrong today are all generic (`fn g<T>(x: T) -> T { x }`, `p[0]`, and
+`e = p[0]; e`): each aliases the argument in the INLINE spelling where its concrete twin copies,
+and D-call-13's guard cannot see any of them.  Measured on the guard's own monomorph —
+`t_3Ctr_g_struct_whole` publishes `ref(Ctr)` with an EMPTY dep list and has no `__retbuf`, so the
+caller never lifts.  Filed; the cure is B7t's own recorded residual, the return buffer at
+instantiation.  **The general shape, and it is not about generics: a guard whose cells all BIND
+before observing is measuring the bind.**  `(F-Ret)`'s own sentence is written the other way
+round for exactly this reason — mutate THROUGH one call and read through another
+(`bump(f(q)); f(q).a`), which touches no binding and therefore cannot be swallowed by one.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
