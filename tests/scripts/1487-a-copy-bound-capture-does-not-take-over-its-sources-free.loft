@@ -35,9 +35,9 @@
 // The uncalled cell leaves its lambda unread on purpose — that is the cell.
 // @EXPECT_WARNING: Variable s is never read
 //
-// @falsified-at: b379a9914 — interpret leaked `kt=81 P1487x40` -> clean, native the same.  The
-//   LEAK is the only channel that moves: every value here was already right on the control
-//   build, which is the shape of the defect.
+// @falsified-at: b379a9914 — interpret leaked `kt=81 P1487×50` -> clean, native leaked
+//   `kt=81 P1487×50` -> clean.  The LEAK is the only channel that moves: every value here was
+//   already right on the control build, which is the shape of the defect.
 
 struct P1487 { n: integer }
 struct S1487 { a: integer }

@@ -1672,7 +1672,19 @@ use a separate collection or add after the loop"
         }
         // The bare-Var test is deliberately NOT unspanned (a Span-wrapped RHS
         // lowers elsewhere); the field-read and self-assign tests are.
-        let is_bare_var = matches!(code, Value::Var(_));
+        //
+        // …and a CAPTURE is that same whole value wearing a different op.  A closure reads
+        // its capture out of the closure record, so the source arrives as
+        // `OpGetDbRef(__closure, off)` rather than as a `Var`, and the selector answered
+        // `NotABind`: `e = q` inside a closure stayed an ALIAS, so `e += […]` grew the
+        // captured `q` and `e[0].a = 99` reached it — against `@FR-B-Copy`, which makes a
+        // plain bind of a whole heap value INDEPENDENT (loft#1489).  The two passes did not
+        // even agree: on pass 1 the capture is still a placeholder `Var`, so pass 1 answered
+        // `CopyVar` and pass 2 `NotABind` for one body.  This is the FIFTH time this family's
+        // selector has been the narrow part while its lowering was already right — P261,
+        // loft#917, loft#1279 and loft#1326 are the others, and `reads_a_capture_whole` is
+        // where the shape now lives so a sixth reader does not re-spell it.
+        let is_bare_var = matches!(code, Value::Var(_)) || self.reads_a_capture_whole(code);
         // @FR-O-Proxy asks copy — the verdict is a `VecBind` (`CopyVar` / `CopyOwnedField` /
         // `SelfAssign`), and every arm of it copies or does nothing.  A wrong answer picks the
         // wrong lowering, not a release.
@@ -4430,7 +4442,7 @@ use a separate collection or add after the loop"
             && !matches!(slot_tp, Type::Optional(_) | Type::RefVar(_))
             && !slot_tp.is_unknown()
             && slot_tp.is_equal(s_type.base());
-        let s_type = if declared_nullable_write {
+        let mut s_type = if declared_nullable_write {
             let what = format!(
                 "{} `{}`",
                 if self.vars.is_argument(var_nr) {
@@ -4520,6 +4532,51 @@ use a separate collection or add after the loop"
         if let Some(v_nr) = rebuild_call_deps {
             let cleared = self.vars.tp(v_nr).with_deps(&crate::data::Deps::none());
             self.vars.set_type(v_nr, cleared);
+        }
+        // `@FR-B-Copy` — a plain bind out of a CAPTURE copies, and the RECORD former had no
+        // lowering that did.  A closure reaches its capture through the closure record, so the
+        // source arrives as `OpGetDbRef(__closure, off)` carrying a dep on that record: right
+        // for the READ, wrong for the BINDING it initialises, because a dep is what every
+        // owns-vs-borrows site reads as *this names storage reached through something else*.
+        // `e = c` inside a closure was therefore an alias and `e.a = 99` reached the captured
+        // `c`, where the same bind out of a PARAMETER — the same shared heap value, arriving
+        // as a bare `Var` — has always copied (loft#1489, the record twin of the collection
+        // cell `classify_vec_bind` answers).
+        //
+        // Copied into a WORK-REF rather than into the binding's own store, which is the shape
+        // `materialize_view_return` already uses for this question at a RETURN.  The binding
+        // then views a record THIS frame owns and frees, so no record decoder has to learn a
+        // new source spelling — and there are two of them, one per backend, which is how a
+        // divergence starts.  Stripping the dep instead was measured: it leaves an owner whose
+        // "own" store is the CAPTURE's, and the frame's release then kills it under the
+        // closure (`USE AFTER FREE … type=S` on both backends).
+        //
+        // Dense records only.  A NULLABLE source may hold nothing, and `OpCopyRecord` of an
+        // absent source leaves the destination an allocated EMPTY record — presence standing in
+        // for absence, the trade loft#1337 records at the return site.
+        if op == "="
+            && var_nr != u16::MAX
+            && self.reads_a_capture_whole(code)
+            && let Type::Reference(td, _) = s_type.clone()
+        {
+            let kt = self.data.def(td).known_type();
+            let w = self
+                .vars
+                .work_refs(&Type::Reference(td, Deps::none()), &mut self.lexer);
+            let copy_d = self.data.def_nr("OpCopyRecord");
+            let db = self.cl("OpDatabase", &[Value::Var(w), Value::Int(i32::from(kt))]);
+            let src = std::mem::replace(code, Value::Null);
+            s_type = Type::Reference(td, Deps::frame1(w));
+            *code = crate::data::v_block(
+                vec![
+                    crate::data::v_set(w, Value::Null),
+                    db,
+                    Value::Call(copy_d, vec![src, Value::Var(w), Value::Int(i32::from(kt))]),
+                    Value::Var(w),
+                ],
+                s_type.clone(),
+                "materialized_capture_bind",
+            );
         }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index

@@ -2548,6 +2548,30 @@ impl Parser {
     }
 
     fn classify_vector_delivery(&self, ls: &[u16], l: &[Value], context: &str) -> Delivery {
+        if context == "return from block"
+            && self.return_views_a_capture(ls, l)
+            && self
+                .return_buffer()
+                .is_some_and(|(_, buf_var)| !ls.contains(&buf_var))
+        {
+            // loft#1489, `@FR-F-Ret` — the tail reads out of the CLOSURE RECORD, so the value
+            // belongs to the frame that built the closure and handing it back is a view where
+            // the rule promises a FRESH, independent one: appending to one call's result grew
+            // the captured collection.  `classify_reference_delivery` has carried this leg
+            // since loft#1485 and the collection former had none, so `fn() -> vector<S> { q }`
+            // published a return dep on `__closure` and every caller bound a view of it.
+            //
+            // `CopyBorrow` and not `Materialize`: the copy has to land somewhere the tail is
+            // not, and `Materialize` copies each arm into `__retbuf` — which for a capturing
+            // lambda can BE the tail's own local, so it copies a value into itself and reads
+            // as a cure that did nothing.  The buffer guard is the same one the argument leg
+            // below carries, and it is what keeps that case out.
+            //
+            // Asked ABOVE the empty-`ls` branch, because a bare capture tail publishes no dep
+            // at all on pass 1 — the same ordering, and the same reason, as the reference
+            // selector's.
+            return Delivery::CopyBorrow(ls.to_vec());
+        }
         if ls.is_empty() && !l.is_empty() {
             // Issue #120 mirror (see the Reference arm): when filter_hidden
             // stripped the deps, recover the tail call's work refs so the site

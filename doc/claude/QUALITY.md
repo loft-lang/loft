@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 438 | 414 | **24** |
+| 439 | 415 | **24** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 759 | 415 | 6 | **338** |
+| 760 | 415 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2616,6 +2616,14 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1489's capture bind: the unspan row `438 · 414 · 24` → `439 · 415 · 24` and
+the Optional row `759 · 415 · 6 · 338` → `760 · 415 · 6 · 339`.**  One new discriminator on each
+axis, and they are the same function: `reads_a_capture_whole`, which tells `(B-Copy)`'s whole
+value from `(B-View)`'s interior place by asking whether an `OpGetDbRef`'s BASE is the closure
+record.  It peels `Span` (so the `neither` column is unchanged) and it is OPAQUE to `τ?` — by
+construction rather than by omission: it discriminates on a `Value`, and the `Type` it is asked
+about is peeled by its CALLER, which is where the nullable carve-out belongs and is stated.
 
 **2026-09-09, loft#1485's capture return: the unspan row `435 · 411 · 24` → `438 · 414 · 24`,
 and the Optional row does not move.**  Three new `Value` discriminators, all peeling and all one
@@ -7359,11 +7367,17 @@ round for exactly this reason — mutate THROUGH one call and read through anoth
 
 #### B8r — FOUR open issues, one absent generalisation: the owner witness stops at the call boundary (2026-09-09)
 
-⚠ **RESOLVED THE SAME DAY, and not by the generalisation — three of the four fell to point fixes
-once the shape below was named properly.**  loft#1486, loft#1483 and loft#1485 are closed; only
-loft#1489 still wants a design step, and its blocker is narrower than this row says (the
-collection bind is not a `Set` on pass 1, so nothing can refuse the rename; the RECORD former
-needed none of it).  The row stays because its *reasoning* was what unblocked them and its
+⚠ **RESOLVED, and not by the generalisation — all four fell to point fixes once the shape below
+was named properly.**  loft#1486, loft#1483, loft#1485 and loft#1489 are closed.  ⚠ **And the
+last of them says this row's fourth line was about the wrong question entirely.**  loft#1489 was
+counted here as a return-buffer problem and its blocker was stated as *"the buffer IS the local
+by pass 2, so there is nothing to copy into"* — both true, and neither the defect.  `e = q` is a
+BIND, and `(B-Copy)` had never held for a bind out of a capture, so the tail had nothing of its
+own to hand back; fix the bind and the return needs no delivery at all.  Two collection
+deliveries were built against the buffer reading and measured INERT before the bind was even
+looked at.  **A boundary the filed issue draws is a hypothesis about where the defect lives, and
+this one moved a whole rule sideways** — from `(F-Ret)` to `(B-Copy)`.  The row stays because its
+*reasoning* was what unblocked them and its
 *prediction* was wrong in an instructive way: **counting four issues as one missing mechanism was
 right about the family and wrong about the cure.**  What they shared was not an absent witness but
 a flag or dep list standing in for TWO questions that diverge — see the paragraph below.
@@ -7393,7 +7407,7 @@ the witness does not cross:
 | loft#1483 | a closure record rebuilt in a loop vs the frame | the frame stands down per `(L-CapOwn)`, the rebuild discards the record unfreed — `C×(n-1)`, and per CALL as well |
 | loft#1485 | a lambda's materialised capture return vs its caller | the callee copies correctly and nothing adopts it — 65535 live stores |
 | loft#1486 | a monomorph's minted vector return vs the caller's null-case buffer | exactly one of the two runs; only the buffer is freed |
-| loft#1489 | a capturing lambda's return buffer vs its own tail local | the buffer IS the local by pass 2, so there is nothing to copy into |
+| loft#1489 | ⚠ NOT a witness question — the bind out of the capture never copied | recorded here as the buffer-vs-local pair, which is what two inert cures were built against |
 
 **Each was attempted and each failed the same way**, which is what makes this a register entry
 rather than four notes.  loft#1483's unconditional release closed the leak on every cell and
@@ -7423,10 +7437,19 @@ the record still holds.  A leak is the better trade … until the release the re
 per SLOT rather than per local."*  So the mechanism is not simply absent; **its per-LOCAL form has
 already failed at a collection**, and the recorded cure — per SLOT — is the same shape all four
 issues want: loft#1483 is a capture SLOT rebound in a loop, loft#1486 is a call-result SLOT that
-holds either the caller's buffer or the callee's mint, loft#1489 is a return buffer SLOT that is
-also the tail's local.  A fifth attempt keyed on the LOCAL is the one already measured wrong.
+holds either the caller's buffer or the callee's mint, and loft#1489 was read as a return buffer
+SLOT that is also the tail's local.  A fifth attempt keyed on the LOCAL is the one already
+measured wrong.
 
-Sizing it is design work, not a walk; recorded here so the next reader counts four issues rather
+⚠ **loft#1489 has since been struck from that list, and its exit is the useful part.**  It closed
+without any witness, per-slot or per-local, because the store it was about should never have been
+shared: `(B-Copy)` says a bind out of a capture COPIES, and the copy gives the tail a store of its
+own, after which no ownership is in question at the return.  Three issues remain the per-slot
+argument; the fourth was a rule that had not been enforced.  **Before sizing a mechanism for a
+family, check that each member really needs one** — an issue in a list of four is there because
+somebody read it into the family, and a mis-read costs the whole design.
+
+Sizing it is design work, not a walk; recorded here so the next reader counts the issues rather
 than picking one, and starts from the per-slot statement rather than rediscovering why per-local
 fails.
 

@@ -34,12 +34,12 @@
 // pointer field and stopped it answering null, on both backends
 // (`1374-an-absent-pointer-leaves-its-slot-as-nullref`).  The BASE has to be the closure record.
 //
-// ⚠ **The COLLECTION former is NOT closed and its cells are here as a RECORD of that**, asserting
-// the answer they give today rather than the one `(F-Ret)` asks for.  Split out as loft#1489: the
-// predicate answers TRUE for those lambdas on both passes, and what is missing is a destination —
-// a capturing lambda's buffer IS the tail's own local by pass 2, so `Materialize` is inert there
-// and `ForwardCopy` clears the buffer before reading its source (measured, `0`).  Freezing
-// today's answer is what makes the day it changes visible.
+// ⚠ **The COLLECTION former was recorded OPEN here and is now CLOSED (loft#1489)** — the two
+// cells below assert `1` where they froze `2`, which is what freezing the wrong answer is for.
+// The destination the analysis said was missing was never the blocker: `e = q` is a `(B-Copy)`
+// bind that had been lowered as an ALIAS, so the tail had nothing of its own to hand back, and
+// `fn() -> vector<S> { q }` needed the capture leg `classify_reference_delivery` has carried
+// since this issue.
 //
 // @falsified-at: 9b1768acf — interpret exit 101 -> 0, interpret panicked -> clean, native exit
 //   101 -> 0, native panicked -> clean.  The channel that moves is the PANIC one and not the
@@ -115,19 +115,20 @@ fn main() {
   assert(g6().a == 7, "control mint: got {g6().a}");
   assert(q6.a == 7, "control mint: the capture is untouched, got {q6.a}");
 
-  // --- the COLLECTION former, recorded OPEN (loft#1489) ---
-  // Both spellings still alias, so appending to one call's result grows the frame's own vector.
+  // --- the COLLECTION former, closed by loft#1489 ---
+  // Neither spelling aliases any more, so appending to one call's result leaves the frame's own
+  // vector at the length it had.  These two cells asserted `2` while the issue was open.
   q7: vector<S1485> = [S1485 { a: 7 }];
   g7 = fn() -> vector<S1485> { e = q7; e };
   r7 = g7();
   r7 += [S1485 { a: 1 }];
-  assert(len(g7()) == 2, "OPEN loft#1489: a captured vector through a local still aliases, got {len(g7())}");
+  assert(len(g7()) == 1, "a captured vector through a local: got {len(g7())}");
 
   q8: vector<S1485> = [S1485 { a: 7 }];
   g8 = fn() -> vector<S1485> { q8 };
   r8 = g8();
   r8 += [S1485 { a: 1 }];
-  assert(len(g8()) == 2, "OPEN loft#1489: a captured vector handed back still aliases, got {len(g8())}");
+  assert(len(g8()) == 1, "a captured vector handed straight back: got {len(g8())}");
 
   // The parameter twin of those two: the control that says the former is not the problem.
   q9: vector<S1485> = [S1485 { a: 7 }];

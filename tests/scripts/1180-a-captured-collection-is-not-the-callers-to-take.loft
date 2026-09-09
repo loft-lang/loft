@@ -33,6 +33,15 @@
 // The INLINE spelling was correct throughout, and that is why this was first filed as a leak:
 // nothing binds the result, so nothing adopts it.  Every cell below binds.
 //
+// ⚠ **loft#1489 changed the MECHANISM under these cells, and they hold a fortiori.**  The
+// repair described above made the caller's bind carry the `__closure` dep so it would not
+// free a store the closure still holds.  `(F-Ret)` then said the lambda should not have been
+// handing back that store at all: the collection return now COPIES out of the capture, so the
+// caller's local carries no dep, owns its copy and frees it — visible in the emission as
+// `r: vector<integer>["g"]` becoming `r: vector<integer>` with an `OpFreeRef(r)` beside it.
+// The capture still survives, which is what every cell here asserts; what changed is that it
+// survives because nothing ever pointed at it, rather than because the pointer was marked.
+//
 // @falsified-at: 6409caec — interpret exit 0 -> 1 and 0 -> 1 assertion failures, native the
 // same on both channels.
 // The native row read `THIS TREE IS NOT CLEAN` when this file was written, because the

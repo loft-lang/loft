@@ -357,6 +357,25 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 0.**
 
+* **D-bind-31** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(B-Copy)` did not hold for
+  a bind out of a CLOSURE CAPTURE.  `e = q` inside a lambda ALIASED the captured collection or
+  record: `e += […]` grew the outer `q`, `e[0].a = 99` and `e.a = 99` reached it, on both
+  backends, with nothing saying so.  The same bind out of a PARAMETER — the identical shared heap
+  value, `(F-ParamHeap)` and `(L-CapHeap)` being one sentence — copied throughout, which is what
+  named the difference.
+  **One op, two notions.**  A closure reaches its capture through the closure record, so the
+  source arrives as `OpGetDbRef(__closure, off)`: a PROJECTION's spelling for a whole value the
+  author bound by name.  Every reader that had to tell `(B-Copy)`'s whole value from
+  `(B-View)`'s interior place tested for a bare `Var` or an `OpGetField` and answered "not a
+  bind" — the FIFTH time this family's selector has been the narrow part while its lowering was
+  already right (P261, loft#917, loft#1279, loft#1326).  `reads_a_capture_whole` is the one home
+  now, and it asks about the BASE, because the loose spelling also admits an auto-`Reference`
+  POINTER FIELD read (`h.link`), which really is the projection this is not.
+  The two passes did not agree either: on pass 1 a capture is still a placeholder `Var`, so the
+  vector selector answered `CopyVar` there and `NotABind` on pass 2 for one body.
+  Guard `1489-a-capture-is-bound-and-returned-as-a-whole-value.loft`, whose `(B-View)` and
+  `(B-Ref-Alias)` cells are what say the copy did not swallow the aliasing that is meant to
+  stay.
 * **D-bind-29** *(opened 2026-09-08, CLOSED 2026-09-08, loft#1463)* — the FUNCTION half of
   `(B-Ref-Uniform)`, on `--native` only.  A write through a `&fn(…) -> τ` link did not land when
   the caller's slot already held a CAPTURING closure: the interpreter wrote it, native left the

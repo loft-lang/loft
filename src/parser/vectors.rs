@@ -4795,6 +4795,32 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         matches!(val.unspan(), Value::Call(o, _) if *o == self.data.def_nr("OpGetDbRef"))
     }
 
+    /// Is this expression a WHOLE-VALUE read of a CAPTURED variable — an `OpGetDbRef` whose
+    /// BASE is the closure record itself?
+    ///
+    /// A closure reaches a capture through its record, so the read wears a PROJECTION's
+    /// spelling while naming a whole value the author bound by NAME — the same thing a
+    /// PARAMETER names.  `calls.md` `(F-ParamHeap)` and `closures.md` `(L-CapHeap)` share
+    /// that value in both cases, and `binding.md` `(B-Copy)` then copies a plain bind out of
+    /// it: `e = p` inside a plain function and `e = q` inside a closure are one rule wearing
+    /// two ops.
+    ///
+    /// [`Self::is_captured_dbref`] is the LOOSE spelling of the same op and stays loose on
+    /// purpose: its callers ask *"is this a DbRef-producing append lvalue"*, and an
+    /// auto-`Reference` POINTER FIELD (`h.link`) belongs to that question.  A BIND has to
+    /// tell the two apart, because a pointer-field read IS the `(B-View)` projection this is
+    /// not — so this one asks about the base.
+    pub(crate) fn reads_a_capture_whole(&self, val: &Value) -> bool {
+        let Value::Call(o, args) = val.unspan() else {
+            return false;
+        };
+        *o == self.data.def_nr("OpGetDbRef")
+            && matches!(
+                args.first().map(Value::unspan),
+                Some(Value::Var(v)) if *v < self.vars.count() && self.vars.name(*v) == "__closure"
+            )
+    }
+
     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {
         if let Value::Call(_, ps) = val.unspan() {
             let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
