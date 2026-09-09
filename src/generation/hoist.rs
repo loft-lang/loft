@@ -741,9 +741,10 @@ fn callee_inputs_inner(
     let Value::Block(body) = def.code().unspan() else {
         return None;
     };
+    // `.base()`: the shape question sees through a `τ?` result (`@FR-N-Shape`).
     if !def.rust().is_empty()
         || def.hidden_return_buffer_attr().is_some()
-        || matches!(def.returned(), Type::Iterator(_, _))
+        || matches!(def.returned().base(), Type::Iterator(_, _))
     {
         return None;
     }
