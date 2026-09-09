@@ -1792,6 +1792,7 @@ impl Output<'_> {
     /// A vector or scalar already covered by an enclosing loop's prelude is skipped: the
     /// enclosing binding is still current, because the promise that let it be hoisted
     /// covers this loop too (the enclosing body contains this one).
+    /// Emits `@FR-R-Header` and `@FR-R-Scalar`: the prelude that binds a loop's headers and scalars once.
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
@@ -1889,6 +1890,7 @@ impl Output<'_> {
     /// emit `let __vh_N = vector::vec_header(&var_d, …);` as the next statement and push a
     /// frame for it.  Answers whether a frame was pushed; [`Self::output_block`] pops what
     /// it pushed before the block closes, so the local's scope and the frame's agree.
+    /// Emits `@FR-R-View`.
     pub(super) fn bind_view_header(
         &mut self,
         w: &mut dyn Write,
@@ -1931,6 +1933,7 @@ impl Output<'_> {
     /// @PLN157 § V-o — the op a call to `def_nr` stands for, with the caller's `vals` put in
     /// the op's operand positions, when `def_nr` is a stdlib one-op wrapper and the switch
     /// is on; `None` otherwise.
+    /// Emits `@FR-R-Wrapper`.
     pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
         if self.wrapper_inline_disabled {
             return None;
@@ -2067,6 +2070,7 @@ impl Output<'_> {
     /// calls (`Op*`, `#rust`-bodied stubs) are the body's work, not routes
     /// back into user code.  `stack_trace()`/`assert`/`panic` are calls,
     /// so a leaf can never ask for the frame it does not have.
+    /// Decides `@FR-R-Leaf`: a body that calls no user function and no fn-ref.
     fn is_elidable_leaf(&mut self, def_nr: u32) -> bool {
         if let Some(&v) = self.leaf_cache.get(&def_nr) {
             return v;

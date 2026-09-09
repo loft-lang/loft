@@ -1781,6 +1781,20 @@ keep their calls; the pixel methods' `len(sp_d)` and every `len(v)` on a variabl
 op.  A mirror of the pre-eval map onto the cloned tree would lift the restriction; nothing
 measured asks for it.
 
+**A third finding, from the rebased tree's GitHub gate (run 34323456806).**  The recogniser
+asked the body's SHAPE and not the definition's ORIGIN, so a USER function whose body is one
+op — `fn reader(w: W) -> integer { w.a }`, `fn writer(w: W) { w.b = 999; }` — was emitted as
+its op too.  The values were right; what was lost is that a user function's CALL is itself
+observable: the live tier may flip it to the interpreter, and its frame is on the shadow
+call stack.  `html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm` flipped
+both functions and counted **0** dispatches where it expected 2, because neither call
+existed any more.  The rule was always "a STDLIB wrapper" (a `t_` method carries no frame
+and no live check, so for it the op IS the call); `one_op_wrapper` now asks
+`def.source() == STD_SOURCE`, cell c11 (a user one-op function) pins that its call stays,
+and `tests/scripts/157-wrapper-op.loft` carries the value.  The § P4c lesson in its third
+form: a peephole that matches an op SHAPE must also ask what the shape stands for — the
+TYPE (§ P4c), the CONTAINER (§ V-m), and now the ORIGIN.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

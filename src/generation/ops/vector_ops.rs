@@ -50,6 +50,7 @@ fn verify(ctx: &EmitCtx<'_, '_>) -> &'static str {
 ///
 /// Anything else (no header, an expression instead of a variable for the vector, a getter
 /// with a different shape) emits the `#rust` template unchanged.
+/// Emits `@FR-R-Header` (the fused element read) and falls back to `@FR-R-Scalar`.
 pub struct FusedElementReadEmitter;
 
 impl OpEmitter for FusedElementReadEmitter {
@@ -84,6 +85,7 @@ impl OpEmitter for FusedElementReadEmitter {
 /// the loop can still change under its hoist panics at the read instead of answering a
 /// stale value.  Everything else — no hoist, a read the collector did not admit — emits the
 /// `#rust` template unchanged.
+/// Emits `@FR-R-Scalar`: the hoisted local, or its checking form under `@FR-R-Switch`.
 fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
     let Some(local) = ctx
         .output
@@ -124,6 +126,7 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
 /// store, or only in place, so nothing inside it can change how many elements `v` has.
 /// Outside such a loop — and for a vector the analysis did not cover — the `#rust`
 /// template's runtime read stands, which is `DefaultEmitter`.
+/// Emits `@FR-R-Header` for `len(P)`.
 pub struct HoistedLengthEmitter;
 
 impl OpEmitter for HoistedLengthEmitter {
@@ -139,6 +142,7 @@ impl OpEmitter for HoistedLengthEmitter {
     }
 }
 
+/// Emits `@FR-R-Header` (the fused element write) under `@FR-R-InPlace`.
 pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {
