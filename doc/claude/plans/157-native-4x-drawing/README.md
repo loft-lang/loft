@@ -184,8 +184,9 @@ and the move, DESIGN.md § V-j's ceiling), then `lock_curved` 5.6× and `wide_li
 5.4× (profile WITH CALLERS on the § V-p runtime, as § V-k did), `lock` 4.39× a hair
 over.  The text readers off the hoist allow-list (P4c c17) and § V-o's leaf-only
 rule (a mirror of the pre-eval map onto the cloned operands) stay queued behind them.
-GitHub gate run 34334280254 is GREEN on the § V-p tip (ce1db5bb: the unit, the interpreter
-link re-point, the test-subject and walker-audit bookkeeping).
+GitHub gate run 34344413805 is GREEN on the § V-r tip (c253383a: § V-p, § V-q, § V-r, the
+interpreter link re-point, the formal chapter's hoist-state rules and their history); build
+on that tip.
 
 **§ V-q SHIPPED 2026-09-09** (DESIGN.md § V-q): the raster rows profiled WITH callers on the
 § V-p runtime put 30–45 % of `lock` / `lock_curved` in the scalar APPEND path — `lock_layer`'s
