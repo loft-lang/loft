@@ -665,18 +665,43 @@ control is loft#1471's fix and loft#1479's is loft#1478's, so scoring either at 
 green receipt for the wrong cause.  Say in the join's report which shas depend on which branch
 instead, so the rebuild is a decision rather than an accident.
 
-**How far this already goes, measured 2026-09-09 on `origin/main`:** 359 guards there carry a
-control sha and **11** of them name a commit reachable from `main`.  The other 348 name commits
-that survive only as loose objects from squash-merged branches, so a FRESH CLONE resolves
-almost none of them — and resolvability is therefore PER-CHECKOUT, not a property of the
-receipt: of four controls dead in one checkout on this box, three resolve in another.  The rot
-is invisible because the gate does not check what it appears to
-(`doc_hygiene.rs`'s `src.contains("@falsified-at:")` tests that the STRING is present, never
-that the ref resolves), so a receipt degrades from re-runnable proof to an assertion that
-someone once watched it fail, with nothing recording when it stopped being checkable.  What a
-receipt should BE is an open design call — gate on resolvability, push a durable tag per
-control, or record the reintroducing PATCH so the line is self-contained — and it is the
-owner's to make.
+**How far this already goes, measured 2026-09-09 on `origin/main`** — 359 guards there carry a
+control sha, and two sessions classified every one of them from opposite directions and agreed
+on the totals:
+
+| where the control still lives | guards | survives a mirror or a host migration? |
+|---|---:|---|
+| reachable from `origin/main` | 11 | yes |
+| reachable from another `origin` branch | 25 | yes, while that branch lives |
+| **only** via `refs/pull/<n>/head` | 199 | **no** — a GitHub convention with no retention contract |
+| present in one clone, no public ref | 121 | no |
+| absent from that clone entirely | 3 | no |
+
+**65 % are publicly recoverable and 35 % are not**, and the two halves want different answers.
+For the 235 the receipt is fine *provided the reader fetches PR refs*, which nobody does by
+default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'` — so a fallback fetch before
+`falsify.sh` gives up on an unknown ref is a small mitigation covering two thirds of the
+problem.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
+124 are recoverable by nobody, and they are the population a self-contained form would have to
+serve.
+
+⚠ **Resolvability is a property of the CHECKOUT, not of the receipt**, and it was measured in
+BOTH directions: one clone held three controls the other had lost (it had fetched PR refs), and
+the other held two the first had lost (local gc, no other explanation).  Neither clone is the
+authority, and nothing in the guard file tells a reader which one they are in.
+
+The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
+`src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
+ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
+fail, with nothing recording when it stopped being checkable.  What a receipt should BE (gate
+on resolvability, a durable tag per control, or the reintroducing PATCH recorded inline) is an
+open design call and the owner's to make; it is stated here as measurement, not as a decision.
+
+⚠ **A method note that cost one of the two counts its first answer:** `git rev-parse
+"<sha>^{commit}"` exits non-zero for a missing object but still PRINTS its argument to stdout,
+so `full=$(git rev-parse …)` is non-empty for a missing object and a `[ -z "$full" ]` guard
+misclassifies it silently.  `git rev-parse --verify --quiet` is the form that stays quiet, and
+`git cat-file -e` answers on the exit code alone.
 
 ### The defect no guard can catch — the corpus EMISSION diff
 
