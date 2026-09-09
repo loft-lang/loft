@@ -1,0 +1,182 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A candidate may BE the return buffer only if it has the return's own SHAPE.
+//
+// A branch arm that yields a projection — `b.items`, `w[0].items` — publishes the CONTAINER
+// in its dep list, because that is the local the value is reached through.  `Delivery::Rename`
+// reads that list as *the candidates that may become `__retbuf`* and renamed a `BoxF` record
+// local onto a `vector<u8>` buffer: the arm then built the struct INTO the caller's buffer,
+// and the delivery cleared that same store and appended a field of what it had just cleared.
+// The caller read an EMPTY collection, on both backends, with no diagnostic of any kind.
+//
+// One list, two questions.  *Which locals is the value reached through* is a BORROW fact and
+// the arm publishes it correctly; *which of them can BE the buffer* is a SHAPE fact, and the
+// candidate's own type is what answers it.  `ls_can_be_record_buffer` is this same guard one
+// former over — loft#877, where a vector was renamed onto a record buffer and `make` cleared
+// the caller's record as a vector — and the `returns_own_field` rung beside it asks the same
+// question of the TAIL SHAPE, which is why `return d.value` was caught and
+// `match s { … => { d = …; d.value } }` was not: a tail walker cannot see through arms.
+//
+// ⚠ **"The return's shape" is the return's own TYPE, not merely *a* vector.**  A
+// `vector<BoxF>` local renamed onto a `vector<u8>` buffer is the same defect one element type
+// over, which `w[0].items` reaches — and it answered 0 on both backends before this.
+//
+// ⚠ **The filed boundary was wrong in three of its rows.**  It reads as *a `match` arm
+// yielding a field of a struct it just built*.  None of the three is load-bearing: an `if`
+// arm does it (`if_arm`), the local need not be built in the arm (`outer_local`), and the
+// field need not be filled by a call (`literal_filled`).  What the arm's POSITION does decide
+// is which candidate reaches the rename first, which is why `second_arm` was green while
+// `first_arm` was not — an accident of ordering, and the reason a one-cell repro reads as a
+// narrower defect than it is.
+//
+// The controls are what say the delivery itself is sound: a function tail with the identical
+// statements was always right, a parameter's field is loft#1345's own shape and stays right,
+// and a `text` field has its own delivery and never had this.
+//
+// Two PRE-EXISTING defects surfaced while the matrix was being built, both measured with this
+// fix reverted and both filed rather than folded in: loft#1494 (a NESTED block yielding the
+// same projection reads a released store — different mechanism, the block's own exit frees)
+// and loft#1495 (an arm that diverges through `return` beside a value arm does not compile on
+// `--native`).  Neither is this issue's family, and the axis that found them — the construct
+// the projection sits in — is the one the filed repro pinned.
+//
+// @falsified-at: PLACEHOLDER
+//   CHANNEL: value — every cell answers a LENGTH, and the wrong one is 0.
+//   WITNESS: `first_arm` answers 0 where 5 is right; so do `if_arm`, `literal_filled`,
+//   `outer_local`, `records`, `nested`, `from_call`, `nullable` and `element_of_a_local`.
+//   HOLDS: exit, panic, free-refusal and expectations are equal on both trees.  The LEAK
+//   channel moves in the same direction as the value one (the control build strands the
+//   struct the arm built into the buffer) so it is not a HOLDS row, but it is not the
+//   measurement either — a run scored on leaks alone would see one store and miss the empty
+//   answer entirely.
+
+struct BoxF1493 { items: vector<u8> }
+struct BoxR1493 { items: vector<BoxF1493> }
+struct BoxT1493 { t: text }
+struct Nest1493 { inner: BoxF1493 }
+enum Shape1493 { A1493 { n: integer }, B1493 { n: integer } }
+
+fn head1493(n: integer) -> vector<u8> { v: vector<u8> = []; for _i in 0..n { v += [1]; } return v; }
+fn heads1493(n: integer) -> vector<BoxF1493> {
+  v: vector<BoxF1493> = [];
+  for _i in 0..n { v += [BoxF1493 { items: [] }]; }
+  return v;
+}
+fn mk1493(n: integer) -> BoxF1493 { BoxF1493 { items: head1493(n) } }
+
+// --- the cells ------------------------------------------------------------------------
+
+// The filed shape: a match arm builds a struct and yields its collection field.
+fn first_arm(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { b = BoxF1493 { items: head1493(n) }; b.items }, B1493 { n } => { head1493(n) } }
+}
+// An `if` arm, which the filed boundary excluded.
+fn if_arm(n: integer) -> vector<u8> {
+  if n > 0 { b = BoxF1493 { items: head1493(n) }; b.items } else { head1493(n) }
+}
+// The field filled by a LITERAL rather than a call — the call is not the trigger either.
+fn literal_filled(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { b = BoxF1493 { items: [1, 1, 1, 1, 1] }; b.items }, B1493 { n } => { head1493(n) } }
+}
+// The local is built BEFORE the match, so "a struct it just built" is not the trigger.
+fn outer_local(s: Shape1493, n2: integer) -> vector<u8> {
+  b = BoxF1493 { items: head1493(n2) };
+  match s { A1493 { n } => { b.items }, B1493 { n } => { head1493(n) } }
+}
+// A vector of RECORDS, so the element former is not the trigger.
+fn records(s: Shape1493) -> vector<BoxF1493> {
+  match s { A1493 { n } => { b = BoxR1493 { items: heads1493(n) }; b.items }, B1493 { n } => { heads1493(n) } }
+}
+// A two-level projection.
+fn nested(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { b = Nest1493 { inner: BoxF1493 { items: head1493(n) } }; b.inner.items }, B1493 { n } => { head1493(n) } }
+}
+// The local comes from a CALL rather than a literal.
+fn from_call(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { b = mk1493(n); b.items }, B1493 { n } => { head1493(n) } }
+}
+// A nullable return takes the same road (`@FR-N-Shape`).
+fn nullable(s: Shape1493) -> vector<u8>? {
+  match s { A1493 { n } => { b = BoxF1493 { items: head1493(n) }; b.items }, B1493 { n } => { head1493(n) } }
+}
+// ⚠ THE CELL THAT SAYS "the return's own TYPE" AND NOT "a vector".  `w` IS a vector, so a
+// shape test written as *is the candidate a collection* admits it — and renaming a
+// `vector<BoxF1493>` onto a `vector<u8>` buffer is the same defect one element type over.
+// It also reaches a SECOND fault the first cure exposed: the arm's own backing is freed at the
+// arm's scope exit, so the delivery is no longer the block's last operator, and the native
+// emitter bound `let _ret =` to the first statement of a multi-statement `Insert`.  Braced now.
+fn element_of_a_local(s: Shape1493) -> vector<u8> {
+  match s {
+    A1493 { n } => { w: vector<BoxF1493> = [BoxF1493 { items: head1493(n) }]; w[0].items },
+    B1493 { n } => { head1493(n) },
+  }
+}
+// Both arms project, so neither can be excused by the other's delivery.
+fn both_arms(s: Shape1493) -> vector<u8> {
+  match s {
+    A1493 { n } => { b = BoxF1493 { items: head1493(n) }; b.items },
+    B1493 { n } => { c = BoxF1493 { items: head1493(n) }; c.items },
+  }
+}
+
+// --- the controls ---------------------------------------------------------------------
+
+// The identical statements one construct OUT.  Always right, which is what makes the cells a
+// finding rather than a question about the statements.
+//
+// ⚠ The NESTED-BLOCK spelling of this control — `{ { b = …; b.items } }` — is deliberately
+// NOT here.  It answers 5 and reads a RELEASED store doing it: `LOFT_POISON=1` panics on
+// `0xDEADBEEF` where a plain build reads the freed bytes and looks right.  Measured
+// pre-existing (it panics with this fix reverted), interpreter-only, and a different
+// mechanism — the block's own exit frees run before the enclosing consumer copies the value
+// out, which is the `__blk_N` hoist's job and that hoist is TEXT-typed by construction.
+// Filed as loft#1494; putting it here would make this file red for something it is not about,
+// and the corpus poison sweep is where it belongs.
+fn function_tail(n: integer) -> vector<u8> { b = BoxF1493 { items: head1493(n) }; b.items }
+// A PARAMETER's field — loft#1345's own shape, and the arm the materialiser already had.
+fn parameter_field(s: Shape1493, p: BoxF1493) -> vector<u8> {
+  match s { A1493 { n } => { p.items }, B1493 { n } => { head1493(n) } }
+}
+// A local that VIEWS a parameter: the store is the caller's throughout.
+fn views_a_parameter(s: Shape1493, p: BoxF1493) -> vector<u8> {
+  match s { A1493 { n } => { b = p; b.items }, B1493 { n } => { head1493(n) } }
+}
+// A TEXT field, which has its own delivery and never had this.
+fn text_field(s: Shape1493) -> text {
+  match s { A1493 { n } => { b = BoxT1493 { t: "abcde" }; b.t }, B1493 { n } => { "zz" } }
+}
+// The projection BOUND first and the binding yielded — a bare `Var` tail, not a projection.
+fn bound_then_yielded(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { b = BoxF1493 { items: head1493(n) }; e = b.items; e }, B1493 { n } => { head1493(n) } }
+}
+// The second arm carries it.  Green before this fix and after — the ORDER decides which
+// candidate reaches the rename first, and that is the whole of why a one-cell repro misleads.
+fn second_arm(s: Shape1493) -> vector<u8> {
+  match s { A1493 { n } => { head1493(n) }, B1493 { n } => { b = BoxF1493 { items: head1493(n) }; b.items } }
+}
+
+fn main() {
+  assert(len(first_arm(A1493 { n: 5 })) == 5, "the filed shape: got {len(first_arm(A1493 { n: 5 }))}");
+  assert(len(if_arm(5)) == 5, "an if arm: got {len(if_arm(5))}");
+  assert(len(literal_filled(A1493 { n: 5 })) == 5, "a literal-filled field: got {len(literal_filled(A1493 { n: 5 }))}");
+  assert(len(outer_local(A1493 { n: 5 }, 5)) == 5, "a local built before the match: got {len(outer_local(A1493 { n: 5 }, 5))}");
+  assert(len(records(A1493 { n: 5 })) == 5, "a vector of records: got {len(records(A1493 { n: 5 }))}");
+  assert(len(nested(A1493 { n: 5 })) == 5, "a two-level projection: got {len(nested(A1493 { n: 5 }))}");
+  assert(len(from_call(A1493 { n: 5 })) == 5, "the local from a call: got {len(from_call(A1493 { n: 5 }))}");
+  assert(len(nullable(A1493 { n: 5 }) ?? []) == 5, "a nullable return: got {len(nullable(A1493 { n: 5 }) ?? [])}");
+  assert(len(element_of_a_local(A1493 { n: 5 })) == 5, "an element of a local vector: got {len(element_of_a_local(A1493 { n: 5 }))}");
+  assert(len(both_arms(A1493 { n: 5 })) == 5, "both arms project, first: got {len(both_arms(A1493 { n: 5 }))}");
+  assert(len(both_arms(B1493 { n: 5 })) == 5, "both arms project, second: got {len(both_arms(B1493 { n: 5 }))}");
+
+  assert(len(function_tail(5)) == 5, "control, the function tail: got {len(function_tail(5))}");
+  assert(len(parameter_field(A1493 { n: 5 }, BoxF1493 { items: head1493(5) })) == 5,
+         "control, a parameter's field: got {len(parameter_field(A1493 { n: 5 }, BoxF1493 { items: head1493(5) }))}");
+  assert(len(views_a_parameter(A1493 { n: 5 }, BoxF1493 { items: head1493(5) })) == 5,
+         "control, a local viewing a parameter: got {len(views_a_parameter(A1493 { n: 5 }, BoxF1493 { items: head1493(5) }))}");
+  assert(size(text_field(A1493 { n: 5 })) == 5, "control, a text field: got {size(text_field(A1493 { n: 5 }))}");
+  assert(len(bound_then_yielded(A1493 { n: 5 })) == 5, "control, bound then yielded: got {len(bound_then_yielded(A1493 { n: 5 }))}");
+  assert(len(second_arm(B1493 { n: 5 })) == 5, "control, the second arm: got {len(second_arm(B1493 { n: 5 }))}");
+
+  println("1493 OK first={len(first_arm(A1493 { n: 5 }))} element={len(element_of_a_local(A1493 { n: 5 }))}");
+}

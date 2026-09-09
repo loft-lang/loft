@@ -15045,7 +15045,42 @@ impl Parser {
         // to show it — a bisect control that cannot fire.  `is_marked_vector_borrow` is the one
         // home for which bindings are the pre-pass's.
         let views_argument = self.var_views_an_argument(v) && !self.vars.is_marked_vector_borrow(v);
+        // loft#1493 — a candidate may BE the return buffer only if it has the return's own
+        // SHAPE.  `ls` is a BORROW list: it names the locals the tail's value is reached
+        // THROUGH, and for a projection arm (`b.items`) that is the CONTAINER — a record.
+        // Renaming it makes the caller's `vector<u8>` buffer BE the arm's `BoxF` local, so the
+        // arm builds the record into the buffer and the delivery then clears that same store
+        // and appends a field of what it just cleared: the caller reads an EMPTY collection,
+        // on both backends, with no diagnostic of any kind.
+        //
+        // `ls_can_be_record_buffer` is this same guard one former over (loft#877, where a
+        // vector was renamed onto a record buffer and `make` cleared the caller's record as a
+        // vector).  The `returns_own_field` rung above asks the same question of the TAIL
+        // SHAPE and so cannot see through a branch's arms — `return d.value` is caught,
+        // `match s { … => { d = …; d.value } }` is not.  The candidate's own TYPE answers it
+        // wherever the tail sits, which is why this rung is structural and not another walker.
+        // …and "the return's shape" means the RETURN'S OWN TYPE, not merely *a* vector: a
+        // `vector<BoxF>` local renamed onto a `vector<u8>` buffer is the same defect one
+        // element type over, which `w[0].items` reaches.  An UNKNOWN candidate is admitted
+        // because `is_equal` answers TRUE for it, so refusing on that would refuse a generic's
+        // still-unresolved local; deps and the `?` are peeled on both sides, since neither
+        // says anything about what the buffer must HOLD (`@FR-N-Shape`).
+        //
+        // ⚠ A LITERAL BACKING is exempt, and it is the case this rung was first written too
+        // wide for.  `[i, i + 1]` mints a `__vdb_N` typed `Reference(main_vector<integer>)` —
+        // a record type by every structural test, and the very store the vector lives in, so
+        // it IS the right candidate for a vector buffer.  Refusing it left
+        // `fn mk(i: integer) -> vector<integer>? { [i, i + 1] }` minting one store per call
+        // that nobody owned: ten calls, ten records, caught by `1200-a-nullable-record-local-\
+        // frees-what-it-displaces`.  `owns_literal_backing_store` is the one home for which
+        // names those are.
+        let is_literal_backing = crate::variables::owns_literal_backing_store(self.vars.name(v));
+        let wrong_shape_for_buffer = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
+            && !is_literal_backing
+            && !self.vars.tp(v).base().is_unknown()
+            && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
         let allow_rename = !(bound_already
+            || wrong_shape_for_buffer
             || reassigned
             || returns_own_field
             || bound_to_vector_join

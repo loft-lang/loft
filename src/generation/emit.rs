@@ -2458,10 +2458,26 @@ impl Output<'_> {
                     // (We break here; the loop over subsequent ops continues but they
                     //  are free-ops which emit nothing harmful under allow(unreachable_code).)
                 } else {
+                    // loft#1493 — a multi-statement `Insert` in VALUE position needs braces,
+                    // for the same reason the `return` path one screen up gives: it emits
+                    // `stmt; stmt; <expr>`, so `let _ret = stmt; stmt; <expr>;` binds `_ret`
+                    // to the FIRST statement and leaves the rest dangling.  Where that first
+                    // statement is a void `if` the binding is `()` and the block fails to
+                    // compile (`expected DbRef, found ()`); where it is not, it would bind the
+                    // wrong value.  A delivery into the return buffer is exactly this shape —
+                    // clear, append, yield the buffer — so it arrives here whenever a block's
+                    // scope frees follow its value tail.
+                    let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
                     write!(w, "let _ret = ")?;
+                    if block_braces {
+                        write!(w, "{{ ")?;
+                    }
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
+                    if block_braces {
+                        write!(w, " }}")?;
+                    }
                     writeln!(w, ";")?;
                 }
             } else {
