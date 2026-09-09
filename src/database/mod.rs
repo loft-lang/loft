@@ -1900,10 +1900,18 @@ impl Stores {
                     "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
                 );
             }
-            *self.allocations[h.store_nr as usize].addr_mut::<T>(
+            // `write`, not `addr_mut` — an element's offset is `index * stride + fld`, and a
+            // record whose stride is not a multiple of the scalar's alignment puts every odd
+            // element at a misaligned address (`Lay` in `157-scalar-hoist`: element 1's `i64`
+            // lands at 34).  Minting a `&mut T` there is undefined behaviour, which is what
+            // `Store::addr_mut`'s own assert says; `Store::write` is the pair loft#1481 added
+            // for exactly this — a value write through `write_unaligned`, which is what the
+            // layout guarantees and what this has always been.
+            self.allocations[h.store_nr as usize].write::<T>(
                 h.rec,
                 crate::vector::checked_vec_pos(index as u32, size) + fld,
-            ) = val;
+                val,
+            );
         } else {
             let elem = self.vec_get_or_raise_runtime(db, size, index);
             if elem.rec != 0 {
@@ -1940,10 +1948,15 @@ impl Stores {
                     "hoisted push header is stale — the loop moved the vector it pushes to"
                 );
             }
+            // `write` for the same reason as the hoisted element set above: the slot's offset
+            // is `len * stride`, which a stride the scalar's alignment does not divide puts at
+            // a misaligned address.  The length at offset 4 is aligned by construction and
+            // takes the same verb, because one spelling for "store a scalar by value" is what
+            // keeps the next slot from being written the other way (loft#1481).
             let store = &mut self.allocations[p.h.store_nr as usize];
-            *store.addr_mut::<T>(p.h.rec, crate::vector::checked_vec_pos(p.h.len, size)) = val;
+            store.write::<T>(p.h.rec, crate::vector::checked_vec_pos(p.h.len, size), val);
             p.h.len += 1;
-            *store.addr_mut::<u32>(p.h.rec, 4) = p.h.len;
+            store.write::<u32>(p.h.rec, 4, p.h.len);
         } else {
             T::append_in(self, db, val);
             *p = crate::vector::push_header(db, &self.allocations);
