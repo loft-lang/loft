@@ -606,9 +606,21 @@ pub struct Output<'a> {
     /// other read emits unchanged. One frame is pushed per `Value::Loop`, so a frame is
     /// popped exactly where the local it names goes out of scope.
     pub vec_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
+    /// `(variable, field offset)` → the Rust local holding the value the prelude read
+    /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
+    pub scalar_hoists: Vec<HashMap<hoist::ScalarKey, String>>,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
+    /// Per-callee memo of what an admitted writing callee reaches (@PLN157 P4c), shared
+    /// across every loop in the program.
+    pub scalar_write_cache: hoist::WriteCache,
+    /// `LOFT_NO_SCALAR_HOIST=1` — read every record scalar field per iteration, as before
+    /// @PLN157 P4c.  One step finer than `LOFT_NO_VECTOR_HOIST` when bisecting a wrong
+    /// answer in a loop that reads a record's fields; `LOFT_HOIST_VERIFY=1` is the
+    /// falsifier (each hoisted read is re-derived and compared).
+    pub scalar_hoist_disabled: bool,
     /// Names the hoisted headers of the function being emitted (`__vh_1`, `__vh_2`, …).
     pub hoist_counter: u32,
     /// `LOFT_HOIST_VERIFY=1` — emit the CHECKING form of every hoisted read, which
@@ -1503,6 +1515,9 @@ impl<'a> Output<'a> {
             dup_fn_names: HashSet::new(),
             loop_stack: Vec::new(),
             vec_headers: Vec::new(),
+            scalar_hoists: Vec::new(),
+            scalar_write_cache: HashMap::new(),
+            scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
             hoist_cache: HashMap::new(),
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
@@ -1745,36 +1760,47 @@ impl Output<'_> {
         self.predeclared.clear();
         self.next_format_count = 0;
         self.vec_headers.clear();
+        self.scalar_hoists.clear();
         self.hoist_counter = 0;
     }
 
-    /// loft#885 — open a loop with the headers of the vectors it only reads.
+    /// loft#885 — open a loop with the headers of the vectors it only reads, and
+    /// (@PLN157 P4c) the record scalars it only reads.
     ///
-    /// Emits `{ let __vh_N = vector::vec_header(…);` per hoistable vector and answers
-    /// whether that wrapper block was opened, which [`Self::end_vector_hoist`] closes. The
-    /// wrapper is what makes the prelude legal wherever a loop can appear — a loop is an
-    /// expression in Rust, and a bare `let` before one would not be.
+    /// Emits `{ let __vh_N = vector::vec_header(…);` per hoistable vector and
+    /// `let __vs_N = <the getter, once>;` per hoistable scalar, and answers whether that
+    /// wrapper block was opened, which [`Self::end_vector_hoist`] closes. The wrapper is
+    /// what makes the prelude legal wherever a loop can appear — a loop is an expression in
+    /// Rust, and a bare `let` before one would not be.
     ///
-    /// A vector already covered by an enclosing loop's prelude is skipped: the enclosing
-    /// header is still current, because the promise that let it be hoisted covers this
-    /// loop too.
+    /// A vector or scalar already covered by an enclosing loop's prelude is skipped: the
+    /// enclosing binding is still current, because the promise that let it be hoisted
+    /// covers this loop too (the enclosing body contains this one).
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
         let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
-        let candidates = if self.hoist_disabled {
-            Vec::new()
+        let mut scalar_frame: HashMap<hoist::ScalarKey, String> = HashMap::new();
+        let hoisted = if self.hoist_disabled {
+            hoist::LoopHoist::default()
         } else {
-            hoist::hoistable_vectors(
+            hoist::hoistable(
                 lp,
                 self.data,
+                self.stores,
                 self.def_nr,
                 &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
                 !self.write_hoist_disabled,
+                !self.scalar_hoist_disabled,
             )
         };
+        let hoist::LoopHoist {
+            vectors: candidates,
+            scalars,
+        } = hoisted;
         let mut lines: Vec<String> = Vec::new();
         for (path, expr) in candidates {
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
@@ -1799,6 +1825,25 @@ impl Output<'_> {
             ));
             frame.insert(path, name);
         }
+        for (key, call) in scalars {
+            if self.scalar_hoists.iter().any(|f| f.contains_key(&key)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&key.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__vs_{}", self.hoist_counter);
+            // The getter call itself, emitted once: its `#rust` template is the one
+            // definition of the value (the `rec == 0` sentinel included), so the local
+            // holds exactly what a per-iteration read would.  The loop's own frame is not
+            // pushed yet, so this emission cannot resolve to the local it is defining.
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &call)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!("let {name} = {operand};"));
+            scalar_frame.insert(key, name);
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -1809,16 +1854,37 @@ impl Output<'_> {
             self.indent(w)?;
         }
         self.vec_headers.push(frame);
+        self.scalar_hoists.push(scalar_frame);
         Ok(opened)
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
+        self.scalar_hoists.pop();
         if opened {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// The Rust local holding `key`'s hoisted scalar, when an enclosing loop read it once
+    /// (@PLN157 P4c).
+    #[must_use]
+    pub fn active_scalar_hoist(&self, key: &hoist::ScalarKey) -> Option<&str> {
+        self.scalar_hoists
+            .iter()
+            .rev()
+            .find_map(|f| f.get(key).map(String::as_str))
+    }
+
+    /// Whether this getter call reads a record scalar an enclosing loop hoisted
+    /// (@PLN157 P4c): the shape qualifies ([`hoist::scalar_read`]) and the loop bound a
+    /// local for it.  Answers that local's name.
+    #[must_use]
+    pub fn hoisted_scalar_read(&self, getter: &str, args: &[Value]) -> Option<&str> {
+        let key = hoist::scalar_read(getter, args)?;
+        self.active_scalar_hoist(&key)
     }
 
     /// The Rust local holding `var`'s hoisted header, when an enclosing loop derived one.

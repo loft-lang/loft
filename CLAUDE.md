@@ -676,6 +676,11 @@ native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the h
 but leaves the scalar element read UNFUSED, one bisect step finer, and is the middle rung that
 showed stage 2 is worth ~3.2× on top of stage 1 (projected ~1.4×) — more than the hoist itself,
 because the second store resolution it removes costs more than the arithmetic it saves.
+**`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
+again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
+(record type, offset) over the body's typed write set — and is the bisect step for a wrong
+scalar in a loop over a record; `LOFT_HOIST_VERIFY=1` re-reads each hoisted scalar and
+panics on a stale one.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a

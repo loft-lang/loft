@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 50 | **12** | 38 |
+| 51 | **12** | 39 |
 
 
 
@@ -7296,6 +7296,7 @@ uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs a
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
 
+@PLN157 P4c adds three peeling sites, one name-keyed site and two see-through sites, all in `generation::hoist` — **430 · 406 · 24**, **51 · 12 · 39**, **753 · 405 · 6 · 342**: `scalar_read`, `setter_target` and `body_writes` read a getter's or setter's operands through their `Span` before typing them; `element_target` names `OpGetField` because it reads the schema type the projection CARRIES (a `TupleGet` carries none, and a tuple member is not a vector an element address names); and `plain_record_type` matches `Optional` by arm on purpose — a nullable record's payload offsets are a layout question the `(record type, offset)` key does not model, so it is neither hoisted nor classified as a write target.
 @PLN157 § V-m adds one peeling site inside an existing function — **427 · 403 · 24** — `scopes::grown_containers` reads a fused `OpPush<Kind>`'s container through its `Span` to tell the variable form from the field form, and the same arm is `spellings`' 50th name-keyed site (**50 · 12 · 38**): it names `OpGetField` because a `TupleGet` cannot be an append's container, exactly as the `OpNewRecord` arm beside it does.
 @PLN157 § V-g adds one peeling site — **426 · 402 · 24** on the joined tree — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
 
