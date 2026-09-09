@@ -132,6 +132,37 @@ Guard: `tests/scripts/1185b-a-forwarded-fnref-result-bound-before-return-is-not-
 0; native INERT, which is the correct reading for a backend-divergence guard since only one side
 can move.
 
+## The NATIVE half — found by finishing the destination axis
+
+The first pass covered two of the four destinations the issue's Scope names (*local, rebind,
+return, forwarded*).  Filling in the rest found a **live defect on the other backend**:
+
+| destination | interpret | native |
+|---|---|---|
+| local, rebind, return | correct | correct |
+| **field** — `b.p = fwd(s, 1)` | correct | **`13 0 0 0 \| cap 0`** |
+
+Same question, same bound-spelling/capture-arm shape, opposite backend — and the controls place it
+exactly: `field + tail` and `field + mint` are clean on both, so it is neither the destination
+alone nor the forwarding alone.
+
+**The cause is the same sentence twice.**  `cr_fnref_minted` stands where both halves of the answer
+are in scope — the returned `DbRef` and the `alloc_serial` snapshot — computes MINTED-or-BORROWED,
+registers the mint, and *returned* on the borrow.  Exactly what `release_fnref_bufs` did on the
+interpreter.  The cure is the same one hop: `FNREF_BORROWED` carries the verdict to
+`OpCopyRecord`, which declines the source-free for a store that predates the call.
+
+```
+BROKEN   src=#0 dst=#4 free_src=TRUE    ← copies the CAPTURE into the lift and frees it
+WORKING  src=#0 dst=#4 free_src=FALSE   ← the tail spelling materialised a real temp first
+```
+
+**Two backends, one question, and each had a test the other did not.**  The interpreter was correct
+for a field destination and wrong for a local; native was correct for a local and wrong for a
+field.  Neither backend's own suite could see its gap, because the shape that exposes it was only
+ever exercised on the other one.  The guard now falsifies on BOTH — `31c4e04da` for the
+interpreter half, `ace157ea4` for the native half, each INERT on the side the other fixed.
+
 ## Defect B is filed, not fixed — loft#1487
 
 The `??`-in-a-lambda leak is a different mechanism and the measurement says so: it reproduces with

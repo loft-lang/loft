@@ -525,10 +525,19 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > free-source guard itself is byte-identical between `codegen_runtime.rs` and `state/io.rs` —
 > one notion, two spellings, and only one of them carried the test.
 >
+> **And the same defect stood on `--native` in a different SHAPE, which finishing the destination
+> axis is what found.** The interpreter was correct for a FIELD destination and wrong for a local;
+> native was correct for a local and wrong for a field (`b.p = fwd(s, 1)` froze the caller's
+> capture). `cr_fnref_minted` had made the identical omission — it computes MINTED-or-BORROWED
+> where both halves of the answer are in scope, registers the mint, and returned on the borrow —
+> so the cure is the same one hop, `FNREF_BORROWED` to `OpCopyRecord`. **Neither backend's suite
+> could see its own gap, because the shape that exposes it was only ever exercised on the other.**
+>
 > Guard: `tests/scripts/1185b-a-forwarded-fnref-result-bound-before-return-is-not-the-callers.loft`
-> (2 cells + 3 controls: the mint arm, the tail spelling, and depth 0), falsified at `31c4e04da`
-> — interpret exit 1 → 0 and 2 assertion failures → 0, native INERT, which is what a
-> backend-divergence guard must read.
+> (5 cells + 4 controls: the mint arm, the tail spelling, depth 0, and a field destination on the
+> mint arm), falsified TWICE — `31c4e04da` moves the interpreter (exit 1 → 0, 2 assertion failures
+> → 0) and `ace157ea4` moves native (exit 1 → 0, 1 assertion failure → 0), each INERT on the side
+> the other fixed, which is what a backend-divergence guard must read.
 
 > **D-clo-12 / D-clo-13 — the two are ONE question, and every static reading of it has now
 > been measured in both directions (2026-08-30).** The question is: *does a fn-ref call hand

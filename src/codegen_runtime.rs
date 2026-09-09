@@ -978,7 +978,14 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if stores.copy_check_enabled() {
         stores.report_copy_mismatches(&data, &to, tp, "OpCopyRecord");
     }
+    // @PLN150 — a store the most recent fn-ref call BORROWED rather than minted is not the
+    // callee's to give away, so the source-free is declined for it.  The interpreter reaches
+    // the same rule in `State::copy_ref_or_null`; measured without this,
+    // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
+    // `--native` alone — the field destination of the shape loft#1185 closed for a local.
+    let borrowed = free_source && cr_take_fnref_borrowed(data.store_nr);
     if free_source
+        && !borrowed
         && data.store_nr != to.store_nr
         && !stores.is_stack_store(data.store_nr)
         && !stores.allocations[data.store_nr as usize].free
@@ -5402,6 +5409,33 @@ pub fn cr_alloc_serial(cell: &std::cell::UnsafeCell<Stores>) -> u64 {
     stores.stores_allocated
 }
 
+thread_local! {
+    /// @PLN150 — the store the most recent fn-ref call handed back that it did NOT mint.
+    ///
+    /// The `--native` counterpart of `State::fnref_borrowed_return`, and the same one hop:
+    /// `COPY_FREE_SOURCE` claims *"the source is a callee's fresh temporary nobody else
+    /// frees"*, and for a forwarded fn-ref result that is a PER-RUN fact.  [`cr_fnref_minted`]
+    /// is already standing at the one place both halves of the answer are in scope — the
+    /// returned `DbRef` and the `alloc_serial` snapshot taken when the call began — and its
+    /// borrow path simply returned.  This carries that verdict to [`OpCopyRecord`], which
+    /// declines the source-free for a store that predates the call.
+    ///
+    /// Matched by STORE and taken when it matches, so it describes one value; re-armed (or
+    /// cleared) by the next fn-ref call, so it cannot go stale across calls.
+    static FNREF_BORROWED: std::cell::Cell<Option<DbRef>> = const { std::cell::Cell::new(None) };
+}
+
+/// Take the @PLN150 borrowed-return marker when it names `store_nr`, clearing it.
+fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
+    FNREF_BORROWED.with(|b| match b.get() {
+        Some(r) if r.store_nr == store_nr => {
+            b.set(None);
+            true
+        }
+        _ => false,
+    })
+}
+
 /// Give an owner to a store a fn-ref callee MINTED and handed back.
 ///
 /// The callee does not free what it returns, and the caller may be a forwarding function whose
@@ -5417,6 +5451,9 @@ pub fn cr_fnref_minted(
     since: u64,
     closure: DbRef,
 ) {
+    // @PLN150 — every path below decides MINTED-or-BORROWED, so the marker is re-armed here
+    // rather than left over from the previous call.
+    FNREF_BORROWED.with(|b| b.set(None));
     if returned.store_nr == u16::MAX || returned.rec == 0 {
         return;
     }
@@ -5426,13 +5463,20 @@ pub fn cr_fnref_minted(
     // reported twelve use-after-free reads of `__closure_4`, all "killed by the free of
     // `var_r`", on `--native` alone.
     if closure.store_nr != u16::MAX && returned.store_nr == closure.store_nr {
+        FNREF_BORROWED.with(|b| b.set(Some(returned)));
         return;
     }
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let Some(slot) = stores.allocations.get(returned.store_nr as usize) else {
         return;
     };
-    if slot.free || slot.alloc_serial <= since {
+    if slot.free {
+        return;
+    }
+    if slot.alloc_serial <= since {
+        // Predates the call: a capture, or an argument.  It belongs to a frame further up, so
+        // no caller may consume it as "the callee's fresh temporary".
+        FNREF_BORROWED.with(|b| b.set(Some(returned)));
         return;
     }
     let serial = slot.alloc_serial;
