@@ -53,6 +53,9 @@
 // cells flip (`v[1]`, `v[n]`, `n / a`, `a / n`, `n % a`, and both two-hole strings), and the
 // three real-fault cells read the SAME on both builds — which is the property that matters,
 // because a fix that just stopped tagging would also pass every cell above them.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 fn main() {
   v: vector<integer?> = [1, null, 3];
   n: integer? = null;

@@ -48,6 +48,11 @@
 //   `boolean` member kept its value (`which=-1`).  So the walk and the peel are two cures and
 //   the cell distinguishes them; its `0`, `""` and `0.0` neighbours passed on that build, which
 //   is what would have made the family look covered without the boolean in it
+//   CHANNEL: the assertions/exit channel, measured on --interpret against 4f29a473 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 // Each cell is its own test function, so a `--tests` run names EVERY broken one.  A single
 // `main` halts at the first failing `assert`, which cannot tell "the member walk is wrong" from

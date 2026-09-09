@@ -29,6 +29,10 @@
 //   right on the interpreter by stack residue, which is the whole reason this was a backend
 //   divergence.  So `make falsify` reports NOT falsified overall for this file, and the native
 //   half is what it measures.
+//   HOLDS: `--interpret` is INERT, and that IS the finding rather than a gap — the
+//   un-promoted path is right on the interpreter by stack residue, which is why this is a
+//   backend-divergence guard. Only the NATIVE side can move (exit and one assertion), so an
+//   interpret-only sweep reports inert by construction and says nothing about the guard.
 
 struct NvW { nv_n: integer = 0 }
 enum NvShape { NvDot, NvCircle { nv_r: integer } }

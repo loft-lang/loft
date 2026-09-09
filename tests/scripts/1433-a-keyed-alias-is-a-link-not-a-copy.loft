@@ -43,6 +43,9 @@
 // @falsified-at: 4444b0d0 — interpret exit 1 -> 0, 6 assertion failures -> 0; native exit
 //   1 -> 0, 1 assertion failure -> 0 (that leg runs every fn in ONE binary, so its first
 //   failure ends the run and its count says nothing about the breadth).
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Row { id: integer, tag: text }
 struct Wrd { nm: text, n: integer }

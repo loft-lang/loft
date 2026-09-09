@@ -31,6 +31,11 @@
 //   control that had failed with "cannot load default library" — the harness runs the
 //   guard from the checkout it is in, and a guard invoked by absolute path finds no
 //   `default/`.  The reason a control is red has to be read before its verdict is used.
+//   CHANNEL: the assertions/exit channel, measured on --interpret against 5a90e534 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Point {
   label: text?,

@@ -28,6 +28,9 @@
 // spelling, all of them before any assert runs.  The ASSERTION channel reads 0 on both
 // trees, which is the point of keeping this file separate from the pad guard — there the
 // two numbers are the other way round.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn main() {
   // ---- a width before a base letter ---------------------------------------------------

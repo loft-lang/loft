@@ -38,6 +38,9 @@
 //   rather than a parity bug.  The control stops at the FIRST cell — an assert ends the
 //   program — so the falsify channels prove the guard bites, and the per-cell evidence is
 //   the position x source matrix in the issue, run on both binaries.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct NswPair { nsw_a: integer, nsw_b: integer }
 struct NswWide { nsw_p: integer, nsw_q: integer, nsw_r: integer }

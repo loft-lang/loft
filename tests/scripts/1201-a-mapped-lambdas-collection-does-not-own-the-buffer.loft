@@ -40,6 +40,10 @@
 // channel and none did (two maps in one function, a nested map, and a map followed by a
 // 40-element comprehension allocating over the freed slot), so poison is the interpreter's
 // only channel — and the nightly arena-UAF sweep that runs it is what found the defect.
+//   HOLDS: on a plain dev build only the NATIVE side moves (exit and one assertion, `wider,
+//   row 1 length: got 6`); the interpreter is equal on every channel there. Under
+//   `LOFT_POISON=1` both backends move. So an unarmed interpret-only row is inert by
+//   construction — score the native side, or arm the poison.
 
 struct P { n: integer }
 struct Q { xs: vector<integer> }

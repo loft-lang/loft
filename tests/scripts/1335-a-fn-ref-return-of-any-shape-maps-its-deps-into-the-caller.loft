@@ -34,6 +34,13 @@
 // the first keyed join ("dep-space violation", exit 101 -> 0); on the ordinary release build
 // every channel reads 0 -> 0 (the wrong-space index landed on a variable the values never
 // read), so `make falsify` reports this guard inert.
+//   ARMED: `RUSTFLAGS='-C debug-assertions=on'`. Falsify builds an ordinary release control,
+//   which is why the sweep reports INERT.
+//   HOLDS: on a release build EVERY channel reads 0 -> 0 and nothing moves — the wrong-space
+//   index landed on a variable the values never read, so the defect is invisible to all six
+//   scored channels. With debug assertions on, the control aborts at the first keyed join
+//   (`dep-space violation`, exit 101 -> 0). A bulk INERT here is the absence of the
+//   instrument, not the absence of a defect.
 struct K { k: integer, v: integer }
 struct K2 { k: integer, v: integer }
 struct K3 { k: integer, v: integer }

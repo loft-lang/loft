@@ -26,6 +26,9 @@
 //   over a `vector<Color?>` is a hard refusal, so no cell runs to fail.  An exit-only move is
 //   the weaker falsification, which is why the dense cell matters — it is the one saying the
 //   cure did not simply delete the refusal, and it must still fire for `vector<Color>`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum Color { Red, Green, Blue }
 struct Holder { c: Color? }
