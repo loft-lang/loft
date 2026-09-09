@@ -101,6 +101,20 @@ fn main() {
   g5(q5).a = 99;
   assert(g5(q5).a == 7, "control parameter: got {g5(q5).a}");
 
+  // A lambda that MINTS from a capture borrows nothing, and its capture must survive being read.
+  //
+  // ⚠ This control also carries loft#1488, which the same fix closed.  Several lambdas of
+  // DIFFERENT shapes in one program leaked one record on `--native` alone — not a count (six
+  // identical lambdas were clean), not any pair, and every cell clean on its own; the filed
+  // repro was four shapes together, exactly the four this file now holds.  The mint control was
+  // left OUT of the first draft of this guard because of that leak, so its presence here is what
+  // says the leak is gone: put it back and the file leaks again the day it returns.
+  q6: S1485 = S1485 { a: 7 };
+  g6 = fn() -> S1485 { S1485 { a: q6.a } };
+  g6().a = 99;
+  assert(g6().a == 7, "control mint: got {g6().a}");
+  assert(q6.a == 7, "control mint: the capture is untouched, got {q6.a}");
+
   // --- the COLLECTION former, recorded OPEN (loft#1489) ---
   // Both spellings still alias, so appending to one call's result grows the frame's own vector.
   q7: vector<S1485> = [S1485 { a: 7 }];
@@ -122,5 +136,8 @@ fn main() {
   r9 += [S1485 { a: 1 }];
   assert(len(g9(q9)) == 1, "control vector parameter: the argument keeps 1, got {len(g9(q9))}");
 
-  println("1485 OK");
+  // Printed WITH the calls in it, which is the other half of loft#1488's shape: an interpolated
+  // lambda call at the end is two more calls, and the first draft of this file had to leave them
+  // out too.
+  println("1485 OK capture={g1().a} whole={g2().a}");
 }
