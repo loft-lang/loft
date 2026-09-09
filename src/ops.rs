@@ -140,6 +140,12 @@ pub fn arm_format_fault() {
 /// `{v[0] / z}`, a real division by zero after a successful read, lost its `/0` that way.
 /// Leaving it also means an inherited null keeps the cause of wherever it was born, so
 /// `{v[9] / 2}` reports the overrun that actually produced its null.
+/// `#[inline]`: generated native code calls this at EVERY fault-prone op — an element read, a
+/// division — and the body is a no-op unless that op actually faulted.  Without the attribute the
+/// callee lives in `libloft.rlib` and cannot be folded across the crate boundary, so each site
+/// pays a real call to test a flag; it measured 1.4 % of the drawing library's bench (loft#1426).
+/// With it the common path is a predictable not-taken branch at the call site.
+#[inline]
 pub fn note_format_fault(kind_id: u8, faulted: bool) {
     if faulted && FORMAT_FAULT_ARMED.with(std::cell::Cell::get) && !format_bare_null() {
         FORMAT_FAULT_TAG.with(|t| t.set(format_fault_label(kind_id)));
