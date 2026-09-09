@@ -173,7 +173,7 @@ pub fn hoistable_vectors(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
 ) -> Vec<(PathKey, Value)> {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place) {
+    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, false) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -190,6 +190,7 @@ fn body_blocks_hoist(
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
+    allow_push: bool,
 ) -> bool {
     body.operators.iter().any(|op| {
         blocks_header_hoist(
@@ -199,6 +200,7 @@ fn body_blocks_hoist(
             &mut HashSet::new(),
             allow_in_place,
             Some(data.def(def_nr).variables()),
+            allow_push,
         )
     })
 }
@@ -334,6 +336,11 @@ pub struct LoopHoist {
     pub vectors: Vec<(PathKey, Value)>,
     /// The scalar reads, each with the getter call the prelude evaluates once.
     pub scalars: Vec<(ScalarKey, Value)>,
+    /// @PLN157 § V-q — the paths the body PUSHES to, each with the vector operand the
+    /// prelude evaluates: these take a [`crate::vector::PushHeader`] (never listed in
+    /// `vectors` as well), which the push keeps current and every read of the path serves
+    /// from.
+    pub pushes: Vec<(PathKey, Value)>,
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -360,13 +367,15 @@ pub fn hoistable(
     allow_in_place: bool,
     scalars: bool,
     inputs: Option<&mut InputCache>,
+    allow_push: bool,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place) {
+    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, allow_push) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
+        pushes: Vec::new(),
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
@@ -424,6 +433,59 @@ pub fn hoistable(
             });
         }
     }
+    // @PLN157 § V-q (`@FR-R-Push`) — the paths the body pushes to.  The gate admitted every
+    // push in the body as a fusable one over a pure path, so what is left to decide is
+    // ALIASING: a growth moves the pushed vector's record, so any other header naming that
+    // same vector would go stale.  A single push beside no other candidate has nothing to
+    // alias with and is admitted whatever its root.  Otherwise every push root must be
+    // EXCLUSIVE — a local that owns its store, or the function's own return buffer — and a
+    // read candidate is kept only when its root cannot name a pushed vector: an owned local
+    // (two owners, two stores), or a parameter when no push targets the return buffer (a
+    // parameter cannot alias a local's store, but it can alias a buffer the caller offered).
+    // A push that fails the rule declines the WHOLE loop, as a growth always did — a push
+    // left to its template would move a record a kept header still describes.
+    if allow_push {
+        let mut pushes: Vec<(PathKey, Value)> = Vec::new();
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(fp) = fused_push(data, data.def(*d).name(), args)
+                    && !pushes.iter().any(|(p, _)| *p == fp.path)
+                {
+                    pushes.push((fp.path, fp.vector.clone()));
+                }
+                false
+            });
+        }
+        if !pushes.is_empty() {
+            if pushes.iter().any(|(p, _)| rebound.contains(&p.0)) {
+                return LoopHoist::default();
+            }
+            let retbuf = retbuf_var(data, def_nr);
+            let others = out
+                .vectors
+                .iter()
+                .any(|(q, _)| !pushes.iter().any(|(p, _)| p == q));
+            if pushes.len() > 1 || others {
+                if !pushes
+                    .iter()
+                    .all(|(p, _)| owned_local(vars, p.0) || Some(p.0) == retbuf)
+                {
+                    return LoopHoist::default();
+                }
+                let any_retbuf = pushes.iter().any(|(p, _)| Some(p.0) == retbuf);
+                out.vectors.retain(|(q, _)| {
+                    pushes.iter().any(|(p, _)| p == q)
+                        || owned_local(vars, q.0)
+                        || (vars.is_argument(q.0) && !any_retbuf)
+                });
+            }
+            out.vectors
+                .retain(|(q, _)| !pushes.iter().any(|(p, _)| p == q));
+            out.pushes = pushes;
+        }
+    }
     if found.is_empty() {
         return out;
     }
@@ -460,6 +522,31 @@ fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
     }
     let known = data.def(*d).known_type();
     (known != u16::MAX).then_some(known)
+}
+
+/// Does local `r` OWN the store it names — so no other variable of this frame can name
+/// that store (@PLN157 § V-q)?  Not a parameter (the caller's store), not a `&` link, an
+/// empty dep list (`@FR-O-Proxy`), and not captured by a closure.
+fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
+    // `.base()`: the shape question sees through a `τ?` slot (`@FR-N-Shape`).
+    !vars.is_argument(r)
+        && !matches!(vars.tp(r).base(), Type::RefVar(_))
+        && !vars.is_captured(r)
+        // A local vector's dep list names its OWN hidden store witness (`__vdb_N`), which
+        // is the store it owns, not a borrow of someone else's.
+        && vars
+            .tp(r)
+            .depend()
+            .iter()
+            .all(|d| vars.name(*d).starts_with("__vdb"))
+}
+
+/// The variable of `def_nr`'s hidden return buffer, when it has one.
+fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
+    let def = data.def(def_nr);
+    let attr = def.hidden_return_buffer_attr()?;
+    let v = def.variables().var(&def.attributes()[attr].name);
+    (v != u16::MAX).then_some(v)
 }
 
 /// What an in-place setter's target reaches.
@@ -595,6 +682,12 @@ fn body_writes(
                         return true;
                     }
                 }
+            } else if FUSABLE_PUSHES.iter().any(|(p, _, _)| *p == name)
+                || name == "OpPreAllocVector"
+            {
+                // @PLN157 § V-q — a push (or the reservation before one) grows a vector and
+                // rewrites its handle slot, which no scalar getter reads; the container
+                // record itself does not move.
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),
@@ -904,6 +997,7 @@ pub fn view_def_header(
             &mut HashSet::new(),
             allow_in_place,
             Some(vars),
+            false,
         )
     }) {
         return None;
@@ -1096,6 +1190,64 @@ pub fn fused_element_read<'a>(
 /// type each stores.  The write twins of [`FUSABLE_GETTERS`], excluded for the same
 /// reasons: a setter that re-bases (`OpSetByte`/`OpSetShort`), masks or translates
 /// keeps the unfused emission.
+/// The scalar pushes a loop may hoist a header for (@PLN157 § V-q, `@FR-R-Push`): the op,
+/// the Rust type of the value, and the element width.  The three [`HoistScalar`] kinds;
+/// a push of another kind keeps its template AND blocks the loop, as every growth does,
+/// because only a push emitted through the refreshing helper leaves the header current.
+///
+/// [`HoistScalar`]: crate::vector::HoistScalar
+pub const FUSABLE_PUSHES: [(&str, &str, u32); 3] = [
+    ("OpPushInt", "i64", 8),
+    ("OpPushSingle", "f32", 4),
+    ("OpPushFloat", "f64", 8),
+];
+
+/// A push the emitter can route through a hoisted [`crate::vector::PushHeader`].
+pub struct FusedPush<'a> {
+    /// The pushed path's key.
+    pub path: PathKey,
+    /// The vector operand, emitted for the growth step's runtime append.
+    pub vector: &'a Value,
+    /// The value pushed.
+    pub val: &'a Value,
+    /// The Rust type of the value.
+    pub rust_type: &'static str,
+    /// The element width in bytes.
+    pub size: u32,
+}
+
+/// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
+/// reservation the parser emits before a push to a LOCAL vector.  It claims a record only
+/// for an ABSENT vector and never moves an existing one, so it cannot stale a header; with a
+/// push header active for the path it is redundant (the push grows on demand) and is
+/// emitted as nothing.
+#[must_use]
+pub fn pre_alloc_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> {
+    if op != "OpPreAllocVector" || args.len() != 3 {
+        return None;
+    }
+    vector_path(data, &args[0])
+}
+
+/// Recognise `OpPush<Kind>(path, val)` for a fusable kind over a pure path (@PLN157 § V-q)
+/// — the ONE definition of the hoistable push, asked by the gate, the collector and the
+/// emitter.  Shape only; the caller confirms the loop hoisted a push header for the path.
+#[must_use]
+pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedPush<'a>> {
+    let (_, rust_type, size) = FUSABLE_PUSHES.iter().find(|(n, _, _)| *n == op)?;
+    if args.len() != 2 {
+        return None;
+    }
+    let path = vector_path(data, &args[0])?;
+    Some(FusedPush {
+        path,
+        vector: &args[0],
+        val: &args[1],
+        rust_type,
+        size: *size,
+    })
+}
+
 const FUSABLE_SETTERS: [(&str, &str); 3] = [
     ("OpSetInt", "i64"),
     ("OpSetSingle", "f32"),
@@ -1195,7 +1347,7 @@ fn writes_store(
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
 ) -> bool {
-    blocks_header_hoist(node, data, cache, active, false, vars)
+    blocks_header_hoist(node, data, cache, active, false, vars, false)
 }
 
 /// @PLN157 § V-c — the frees whose operand is a RECORD variable of the enclosing body.
@@ -1231,6 +1383,7 @@ fn blocks_header_hoist(
     active: &mut HashSet<u32>,
     allow_in_place: bool,
     vars: Option<&crate::variables::Function>,
+    allow_push: bool,
 ) -> bool {
     node.any_node(&mut |n| match n {
         Value::Call(d, args) => {
@@ -1240,7 +1393,15 @@ fn blocks_header_hoist(
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
-            if in_place_setter || record_free {
+            // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
+            // under its own tier: it grows one vector whose header the loop keeps current
+            // through the push itself; `hoistable` decides the aliasing.  The value operand
+            // still walks below this node.
+            let fusable_push = known
+                && allow_push
+                && (fused_push(data, data.def(*d).name(), args).is_some()
+                    || pre_alloc_path(data, data.def(*d).name(), args).is_some());
+            if in_place_setter || record_free || fusable_push {
                 false
             } else if call_writes_store(*d, data, cache, active) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted

@@ -1,0 +1,73 @@
+// @PLN157 § V-q (loft#1426 M2) — a loop that PUSHES to a vector path keeps a PUSH header for
+// it on the native backend (@FR-R-Push): the header carries the record's capacity, a push
+// that fits is a bounds test, one store and a length bump written to the header AND the
+// record, a growth step is the runtime's own append followed by a fresh header, and every
+// read of the path in the loop serves from that header.  The interpreter (no rewrite) is
+// the oracle.  The cells pin the boundary from both sides:
+//   - the constant-fill comprehension, a push of a value read from another vector, two
+//     pushed vectors, a view root, a growth ladder, an empty start, a push beside an
+//     in-place write, beside a callee reading the length, and reads of the pushed vector
+//     (its length, its last element) answer the same values through the push header;
+//   - a rebound root, a non-fusable kind beside the push, a record append beside it, an
+//     alias read through a view, and a value that reads the pushed vector itself keep the
+//     template path (the last because the parser copies the source per iteration) and their
+//     values.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-q-hoisted-push-cells.loft
+// (tests/push_hoist.rs pins which loops earn a push header); this file carries the VALUE
+// cells that must hold whatever the emitter decides.
+// `LOFT_NO_PUSH_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-09) — `Stores::push_hoisted`'s fast path made
+// to skip the record's length write-back (the header's `len` bumps, the record's stays at the
+// last growth step) turns the constant-fill cell red on --native (`len(lay.best)` reads the
+// stale record length) and LOFT_HOIST_VERIFY=1 panics at the next push (`hoisted push header
+// is stale`).  Restored byte-identically, interpret / native / LOFT_HOIST_VERIFY /
+// LOFT_NO_PUSH_HOIST all green.
+
+struct Lay { w: integer, best: vector<float>, sb: vector<float> }
+struct Cv { data: vector<integer> }
+
+fn total(v: const vector<float>) -> float { s = 0.0; for x in v { s += x; } s }
+fn itotal(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn count(v: const vector<float>) -> integer { len(v) }
+fn fill(lay: Lay, n: integer, x: float) { for _i in 0..n { lay.sb += [x]; } }
+
+fn constant_fill() -> integer { n = 1000; lay = Lay { w: 4, best: [for _i in 0..n { 2.0 }], sb: [for _i in 0..n { 0.5 }] }; assert(len(lay.best) == 1000 && len(lay.sb) == 1000, "both fills reach n"); (total(lay.best) + total(lay.sb)) as integer }
+fn from_other() -> integer { xs: vector<float> = [1.0, 2.0, 3.0, 4.0]; out: vector<float> = []; for i in 0..len(xs) { out += [(xs[i] ?? 0.0) * 2.0]; } total(out) as integer }
+fn reads_itself() -> integer { px: vector<float> = [1.0]; for i in 1..4 { px += [(px[len(px) - 1] ?? 0.0) + (i as float)]; } assert((px[3] ?? -1.0) as integer == 7, "the last element is 7"); total(px) as integer }
+fn two_vectors() -> integer { a: vector<float> = []; b: vector<float> = []; for i in 0..3 { a += [i as float]; b += [(i as float) * 10.0]; } (total(a) + total(b)) as integer }
+fn through_view() -> integer { lay = Lay { w: 0, best: [], sb: [] }; d = &lay.best; for i in 1..4 { d += [i as float]; } assert(len(d) == 3, "the view sees the pushes"); total(lay.best) as integer }
+fn alias_read() -> integer { v: vector<float> = [5.0]; w = &v; s = 0.0; for i in 6..8 { v += [i as float]; s += w[0] ?? 0.0; } assert(len(v) == 3 && len(w) == 3, "the alias sees the growth"); s as integer }
+fn nested() -> integer { rows: vector<integer> = [10, 20, 30]; out: vector<float> = []; s = 0; for r in 0..3 { s += rows[r] ?? 0; for k in 0..2 { out += [((r * k) as float)]; } } assert(len(out) == 6, "six pushes"); s * 100 + total(out) as integer }
+fn rebound_root() -> integer { v: vector<float> = []; for i in 0..3 { v = []; v += [i as float]; } assert(len(v) == 1, "a fresh vector each iteration"); total(v) as integer }
+fn parameter_field() -> integer { lay = Lay { w: 0, best: [], sb: [] }; fill(lay, 5, 3.0); fill(lay, 2, 1.0); assert(len(lay.sb) == 7, "both fills land"); total(lay.sb) as integer }
+fn growth_ladder() -> integer { v: vector<float> = []; for i in 0..5000 { v += [i as float]; } assert(len(v) == 5000 && (v[4999] ?? -1.0) as integer == 4999, "the ladder reaches the end"); total(v) as integer }
+fn other_kinds() -> integer { a: vector<integer> = []; b: vector<boolean> = []; c: vector<character> = []; for i in 0..4 { a += [i * i]; b += [i % 2 == 1]; c += ['a']; } t = 0; for x in b { if x { t += 1; } } assert(len(c) == 4 && (c[3] ?? '?') == 'a', "characters land"); itotal(a) * 10 + t }
+fn beside_in_place() -> integer { m: vector<integer> = [10, 20, 30]; out: vector<float> = []; for i in 0..3 { m[i] = (m[i] ?? 0) + 1; out += [(m[i] ?? 0) as float]; } itotal(m) * 1000 + total(out) as integer }
+fn callee_reads_length() -> integer { v: vector<float> = []; s = 0; for i in 0..3 { v += [i as float]; s += count(v); } s }
+fn len_after_push() -> integer { v: vector<float> = []; s = 0; for i in 0..4 { v += [i as float]; s += len(v); } s }
+fn last_pushed() -> integer { v: vector<float> = []; s = 0.0; for i in 0..4 { v += [i as float]; s += v[len(v) - 1] ?? -100.0; } s as integer }
+fn empty_start() -> integer { v: vector<float> = []; for _i in 0..3 { v += [1.0]; } assert(len(v) == 3, "three pushes"); total(v) as integer }
+fn record_append_beside() -> integer { cvs: vector<Cv> = []; v: vector<float> = []; for i in 0..3 { v += [i as float]; cvs += [Cv { data: [i] }]; } assert(len(cvs) == 3, "three records"); total(v) as integer }
+
+fn main() {
+  assert(constant_fill() == 2500, "1000 × 2.0 + 1000 × 0.5");
+  assert(from_other() == 20, "2 + 4 + 6 + 8");
+  assert(reads_itself() == 14, "1 + 2 + 4 + 7");
+  assert(two_vectors() == 33, "3 + 30");
+  assert(through_view() == 6, "1 + 2 + 3 through the view");
+  assert(alias_read() == 10, "the alias reads 5 twice");
+  assert(nested() == 6003, "60 rows, 3 pushed");
+  assert(rebound_root() == 2, "the last fresh vector holds 2");
+  assert(parameter_field() == 17, "5 × 3 + 2 × 1");
+  assert(growth_ladder() == 12497500, "sum 0..4999");
+  assert(other_kinds() == 142, "0+1+4+9 and two odd");
+  assert(beside_in_place() == 63063, "[11, 21, 31] twice");
+  assert(callee_reads_length() == 6, "1 + 2 + 3: the callee sees every push");
+  assert(len_after_push() == 10, "1 + 2 + 3 + 4");
+  assert(last_pushed() == 6, "0 + 1 + 2 + 3");
+  assert(empty_start() == 3, "three ones");
+  assert(record_append_beside() == 3, "0 + 1 + 2");
+  println("push-hoist ok");
+}

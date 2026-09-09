@@ -690,6 +690,10 @@ op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_C
 scalar fields or views its vector fields gets a `<fn>__inv` twin taking those as extra
 parameters, and a loop that hoisted them for the argument calls the twin — and is the bisect
 step for a wrong value read through a record parameter inside a callee a hoisting loop calls.
+**`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
+a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
+record's capacity, a push that fits is one store and a length bump, and every read of the path
+serves from it — and is the bisect step for a wrong element or length out of an appending loop.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`).
 PERFORMANCE.md § Design: P2, NATIVE.md.
 

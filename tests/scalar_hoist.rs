@@ -26,12 +26,12 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c6", 0, 0),     // the view is rebound
     ("n_c7", 0, 1),     // an element write of the same type at the offset (pts keeps its header)
     ("n_c8", 1, 0),     // the inner loop only
-    ("n_c9", 0, 0),     // a growing write blocks everything
-    ("n_c10", 4, 0),    // boolean, enum, character, float
-    ("n_c11", 1, 0),    // lw evicted through the callee, x0 kept
-    ("n_c12", 1, 0),    // a retbuf writer beside a rebound result
-    ("n_c13", 0, 0),    // a path read is not a candidate; h.n is written
-    ("n_c14", 1, 1),    // an element write of ANOTHER type at the offset
+    ("n_c9", 1, 0), // a growing write that is a fusable PUSH hoists since § V-q: x0 kept, px takes a push header (`__ph_`, not counted here)
+    ("n_c10", 4, 0), // boolean, enum, character, float
+    ("n_c11", 1, 0), // lw evicted through the callee, x0 kept
+    ("n_c12", 1, 0), // a retbuf writer beside a rebound result
+    ("n_c13", 0, 0), // a path read is not a candidate; h.n is written
+    ("n_c14", 1, 1), // an element write of ANOTHER type at the offset
     ("n_c15", 0, 1), // an element write of the SAME type: conservative eviction (pts keeps its header)
     ("n_c16", 1, 0), // a nested-path write of another root
     ("n_c17", 0, 0), // a text read keeps the loop off the allow-list

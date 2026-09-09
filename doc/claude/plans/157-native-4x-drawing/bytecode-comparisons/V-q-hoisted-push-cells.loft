@@ -1,0 +1,69 @@
+// @PLN157 § V-q cells — a loop that PUSHES to one vector path keeps that path's header
+// (@FR-R-Push): the header carries the capacity, the push writes through it and refreshes it
+// at a growth step, and every read of the path in the loop serves from it.  The interpreter
+// (no rewrite) is the oracle; native must answer the same under LOFT_HOIST_VERIFY=1, and the
+// emission (which loops earn a push header, which decline) is pinned by tests/push_hoist.rs.
+// Expected values are hand-computed in each cell's comment.
+struct Lay { w: integer, best: vector<float>, sb: vector<float> }
+struct Cv { data: vector<integer> }
+
+fn total(v: const vector<float>) -> float { s = 0.0; for x in v { s += x; } s }
+fn itotal(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn count(v: const vector<float>) -> integer { len(v) }
+
+// c1 — the constant-fill comprehension into a record's field (the lock_layer shape):
+// 1000 × 2.0 and 1000 × 0.5 → 2000 / 500, both lengths 1000.
+fn c1() {
+  n = 1000;
+  lay = Lay { w: 4, best: [for _i in 0..n { 2.0 }], sb: [for _i in 0..n { 0.5 }] };
+  println("c1 {total(lay.best) as integer} {total(lay.sb) as integer} {len(lay.best)} {len(lay.sb)}");
+}
+// c2 — a push of a value read from ANOTHER vector: out = xs × 2 → 2+4+6+8 = 20.
+fn c2() { xs: vector<float> = [1.0, 2.0, 3.0, 4.0]; out: vector<float> = []; for i in 0..len(xs) { out += [(xs[i] ?? 0.0) * 2.0]; } println("c2 {total(out) as integer} {len(out)}"); }
+// c3 — the ribbons shape: the pushed vector is READ in the same loop, at its last element.
+// px: 1, then 1+1=2, 2+2=4, 4+3=7 → [1, 2, 4, 7], total 14, last 7.
+fn c3() { px: vector<float> = [1.0]; for i in 1..4 { px += [(px[len(px) - 1] ?? 0.0) + (i as float)]; } println("c3 {total(px) as integer} {len(px)} {px[3] ?? -1.0}"); }
+// c4 — two vectors pushed in one loop: a gets i, b gets i·10 → 0+1+2 = 3, 0+10+20 = 30.
+fn c4() { a: vector<float> = []; b: vector<float> = []; for i in 0..3 { a += [i as float]; b += [(i as float) * 10.0]; } println("c4 {total(a) as integer} {total(b) as integer}"); }
+// c5 — a push THROUGH A VIEW of a record field: the record's own field grows.  [1, 2, 3] → 6.
+fn c5() { lay = Lay { w: 0, best: [], sb: [] }; d = &lay.best; for i in 1..4 { d += [i as float]; } println("c5 {total(lay.best) as integer} {len(lay.best)} {len(d)}"); }
+// c6 — ALIAS: a view of the pushed local read in the same loop, one element in.
+// v = [5]; push 6, 7 (two iterations); the view reads v[0] each time → 5 × 2 = 10; len 3.
+fn c6() { v: vector<float> = [5.0]; w = &v; s = 0.0; for i in 6..8 { v += [i as float]; s += w[0] ?? 0.0; } println("c6 {s as integer} {len(v)} {len(w)}"); }
+// c7 — a push in the INNER loop, the outer loop holding another vector's header:
+// for each of 3 rows, push row·k for k in 0..2 (k = 0, 1) → 0+0 + 0+1 + 0+2 = 3, len 6; the
+// outer vector's elements read once per row: 10+20+30 = 60.
+fn c7() { rows: vector<integer> = [10, 20, 30]; out: vector<float> = []; s = 0; for r in 0..3 { s += rows[r] ?? 0; for k in 0..2 { out += [((r * k) as float)]; } } println("c7 {s} {total(out) as integer} {len(out)}"); }
+// c8 — the pushed root REBOUND in the loop: each iteration starts a fresh vector.
+// v is [] then [0], then [] then [1], … the last v is [2] → total 2, len 1.
+fn c8() { v: vector<float> = []; for i in 0..3 { v = []; v += [i as float]; } println("c8 {total(v) as integer} {len(v)}"); }
+// c9 — a push into a PARAMETER's field from a callee: the caller's record grows.
+fn fill(lay: Lay, n: integer, x: float) { for _i in 0..n { lay.sb += [x]; } }
+fn c9() { lay = Lay { w: 0, best: [], sb: [] }; fill(lay, 5, 3.0); fill(lay, 2, 1.0); println("c9 {total(lay.sb) as integer} {len(lay.sb)}"); }
+// c10 — a long growth ladder: 5000 pushes of i, sum 0..4999 = 12497500, len 5000.
+fn c10() { v: vector<float> = []; for i in 0..5000 { v += [i as float]; } println("c10 {total(v) as integer} {len(v)} {v[4999] ?? -1.0}"); }
+// c11 — the other scalar kinds: integer, boolean, character.
+fn c11() {
+  a: vector<integer> = []; b: vector<boolean> = []; c: vector<character> = [];
+  for i in 0..4 { a += [i * i]; b += [i % 2 == 1]; c += ['a']; }
+  t = 0; for x in b { if x { t += 1; } }
+  println("c11 {itotal(a)} {t} {len(c)} {c[3] ?? '?'}");
+}
+// c12 — a push beside an IN-PLACE element write to another vector: [10,20,30] each +1 → 63.
+fn c12() { m: vector<integer> = [10, 20, 30]; out: vector<float> = []; for i in 0..3 { m[i] = (m[i] ?? 0) + 1; out += [(m[i] ?? 0) as float]; } println("c12 {itotal(m)} {total(out) as integer}"); }
+// c13 — a push beside a CALLEE that reads the pushed vector's length: the callee must see
+// every push so far: len after each push 1, 2, 3 → 6.
+fn c13() { v: vector<float> = []; s = 0; for i in 0..3 { v += [i as float]; s += count(v); } println("c13 {s} {len(v)}"); }
+// c14 — `len(v)` read in the body after the push: 1+2+3+4 = 10.
+fn c14() { v: vector<float> = []; s = 0; for i in 0..4 { v += [i as float]; s += len(v); } println("c14 {s}"); }
+// c15 — the element just pushed, read back by index: v[len-1] each time → 0+1+2+3 = 6.
+fn c15() { v: vector<float> = []; s = 0.0; for i in 0..4 { v += [i as float]; s += v[len(v) - 1] ?? -100.0; } println("c15 {s as integer}"); }
+// c16 — the vector starts EMPTY (no record yet): the first push allocates; 3 pushes → 3, len 3.
+fn c16() { v: vector<float> = []; for _i in 0..3 { v += [1.0]; } println("c16 {total(v) as integer} {len(v)}"); }
+// c17 — a push to a local while ANOTHER local is read by index in the loop (no alias
+// possible: two owners): out gets xs[i]+1 → 2+3+4 = 9.
+fn c17() { xs: vector<float> = [1.0, 2.0, 3.0]; out: vector<float> = []; for i in 0..3 { out += [(xs[i] ?? 0.0) + 1.0]; } println("c17 {total(out) as integer}"); }
+// c18 — a growing op of ANOTHER kind beside the push (a record append): declines.
+fn c18() { cvs: vector<Cv> = []; v: vector<float> = []; for i in 0..3 { v += [i as float]; cvs += [Cv { data: [i] }]; } println("c18 {total(v) as integer} {len(cvs)}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); }

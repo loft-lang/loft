@@ -611,12 +611,19 @@ pub struct VecHeader {
 /// call the `#rust` template made, not a second spelling of it.
 pub trait HoistScalar: Copy + 'static {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self);
+    /// The runtime's own append of this kind — the growth step of a hoisted push
+    /// (@PLN157 § V-q), so the capacity ladder has one definition.
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self);
 }
 
 impl HoistScalar for i64 {
     #[inline]
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_int(rec, fld, val);
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_i64(db, val);
     }
 }
 
@@ -625,6 +632,10 @@ impl HoistScalar for f32 {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_single(rec, fld, val);
     }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_f32(db, val);
+    }
 }
 
 impl HoistScalar for f64 {
@@ -632,6 +643,38 @@ impl HoistScalar for f64 {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_float(rec, fld, val);
     }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_f64(db, val);
+    }
+}
+
+/// A vector header a loop PUSHES through (@PLN157 § V-q, `@FR-R-Push`): the header plus the
+/// record's capacity in elements, so a push that fits is a bounds test, one store and a
+/// length bump, and only the growth step re-enters the runtime's append and re-derives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PushHeader {
+    /// The header every read of the path serves from; its `len` is kept current per push.
+    pub h: VecHeader,
+    /// Elements the record can hold before it must grow (0 for an absent vector).
+    pub cap: u32,
+}
+
+/// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
+#[must_use]
+pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
+    let h = vec_header(db, stores);
+    let cap = if h.rec == 0 {
+        0
+    } else {
+        // The claim header (a positive i32 word count) is what `vector_append` reads for
+        // the same number: words → bytes, minus the 8-byte header, over the element size
+        // — which the CALLER knows and this does not, so the capacity is kept in BYTES
+        // here and compared against `len * size` at the push.
+        let words = *keys::store(db, stores).addr::<i32>(h.rec, 0);
+        u32::try_from(words).map_or(0, |w| w.saturating_mul(8).saturating_sub(8))
+    };
+    PushHeader { h, cap }
 }
 
 /// Derive [`VecHeader`] for the vector `db` points at.

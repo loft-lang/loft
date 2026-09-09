@@ -1912,6 +1912,44 @@ impl Stores {
         }
     }
 
+    /// @PLN157 § V-q — ONE push through a hoisted [`crate::vector::PushHeader`]
+    /// (`@FR-R-Push`): when the element fits, a bounds test against the capacity, one
+    /// typed store at the next slot and a length bump written to BOTH the header and the
+    /// record (a runtime reader inside the loop — a callee's `len(v)` — sees every push);
+    /// otherwise the runtime's own append (its growth ladder, its checks) and a fresh
+    /// header, since the growth may have moved the record.  `size` is the element width
+    /// the op carries.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
+    /// before the push — the point of the switch.  Never in the emitted default.
+    #[inline]
+    pub fn push_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        val: T,
+    ) {
+        if p.h.rec != 0 && p.h.len.saturating_add(1).saturating_mul(size) <= p.cap {
+            if VERIFY {
+                assert_eq!(
+                    *p,
+                    crate::vector::push_header(db, &self.allocations),
+                    "hoisted push header is stale — the loop moved the vector it pushes to"
+                );
+            }
+            let store = &mut self.allocations[p.h.store_nr as usize];
+            *store.addr_mut::<T>(p.h.rec, crate::vector::checked_vec_pos(p.h.len, size)) = val;
+            p.h.len += 1;
+            *store.addr_mut::<u32>(p.h.rec, 4) = p.h.len;
+        } else {
+            T::append_in(self, db, val);
+            *p = crate::vector::push_header(db, &self.allocations);
+        }
+    }
+
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_ref_or_raise`.  Same body; native rewriter
     /// translates `s.vec_ref_or_raise(...)` →
