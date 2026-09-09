@@ -435,7 +435,9 @@ pub fn hoistable(
     }
     // @PLN157 § V-q (`@FR-R-Push`) — the paths the body pushes to.  The gate admitted every
     // push in the body as a fusable one over a pure path, so what is left to decide is
-    // ALIASING: a growth moves the pushed vector's record, so any other header naming that
+    // ALIASING (`@FR-R-Alias`), and then `@FR-R-State`: a pushed path leaves the read list,
+    // so it has ONE holder — which is why this block runs after every collector that can
+    // add a read candidate (the body's own reads, § V-p's callee inputs): a growth moves the pushed vector's record, so any other header naming that
     // same vector would go stale.  A single push beside no other candidate has nothing to
     // alias with and is admitted whatever its root.  Otherwise every push root must be
     // EXCLUSIVE — a local that owns its store, or the function's own return buffer — and a
@@ -525,7 +527,7 @@ fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
 }
 
 /// Does local `r` OWN the store it names — so no other variable of this frame can name
-/// that store (@PLN157 § V-q)?  Not a parameter (the caller's store), not a `&` link, an
+/// that store (@PLN157 § V-q)?  Enforces `@FR-R-Alias`'s exclusivity test.  Not a parameter (the caller's store), not a `&` link, an
 /// empty dep list (`@FR-O-Proxy`), and not captured by a closure.
 fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
     // `.base()`: the shape question sees through a `τ?` slot (`@FR-N-Shape`).

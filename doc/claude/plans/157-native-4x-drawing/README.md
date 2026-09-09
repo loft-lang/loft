@@ -42,6 +42,16 @@ loft-native within **4×** of plain Rust on every judged row of the drawing
 performance pass, with the library's loft source unchanged and every row's
 hash unchanged.
 
+**And, since 2026-09-09, the FORMAL RULING of what the native rewrites assume
+(owner's steer):** every rewrite the plan ships is a rule in
+[formal/rewrites.md](../../formal/rewrites.md) — the hoist STATE they compose
+through (`R-State`, `R-Refresh`, `R-Alias`) and one rule per rewrite, each with
+its switch, its falsifier and its sites — and the emitted routines are VALIDATED
+against those assumptions by two instruments: the checking forms at run time
+(`LOFT_HOIST_VERIFY=1`) and the emission audit at emission time (§ V-r, queued
+first).  The emitted Rust grows with every unit; a unit is not shipped until
+its assumptions are written as a rule and checkable by both.
+
 ## Effort + design
 
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
@@ -193,7 +203,15 @@ path a second, stale header until the order was fixed; the verifier caught it). 
 rows still over the bar are `smooth` 15.5× and `fronds` 12.9× (the allocation class, queue
 items 4b / 5 / the move) and `wide_line` 5.4× (its rasteriser's own arithmetic — profile at
 `--n 200000` to rank; the 4000-rep profile is half compile).  Check the GitHub gate dispatched
-on the § V-q commit before building on it.
+on the § V-q commit before building on it.  **The next unit is § V-r, the EMISSION AUDIT**
+(the plan's validation goal, above): `scripts/emission_audit.py` over a `--native-emit`
+output checks `R-State` (one holder per path expression per frame, every hoisted read /
+write / push / `.len` / twin argument naming the holder bound for its path), `R-Refresh`
+(no template append or growing op on a held path) and `R-Inputs` (a twin call hands in
+exactly the holders its parameters name), run by a test over every cell corpus and the
+consumer bench — the instrument that would have flagged the double holder before any run.
+After it the hoist-STATE builder (`hoistable` holds `R-State` by collector ORDER today; one
+`LoopState` with a single insert path, behaviour-preserving, M), then the rows.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
