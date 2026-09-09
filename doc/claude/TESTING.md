@@ -630,6 +630,18 @@ proving only that the file is sensitive to the build. **Read the `asserts` colum
 verdict** — a guard should move the channel it is about.
 
 
+⚠ **Two falsify runs at once used to corrupt each other, and the symptoms read as findings.**
+The target directories are shared between runs on purpose — `head-target` holds the HERE build
+for both the bulk and single paths, and a control is cached per ref — but cargo does not
+serialise itself across processes, so two writers produced a partial or stale binary.  Measured
+2026-09-09: an overlapping sweep and single run reported `this tree does not build` on a tree
+`cargo check` builds fine, a backend INERT with its `here` column unclean (indistinguishable
+from a native regression against a green suite), and an `exit 127` — a missing binary — in a
+bulk row.  Re-run serially, all three guards reproduced their receipts exactly.  Every build now
+takes its target directory's lock, so a run arriving mid-build WAITS for the finished binary;
+runs against different refs still proceed in parallel.  If you meet one of those three symptoms
+on an older checkout, suspect a concurrent run before the tree.
+
 **`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
 (`scripts/falsify.sh`). It builds `REF` in a cached worktree, runs the guard THERE and
 HERE, and compares four channels apart — **exit code, assertion failures, leaked stores,
