@@ -243,12 +243,12 @@ fn is_repository(dir: &str) -> bool {
 /// Arguments pop in reverse; `out` is a `&text` destination, the same shape
 /// `OpGetFileText` uses for a text answer that does not travel on the stack.
 pub fn n_git_query(stores: &mut Stores, stack: &mut DbRef) {
-    let out = *stores.get::<DbRef>(stack);
-    let dir = *stores.get::<Str>(stack);
-    let n = *stores.get::<i64>(stack);
-    let b = *stores.get::<Str>(stack);
-    let a = *stores.get::<Str>(stack);
-    let kind = *stores.get::<i64>(stack);
+    let out = stores.get::<DbRef>(stack);
+    let dir = stores.get::<Str>(stack);
+    let n = stores.get::<i64>(stack);
+    let b = stores.get::<Str>(stack);
+    let a = stores.get::<Str>(stack);
+    let kind = stores.get::<i64>(stack);
 
     let (code, text) = answer(kind, a.str(), b.str(), n, dir.str());
     *stores.store_mut(&out).addr_mut::<String>(out.rec, out.pos) = text;

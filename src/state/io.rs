@@ -18,8 +18,8 @@ impl State {
     When the reading was incorrect.
     */
     pub fn get_file_text(&mut self) {
-        let r = *self.get_stack::<DbRef>();
-        let file = *self.get_stack::<DbRef>();
+        let r = self.get_stack::<DbRef>();
+        let file = self.get_stack::<DbRef>();
         if file.rec == 0 {
             return;
         }
@@ -124,7 +124,7 @@ impl State {
             }
         } else if let Parts::Vector(elem_tp) = &self.database.types[db_tp as usize].parts {
             let elem_tp = *elem_tp;
-            let vec_ref = *self.database.store(&val).addr::<DbRef>(val.rec, val.pos);
+            let vec_ref = self.database.store(&val).read::<DbRef>(val.rec, val.pos);
             let (v_ptr, store_nr) = {
                 let store = self.database.store(&vec_ref);
                 (
@@ -155,7 +155,7 @@ impl State {
             // them (garbage) to the file; the read then filled the reader's record
             // with that garbage.  Native derefs (FileVal for DbRef); this was the
             // interp-only write half of the same defect.
-            let rec_ref = *self.database.store(&val).addr::<DbRef>(val.rec, val.pos);
+            let rec_ref = self.database.store(&val).read::<DbRef>(val.rec, val.pos);
             self.database
                 .read_data(&rec_ref, db_tp, little_endian, &mut data);
         } else {
@@ -166,8 +166,8 @@ impl State {
     }
 
     pub fn write_file(&mut self) {
-        let val = *self.get_stack::<DbRef>();
-        let file = *self.get_stack::<DbRef>();
+        let val = self.get_stack::<DbRef>();
+        let file = self.get_stack::<DbRef>();
         let db_tp = self.code::<u16>();
         if file.rec == 0 {
             return;
@@ -319,7 +319,7 @@ impl State {
                 .addr_mut::<String>(val.rec, val.pos) = s;
         } else if actual == n {
             if let Parts::Vector(_) = &self.database.types[db_tp as usize].parts {
-                let vec_ref = *self.database.store(&val).addr::<DbRef>(val.rec, val.pos);
+                let vec_ref = self.database.store(&val).read::<DbRef>(val.rec, val.pos);
                 self.database
                     .write_data(&vec_ref, db_tp, little_endian, &data);
             } else if matches!(
@@ -395,7 +395,7 @@ impl State {
                 // record was never populated and the delivered value was the slot
                 // bytes reinterpreted as a DbRef.  Native derefs (FileVal for
                 // DbRef); this was the interp-only read half.
-                let rec_ref = *self.database.store(&val).addr::<DbRef>(val.rec, val.pos);
+                let rec_ref = self.database.store(&val).read::<DbRef>(val.rec, val.pos);
                 self.database
                     .write_data(&rec_ref, db_tp, little_endian, &data);
             } else {
@@ -405,9 +405,9 @@ impl State {
     }
 
     pub fn read_file(&mut self) {
-        let bytes = *self.get_stack::<i64>() as i32;
-        let val = *self.get_stack::<DbRef>();
-        let file = *self.get_stack::<DbRef>();
+        let bytes = self.get_stack::<i64>() as i32;
+        let val = self.get_stack::<DbRef>();
+        let file = self.get_stack::<DbRef>();
         let db_tp = self.code::<u16>();
         if file.rec == 0 {
             return;
@@ -515,8 +515,8 @@ impl State {
     }
 
     pub fn seek_file(&mut self) {
-        let pos = *self.get_stack::<i64>();
-        let file = *self.get_stack::<DbRef>();
+        let pos = self.get_stack::<i64>();
+        let file = self.get_stack::<DbRef>();
         if file.rec == 0 {
             return;
         }
@@ -555,7 +555,7 @@ impl State {
     }
 
     pub fn size_file(&mut self) {
-        let file = *self.get_stack::<DbRef>();
+        let file = self.get_stack::<DbRef>();
         if file.rec == 0 {
             self.put_stack(i64::MIN);
             return;
@@ -586,7 +586,7 @@ impl State {
     }
 
     pub fn sync_file(&mut self) {
-        let file = *self.get_stack::<DbRef>();
+        let file = self.get_stack::<DbRef>();
         if file.rec == 0 {
             self.put_stack(false);
             return;
@@ -615,8 +615,8 @@ impl State {
     }
 
     pub fn truncate_file(&mut self) {
-        let size = *self.get_stack::<i64>();
-        let file = *self.get_stack::<DbRef>();
+        let size = self.get_stack::<i64>();
+        let file = self.get_stack::<DbRef>();
         if file.rec == 0 {
             self.put_stack(false);
             return;
@@ -678,7 +678,7 @@ impl State {
     }
 
     pub fn free_ref(&mut self) {
-        let db = *self.get_stack::<DbRef>();
+        let db = self.get_stack::<DbRef>();
         self.free_ref_db(db);
     }
 
@@ -692,7 +692,7 @@ impl State {
     /// cross-owner free.  Only reachable when the `LOFT_STORE_TAG` gate emitted
     /// this op (a deliberate testing build); the op is absent otherwise.
     pub fn free_ref_tag(&mut self) {
-        let db = *self.get_stack::<DbRef>();
+        let db = self.get_stack::<DbRef>();
         let tag = u32::from(self.code::<u16>());
         if db.store_nr != u16::MAX && (db.store_nr as usize) < self.database.allocations.len() {
             let st = &self.database.allocations[db.store_nr as usize];
@@ -719,7 +719,7 @@ impl State {
     /// allocation-site `tag` operand, stamp it on the store so a later
     /// `OpFreeRefTag` can verify the free corresponds.  Verification build only.
     pub fn store_tag(&mut self) {
-        let db = *self.get_stack::<DbRef>();
+        let db = self.get_stack::<DbRef>();
         let tag = u32::from(self.code::<u16>());
         if db.store_nr != u16::MAX && (db.store_nr as usize) < self.database.allocations.len() {
             self.database.allocations[db.store_nr as usize].tag = tag;
@@ -768,7 +768,7 @@ impl State {
     }
 
     pub fn sizeof_ref(&mut self) {
-        let db = *self.get_stack::<DbRef>();
+        let db = self.get_stack::<DbRef>();
         let new_value: i64 = if db.rec == 0 {
             0
         } else {
@@ -781,7 +781,7 @@ impl State {
     pub(super) fn format_db(&mut self) -> String {
         let db_tp = self.code::<u16>();
         let format = self.code::<u8>();
-        let val = *self.get_stack::<DbRef>();
+        let val = self.get_stack::<DbRef>();
         // validate DbRef and known_type before raw pointer access
         #[cfg(debug_assertions)]
         {
@@ -841,7 +841,7 @@ impl State {
         // for the parent enum's largest variant.  The parent's size covers
         // all variants; the variant's own size may be smaller (unit variants).
         let size = self.database.enum_parent_size(db_tp);
-        let mut db = *self.get_var::<DbRef>(var);
+        let mut db = self.get_var::<DbRef>(var);
         if crate::keys::trace_db() {
             eprintln!(
                 "[db] OpDatabase var={var} db_tp={db_tp} db=#{}@{},{} size={size}",
@@ -921,7 +921,7 @@ impl State {
     pub fn new_record(&mut self) {
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         let new_value = self.database.record_new(&data, parent_tp, fld);
         self.database.set_default_value(
             if fld == u16::MAX {
@@ -940,7 +940,7 @@ impl State {
     /// `codegen_runtime::OpGetRecord` is the native twin, normalised at its exit the same way.
     pub fn get_record(&mut self) {
         let (db_tp, key) = self.read_key(false);
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         let res = if data.rec == 0 {
             DbRef::NULL
         } else {
@@ -1135,7 +1135,7 @@ impl State {
         let till_key = self.code::<u8>();
         let till = self.stack_key(till_key, &keys);
         let from = self.stack_key(from_key, &keys);
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         // A holder with no record — a field reached through `nullref` — holds no
         // collection, and the cursor says so before any store is resolved: `finish ==
         // u32::MAX` is what `step` reads as "done", and the same test opens
@@ -1277,13 +1277,13 @@ impl State {
                 break;
             }
             match k.type_nr.abs() {
-                1 => key.push(Content::Long(*self.get_stack::<i64>())),
-                2 => key.push(Content::Long(*self.get_stack::<i64>())),
-                3 => key.push(Content::Single(*self.get_stack::<f32>())),
-                4 => key.push(Content::Float(*self.get_stack::<f64>())),
-                5 => key.push(Content::Long(i64::from(*self.get_stack::<bool>()))),
+                1 => key.push(Content::Long(self.get_stack::<i64>())),
+                2 => key.push(Content::Long(self.get_stack::<i64>())),
+                3 => key.push(Content::Single(self.get_stack::<f32>())),
+                4 => key.push(Content::Float(self.get_stack::<f64>())),
+                5 => key.push(Content::Long(i64::from(self.get_stack::<bool>()))),
                 6 => key.push(Content::Str(self.string())),
-                7 => key.push(Content::Long(i64::from(*self.get_stack::<u8>()))),
+                7 => key.push(Content::Long(i64::from(self.get_stack::<u8>()))),
                 // The five narrow STORAGE widths (`Parts::Int` / `Short` / `Byte` /
                 // `ShortRaw` / `IntRaw`).  Narrowing happens at the field boundary, so the bound a
                 // caller pushes for a ranged scan is an ordinary 8-byte integer whatever
@@ -1295,7 +1295,7 @@ impl State {
                 // iteration of a collection keyed on `u8` / `i16` / `i32` / a limited
                 // integer — including a bare `for r in coll`, which pushes bounds too, so
                 // the collection could be built and counted but never walked (loft#812).
-                8..=12 => key.push(Content::Long(*self.get_stack::<i64>())),
+                8..=12 => key.push(Content::Long(self.get_stack::<i64>())),
                 _ => panic!("Unknown key type"),
             }
         }
@@ -1311,10 +1311,10 @@ impl State {
         let state_var = self.code::<u16>();
         let on = self.code::<u8>();
         let arg = self.code::<u16>();
-        let cur = *self.get_var::<u32>(state_var);
-        let finish = *self.get_var::<u32>(state_var - 4);
+        let cur = self.get_var::<u32>(state_var);
+        let finish = self.get_var::<u32>(state_var - 4);
         let reverse = on & 64 != 0;
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         // The holder's record is tested BEFORE its store is resolved: a holder reached
         // through `nullref` has no store to resolve (`codegen_runtime::OpStep` asks in the
         // same order).
@@ -1439,8 +1439,8 @@ impl State {
         let on = self.code::<u8>();
         let tp = self.code::<u16>();
         let reverse = on & 64 != 0;
-        let cur = *self.get_var::<i32>(state_var);
-        let data = *self.get_stack::<DbRef>();
+        let cur = self.get_var::<i32>(state_var);
+        let data = self.get_stack::<DbRef>();
         // Defense-in-depth: coroutine DbRefs (store_nr == u16::MAX) must not reach remove().
         // The compiler already rejects e#remove on generator iterators (CO1.5c / S24), so this
         // guard only fires if that check is somehow bypassed — preventing release-build corruption.
@@ -1492,7 +1492,7 @@ impl State {
                 // @PLAN53 cluster 2 / 2f: get_var adds NO step, so this finish-read delta
                 // must thread step(12) the other way: −(step(12)+4) = −16 off (identity),
                 // −20 aligned.  The same disease as the case-0 fix above.
-                let finish = *self.get_var::<u32>(state_var - (self.stack_step(12) + 4) as u16);
+                let finish = self.get_var::<u32>(state_var - (self.stack_step(12) + 4) as u16);
                 // The removal and the cursor it leaves behind are one decision, shared with
                 // the native runtime (loft#1272) — `tp` is the Index TYPE, which the shared
                 // side turns into the fields offset tree navigation needs.
@@ -1540,13 +1540,13 @@ impl State {
     */
     pub fn clear(&mut self) {
         let tp = self.code::<u16>();
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         self.database.remove_claims(&data, tp);
     }
 
     pub fn append_copy(&mut self) {
         let tp = self.code::<u16>();
-        let count = *self.get_stack::<i64>();
+        let count = self.get_stack::<i64>();
         // A count is a TOTAL, and a negative total is not a shorter vector — it is not a
         // vector at all, so it clamps to zero and yields no elements. A bare `as u32`
         // instead turns `[7; -1]` into 4 294 967 295 `copy_block`s that walk off the store
@@ -1554,7 +1554,7 @@ impl State {
         // Twin of `OpAppendCopy` (`src/codegen_runtime.rs`) — keep the two in step, or
         // they disagree on a heap-corrupting input.
         let multiply = count.clamp(0, i64::from(u32::MAX)) as u32;
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         let ctp = self.database.content(tp);
         let size = u32::from(self.database.size(ctp));
         let length = vector::length_vector(&data, &self.database.allocations);
@@ -1616,8 +1616,8 @@ impl State {
             crate::keys::uaf_copy_enter();
         }
         let raw_tp = self.code::<u16>();
-        let to = *self.get_stack::<DbRef>();
-        let data = *self.get_stack::<DbRef>();
+        let to = self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         self.do_copy_record(data, to, raw_tp);
         if mark {
             crate::keys::uaf_copy_exit();
@@ -1870,7 +1870,7 @@ impl State {
     pub fn copy_ref_or_null(&mut self) {
         let pos = self.code::<u16>();
         let raw_tp = self.code::<u16>();
-        let src = *self.get_stack::<DbRef>();
+        let src = self.get_stack::<DbRef>();
         // `rec == 0` is the absence test, not `store_nr == u16::MAX` — the doc above already
         // says so ("`v == null` … tests `rec == 0`") while the guard asked the narrower
         // question.  A read that names no record answers `nullref` (`DbRef::or_null`,
@@ -1887,14 +1887,14 @@ impl State {
             // it: that ALLOCATES a store and hands back a ref into it, so the slot read as
             // present to `== null` while rendering as null, and one store leaked per null
             // result (loft#1346, the interpreter's nullable-record reassign copy).
-            let dst = *self.get_var::<DbRef>(pos);
+            let dst = self.get_var::<DbRef>(pos);
             if dst.store_nr != u16::MAX {
                 self.database.free(&dst);
             }
             *self.mut_var::<DbRef>(pos) = DbRef::NULL;
             return;
         }
-        let dst = *self.get_var::<DbRef>(pos);
+        let dst = self.get_var::<DbRef>(pos);
         self.do_copy_record(src, dst, raw_tp);
     }
 
@@ -1915,13 +1915,13 @@ impl State {
         let pos = self.code::<u16>();
         let raw_tp = self.code::<u16>();
         let code_pos = self.code_pos;
-        let witness = *self.get_stack::<DbRef>();
-        let src = *self.get_stack::<DbRef>();
+        let witness = self.get_stack::<DbRef>();
+        let src = self.get_stack::<DbRef>();
         if src.store_nr != u16::MAX && src.store_nr == witness.store_nr {
             // BORROW arm — materialise: `raw_tp`'s `0x8000` source-free bit applies to
             // the COPY, not the fresh allocation, so mask it for `alloc_record_at`.
             self.alloc_record_at(pos, raw_tp & 0x7fff, code_pos);
-            let new_dst = *self.get_var::<DbRef>(pos);
+            let new_dst = self.get_var::<DbRef>(pos);
             self.do_copy_record(src, new_dst, raw_tp);
         } else {
             // OWNED arm (or null) — adopt the store directly.
@@ -1942,8 +1942,8 @@ impl State {
         let raw_tp = self.code::<u16>();
         let free_source = raw_tp & 0x8000 != 0;
         let tp = raw_tp & 0x7FFF;
-        let dest = *self.get_stack::<DbRef>();
-        let src = *self.get_stack::<DbRef>();
+        let dest = self.get_stack::<DbRef>();
+        let src = self.get_stack::<DbRef>();
         // loft#1150 — an ABSENT source copies NOTHING.  A `-> hash<T[k]>?` that answers
         // `null` reaches here as the `u16::MAX` sentinel, and `copy_claims` dereferences the
         // source store: `allocations[65535]` panicked on both backends.  The destination is
@@ -1983,15 +1983,15 @@ impl State {
         let raw_tp = self.code::<u16>();
         let free_source = raw_tp & 0x8000 != 0;
         let db_tp = raw_tp & 0x7FFF;
-        let value = *self.get_stack::<DbRef>();
-        let coll = *self.get_stack::<DbRef>();
+        let value = self.get_stack::<DbRef>();
+        let coll = self.get_stack::<DbRef>();
         self.database.set_keyed(&coll, &value, db_tp, free_source);
     }
 
     pub fn hash_add(&mut self) {
         let tp = self.code::<u16>();
-        let rec = *self.get_stack::<DbRef>();
-        let data = *self.get_stack::<DbRef>();
+        let rec = self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         hash::add(
             &data,
             &rec,
@@ -2002,12 +2002,12 @@ impl State {
 
     pub fn validate(&mut self) {
         let tp = self.code::<u16>();
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         self.database.validate(&data, tp);
     }
 
     pub fn hash_find(&mut self) {
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         let (db_tp, key) = self.read_key(true);
         let res = hash::find(
             &data,
@@ -2028,8 +2028,8 @@ impl State {
     pub fn hash_remove(&mut self) {
         let raw = self.code::<u16>();
         let tp = raw & !crate::database::CLEAR_KEYED_VIEW;
-        let rec = *self.get_stack::<DbRef>();
-        let data = *self.get_stack::<DbRef>();
+        let rec = self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         if rec.rec != 0 {
             if raw & crate::database::CLEAR_KEYED_VIEW == 0 {
                 self.database.remove_owned(&data, &rec, tp);
@@ -2053,12 +2053,12 @@ impl State {
                 break;
             }
             match k {
-                0 | 1 => key.push(Content::Long(*self.get_stack::<i64>())),
-                2 => key.push(Content::Single(*self.get_stack::<f32>())),
-                3 => key.push(Content::Float(*self.get_stack::<f64>())),
-                4 => key.push(Content::Long(i64::from(*self.get_stack::<bool>()))),
+                0 | 1 => key.push(Content::Long(self.get_stack::<i64>())),
+                2 => key.push(Content::Single(self.get_stack::<f32>())),
+                3 => key.push(Content::Float(self.get_stack::<f64>())),
+                4 => key.push(Content::Long(i64::from(self.get_stack::<bool>()))),
                 5 => key.push(Content::Str(self.string())),
-                6 => key.push(Content::Long(i64::from(*self.get_stack::<u32>()))),
+                6 => key.push(Content::Long(i64::from(self.get_stack::<u32>()))),
                 _ => {
                     // Narrow integer storage (Parts::Int / Short / ShortRaw /
                     // Byte) — the lookup value is still an i64 on the stack
@@ -2072,9 +2072,9 @@ impl State {
                         | crate::database::Parts::Short(_, _)
                         | crate::database::Parts::ShortRaw(_, _)
                         | crate::database::Parts::Byte(_, _) => {
-                            key.push(Content::Long(*self.get_stack::<i64>()));
+                            key.push(Content::Long(self.get_stack::<i64>()));
                         }
-                        _ => key.push(Content::Long(i64::from(*self.get_stack::<u8>()))),
+                        _ => key.push(Content::Long(i64::from(self.get_stack::<u8>()))),
                     }
                 }
             }
@@ -2092,8 +2092,8 @@ impl State {
         }
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
-        let record = *self.get_stack::<DbRef>();
-        let data = *self.get_stack::<DbRef>();
+        let record = self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         self.database.record_finish(&data, &record, parent_tp, fld);
         if mark {
             crate::keys::uaf_copy_exit();
@@ -2132,8 +2132,8 @@ impl State {
     pub fn insert_vector(&mut self) {
         let size = self.code::<u16>();
         let db_tp = self.code::<u16>();
-        let index = *self.get_stack::<i64>();
-        let r = *self.get_stack::<DbRef>();
+        let index = self.get_stack::<i64>();
+        let r = self.get_stack::<DbRef>();
         let new_value =
             vector::insert_vector(&r, u32::from(size), index, &mut self.database.allocations);
         self.database.set_default_value(db_tp, &new_value);

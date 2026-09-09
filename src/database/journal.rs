@@ -224,7 +224,7 @@ impl Journal {
     /// relocated) record handle `resize` returns.
     fn ensure_capacity(&mut self) {
         let needed_words = (DATA_OFF + (self.count + 1) * STRIDE).div_ceil(8);
-        let cur_words = (*self.index.addr::<i32>(self.rec, 0)) as u32;
+        let cur_words = (self.index.read::<i32>(self.rec, 0)) as u32;
         if needed_words > cur_words {
             self.rec = self.index.resize(self.rec, needed_words.max(cur_words * 2));
         }
@@ -449,10 +449,10 @@ mod tests {
     }
 
     fn read_i64(stores: &Stores, sn: u16, rec: u32, off: u32) -> i64 {
-        *stores.allocations[sn as usize].addr::<i64>(rec, off)
+        stores.allocations[sn as usize].read::<i64>(rec, off)
     }
     fn write_i64(stores: &mut Stores, sn: u16, rec: u32, off: u32, v: i64) {
-        *stores.allocations[sn as usize].addr_mut::<i64>(rec, off) = v;
+        stores.allocations[sn as usize].write::<i64>(rec, off, v);
     }
 
     /// Undo then redo a single scalar-field edit, exact byte fidelity both ways.
@@ -762,7 +762,7 @@ mod tests {
             "A,B,C,D laid out adjacent"
         );
 
-        let hdr = |s: &Store, p: u32| *s.addr::<i32>(p, 0);
+        let hdr = |s: &Store, p: u32| s.read::<i32>(p, 0);
 
         // Free C, then B (absorbs C forward), then A (absorbs B+C) -> one free block
         // [a, d) with b strictly in the middle.
@@ -822,7 +822,7 @@ mod tests {
         }
         let bytes = |w: u32| w * 8; // words -> bytes
         // Actual claimed size from the header (claim may hand out more than requested).
-        let real_size = |s: &Store, p: u32| (*s.addr::<i32>(p, 0)) as u32;
+        let real_size = |s: &Store, p: u32| (s.read::<i32>(p, 0)) as u32;
         let fill = |s: &mut Store, p: u32, sz: u32, tag: u32| {
             for w in 1..sz {
                 s.set_u32_raw(p, w * 8, tag | w);
@@ -957,7 +957,7 @@ mod tests {
         }
 
         let bytes = |w: u32| w * 8;
-        let real = |s: &Store, p: u32| (*s.addr::<i32>(p, 0)) as u32;
+        let real = |s: &Store, p: u32| (s.read::<i32>(p, 0)) as u32;
         let fill = |s: &mut Store, p: u32, sz: u32, tag: &mut u32| {
             *tag = tag.wrapping_add(1);
             for w in 1..sz {
@@ -1082,7 +1082,7 @@ mod tests {
         stores.allocations[sn as usize].get_u32_raw(rec, off)
     }
     fn hdr(stores: &Stores, sn: u16, rec: u32) -> i32 {
-        *stores.allocations[sn as usize].addr::<i32>(rec, 0)
+        stores.allocations[sn as usize].read::<i32>(rec, 0)
     }
 
     /// @PLN16.J — `record_insert` / `record_free` round-trip on the `Journal` itself.

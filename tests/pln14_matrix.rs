@@ -70,7 +70,7 @@ fn snapshot_round_trip(
 ) -> (String, String, bool) {
     let (p, mut state) = build(defs, ty, expr);
     // `get_stack` CONSUMES — read the root DbRef exactly once.
-    let root = *state.get_stack::<DbRef>();
+    let root = state.get_stack::<DbRef>();
     assert_readable(&root, &state, expr);
     let tp = state.database.name(type_name);
     assert!(tp != u16::MAX, "unresolved type name `{type_name}`");
@@ -210,7 +210,7 @@ fn materialize_round_trip(
     expr: &str,
 ) -> (String, String) {
     let (_p, mut state) = build(defs, ty, expr);
-    let root = *state.get_stack::<DbRef>();
+    let root = state.get_stack::<DbRef>();
     assert_readable(&root, &state, expr);
     let tp = state.database.name(type_name);
     assert!(tp != u16::MAX, "unresolved type name `{type_name}`");
@@ -252,7 +252,7 @@ fn materialize_gives_each_value_its_own_home() {
 #[test]
 fn materialize_of_null_is_null() {
     let (_p, mut state) = build(&[STRUCTS], "P", "P { x: 1, y: 2 }");
-    let root = *state.get_stack::<DbRef>();
+    let root = state.get_stack::<DbRef>();
     let tp = state.database.name("P");
     let session = state.database.database(256);
     let null_src = DbRef {
@@ -276,11 +276,7 @@ fn cross_binding_is_a_copy_not_an_alias() {
         "integer",
         "a = [1, 2, 3];\n  b = a;\n  a[0] = 99;\n  b[0]",
     );
-    assert_eq!(
-        *state.get_stack::<i64>(),
-        1,
-        "b aliased a (expected a copy)"
-    );
+    assert_eq!(state.get_stack::<i64>(), 1, "b aliased a (expected a copy)");
 }
 
 /// Negative control: a faulting RHS records a runtime error and NO value — the
@@ -375,7 +371,7 @@ fn calibration_guard_catches_an_unreadable_root() {
 fn a_materialized_value_is_self_contained_in_one_store() {
     for (ty, type_name, expr) in heap_cases() {
         let (_p, mut state) = build(&[STRUCTS], ty, &expr);
-        let root = *state.get_stack::<DbRef>();
+        let root = state.get_stack::<DbRef>();
         assert_readable(&root, &state, &expr);
         let tp = state.database.name(type_name);
         let mut before = String::new();
@@ -420,7 +416,7 @@ fn a_materialized_value_is_self_contained_in_one_store() {
 fn a_session_store_survives_re_adoption_at_a_different_slot() {
     for (ty, type_name, expr) in heap_cases() {
         let (p, mut state) = build(&[STRUCTS], ty, &expr);
-        let root = *state.get_stack::<DbRef>();
+        let root = state.get_stack::<DbRef>();
         assert_readable(&root, &state, &expr);
         let tp = state.database.name(type_name);
         let mut before = String::new();

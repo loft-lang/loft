@@ -237,7 +237,7 @@ impl State {
             while off + 12 <= safe_top {
                 // Read three 4-byte words manually, byte-by-byte, to sidestep
                 // any potential alignment or bounds issue.
-                let b = |o: u32| -> u8 { *store.addr::<u8>(self.stack_cur.rec, base + o) };
+                let b = |o: u32| -> u8 { store.read::<u8>(self.stack_cur.rec, base + o) };
                 let w0 = u32::from_le_bytes([b(off), b(off + 1), b(off + 2), b(off + 3)]);
                 let sn = (w0 & 0xFFFF) as u16; // store_nr lives in the low 2 bytes
                 let rec = u32::from_le_bytes([b(off + 4), b(off + 5), b(off + 6), b(off + 7)]);
@@ -318,7 +318,7 @@ impl State {
         const ROW: u32 = 16;
         let store = self.database.store(&self.stack_cur);
         let base = scan.base;
-        let b = |o: u32| -> u8 { *store.addr::<u8>(self.stack_cur.rec, base + o) };
+        let b = |o: u32| -> u8 { store.read::<u8>(self.stack_cur.rec, base + o) };
         writeln!(f, "[STACK] hex dump (stack_pos={}, base={base}):", scan.sp)?;
         let mut off = 0u32;
         while off < scan.safe_top {
@@ -420,7 +420,7 @@ impl State {
         if total > store.byte_capacity() {
             return None;
         }
-        Some(*store.addr::<T>(self.stack_cur.rec, self.stack_cur.pos + abs_pos))
+        Some(store.read::<T>(self.stack_cur.rec, self.stack_cur.pos + abs_pos))
     }
 
     /// Enumerate every slot-assigned variable in the current call frame with a
@@ -1371,7 +1371,7 @@ impl State {
         write!(log, "  snapshot[{start}..{sp}]:")?;
         let store = self.database.store(&self.stack_cur);
         for offset in start..sp {
-            let byte = *store.addr::<u8>(self.stack_cur.rec, base + offset);
+            let byte = store.read::<u8>(self.stack_cur.rec, base + offset);
             write!(log, " {byte:02x}")?;
         }
         writeln!(log)?;
@@ -1577,7 +1577,7 @@ impl State {
         let till_key = self.code::<u8>();
         let till = self.stack_key(till_key, &keys);
         let from = self.stack_key(from_key, &keys);
-        let data = *self.get_stack::<DbRef>();
+        let data = self.get_stack::<DbRef>();
         write!(
             log,
             "data=ref({},{},{}), on={on}, arg={arg}, keys={keys:?}, from={from:?}, till={till:?})",
@@ -1594,7 +1594,7 @@ impl State {
         self.stack_pos -= u32::from(discard);
         self.stack_pos += ret;
         let st = self.stack_pos;
-        let addr = *self.get_var::<u32>(0);
+        let addr = self.get_var::<u32>(0);
         self.stack_pos = cur_st;
         self.code_pos = cur_code;
         attr.insert(a_nr, format!("ret={addr}[{st}]"));
@@ -1648,7 +1648,7 @@ impl State {
         if def.name() == "OpConvRefFromNull" {
             writeln!(log, " -> {v}[{}]", self.stack_pos)?;
             self.stack_pos = stack;
-            let db = *self.get_stack::<DbRef>();
+            let db = self.get_stack::<DbRef>();
             writeln!(
                 log,
                 "  ; store-alloc nr={} max={}",
@@ -1667,11 +1667,11 @@ impl State {
             let stack = self.stack_pos;
             let known = *k;
             let res = match known {
-                0 => format!("{}", *self.get_stack::<i64>()), // integer
-                1 => format!("{}", *self.get_stack::<i64>()), // long
-                2 => format!("{}", *self.get_stack::<f32>()), // single
-                3 => format!("{}", *self.get_stack::<f64>()), // float
-                4 => format!("{}", *self.get_stack::<u8>() == 1), // boolean
+                0 => format!("{}", self.get_stack::<i64>()), // integer
+                1 => format!("{}", self.get_stack::<i64>()), // long
+                2 => format!("{}", self.get_stack::<f32>()), // single
+                3 => format!("{}", self.get_stack::<f64>()), // float
+                4 => format!("{}", self.get_stack::<u8>() == 1), // boolean
                 5 => {
                     let s = self.string();
                     match s.try_str() {
@@ -1682,16 +1682,16 @@ impl State {
                         Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                     }
                 } // text
-                6 => format!("{}", *self.get_stack::<char>()), // character
+                6 => format!("{}", self.get_stack::<char>()), // character
                 _ if known != u16::MAX => match &self.database.types[known as usize].parts {
                     crate::database::Parts::Enum(_) => {
-                        let val = *self.get_stack::<u8>();
+                        let val = self.get_stack::<u8>();
                         format!("{}({val})", self.database.enum_val(known, val))
                     }
                     crate::database::Parts::Struct(_)
                     | crate::database::Parts::EnumValue(_, _)
                     | crate::database::Parts::Vector(_) => {
-                        let val = *self.get_stack::<DbRef>();
+                        let val = self.get_stack::<DbRef>();
                         let (depth, elems) = Self::dump_limits();
                         self.database.dump_compact(&val, known, depth, elems)
                     }
@@ -1723,9 +1723,9 @@ impl State {
 
     pub(super) fn dump_stack(&mut self, typedef: &Type, code: u32, data: &Data) -> String {
         match typedef {
-            Type::Integer(_) => format!("{}", *self.get_stack::<i64>()),
+            Type::Integer(_) => format!("{}", self.get_stack::<i64>()),
             Type::Character => {
-                let c = *self.get_stack::<char>();
+                let c = self.get_stack::<char>();
                 if c == char::from(0) {
                     "null".to_string()
                 } else {
@@ -1734,7 +1734,7 @@ impl State {
             }
             Type::Enum(tp, false, _) => {
                 if code == u32::MAX {
-                    format!("{}", *self.get_stack::<u8>())
+                    format!("{}", self.get_stack::<u8>())
                 } else {
                     let known = if self.types.contains_key(&code) {
                         self.types[&code]
@@ -1743,12 +1743,12 @@ impl State {
                     } else {
                         data.def(*tp).known_type()
                     };
-                    let val = *self.get_stack::<u8>();
+                    let val = self.get_stack::<u8>();
                     format!("{}({val})", self.database.enum_val(known, val))
                 }
             }
-            Type::Single => format!("{}", *self.get_stack::<f32>()),
-            Type::Float => format!("{}", *self.get_stack::<f64>()),
+            Type::Single => format!("{}", self.get_stack::<f32>()),
+            Type::Float => format!("{}", self.get_stack::<f64>()),
             Type::Text(_) => {
                 // Guard: check stack has room for a Str read.
                 let needed = self.stack_cur.pos + self.stack_pos;
@@ -1765,14 +1765,14 @@ impl State {
                     Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                 }
             }
-            Type::Boolean => format!("{}", *self.get_stack::<u8>() == 1),
+            Type::Boolean => format!("{}", self.get_stack::<u8>() == 1),
             Type::Reference(tp, _) | Type::Enum(tp, true, _) => {
                 let known = if self.types.contains_key(&code) {
                     self.types[&code]
                 } else {
                     data.def(*tp).known_type()
                 };
-                let val = *self.get_stack::<DbRef>();
+                let val = self.get_stack::<DbRef>();
                 if known == u16::MAX || val.store_nr as usize >= self.database.allocations.len() {
                     return format!("ref({},{},{})", val.store_nr, val.rec, val.pos);
                 }
@@ -1787,7 +1787,7 @@ impl State {
                 // Guard: the record must be live (positive fld-0 header) before we
                 // dereference.
                 if val.rec != 0 {
-                    let hdr = *store.addr::<i32>(val.rec, 0);
+                    let hdr = store.read::<i32>(val.rec, 0);
                     if hdr <= 0 {
                         return format!("ref({},{},{})=<freed>", val.store_nr, val.rec, val.pos);
                     }
@@ -1796,7 +1796,7 @@ impl State {
                 self.database.dump_compact(&val, known, depth, elems)
             }
             Type::Vector(_, _) => {
-                let val = *self.get_stack::<DbRef>();
+                let val = self.get_stack::<DbRef>();
                 let known = if self.types.contains_key(&code) {
                     self.types[&code]
                 } else {

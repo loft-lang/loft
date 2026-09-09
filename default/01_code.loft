@@ -145,7 +145,7 @@ fn OpConstFalse() -> boolean;
 fn OpCastTextFromBool(v1: boolean) -> text;
 #rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
-#rust"*s.get_var::<u8>(@pos)"
+#rust"s.get_var::<u8>(@pos)"
 fn OpPutBool(var: const u16, value: boolean);
 #rust"s.put_var(@var, @value);"
 fn OpNot(v1: boolean) -> boolean;
@@ -194,9 +194,9 @@ fn OpConstShort(val: const i16) -> integer;
 fn OpConstTiny(val: const i8) -> integer;
 #rust"i64::from(@val)"
 fn OpVarInt(pos: const u16) -> integer;
-#rust"*s.get_var::<i64>(@pos)"
+#rust"s.get_var::<i64>(@pos)"
 fn OpVarCharacter(pos: const u16) -> character;
-#rust"*s.get_var::<char>(@pos)"
+#rust"s.get_var::<char>(@pos)"
 fn OpPutInt(pos: const u16, value: integer);
 #rust"s.put_var(@pos, @value);"
 fn OpPutCharacter(pos: const u16, value: character);
@@ -315,7 +315,7 @@ pub fn floor_mod(both: integer, divisor: integer) -> integer? {
 fn OpConstSingle(val: const single) -> single;
 #rust"@val"
 fn OpVarSingle(pos: const u16) -> single;
-#rust"*s.get_var::<f32>(@pos)"
+#rust"s.get_var::<f32>(@pos)"
 fn OpPutSingle(pos: const u16, value: single);
 #rust"s.put_var(@pos, @value);"
 fn OpConvSingleFromNull() -> single;
@@ -470,7 +470,7 @@ fn OpFormatStackSingle(
 fn OpConstFloat(val: const float) -> float;
 #rust"@val"
 fn OpVarFloat(pos: const u16) -> float;
-#rust"*s.get_var::<f64>(@pos)"
+#rust"s.get_var::<f64>(@pos)"
 fn OpPutFloat(pos: const u16, value: float);
 #rust"s.put_var(@pos, @value);"
 fn OpConvFloatFromNull() -> float;
@@ -824,7 +824,7 @@ fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
 type enumerate size(1);
 fn OpVarEnum(pos: const u16) -> enumerate;
-#rust"*s.get_var::<u8>(@pos)"
+#rust"s.get_var::<u8>(@pos)"
 fn OpConstEnum(val: const enumerate) -> enumerate;
 #rust"@val"
 fn OpPutEnum(pos: const u16, value: enumerate);
@@ -916,7 +916,7 @@ fn OpFreeScratch(scratch: reference);
 #rust"s.database.free_iteration_scratch(&@scratch);"
 fn OpSizeofRef(val: reference) -> integer;
 fn OpVarRef(pos: const u16) -> reference;
-#rust"{{let r = *s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
+#rust"{{let r = s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
 fn OpPutRef(pos: const u16, value: reference);
 #rust"s.put_var(@pos, @value);"
 fn OpEqRef(v1: reference, v2: reference) -> boolean;
@@ -1068,7 +1068,7 @@ type vector size(4);
 type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
-#rust"*s.get_var::<DbRef>(@pos)"
+#rust"s.get_var::<DbRef>(@pos)"
 // Plan-07 phase 4e.3 — tag the next format-string null render with a
 // fault-kind label.  Emitted by 4e.1's format-scope swap immediately
 // before each fault-prone Nullable peer so the format conversion op

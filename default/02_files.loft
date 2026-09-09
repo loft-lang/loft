@@ -1121,12 +1121,12 @@ fn OpCoroutineExhausted(gen: reference) -> boolean;
 // store, so reading the slot as a [u8; 20] integer array is UB (Miri: uninit at [18]).
 // MaybeUninit copies the bytes without requiring them initialised — byte-identical.
 fn OpVarFnRef(pos: const u16) -> text;
-#rust"*s.get_var::<[std::mem::MaybeUninit<u8>; 20]>(@pos)"
+#rust"s.get_var::<[std::mem::MaybeUninit<u8>; 20]>(@pos)"
 // A5.6-1: Pop 20-byte fn-ref value from stack into frame variable at pos.
 // WARNING (C40): same type mismatch as OpVarFnRef above — see C30 guard.
 // @PLAN53 cluster 4: MaybeUninit, not [u8; 20] — see OpVarFnRef above.
 fn OpPutFnRef(pos: const u16, _fnref: text);
-#rust"{{ let v = *s.get_stack::<[std::mem::MaybeUninit<u8>; 20]>(); s.put_var(@pos, v); }}"
+#rust"{{ let v = s.get_stack::<[std::mem::MaybeUninit<u8>; 20]>(); s.put_var(@pos, v); }}"
 // Push a pre-built constant's DbRef from the constant store.
 // `s.const_ref_at(...)` (vs raw `s.const_refs[...]` indexing) lets the
 // native-codegen substitution rename to `stores.const_ref_at_runtime(`,

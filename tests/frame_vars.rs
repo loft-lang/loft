@@ -384,7 +384,7 @@ fn reserve_poison_fires_on_uninit_slot_read() {
     // Reserve a frame region WITHOUT initialising it, then pop a slot the frame
     // never wrote.  Under reserve-poison every byte is drawn from the sentinel.
     state.reserve_frame(20);
-    let word: u32 = *state.get_stack::<u32>();
+    let word: u32 = state.get_stack::<u32>();
     let bytes = word.to_le_bytes();
     assert!(
         bytes.iter().all(|b| matches!(b, 0xEF | 0xBE | 0xAD | 0xDE)),

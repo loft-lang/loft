@@ -1174,7 +1174,7 @@ fn render_capture(
         // boolean) is claiming a value the language says is absent.  The panel's twin,
         // `State::render_frame_local`, has answered this way since loft#1459 site 1.
         Type::Integer(_) => {
-            let n = *state.get_stack::<i64>();
+            let n = state.get_stack::<i64>();
             *captured = Some(Captured::Scalar(ScalarValue::Integer(n)));
             Some(if n == i64::MIN {
                 "null".to_string()
@@ -1183,7 +1183,7 @@ fn render_capture(
             })
         }
         Type::Float => {
-            let v = *state.get_stack::<f64>();
+            let v = state.get_stack::<f64>();
             *captured = Some(Captured::Scalar(ScalarValue::Float(v)));
             Some(if v.is_nan() {
                 "null".to_string()
@@ -1193,7 +1193,7 @@ fn render_capture(
         }
         // own-format `2f` isn't valid JSON; drop the suffix for `json`.
         Type::Single if json => {
-            let v = *state.get_stack::<f32>();
+            let v = state.get_stack::<f32>();
             *captured = Some(Captured::Scalar(ScalarValue::Single(v)));
             Some(if v.is_nan() {
                 "null".to_string()
@@ -1202,7 +1202,7 @@ fn render_capture(
             })
         }
         Type::Single => {
-            let v = *state.get_stack::<f32>();
+            let v = state.get_stack::<f32>();
             *captured = Some(Captured::Scalar(ScalarValue::Single(v)));
             Some(if v.is_nan() {
                 "null".to_string()
@@ -1214,7 +1214,7 @@ fn render_capture(
         // byte is the absence, which is the same split `Stores::is_null` makes (`> 1`)
         // rather than the narrower `== 255` — one home for the two to agree on.
         Type::Boolean => {
-            let raw = *state.get_stack::<u8>();
+            let raw = state.get_stack::<u8>();
             *captured = Some(Captured::Scalar(ScalarValue::Boolean(raw == 1)));
             Some(
                 match raw {
@@ -1229,7 +1229,7 @@ fn render_capture(
         // Codepoint 0 is `character`'s reserved absence (`formal/types.md`, loft#1014),
         // not a renderable character — `char::from_u32` would happily answer `'\0'`.
         Type::Character => {
-            let raw = *state.get_stack::<u32>();
+            let raw = state.get_stack::<u32>();
             *captured = Some(Captured::Scalar(ScalarValue::Character(raw)));
             if raw == 0 {
                 return Some("null".to_string());
@@ -1266,7 +1266,7 @@ fn render_capture(
             if tp == u16::MAX {
                 return None;
             }
-            let db = *state.get_stack::<crate::keys::DbRef>();
+            let db = state.get_stack::<crate::keys::DbRef>();
             *captured = Some(Captured::Heap(db));
             let mut out = String::new();
             if json {
@@ -1282,7 +1282,7 @@ fn render_capture(
             if tp == u16::MAX {
                 return None;
             }
-            let disc = *state.get_stack::<u8>();
+            let disc = state.get_stack::<u8>();
             *captured = Some(Captured::Scalar(ScalarValue::SimpleEnum(disc)));
             if crate::database::Stores::enum_is_null(disc) {
                 Some("null".to_string())
@@ -2788,7 +2788,7 @@ impl ReplSession {
         } else {
             // The root `DbRef` is the function's return on the build stack top; its
             // store_nr is in `[floor, build.max)`, valid in live after the graft.
-            let db = *build.get_stack::<crate::keys::DbRef>();
+            let db = build.get_stack::<crate::keys::DbRef>();
             match self.paused.as_deref_mut() {
                 Some(live) => {
                     live.database.adopt_value_stores(&mut build.database, floor);

@@ -19,12 +19,12 @@ mod common;
 use common::cached_default;
 
 fn n_double_it(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<i32>(stack);
+    let v = stores.get::<i32>(stack);
     stores.put(stack, v * 2);
 }
 
 fn n_add_two(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<i32>(stack);
+    let v = stores.get::<i32>(stack);
     stores.put(stack, v + 2);
 }
 

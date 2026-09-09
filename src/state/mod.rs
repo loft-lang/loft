@@ -818,7 +818,7 @@ impl State {
             fn_var >= 20,
             "fn_call_ref: fn_var={fn_var} < 20 — fn-ref slot is 20B (d_nr i64 + closure DbRef)"
         );
-        let d_nr_i64 = *self.get_var::<i64>(fn_var);
+        let d_nr_i64 = self.get_var::<i64>(fn_var);
         // Negative d_nr = un-initialised slot (integer null sentinel = i64::MIN).
         assert!(
             d_nr_i64 >= 0,
@@ -969,7 +969,7 @@ impl State {
         // the wrong offset.  The hidden-buf pushes above DO shift TOS,
         // so we must read closure AFTER them but compute its offset
         // against the shifted TOS.  Adjust fn_var by hidden_bufs_size.
-        let closure = *self.get_var::<DbRef>(fn_var + hidden_bufs_size - 8);
+        let closure = self.get_var::<DbRef>(fn_var + hidden_bufs_size - 8);
         let has_closure = closure.rec != 0;
         // Measured, not assumed, for the same reason as the hidden buffers above:
         // the callee's frame must be told the span these pushes really occupy.
@@ -1181,7 +1181,7 @@ impl State {
         }
         let fn_stack = self.stack_pos;
         self.stack_pos += u32::from(ret);
-        self.code_pos = *self.get_var::<u32>(0);
+        self.code_pos = self.get_var::<u32>(0);
         self.copy_result(value, pos, fn_stack);
         // Both lists are consumed here, and the OR is load-bearing: a fn-ref call whose callee
         // allocated no buffer still leaves a snapshot, and skipping the release for it left that
@@ -1241,7 +1241,7 @@ impl State {
             .saturating_sub(1);
         let returned: Option<DbRef> = (usize::from(value) == size_of::<DbRef>()).then(|| {
             let back = u16::try_from(self.stack_step(u32::from(value))).unwrap_or(0);
-            *self.get_var::<DbRef>(back)
+            self.get_var::<DbRef>(back)
         });
         // loft#1185 — a store this frame MINTED and is handing back has no owner: the callee
         // does not free what it returns, and its caller may be a forwarding function whose
@@ -1689,7 +1689,7 @@ impl State {
     /// Panics on re-entrant advance (coroutine already running).
     #[allow(clippy::too_many_lines)] // borrow-checker constraints prevent splitting this function
     pub fn coroutine_next(&mut self, value_size: u32) {
-        let gen_ref = *self.get_stack::<DbRef>();
+        let gen_ref = self.get_stack::<DbRef>();
 
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             // CO1.6c: push typed null sentinel.
@@ -2253,7 +2253,7 @@ impl State {
             let field_base = self.stack_cur.pos + base;
             let store = self.database.store_mut(&self.stack_cur);
             for off in 0..step {
-                *store.addr_mut::<u8>(rec, field_base + off) = POISON[(off & 3) as usize];
+                store.write::<u8>(rec, field_base + off, POISON[(off & 3) as usize]);
             }
         }
     }
@@ -2400,7 +2400,7 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
-    pub fn get_stack<T: 'static>(&mut self) -> &T {
+    pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
         assert!(
             (size_of::<T>() as u32) < self.stack_pos,
             "No elements left on the stack {} < {}",
@@ -2424,11 +2424,11 @@ impl State {
         let r = self
             .database
             .store(&self.stack_cur)
-            .addr::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
+            .read::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
         #[cfg(debug_assertions)]
         {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
-                let db: &DbRef = unsafe { &*(r as *const T as *const DbRef) };
+                let db: &DbRef = unsafe { &*std::ptr::from_ref::<T>(&r).cast::<DbRef>() };
                 if !(db.store_nr == u16::MAX
                     || (db.store_nr as usize) < self.database.allocations.len())
                 {
@@ -2456,7 +2456,7 @@ impl State {
         if crate::keys::uaf_gen_enabled()
             && std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>()
         {
-            let db: &DbRef = unsafe { &*std::ptr::from_ref::<T>(r).cast::<DbRef>() };
+            let db: &DbRef = unsafe { &*std::ptr::from_ref::<T>(&r).cast::<DbRef>() };
             // Read the stamp, then CONSUME it (LIFO): the stack is last-in-first-out, so a
             // stamp belongs to exactly the pop that matches its push. Clearing on pop stops
             // a stale stamp from surviving to a later unrelated read once a non-DbRef push
@@ -2596,7 +2596,22 @@ impl State {
         // form was covered while the other three were not).
     }
 
-    pub fn get_var<T: 'static>(&mut self, pos: u16) -> &T {
+    /// Borrow a frame variable IN PLACE, for the values [`State::get_var`] cannot copy out.
+    ///
+    /// A `String` in a slot owns a heap buffer, so reading it by value would duplicate that
+    /// ownership.  Goes through [`Store::addr`], which asserts the slot is aligned for `T`
+    /// (loft#1481) — a frame slot is `aligned_stack_step`-stepped, so it is.
+    pub fn get_var_ref<T: 'static>(&mut self, pos: u16) -> &T {
+        if self.verify_on {
+            self.verify_slot::<T>("get_var_ref", self.stack_pos - u32::from(pos));
+        }
+        self.database.store(&self.stack_cur).addr::<T>(
+            self.stack_cur.rec,
+            self.stack_cur.pos + self.stack_pos - u32::from(pos),
+        )
+    }
+
+    pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
         // get_var reads T at (stack_pos - pos); pos > stack_pos would underflow.
         // pos < size_of::<T>() is also invalid (read extends before the frame base).
         // Note: pos == 0 is valid when accessing a pre-reserved frame slot above the
@@ -2613,7 +2628,7 @@ impl State {
         if self.verify_on {
             self.verify_slot::<T>("get_var", self.stack_pos - u32::from(pos));
         }
-        self.database.store(&self.stack_cur).addr::<T>(
+        self.database.store(&self.stack_cur).read::<T>(
             self.stack_cur.rec,
             self.stack_cur.pos + self.stack_pos - u32::from(pos),
         )
@@ -2672,7 +2687,7 @@ impl State {
                 let rec = self
                     .database
                     .store(&self.stack_cur)
-                    .addr::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + at)
+                    .read::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + at)
                     .rec;
                 let _ = abs;
                 crate::stack_verify::report_stale(what, ty, at, rec, pc, line, u16::from(op));
@@ -2710,7 +2725,7 @@ impl State {
                 if store.shadow_handle_base_at((base + off) as usize) {
                     // The shadow is indexed ABSOLUTELY (`rec * 8 + fld`) and `addr` takes the
                     // FIELD, so the record's own bytes are counted once here and not twice.
-                    let db = store.addr::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + off);
+                    let db = store.read::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + off);
                     if crate::stack_verify::trace() {
                         eprintln!(
                             "[stale-scan] off={off} handle store={} rec={} pos={} moved={:?}",
@@ -3308,10 +3323,10 @@ impl State {
         if tp_known == u16::MAX {
             return None;
         }
-        let db = *self
+        let db = self
             .database
             .store(&self.stack_cur)
-            .addr::<crate::keys::DbRef>(rec, at);
+            .read::<crate::keys::DbRef>(rec, at);
         let mut out = String::new();
         if json {
             self.database.show_json(&mut out, &db, tp_known, false);
@@ -3422,14 +3437,14 @@ impl State {
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
                 | Type::Enum(_, true, _) => {
-                    FrameArg::Ref(*store.addr::<crate::keys::DbRef>(rec, at))
+                    FrameArg::Ref(store.read::<crate::keys::DbRef>(rec, at))
                 }
-                Type::Float => FrameArg::F64(*store.addr::<f64>(rec, at)),
-                Type::Single => FrameArg::F32(*store.addr::<f32>(rec, at)),
-                Type::Boolean | Type::Enum(_, false, _) => FrameArg::U8(*store.addr::<u8>(rec, at)),
-                Type::Character => FrameArg::U32(*store.addr::<u32>(rec, at)),
+                Type::Float => FrameArg::F64(store.read::<f64>(rec, at)),
+                Type::Single => FrameArg::F32(store.read::<f32>(rec, at)),
+                Type::Boolean | Type::Enum(_, false, _) => FrameArg::U8(store.read::<u8>(rec, at)),
+                Type::Character => FrameArg::U32(store.read::<u32>(rec, at)),
                 // Integer (and anything else that fits) rides an `i64` slot.
-                _ => FrameArg::I64(*store.addr::<i64>(rec, at)),
+                _ => FrameArg::I64(store.read::<i64>(rec, at)),
             };
             args.push(val);
         }
@@ -4089,10 +4104,10 @@ impl State {
         if fields.is_empty() || !matches!(tp, crate::data::Type::Reference(_, _)) {
             return None;
         }
-        let db = *self
+        let db = self
             .database
             .store(&self.stack_cur)
-            .addr::<crate::keys::DbRef>(rec, at);
+            .read::<crate::keys::DbRef>(rec, at);
         if db.rec == 0 {
             return None; // null struct
         }
@@ -4171,10 +4186,10 @@ impl State {
         }
         // The frame slot holds the vector handle `DbRef`; its (rec, pos) cell holds the
         // backing record number, and elements live at `8 + i * stride` within it.
-        let db = *self
+        let db = self
             .database
             .store(&self.stack_cur)
-            .addr::<crate::keys::DbRef>(rec, at);
+            .read::<crate::keys::DbRef>(rec, at);
         if db.rec == 0 {
             return None; // null vector
         }
@@ -4223,32 +4238,32 @@ impl State {
             match content {
                 0 => match lit.parse::<i64>() {
                     Ok(v) => {
-                        *store.addr_mut::<i64>(rec, off) = v;
+                        store.write::<i64>(rec, off, v);
                         true
                     }
                     Err(_) => false,
                 },
                 2 => match lit.trim_end_matches('f').parse::<f32>() {
                     Ok(v) => {
-                        *store.addr_mut::<f32>(rec, off) = v;
+                        store.write::<f32>(rec, off, v);
                         true
                     }
                     Err(_) => false,
                 },
                 3 => match lit.parse::<f64>() {
                     Ok(v) => {
-                        *store.addr_mut::<f64>(rec, off) = v;
+                        store.write::<f64>(rec, off, v);
                         true
                     }
                     Err(_) => false,
                 },
                 4 => match lit {
                     "true" => {
-                        *store.addr_mut::<u8>(rec, off) = 1;
+                        store.write::<u8>(rec, off, 1);
                         true
                     }
                     "false" => {
-                        *store.addr_mut::<u8>(rec, off) = 0;
+                        store.write::<u8>(rec, off, 0);
                         true
                     }
                     _ => false,
@@ -4261,7 +4276,7 @@ impl State {
                     let mut cs = inner.chars();
                     match (cs.next(), cs.next()) {
                         (Some(c), None) => {
-                            *store.addr_mut::<u32>(rec, off) = c as u32;
+                            store.write::<u32>(rec, off, c as u32);
                             true
                         }
                         _ => false,
@@ -4950,11 +4965,11 @@ impl State {
             Type::Integer(_) => self
                 .database
                 .store(&self.stack_cur)
-                .addr::<i64>(rec, at)
+                .read::<i64>(rec, at)
                 .to_string(),
             // 255 is @PLN17's three-state-boolean null sentinel (C73); rendering it as
             // "null" is inert pre-merge (two-state writes only 0/1) and correct after.
-            Type::Boolean => match *self.database.store(&self.stack_cur).addr::<u8>(rec, at) {
+            Type::Boolean => match self.database.store(&self.stack_cur).read::<u8>(rec, at) {
                 0 => "false",
                 255 => "null",
                 _ => "true",
@@ -4965,16 +4980,16 @@ impl State {
             // D1 bridge seeds the frame) — the same round-trip guarantee
             // `render_capture` makes via `float_literal`.
             Type::Float => loft_float_literal(&f64::to_string(
-                self.database.store(&self.stack_cur).addr::<f64>(rec, at),
+                &self.database.store(&self.stack_cur).read::<f64>(rec, at),
             )),
             Type::Single => format!(
                 "{}f",
                 loft_float_literal(&f32::to_string(
-                    self.database.store(&self.stack_cur).addr::<f32>(rec, at)
+                    &self.database.store(&self.stack_cur).read::<f32>(rec, at)
                 ))
             ),
             Type::Character => {
-                char::from_u32(*self.database.store(&self.stack_cur).addr::<u32>(rec, at))
+                char::from_u32(self.database.store(&self.stack_cur).read::<u32>(rec, at))
                     .map_or_else(|| "?".to_string(), |c| format!("'{c}'"))
             }
             // A text **argument** is a 16-byte `Str` borrow (`OpArgText`); a text
@@ -4985,7 +5000,7 @@ impl State {
                 let raw = if is_arg {
                     self.database
                         .store(&self.stack_cur)
-                        .addr::<crate::keys::Str>(rec, at)
+                        .read::<crate::keys::Str>(rec, at)
                         .str()
                         .to_string()
                 } else {
@@ -5017,10 +5032,10 @@ impl State {
                 if tp_known == u16::MAX {
                     return format!("<{}>", tp.source_name(data));
                 }
-                let db = *self
+                let db = self
                     .database
                     .store(&self.stack_cur)
-                    .addr::<crate::keys::DbRef>(rec, at);
+                    .read::<crate::keys::DbRef>(rec, at);
                 let mut out = String::new();
                 // Bounded glance for the variables panel so a big struct/vector doesn't
                 // flood it (the LOFT_DUMP_DEPTH/ELEMENTS trace defaults); the full value is
@@ -5033,7 +5048,7 @@ impl State {
             Type::Enum(_, false, _) => {
                 let tname = tp.name(data);
                 let tp_known = self.database.name(&tname);
-                let disc = *self.database.store(&self.stack_cur).addr::<u8>(rec, at);
+                let disc = self.database.store(&self.stack_cur).read::<u8>(rec, at);
                 if tp_known == u16::MAX || Stores::enum_is_null(disc) {
                     "null".to_string()
                 } else {
@@ -5066,10 +5081,10 @@ impl State {
                 let absent = {
                     let store = self.database.store(&self.stack_cur);
                     match inner.base() {
-                        Type::Integer(_) => *store.addr::<i64>(rec, at) == i64::MIN,
-                        Type::Float => store.addr::<f64>(rec, at).is_nan(),
-                        Type::Single => store.addr::<f32>(rec, at).is_nan(),
-                        Type::Character => *store.addr::<u32>(rec, at) == 0,
+                        Type::Integer(_) => store.read::<i64>(rec, at) == i64::MIN,
+                        Type::Float => store.read::<f64>(rec, at).is_nan(),
+                        Type::Single => store.read::<f32>(rec, at).is_nan(),
+                        Type::Character => store.read::<u32>(rec, at) == 0,
                         // A handle-carried kind the recursion below cannot render — a keyed
                         // collection — still has an absence, and `DbRef::is_null` is its one
                         // home.  Without this the delegate fell to the catch-all and the
@@ -5083,7 +5098,7 @@ impl State {
                         | Type::Index(_, _, _)
                         | Type::Radix(_, _, _)
                         | Type::Trie(_, _, _) => {
-                            store.addr::<crate::keys::DbRef>(rec, at).is_null()
+                            store.read::<crate::keys::DbRef>(rec, at).is_null()
                         }
                         _ => false,
                     }
@@ -5960,10 +5975,10 @@ impl State {
             return;
         }
         for &slot in heap_slots {
-            let db = *self
+            let db = self
                 .database
                 .store(&self.stack_cur)
-                .addr::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + slot);
+                .read::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + slot);
             if db.store_nr != u16::MAX {
                 self.free_ref_db(db);
             }
@@ -6413,10 +6428,10 @@ impl State {
         self.code_pos = code_position;
         let yielded = self.resume();
         assert!(!yielded, "reenter_ret: the callee yielded mid-call");
-        let result = *self
+        let result = self
             .database
             .store(&self.stack_cur)
-            .addr::<T>(self.stack_cur.rec, self.stack_cur.pos + base);
+            .read::<T>(self.stack_cur.rec, self.stack_cur.pos + base);
         self.code_pos = saved_pos;
         self.stack_pos = saved_sp;
         result
@@ -6481,10 +6496,10 @@ impl State {
             };
             on_pause(self, data, &hit);
         }
-        let result = *self
+        let result = self
             .database
             .store(&self.stack_cur)
-            .addr::<T>(self.stack_cur.rec, self.stack_cur.pos + base);
+            .read::<T>(self.stack_cur.rec, self.stack_cur.pos + base);
         self.code_pos = saved_pos;
         self.stack_pos = saved_sp;
         result
@@ -6878,7 +6893,7 @@ impl State {
             return Err(format!("{}: {}", err.kind.label(), err.message));
         }
 
-        let result = *self.get_stack::<i64>();
+        let result = self.get_stack::<i64>();
         self.stack_pos = saved_stack_pos;
         self.code_pos = saved_code_pos;
         Ok(result)
@@ -6926,7 +6941,7 @@ impl State {
         self.put_stack(u32::MAX); // 4 bytes  → stack_pos = 20
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
-        *self.get_stack::<i64>()
+        self.get_stack::<i64>()
     }
 
     /// Execute a worker function at `fn_pos`, return raw result bits as `u64`.
@@ -6971,9 +6986,9 @@ impl State {
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
         match return_size {
-            8 => *self.get_stack::<u64>(),
-            1 => u64::from(*self.get_stack::<u8>()),
-            _ => u64::from(*self.get_stack::<u32>()),
+            8 => self.get_stack::<u64>(),
+            1 => u64::from(self.get_stack::<u8>()),
+            _ => u64::from(self.get_stack::<u32>()),
         }
     }
 
@@ -7030,9 +7045,9 @@ impl State {
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
         match return_size {
-            8 => *self.get_stack::<u64>(),
-            1 => u64::from(*self.get_stack::<u8>()),
-            _ => u64::from(*self.get_stack::<u32>()),
+            8 => self.get_stack::<u64>(),
+            1 => u64::from(self.get_stack::<u8>()),
+            _ => u64::from(self.get_stack::<u32>()),
         }
     }
 
@@ -7149,9 +7164,9 @@ impl State {
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
         match return_size {
-            8 => *self.get_stack::<u64>(),
-            1 => u64::from(*self.get_stack::<u8>()),
-            _ => u64::from(*self.get_stack::<u32>()),
+            8 => self.get_stack::<u64>(),
+            1 => u64::from(self.get_stack::<u8>()),
+            _ => u64::from(self.get_stack::<u32>()),
         }
     }
 
@@ -7279,9 +7294,9 @@ impl State {
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
         match return_size {
-            8 => *self.get_stack::<u64>(),
-            1 => u64::from(*self.get_stack::<u8>()),
-            _ => u64::from(*self.get_stack::<u32>()),
+            8 => self.get_stack::<u64>(),
+            1 => u64::from(self.get_stack::<u8>()),
+            _ => u64::from(self.get_stack::<u32>()),
         }
     }
 
@@ -7395,7 +7410,7 @@ impl State {
         self.put_stack(u32::MAX);
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
-        *self.get_stack::<DbRef>()
+        self.get_stack::<DbRef>()
     }
 
     /// Execute a text-returning worker function; copy the `Str` result to an owned
@@ -7457,7 +7472,7 @@ impl State {
         self.code_pos = fn_pos;
         self.run_to_return(Self::WORKER_OP_CEILING);
         // Pop the Str return value (16 bytes) and copy into owned String.
-        let s = *self.get_stack::<Str>();
+        let s = self.get_stack::<Str>();
         let result = s.str().to_owned();
         // Drop the String buffers to free their heap allocations.
         for cr in work_crs.iter().rev() {
@@ -7555,15 +7570,15 @@ impl State {
         let out = match ret {
             HostRetKind::Void => HostReturn::Void,
             HostRetKind::Prim(sz) => HostReturn::Prim(match sz {
-                8 => *self.get_stack::<u64>(),
-                1 => u64::from(*self.get_stack::<u8>()),
-                _ => u64::from(*self.get_stack::<u32>()),
+                8 => self.get_stack::<u64>(),
+                1 => u64::from(self.get_stack::<u8>()),
+                _ => u64::from(self.get_stack::<u32>()),
             }),
             HostRetKind::Text => {
-                let s = *self.get_stack::<Str>();
+                let s = self.get_stack::<Str>();
                 HostReturn::Text(s.str().to_owned())
             }
-            HostRetKind::Ref => HostReturn::Ref(*self.get_stack::<DbRef>()),
+            HostRetKind::Ref => HostReturn::Ref(self.get_stack::<DbRef>()),
         };
         // Drop the hidden text buffers to free their heap allocations.
         for cr in work_crs.iter().rev() {

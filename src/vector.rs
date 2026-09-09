@@ -248,7 +248,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // freed a store that was still named, not who computed the offset: the offset
         // is right for the type the caller thinks it is holding.  `LOFT_NO_SLOT_REUSE=1`
         // settles it in one run — if the fault vanishes, the slot had two owners.
-        let owner_words = *store.addr::<i32>(db.rec, 0);
+        let owner_words = store.read::<i32>(db.rec, 0);
         assert!(
             owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8,
             "vector_append: in store {}, field {}.{} lies outside its own record, which \
@@ -269,7 +269,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // derive a capacity and a copy length from that word, and both wrap, so the
         // failure would otherwise surface far away as an unbounded `memcpy` inside
         // `resize` — naming the copy, which is innocent.
-        let cur_words_signed = *store.addr::<i32>(vec_rec, 0);
+        let cur_words_signed = store.read::<i32>(vec_rec, 0);
         assert!(
             cur_words_signed > 0,
             "vector_append: in store {}, the vector handle in record {}.{} points at record \

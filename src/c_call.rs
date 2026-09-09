@@ -741,7 +741,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     for arg in binding.arg_plan.iter().rev() {
         match arg {
             CArg::TextPointer => {
-                let s = *stores.get::<Str>(stack);
+                let s = stores.get::<Str>(stack);
                 let bytes = s.str().as_bytes();
                 let mut b = Vec::with_capacity(bytes.len() + 1);
                 b.extend_from_slice(bytes);
@@ -754,7 +754,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
                 // names the data record; the elements start at byte 8 and the
                 // count sits at byte 4. Pushed as count-then-pointer because
                 // the slots are reversed below.
-                let r = *stores.get::<DbRef>(stack);
+                let r = stores.get::<DbRef>(stack);
                 let data_rec = if r.rec == 0 || r.pos == 0 {
                     0
                 } else {
@@ -781,7 +781,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
                 slots.push(ptr);
             }
             CArg::Scalar => {
-                slots.push(*stores.get::<i64>(stack) as u64);
+                slots.push(stores.get::<i64>(stack) as u64);
             }
         }
     }

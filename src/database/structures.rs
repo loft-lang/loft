@@ -806,7 +806,7 @@ impl Stores {
             let store = keys::store(o_db, &self.allocations);
             let byte_len = o_length as usize * size as usize;
             (0..byte_len)
-                .map(|i| *store.addr::<u8>(o_rec, 8 + i as u32))
+                .map(|i| store.read::<u8>(o_rec, 8 + i as u32))
                 .collect()
         } else {
             Vec::new()
@@ -831,7 +831,7 @@ impl Stores {
             // (possibly reallocated) destination record after `vector_set_size`.
             let store = keys::mut_store(db, &mut self.allocations);
             for (i, &byte) in snapshot.iter().enumerate() {
-                *store.addr_mut::<u8>(new_db.rec, new_db.pos + i as u32) = byte;
+                store.write::<u8>(new_db.rec, new_db.pos + i as u32, byte);
             }
         } else if db.store_nr == o_db.store_nr {
             // Re-read o_rec after resize in case it moved (non-self-append same-store case).

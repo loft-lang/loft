@@ -88,7 +88,7 @@ pub fn init(state: &mut State) {{
         writeln!(into, "\nfn {n}(stores: &mut Stores, stack: &mut DbRef) {{")?;
         for a in data.def(d_nr).attributes.iter().rev() {
             let tp = data.rust_type(&a.typedef, &Context::Argument);
-            writeln!(into, "    let v_{} = *stores.get::<{tp}>(stack);", a.name)?;
+            writeln!(into, "    let v_{} = stores.get::<{tp}>(stack);", a.name)?;
             if let Type::RefVar(var) = &a.typedef
                 && let Type::Text(_) = **var
             {
@@ -222,7 +222,7 @@ pub const OPERATORS: &[fn(&mut State)] = &["
                     // `i32::MIN` (0x80000000) coroutine-exhaustion sentinel
                     // pushed by `push_null_value`. That bit pattern is not a
                     // valid Unicode scalar value, so reading the bytes as
-                    // `*s.get_stack::<char>()` is undefined behaviour: the
+                    // `s.get_stack::<char>()` is undefined behaviour: the
                     // release-mode optimiser then assumes the resulting
                     // `char` is a valid scalar and elides any sentinel
                     // check, causing `for c in iterator<character>()` loops
@@ -231,7 +231,7 @@ pub const OPERATORS: &[fn(&mut State)] = &["
                     // functions always see a valid `char`.
                     writeln!(
                         into,
-                        "    let v_{} = char::from_u32(*s.get_stack::<u32>()).unwrap_or('\\0');",
+                        "    let v_{} = char::from_u32(s.get_stack::<u32>()).unwrap_or('\\0');",
                         a.name
                     )?;
                 } else if matches!(a.typedef, Type::Boolean) {
@@ -239,9 +239,9 @@ pub const OPERATORS: &[fn(&mut State)] = &["
                     // 255=null).  Reading the byte as `bool` is UB for 255, so read
                     // the raw u8 — truthiness ops coerce (255 -> false) and
                     // value-movement / comparison ops preserve it.
-                    writeln!(into, "    let v_{} = *s.get_stack::<u8>();", a.name)?;
+                    writeln!(into, "    let v_{} = s.get_stack::<u8>();", a.name)?;
                 } else {
-                    writeln!(into, "    let v_{} = *s.get_stack::<{tp}>();", a.name)?;
+                    writeln!(into, "    let v_{} = s.get_stack::<{tp}>();", a.name)?;
                 }
             }
         }

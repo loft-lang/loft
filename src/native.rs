@@ -554,37 +554,37 @@ fn n_stub_empty_text(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_stub_noop(stores: &mut Stores, stack: &mut DbRef) {
     // Pop the i32 arg and discard (n_sleep_ms takes one integer).
-    let _ = *stores.get::<i64>(stack);
+    let _ = stores.get::<i64>(stack);
 }
 
 // ── Real ws_* impls (route to JS host bridge via src/wasm.rs) ──────────
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_ws_connect(stores: &mut Stores, stack: &mut DbRef) {
-    let url = *stores.get::<crate::keys::Str>(stack);
+    let url = stores.get::<crate::keys::Str>(stack);
     let id = crate::wasm::host_ws_connect(url.str());
     stores.put(stack, i64::from(id));
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_ws_client_send(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = *stores.get::<crate::keys::Str>(stack);
-    let id = *stores.get::<i64>(stack) as i32;
+    let msg = stores.get::<crate::keys::Str>(stack);
+    let id = stores.get::<i64>(stack) as i32;
     let ok = crate::wasm::host_ws_send(id, msg.str(), false);
     stores.put(stack, ok);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_ws_client_send_binary(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = *stores.get::<crate::keys::Str>(stack);
-    let id = *stores.get::<i64>(stack) as i32;
+    let msg = stores.get::<crate::keys::Str>(stack);
+    let id = stores.get::<i64>(stack) as i32;
     let ok = crate::wasm::host_ws_send(id, msg.str(), true);
     stores.put(stack, ok);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_ws_client_recv(stores: &mut Stores, stack: &mut DbRef) {
-    let id = *stores.get::<i64>(stack) as i32;
+    let id = stores.get::<i64>(stack) as i32;
     let ok = crate::wasm::host_ws_recv(id);
     stores.put(stack, ok);
 }
@@ -633,7 +633,7 @@ fn n_ws_client_opcode(stores: &mut Stores, stack: &mut DbRef) {
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_ws_client_close(stores: &mut Stores, stack: &mut DbRef) {
-    let id = *stores.get::<i64>(stack) as i32;
+    let id = stores.get::<i64>(stack) as i32;
     crate::wasm::host_ws_close(id);
 }
 
@@ -651,13 +651,13 @@ fn n_pack_reset(_stores: &mut Stores, _stack: &mut DbRef) {
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u8(_stores: &mut Stores, stack: &mut DbRef) {
-    let b = *_stores.get::<i64>(stack) as i32;
+    let b = _stores.get::<i64>(stack) as i32;
     PACK_BUF.with(|buf| buf.borrow_mut().push((b & 0xff) as u8));
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u16_le(_stores: &mut Stores, stack: &mut DbRef) {
-    let v = *_stores.get::<i64>(stack) as i32;
+    let v = _stores.get::<i64>(stack) as i32;
     PACK_BUF.with(|buf| {
         let mut buf = buf.borrow_mut();
         let v = (v & 0xffff) as u16;
@@ -667,7 +667,7 @@ fn n_pack_u16_le(_stores: &mut Stores, stack: &mut DbRef) {
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u32_le(_stores: &mut Stores, stack: &mut DbRef) {
-    let v = *_stores.get::<i64>(stack) as i32;
+    let v = _stores.get::<i64>(stack) as i32;
     PACK_BUF.with(|buf| {
         let mut buf = buf.borrow_mut();
         let v = v as u32;
@@ -684,8 +684,8 @@ fn n_pack_take(stores: &mut Stores, stack: &mut DbRef) {
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_byte_at(stores: &mut Stores, stack: &mut DbRef) {
-    let t = *stores.get::<crate::keys::Str>(stack);
-    let idx = *stores.get::<i64>(stack) as i32;
+    let t = stores.get::<crate::keys::Str>(stack);
+    let idx = stores.get::<i64>(stack) as i32;
     let bytes = t.str().as_bytes();
     let result = if idx < 0 || (idx as usize) >= bytes.len() {
         -1i32
@@ -859,10 +859,10 @@ fn trace_assert_site(file: &str, line: i64) {
 }
 
 fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
-    let v_test = *stores.get::<bool>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
+    let v_test = stores.get::<bool>(stack);
     trace_assert_site(v_file.str(), v_line);
     if stores.report_asserts {
         stores.assert_results.push((
@@ -909,9 +909,9 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
     // Same shared decision as `n_assert` above.
     {
         let kind = crate::runtime_error::RuntimeErrorKind::UserPanic {
@@ -933,9 +933,9 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_log_info(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
     if let Some(ref logger) = stores.logger
         && let Ok(mut lg) = logger.lock()
     {
@@ -944,9 +944,9 @@ fn n_log_info(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_log_warn(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
     if let Some(ref logger) = stores.logger
         && let Ok(mut lg) = logger.lock()
     {
@@ -955,9 +955,9 @@ fn n_log_warn(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_log_error(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
     if let Some(ref logger) = stores.logger
         && let Ok(mut lg) = logger.lock()
     {
@@ -971,9 +971,9 @@ fn n_log_error(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_log_fatal(stores: &mut Stores, stack: &mut DbRef) {
-    let v_line = *stores.get::<i64>(stack);
-    let v_file = *stores.get::<Str>(stack);
-    let v_message = *stores.get::<Str>(stack);
+    let v_line = stores.get::<i64>(stack);
+    let v_file = stores.get::<Str>(stack);
+    let v_message = stores.get::<Str>(stack);
     if let Some(ref logger) = stores.logger
         && let Ok(mut lg) = logger.lock()
     {
@@ -989,8 +989,8 @@ fn n_log_fatal(stores: &mut Stores, stack: &mut DbRef) {
 // Interpreter handler for `write_text_raw` — mirrors its `#rust` template.
 // `write` (a loft fn) wraps the bool into a FileResult; this pushes the bool.
 fn n_write_text_raw(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = *stores.get::<Str>(stack);
-    let v_file = *stores.get::<DbRef>(stack);
+    let v_v = stores.get::<Str>(stack);
+    let v_file = stores.get::<DbRef>(stack);
     let new_value = stores.write_file(&v_file, v_v.str());
     stores.put(stack, new_value);
 }
@@ -1010,7 +1010,7 @@ fn n_env_variables(stores: &mut Stores, stack: &mut DbRef) {
 /// honest answer is false — a build that cannot load a C library certainly
 /// cannot call into one.
 fn n_c_library_available(stores: &mut Stores, stack: &mut DbRef) {
-    let soname = *stores.get::<crate::keys::Str>(stack);
+    let soname = stores.get::<crate::keys::Str>(stack);
     #[cfg(feature = "native-extensions")]
     let ok = crate::c_call::library_available(soname.str());
     #[cfg(not(feature = "native-extensions"))]
@@ -1024,8 +1024,8 @@ fn n_c_library_available(stores: &mut Stores, stack: &mut DbRef) {
 // @PLN10 Phase 2 — destination-passing variant of `n_env_variable`.
 // Always-non-null (the env value, "" if unset).  Routed by `is_text_dest_native`.
 fn n_env_variable_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_name = *stores.get::<Str>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_name = stores.get::<Str>(stack);
     let value = stores.os_variable(v_name.str());
     stores
         .store_mut(&dest)
@@ -1044,8 +1044,8 @@ fn n_host_output(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_host_input_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_wait_ms = *stores.get::<i64>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_wait_ms = stores.get::<i64>(stack);
     let value = stores.host_input_native(v_wait_ms);
     stores
         .store_mut(&dest)
@@ -1054,8 +1054,8 @@ fn n_host_input_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_byte_at(stores: &mut Stores, stack: &mut DbRef) {
-    let v_i = *stores.get::<i64>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_i = stores.get::<i64>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = Stores::text_byte_at_native(v_self.str(), v_i);
     stores.put(stack, new_value);
 }
@@ -1066,8 +1066,8 @@ fn t_4text_byte_at(stores: &mut Stores, stack: &mut DbRef) {
 /// avoiding the legacy scratch (`@PLN10`).  Invalid UTF-8 leaves the buffer
 /// empty (the `String::from_utf8` fallback in `text_from_bytes_native`).
 fn n_text_from_bytes_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_bytes = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_bytes = stores.get::<DbRef>(stack);
     let new_value = stores.text_from_bytes_native(v_bytes);
     stores
         .store_mut(&dest)
@@ -1076,40 +1076,40 @@ fn n_text_from_bytes_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_starts_with(stores: &mut Stores, stack: &mut DbRef) {
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = { v_self.str().starts_with(v_value.str()) };
     stores.put(stack, new_value);
 }
 
 fn t_4text_ends_with(stores: &mut Stores, stack: &mut DbRef) {
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = { v_self.str().ends_with(v_value.str()) };
     stores.put(stack, new_value);
 }
 
 fn t_4text_trim(stores: &mut Stores, stack: &mut DbRef) {
-    let v_both = *stores.get::<Str>(stack);
+    let v_both = stores.get::<Str>(stack);
     let new_value = { v_both.str().trim() };
     stores.put(stack, new_value);
 }
 
 fn t_4text_trim_start(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = { v_self.str().trim_start() };
     stores.put(stack, new_value);
 }
 
 fn t_4text_trim_end(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = { v_self.str().trim_end() };
     stores.put(stack, new_value);
 }
 
 fn t_4text_find(stores: &mut Stores, stack: &mut DbRef) {
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value: i64 = {
         if let Some(v) = v_self.str().find(v_value.str()) {
             v as i64
@@ -1121,8 +1121,8 @@ fn t_4text_find(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_rfind(stores: &mut Stores, stack: &mut DbRef) {
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value: i64 = {
         if let Some(v) = v_self.str().rfind(v_value.str()) {
             v as i64
@@ -1134,17 +1134,17 @@ fn t_4text_rfind(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_contains(stores: &mut Stores, stack: &mut DbRef) {
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = { v_self.str().contains(v_value.str()) };
     stores.put(stack, new_value);
 }
 
 fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_with = *stores.get::<Str>(stack);
-    let v_value = *stores.get::<Str>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_with = stores.get::<Str>(stack);
+    let v_value = stores.get::<Str>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = v_self.str().replace(v_value.str(), v_with.str());
     stores
         .store_mut(&dest)
@@ -1153,8 +1153,8 @@ fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = v_self.str().to_lowercase();
     stores
         .store_mut(&dest)
@@ -1163,8 +1163,8 @@ fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_4text_to_uppercase_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_self = *stores.get::<Str>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_self = stores.get::<Str>(stack);
     let new_value = v_self.str().to_uppercase();
     stores
         .store_mut(&dest)
@@ -1173,37 +1173,37 @@ fn t_4text_to_uppercase_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn t_9character_is_lowercase(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_lowercase());
 }
 
 fn t_9character_is_uppercase(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_uppercase());
 }
 
 fn t_9character_is_numeric(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_numeric());
 }
 
 fn t_9character_is_alphanumeric(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_alphanumeric());
 }
 
 fn t_9character_is_alphabetic(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_alphabetic());
 }
 
 fn t_9character_is_whitespace(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_whitespace());
 }
 
 fn t_9character_is_control(stores: &mut Stores, stack: &mut DbRef) {
-    let v_self = *stores.get::<char>(stack);
+    let v_self = stores.get::<char>(stack);
     stores.put(stack, v_self.is_control());
 }
 
@@ -1216,8 +1216,8 @@ fn n_arguments(stores: &mut Stores, stack: &mut DbRef) {
 // Always-non-null (a date string), so the result writes straight into the
 // caller's buffer instead of `stores.scratch`.  Routed by `is_text_dest_native`.
 fn n_ymd_days_ago_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v_days = *stores.get::<i64>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v_days = stores.get::<i64>(stack);
     let s = Stores::ymd_days_ago_native(v_days);
     stores
         .store_mut(&dest)
@@ -1228,7 +1228,7 @@ fn n_ymd_days_ago_dest(stores: &mut Stores, stack: &mut DbRef) {
 // @PLN10 Phase 1 — destination-passing variant of `n_store_memory`.
 // Always-non-null (a report string).  Routed by `is_text_dest_native`.
 fn n_store_memory_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let report = stores.memory_report();
     stores
         .store_mut(&dest)
@@ -1237,7 +1237,7 @@ fn n_store_memory_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let result = Stores::os_mtime_native(v_path.str());
     stores.put(stack, result);
 }
@@ -1246,7 +1246,7 @@ fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.  Resolves the path against the program anchor,
 /// then stats it.
 fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let new_value = crate::codegen_runtime::fs_is_dir(&stores.resolve_path(v_path.str()));
     stores.put(stack, new_value);
 }
@@ -1254,7 +1254,7 @@ fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
 /// Interpreter handler for `is_file` — mirrors the `#rust` template in
 /// `default/02_files.loft`.
 fn n_is_file(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let new_value = crate::codegen_runtime::fs_is_file(&stores.resolve_path(v_path.str()));
     stores.put(stack, new_value);
 }
@@ -1263,7 +1263,7 @@ fn n_is_file(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.  `fs_list_dir` re-homes the path internally and
 /// returns the `vector<text>` of sorted entry names.
 fn n_list_dir(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let new_value = stores.fs_list_dir(v_path.str());
     stores.put(stack, new_value);
 }
@@ -1271,7 +1271,7 @@ fn n_list_dir(stores: &mut Stores, stack: &mut DbRef) {
 /// Interpreter handler for `read_bytes` — mirrors the `#rust` template in
 /// `default/02_files.loft`.  Returns the file contents as a `vector<u8>`.
 fn n_read_bytes(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let new_value = stores.fs_read_bytes(v_path.str());
     stores.put(stack, new_value);
 }
@@ -1282,8 +1282,8 @@ fn n_read_bytes(stores: &mut Stores, stack: &mut DbRef) {
 /// before the path — matching the generated handler convention
 /// (`move_file` pops `to` then `from`; `get_dir` pops `result` then `path`).
 fn n_write_bytes(stores: &mut Stores, stack: &mut DbRef) {
-    let v_bytes = *stores.get::<DbRef>(stack);
-    let v_path = *stores.get::<Str>(stack);
+    let v_bytes = stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
     let new_value = stores.fs_write_bytes(v_path.str(), v_bytes);
     stores.put(stack, new_value);
 }
@@ -1291,7 +1291,7 @@ fn n_write_bytes(stores: &mut Stores, stack: &mut DbRef) {
 /// @PLAN38 phase 01b — interpreter handler for `store_durable_check`.
 /// Mirrors the `#rust` template in `default/02_files.loft`.
 fn n_store_durable_check(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let result = crate::store::Store::durable_check(std::path::Path::new(v_path.str()));
     stores.put(stack, result);
 }
@@ -1299,7 +1299,7 @@ fn n_store_durable_check(stores: &mut Stores, stack: &mut DbRef) {
 /// @PLAN38 phase 01b — interpreter handler for `store_durable_seal`.
 /// Mirrors the `#rust` template in `default/02_files.loft`.
 fn n_store_durable_seal(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
     let result = crate::store::Store::durable_seal(std::path::Path::new(v_path.str()));
     stores.put(stack, result);
 }
@@ -1312,8 +1312,8 @@ fn n_store_durable_seal(stores: &mut Stores, stack: &mut DbRef) {
 /// surface.
 #[cfg(feature = "mmap")]
 fn n_store_persist_bind(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.bind_path(v_ref.store_nr, std::path::Path::new(v_path.str()));
     stores.put(stack, ok);
 }
@@ -1326,8 +1326,8 @@ fn n_store_persist_bind(stores: &mut Stores, stack: &mut DbRef) {
 /// `bind_path`.
 #[cfg(feature = "mmap")]
 fn n_store_persist_copy(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.persist_copy(v_ref.store_nr, std::path::Path::new(v_path.str()));
     stores.put(stack, ok);
 }
@@ -1336,7 +1336,7 @@ fn n_store_persist_copy(stores: &mut Stores, stack: &mut DbRef) {
 /// store-rooted collection's heap graph (every pointer targets a live record).
 /// @PLN97. Ungated — a general integrity tool.
 fn n_store_verify(stores: &mut Stores, stack: &mut DbRef) {
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.verify_graph_ok(&v_ref);
     stores.put(stack, ok);
 }
@@ -1345,7 +1345,7 @@ fn n_store_verify(stores: &mut Stores, stack: &mut DbRef) {
 /// and answer with the bytes it gave.  @PLN123 A3; mirrors the `#rust` template
 /// in `default/02_files.loft`.
 fn n_store_reclaim(stores: &mut Stores, stack: &mut DbRef) {
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let bytes = stores.reclaim_store(v_ref.store_nr);
     stores.put(stack, bytes);
 }
@@ -1354,7 +1354,7 @@ fn n_store_reclaim(stores: &mut Stores, stack: &mut DbRef) {
 /// bound file and drop it from the resident set, answering the bytes dropped.
 /// @PLN126; mirrors the `#rust` template in `default/02_files.loft`.
 fn n_store_release(stores: &mut Stores, stack: &mut DbRef) {
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let bytes = stores.release_store(v_ref.store_nr);
     stores.put(stack, bytes);
 }
@@ -1365,8 +1365,8 @@ fn n_store_release(stores: &mut Stores, stack: &mut DbRef) {
 /// live file handle).  See `Stores::load_path` + `default/02_files.loft`.
 /// @PLN97 arc G Phase 1.
 fn n_store_load(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_path(v_ref.store_nr, std::path::Path::new(v_path.str()));
     stores.put(stack, ok);
 }
@@ -1382,8 +1382,8 @@ fn n_store_load(stores: &mut Stores, stack: &mut DbRef) {
 /// warning, visible only in a `--no-default-features` build.
 #[cfg(paged_store)]
 fn n_store_bind_lazy(stores: &mut Stores, stack: &mut DbRef) {
-    let v_source = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_source = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     // `bind_lazy` owns the verdict, including the refusal a kind mismatch
     // decides (loft#802) — deriving any part of it here would be the second
     // home for one fact, and the `#rust` body in `02_files.loft` would have to
@@ -1401,8 +1401,8 @@ fn n_store_bind_lazy(stores: &mut Stores, stack: &mut DbRef) {
 /// through `c_call::resolve`, which is that feature's whole surface.
 #[cfg(feature = "native-extensions")]
 fn n_store_lazy_query(stores: &mut Stores, stack: &mut DbRef) {
-    let v_condition = *stores.get::<Str>(stack);
-    let coll = *stores.get::<DbRef>(stack);
+    let v_condition = stores.get::<Str>(stack);
+    let coll = stores.get::<DbRef>(stack);
     let added = stores.lazy_query(&coll, v_condition.str());
     stores.put(stack, added);
 }
@@ -1412,9 +1412,9 @@ fn n_store_lazy_query(stores: &mut Stores, stack: &mut DbRef) {
 /// records the collection gained.  Args pop in reverse: hi, lo, local.
 #[cfg(feature = "native-extensions")]
 fn n_store_lazy_range(stores: &mut Stores, stack: &mut DbRef) {
-    let v_hi = *stores.get::<i64>(stack);
-    let v_lo = *stores.get::<i64>(stack);
-    let coll = *stores.get::<DbRef>(stack);
+    let v_hi = stores.get::<i64>(stack);
+    let v_lo = stores.get::<i64>(stack);
+    let coll = stores.get::<DbRef>(stack);
     let added = stores.lazy_range(&coll, v_lo, v_hi);
     stores.put(stack, added);
 }
@@ -1422,8 +1422,8 @@ fn n_store_lazy_range(stores: &mut Stores, stack: &mut DbRef) {
 /// Interpreter handler for `store_lazy_error` — @PLN129 arc C.  Why the last
 /// fetch could not reach the collection's source, or "" when healthy.
 fn n_store_lazy_error_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let coll = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let coll = stores.get::<DbRef>(stack);
     let msg = stores.lazy_error(&coll);
     stores
         .store_mut(&dest)
@@ -1434,7 +1434,7 @@ fn n_store_lazy_error_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// Interpreter handler for `store_lazy_faults` — @PLN129 arc C.  How many
 /// fetches could not reach the source; 0 is healthy.
 fn n_store_lazy_faults(stores: &mut Stores, stack: &mut DbRef) {
-    let coll = *stores.get::<DbRef>(stack);
+    let coll = stores.get::<DbRef>(stack);
     let n = stores.lazy_faults(&coll);
     stores.put(stack, n);
 }
@@ -1442,7 +1442,7 @@ fn n_store_lazy_faults(stores: &mut Stores, stack: &mut DbRef) {
 /// Interpreter handler for `store_lazy_clear` — @PLN129 arc C.  Acknowledge the
 /// failures; the ONLY thing that clears them.
 fn n_store_lazy_clear(stores: &mut Stores, stack: &mut DbRef) {
-    let coll = *stores.get::<DbRef>(stack);
+    let coll = stores.get::<DbRef>(stack);
     let had = stores.lazy_clear(&coll);
     stores.put(stack, had);
 }
@@ -1455,8 +1455,8 @@ fn n_store_lazy_clear(stores: &mut Stores, stack: &mut DbRef) {
 /// and `0` are inserted and absent, and "the source is down" carries a reason
 /// that a caller must be able to tell apart from "no such key".
 fn n_store_lazy_fail(stores: &mut Stores, stack: &mut DbRef) {
-    let v_why = *stores.get::<Str>(stack);
-    let coll = *stores.get::<DbRef>(stack);
+    let v_why = stores.get::<Str>(stack);
+    let coll = stores.get::<DbRef>(stack);
     stores.lazy_fail(&coll, v_why.str());
 }
 
@@ -1465,9 +1465,9 @@ fn n_store_lazy_fail(stores: &mut Stores, stack: &mut DbRef) {
 /// pop in reverse: key, path, local.  @PLN97 arc G Phase 3a.
 #[cfg(paged_store)]
 fn n_store_load_key(stores: &mut Stores, stack: &mut DbRef) {
-    let v_key = *stores.get::<i64>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_key = stores.get::<i64>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_key(&v_ref, v_path.str(), v_key);
     stores.put(stack, ok);
 }
@@ -1476,9 +1476,9 @@ fn n_store_load_key(stores: &mut Stores, stack: &mut DbRef) {
 /// Args pop in reverse: key, path, local.  @PLN97 arc G Phase 3b.6.
 #[cfg(paged_store)]
 fn n_store_load_key_text(stores: &mut Stores, stack: &mut DbRef) {
-    let v_key = *stores.get::<Str>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_key = stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_key_text(&v_ref, v_path.str(), v_key.str());
     stores.put(stack, ok);
 }
@@ -1488,10 +1488,10 @@ fn n_store_load_key_text(stores: &mut Stores, stack: &mut DbRef) {
 /// reverse: limit, pre, path, local.  @PLN134.
 #[cfg(paged_store)]
 fn n_store_load_prefix(stores: &mut Stores, stack: &mut DbRef) {
-    let v_limit = *stores.get::<i64>(stack);
-    let v_pre = *stores.get::<Str>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_limit = stores.get::<i64>(stack);
+    let v_pre = stores.get::<Str>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let n = stores.load_prefix(&v_ref, v_path.str(), v_pre.str(), v_limit);
     stores.put(stack, n);
 }
@@ -1501,11 +1501,11 @@ fn n_store_load_prefix(stores: &mut Stores, stack: &mut DbRef) {
 /// limit, till, from, path, local.  @PLN136.
 #[cfg(paged_store)]
 fn n_store_load_box(stores: &mut Stores, stack: &mut DbRef) {
-    let v_limit = *stores.get::<i64>(stack);
-    let v_till = *stores.get::<DbRef>(stack);
-    let v_from = *stores.get::<DbRef>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_limit = stores.get::<i64>(stack);
+    let v_till = stores.get::<DbRef>(stack);
+    let v_from = stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let n = stores.load_box_vec(&v_ref, v_path.str(), &v_from, &v_till, v_limit);
     stores.put(stack, n);
 }
@@ -1515,10 +1515,10 @@ fn n_store_load_box(stores: &mut Stores, stack: &mut DbRef) {
 /// pop in reverse: hi, lo, path, local.  @PLN97 arc G Phase 4.
 #[cfg(paged_store)]
 fn n_store_load_range(stores: &mut Stores, stack: &mut DbRef) {
-    let v_hi = *stores.get::<i64>(stack);
-    let v_lo = *stores.get::<i64>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_hi = stores.get::<i64>(stack);
+    let v_lo = stores.get::<i64>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let n = stores.load_range(&v_ref, v_path.str(), v_lo, v_hi);
     stores.put(stack, n);
 }
@@ -1529,9 +1529,9 @@ fn n_store_load_range(stores: &mut Stores, stack: &mut DbRef) {
 /// @PLN97 arc G Phase 3a.
 #[cfg(paged_store)]
 fn n_store_load_keys(stores: &mut Stores, stack: &mut DbRef) {
-    let v_keys = *stores.get::<DbRef>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_keys = stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let n = stores.load_keys_vec(&v_ref, v_path.str(), &v_keys);
     stores.put(stack, n);
 }
@@ -1542,9 +1542,9 @@ fn n_store_load_keys(stores: &mut Stores, stack: &mut DbRef) {
 /// Args pop in reverse: keys, path, local.  loft#1064.
 #[cfg(paged_store)]
 fn n_store_load_keys_text(stores: &mut Stores, stack: &mut DbRef) {
-    let v_keys = *stores.get::<DbRef>(stack);
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_keys = stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let n = stores.load_keys_text_vec(&v_ref, v_path.str(), &v_keys);
     stores.put(stack, n);
 }
@@ -1559,9 +1559,9 @@ fn n_store_load_keys_text(stores: &mut Stores, stack: &mut DbRef) {
     all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
 ))]
 fn n_store_load_url(stores: &mut Stores, stack: &mut DbRef) {
-    let v_sha = *stores.get::<Str>(stack);
-    let v_url = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_sha = stores.get::<Str>(stack);
+    let v_url = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_url_verified(v_ref.store_nr, v_url.str(), v_sha.str());
     stores.put(stack, ok);
 }
@@ -1577,8 +1577,8 @@ fn n_store_load_url(stores: &mut Stores, stack: &mut DbRef) {
     all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
 ))]
 fn n_store_load_url_trusted(stores: &mut Stores, stack: &mut DbRef) {
-    let v_url = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_url = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_url(v_ref.store_nr, v_url.str());
     stores.put(stack, ok);
 }
@@ -1588,8 +1588,8 @@ fn n_store_load_url_trusted(stores: &mut Stores, stack: &mut DbRef) {
 /// (rejects a crafted / corrupt image instead of hanging or over-reading).  Args
 /// pop in reverse: path, local.  @PLN97 arc G Phase 2.
 fn n_store_load_untrusted(stores: &mut Stores, stack: &mut DbRef) {
-    let v_path = *stores.get::<Str>(stack);
-    let v_ref = *stores.get::<DbRef>(stack);
+    let v_path = stores.get::<Str>(stack);
+    let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_path_untrusted(v_ref.store_nr, std::path::Path::new(v_path.str()));
     stores.put(stack, ok);
 }
@@ -1602,26 +1602,26 @@ fn n_store_load_untrusted(stores: &mut Stores, stack: &mut DbRef) {
 /// stats to stderr — `make index > index/tags.json` then puts JSON
 /// in the file while still showing the summary on screen.
 fn n_eprint(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<Str>(stack);
+    let v = stores.get::<Str>(stack);
     crate::codegen_runtime::host_eprint(v.str());
 }
 
 fn n_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = *stores.get::<DbRef>(stack);
+    let v_v = stores.get::<DbRef>(stack);
     let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
     let new_value = { Stores::os_directory(v_v) };
     stores.put(stack, new_value);
 }
 
 fn n_user_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = *stores.get::<DbRef>(stack);
+    let v_v = stores.get::<DbRef>(stack);
     let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
     let new_value = { Stores::os_home(v_v) };
     stores.put(stack, new_value);
 }
 
 fn n_program_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = *stores.get::<DbRef>(stack);
+    let v_v = stores.get::<DbRef>(stack);
     let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
     let new_value = { Stores::os_executable(v_v) };
     stores.put(stack, new_value);
@@ -1630,7 +1630,7 @@ fn n_program_directory(stores: &mut Stores, stack: &mut DbRef) {
 // @PLN10 — destination-passing variant: write straight into the caller's
 // buffer instead of `stores.scratch`.  Routed by `is_text_dest_native`.
 fn n_source_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = stores.source_dir.clone();
     stores
         .store_mut(&dest)
@@ -1643,7 +1643,7 @@ fn n_source_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
 // (routed by `is_text_dest_native`), always non-null ("" only on a filesystem-less
 // target; the loft wrapper maps "" to null).
 fn n_os_temp_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = Stores::os_temp_dir_native();
     stores
         .store_mut(&dest)
@@ -1652,7 +1652,7 @@ fn n_os_temp_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_os_cache_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = Stores::os_cache_dir_native();
     stores
         .store_mut(&dest)
@@ -1667,13 +1667,13 @@ fn n_os_cache_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// `push_loft_str`) writes the foreign `LoftStr` into that record instead of the
 /// never-cleared `stores.scratch`.  Pushes nothing.
 fn n_set_bridge_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     stores.bridge_text_dest = Some(dest);
 }
 
 /// Read the lock state of the store that owns the record pointed to by `r`.
 fn n_get_store_lock(stores: &mut Stores, stack: &mut DbRef) {
-    let r = *stores.get::<DbRef>(stack);
+    let r = stores.get::<DbRef>(stack);
     let locked = stores.is_store_locked(&r);
     stores.put(stack, locked);
 }
@@ -1682,8 +1682,8 @@ fn n_get_store_lock(stores: &mut Stores, stack: &mut DbRef) {
 /// From loft, only `d#lock = true` is accepted by the parser; `false` is only
 /// reachable here if the variable is not marked `const`.
 fn n_set_store_lock(stores: &mut Stores, stack: &mut DbRef) {
-    let locked = *stores.get::<bool>(stack);
-    let r = *stores.get::<DbRef>(stack);
+    let locked = stores.get::<bool>(stack);
+    let r = stores.get::<DbRef>(stack);
     if locked {
         stores.lock_store(&r);
     } else {
@@ -1697,7 +1697,7 @@ fn n_set_store_lock(stores: &mut Stores, stack: &mut DbRef) {
 /// writes / claims from the callee stay legal (unlike `lock_store`,
 /// which is the hard user-facing `d#lock` tripwire that blocks writes).
 fn n_protect_store_frees(stores: &mut Stores, stack: &mut DbRef) {
-    let r = *stores.get::<DbRef>(stack);
+    let r = stores.get::<DbRef>(stack);
     if r.rec != 0 && (r.store_nr as usize) < stores.allocations.len() {
         // The origin names the bracket in a refusal or a `LOFT_LOG=locks` trace; it is
         // formatted only when someone will read it — this runs on every call with a
@@ -1716,7 +1716,7 @@ fn n_protect_store_frees(stores: &mut Stores, stack: &mut DbRef) {
 
 /// @P290 — clear the soft free-protection set by `n_protect_store_frees`.
 fn n_unprotect_store_frees(stores: &mut Stores, stack: &mut DbRef) {
-    let r = *stores.get::<DbRef>(stack);
+    let r = stores.get::<DbRef>(stack);
     if r.rec != 0 && (r.store_nr as usize) < stores.allocations.len() {
         stores.allocations[r.store_nr as usize].clear_free_protected();
     }
@@ -1780,18 +1780,18 @@ fn n_parallel_for_light(_stores: &mut Stores, _stack: &mut DbRef) {
 /// here.
 fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
     // Same stack layout / pop order as n_parallel_for.
-    let n_extra = *stores.get::<i64>(stack) as usize;
+    let n_extra = stores.get::<i64>(stack) as usize;
     let mut extra_args: Vec<u64> = Vec::with_capacity(n_extra);
     for _ in 0..n_extra {
-        extra_args.push(*stores.get::<i64>(stack) as u64);
+        extra_args.push(stores.get::<i64>(stack) as u64);
     }
     extra_args.reverse();
 
-    let v_func = *stores.get::<i64>(stack) as i32;
-    let v_threads = *stores.get::<i64>(stack) as i32;
-    let v_return_size = *stores.get::<i64>(stack) as i32;
-    let v_element_size = *stores.get::<i64>(stack) as i32;
-    let v_input = *stores.get::<DbRef>(stack);
+    let v_func = stores.get::<i64>(stack) as i32;
+    let v_threads = stores.get::<i64>(stack) as i32;
+    let v_return_size = stores.get::<i64>(stack) as i32;
+    let v_element_size = stores.get::<i64>(stack) as i32;
+    let v_input = stores.get::<DbRef>(stack);
 
     let (fn_pos, program) = {
         let ctx = stores
@@ -1943,18 +1943,18 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
     };
 
     // Pop common args (same layout as legacy n_parallel_for).
-    let n_extra = *stores.get::<i64>(stack) as usize;
+    let n_extra = stores.get::<i64>(stack) as usize;
     let mut extra_args: Vec<u64> = Vec::with_capacity(n_extra);
     for _ in 0..n_extra {
-        extra_args.push(*stores.get::<i64>(stack) as u64);
+        extra_args.push(stores.get::<i64>(stack) as u64);
     }
     extra_args.reverse();
 
-    let v_func = *stores.get::<i64>(stack) as i32;
-    let v_threads = *stores.get::<i64>(stack) as i32;
-    let v_return_size = *stores.get::<i64>(stack) as i32;
-    let v_element_size = *stores.get::<i64>(stack) as i32;
-    let v_input = *stores.get::<DbRef>(stack);
+    let v_func = stores.get::<i64>(stack) as i32;
+    let v_threads = stores.get::<i64>(stack) as i32;
+    let v_return_size = stores.get::<i64>(stack) as i32;
+    let v_element_size = stores.get::<i64>(stack) as i32;
+    let v_input = stores.get::<DbRef>(stack);
 
     // Build (fn_pos, program) + per-stitch context fetches in one
     // parallel_ctx borrow scope.  Snapshot raw `data_ptr` so the
@@ -2200,17 +2200,17 @@ fn n_parallel_queue(stores: &mut Stores, stack: &mut DbRef) {
 /// Restricts to `vector<integer>` input — see ARC.md A5 for the future
 /// extension story.
 fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
-    let n_extra = *stores.get::<i64>(stack) as usize;
+    let n_extra = stores.get::<i64>(stack) as usize;
     let mut extra_args: Vec<u64> = Vec::with_capacity(n_extra);
     for _ in 0..n_extra {
-        extra_args.push(*stores.get::<i64>(stack) as u64);
+        extra_args.push(stores.get::<i64>(stack) as u64);
     }
     extra_args.reverse();
 
-    let v_threads = *stores.get::<i64>(stack) as i32;
-    let v_func = *stores.get::<i64>(stack) as i32;
-    let v_init = *stores.get::<i64>(stack);
-    let v_input = *stores.get::<DbRef>(stack);
+    let v_threads = stores.get::<i64>(stack) as i32;
+    let v_func = stores.get::<i64>(stack) as i32;
+    let v_init = stores.get::<i64>(stack);
+    let v_input = stores.get::<DbRef>(stack);
 
     let (fn_pos, program, element_size) = {
         let ctx = stores
@@ -2268,7 +2268,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
 /// Panics if `par_buffer_stack` is empty (no active queue) or if
 /// `idx` is out of range — both indicate a parser-side bug.
 fn n_parallel_buf_get(stores: &mut Stores, stack: &mut DbRef) {
-    let idx = *stores.get::<i64>(stack);
+    let idx = stores.get::<i64>(stack);
     let buf = stores
         .par_buffer_stack
         .last()
@@ -2308,8 +2308,8 @@ fn n_parallel_queue_text(stores: &mut Stores, stack: &mut DbRef) {
 /// Always-non-null (clones an owned `String` from the par text buffer).
 /// Routed by `is_text_dest_native`.
 fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let idx = *stores.get::<i64>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let idx = stores.get::<i64>(stack);
     let s_owned = {
         let buf = stores
             .par_text_buffer_stack
@@ -2358,7 +2358,7 @@ fn n_parallel_queue_ref(stores: &mut Stores, stack: &mut DbRef) {
 /// Panics if `par_ref_buffer_stack` is empty (no active queue) or
 /// `idx` is out of range — both indicate a parser-side bug.
 fn n_parallel_buf_get_ref(stores: &mut Stores, stack: &mut DbRef) {
-    let idx = *stores.get::<i64>(stack);
+    let idx = stores.get::<i64>(stack);
     let r = {
         let buf = stores
             .par_ref_buffer_stack
@@ -2413,9 +2413,9 @@ fn n_parallel_queue_narrow(stores: &mut Stores, stack: &mut DbRef) {
 /// `return_size` is checked against the stored stride — a mismatch
 /// is a parser-side bug.
 fn n_parallel_buf_get_narrow(stores: &mut Stores, stack: &mut DbRef) {
-    let signed = *stores.get::<i64>(stack) != 0;
-    let return_size = *stores.get::<i64>(stack) as usize;
-    let idx = *stores.get::<i64>(stack) as usize;
+    let signed = stores.get::<i64>(stack) != 0;
+    let return_size = stores.get::<i64>(stack) as usize;
+    let idx = stores.get::<i64>(stack) as usize;
 
     let val: i64 = {
         let entry = stores
@@ -2482,7 +2482,7 @@ fn n_parallel_buf_drop_narrow(stores: &mut Stores, _stack: &mut DbRef) {
 /// has slot size 4 (per `variables::size`), matching `f32`'s width.
 /// Mirrors how `OpConvSingleFromInt` returns f32 (`src/ops.rs:502`).
 fn n_parallel_buf_get_single(stores: &mut Stores, stack: &mut DbRef) {
-    let idx = *stores.get::<i64>(stack) as usize;
+    let idx = stores.get::<i64>(stack) as usize;
     let val: f32 = {
         let entry = stores
             .par_narrow_buffer_stack
@@ -2512,7 +2512,7 @@ fn n_parallel_buf_get_single(stores: &mut Stores, stack: &mut DbRef) {
 /// slot as u64 — the bytes ARE the f64 bit pattern.  This getter
 /// recovers the typed value with no intermediate IR Op.
 fn n_parallel_buf_get_float(stores: &mut Stores, stack: &mut DbRef) {
-    let idx = *stores.get::<i64>(stack) as usize;
+    let idx = stores.get::<i64>(stack) as usize;
     let row = stores
         .par_buffer_stack
         .last()
@@ -2554,7 +2554,7 @@ fn n_parallel_queue_fn(stores: &mut Stores, stack: &mut DbRef) {
 /// Panics if `par_fn_buffer_stack` is empty (no active queue) or
 /// if `idx` is out of range — both indicate a parser-side bug.
 fn n_parallel_buf_get_fn(stores: &mut Stores, stack: &mut DbRef) {
-    let idx = *stores.get::<i64>(stack);
+    let idx = stores.get::<i64>(stack);
     let bytes_20: [u8; 20] = {
         let buf = stores
             .par_fn_buffer_stack
@@ -2734,7 +2734,7 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
 /// `n_stack_trace` does: a rename in `default/07_reflect.loft` then panics with a
 /// clear message instead of writing silent garbage at byte 65535.
 fn n_reflect_type(stores: &mut Stores, stack: &mut DbRef) {
-    let kt = *stores.get::<i64>(stack) as u16;
+    let kt = stores.get::<i64>(stack) as u16;
     let result = reflect_type_into(stores, kt);
     stores.put(stack, result);
 }
@@ -2747,7 +2747,7 @@ fn n_reflect_type(stores: &mut Stores, stack: &mut DbRef) {
 /// which is why a runtime name works there too — the question the plan expected
 /// to be load-bearing.
 fn n_type_named(stores: &mut Stores, stack: &mut DbRef) {
-    let raw = *stores.get::<Str>(stack);
+    let raw = stores.get::<Str>(stack);
     let result = type_named_in(stores, raw.str());
     stores.put(stack, result);
 }
@@ -2757,9 +2757,9 @@ fn n_type_named(stores: &mut Stores, stack: &mut DbRef) {
 /// Arguments come off the stack in reverse, so the parse-time type id (pushed
 /// last by the lowering in `src/parser/control.rs`) is read first.
 fn n_reflect_field(stores: &mut Stores, stack: &mut DbRef) {
-    let kt = *stores.get::<i64>(stack) as u16;
-    let position = *stores.get::<i64>(stack);
-    let value = *stores.get::<DbRef>(stack);
+    let kt = stores.get::<i64>(stack) as u16;
+    let position = stores.get::<i64>(stack);
+    let value = stores.get::<DbRef>(stack);
     let result = reflect_field_into(stores, &value, position, kt);
     stores.put(stack, result);
 }
@@ -2767,9 +2767,9 @@ fn n_reflect_field(stores: &mut Stores, stack: &mut DbRef) {
 /// @PLN23 S7b: `field_value(x, path)` — the VALUE at the end of a chain of
 /// inline record fields.
 fn n_reflect_field_path(stores: &mut Stores, stack: &mut DbRef) {
-    let kt = *stores.get::<i64>(stack) as u16;
-    let path = *stores.get::<DbRef>(stack);
-    let value = *stores.get::<DbRef>(stack);
+    let kt = stores.get::<i64>(stack) as u16;
+    let path = stores.get::<DbRef>(stack);
+    let value = stores.get::<DbRef>(stack);
     let result = reflect_field_path_into(stores, &value, &path, kt);
     stores.put(stack, result);
 }
@@ -3503,7 +3503,7 @@ fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
 /// Return the error text from the last `Type.parse()` call.
 /// Empty string means the parse succeeded.
 fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = *stores.get::<Str>(stack);
+    let msg = stores.get::<Str>(stack);
     stores.last_parse_errors.push(msg.str().to_owned());
 }
 
@@ -3511,7 +3511,7 @@ fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
 // Always-non-null (the joined error text, possibly empty); no stack args.
 // Routed by `is_text_dest_native`.
 fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let msg = stores.last_parse_errors.join("\n");
     stores.last_parse_errors.clear();
     stores
@@ -3541,8 +3541,8 @@ fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// path emits it as a compile-time constant; direct callers must
 /// use `sizeof(hash<T[…]>)`-style type introspection to obtain it.
 fn n_hash_sorted(stores: &mut Stores, stack: &mut DbRef) {
-    let v_tp = *stores.get::<i64>(stack) as u16;
-    let v_h = *stores.get::<DbRef>(stack);
+    let v_tp = stores.get::<i64>(stack) as u16;
+    let v_h = stores.get::<DbRef>(stack);
     let result = stores.build_hash_sorted_vec(&v_h, v_tp);
     stores.put(stack, result);
 }
@@ -3550,8 +3550,8 @@ fn n_hash_sorted(stores: &mut Stores, stack: &mut DbRef) {
 /// Raw bucket-walk sibling of `n_hash_sorted` for `for e in h par(...)` —
 /// skips the key sort because the parallel queue has no use for hash order.
 fn n_hash_unsorted(stores: &mut Stores, stack: &mut DbRef) {
-    let v_tp = *stores.get::<i64>(stack) as u16;
-    let v_h = *stores.get::<DbRef>(stack);
+    let v_tp = stores.get::<i64>(stack) as u16;
+    let v_h = stores.get::<DbRef>(stack);
     let result = stores.build_hash_unsorted_vec(&v_h, v_tp);
     stores.put(stack, result);
 }
@@ -3559,34 +3559,34 @@ fn n_hash_unsorted(stores: &mut Stores, stack: &mut DbRef) {
 /// @PLN48 — iterate a `spatial`/`radix` collection in natural key order.  Wraps
 /// `Stores::build_radix_sorted_vec`; no sort — the tree walk is already ordered.
 fn n_radix_sorted(stores: &mut Stores, stack: &mut DbRef) {
-    let v_tp = *stores.get::<i64>(stack) as u16;
-    let v_r = *stores.get::<DbRef>(stack);
+    let v_tp = stores.get::<i64>(stack) as u16;
+    let v_r = stores.get::<DbRef>(stack);
     let result = stores.build_radix_sorted_vec(&v_r, v_tp);
     stores.put(stack, result);
 }
 
 /// @PLN48 S3 — a spatial range slice.  Args pop in reverse declaration order.
 fn n_spatial_range(stores: &mut Stores, stack: &mut DbRef) {
-    let limit = *stores.get::<i64>(stack);
-    let tz = *stores.get::<i64>(stack);
-    let ty = *stores.get::<i64>(stack);
-    let tx = *stores.get::<i64>(stack);
-    let has_till = *stores.get::<i64>(stack);
-    let fz = *stores.get::<i64>(stack);
-    let fy = *stores.get::<i64>(stack);
-    let fx = *stores.get::<i64>(stack);
-    let tp = *stores.get::<i64>(stack) as u16;
-    let coll = *stores.get::<DbRef>(stack);
+    let limit = stores.get::<i64>(stack);
+    let tz = stores.get::<i64>(stack);
+    let ty = stores.get::<i64>(stack);
+    let tx = stores.get::<i64>(stack);
+    let has_till = stores.get::<i64>(stack);
+    let fz = stores.get::<i64>(stack);
+    let fy = stores.get::<i64>(stack);
+    let fx = stores.get::<i64>(stack);
+    let tp = stores.get::<i64>(stack) as u16;
+    let coll = stores.get::<DbRef>(stack);
     let result = stores.build_radix_range_vec(&coll, tp, fx, fy, fz, has_till, tx, ty, tz, limit);
     stores.put(stack, result);
 }
 
 /// A trie prefix slice.  Args pop in reverse declaration order.
 fn n_trie_prefix(stores: &mut Stores, stack: &mut DbRef) {
-    let limit = *stores.get::<i64>(stack);
-    let pre = *stores.get::<Str>(stack);
-    let tp = *stores.get::<i64>(stack) as u16;
-    let coll = *stores.get::<DbRef>(stack);
+    let limit = stores.get::<i64>(stack);
+    let pre = stores.get::<Str>(stack);
+    let tp = stores.get::<i64>(stack) as u16;
+    let coll = stores.get::<DbRef>(stack);
     let result = stores.build_trie_prefix_vec(&coll, tp, pre.str(), limit);
     stores.put(stack, result);
 }
@@ -3881,7 +3881,7 @@ pub(crate) fn materialise_primitive_into(
 }
 
 fn n_json_parse(stores: &mut Stores, stack: &mut DbRef) {
-    let v_raw = *stores.get::<Str>(stack);
+    let v_raw = stores.get::<Str>(stack);
     let result = json_parse_into_stores(stores, v_raw.str());
     stores.put(stack, result);
 }
@@ -4064,7 +4064,7 @@ pub fn json_parse_into_stores(stores: &mut Stores, raw: &str) -> DbRef {
 
 // @PLN10 — destination-passing variant of `n_json_errors`.
 fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let msg = stores.last_json_errors.join("|");
     stores
         .store_mut(&dest)
@@ -4079,8 +4079,8 @@ fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
 // dest-passes like any other producer; no "null-aware primitive" is needed.
 // Bonus: per-call dests retire the @P354 sibling-aliasing scratch hazard.
 fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     let out: String = if discr == JV_DISCR_STRING {
         let str_tp = stores.name("JString");
@@ -4097,7 +4097,7 @@ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_as_number(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     // @PLN109 — a JInteger widens to f64; a JNumber reads as-is; else NaN.
     #[allow(clippy::cast_precision_loss)]
@@ -4116,7 +4116,7 @@ fn n_as_number(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_as_long(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     // @PLN109 — a JInteger reads its EXACT i64 (H5); a JNumber truncates; else MIN.
     let n = if discr == JV_DISCR_INT {
@@ -4134,7 +4134,7 @@ fn n_as_long(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_as_bool(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     if discr == JV_DISCR_BOOL {
         let bool_tp = stores.name("JBool");
@@ -4155,8 +4155,8 @@ fn n_as_bool(stores: &mut Stores, stack: &mut DbRef) {
 /// so chained access stays safe (every intermediate failure
 /// produces `JNull`, never a trap).
 fn n_field(stores: &mut Stores, stack: &mut DbRef) {
-    let name = *stores.get::<Str>(stack);
-    let self_ref = *stores.get::<DbRef>(stack);
+    let name = stores.get::<Str>(stack);
+    let self_ref = stores.get::<DbRef>(stack);
     let discr = stores
         .store(&self_ref)
         .get_byte(self_ref.rec, self_ref.pos, 0);
@@ -4211,8 +4211,8 @@ fn n_field(stores: &mut Stores, stack: &mut DbRef) {
 /// fresh one) — it's a borrowed view that lives as long as the
 /// parent's store does.  Matches the file-pattern arena contract.
 fn n_item(stores: &mut Stores, stack: &mut DbRef) {
-    let index = *stores.get::<i64>(stack) as i32;
-    let self_ref = *stores.get::<DbRef>(stack);
+    let index = stores.get::<i64>(stack) as i32;
+    let self_ref = stores.get::<DbRef>(stack);
     let discr = stores
         .store(&self_ref)
         .get_byte(self_ref.rec, self_ref.pos, 0);
@@ -4253,7 +4253,7 @@ fn n_item(stores: &mut Stores, stack: &mut DbRef) {
 /// offset 4 of the vector record; empty containers (no record
 /// allocated) return 0.
 fn n_len(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     let len: i64 = match discr {
         JV_DISCR_ARRAY => {
@@ -4311,8 +4311,8 @@ fn n_len(stores: &mut Stores, stack: &mut DbRef) {
 /// `src`, and pushes the result DbRef.  The compile-time codegen calls
 /// this for every `Struct.parse(JsonValue)` invocation.
 fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
-    let struct_kt_arg = *stores.get::<i64>(stack) as i32;
-    let src = *stores.get::<DbRef>(stack);
+    let struct_kt_arg = stores.get::<i64>(stack) as i32;
+    let src = stores.get::<DbRef>(stack);
     let struct_kt = struct_kt_arg as u16;
     // `stores.size` returns the struct's size in bytes; `database`
     // wants words (8 bytes each).  Round up + 1 word for the record
@@ -4740,11 +4740,11 @@ fn copy_bytes(stores: &mut Stores, src: &DbRef, dest: &DbRef, dest_pos: u32, n_b
     // stores mutably and invalidate the source pointer.
     let mut buf: Vec<u8> = Vec::with_capacity(n_bytes as usize);
     for i in 0..n_bytes {
-        buf.push(*stores.store(src).addr::<u8>(src.rec, src.pos + i));
+        buf.push(stores.store(src).read::<u8>(src.rec, src.pos + i));
     }
     let dest_store = stores.store_mut(dest);
     for (i, byte) in buf.iter().enumerate() {
-        *dest_store.addr_mut::<u8>(dest.rec, dest_pos + i as u32) = *byte;
+        dest_store.write::<u8>(dest.rec, dest_pos + i as u32, *byte);
     }
 }
 
@@ -4897,9 +4897,9 @@ fn n_struct_to_json_pretty_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn struct_to_json_dispatch_dest(stores: &mut Stores, stack: &mut DbRef, pretty: bool) {
-    let dest = *stores.get::<DbRef>(stack);
-    let struct_kt_arg = *stores.get::<i64>(stack) as i32;
-    let src = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let struct_kt_arg = stores.get::<i64>(stack) as i32;
+    let src = stores.get::<DbRef>(stack);
     let struct_kt = struct_kt_arg as u16;
     let mut out = String::new();
     stores.show_json(&mut out, &src, struct_kt, pretty);
@@ -4925,7 +4925,7 @@ fn n_json_null(stores: &mut Stores, stack: &mut DbRef) {
 /// Q4 primitive constructor — allocate a JsonValue set to the
 /// `JBool` variant with the supplied boolean payload.
 fn n_json_bool(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<bool>(stack);
+    let v = stores.get::<bool>(stack);
     let result = jv_alloc(stores);
     let pos = result.pos;
     let bool_tp = stores.name("JBool");
@@ -4943,7 +4943,7 @@ fn n_json_bool(stores: &mut Stores, stack: &mut DbRef) {
 /// diagnostic to `json_errors()`, matching the spec'd
 /// `to_json_pretty` behaviour for non-finite floats.
 fn n_json_number(stores: &mut Stores, stack: &mut DbRef) {
-    let n = *stores.get::<f64>(stack);
+    let n = stores.get::<f64>(stack);
     let result = jv_alloc(stores);
     let pos = result.pos;
     if n.is_finite() {
@@ -4971,7 +4971,7 @@ fn n_json_number(stores: &mut Stores, stack: &mut DbRef) {
 /// `n_json_parse` primitives), so the returned DbRef owns the
 /// text independently of the input's lifetime.
 fn n_json_string(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<Str>(stack);
+    let v = stores.get::<Str>(stack);
     let s_owned = v.str().to_owned();
     let result = jv_alloc(stores);
     let pos = result.pos;
@@ -4995,7 +4995,7 @@ fn n_json_string(stores: &mut Stores, stack: &mut DbRef) {
 /// returned tree frees as one unit when the root DbRef leaves
 /// scope.  Empty input still produces an empty JArray.
 fn n_json_array(stores: &mut Stores, stack: &mut DbRef) {
-    let items = *stores.get::<DbRef>(stack);
+    let items = stores.get::<DbRef>(stack);
     let length = crate::vector::length_vector(&items, &stores.allocations);
     let result = jv_alloc(stores);
     if length == 0 {
@@ -5033,7 +5033,7 @@ fn n_json_array(stores: &mut Stores, stack: &mut DbRef) {
 /// `materialise_primitive_into`.  Empty input still produces an
 /// empty JObject.
 fn n_json_object(stores: &mut Stores, stack: &mut DbRef) {
-    let fields = *stores.get::<DbRef>(stack);
+    let fields = stores.get::<DbRef>(stack);
     let length = crate::vector::length_vector(&fields, &stores.allocations);
     let result = jv_alloc(stores);
     if length == 0 {
@@ -5079,8 +5079,8 @@ fn n_json_object(stores: &mut Stores, stack: &mut DbRef) {
 /// "absent" from "present-but-null" — a field whose value is
 /// `JNull` still returns `true`.
 fn n_has_field(stores: &mut Stores, stack: &mut DbRef) {
-    let name = *stores.get::<Str>(stack);
-    let v = *stores.get::<DbRef>(stack);
+    let name = stores.get::<Str>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     if discr != JV_DISCR_OBJECT {
         stores.put(stack, false);
@@ -5119,7 +5119,7 @@ fn n_has_field(stores: &mut Stores, stack: &mut DbRef) {
 /// `for k in v.keys() { ... }` on any JsonValue without first
 /// destructuring.
 fn n_keys(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     let text_tp = stores.name("text");
     let text_size = u32::from(stores.size(text_tp));
@@ -5173,7 +5173,7 @@ fn n_keys(stores: &mut Stores, stack: &mut DbRef) {
 /// result store — caller's input arena can be freed
 /// independently.
 fn n_fields(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     let jf_tp = stores.name("JsonField");
     let jf_size = u32::from(stores.size(jf_tp));
@@ -5230,8 +5230,8 @@ fn n_fields(stores: &mut Stores, stack: &mut DbRef) {
 
 // @PLN10 — destination-passing variant of `n_kind`.
 fn n_kind_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let discr = stores.store(&v).get_byte(v.rec, v.pos, 0);
     let name = match discr {
         JV_DISCR_NULL => "JNull",
@@ -5418,8 +5418,8 @@ fn json_to_text_at(stores: &Stores, v: &DbRef, pretty: bool, depth: usize) -> St
 
 // @PLN10 — destination-passing variant of `n_to_json`.
 fn n_to_json_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let out = json_to_text(stores, &v, false);
     stores
         .store_mut(&dest)
@@ -5429,8 +5429,8 @@ fn n_to_json_dest(stores: &mut Stores, stack: &mut DbRef) {
 
 // @PLN10 — destination-passing variant of `n_to_json_pretty`.
 fn n_to_json_pretty_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
-    let v = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     let out = json_to_text(stores, &v, true);
     stores
         .store_mut(&dest)

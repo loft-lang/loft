@@ -1993,7 +1993,7 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn get<T: 'static>(&mut self, stack: &mut DbRef) -> &T {
+    pub fn get<T: 'static + Copy>(&mut self, stack: &mut DbRef) -> T {
         // @PLAN53 cluster 2 / S4: pop the value's STEPPED span (8-rounded in
         // aligned mode) so a native arg occupying a stepped slot is reached
         // correctly; identity (real size_of) when off → flag-OFF unchanged.
@@ -2006,11 +2006,11 @@ impl Stores {
             step,
         );
         stack.pos -= step;
-        let r = self.store(stack).addr::<T>(stack.rec, stack.pos);
+        let r = self.store(stack).read::<T>(stack.rec, stack.pos);
         #[cfg(debug_assertions)]
         {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
-                let db: &DbRef = unsafe { &*(r as *const T as *const DbRef) };
+                let db: &DbRef = unsafe { &*(std::ptr::from_ref(&r).cast::<DbRef>()) };
                 debug_assert!(
                     db.store_nr == u16::MAX || (db.store_nr as usize) < self.allocations.len(),
                     "get<DbRef>: OOB store_nr={} (allocations.len()={}) \

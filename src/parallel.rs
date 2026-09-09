@@ -684,10 +684,10 @@ pub fn rebase_walk_record(
             continue;
         }
         let store = &mut stores.allocations[record_ref.store_nr as usize];
-        let cur: DbRef = *store.addr::<DbRef>(record_ref.rec, field_pos);
+        let cur: DbRef = store.read::<DbRef>(record_ref.rec, field_pos);
         let translated = map.translate(&cur);
         if translated != cur {
-            *store.addr_mut::<DbRef>(record_ref.rec, field_pos) = translated;
+            store.write::<DbRef>(record_ref.rec, field_pos, translated);
         }
         // Recurse into the pointed-at record using the field's declared type so the next
         // layer's `owned_elements` call sees the right shape.
@@ -1142,7 +1142,7 @@ fn revive_record_chain(
             continue;
         }
         let cur: DbRef =
-            *stores.allocations[store_nr as usize].addr::<DbRef>(record_ref.rec, field_pos);
+            stores.allocations[store_nr as usize].read::<DbRef>(record_ref.rec, field_pos);
         if cur.store_nr != u16::MAX && (cur.store_nr as usize) < stores.allocations.len() {
             revive_record_chain(
                 stores,
