@@ -2051,7 +2051,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
         Some(match args.first().map(Value::unspan) {
             Some(Value::Var(x)) => crate::data::Deps::frame1(*x),
-            _ => crate::data::Deps::none(),
+            // …and the container reached THROUGH a projection: `g.ts[i]` reads out of `g`
+            // exactly as `t[i]` reads out of `t`, and the cursor borrows the same store either
+            // way.  Only the `Var` spelling was recognised, so a field's vector took the
+            // `Deps::none()` arm — and the two halves of "this is a borrow" then disagreed:
+            // `borrows.is_some()` is TRUE for any `OpGetVector`, so the scope-exit free was
+            // SUPPRESSED, while the empty deps left the cursor typed as owning nothing.  A
+            // work-ref that is neither freed nor a borrow is a leak, and `--native` leaked one
+            // `__tuple<…>` record per read while `--interpret` stayed clean (loft#1479).
+            //
+            // `projection_container_var` is asked of the WHOLE `OpGetVector` node, not of its
+            // argument, because that walk starts at a projection op and peels: it takes this
+            // node, then the `OpGetField` under it, and stops at the variable.  It is *"the ONE
+            // derivation of which container did this view come out of"*, whose own doc records
+            // two readers that had the loop byte-for-byte — this was a third, spelled inline
+            // and only one level deep.
+            //
+            // A chain rooted at a CALL (`make_bag().rows[i]`) still answers `None` and keeps
+            // today's `Deps::none()`: that base is a temporary nobody else owns, and naming it
+            // here is `container_dep`'s separate question.  `OpGetVectorNullable` is off
+            // `is_projection_op`'s list — deliberately, because this deps list IS the proxy its
+            // doc warns about — so it too is unchanged.
+            Some(_) => crate::use_analysis::projection_container_var(&self.data, v)
+                .map_or_else(crate::data::Deps::none, crate::data::Deps::frame1),
+            None => crate::data::Deps::none(),
         })
     }
 
