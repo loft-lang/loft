@@ -1,0 +1,162 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A capture that owns its store outright does not take over another local's frame-exit free.
+//
+// `closures.md` `(L-CapOwn)` — *a captured heap store is freed ONCE, by whichever of the record
+// and the frame outlives the other*.  A store NO capture reaches is not in that trade at all,
+// so the frame owes it a free whatever the closure adopted.
+//
+// The frame stands down for a captured local because the closure record's cascade releases what
+// it adopted.  A COLLECTION capture names a VIEW, so the store lives in a backing local no
+// closure captured by name, and `CaptureBuilds::backing` is what points the suppression at it.
+// That map recorded a backing for any right-hand side naming a single root — and `mb = cap`
+// names `cap` while still minting `mb` a store of its own.  So the SOURCE's free was suppressed
+// on the strength of a capture that adopted the DESTINATION's store, and the copied-from record
+// was released by nobody.
+//
+// One map, two questions: *which local did this right-hand side name* is not *which local HOLDS
+// the store this capture reaches*, and the map's own contract already said so — "a capture that
+// owns its store outright has no backing root and is absent".  The destination's deps are what
+// separate a view from a copy; the cure is that test at the recording site, not a sharper one
+// at the consumer.
+//
+// **The filed boundary was wrong in three of its six rows, and the controls below are what
+// says so.**  It read the leak as the unused arm of a `??` inside a lambda, needing a MINTING
+// fallback literal and the PRESENT arm to be taken.  None of the three is load-bearing: the
+// leak reproduces with no `??` at all, with a non-minting fallback, and with the lambda never
+// CALLED — the `mb: P? = cap` line every cell of the report shared is the whole trigger.  A
+// matrix built off the filed repro would have pinned exactly the axis the defect lived on.
+//
+// The leak SCALES with the call count and the store count hides it: the report reads
+// `1 stores` while the RECORD count grows, because one store is reused and appended to.  So the
+// probe is a FUNCTION called 40 times, not one top-level bind.
+//
+// The uncalled cell leaves its lambda unread on purpose — that is the cell.
+// @EXPECT_WARNING: Variable s is never read
+//
+// @falsified-at: b379a9914 — interpret leaked `kt=81 P1487x40` -> clean, native the same.  The
+//   LEAK is the only channel that moves: every value here was already right on the control
+//   build, which is the shape of the defect.
+
+struct P1487 { n: integer }
+struct S1487 { a: integer }
+
+// The defect: the copy's SOURCE is freed by nobody once the DESTINATION is captured.
+fn probe_1487(v: integer) -> integer {
+  cap = P1487 { n: v };
+  mb: P1487 = cap;
+  s = fn() -> integer { mb.n };
+  s()
+}
+
+// Chain depth, an axis the report never moved: only the local the capture names DIRECTLY was
+// suppressed, so the middle of a three-link chain leaked and its head did not.
+fn chain_1487() -> integer {
+  a = P1487 { n: 1 };
+  b: P1487 = a;
+  c: P1487 = b;
+  s = fn() -> integer { c.n };
+  s() + a.n + b.n
+}
+
+// Capturing the SOURCE instead: clean before this fix and after it.  The record adopts `cap`'s
+// store and the frame frees `mb`, which is the same trade in the other direction.
+fn source_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487 = cap;
+  s = fn() -> integer { cap.n };
+  s() + mb.n
+}
+
+// Both captured: two adoptions, no frame-exit free left to get wrong.
+fn both_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487 = cap;
+  s = fn() -> integer { cap.n + mb.n };
+  s()
+}
+
+// Two independent literals, one captured.  This is `probe_1487` with the copy removed, and it
+// was always clean — which is what named the copy as the trigger.
+fn two_literals_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487 = P1487 { n: 21 };
+  s = fn() -> integer { mb.n };
+  s() + cap.n
+}
+
+// The shape as FILED — a `??` join inside a lambda over a nullable copy-bound capture.  Kept
+// because it is the report's own repro, not because any of its three stated conditions matter.
+fn filed_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487? = cap;
+  s = fn(v: integer) -> P1487 { mb ?? P1487 { n: 99 } };
+  t = 0;
+  for _ in 0..4 { r = s(1); t = t + r.n; }
+  t + cap.n
+}
+
+// …and the same lambda never CALLED.  The leak was already there, which is what disproves the
+// "the fallback's work-ref, minted once and never released" reading.
+fn uncalled_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487? = cap;
+  s = fn(v: integer) -> P1487 { mb ?? P1487 { n: 99 } };
+  cap.n
+}
+
+// The backing suppression this fix narrows must SURVIVE for a real collection view: `q` is a
+// view of a hidden buffer local no closure captured by name, and the record adopted that
+// buffer.  Freeing it at frame exit is a use-after-free, not a leak — so this cell is scored by
+// its VALUE and the closure is made to escape, which is where a wrong free would be read.
+fn make_1487() -> fn() -> integer {
+  q: vector<S1487> = [S1487 { a: 7 }, S1487 { a: 9 }];
+  return fn() -> integer { len(q) + q[1].a };
+}
+
+// A COPY-bound collection: `e = src` mints its own buffer, so the root the right-hand side
+// names is that buffer and not `src`.  Clean throughout, and it is the control that says the
+// collection half never depended on the copy being read as a view.
+fn collection_copy_1487() -> integer {
+  src: vector<S1487> = [S1487 { a: 7 }, S1487 { a: 9 }];
+  e = src;
+  g = fn() -> integer { len(e) };
+  g() + len(src)
+}
+
+// A copy-bound capture REASSIGNED after the build (loft#1324 / loft#1388): the record holds the
+// store adopted at the build, the frame owes the one the local names now, and the source of the
+// copy owes its own.  Three stores, three owners.
+fn reassigned_1487() -> integer {
+  cap = P1487 { n: 13 };
+  mb: P1487 = cap;
+  h = fn(i: integer) -> integer { mb.n + i };
+  mb = P1487 { n: 5 };
+  h(1) + mb.n + cap.n
+}
+
+fn main() {
+  // The CALL axis, where the leak accumulates.  40 calls left 40 records behind.
+  t = 0;
+  for i in 0..40 { t = t + probe_1487(i); }
+  assert(t == 780, "40 copy-bound captures: got {t}");
+
+  assert(chain_1487() == 3, "a three-link copy chain: got {chain_1487()}");
+  assert(filed_1487() == 65, "the shape as filed: got {filed_1487()}");
+  assert(uncalled_1487() == 13, "the lambda never called: got {uncalled_1487()}");
+
+  // The controls — every one of these was clean before the fix and must stay clean.
+  assert(source_1487() == 26, "capturing the copy's source: got {source_1487()}");
+  assert(both_1487() == 26, "capturing both ends: got {both_1487()}");
+  assert(two_literals_1487() == 34, "two independent literals: got {two_literals_1487()}");
+  assert(collection_copy_1487() == 4, "a copy-bound collection: got {collection_copy_1487()}");
+  assert(reassigned_1487() == 32, "reassigned after the build: got {reassigned_1487()}");
+
+  // The escaping collection capture: a wrong free here reads as a released store, not a leak.
+  g = make_1487();
+  assert(g() == 11, "an escaped collection capture still answers: got {g()}");
+  assert(g() == 11, "…and answers twice: got {g()}");
+
+  println("1487 OK calls={t} chain={chain_1487()} filed={filed_1487()}");
+}

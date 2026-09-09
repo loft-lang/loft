@@ -6301,7 +6301,7 @@ pub(crate) fn capture_build_backings(
             // the build node is reached AFTER this one, by which time `latest` describes the
             // assignment rather than the capture.  Resolve those builds here, against
             // `latest` as it still stands, and let the walk skip them when it arrives.
-            for (record, c, backing) in captures_built_in(data, rhs, set_dbref, &latest) {
+            for (record, c, backing) in captures_built_in(data, function, rhs, set_dbref, &latest) {
                 built.insert(c);
                 if let Some(b) = backing {
                     out.backing.insert(c, b);
@@ -6328,11 +6328,12 @@ pub(crate) fn capture_build_backings(
                 out.reassigned_after_build.insert(*v);
             }
             match crate::use_analysis::view_root_slots(data, rhs).as_deref() {
-                Some([root]) if *root != *v && !function.is_argument(*root) => {
+                Some([root]) if bind_views_root(function, *v, rhs, *root) => {
                     latest.insert(*v, *root);
                 }
                 // A right-hand side that names no single root leaves no backing to remember,
-                // and the stale one would be worse than none: drop it.
+                // and the stale one would be worse than none: drop it.  So does one whose
+                // destination owns the store it ends up holding — see `bind_views_root`.
                 _ => {
                     latest.remove(v);
                 }
@@ -6386,6 +6387,7 @@ pub(crate) fn capture_build_backings(
 /// the assignment this right-hand side belongs to.
 fn captures_built_in(
     data: &Data,
+    function: &Function,
     rhs: &Value,
     set_dbref: u32,
     outer: &HashMap<u16, u16>,
@@ -6394,7 +6396,7 @@ fn captures_built_in(
     let mut found: Vec<(u16, u16, Option<u16>)> = Vec::new();
     rhs.walk(&mut |node: &Value| match node.unspan() {
         Value::Set(c, src) => match crate::use_analysis::view_root_slots(data, src).as_deref() {
-            Some([root]) if root != c => {
+            Some([root]) if bind_views_root(function, *c, src, *root) => {
                 latest.insert(*c, *root);
             }
             _ => {
@@ -6568,6 +6570,54 @@ fn capture_attr_is_cascade_relevant(data: &Data, record: u32, a: usize) -> bool 
 ///
 /// Empty when `start` owns its store directly, which is the struct case: there is nothing
 /// behind it to mark.
+/// Does the bind `v = rhs`, whose right-hand side is rooted at `root`, leave `v` VIEWING
+/// the store `root` holds?
+///
+/// [`CaptureBuilds::backing`] names the local that HOLDS the store a capture reaches, and a
+/// capture owning its store outright has none.  A right-hand side naming a single root
+/// answers neither question on its own: `mb = cap` names `cap` and still mints `mb` a store
+/// of its own, so recording `cap` as the backing suppressed a frame-exit free that the
+/// closure's cascade never took over, and the copied-from record was freed by nobody
+/// (loft#1487, one store per copy-bound capture, both backends).
+///
+/// `binding.md` is what separates the two, and it separates them by the SHAPE of the
+/// right-hand side rather than by any fact about `v`: `(B-View)` makes a PROJECTION —
+/// `q = __vdb_1[…]`, `x = b.s`, an element read — name an interior place, so the root keeps
+/// holding the store; `(B-Copy)` makes a plain bind of a whole heap value COPY, so a bare
+/// local read leaves `v` owning a store of its own.  `(B-Ref-Alias)` is the one bare-name
+/// exception, and it says so in the destination's type.
+///
+/// ⚠ **Asked of `v`'s DEPS instead, this is the wrong currency and the reassignment cells
+/// fail.** The map is built by a per-ASSIGNMENT walk because `@FR-O-Latest` needs the store
+/// the capture named AT THE BUILD; a dep read describes what the local names LAST, so a
+/// capture reassigned after its build loses the backing the record still holds and the
+/// frame frees it under the escaped closure — `1324-a-reassigned-capture-suppresses-the-\
+/// store-the-record-holds` reads `null(oob)` on exactly that.  The right-hand side is a
+/// fact about this assignment and stays true however often the local is assigned again.
+///
+/// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the
+/// frame outlives the other.  A store no capture reaches is not in that trade at all, so
+/// naming it here takes away the frame's release without giving the cascade anything.
+fn bind_views_root(function: &Function, v: u16, rhs: &Value, root: u16) -> bool {
+    root != v
+        && !function.is_argument(root)
+        && (!rhs_is_a_bare_local_read(rhs) || matches!(function.tp(v), Type::RefVar(_)))
+}
+
+/// Is this right-hand side a bare read of another local — the `(B-Copy)` shape, as opposed
+/// to a projection naming a place inside one?
+///
+/// Peels the wrappers a right-hand side arrives in and nothing else: a `Span` is a source
+/// position, and the parser wraps a one-expression arm in a `Block` with a single operator.
+fn rhs_is_a_bare_local_read(rhs: &Value) -> bool {
+    match rhs.unspan() {
+        Value::Var(_) => true,
+        Value::Block(bl) if bl.operators.len() == 1 => rhs_is_a_bare_local_read(&bl.operators[0]),
+        Value::Insert(ops) if ops.len() == 1 => rhs_is_a_bare_local_read(&ops[0]),
+        _ => false,
+    }
+}
+
 fn backing_chain(function: &Function, start: u16) -> Vec<u16> {
     let mut chain = Vec::new();
     let mut v = start;
@@ -10497,13 +10547,21 @@ impl Scopes<'_> {
                     ));
                 }
                 if scope_debug && !emit {
+                    // Every conjunct of `emit`, because the question this line is read to
+                    // answer is WHICH of them declined.  Three of the six used to be
+                    // printed and `owns` / `captured_ref` / `free_transferred` were not,
+                    // so a suppression by one of those read as a suppression by any of
+                    // them — the reader then re-derives the verdict by hand, which is how
+                    // loft#1487 was first attributed to the wrong predicate.
                     eprintln!(
                         "[scope_debug] NOT freeing '{}' (var={v}, scope={}, to_scope={to_scope}): \
-                         dep_empty={} in_ret={in_ret} skip_free={}",
+                         dep_empty={} owns={owns} is_work_ref={is_work_ref} in_ret={in_ret} \
+                         skip_free={} free_transferred={} captured_ref={captured_ref}",
                         function.name(v),
                         self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
                         dep.is_empty(),
                         function.is_skip_free(v),
+                        self.free_transferred.contains(&v),
                     );
                 }
                 if emit {
