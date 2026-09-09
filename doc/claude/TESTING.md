@@ -648,6 +648,23 @@ requires one on every file added under `tests/scripts/`, against the ratchet in
 `tests/falsified.baseline`; `// @falsified-at: none — <reason>` is the honest opt-out for a
 file that genuinely cannot fail on any earlier build.
 
+⚠ **The sha in that line is a RECEIPT, not a pointer — so a CHERRY-PICKED guard keeps the
+peer's.**  When you take a guard from a sibling checkout its `@falsified-at:` names a commit on
+THEIR branch, and the reflex is to re-point it at your own equivalent so the reference resolves
+in your history.  That replaces a measured statement with an assumed one: your equivalent
+commit is a different tree, carrying all your own work, and nothing gates the difference —
+`every_new_guard_records_its_control` checks that the LINE EXISTS, never that its sha resolves
+or that the guard still falsifies there.  Re-point only together with a fresh `make falsify`
+run whose output you paste.
+
+**And `origin/main` is not a free durable substitute for all of them.**  One control build at
+main would serve every picked guard and never go stale, which is the tempting move — and it is
+wrong wherever the guards CHAIN.  A guard whose control is the previous fix in a series does
+move a channel against main, for the EARLIER defect's reason: measured 2026-09-09, loft#1472's
+control is loft#1471's fix and loft#1479's is loft#1478's, so scoring either at main records a
+green receipt for the wrong cause.  Say in the join's report which shas depend on which branch
+instead, so the rebuild is a decision rather than an accident.
+
 ### The defect no guard can catch — the corpus EMISSION diff
 
 `make falsify` scores a guard, and a guard scores a program someone wrote.  Neither sees the
