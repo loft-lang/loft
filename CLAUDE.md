@@ -680,7 +680,10 @@ because the second store resolution it removes costs more than the arithmetic it
 again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
 (record type, offset) over the body's typed write set — and is the bisect step for a wrong
 scalar in a loop over a record; `LOFT_HOIST_VERIFY=1` re-reads each hoisted scalar and
-panics on a stale one.
+panics on a stale one.  **`LOFT_NO_VIEW_HOIST=1`** (@PLN157 § V-n) makes a `&`-bound vector
+view (`d = &cv.data`) derive no header at its binding — with it on, the rest of the block
+reads `d[i]` through one header derived once — and is the bisect step for a wrong element
+read through a view outside a loop.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a

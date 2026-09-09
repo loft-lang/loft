@@ -18,7 +18,8 @@ optimised — the release default since 2026-09-08, DESIGN.md § The shipped tie
 is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `lock`
 30× → **4.4×** (2.7× gate row); `smooth` 262× → **14×**; `fronds` 49× →
 **13.0×**; `composite` 26× → **6.3×**; the fills 17× → **3.8×** (under the bar);
-`wide_line` 17× → 5.5×; `lock_curved` 11.9× → **5.7×** (2026-09-09, after P4c).
+`wide_line` 17× → 5.5×; `lock_curved` 11.9× → **5.7×**; `composite` **6.1×** and
+the render rows −5–6 % after § V-n (2026-09-09).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -45,7 +46,7 @@ hash unchanged.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-09 (P4c)
+- **Last touched:** 2026-09-09 (§ V-n)
 
 ## Where to resume
 
@@ -115,12 +116,16 @@ schema what the container holds.  **P4c SHIPPED the same day** (DESIGN.md
 § P4c): loop-invariant record scalar reads hoisted as `__vs_N` locals under the
 header gate, keyed `(record type, offset)` with an admitted callee's written
 set evicting the caller's scalars; nineteen cells, falsified by disabling the
-eviction (eight red), `LOFT_NO_SCALAR_HOIST` / `LOFT_HOIST_VERIFY`.  **Next:**
-the pixel methods' own reads (29 % of `composite` — `if idx < len(d) { d[idx] }`
-resolves the store three times per call), the text readers off the hoist
-allow-list (c17), the 27 scalar `OpNewRecord` sites the fusion does not reach
-(`parse_*`, `text.split`, `File.lines` — S, no judged row), then the queue's
-4b / 5 / the move.  The
+eviction (eight red), `LOFT_NO_SCALAR_HOIST` / `LOFT_HOIST_VERIFY`.  **§ V-n
+shipped after it** (DESIGN.md § V-n): a `&`-bound vector view derives its
+header at the binding for the rest of its block, so the pixel methods'
+element access takes one resolution instead of three (`composite` 6.3× →
+6.1×, the render rows −5–6 %).  **Next:** `len(d)` is a stdlib CALL the
+header never serves (DESIGN.md § V-n, the finding — a one-op stdlib wrapper
+emitting its op is the S item that closes the pixel methods' last resolution);
+the text readers off the hoist allow-list (P4c c17); the 27 scalar
+`OpNewRecord` sites the fusion does not reach (`parse_*`, `text.split`,
+`File.lines` — S, no judged row); then the queue's 4b / 5 / the move.  The
 scratch clone's `bench/bench.loft` carries a `--only <routine>` switch (scratch
 only, never the consumer's tree): `scripts/profile.sh --engine --calls --
 --native-release <clone>/drawing/bench/bench.loft --n 4000 --only composite`
@@ -208,6 +213,7 @@ unless said otherwise.
 | **V-l** — a loop calling an IN-PLACE-ONLY writer keeps its hoisted headers: `in_place_only_writer` beside § V-c's `retbuf_only_writer`, admitted under the in-place tier (`LOFT_NO_INPLACE_CALLEE_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier); nine cells, five hoist and four must not | [DESIGN.md § V-l](DESIGN.md) | a cell hoists that must not (c2/c4/c6/c9), or the verifier panics on any cell | **Shipped 2026-09-09** — the setter-loop A/B −21 %; `composite` hoists but its cost is inside the pixel methods (next: their own reads + loop-invariant scalar fields) |
 | **V-m** — the fused scalar append: `v += [x]` on a plain vector was five runtime calls per element; seven typed `OpPush<Kind>` ops (one resolution, one capacity test, one write, one length bump, both backends), fused by the parser at `new_record` and the comprehension lowering; five writer classifiers taught the op | [DESIGN.md § V-m](DESIGN.md) | a cell leaks or answers wrong on either backend; `tests/fused_append.rs` | **Shipped 2026-09-09** — consumer `lock` 5.2× → 4.6×, `lock_curved` 6.9× → 5.8×, `wide_line` 6.3× → 5.5×, fills under the bar; 14/14 hashes agree |
 | **P4c** — loop-invariant record scalar reads hoisted as locals: `lay.x0` read once before a loop that cannot write it, keyed `(record type, offset)` over the body's typed write set plus what an admitted callee reaches (`hoist::hoistable` / `WriteSet`); `LOFT_NO_SCALAR_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § P4c](DESIGN.md) | a cell hoists a field the loop writes (the eight sabotage-red cells), or the verifier panics on any cell | **Shipped 2026-09-09** — 19 cells exact on both backends; emission pinned per cell (`tests/scalar_hoist.rs`); consumer `composite` 7.6× → 6.3× (−17 %), `lock` 4.6× → 4.4×, 14/14 hashes agree |
+| **V-n** — a `&`-bound vector VIEW (`d = &cv.data`) derives its header once at the binding for the rest of the block that indexes it (`hoist::view_def_header`, `Output::bind_view_header`): the pixel methods' `len(d)`-guarded element read/write take one store resolution instead of three; `LOFT_NO_VIEW_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-n](DESIGN.md) | a binding earns a header its remainder can invalidate (c18 red), or the verifier panics on any cell | **Shipped 2026-09-09** — 18 cells exact on both backends, emission pinned (`tests/view_header.rs`); consumer `composite` 6.3× → 6.1×, `render_lock` −6 %, `render_marks` −5 %, 14/14 hashes agree |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

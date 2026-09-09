@@ -1659,6 +1659,64 @@ what the container holds (`Parts::Vector` of a base / enum / int4 element, reach
 on the general path, and V-m cells c16/c17 carry the values.  The general lesson matches
 § V-m's: a peephole that matches an op SHAPE must also ask the TYPE the shape stands for.
 
+## V-n — a vector view derives its header at the binding (2026-09-09)
+
+**The shape** (§ V-l's finding, re-measured after P4c): `composite`'s two pixel methods are
+`sp_d = &self.data; if sp_idx < len(sp_d) { sp_d[sp_idx] = color }` — a view bound, a
+length read, one element write — and the row spent ~30 % in their reads: `t_6vector_len`
+resolves the store once, `vec_get_or_raise_runtime` again (store, slot, length, element
+`DbRef`), the typed setter a third time through that `DbRef`.  There is no loop inside the
+method for the header hoist to attach to.
+
+**Invariant.**  *A view's `DbRef` is fixed at its binding, so the header derived there
+describes the vector for as long as nothing after the binding can move it* — the loop
+hoist's promise applied to the STATEMENTS AFTER a `Set(d, <pure path>)` instead of a loop
+body.  `hoist::view_def_header` admits a binding when `d` is vector-typed, the right-hand
+side is a pure path with another root, the remainder of the block passes
+`blocks_header_hoist` (the in-place tier), never rebinds `d`, and indexes `d` at least
+once (a length read alone is cheaper through the runtime than through a header).  A rebind
+of the path's ROOT after the binding does not matter: `d` keeps the `DbRef` it was given —
+and the reassignment that would move the record is a store write the gate sees (c9, where
+the compiler's own advice says it copied `d` out first).  `Output::bind_view_header` emits
+`let __vh_N = vector::vec_header(&var_d, …);` as the statement after the binding and pushes
+a frame `output_block` pops before its closing brace, so the local's scope and the frame's
+agree; every existing header consumer (`get_elem_hoisted`, the fused write,
+`HoistedLengthEmitter`, a nested loop's own prelude, which skips a path already covered)
+serves it unchanged.  Switch `LOFT_NO_VIEW_HOIST` (generation time); `LOFT_HOIST_VERIFY=1`
+re-derives every read.
+
+**Cells before the code** (`bytecode-comparisons/V-n-view-def-header-cells.loft`, eighteen,
+hand-computed): c1 the set_pixel shape · c2 get_pixel · c3 a growth through the view ·
+c4 the view rebound · c5 an in-place callee between · c6 a growing callee between · c7
+bound inside an if-arm · c8 bound inside a loop body · c9 the root reassigned · c10 two
+sibling views · c11 a nested path · c12 only the length read · c13 reads inside a nested
+loop and if · c14 the binding last · c15 a keyed collection · c16 a float vector with a
+fused write · c17 a vector of vectors · c18 a growth that RELOCATES the record, then an
+in-range read.  Two lessons from writing them: a cell's reads must live in a HELPER — a
+`println` in the same block is text work the gate reads as a store write, and the first
+draft measured that instead of its own axis; and c9's expectation was wrong by hand (10)
+and right by the oracle (4), because the compiler copies a view out of a record about to
+be reassigned and says so.  Emission (which bindings earn a header) predicted and pinned
+in `tests/view_header.rs`: eleven helpers bind one, `h10` two; the growing, rebound,
+length-only, keyed, trailing and `?? []`-defaulting shapes (c17: the default allocates)
+bind none.  **Falsified**: `view_def_header` made to skip the remainder gate turns c18 red
+on plain native (206 → 199: the stale header names the record the growth moved away from)
+and panics under the verifier — and c3/c6 do NOT go red, because their reads fall off the
+stale header's range and take the runtime path, which is why c18 was added before the
+record was written.  `tests/scripts/157-view-header.loft` carries the value cells.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree): `composite` 638k → **618k**
+ns/op (6.30× → 6.10×); `render_lock` 35.2M → **33.1M** (−6 %), `render_marks` 15.1M →
+**14.3M** (−5 %); the standalone A/B on one binary form (`--only composite`, the switch off
+vs on) −6 to −8 %; every other row noise.
+
+**Finding.**  `len(d)` is a CALL to the stdlib's `t_6vector_len`, whose whole body is
+`OpLengthVector`, so a header never serves it: `HoistedLengthEmitter` fires only where the
+parser emits the op itself (a `for` bound).  A stdlib wrapper whose body is one op over its
+parameters could emit the op — an S item that would give every `len(v)` in a hoisted loop or
+after a view binding the header's length, and is the next step for the pixel methods (their
+`sp_idx < len(sp_d)` still resolves the store once per call).
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
