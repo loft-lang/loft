@@ -129,25 +129,30 @@ The branch is merged to main via a single PR when all items pass CI.
   policy on inputs each of its rules has to act on. A SKIP is not a pass — it means that
   repo is not cloned beside this one.
 
-  **It also reads the WARNING half now, and gates it as a ratchet.** Warnings never break a
-  published artifact and must never fail it — that is COMPATIBILITY.md's rule and the
-  compile/test verdict above keeps it — but a library that was warning-CLEAN and now warns
-  will fail its own CI (`LOFT_DENY_WARNINGS=1`) on its next PR, for an author who did not
-  touch the code. So existing debt is tolerated against `index/lib_warning_ratchet.json`
-  and a NEW dirty library is red, at the change that caused it. Accepting one is a
-  deliberate `--write-ratchet` re-pin in the same commit, where a reviewer sees it.
+  **It answers a SECOND question now, apart from the first: can each library be built and
+  RELEASED as it stands?** A library carrying warnings cannot — its own CI runs
+  `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the next PR to that repo is red
+  before its author has typed anything. So the run prints a `RELEASE-READY` /
+  `NOT RELEASE-READY` verdict naming the packages, and carries it in the exit code.
 
-  ⚠ **A named-subset or partly-skipped run passes `--partial`**, because a package the run
-  did not read is not evidence it was cleaned. Without that, `revalidate_libs_local.sh regex`
-  reported the other nine as cleaned and asked for a re-pin that would have thrown the
-  baseline away.
+  ⚠ **The two verdicts are apart because only one of them is your change's fault.** A
+  COMPILE-BREAK is a language change retro-breaking a shipped library — the freeze's
+  question, and yours to answer. `NOT RELEASE-READY` is a fact about the ecosystem that was
+  true before you started; the closing line says so, so a red never sends you looking for a
+  regression you did not cause.
 
-  ⚠ **Why the ratchet exists at all is worth one line, because the report already did.**
-  The dashboard has printed the dirty set since it was written, into a GREEN check: measured
-  over `revalidate-libs`'s own history, the set went **2 → 11 libraries in eight days with
-  every run green**, and the first anyone heard of it was a red check in the library repos on
-  code those authors had not touched — which is exactly what the step's own comment
-  predicted. A report whose default state nobody notices is not a report.
+  ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
+  the absolute state; a delta answers a different one. On the CI side this is the
+  `release-ready` job in `revalidate-libs.yml`, which is **advisory and must never become a
+  required check** — `main` requires Test ×3, Clippy and Format, and a library's warning
+  debt is information, never a veto on a loft PR.
+
+  ⚠ **Why it is a verdict and not a dashboard line**, in one sentence, because the dashboard
+  already existed: it printed the dirty set for weeks inside a GREEN check — measured over
+  `revalidate-libs`'s own history, **2 → 11 libraries in eight days, every run green** — and
+  the first anyone heard of it was a red check in the library repos on code those authors
+  had not touched, which is exactly what the step's own comment predicted. A report whose
+  default state nobody notices is not a report.
 
   **A clean run reads `42 pass, 0 runtime/env, 0 skipped, 0 COMPILE-BREAK` and exits 0.**
   It did not until loft#1315: the matrix policy was written twice, once in the workflow and

@@ -84,11 +84,6 @@ dist/
 # `make optional-ratchet` compares against it, and the number in the DIFF is the receipt for
 # the walk that lowered it.
 !/index/optional_ratchet.json
-# The library-WARNING ratchet baseline is committed for the same reason again: the
-# `revalidate-libs` gate compares the dirty SET against it, and a package name appearing in
-# the DIFF is the receipt for a debt someone accepted deliberately.  Uncommitted, the gate
-# reads "no baseline" and is permanently tolerant — which is the state it exists to end.
-!/index/lib_warning_ratchet.json
 # loft#680: the per-target builtin surface is committed for the same reason —
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.

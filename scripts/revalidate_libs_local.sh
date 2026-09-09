@@ -237,21 +237,21 @@ while IFS=$'\t' read -r n v repo tag sub; do
   fi
 done < "$matrix"
 
-# The warning half.  Separate from the compile/test verdict above ON PURPOSE: warnings do
-# not break a shipped artifact and must never fail it (COMPATIBILITY.md), but a library that
-# was clean and now warns will fail its OWN CI on its next PR, for an author who did not
-# touch the code.  The ratchet is what makes that visible at the change that caused it —
-# see `lib_warning_scan.py` for the eight days of green runs that earned it.
+# The RELEASE-READINESS half, separate from the compile/test verdict above ON PURPOSE:
+# they answer different questions.  Above: does this loft retro-break a shipped library —
+# the freeze's question, and a break is this change's fault.  Here: can each library be
+# built and released as it STANDS — a fact about the ecosystem, true or false before you
+# started, and never a reason to abandon your change.
+#
+# RED whenever a library carries warnings, because a library with warnings cannot be
+# released: its own CI runs `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the
+# next PR to that repo is red before its author has typed anything.  Same rule as the
+# `release-ready` job in `revalidate-libs.yml`, through the same script, so the two readers
+# of this policy cannot drift — which is what loft#1315 cost when they did.
 echo
-ratchet_rc=0
+release_rc=0
 if [ -n "$(ls -A "$warn" 2>/dev/null)" ]; then
-  # PARTIAL means "this run did not read every package", and there are two ways to be
-  # partial: something SKIPPED (a clone or a tag missing), or you NAMED a subset.  Missing
-  # the second reported the whole rest of the registry as `cleaned` on a three-package run
-  # — a re-pin request that would have thrown the baseline away.
-  partial=""
-  { [ "$skipped" -gt 0 ] || [ ${#want[@]} -gt 0 ]; } && partial="--partial"
-  python3 "$here/lib_warning_scan.py" collect "$warn" ${partial:+$partial} || ratchet_rc=$?
+  python3 "$here/lib_warning_scan.py" collect "$warn" || release_rc=$?
 fi
 
 echo
@@ -265,5 +265,8 @@ if [ ${#want[@]} -gt 0 ] && [ "$skipped" -gt 0 ]; then
   echo "asked about ${#want[@]} package(s) and could not check $skipped of them" >&2
   exit 2
 fi
-[ "$ratchet_rc" -eq 0 ] || echo "a library that was warning-clean now warns — see the ratchet above"
-exit $(( (breaks > 0) || ratchet_rc != 0 ))
+# The two verdicts are reported apart, and only the COMPILE-BREAK one is this change's
+# fault.  `release_rc` is a fact about the libraries as they stand; the exit code carries it
+# so a script can read it, and the line above says which of the two went wrong.
+[ "$release_rc" -eq 0 ] || echo "…and one or more libraries cannot be released as they stand (above) — the ecosystem's state, not this change's"
+exit $(( (breaks > 0) || release_rc != 0 ))

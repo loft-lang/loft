@@ -273,92 +273,50 @@ def cmd_scan(args) -> int:
     return 0
 
 
-# ── the ratchet ───────────────────────────────────────────────────────────────────────
+# ── the release-readiness verdict ─────────────────────────────────────────────────────
 #
-# Warnings must NOT gate a shipped library: a new deprecation breaking an already-published
-# artifact is exactly what COMPATIBILITY.md forbids, and the hard gate above tolerates them
-# for that reason.  But "reported, never gated" turned out to report into a GREEN check that
-# nobody opens — measured on this very workflow, the dirty set went **2 → 11 libraries over
-# eight days with every run green**, and the first anyone heard of it was a red check in the
-# library repos, on code those authors had not touched.  That is the failure mode the step's
-# own comment predicted, still happening.
+# One question, asked of the ecosystem rather than of this change: **can each published
+# library be built and released as it stands?**  A library carrying warnings cannot — its
+# own CI runs `LOFT_DENY_WARNINGS=1`, so the next PR to that repo is red before its author
+# has typed anything, and a release cut from it fails the same gate.
 #
-# So the gate is a RATCHET over the SET, not the count.  Every library already carrying debt
-# stays tolerated — the compat rule is untouched — and a library that goes dirty for the
-# FIRST time is red, at the change that did it, while the diff is still on screen.  A count
-# would not do: nine can stay nine while the membership turns over completely.
+# So this is RED whenever any library warns, not when the set grows.  The absolute state is
+# the answer to the question; a delta is the answer to a different one.
 #
-# Falling is never a failure: a library cleaned up prints the re-pin command and exits 0, so
-# a PR is never blocked by its own improvement.  Re-pin in the same commit, so the baseline
-# in the diff is the receipt.
+# ⚠ It is ADVISORY and must stay so.  Warnings are non-contractual — a new deprecation must
+# never fail an already-shipped artifact, which is COMPATIBILITY.md's rule — and the
+# compile/test gate beside it is the one that speaks for the freeze.  This job says *"nine
+# libraries cannot be released today"*, which is a fact a reader wants on every PR and
+# never a reason to refuse the PR.
 #
-# ⚠ The baseline is a DERIVED row and must never be CARRIED across a join or a rebase —
-# re-run and re-pin on the joined tree.
-RATCHET = Path(__file__).resolve().parent.parent / "index" / "lib_warning_ratchet.json"
-
-
-def ratchet(dirty, inconclusive, write: bool, partial: bool = False) -> int:
-    """Compare the dirty SET against the committed baseline. `dirty` is the packages that
-    warn; `inconclusive` is the readings that produced no compiled file, which are never
-    counted as clean and never silently pinned.
-
-    `partial` says the run did not read every package — a local sweep with a sibling clone
-    missing, say.  A package that IS dirty and is not in the baseline is still a real
-    finding then, so the failure stands; a package MISSING from the reading is not evidence
-    that it was cleaned, so the shrink advice is suppressed rather than nagging for a re-pin
-    the run did not earn."""
-    now = sorted(dirty)
-    if write:
-        RATCHET.parent.mkdir(parents=True, exist_ok=True)
-        RATCHET.write_text(json.dumps({"dirty": now}, indent=2) + "\n")
-        print(f"lib-warning ratchet: pinned {len(now)} package(s) into {RATCHET.name}")
+# An INCONCLUSIVE reading is red too, and deliberately: a package whose suite did not run
+# compiled no file, so nothing could warn, and reading that zero as "releasable" is the one
+# answer this verdict must never give.
+def releasable(dirty, inconclusive) -> int:
+    if not dirty and not inconclusive:
+        print("RELEASE-READY: every scanned library builds warning-clean against this loft.")
         return 0
-    try:
-        base = sorted(json.loads(RATCHET.read_text()).get("dirty", []))
-    except (OSError, json.JSONDecodeError):
-        print(f"::warning title=lib-warning ratchet::no baseline at {RATCHET.name} — "
-              "run `--write-ratchet` to pin the current set", file=sys.stderr)
-        return 0
-    new = [p for p in now if p not in base]
-    gone = [p for p in base if p not in now]
-    for p in new:
-        print(f"  NEW DIRTY  {p}")
-    for p in gone:
-        print(f"  cleaned    {p}")
-    if new:
+    if dirty:
         print(
-            f"\nERROR: {len(new)} library that was warning-clean now warns against this "
-            "loft: " + ", ".join(new) + ".\n"
-            "  This does not break the published artifact — that is what the hard gate\n"
-            "  above checks, and it is still green.  What it DOES break is that library's\n"
-            "  own CI (`LOFT_DENY_WARNINGS=1`) on its next PR, for an author who did not\n"
-            "  touch the code.  Fix the warning here, or accept the debt deliberately by\n"
-            "  re-pinning:  python3 scripts/lib_warning_scan.py collect <dir> --write-ratchet"
+            f"NOT RELEASE-READY: {len(dirty)} librar(y/ies) carry warnings — "
+            + ", ".join(dirty)
+            + ".\n  Each fails its own `LOFT_DENY_WARNINGS=1` CI as it stands, so it cannot be\n"
+            "  released, and the next PR to that repo is red before its author changes\n"
+            "  anything.  Clean the source and republish, or fix the warning here if this\n"
+            "  loft is what introduced it."
         )
         print(
-            "::error title=a library newly warns::" + ", ".join(new)
-            + " — clean against this loft before, warning now.",
+            "::error title=libraries not release-ready::"
+            + ", ".join(dirty)
+            + " — carry warnings, so they cannot be released as they stand.",
             file=sys.stderr,
         )
-        return 1
-    if gone and partial:
-        print(
-            f"\n{len(gone)} baseline package(s) were not read in this partial run, which is "
-            "not evidence they were cleaned — no re-pin is owed."
-        )
-    elif gone:
-        print("\nThe dirty set SHRANK — re-pin it in this commit:")
-        print("  python3 scripts/lib_warning_scan.py collect <dir> --write-ratchet")
-    else:
-        print(f"lib-warning ratchet: at baseline ({len(base)} package(s) carrying debt).")
     if inconclusive:
         print(
-            "::warning title=lib-warning ratchet::"
-            f"{len(inconclusive)} reading(s) were INCONCLUSIVE, so the set below is a "
-            "floor, not a measurement: " + ", ".join(sorted(inconclusive)),
-            file=sys.stderr,
+            f"\nUNKNOWN: {len(inconclusive)} reading(s) compiled no file, so their zero is "
+            "not an all-clear — " + ", ".join(sorted(inconclusive)) + "."
         )
-    return 0
+    return 1
 
 
 def cmd_collect(args) -> int:
@@ -482,12 +440,7 @@ def cmd_collect(args) -> int:
     else:
         print("✅ every scanned library is warning-clean against this loft.")
     print()
-    return ratchet(
-        dirty,
-        inconclusive,
-        getattr(args, "write_ratchet", False),
-        getattr(args, "partial", False),
-    )
+    return releasable(dirty, inconclusive)
 
 
 def main() -> int:
@@ -513,18 +466,6 @@ def main() -> int:
 
     c = sub.add_parser("collect", help="merge scan reports into one markdown table")
     c.add_argument("dir", help="directory holding the JSON reports")
-    c.add_argument(
-        "--partial",
-        action="store_true",
-        help="this run did not read every package (a local sweep with clones missing), so a "
-        "package absent from the reading is not treated as cleaned",
-    )
-    c.add_argument(
-        "--write-ratchet",
-        action="store_true",
-        help="pin the current dirty SET as the new baseline (the receipt for a deliberate "
-        "acceptance, or for a clean-up that shrank it)",
-    )
 
     args = ap.parse_args()
     if args.cmd == "scan":
