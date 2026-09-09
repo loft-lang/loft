@@ -1927,6 +1927,107 @@ view earns no header (c11) as § V-n decided; a return-buffer writer (§ V-c) is
 by the caller's gate but earns no twin — nothing measured asks for it; and only a leaf
 argument variable qualifies (c5, c6), the same rule the loop's own candidates follow.
 
+## V-q — a loop that pushes keeps a push header (2026-09-09)
+
+**The shape** (the profiles of the two raster rows still over the bar, WITH callers on the
+§ V-p runtime): `lock_curved` spent 26 % in `append_f64` self, 11 % in `vector_append` and
+another 8 % in its helpers — ~45 % of the row — and `lock` ~30 %, all called from
+`n_lock_layer`'s seven comprehension loops: `Lay { best: [for _i in 0..ll_n { 2.0 }], sb:
+[for _i in 0..ll_n { 0.0 }], … }`, seven vectors of `lw × lh` floats filled one push at a
+time — 268 000 pushes per `lock_curved` rep at ~12 ns each, where a `Vec::push` is one.  Each
+push resolved the store twice, read the vector slot, the length and the claim header,
+computed the capacity, and wrote the element and the length through checked accessors.
+
+**The ceiling, measured first.**  The emitted Rust of the bench rebuilt by hand with a
+push header per fill loop (header + capacity derived once; a push that fits one store and
+a length bump; a growth step the runtime's append and a re-derive): `lock_curved` 7.40M →
+**4.98M** ns/op (−33 %, hash unchanged).  That is the number the unit is built against.
+
+**Invariant** (`@FR-R-Push`, [formal/rewrites.md](../../formal/rewrites.md)).  *A growth
+moves the pushed vector's RECORD and nothing else — the container record, every other
+vector's record and every scalar keep their numbers — so the only header a push can
+invalidate is one naming the SAME vector, and the push's own is refreshed at the site.*  The
+loop keeps a PUSH header for each pushed path: (R-Header)'s triple plus the record's
+capacity in bytes; the fast path is `len·size + size ≤ cap`, one typed store at
+`8 + len·size`, `len += 1` written to the header and the record (a runtime reader inside
+the loop — an admitted callee's `len(v)` — must see every push); the growth step is the
+kind's own runtime append (`HoistScalar::append_in`, one growth ladder) and a fresh header.
+Aliasing is decided by OWNERSHIP: a single push beside no other candidate has nothing to
+alias with and is admitted whatever its root (a view, a parameter's field); otherwise every
+push root must be EXCLUSIVE — a local that owns its store (its dep list empty or naming
+only its own `__vdb_N` witness, not a `&` link, not captured, not a parameter) or the
+function's return buffer — and a read candidate is kept only when its root is an owned
+local, or a parameter while no push targets the return buffer (a parameter cannot alias a
+local's store, but it can alias a buffer the caller offered, § V-d).  A push that fails the
+rule declines the WHOLE loop, as a growth always did: a push left to its template would
+move a record a kept header still describes.  The `OpPreAllocVector` the parser emits before
+a push to a LOCAL claims a record only for an ABSENT vector and never moves one, so it is
+admitted with the push and emitted as nothing where a push header is held.
+
+**The code.**  `hoist::FUSABLE_PUSHES` (the three `HoistScalar` kinds — `OpPushInt`,
+`OpPushSingle`, `OpPushFloat`; a boolean, enum, character or narrow push keeps its template
+AND blocks the loop, because only a push emitted through the refreshing helper leaves the
+header current) and `hoist::fused_push` (the one recogniser: a fusable kind over a pure
+path); `blocks_header_hoist` admits a fusable push and its pre-alloc under `allow_push`;
+`hoist::hoistable` collects the push paths AFTER every read candidate (its own, and § V-p's
+callee inputs) and applies the ownership rule, removing the push paths from the read list —
+the ordering is load-bearing, see finding 1; `body_writes` counts a push as writing no
+scalar; `Output::begin_vector_hoist` binds `let mut __ph_N = vector::push_header(…)` and
+registers the path as `__ph_N.h` for every existing header consumer (the fused read and
+write, the hoisted length, § V-p's twin inputs by value); the registry's
+`HoistedPushEmitter` emits `stores.push_hoisted::<T, VERIFY>(&mut __ph_N, &path, size, v)`
+and `PreAllocEmitter` emits `()` under a held header.  Runtime: `vector::PushHeader`,
+`vector::push_header`, `Stores::push_hoisted`.  Switch `LOFT_NO_PUSH_HOIST` (generation
+time); falsifier `LOFT_HOIST_VERIFY=1`, under which the push re-derives its header before
+each fast-path store and the reads verify as before.
+
+**Cells before the code** (`bytecode-comparisons/V-q-hoisted-push-cells.loft`, eighteen,
+hand-computed, all matching the interpreter before the emitter existed — c6's comment
+miscounted its iterations and the oracle corrected it): c1 the constant-fill comprehension
+into a record's fields · c2 a push of a value read from another vector · c3 the ribbons
+shape, the pushed vector read at its last element · c4 two pushed vectors · c5 a push through
+a view · c6 an alias of the pushed local read in the loop · c7 a push in an inner loop under
+an outer header · c8 the pushed root rebound · c9 a parameter's field pushed from a callee ·
+c10 a 5000-element growth ladder · c11 integer, boolean and character pushes · c12 a push
+beside an in-place write · c13 beside a callee reading the length · c14 `len(v)` after the
+push · c15 the element just pushed read back · c16 an empty start · c17 two owners · c18 a
+record append beside the push.  Emission (`tests/push_hoist.rs`): push headers at c1 (2),
+c2, c4 (2), c5, c6 (the view `w` dropped, a runtime read), c7, c9, c10, c12–c17; none at c8
+(rebound), c11 (a non-fusable kind blocks), c18 (a record append blocks) — and none at c3,
+which the prediction had listed: a push whose VALUE reads the pushed vector is materialised
+by the parser as `OpDatabase · OpAppendVector` — a COPY of the whole vector per iteration —
+before the push (finding 2).  `tests/scripts/157-push-hoist.loft` carries the values.
+
+**Findings.**  (1) The first emission gave the callee-inputs guard's growing loop TWO
+headers for one path — the push header and, from § V-p's twin inputs, a plain one — and
+the verifier caught the twin reading one push behind; the push block had run before the
+input candidates were collected.  A rewrite that removes a path from the read list must run
+after every collector that can add one.  (2) c3: `px += [px[len(px)-1]? + …]` copies `px`
+into a fresh store on every iteration before pushing — the parser's materialisation of a
+self-reading append.  `lock_ribbons` has that exact shape (`lr_cum += [lr_cum[len(lr_cum) -
+1]? + lr_d]`), quadratic in the point count; small for this consumer's paths, a unit of its
+own for a long one (the value is computed before the push, so no copy is needed).  (3) A
+push to a bare LOCAL is preceded by `OpPreAllocVector`, which the first emission did not
+admit, so c2–c17 declined while the field-path cells hoisted; and a local vector's dep list
+names its own `__vdb_N` store witness, which an "owns its store" test spelled as "no deps"
+refused.  Both were visible only in the emission pin, not in the values.
+
+**Measured** (shipped tier, `--only`, two runs each, hashes unchanged):
+
+| row | § V-p | § V-q |
+|---|---:|---:|
+| `lock_curved` | 7.46M (5.64×) | **5.07M** (**3.84×**, −32 %) |
+| `lock` | 6.77M (4.39×) | **5.42M** (**3.51×**, −20 %) |
+| `wide_line` | 31.6k (5.36×) | 32.6–33.0k (unchanged: its cost is the rasteriser's own arithmetic) |
+
+Both raster rows are under the bar.  The full lane (`compare.py --repeat 3`, 14/14 hashes
+agree): `lock` **3.57×**, `lock_curved` **3.89×**, `composite` 2.34×, the fills 3.72× ·
+3.64×, `hair` 2.04×; the unjudged rows that build lock layers moved with them —
+`render_lock` 30.1M → **25.2M**, `render_marks` 13.3M → **11.2M** (−16 %), `resize` 260M →
+227M; `smooth` 14.3× and `fronds` 12.1× (the allocation class) and `wide_line` 5.3× (its
+rasteriser's arithmetic) are what remain over the bar.  `hash` read 3.43× in that run
+against 2.2× before — re-timed alone below, since the table ran beside a build.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

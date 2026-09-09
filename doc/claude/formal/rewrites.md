@@ -195,6 +195,35 @@ re-reads every input against the record.  Sites: `hoist::callee_inputs`,
 `hoist::hoistable` (the mapping through the argument), the twin's emission in
 `Output::output_function`, the twin call in `Output::user_fn_call_body`.
 
+### A push keeps its own header current
+
+```
+  (R-Push)       in a loop whose store writes are (R-InPlace) sets and pushes of a
+                 fusable scalar kind to pure paths, a pushed path P keeps a PUSH
+                 header — (R-Header)'s triple plus the record's capacity — that the
+                 push itself keeps current: a push that fits is a bounds test, one
+                 store and a length bump written to the header AND the record; a
+                 growth step is the runtime's own append followed by a fresh header.
+                 Every read of P in the loop serves from that header.  Aliasing is
+                 decided by ownership: a single push beside no other candidate is
+                 admitted whatever its root; otherwise every push root must be a
+                 local that owns its store or the function's return buffer, and a
+                 read candidate is kept only when its root is an owned local, or a
+                 parameter while no push targets the return buffer.  A push that
+                 fails the rule declines the whole loop.
+```
+
+**In words.** @PLN157 § V-q.  A growth moves the pushed vector's RECORD and nothing else
+— the container record, every other vector's record and every scalar keep their numbers —
+so the only header a push can invalidate is one naming the SAME vector, and the push's own
+is refreshed at the site.  The record's length is written per push so a runtime reader in
+the loop (an admitted callee's `len(v)`) sees every push.  Switch `LOFT_NO_PUSH_HOIST`;
+falsifier `LOFT_HOIST_VERIFY=1` (the push re-derives its header before each fast-path
+store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `hoist::hoistable` (the
+aliasing rule), `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`,
+`Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
+4.39× → 3.51× of Rust, hashes unchanged.
+
 ### A leaf carries no frame
 
 ```

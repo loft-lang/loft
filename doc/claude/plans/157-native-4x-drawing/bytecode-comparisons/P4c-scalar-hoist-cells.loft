@@ -38,7 +38,8 @@ fn c7() { pts: vector<Lay> = [mk_lay(1), mk_lay(2), mk_lay(3)]; f = pts[1]?; s =
 // c8 — nested loops, the OUTER body writing between inner loops: the inner loop hoists
 // (its prelude runs after the write), the outer does not.
 fn c8() { l = mk_lay(0); s = 0; for k in 0..3 { l.x0 = k * 10; for i in 0..2 { s += l.x0 + i; } } println("c8 {s}"); }
-// c9 — a GROWING write beside the read: the whole hoist declines, scalars included.
+// c9 — a GROWING write beside the read: declined the whole hoist until @PLN157 § V-q admitted a
+// fusable PUSH under its own header; x0 hoists, px takes a push header, the values are unchanged.
 fn c9() { l = Lay { x0: 7, lw: 0.0, on: false, kind: Kind.A, ch: 'a', tag: "", px: [] }; s = 0; for i in 0..3 { s += l.x0; l.px += [i]; } println("c9 {s} {len(l.px)}"); }
 // c10 — every scalar KIND: boolean, enum, character, float.
 fn c10() { l = Lay { x0: 0, lw: 1.5, on: true, kind: Kind.C, ch: 'z', tag: "", px: [] }; s = 0; for i in 0..3 { if l.on { s += 1; } if l.kind == Kind.C { s += 10; } if l.ch == 'z' { s += 100; } s += (l.lw * 2.0) as integer; } println("c10 {s}"); }

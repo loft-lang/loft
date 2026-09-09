@@ -19,7 +19,8 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 30× → **4.4×** (2.7× gate row); `smooth` 262× → **14×**; `fronds` 49× →
 **13.0×**; `composite` 26× → **6.3×**; the fills 17× → **3.8×** (under the bar);
 `wide_line` 17× → 5.6×; `lock_curved` 11.9× → **5.7×**; `composite` 26× →
-**4.4×** after § V-n + § V-o, **2.3×** after § V-p (2026-09-09, under the bar).
+**4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
+§ V-q (2026-09-09, both under the bar).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -46,7 +47,7 @@ hash unchanged.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-09 (§ V-p)
+- **Last touched:** 2026-09-09 (§ V-q)
 
 ## Where to resume
 
@@ -174,7 +175,25 @@ and the move, DESIGN.md § V-j's ceiling), then `lock_curved` 5.6× and `wide_li
 over.  The text readers off the hoist allow-list (P4c c17) and § V-o's leaf-only
 rule (a mirror of the pre-eval map onto the cloned operands) stay queued behind them.
 GitHub gate run 34334280254 is GREEN on the § V-p tip (ce1db5bb: the unit, the interpreter
-link re-point, the test-subject and walker-audit bookkeeping); build on that tip.
+link re-point, the test-subject and walker-audit bookkeeping).
+
+**§ V-q SHIPPED 2026-09-09** (DESIGN.md § V-q): the raster rows profiled WITH callers on the
+§ V-p runtime put 30–45 % of `lock` / `lock_curved` in the scalar APPEND path — `lock_layer`'s
+seven constant-fill comprehensions, one push at a time at ~12 ns.  A loop that pushes to a
+vector path now keeps a PUSH header (the triple plus the capacity) the push itself keeps
+current, refreshed at the growth step; aliasing decided by ownership; the ceiling measured by
+hand first (−33 %).  `lock_curved` 5.64× → **3.84×**, `lock` 4.39× → **3.51×**, both under
+the bar; eighteen cells, `tests/push_hoist.rs`, `tests/scripts/157-push-hoist.loft`, switch
+`LOFT_NO_PUSH_HOIST`.  Two findings worth the next reader's time: a push whose VALUE reads the
+pushed vector is materialised by the parser as a whole-vector COPY per iteration
+(`lock_ribbons`' `lr_cum += [lr_cum[len(lr_cum)-1]? + lr_d]` is quadratic in the point
+count — a unit of its own for a long path), and a rewrite that removes a path from the read
+list must run after every collector that can add one (the § V-p twin inputs gave the pushed
+path a second, stale header until the order was fixed; the verifier caught it).  **Next:** the
+rows still over the bar are `smooth` 15.5× and `fronds` 12.9× (the allocation class, queue
+items 4b / 5 / the move) and `wide_line` 5.4× (its rasteriser's own arithmetic — profile at
+`--n 200000` to rank; the 4000-rep profile is half compile).  Check the GitHub gate dispatched
+on the § V-q commit before building on it.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -260,6 +279,7 @@ unless said otherwise.
 | **V-n** — a `&`-bound vector VIEW (`d = &cv.data`) derives its header once at the binding for the rest of the block that indexes it (`hoist::view_def_header`, `Output::bind_view_header`): the pixel methods' `len(d)`-guarded element read/write take one store resolution instead of three; `LOFT_NO_VIEW_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-n](DESIGN.md) | a binding earns a header its remainder can invalidate (c18 red), or the verifier panics on any cell | **Shipped 2026-09-09** — 18 cells exact on both backends, emission pinned (`tests/view_header.rs`); consumer `composite` 6.3× → 6.1×, `render_lock` −6 %, `render_marks` −5 %, 14/14 hashes agree |
 | **V-o** — a stdlib ONE-OP wrapper (`len(v)`, `sqrt(x)`, 43 of them) is emitted as its op with the caller's arguments in the operand positions (`hoist::one_op_wrapper`, `Output::wrapper_op`), so the header-aware emitters see `len(d)` after a view binding and inside a hoisted loop; `LOFT_NO_WRAPPER_INLINE` off-switch | [DESIGN.md § V-o](DESIGN.md) | a wrapper call is left, or an operand lands in the wrong position (the reversed map fails to compile; the parameter swap turns `pow` wrong) | **Shipped 2026-09-09** — 10 cells exact on both backends, emission pinned (`tests/wrapper_op.rs`); consumer `composite` 6.1× → **4.4×** (−28 %), 14/14 hashes agree |
 | **V-p** — a callee's INVARIANT INPUTS cross the call: a callee admitted under `@FR-R-Callee` gets a TWIN (`<fn>__inv`) taking its record parameter's invariant scalars and vector headers as extra parameters (`hoist::callee_inputs`, transitively through pass-through callees), and a loop that hoisted them for the argument variable calls the twin (`Output::twin_call_inputs`); `LOFT_NO_CALLEE_INPUTS` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-p](DESIGN.md) | a c1–c17 cell moves; `tests/callee_inputs.rs` no longer sees a twin or a twin call; a consumer hash disagrees | **Shipped 2026-09-09** — `composite` 4.41× → 2.34× (under the bar), `render_lock` / `render_marks` −8 %; the two candidate designs measured equal by hand before the code, so the cheaper machinery was built |
+| **V-q** — a loop that PUSHES to a vector path keeps a PUSH header: (R-Header)'s triple plus the capacity, the push writes through it and refreshes it at a growth step, every read of the path serves from it (`hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `Stores::push_hoisted`, the ownership rule in `hoist::hoistable`); `LOFT_NO_PUSH_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-q](DESIGN.md) | a c1–c18 cell moves; `tests/push_hoist.rs` no longer sees a push header; a consumer hash disagrees | **Shipped 2026-09-09** — `lock_curved` 5.64× → 3.84×, `lock` 4.39× → 3.51× (both under the bar); ceiling measured by hand first at −33 % |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

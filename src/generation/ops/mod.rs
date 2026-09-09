@@ -241,6 +241,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     for op in ["OpSetInt", "OpSetSingle", "OpSetFloat"] {
         r.insert(op, Box::new(vector_ops::FusedElementWriteEmitter));
     }
+    // @PLN157 § V-q — a scalar push goes through the loop's push header; the same ops
+    // fall back to their template outside a loop that hoisted one.
+    for (op, _, _) in crate::generation::hoist::FUSABLE_PUSHES {
+        r.insert(op, Box::new(vector_ops::HoistedPushEmitter));
+    }
+    r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
     r.insert("OpGetRecord", Box::new(key_ops::OpGetRecordEmitter));
     r.insert("OpIterate", Box::new(key_ops::OpIterateEmitter));
 

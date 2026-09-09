@@ -633,6 +633,14 @@ pub struct Output<'a> {
     pub wrapper_inline_disabled: bool,
     /// Per-definition memo of [`hoist::one_op_wrapper`].
     wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
+    /// @PLN157 § V-q — the push headers of the enclosing loops, innermost last: path → the
+    /// Rust local holding its [`crate::vector::PushHeader`] (`__ph_N`); the same path is in
+    /// [`Self::vec_headers`] as `__ph_N.h` for every read.  Pushed and popped beside them.
+    pub push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// `LOFT_NO_PUSH_HOIST=1` — a loop that pushes to a vector hoists nothing, as before
+    /// @PLN157 § V-q (`@FR-R-Push`); the bisect step for a wrong element or length out of a
+    /// loop that appends.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub push_hoist_disabled: bool,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -1552,6 +1560,8 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
             input_cache: HashMap::new(),
+            push_headers: Vec::new(),
+            push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1799,6 +1809,7 @@ impl Output<'_> {
         self.next_format_count = 0;
         self.vec_headers.clear();
         self.scalar_hoists.clear();
+        self.push_headers.clear();
         self.hoist_counter = 0;
     }
 
@@ -1835,13 +1846,36 @@ impl Output<'_> {
                 !self.write_hoist_disabled,
                 !self.scalar_hoist_disabled,
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+                !self.push_hoist_disabled,
             )
         };
         let hoist::LoopHoist {
             vectors: candidates,
             scalars,
+            pushes,
         } = hoisted;
+        let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
+        for (path, expr) in pushes {
+            // An enclosing loop that pushes the same path already holds its header (a push
+            // anywhere in a body makes the path a push path at every enclosing level).
+            if self.push_headers.iter().any(|f| f.contains_key(&path)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__ph_{}", self.hoist_counter);
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!(
+                "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@PLN157 § V-q push header"
+            ));
+            frame.insert(path.clone(), format!("{name}.h"));
+            push_frame.insert(path, name);
+        }
         for (path, expr) in candidates {
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
@@ -1895,6 +1929,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(frame);
         self.scalar_hoists.push(scalar_frame);
+        self.push_headers.push(push_frame);
         Ok(opened)
     }
 
@@ -1902,6 +1937,7 @@ impl Output<'_> {
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
         self.scalar_hoists.pop();
+        self.push_headers.pop();
         if opened {
             write!(w, " }}")?;
         }
@@ -2101,6 +2137,32 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// @PLN157 § V-q — the push header an enclosing loop holds for `path`, when one does.
+    #[must_use]
+    pub fn active_push_header(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.push_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// Whether this push is emitted through a hoisted push header (@PLN157 § V-q): the
+    /// shape qualifies ([`hoist::fused_push`]), an enclosing loop bound a push header for
+    /// the path, and the mechanism is on.  Answers the fused shape with the header's name.
+    #[must_use]
+    pub fn fused_push<'a>(
+        &self,
+        op: &str,
+        args: &'a [Value],
+    ) -> Option<(hoist::FusedPush<'a>, String)> {
+        if self.push_hoist_disabled {
+            return None;
+        }
+        let fused = hoist::fused_push(self.data, op, args)?;
+        let header = self.active_push_header(&fused.path)?.to_owned();
+        Some((fused, header))
     }
 
     /// Whether this call is emitted as ONE fused element read (loft#885 stage 2) — the

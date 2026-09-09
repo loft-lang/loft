@@ -229,3 +229,51 @@ impl OpEmitter for OpGetVectorEmitter {
         write!(ctx.w, ") as u32, __vi)}}")
     }
 }
+
+/// `OpPushInt` / `OpPushSingle` / `OpPushFloat` — `v += [x]` inside a loop that hoisted a
+/// PUSH header for `v` (@PLN157 § V-q, `@FR-R-Push`), emitted as ONE call that tests the
+/// capacity, stores the element and bumps the length, re-entering the runtime's append only
+/// at a growth step.  The value is bound to a local before the call for the template's own
+/// reason (@P321d / @P338): the helper takes `&mut stores`, and the value may still be
+/// evaluating its own `stores` borrow when that one is taken.
+///
+/// Anything else — no push header, a kind this table does not fuse — emits the `#rust`
+/// template unchanged.
+pub struct HoistedPushEmitter;
+
+impl OpEmitter for HoistedPushEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let Some((fused, header)) = ctx.output.fused_push(ctx.def_fn.name(), args) else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let (ty, size) = (fused.rust_type, fused.size);
+        let verify = verify(ctx);
+        write!(ctx.w, "{{ let __pv = (")?;
+        ctx.emit(fused.val)?;
+        write!(
+            ctx.w,
+            "); stores.push_hoisted::<{ty}, {verify}>(&mut {header}, &("
+        )?;
+        ctx.emit(fused.vector)?;
+        write!(ctx.w, "), {size}, __pv) }}")
+    }
+}
+
+/// `OpPreAllocVector` — the reservation the parser emits before a push to a local vector.
+/// Inside a loop that holds a push header for the path it is emitted as NOTHING (@PLN157
+/// § V-q): the push grows the vector on demand, and the reservation would cost a store
+/// resolution per iteration for a record that is either already there or about to be
+/// claimed by the push's own growth step.  Everywhere else the `#rust` template stands.
+pub struct PreAllocEmitter;
+
+impl OpEmitter for PreAllocEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let held = !ctx.output.push_hoist_disabled
+            && crate::generation::hoist::pre_alloc_path(ctx.output.data, ctx.def_fn.name(), args)
+                .is_some_and(|path| ctx.output.active_push_header(&path).is_some());
+        if held {
+            return write!(ctx.w, "()");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}

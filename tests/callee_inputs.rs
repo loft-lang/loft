@@ -67,17 +67,17 @@ const CALLS: &[(&str, usize)] = &[
     ("n_c6", 0),             // an optional element view as the argument
     ("n_c7", 2),             // two records, two twin calls
     ("n_c8", 1),             // blend
-    ("n_c9", 0),             // outside a loop, and a growing loop
-    ("n_c10", 2),            // one per loop
-    ("n_c11", 0),            // cnt
-    ("n_c12", 1),            // getp2's twin …
+    ("n_c9", 1), // outside a loop (plain), and a loop whose growth is a fusable PUSH — hoisted since § V-q
+    ("n_c10", 2), // one per loop
+    ("n_c11", 0), // cnt
+    ("n_c12", 1), // getp2's twin …
     ("t_2Cv_getp2__inv", 1), // … which calls getp's twin
-    ("n_c13", 1),            // through a `&` alias
-    ("n_c14", 1),            // readw
-    ("n_c15", 0),            // walk
-    ("n_c16", 0),            // area
-    ("n_c17", 1),            // getp beside a writer of another type
-    ("n_c18", 0),            // a `&` view rebound in the loop
+    ("n_c13", 1), // through a `&` alias
+    ("n_c14", 1), // readw
+    ("n_c15", 0), // walk
+    ("n_c16", 0), // area
+    ("n_c17", 1), // getp beside a writer of another type
+    ("n_c18", 0), // a `&` view rebound in the loop
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
