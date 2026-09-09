@@ -184,49 +184,54 @@ jobs:
         working-directory: lib/${{ matrix.sub }}
         run: LOFT_TIMEOUT=240 loft --native --tests tests
 
-      # WARNINGS — reported, never gated.  The hard gate above deliberately tolerates
-      # warnings (a new deprecation must not fail an already-shipped artifact), which
-      # leaves them invisible: a library accumulates warnings against a moving loft for
-      # weeks, and the first anyone hears of it is a RED check on the next PR to that
-      # library repo, where CI runs LOFT_DENY_WARNINGS=1 on code the author did not
-      # touch.  gridmesh 0.1.2 is the worked example — 20 warnings, every nightly green.
-      # Two readings, because they answer different questions:
-      #   published → what a user of the library sees today   (fix = republish)
-      #   source    → what the library's own CI does next PR  (fix = clean the source)
-      # The published reading re-reads the suite output the gate already captured, so
-      # it costs nothing; the source reading needs its own checkout + parse.
-      - name: Checkout ${{ matrix.repo }} default branch (source reading)
+      # RELEASE-READY — one pass, and it is RED when that pass warned.
+      #
+      # ⚠ ONE pass.  This used to take two readings of the same question — the published
+      # tag, then a second CHECKOUT of the library's default branch with the whole suite
+      # RUN AGAIN — on the theory that "what a user sees today" and "what the library's own
+      # CI does next PR" are different.  They are the same answer often enough not to be
+      # worth 42 extra suite runs and 42 extra clones on every PR: the tag is what is
+      # published and what a release is cut from, and a source tree that differs is the
+      # library repo's own CI's business, where it is already gated.  The reading below
+      # re-reads the log the pass above already wrote, so it costs nothing.
+      #
+      # RED on any warning, because the question is *can this library be built and released
+      # as it stands* — and a library carrying warnings cannot: its own CI runs
+      # `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the next PR to that repo
+      # is red before its author has typed anything.  The absolute state is the answer to
+      # "can it ship"; a delta answers a different question.
+      #
+      # ⚠ This never blocks a loft PR, and that is not an accident of settings alone:
+      # `revalidate-libs` is outside `main`'s required contexts (Test ×3, Clippy, Format)
+      # and must stay outside them.  Warnings are non-contractual — a new deprecation must
+      # never fail an already-shipped artifact (COMPATIBILITY.md) — so a red here is a fact
+      # about the ecosystem, never a veto on a change to the compiler.
+      #
+      # The step is SEPARATE from the hard gate so a reader of a red leg can see which
+      # question failed from the step name alone: `Test against this loft` is a language
+      # change retro-breaking a shipped library; this one is warning debt.
+      - name: Release-ready — ${{ matrix.name }}  (advisory, never blocks)
         if: always()
-        continue-on-error: true
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ matrix.repo }}
-          path: lib-main
-
-      - name: Warnings — ${{ matrix.name }}  (report only)
-        if: always()
-        continue-on-error: true
         run: |
           set -uo pipefail
           scan="$GITHUB_WORKSPACE/loft-src/scripts/lib_warning_scan.py"
           mkdir -p "$GITHUB_WORKSPACE/warn"
           tag_log="$GITHUB_WORKSPACE/lib/${{ matrix.sub }}/suite.log"
-          if [ -f "$tag_log" ]; then
-            python3 "$scan" scan --from-log "$tag_log" \
-              --root "$GITHUB_WORKSPACE/lib/${{ matrix.sub }}" \
-              --name '${{ matrix.name }}' --ref '${{ matrix.version }}' --label published \
-              --json "$GITHUB_WORKSPACE/warn/${{ matrix.name }}-published.json"
+          if [ ! -f "$tag_log" ]; then
+            echo "no suite log for ${{ matrix.name }} — the pass above did not run; nothing to read"
+            exit 0
           fi
-          src_dir="$GITHUB_WORKSPACE/lib-main/${{ matrix.sub }}"
-          if [ -d "$src_dir/tests" ]; then
-            branch="$(git -C "$GITHUB_WORKSPACE/lib-main" rev-parse --abbrev-ref HEAD 2>/dev/null | head -1)"
-            [ -n "$branch" ] && [ "$branch" != HEAD ] || branch="default branch"
-            LOFT_TIMEOUT=240 python3 "$scan" scan "$src_dir" \
-              --name '${{ matrix.name }}' --ref "$branch" --label source \
-              --json "$GITHUB_WORKSPACE/warn/${{ matrix.name }}-source.json"
-          else
-            echo "no tests/ at ${{ matrix.repo }}:${{ matrix.sub }} — source reading skipped"
+          python3 "$scan" scan --from-log "$tag_log" \
+            --root "$GITHUB_WORKSPACE/lib/${{ matrix.sub }}" \
+            --name '${{ matrix.name }}' --ref '${{ matrix.version }}' --label published \
+            --json "$GITHUB_WORKSPACE/warn/${{ matrix.name }}-published.json"
+          n=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["count"])' \
+                "$GITHUB_WORKSPACE/warn/${{ matrix.name }}-published.json")
+          if [ "$n" -gt 0 ]; then
+            echo "::error title=${{ matrix.name }} is not release-ready::$n warning(s) against this loft — its own LOFT_DENY_WARNINGS CI fails as it stands, so it cannot be released."
+            exit 1
           fi
+          echo "✅ ${{ matrix.name }} ${{ matrix.version }} is release-ready — no warnings against this loft"
 
       - name: Upload the warning report
         if: always()
@@ -255,6 +260,14 @@ jobs:
           path: warn
           merge-multiple: true
 
+      # The one TABLE for the ecosystem — which libraries warn, and what kind.  Report
+      # only: the red already happened, once, in each library's own leg.  Repeating it
+      # here would be the second verdict on one question, which is what the second suite
+      # run was.
+      - name: Warning dashboard
+        continue-on-error: true
+        run: python3 scripts/lib_warning_scan.py collect warn >> "$GITHUB_STEP_SUMMARY" || true
+
       - name: Verdict
         run: |
           r='${{ needs.revalidate.result }}'
@@ -266,59 +279,12 @@ jobs:
             # all-clear for the ecosystem, and it never was one.  Whether those libraries
             # can be RELEASED is the `release-ready` job's question, and it has its own
             # verdict.
-            echo "✅ no published library FAILS to compile or test against this loft (release-readiness: see the release-ready job)"
+            echo "✅ every published library compiles, tests green AND is release-ready against this loft"
           else
-            echo "::error::a PUBLISHED library FAILS against this loft — a language change is retro-breaking a shipped lib. See the failed matrix legs; fix the lib (bump + republish) or reconsider the change (pre-freeze) — the stdlib may only grow additively."
+            # A leg is red for one of two reasons and its STEP NAME says which, so the
+            # verdict names both rather than asserting the graver one.  It used to claim a
+            # retro-break outright, which would now misread every warning-debt leg as a
+            # freeze violation.
+            echo "::error::a published library leg is RED. `Test against this loft` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). `Release-ready` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
             exit 1
           fi
-
-  # ── Can each published library be BUILT AND RELEASED as it stands? ──────────────────
-  #
-  # A separate job from `gate`, and ADVISORY on purpose.  The two answer different
-  # questions and only one of them is about this PR:
-  #
-  #   gate          does a language change here retro-break a shipped library?  That is
-  #                 the freeze's question, and a break is this change's fault.
-  #   release-ready can each library be released TODAY?  That is a fact about the
-  #                 ecosystem, true or false before this PR existed, and never a reason
-  #                 to refuse it.
-  #
-  # RED whenever any library carries warnings — not when the set grows.  A library with
-  # warnings cannot be released: its own CI runs `LOFT_DENY_WARNINGS=1`, so a release cut
-  # from it fails, and the next PR to that repo is red before its author has typed
-  # anything.  The absolute state is the answer to "can it ship"; a delta answers a
-  # different question.
-  #
-  # ⚠ It must never become a required check.  Warnings are non-contractual — a new
-  # deprecation must not fail an already-shipped artifact (COMPATIBILITY.md) — and a red
-  # here is information, not a veto.  `main`'s required contexts are Test ×3, Clippy and
-  # Format; keep this out of them.
-  #
-  # ⚠ It reports into a job whose default state a reader notices, which is the whole
-  # point.  The dashboard it prints has existed for weeks inside a GREEN check: measured
-  # on this workflow's own history, the dirty set went 2 -> 11 libraries over eight days
-  # with every run green, and the first anyone heard of it was a red check in the library
-  # repos, on code those authors had not touched.
-  release-ready:
-    name: library release-readiness (advisory, never blocks)
-    needs: revalidate
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4        # for scripts/lib_warning_scan.py
-
-      - name: Collect the per-library warning reports
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          pattern: warnings-*
-          path: warn
-          merge-multiple: true
-
-      - name: Can these libraries be released?
-        run: |
-          # ⚠ `set -o pipefail` is the whole verdict.  GitHub's default shell is
-          # `bash -e {0}` WITHOUT pipefail, so `python3 … | tee` would carry TEE's exit
-          # status — always 0 — and the job would print `::error::` and pass.
-          set -o pipefail
-          python3 scripts/lib_warning_scan.py collect warn | tee -a "$GITHUB_STEP_SUMMARY"

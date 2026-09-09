@@ -143,9 +143,13 @@ The branch is merged to main via a single PR when all items pass CI.
 
   ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
   the absolute state; a delta answers a different one. On the CI side this is the
-  `release-ready` job in `revalidate-libs.yml`, which is **advisory and must never become a
-  required check** — `main` requires Test ×3, Clippy and Format, and a library's warning
-  debt is information, never a veto on a loft PR.
+  `Release-ready` STEP inside each library's own matrix leg in `revalidate-libs.yml` — one
+  pass per library, reading the log that pass already wrote, so the answer costs nothing.
+  It is **advisory and must never become a required check**: `main` requires Test ×3,
+  Clippy and Format, and a library's warning debt is information, never a veto on a loft
+  PR. On a RELEASE it is blocking, which is `release-gate.yml`'s standing rule —
+  *informational on a diff, blocking on a release* — and exactly right for a question that
+  is literally "can these be released".
 
   ⚠ **Why it is a verdict and not a dashboard line**, in one sentence, because the dashboard
   already existed: it printed the dirty set for weeks inside a GREEN check — measured over
