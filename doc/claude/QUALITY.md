@@ -7359,6 +7359,25 @@ round for exactly this reason — mutate THROUGH one call and read through anoth
 
 #### B8r — FOUR open issues, one absent generalisation: the owner witness stops at the call boundary (2026-09-09)
 
+⚠ **RESOLVED THE SAME DAY, and not by the generalisation — three of the four fell to point fixes
+once the shape below was named properly.**  loft#1486, loft#1483 and loft#1485 are closed; only
+loft#1489 still wants a design step, and its blocker is narrower than this row says (the
+collection bind is not a `Set` on pass 1, so nothing can refuse the rename; the RECORD former
+needed none of it).  The row stays because its *reasoning* was what unblocked them and its
+*prediction* was wrong in an instructive way: **counting four issues as one missing mechanism was
+right about the family and wrong about the cure.**  What they shared was not an absent witness but
+a flag or dep list standing in for TWO questions that diverge — see the paragraph below.
+
+**The cure that actually worked, three times.**  A stand-in is right while the two questions
+coincide, and a site is written when they do; nothing announces the day they come apart, because
+every value stays correct on the path that made the stand-in true.  loft#1486's dep list must name
+the backing AND say who owns; loft#1483's `if <record is non-null>` asks *does the record exist*
+for *does the record own THIS store*; loft#1485's `callref_captures` asks *does the closure hold a
+store* for *can the return BE it*.  Each was fixed by giving the second question its own answer —
+DERIVED from facts already recorded, never a sharper condition on the shared one.  Every attempt
+at a sharper condition traded one question for the other, measured: a leak for a wrong value, a
+leak for a use-after-free, and an inert change.
+
 Not a walk and not a fix — a count taken while closing loft#1482 and loft#1484, and the reason
 three separate point fixes were built, measured and REVERTED the same day.
 
