@@ -131,9 +131,18 @@ element access takes one resolution instead of three (`composite` 6.3× →
 6.1×, the render rows −5–6 %).  **§ V-o shipped after it** (DESIGN.md § V-o):
 a stdlib one-op wrapper is emitted as its op, so `len(d)` reads the header —
 `composite` 6.1× → **4.4×**, the last of that row's store resolutions.
-**Next:** `composite` sits 0.4× over the bar — profile it WITH CALLERS again
-(the remaining per-pixel cost is the caller's own arithmetic and the method
-calls' arguments); the text readers off the hoist allow-list (P4c c17); the 27 scalar
+**Next:** `composite` sits 0.4× over the bar, and its profile after § V-o (joined
+tree, `--only composite`, 1.5k samples) no longer shows a runtime helper at the
+top: `n_composite_layer` 37 % self, `get_pixel` 15 %, `set_pixel` 12 %, the fused
+write 4.4 %, `get_elem_hoisted` 4.2 %, `addr_mut` 2.4 % — the program's own
+arithmetic and the two method calls per pixel, whose bodies re-read
+`self.width` / `self.height` per call (single reads, so P4c cannot hoist them
+and the caller's hoisted scalars do not cross the call).  The unit that closes
+that is INTERPROCEDURAL — the pixel methods inlined into the caller's loop, or a
+parameter's invariant scalar fields passed across the call — an M design for the
+next session (DESIGN.md § P4 item 3's caller side, one call deep).  After it:
+the text readers off the hoist allow-list (P4c c17); § V-o's leaf-only rule
+lifted by mirroring the pre-eval map onto the cloned operands; the 27 scalar
 `OpNewRecord` sites the fusion does not reach (`parse_*`, `text.split`,
 `File.lines` — S, no judged row); then the queue's 4b / 5 / the move.  The
 scratch clone's `bench/bench.loft` carries a `--only <routine>` switch (scratch
