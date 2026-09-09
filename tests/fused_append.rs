@@ -17,10 +17,14 @@ use std::process::Command;
 const PROBE: &str = "\
 struct K { k: integer }
 struct Lay { xs: vector<float> }
+struct Rec { nr: integer }
+struct Asc { m: index<Rec[nr]> }
 fn c_scalar(n: integer) -> integer { v: vector<integer> = []; for i in 0..n { v += [i]; } len(v) }
 fn c_keyed() -> integer { s: sorted<K[k]> = []; s += [K { k: 5 }]; s += [K { k: 1 }]; len(s) }
 fn c_comprehension(n: integer) -> integer { lay = Lay { xs: [] }; lay.xs = [for i in 0..n { (i as float) * 0.5 }]; len(lay.xs) }
-fn main() { println(\"{c_scalar(3)} {c_keyed()} {c_comprehension(4)}\"); }
+fn c_keyed_one_field() -> integer { a = Asc { m: [Rec { nr: 2 }, Rec { nr: 1 }] }; len(a.m) }
+fn c_record_one_field() -> integer { v: vector<Rec> = [Rec { nr: 2 }, Rec { nr: 1 }]; len(v) }
+fn main() { println(\"{c_scalar(3)} {c_keyed()} {c_comprehension(4)} {c_keyed_one_field()} {c_record_one_field()}\"); }
 ";
 
 fn introspect(src: &std::path::Path, env: &[(&str, &str)]) -> String {
@@ -68,6 +72,18 @@ fn a_scalar_append_is_one_fused_push_and_a_keyed_insert_is_not() {
         comp.contains("OpPushFloat(") && !comp.contains("OpNewRecord("),
         "a scalar comprehension fuses too:\n{comp}"
     );
+    // A ONE-FIELD record's element build has exactly the scalar triple's shape, so the
+    // container's schema kind — not the shape — is what keeps these on the general path:
+    // an `index<Rec[nr]>` (whose `OpFinishRecord` IS the keyed insert; fused by shape it
+    // walked empty — `tests/scripts/1272-a-remove-inside-a-keyed-range.loft`), and a plain
+    // `vector<Rec>`.
+    for name in ["n_c_keyed_one_field", "n_c_record_one_field"] {
+        let ir = ir_of(&dump, name);
+        assert!(
+            !ir.contains("OpPush") && ir.contains("OpNewRecord("),
+            "{name}: a record element keeps the general path whatever its field count:\n{ir}"
+        );
+    }
     let _ = std::fs::remove_file(&src);
 }
 

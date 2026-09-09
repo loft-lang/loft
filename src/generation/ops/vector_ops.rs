@@ -55,10 +55,10 @@ pub struct FusedElementReadEmitter;
 impl OpEmitter for FusedElementReadEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
+            return emit_hoisted_scalar_or_default(ctx, args);
         };
         let Some(header) = ctx.output.active_vec_header(&fused.path) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
+            return emit_hoisted_scalar_or_default(ctx, args);
         };
         let (header, ty, absent) = (header.to_string(), fused.rust_type, fused.absent);
         let verify = verify(ctx);
@@ -75,6 +75,29 @@ impl OpEmitter for FusedElementReadEmitter {
         ctx.emit(fused.fld)?;
         write!(ctx.w, ") as u32, {absent}, &stores.allocations)")
     }
+}
+
+/// A record scalar read (`lay.x0`, any getter in [`crate::generation::hoist::SCALAR_GETTERS`])
+/// inside a loop that hoisted it (@PLN157 P4c): the local the prelude bound stands for the
+/// whole getter — its store resolution, its `rec == 0` test and its load.  Under
+/// `LOFT_HOIST_VERIFY=1` the getter is ALSO emitted and the two are compared, so a scalar
+/// the loop can still change under its hoist panics at the read instead of answering a
+/// stale value.  Everything else — no hoist, a read the collector did not admit — emits the
+/// `#rust` template unchanged.
+fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+    let Some(local) = ctx
+        .output
+        .hoisted_scalar_read(ctx.def_fn.name(), args)
+        .map(str::to_owned)
+    else {
+        return super::default::DefaultEmitter.emit(ctx, args);
+    };
+    if ctx.output.hoist_verify {
+        write!(ctx.w, "vector::hoisted_scalar_verify({local}, ")?;
+        super::default::DefaultEmitter.emit(ctx, args)?;
+        return write!(ctx.w, ")");
+    }
+    write!(ctx.w, "{local}")
 }
 
 /// `OpSetInt` / `OpSetSingle` / `OpSetFloat` — a scalar write of `v[i]` inside a loop

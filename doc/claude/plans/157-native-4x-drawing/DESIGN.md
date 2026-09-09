@@ -1574,6 +1574,91 @@ built with the Makefile's features (`--no-default-features --features random`) b
 `make surface-gen`, or the generator records the new ops as unavailable in the browser
 (it did, once, against the stale rlib).
 
+## P4c — loop-invariant record scalars hoisted as locals (2026-09-09)
+
+**The shape** (§ V-l's last paragraph): the emitted hot loops read a record parameter's
+scalar fields per iteration through a store resolution each — `n_raster_segment` 15
+(`lay.*`), `n_lock_layer` 9 (`st.*`, `br.*`), `n_composite_layer` 7 (`lay.*`, 8 % of the
+row).  Each is `OpGet<Kind>(Var(lay), const fld)`: resolve the store, test `rec`, load.
+
+**Invariant.**  *A scalar field the loop body cannot write holds one value for the whole
+loop, so the getter may run once, before it.*  What the body can write is decided by the
+same gate as the vector headers (`body_blocks_hoist`, hoist.rs — ONE gate, so a scalar is
+admitted only in a loop whose store writes are all in place) and then by the body's
+**write set**: every in-place setter's target typed as `(record type, offset)` — the
+variable's own type, the schema type an `OpGetField` carries, or the element type of the
+vector an element address names (a `vector<integer>` element written at offset 0 reaches no
+record's field) — plus what an admitted callee reaches (`callee_writes`: an in-place-only
+writer's own set, its parameters typed by its own table, so `l.lw = w` is `(Lay, lw)` for
+every caller; a return-buffer writer's record type WHOLE, since § V-d may hand it a record
+the caller offered) and the whole type of a record the body frees.  A target the walk
+cannot type — an `Optional`, a struct-enum, an `OpGetVectorNullable` payload, a computed
+offset — empties the loop's scalar hoist rather than guessing; a rebind of the variable
+removes its candidates as it removes headers.  Keys carry the TYPE and not the variable
+because aliasing is decided by what a write can reach: a `&`-bound alias, an element view
+(`f = pts[1]?`, `(B-View-Depth)`) and a callee's parameter all write the same `(Lay, 0)`.
+
+**The emission.**  `hoist::hoistable` answers a `LoopHoist` (headers + scalars);
+`begin_vector_hoist` binds `let __vs_N = <the getter call, emitted once>;` in the same
+prelude block as the headers — the `#rust` template is the one definition of the value, the
+`rec == 0` sentinel included, so no per-kind table exists; `FusedElementReadEmitter`, now
+registered for all fourteen `SCALAR_GETTERS`, emits the local (element fusion first for the
+three fusable kinds).  The pre-eval that lifts a getter nested in a user call lifts the
+local, which is harmless.  Under `LOFT_HOIST_VERIFY=1` every hoisted read is emitted as
+`vector::hoisted_scalar_verify(local, <fresh getter>)` — NaN-equal for floats — and panics
+on the first stale value; `LOFT_NO_SCALAR_HOIST=1` (generation time) restores the
+per-iteration reads with the headers untouched.
+
+**Cells before the code** (`bytecode-comparisons/P4c-scalar-hoist-cells.loft`, nineteen with
+hand-computed expectations, `matrix_axes.py` run to find the narrow-int, if-arm and
+call-argument gaps c17–c19 fill): c1 the raster shape (a parameter, two scalars, an
+in-place element write) · c2 the loop writes the field · c3 another type at the same
+offset · c4 a callee writes it · c5 a `&`-alias writes it · c6 a view rebound in the loop
+· c7 an element view beside an element write of the same type · c8 nested loops with the
+outer writing between · c9 a growing write · c10 boolean / enum / character / float · c11
+a callee writing a DIFFERENT field · c12 a return-buffer writer beside a rebound result ·
+c13 a const-path read (`h.sub.x0`) · c14 an element write of ANOTHER type · c15 of the
+SAME type beside an unaliased local · c16 a nested-path write of another root · c17 a text
+field read · c18 `i32` / `u8` fields · c19 the read as a call argument in an if-arm.  All
+nineteen matched on both backends BEFORE the emitter existed; the predicted emission
+(which cells hoist, how many) was written first and matched exactly on the first run
+except that c7 and c15 also keep the vector header for `pts`, which the prediction had not
+listed.  `tests/scalar_hoist.rs` pins the per-cell emission, the verify form and the
+switch; `tests/scripts/157-scalar-hoist.loft` carries the value cells.  **Falsified**:
+`WriteSet::evicts` made to answer `false` turns eight cells red on native (c2 `6 4` →
+`0 1`, c3, c4, c5, c7, c8, c11, c13 answer the pre-loop value) and the verifier panics at
+the first stale read.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree, the § V-m column from the
+same instrument earlier the same day):
+
+| row | § V-m | P4c |
+|---|---:|---:|
+| `composite` | 7.6× (769k) | **6.30×** (638k, −17 %) |
+| `lock` | 4.59× (7.07M) | **4.39×** (6.89M) |
+| `lock_curved` | 5.76× | 5.71× |
+| `hash` | 241–248k ns/op | 240–248k (unchanged: its loop is arithmetic; the 2.2× → 2.5× in the table is the reference lane's swing, DESIGN.md § V-f) |
+| `fronds` / `smooth` / fills / `wide_line` | | 13.0× / 14.3× / 3.85× · 3.77× / 5.50× — noise |
+
+`composite`'s move is the caller-side 8 % § V-l attributed plus the seven `lay.*` reads
+per pixel it named; what the row still carries is the pixel methods' own reads (29 %),
+the next unit.  `n_raster_segment`'s fifteen `lay.*` reads per pixel now bind before the
+loop, which is the `lock` gain.
+
+**Two findings.**  (1) A loop that reads a TEXT field cannot hoist anything today:
+`OpGetText`, `t_4text_len`'s body and `OpFreeText` are off the read-only allow-list, so the
+gate reads them as writers (c17) — the allow-list doctrine at work, and a widening to weigh
+when a judged row shows it.  (2) The § V-m commit's GitHub gate (its ASan and
+`stack_align_guard` jobs, both running `wrap`'s script suite) caught a silent wrong answer
+the local curated gate had not: `tests/scripts/1272-a-remove-inside-a-keyed-range.loft`
+walked EMPTY under the fusion.  A one-field record (`Rec { nr }`) lowers to exactly the
+scalar triple, and an `index<Rec[nr]>` of them lowers `OpFinishRecord` into the keyed insert
+— fused by SHAPE, the insert was gone.  `Parser::fusable_scalar_vector` now asks the schema
+what the container holds (`Parts::Vector` of a base / enum / int4 element, reached through
+`OpNewRecord`'s own `(tp, fld)` operands), `tests/fused_append.rs` pins both record shapes
+on the general path, and V-m cells c16/c17 carry the values.  The general lesson matches
+§ V-m's: a peephole that matches an op SHAPE must also ask the TYPE the shape stands for.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

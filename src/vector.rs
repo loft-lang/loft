@@ -754,6 +754,51 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     }
 }
 
+/// Equality for the checking form of a hoisted scalar (@PLN157 P4c): a float compares
+/// NaN-equal, because the getters answer `NAN` at an absent record and two such reads must
+/// agree.
+pub trait HoistEq: Copy + std::fmt::Debug {
+    fn same(self, other: Self) -> bool;
+}
+
+macro_rules! hoist_eq_exact {
+    ($($t:ty),*) => { $(impl HoistEq for $t { fn same(self, other: Self) -> bool { self == other } })* };
+}
+hoist_eq_exact!(i64, i32, u8, u32, bool, char);
+
+// Two reads of the SAME field bytes are bit-identical, so bit equality is the exact test
+// (a `float_cmp` margin would hide a real change); a NaN of another payload still counts as
+// the same absent record.
+impl HoistEq for f64 {
+    fn same(self, other: Self) -> bool {
+        self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
+    }
+}
+
+impl HoistEq for f32 {
+    fn same(self, other: Self) -> bool {
+        self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
+    }
+}
+
+/// The checking form of a hoisted record scalar read (`LOFT_HOIST_VERIFY=1`, @PLN157 P4c):
+/// `hoisted` is what the loop's prelude read once, `fresh` what the getter answers now.
+///
+/// # Panics
+///
+/// When they differ — the loop changed the field under its hoist, through a route the
+/// write-set analysis did not classify.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
+    assert!(
+        hoisted.same(fresh),
+        "hoisted record scalar is stale — the loop wrote the field it was hoisted from \
+         (hoisted {hoisted:?}, now {fresh:?})"
+    );
+    hoisted
+}
+
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later
 /// element down one, so there are no holes and no tombstones and index `j > i` now names what
 /// was at `j+1`.  That renumbering is what ends the place a view names (@FR-B-Disturb), so it

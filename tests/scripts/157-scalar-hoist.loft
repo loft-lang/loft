@@ -1,0 +1,92 @@
+// @PLN157 P4c (loft#1426 M2) — a loop's INVARIANT record scalar field reads are
+// read once, before the loop, on the native backend; the interpreter reads them
+// per iteration and is the oracle.  The cells pin the boundary from both sides:
+//   - a field the loop does not write hoists and answers the same value;
+//   - a field the loop writes — directly, through a `&`-bound alias, through a
+//     callee's parameter, through an element view of a vector of the same type,
+//     or by rebinding the record — is NOT hoisted, so the loop sees each write;
+//   - the keys carry the record TYPE: another type written at the same offset
+//     leaves the hoist in place.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/P4c-scalar-hoist-cells.loft
+// (tests/scalar_hoist.rs pins which cells hoist); this file carries the VALUE cells
+// that must hold whatever the emitter decides.
+// `LOFT_NO_SCALAR_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-09) — `WriteSet::evicts` made to
+// answer `false` (no eviction at all) turns eight cells red on --native (c2 6→0,
+// c3, c4, c5, c7, c8, c11, c13 answer the pre-loop value) and LOFT_HOIST_VERIFY=1
+// panics at the first stale read; restored byte-identically, interpret / native /
+// LOFT_HOIST_VERIFY / LOFT_NO_SCALAR_HOIST all green.
+
+enum Kind { A, B, C }
+struct Lay { x0: integer, lw: float, on: boolean, kind: Kind = Kind.A, ch: character, px: vector<integer> }
+struct Oth { x0: integer, lw: float }
+
+fn mk_lay(x0: integer) -> Lay { Lay { x0: x0, lw: 0.5, on: true, kind: Kind.B, ch: 'q', px: [0, 0, 0, 0] } }
+fn bump_x0(l: Lay) { l.x0 = l.x0 + 1; }
+fn set_lw(l: Lay, w: float) { l.lw = w; }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+/// The raster shape: a record parameter, a pixel loop reading two scalars and
+/// writing an element in place.  px[i] = 3i + 1 -> 1,4,7,10.
+fn raster(lay: Lay, n: integer) -> integer {
+  for i in 0..n { lay.px[i] = lay.x0 * i + (lay.lw * 2.0) as integer; }
+  total(lay.px)
+}
+
+fn main() {
+  l1 = mk_lay(3);
+  r = raster(l1, 4);
+  println("c1 raster={r}");
+  assert(r == 22, "invariant x0 and lw read once: 1+4+7+10");
+
+  // The loop writes the hoisted field itself: 0+1+2+3, then x0 = 4.
+  l2 = mk_lay(0); s2 = 0;
+  for i in 0..4 { s2 += l2.x0; l2.x0 = l2.x0 + 1; }
+  assert(s2 == 6 && l2.x0 == 4, "a field the loop writes is read per iteration");
+
+  // Another record TYPE written at the same offset leaves l3.x0 hoisted: 5*3.
+  l3 = mk_lay(5); o = Oth { x0: 0, lw: 0.0 }; s3 = 0;
+  for i in 0..3 { s3 += l3.x0; o.x0 = o.x0 + i; }
+  assert(s3 == 15 && o.x0 == 3, "the keys carry the type");
+
+  // A callee writes the field through its parameter: 10+11+12.
+  l4 = mk_lay(10); s4 = 0;
+  for i in 0..3 { s4 += l4.x0; bump_x0(l4); }
+  assert(s4 == 33 && l4.x0 == 13, "a callee's write evicts the field");
+
+  // A `&`-bound alias writes it: 1+2+4, then 8.
+  l5 = mk_lay(1); al = &l5; s5 = 0;
+  for i in 0..3 { s5 += l5.x0; al.x0 = al.x0 * 2; }
+  assert(s5 == 7 && l5.x0 == 8, "an alias's write evicts by type");
+
+  // An element VIEW (B-View-Depth) beside an element write of the same type at
+  // the offset: the third turn reads the written 101.
+  pts: vector<Lay> = [mk_lay(1), mk_lay(2), mk_lay(3)];
+  f = pts[1]?; s7 = 0;
+  for i in 0..3 { s7 += f.x0; pts[i].x0 = 100 + i; }
+  assert(s7 == 105 && (pts[1]?.x0) == 101, "an element write of the same type evicts the view's field");
+
+  // Nested loops: the outer writes between inner loops; the inner hoists after it.
+  l8 = mk_lay(0); s8 = 0;
+  for k in 0..3 { l8.x0 = k * 10; for i in 0..2 { s8 += l8.x0 + i; } }
+  assert(s8 == 63, "the inner loop's prelude runs after the outer write");
+
+  // A callee writes a DIFFERENT field: lw is read per iteration, x0 once. 2+3+4.
+  l11 = mk_lay(2); s11 = 0;
+  for i in 0..3 { set_lw(l11, i as float); s11 += (l11.lw as integer) + l11.x0; }
+  assert(s11 == 9, "only the written offset is evicted");
+
+  // Every scalar kind: boolean, enum, character, float — (1+10+100+3) * 3.
+  l10 = Lay { x0: 0, lw: 1.5, on: true, kind: Kind.C, ch: 'z', px: [] }; s10 = 0;
+  for i in 0..3 {
+    if l10.on { s10 += 1; }
+    if l10.kind == Kind.C { s10 += 10; }
+    if l10.ch == 'z' { s10 += 100; }
+    s10 += (l10.lw * 2.0) as integer;
+  }
+  assert(s10 == 342, "boolean, enum, character and float fields hoist alike");
+
+  println("scalar-hoist ok");
+}

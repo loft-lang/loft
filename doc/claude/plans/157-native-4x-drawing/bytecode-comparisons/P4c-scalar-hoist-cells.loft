@@ -1,0 +1,71 @@
+// @PLN157 P4c cells — a loop's INVARIANT record scalar field reads hoisted as locals.
+// The interpreter (no hoist) is the oracle; native must answer the same under LOFT_HOIST_VERIFY=1.
+// Expected values are hand-computed in P4c-scalar-hoist-cells.expected; the emission per
+// cell (which scalars hoist) is pinned by tests/scalar_hoist.rs and tests/hoist_gate.rs.
+enum Kind { A, B, C }
+struct Lay { x0: integer, lw: float, on: boolean, kind: Kind = Kind.A, ch: character, tag: text, px: vector<integer> }
+struct Oth { x0: integer, lw: float }
+struct P { a: float, b: float }
+struct Sub { x0: integer }
+struct Holder { sub: Sub, n: integer }
+
+fn mk_lay(x0: integer) -> Lay { Lay { x0: x0, lw: 0.5, on: true, kind: Kind.B, ch: 'q', tag: "t", px: [0, 0, 0, 0] } }
+fn bump_x0(l: Lay) { l.x0 = l.x0 + 1; }
+fn set_lw(l: Lay, w: float) { l.lw = w; }
+fn mk(u: float) -> P { P { a: u, b: u * 2.0 } }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+// c1 — the raster shape: a record PARAMETER, a pixel loop reading two scalars and writing
+// an element in place.  x0 and lw hoist beside the px header.
+fn raster(lay: Lay, n: integer) -> integer {
+  for i in 0..n { lay.px[i] = lay.x0 * i + (lay.lw * 2.0) as integer; }
+  total(lay.px)
+}
+fn c1() { l = mk_lay(3); println("c1 {raster(l, 4)} {len(l.px)}"); }
+// c2 — the loop writes the hoisted field itself: x0 must not hoist.
+fn c2() { l = mk_lay(0); s = 0; for i in 0..4 { s += l.x0; l.x0 = l.x0 + 1; } println("c2 {s} {l.x0}"); }
+// c3 — the same offset of ANOTHER record type is written: l.x0 still hoists (keys carry the type).
+fn c3() { l = mk_lay(5); o = Oth { x0: 0, lw: 0.0 }; s = 0; for i in 0..3 { s += l.x0; o.x0 = o.x0 + i; } println("c3 {s} {o.x0}"); }
+// c4 — a callee writes the hoisted field through its own parameter: evicted by the callee's written set.
+fn c4() { l = mk_lay(10); s = 0; for i in 0..3 { s += l.x0; bump_x0(l); } println("c4 {s} {l.x0}"); }
+// c5 — a `&`-bound alias of the record is written: evicted by type, not by name.
+fn c5() { l = mk_lay(1); al = &l; s = 0; for i in 0..3 { s += l.x0; al.x0 = al.x0 * 2; } println("c5 {s} {l.x0}"); }
+// c6 — a view local REBOUND inside the loop: never a candidate.
+fn c6() { pts: vector<Lay> = [mk_lay(4), mk_lay(9)]; s = 0; for k in 0..2 { cur = pts[k]?; s += cur.x0 * 10 + k; } println("c6 {s}"); }
+// c7 — an element VIEW (`f = pts[1]?`, B-View-Depth) with an element write at the hoisted
+// offset beside it: the write is (Lay, 0), so f.x0 is evicted and reads 101 on the third turn.
+fn c7() { pts: vector<Lay> = [mk_lay(1), mk_lay(2), mk_lay(3)]; f = pts[1]?; s = 0; for i in 0..3 { s += f.x0; pts[i].x0 = 100 + i; } println("c7 {s} {pts[1]?.x0}"); }
+// c8 — nested loops, the OUTER body writing between inner loops: the inner loop hoists
+// (its prelude runs after the write), the outer does not.
+fn c8() { l = mk_lay(0); s = 0; for k in 0..3 { l.x0 = k * 10; for i in 0..2 { s += l.x0 + i; } } println("c8 {s}"); }
+// c9 — a GROWING write beside the read: the whole hoist declines, scalars included.
+fn c9() { l = Lay { x0: 7, lw: 0.0, on: false, kind: Kind.A, ch: 'a', tag: "", px: [] }; s = 0; for i in 0..3 { s += l.x0; l.px += [i]; } println("c9 {s} {len(l.px)}"); }
+// c10 — every scalar KIND: boolean, enum, character, float.
+fn c10() { l = Lay { x0: 0, lw: 1.5, on: true, kind: Kind.C, ch: 'z', tag: "", px: [] }; s = 0; for i in 0..3 { if l.on { s += 1; } if l.kind == Kind.C { s += 10; } if l.ch == 'z' { s += 100; } s += (l.lw * 2.0) as integer; } println("c10 {s}"); }
+// c11 — a callee writes a DIFFERENT field in place: lw evicted, x0 kept.
+fn c11() { l = mk_lay(2); s = 0; for i in 0..3 { set_lw(l, i as float); s += (l.lw as integer) + l.x0; } println("c11 {s}"); }
+// c12 — a return-buffer writer called in the loop, its result rebound each turn: l.x0 keeps its hoist.
+fn c12() { l = mk_lay(3); s = 0.0; for i in 0..3 { t = mk(i as float); s += t.a + t.b + (l.x0 as float); } println("c12 {s as integer}"); }
+// c13 — a read through a const PATH (h.sub.x0) beside a written sibling field (h.n).
+fn c13() { h = Holder { sub: Sub { x0: 4 }, n: 0 }; s = 0; for i in 0..3 { s += h.sub.x0 + h.n; h.n = i; } println("c13 {s} {h.n}"); }
+// c14 — an element write into a vector of ANOTHER struct type at the same offset: keys stay apart.
+fn c14() { l = mk_lay(6); os: vector<Oth> = [Oth { x0: 0, lw: 0.0 }, Oth { x0: 0, lw: 0.0 }]; s = 0; for i in 0..2 { s += l.x0; os[i].x0 = i + 1; } println("c14 {s} {os[0]?.x0} {os[1]?.x0}"); }
+// c15 — an element write into a vector of the SAME type at the hoisted offset, beside an
+// unaliased local: evicted by type (conservative), the value unchanged either way.
+fn c15() { l = mk_lay(5); pts: vector<Lay> = [mk_lay(0), mk_lay(0), mk_lay(0)]; s = 0; for i in 0..3 { s += l.x0; pts[i].x0 = i; } println("c15 {s} {pts[2]?.x0}"); }
+// c16 — a write through a nested PATH of another root (h2.sub.x0 is (Sub, 0)) beside h1.n: h1.n hoists.
+fn c16() { h1 = Holder { sub: Sub { x0: 1 }, n: 5 }; h2 = Holder { sub: Sub { x0: 0 }, n: 0 }; s = 0; for i in 0..3 { s += h1.n; h2.sub.x0 = h2.sub.x0 + i; } println("c16 {s} {h2.sub.x0}"); }
+
+// c17 — c11 plus a TEXT field read: not a candidate itself, and today `OpGetText` /
+// `t_4text_len` / `OpFreeText` are off the read-only allow-list, so the whole loop declines
+// (hoist.rs doctrine: an op missing from the list costs the hoist, never correctness).
+fn c17() { l = mk_lay(2); s = 0; for i in 0..3 { set_lw(l, i as float); s += (l.lw as integer) + l.x0 + len(l.tag); } println("c17 {s}"); }
+// c18 — NARROW integer fields (`i32` → OpGetInt4, `u8` → OpGetByte with a `min` operand).
+struct N { w: i32, b: u8, xs: vector<integer> }
+fn c18() { n = N { w: 7, b: 3, xs: [0, 0] }; for i in 0..2 { n.xs[i] = n.w + n.b + i; } println("c18 {total(n.xs)}"); }
+// c19 — the read as a CALL ARGUMENT inside an if-arm: the pre-eval lifts it, and the
+// lifted binding is the hoisted local.
+fn twice(x: integer) -> integer { x * 2 }
+fn c19() { l = mk_lay(4); s = 0; for i in 0..3 { if l.on { s += twice(l.x0) + i; } } println("c19 {s}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); }

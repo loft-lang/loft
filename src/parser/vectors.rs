@@ -5387,6 +5387,29 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         }
+        // The container must be a PLAIN vector of a scalar kind, read off the schema and
+        // not off the op shape: a one-field record (`Rec { nr }`) lowers to exactly this
+        // triple, and an `index<Rec[nr]>` of them turns `OpFinishRecord` into the keyed
+        // insert — fused by shape, every walk of that collection answered empty.
+        let new_args = match &ls[n - 3] {
+            Value::Set(_, inner) => match inner.unspan() {
+                Value::Call(_, args) => args,
+                _ => return,
+            },
+            _ => return,
+        };
+        let (Value::Int(tp), Value::Int(fld)) = (new_args[1].unspan(), new_args[2].unspan()) else {
+            return;
+        };
+        if !self.fusable_scalar_vector(*tp, *fld) {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=container tp={tp} fld={fld}",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
         if set_args[0] != Value::Var(elm) || set_args[1] != Value::Int(0) {
             if trace {
                 eprintln!(
@@ -5419,6 +5442,46 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.data.def(self.context).name()
             );
         }
+    }
+
+    /// Does `OpNewRecord(_, tp, fld)` name a PLAIN vector whose elements are one scalar —
+    /// the only container a fused push (@PLN157 § V-m) may address?  `fld == u16::MAX`
+    /// means `tp` IS the vector's schema type; otherwise `tp` is the parent record and
+    /// `fld` the field that holds it.  A keyed kind, an array, and a vector of records
+    /// (even a one-field record, whose element build has the same three-op shape) all
+    /// answer `false` and keep the general path.
+    fn fusable_scalar_vector(&self, tp: i32, fld: i32) -> bool {
+        use crate::database::Parts;
+        let Ok(tp) = u16::try_from(tp) else {
+            return false;
+        };
+        let vector_tp = if fld == i32::from(u16::MAX) {
+            tp
+        } else {
+            let Ok(fld) = u16::try_from(fld) else {
+                return false;
+            };
+            let holds = matches!(
+                self.database.types.get(tp as usize).map(|t| &t.parts),
+                Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) if (fld as usize) < fields.len()
+            );
+            if !holds {
+                return false;
+            }
+            self.database.field_type(tp, fld)
+        };
+        let Some(Parts::Vector(elem)) = self
+            .database
+            .types
+            .get(vector_tp as usize)
+            .map(|t| &t.parts)
+        else {
+            return false;
+        };
+        matches!(
+            self.database.types.get(*elem as usize).map(|t| &t.parts),
+            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _))
+        )
     }
 
     /// Return the database `known_type` of a `main_vector<T>` wrapper struct,

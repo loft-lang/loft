@@ -389,7 +389,10 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // loft#885 — indexed reads inside a loop that writes no store are emitted against a
     // header the loop derived once.  Both emitters delegate to the `#rust` template for
     // every read the analysis did not cover, which is every read outside such a loop.
-    for name in ["OpGetInt", "OpGetSingle", "OpGetFloat"] {
+    // @PLN157 P4c — the same emitter serves every scalar field getter: a read the loop
+    // hoisted as a record scalar emits the local the prelude bound, and the three
+    // fusable kinds try the element fusion first.
+    for name in crate::generation::hoist::SCALAR_GETTERS {
         r.insert(name, Box::new(vector_ops::FusedElementReadEmitter));
     }
     r.insert("OpGetVector", Box::new(vector_ops::OpGetVectorEmitter));
@@ -500,9 +503,12 @@ mod tests {
         // @PLN157 P3 raised it by 18: the eight Eq/Ne/Lt/Le × Single/Float
         // compares (FloatCompareEmitter) and the ten integer
         // arithmetic/conversion ops (IntArithEmitter) — both emit the
-        // template form unless the non-sentinel proof holds.
+        // template form unless the non-sentinel proof holds.  @PLN157 P4c
+        // raised it by 11: `FusedElementReadEmitter` now serves all fourteen
+        // scalar field getters (a hoisted record scalar emits its local), not
+        // only the three fusable kinds.
         assert!(
-            count <= 98,
+            count <= 109,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
