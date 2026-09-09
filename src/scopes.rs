@@ -2673,6 +2673,16 @@ fn run_scan_phase(
         scopes.var_order.push(w);
         scopes.owner_witness.insert(v, w);
     }
+    // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
+    // spelling of the same mixed-ownership local answers the identical question by STORE
+    // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  C90 makes the two
+    // spellings the same slot, so nullability does not require a runtime flag here and the
+    // divergence is an accident of this site.  Reach: 5 of 1311 corpus files emit a `__lbo_`.
+    // Not folded — whether it CAN be is unmeasured (the falsification was attempted and its own
+    // control caught it going vacuous), and it belongs to @PLN155's question, "a limited amount
+    // of code that verifies if a free is needed", rather than to @PLN160's.  Note also that
+    // `__own_` has `LOFT_NO_OWNER_WITNESS=1` and this one has no `LOFT_NO_*` switch at all, so
+    // the one of the three whose necessity cannot be shown is the one with no bisect step.
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
         let name = format!("__lbo_{}", function.name(v));

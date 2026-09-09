@@ -3716,7 +3716,7 @@ impl Parser {
             && hint_is_the_whole_value
         {
             let var_tp = self.vars.tp(*v_nr).clone();
-            // ⚠ @FR-N-Shape (@PLN160) — this names ONE spelling: `x: S?` is
+            // ⚠ @FR-N-Shape / @FR-N-Road (@PLN160) — this names ONE spelling: `x: S?` is
             // `Optional(Reference(S))` and does not match, so every nullable local bound from a
             // struct literal declines the in-place hint and builds into a work-ref instead,
             // while its dense twin builds in place.  C90 makes the two the same slot, so the

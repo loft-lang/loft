@@ -471,6 +471,32 @@ old auto-`τ?` reading. Design record:
             covers an EXHAUSTIVE `match Type` and nothing else, so `matches!`, `if let` and a
             catch-all arm are where this rule is broken silently.
 
+(N-Road)    a question about the LOWERING of a value — which delivery it takes, which ops are
+            emitted, which mechanism tracks its ownership, whether a temporary stands between it
+            and its destination — answers IDENTICALLY for τ and for τ?.  The LOWERING twin of
+            (N-Shape), which rules the TYPE side, and it follows from C90 for the same reason:
+            the `?` is a compile-time marker over τ's own storage, so it cannot be the thing
+            that selects a road.  A divergence between the two spellings' emitted IR is
+            therefore an ACCIDENT of the site that introduced it, never a consequence of the
+            marker.
+            ⚠ **The dense spelling is NOT the oracle.**  This rule says only that the two must
+            AGREE; what settles which answer they agree ON is a rule about the thing
+            itself: `@FR-F-Ret` for a return, the store-lifetime rules for a free.  Reading the ordinary
+            spelling as correct because it is the ordinary one is how loft#1468 closed on a
+            premise that was false (calls-history.md D-call-17/18).
+            ⚠ ONE exception, and only this one: the `??` operator's own lowering.  A nullable
+            twin must handle absence somewhere and there is no way to read a `τ?` without it, so
+            `__ncc_` ops are the OPERATOR's road and not the TYPE's.
+            Home: none single — a lowering is chosen per site, so the rule is enforced at each
+            delivery selector and each ownership mechanism, and the way it is BROKEN is a shape
+            test naming `Type::Reference` (or any bare former) where `Optional(Reference)` also
+            arrives.  The instrument is `make nullable-road` (@PLN160): hand-written
+            dense/nullable PAIRS, normalised for the `?` and diffed per MACHINERY CHANNEL,
+            discounting `ncc(??)`.
+            Measured 2026-09-09 over six pairs: FIVE diverge, and every one is an accident of
+            its site — none required by C90.  Two of the five were defects in the DENSE
+            spelling that the nullable road was masking (loft#1482, loft#1483).
+
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys
             (N-Cast) / (N-Cast?): `s as float` asserts (non-null), `s as float?` checks (→

@@ -69,6 +69,21 @@ KEYSTONES = [
     # class as a fresh candidate and names it a PLAN again, one day after a plan finished on
     # it; with it, the class reads MEASURING, which is what an unscored keystone means.
     ("Function::proxy_says_owned",     "ownership/free",   1479, "PLN155"),
+    # @PLN160's keystone, and it is a RULE rather than a fold — `@FR-N-Road`, the LOWERING twin
+    # of `@FR-N-Shape`: a question about how a value is lowered answers alike for `τ` and `τ?`,
+    # so a divergence between the two spellings' emitted IR is an accident of its site.  Earned
+    # by measurement rather than asserted: six hand-written pairs, five diverge, and every one
+    # classified as an accident with none required by C90.
+    #
+    # ⚠ Two things a reader of its row must know, because both would otherwise be read as
+    # results.  FIRST, this keystone REMOVES no divergence — the plan classified and did not
+    # fix, and two of the five cures are held behind other issues (#1483 blocks the
+    # `objects.rs` peel; the `__lbo_` fold is @PLN155's queue).  So a NO EFFECT verdict here
+    # means "writing the rule did not by itself retire the class", which is worth knowing and
+    # is NOT evidence the rule is wrong.  SECOND, this is the SECOND keystone on
+    # `ownership/free` in one cycle — @PLN155's sits at #1479 — so this one's BEFORE window
+    # contains that one's effect, and the two rows are not independent readings.
+    ("@FR-N-Road (rule, not a fold)",  "ownership/free",   1485, "PLN160"),
 ]
 
 # ⚠ **The fourth trap, and it is the one that reads as a verdict.**  A keystone whose plan

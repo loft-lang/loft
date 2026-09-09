@@ -9,8 +9,10 @@ Tracker: [@PLN160](https://github.com/loft-lang/plans/issues/160).
 
 ## Status
 
-**Open — the enumeration the issue asks for is COMPLETE and every divergence is CLASSIFIED
-(2026-09-09).**  Nothing has been fixed here, deliberately: the issue's instruction is *"before
+**CLOSED 2026-09-09.**  The enumeration the issue asks for is complete, every divergence is
+classified, the LOWERING-side rule the issue says did not exist is written (`@FR-N-Road`), the
+keystone is registered and the stated verify is reproducible (`make nullable-road ARGS=--verify`
+— 6 of 6 pairs, both halves, both backends, `LOFT_STRICT_STORES=1`).  Nothing has been fixed here, deliberately: the issue's instruction is *"before
 designing anything: enumerate where the two spellings' lowerings diverge."*  Two bugs were filed
 along the way (**loft#1482**, **loft#1483**), both of them defects in the DENSE spelling that the
 nullable road was masking; loft#1482 is already fixed by the peer stream and `D-call-18` is closed.
@@ -336,18 +338,56 @@ The issue's opening question is answered: `τ` and `τ?` do **not** reach the st
 same road, in five shapes out of six, and every divergence is an accident of the site that
 introduced it rather than a consequence of the marker.
 
-## Next
+## What closing required, and what it produced
 
-Per the issue: for each surviving divergence, ask whether **C90 REQUIRES** it — the `?` is a
-compile-time marker, so most cannot — or whether it is an **accident of the site** that
-introduced it.  The accidents are the queue.  Nothing should be fixed before that
-classification, because a divergence removed without knowing which kind it was is a change with
-no measurement behind it.
+The issue asked for three things beyond the enumeration, and all three are done.
 
-The verify, unchanged from the issue: a dense/nullable PAIR per divergence, both backends, under
-`LOFT_STRICT_STORES=1` — the value channel does not score an ownership change (@PLN153 batch
-10's lesson) — and this plan's own keystone registered in `scripts/bug-review.py`'s `KEYSTONES`
-so the payoff check judges it, as @PLN155 phase 5 established.
+**1. The rule.**  The issue's framing was *"`@FR-N-Shape` is the TYPE-side half of this question
+already answered … This is the LOWERING-side half, and it has no rule yet."*  It has one now:
+**`@FR-N-Road`** in [formal/types.md](../../formal/types.md), beside its type-side twin.  A
+question about how a value is LOWERED — which delivery it takes, which ops are emitted, which
+mechanism tracks its ownership, whether a temporary stands between it and its destination —
+answers identically for `τ` and `τ?`, so a divergence in the emitted IR is an accident of its
+site.  It is EARNED rather than asserted: five of six pairs diverge and every one classified as
+an accident, none required by C90.
+
+It carries the plan's hardest-won caveat as part of the rule text: **the dense spelling is not
+the oracle.**  `@FR-N-Road` says only that the two must AGREE — what settles which answer they
+agree ON is a rule about the thing itself.  Reading the ordinary spelling as correct because it
+is the ordinary one is exactly how loft#1468 closed on a false premise.  Cited at the two
+accident sites still open (`objects.rs` in-place hint, `scopes.rs` `__lbo_`), so
+`rule_tags.py sites N-Road` reaches them.
+
+**2. The keystone** is registered in `scripts/bug-review.py`'s `KEYSTONES`, with two caveats
+stated in the table rather than left for a reader to infer: it is a RULE and not a fold, so it
+removes no divergence and a `NO EFFECT` verdict would mean *"writing the rule did not by itself
+retire the class"* rather than *"the rule is wrong"*; and it is the SECOND keystone on
+`ownership/free` in one cycle (@PLN155's sits at #1479), so its BEFORE window contains that
+one's effect and the two rows are not independent readings.
+
+**3. The verify is reproducible.**  The issue asks for the pairs *"on both backends, under
+`LOFT_STRICT_STORES=1`"*; that channel was being run by hand, which is not a measurement the next
+reader can repeat.  `make nullable-road ARGS=--verify` runs all four cells per pair and checks
+what the IR diff cannot: that the two halves **agree in value** — the claim the whole report
+rests on — and that neither leaks.  **6 of 6 verify.**  It greps TWO patterns, because
+`LOFT_STRICT_STORES` implies `LOFT_NO_SLOT_REUSE` and a leak-free program that churns >65535
+stores aborts with *"store table exhausted"*, which a one-grep sweep scores CLEAN.
+
+## What is deliberately NOT here
+
+Nothing was fixed, and that is the issue's own instruction — *"before designing anything:
+enumerate."*  The queue this plan hands on:
+
+| cure | where it goes |
+|---|---|
+| widen `ret_promo_base` (`ret-view-of-param`, loft#1421) | open; adjacent to the delivery code loft#1482 just changed |
+| the `objects.rs:3719` peel (`captured-local-rebind`) | blocked on **loft#1483** |
+| fold `__lbo_` onto store identity (`local-rebound-by-mint`) | [@PLN155](../155-licence-to-free/README.md)'s question, not this one |
+
+And one measurement is deliberately NOT taken: **the channel table is a derived row and predates
+loft#1482's fix**, which moves the very `retbuf` channel two pairs count.  It is re-measured on
+the join — `make nullable-road` — and never carried.  loft#1484's expected cure (the return
+buffer at instantiation) moves the same channel again, so the re-read waits for both.
 
 ## See also
 

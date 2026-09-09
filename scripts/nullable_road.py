@@ -167,16 +167,87 @@ def headline(name):
     return ""
 
 
+def run_pair_half(path, native):
+    """Run one half, returning (value, leak_note).  BOTH backends reachable.
+
+    The leak channel needs TWO greps, not one.  `LOFT_STRICT_STORES=1` implies
+    `LOFT_NO_SLOT_REUSE` (`keys.rs`), so a leak-FREE program that churns more than 65535
+    stores ABORTS with *"store table exhausted"* rather than finishing — and a sweep that
+    greps only for `strict-store`, the obvious thing to grep, sees no such line and scores
+    that file CLEAN.  Measured on a 45-file sweep where 1 file did exactly that.
+    """
+    cmd = [loft_bin(), "--path", ROOT]
+    if not native:
+        cmd.append("--interpret")
+    cmd.append(path)
+    env = dict(os.environ, LOFT_STRICT_STORES="1", LOFT_TIMEOUT="90")
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT,
+                             timeout=240, env=env)
+    except subprocess.TimeoutExpired:
+        return ("<timeout>", "timeout")
+    text = out.stdout + out.stderr
+    if "store table exhausted" in text:
+        return ("<exhausted>", "EXHAUSTED — re-read under LOFT_STORES=timeline")
+    if "strict-store" in text:
+        return (text.strip().split("\n")[-1], "LEAK")
+    body = [l for l in out.stdout.strip().split("\n") if l.strip()]
+    return (body[-1] if body else "", "")
+
+
+def verify():
+    """@PLN160's stated VERIFY: every pair, both halves, BOTH backends, under
+    `LOFT_STRICT_STORES=1`.
+
+    The issue asks for exactly this and the channel was being run by hand, which is not a
+    measurement the next reader can repeat.  Two things it checks that the IR diff cannot:
+    the two halves AGREE IN VALUE (so a surviving diff is a lowering difference and not a
+    semantic one — the claim the whole report rests on), and neither half leaks.
+    """
+    names = pair_names()
+    print("\n== @PLN160 verify — both halves, both backends, LOFT_STRICT_STORES=1 ==\n")
+    bad = 0
+    for n in names:
+        cells = {}
+        for half in ("dense", "opt"):
+            for native in (False, True):
+                cells[(half, native)] = run_pair_half(
+                    os.path.join(PAIRS, f"{n}.{half}.loft"), native)
+        vals = {k: v[0] for k, v in cells.items()}
+        notes = [f"{h}/{'native' if nat else 'interp'} {msg}"
+                 for (h, nat), (_, msg) in cells.items() if msg]
+        agree = len(set(vals.values())) == 1
+        ok = agree and not notes
+        bad += 0 if ok else 1
+        mark = "ok  " if ok else "FAIL"
+        print(f"  {mark}  {n:<32} value={next(iter(vals.values()))!r}")
+        if not agree:
+            print("        halves DISAGREE — a surviving diff would not be a pure lowering "
+                  "difference:")
+            for k, v in vals.items():
+                print(f"          {k[0]}/{'native' if k[1] else 'interp'}: {v!r}")
+        for note in notes:
+            print(f"        {note}")
+    print(f"\n  {len(names) - bad} of {len(names)} pairs verify.\n")
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--diff", metavar="NAME", help="print the surviving diff for one pair")
     ap.add_argument("--control", action="store_true",
                     help="the instrument's own control: a pair that is its own twin")
+    ap.add_argument("--verify", action="store_true",
+                    help="@PLN160's stated verify: both halves, BOTH backends, "
+                         "under LOFT_STRICT_STORES=1")
     a = ap.parse_args()
 
     names = pair_names()
     if not names:
         sys.exit(f"no pairs under {os.path.relpath(PAIRS, ROOT)}")
+
+    if a.verify:
+        return verify()
 
     if a.control:
         # A file against ITSELF must normalise to nothing.  Without this the whole report is
