@@ -2402,12 +2402,25 @@ impl Stores {
         if enum_tp == u16::MAX || (enum_tp as usize) >= self.types.len() {
             return;
         }
+        let mut linked = false;
         if let Parts::Enum(variants) = &mut self.types[enum_tp as usize].parts {
             for variant in variants.iter_mut() {
                 if variant.1 == value_name {
                     variant.0 = value_tp;
+                    linked = true;
                 }
             }
+        }
+        // The variant's row names its enum in `parents`, which is what lets
+        // [`Self::enum_parent_size`] answer "how big must a record of this variant be" by a
+        // lookup over that small set instead of a scan of every registered type (@PLN157 § V-e).
+        // The link belongs HERE, where the variant type becomes a member: writing it only at
+        // field containment left an enum whose variant arrived by this route out of the set, so
+        // the lookup returned a DIFFERENT parent's size than the scan — 16 where the scan said
+        // 24, on 17 corpus files under `-C debug-assertions=on`.  The two walks are the same
+        // question and the assert beside them exists to say so.
+        if linked && value_tp != u16::MAX && (value_tp as usize) < self.types.len() {
+            self.types[value_tp as usize].parents.insert(enum_tp);
         }
     }
 

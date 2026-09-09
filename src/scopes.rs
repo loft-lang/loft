@@ -9017,43 +9017,47 @@ impl Scopes<'_> {
                 // for it.  Measured: `give_both_ways` (a frame delivering by BOTH routes at
                 // once) read 0xBEEF under `LOFT_POISON=1`.
                 let link_delivered = link_written_closure_records(data, function, self.d_nr);
-                for group in adopters.values() {
-                    // A record that ALONE adopts its store may be released on a path that does
-                    // not deliver it: its cascade takes the capture with it, and on that path
-                    // nobody escaped holding either.
-                    //
-                    // Where several records SHARE a store, every member owns — none of them is
-                    // freed by this frame (`group_every_record_leaves`), so no cascade runs
-                    // here — and a plain release on the one left behind would follow its capture
-                    // slots into the store the DELIVERED record still holds.  Null those slots
-                    // first: the cascade then finds nothing, this record's own store is
-                    // reclaimed, and the capture stays for the record that escaped to free in
-                    // the caller.  The offsets come from the BUILDS, so they are exactly the
-                    // slots the emitted code wrote.
-                    let shared = group.len() > 1;
-                    for (r, _, _) in group {
-                        if !record_leaves_frame(data, function, self.d_nr, *r)
-                            || link_delivered.contains(r)
-                        {
-                            continue;
-                        }
-                        let mut release: Vec<Value> = Vec::new();
-                        if shared {
-                            for off in record_capture_slots(body, *r, set_dbref) {
-                                release.push(Value::Call(
-                                    set_dbref,
-                                    vec![
-                                        Value::Var(*r),
-                                        Value::Int(off),
-                                        Value::Call(null_ref, Vec::new()),
-                                    ],
-                                ));
-                            }
-                        }
-                        release.push(call("OpFreeRef", *r, data));
-                        free_record_in_omitting_arms(&mut copy, *r, function, tp, &release);
-                        touched = true;
+                // Every closure-record LOCAL this frame owns, not only the ones that entered
+                // an adopter group: a record capturing a PARAMETER adopts nothing (the store is
+                // the caller's) and so appears in no group, yet it is delivered by the same
+                // branch and owes the same per-arm release.  Gating on the groups left those
+                // records with no free anywhere, which `check_ref_leaks` reports as a leak.
+                for v in 0..function.next_var() {
+                    if function.is_argument(v) {
+                        continue;
                     }
+                    let Type::Reference(rec_def, _) = function.tp(v) else {
+                        continue;
+                    };
+                    if !data.def(*rec_def).name.starts_with("__closure_")
+                        || !record_leaves_frame(data, function, self.d_nr, v)
+                        || link_delivered.contains(&v)
+                    {
+                        continue;
+                    }
+                    // Nulling is owed only where another record can hold the SAME store: there
+                    // the cascade would reach a capture the delivered record still needs.  A
+                    // sole adopter — and a record that adopts nothing at all — wants the plain
+                    // release, whose cascade is either correct or empty.
+                    let shared = adopters
+                        .values()
+                        .any(|g| g.len() > 1 && g.iter().any(|(l, _, _)| *l == v));
+                    let mut release: Vec<Value> = Vec::new();
+                    if shared {
+                        for off in record_capture_slots(body, v, set_dbref) {
+                            release.push(Value::Call(
+                                set_dbref,
+                                vec![
+                                    Value::Var(v),
+                                    Value::Int(off),
+                                    Value::Call(null_ref, Vec::new()),
+                                ],
+                            ));
+                        }
+                    }
+                    release.push(call("OpFreeRef", v, data));
+                    free_record_in_omitting_arms(&mut copy, v, function, tp, &release);
+                    touched = true;
                 }
             }
             if touched {
