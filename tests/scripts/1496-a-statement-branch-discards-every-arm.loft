@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A branch in STATEMENT position discards every arm — in the BODY and in the TYPE alike.
+//
+// `(F-Block)` says a block in statement position discards what its tail yields.  An arm of a
+// statement `if` was left disagreeing with itself about that: `else { 5 }` had its tail wrapped
+// in a `Drop` while its block still claimed `integer`, and the value-carrying middle arm of an
+// `else if` chain kept both its value and its type.  The interpreter balances its eval stack
+// against the block's TYPE, so each shape left it off by one in its own direction — the first
+// promised a value it never pushed, the second pushed one nothing pops — and every read after
+// the branch was misaligned.  `--native` compensates at emit time (`stmt_discard`,
+// loft#1381/#1382), so the two backends disagreed and only the interpreter was wrong.
+//
+// ⚠ **The corruption is not confined to the value of the `if`.**  It lands on whatever locals
+// are live across the branch, so `two_locals` loses BOTH — and it is silent: a non-null
+// `integer` local that was assigned 0 reads back `null`, which is a type-system promise
+// broken with no diagnostic.
+//
+// ⚠ **The fix is decided at the ENCLOSING level, and it has to be.**  Three arm-side
+// discriminators were each disproven by measurement:
+//
+//   1. *the arm's `result` is Void* — the else arm of `if n > 0 { …; return b.items; } else
+//      { head(n) }` also has `result == Void` and its value IS the function's, so voiding on
+//      that fact made the function return nothing (E0308 on `--native`);
+//   2. *the arm's tail is a `Drop`* — a `Drop` is pushed for that same else arm too;
+//   3. *un-drop the arm instead* — the un-drop's own comment records why it is restricted to a
+//      bare `{ … }`: un-dropping a body that IS a statement leaks what the tail returned,
+//      which is loft#725 reopened.
+//
+// What separates a statement branch from a value one is only whether anything FOLLOWS it, and
+// that is known in the statement loop and nowhere inside the arm.  So the normalisation runs
+// there, past the point that breaks out of the loop at `}`.
+//
+// The controls are the two directions the fix must not tip: a branch in VALUE position keeps
+// its arms (`value_position`, `bound_to_a_local`), and a DIVERGING arm is left alone —
+// `Never` is not a claim to yield, and loft#1495's guard is the rest of that case.
+//
+// @falsified-at: 4b7e9b99c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1496-a-statement-branch-discards-every-arm.patch
+//   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
+//   CHANNEL: VALUE, on the INTERPRETER only.  `--native` is equal on both trees, which is the
+//     whole shape of the defect: a program tested on the default backend was wrong when
+//     interpreted, and no leak, panic or exit channel moves at all.
+//   ARMED: nothing.  A plain `--interpret` run fails the assertion.
+//   WITNESS: `value_arm(0)` answers **null** where 0 is right — `t` was assigned 0 and never
+//     written again.  `chain_middle(2)` answers **5**, the discarded arm's own value, and
+//     `two_locals(0)` answers null for BOTH `a` and `t`.
+//   HOLDS: leak, panic, free-refusal, exit and expectations are equal on both trees, and every
+//     `--native` cell passes on both — so a run scored on the default backend alone sees
+//     nothing, which is why this guard's channel is named as the interpreter's.
+
+// --- the shapes that were wrong ---------------------------------------------------------
+
+// The filed shape: a statement `if` whose else arm carries a value.
+fn value_arm(n: integer) -> integer { t = 0; if n > 0 { t += 1; } else { 5 } return t; }
+// Through an `else if` CHAIN, the value in the MIDDLE arm.
+fn chain_middle(n: integer) -> integer {
+  t = 0;
+  if n > 3 { t += 1; } else if n > 1 { 5 } else { 7 }
+  return t;
+}
+// A `text` value arm — the arm's type is not the axis.
+fn text_arm(n: integer) -> integer { t = 0; if n > 0 { t += 1; } else { "xy" } return t; }
+// ⚠ TWO locals live across the branch: the corruption is not confined to the `if`'s own value.
+fn two_locals(n: integer) -> integer { a = 4; t = 0; if n > 0 { t += 1; } else { 5 } return a * 10 + t; }
+// A vector value arm, so the arm may allocate and must still be discarded without leaking.
+fn vector_arm(n: integer) -> integer {
+  t = 0;
+  if n > 0 { t += 1; } else { [1, 2, 3] }
+  return t;
+}
+
+// --- controls ---------------------------------------------------------------------------
+
+// Both arms void: never affected, and the shape loft#1381 is about.
+fn c_both_void(n: integer) -> integer { t = 0; if n > 0 { t += 1; } else { t += 0; } return t; }
+// Both arms carry a value, still a statement: was already right, and must stay right.
+fn c_both_value(n: integer) -> integer { t = 7; if n > 0 { 5 } else { 6 } return t; }
+// A `match` STATEMENT with a value arm: already right.
+fn c_match_statement(n: integer) -> integer {
+  t = 0;
+  match n { 0 => { t += 1; }, _ => { 5 } }
+  return t;
+}
+// ⚠ VALUE position — the branch's arms must KEEP their values.  This is the direction the fix
+// must not tip, and the reason it is decided by what follows the branch rather than inside it.
+fn c_value_position(n: integer) -> integer { x = if n > 0 { 1 } else { 5 }; return x; }
+fn c_bound_to_a_local(n: integer) -> text { s = if n > 0 { "ab" } else { "cde" }; return s; }
+// The branch as the function's TAIL, which is its value.
+fn c_tail_is_the_value(n: integer) -> integer { if n > 0 { 1 } else { 5 } }
+// ⚠ A DIVERGING arm beside a value arm — loft#1495's shape.  `Never` is not a claim to yield,
+// so it is left alone and the sibling still carries the value.
+fn c_diverging_arm(n: integer) -> integer { if n > 0 { return 9; } else { 5 } }
+
+fn main() {
+  assert(value_arm(0) == 0, "a value else arm: got {value_arm(0)}");
+  assert(value_arm(5) == 1, "its void arm: got {value_arm(5)}");
+  assert(chain_middle(2) == 0, "a chain's middle arm: got {chain_middle(2)}");
+  assert(chain_middle(0) == 0, "a chain's last arm: got {chain_middle(0)}");
+  assert(chain_middle(5) == 1, "a chain's void head: got {chain_middle(5)}");
+  assert(text_arm(0) == 0, "a text value arm: got {text_arm(0)}");
+  assert(two_locals(0) == 40, "two locals live across it: got {two_locals(0)}");
+  assert(two_locals(5) == 41, "the same, void arm taken: got {two_locals(5)}");
+  assert(vector_arm(0) == 0, "a vector value arm: got {vector_arm(0)}");
+
+  assert(c_both_void(0) == 0, "control, both arms void: got {c_both_void(0)}");
+  assert(c_both_value(0) == 7, "control, both arms value: got {c_both_value(0)}");
+  assert(c_both_value(5) == 7, "control, both arms value, then: got {c_both_value(5)}");
+  assert(c_match_statement(3) == 0, "control, a match statement's value arm: got {c_match_statement(3)}");
+  assert(c_match_statement(0) == 1, "control, its void arm: got {c_match_statement(0)}");
+  assert(c_value_position(0) == 5, "control, value position: got {c_value_position(0)}");
+  assert(c_value_position(5) == 1, "control, value position, then: got {c_value_position(5)}");
+  assert(size(c_bound_to_a_local(0)) == 3, "control, bound to a local: got {size(c_bound_to_a_local(0))}");
+  assert(c_tail_is_the_value(0) == 5, "control, the branch is the tail: got {c_tail_is_the_value(0)}");
+  assert(c_diverging_arm(5) == 9, "control, a diverging arm: got {c_diverging_arm(5)}");
+  assert(c_diverging_arm(0) == 5, "control, its value sibling: got {c_diverging_arm(0)}");
+
+  println("1496 OK value_arm={value_arm(0)} chain={chain_middle(2)} two={two_locals(0)}");
+}

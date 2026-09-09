@@ -151,16 +151,15 @@ fn main() {
   assert(size(textual(5)) == 2, "a text return: got {size(textual(5))}");
   assert(len(record(5).items) == 5, "a record return: got {len(record(5).items)}");
 
-  // ⚠ The VOID arm of each statement control is asserted; the arm that CARRIES a value is
-  // loft#1496 and is asserted in that issue's own guard, not here.  Building these two cells
-  // is what found it: a statement `if` whose arms disagree about yielding leaves the
-  // interpreter's eval stack short, so `c_statement_if(0)` answers null and
-  // `c_statement_chain(2)` answers 5 where both must answer 0.  That is a defect of the
-  // INTERPRETER's statement discard, not of this emitter fix — it reproduces on `main` and on
-  // every build before it — and asserting it here would make this guard fail for a reason it
-  // does not measure.
+  // ⚠ Building these two controls is what found loft#1496 — the arm that CARRIES a value left
+  // the interpreter's eval stack short, so `c_statement_if(0)` answered null and
+  // `c_statement_chain(2)` answered 5 where both must answer 0.  Both are asserted here now
+  // that it is closed; that issue's own guard carries the boundary.
   assert(c_statement_if(5) == 1, "control, a statement if still discards: got {c_statement_if(5)}");
+  assert(c_statement_if(0) == 0, "control, its value arm discards: got {c_statement_if(0)}");
   assert(c_statement_chain(5) == 1, "control, a statement chain discards: got {c_statement_chain(5)}");
+  assert(c_statement_chain(2) == 0, "control, its middle arm discards: got {c_statement_chain(2)}");
+  assert(c_statement_chain(0) == 0, "control, its last arm discards: got {c_statement_chain(0)}");
   assert(len(c_both_diverge(5)) == 5, "control, both arms diverge: got {len(c_both_diverge(5))}");
   assert(len(c_no_return(A1495 { n: 5 })) == 5, "control, no return keyword: got {len(c_no_return(A1495 { n: 5 }))}");
 

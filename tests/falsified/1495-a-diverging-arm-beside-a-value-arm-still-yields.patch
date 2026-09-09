@@ -1,0 +1,140 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 3e05a6875..2a3df7ae9 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -1774,20 +1774,10 @@ impl Output<'_> {
+         // of a statement, and reading "unknown" as void fired this on six tuple files whose
+         // arms `infer_type` answers `None` for — each then lost the value the `if` was there
+         // to produce (E0308 on `--native`, measured over the corpus).
+-        // loft#1495 — and the void arm must be void because the `if` is a STATEMENT, not
+-        // because control LEFT it.  An arm that diverges (`=> { b = …; return b.items; }`)
+-        // yields nothing and so types `Void`, while its sibling carries the value the `if`
+-        // is there to produce: discarding both then handed rustc a `()` where a `DbRef` was
+-        // wanted, and the program loft runs would not compile at all.  Rust types a diverging
+-        // arm `!`, which coerces to whatever the sibling yields, so the ordinary value
+-        // emission is already right for it.
+         let stmt_discard = match (self.arm_result(true_v), self.arm_result(false_v)) {
+             (Some(t), Some(f)) => {
+-                let t_void = matches!(t, Type::Void);
+-                let f_void = matches!(f, Type::Void);
+-                t_void != f_void
++                matches!(t, Type::Void) != matches!(f, Type::Void)
+                     && !matches!(false_v, Value::Null)
+-                    && !Self::arm_diverges(if t_void { true_v } else { false_v })
+             }
+             _ => false,
+         };
+@@ -1911,45 +1901,13 @@ impl Output<'_> {
+             Value::If(_, then_arm, else_arm) if !matches!(else_arm.unspan(), Value::Null) => {
+                 let then_tp = self.arm_result(then_arm)?;
+                 let else_tp = self.arm_result(else_arm)?;
+-                // By the same rule the gate applies, INCLUDING loft#1495's exclusion: a
+-                // nested `if` whose void arm merely DIVERGES is not discarded, so it still
+-                // answers the value its other arm carries.  Reading it as `Void` here made
+-                // the enclosing `if` discard a chain that does yield one — which is how a
+-                // three-armed `if … return … else if … else …` failed to compile.
+-                let then_void = matches!(then_tp, Type::Void);
+-                let else_void = matches!(else_tp, Type::Void);
+-                let discarded = then_void != else_void
+-                    && !Self::arm_diverges(if then_void { then_arm } else { else_arm });
+-                Some(if discarded {
+-                    Type::Void
+-                } else if then_void {
+-                    else_tp
+-                } else {
+-                    then_tp
+-                })
++                let discarded = matches!(then_tp, Type::Void) ^ matches!(else_tp, Type::Void);
++                Some(if discarded { Type::Void } else { then_tp })
+             }
+             other => self.infer_type(IrNode::Native(other)),
+         }
+     }
+ 
+-    /// Does this arm never YIELD a value, because control LEAVES it rather than falling out
+-    /// of the bottom?
+-    ///
+-    /// Such an arm types `Void` for a reason that has nothing to do with the `if` being a
+-    /// statement — there is no value because control left.  Rust types it `!`, which coerces
+-    /// to whatever the sibling arm yields, so the ordinary value emission serves it and the
+-    /// statement discard does not.
+-    ///
+-    /// [`Value::tail`] is the one home for *descend to where control leaves*, through a
+-    /// `Span`, a value block and an argument-lift `Insert` alike — the same helper the
+-    /// diverging-return capture below asks.
+-    fn arm_diverges(v: &Value) -> bool {
+-        matches!(
+-            v.tail(),
+-            Value::Return(_) | Value::Break(_) | Value::Continue(_)
+-        )
+-    }
+-
+     fn pre_declare_branch_vars(
+         &mut self,
+         w: &mut dyn Write,
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index dfb2d0231..4bc3ac1f8 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -1114,23 +1114,6 @@ impl Parser {
+             if self.lexer.peek_token("}") {
+                 break;
+             }
+-            // loft#1496 — past that `break`, the statement just pushed is NOT this block's
+-            // value: another statement follows it.  So a BRANCH here is a statement, nothing
+-            // reads what its arms yield, and an arm that dropped its tail must stop claiming
+-            // the dropped value's type.  Left claiming it, the interpreter's eval stack was
+-            // one short of what the arm promised and every read after the branch was
+-            // misaligned: `t = 0; if n > 0 { t += 1; } else { 5 }; return t` answered null
+-            // for `n == 0`, and with two locals live across the branch, both of them.
+-            //
+-            // Decided HERE and not inside the arm, because the arm cannot tell.  Measured: the
+-            // same `result == Void` and the same `Drop` reach the else arm of
+-            // `if n > 0 { …; return b.items; } else { head(n) }`, whose value IS the
+-            // function's, so voiding on either of those facts made that function return
+-            // nothing at all.  What separates the two cases is only whether anything follows
+-            // the branch, which is what this point in the loop knows and the arm does not.
+-            if let Some(last) = l.last_mut() {
+-                Self::void_dropped_statement_arms(last);
+-            }
+             // Preserve Never for blocks that end with return/break/continue.
+             if !matches!(t, Type::Never) {
+                 t = Type::Void;
+@@ -12466,37 +12449,6 @@ impl Parser {
+         l.iter().any(|op| scan(op, v))
+     }
+ 
+-    /// A branch in STATEMENT position yields nothing, so an arm that DROPPED its tail must not
+-    /// keep claiming that tail's type.
+-    ///
+-    /// Only an arm whose tail is a `Value::Drop` is retyped: there the body has already thrown
+-    /// the value away and the type is the half that disagrees.  An arm that still ENDS in its
+-    /// value is left alone — retyping that one would make the type deny a value the body
+-    /// pushes, which is the same imbalance in the other direction.
+-    ///
+-    /// Recurses through an `else if` CHAIN, whose arms are nested `If` values rather than
+-    /// blocks, so a value-carrying middle arm is reached too.
+-    fn void_dropped_statement_arms(v: &mut Value) {
+-        match v {
+-            Value::Span(b) => Self::void_dropped_statement_arms(&mut b.1),
+-            Value::If(_, t, f) => {
+-                Self::void_dropped_statement_arms(t);
+-                Self::void_dropped_statement_arms(f);
+-            }
+-            Value::Block(bl) => {
+-                if !matches!(bl.result, Type::Void | Type::Never)
+-                    && bl
+-                        .operators
+-                        .last()
+-                        .is_some_and(|op| matches!(op.unspan(), Value::Drop(_)))
+-                {
+-                    bl.result = Type::Void;
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-
+     fn block_defines_var(l: &[Value], v: u16) -> bool {
+         l.iter().any(|op| Self::stmt_defines_var(op, v))
+     }

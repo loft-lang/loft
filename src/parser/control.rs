@@ -1114,6 +1114,23 @@ impl Parser {
             if self.lexer.peek_token("}") {
                 break;
             }
+            // loft#1496 — past that `break`, the statement just pushed is NOT this block's
+            // value: another statement follows it.  So a BRANCH here is a statement, nothing
+            // reads what its arms yield, and an arm that dropped its tail must stop claiming
+            // the dropped value's type.  Left claiming it, the interpreter's eval stack was
+            // one short of what the arm promised and every read after the branch was
+            // misaligned: `t = 0; if n > 0 { t += 1; } else { 5 }; return t` answered null
+            // for `n == 0`, and with two locals live across the branch, both of them.
+            //
+            // Decided HERE and not inside the arm, because the arm cannot tell.  Measured: the
+            // same `result == Void` and the same `Drop` reach the else arm of
+            // `if n > 0 { …; return b.items; } else { head(n) }`, whose value IS the
+            // function's, so voiding on either of those facts made that function return
+            // nothing at all.  What separates the two cases is only whether anything follows
+            // the branch, which is what this point in the loop knows and the arm does not.
+            if let Some(last) = l.last_mut() {
+                Self::void_dropped_statement_arms(last);
+            }
             // Preserve Never for blocks that end with return/break/continue.
             if !matches!(t, Type::Never) {
                 t = Type::Void;
@@ -12447,6 +12464,45 @@ impl Parser {
             }
         }
         l.iter().any(|op| scan(op, v))
+    }
+
+    /// A branch in STATEMENT position yields nothing, so every arm of it discards — in the
+    /// BODY and in the TYPE alike, because the interpreter balances its eval stack against
+    /// both.
+    ///
+    /// An arm that already dropped its tail keeps only the wrong type; an arm that still ends
+    /// in its value keeps only the wrong body.  Both were measured, and each leaves the stack
+    /// off by one in its own direction: `else { 5 }` (dropped body, `integer` type) promised a
+    /// value it never pushed, and the value-carrying middle arm of an `else if` CHAIN pushed
+    /// one nothing pops.  So the arm is made to discard both ways, which is what a statement
+    /// means and what the `;` form has always done.
+    ///
+    /// A DIVERGING arm is left alone: `Never` is not a claim to yield, and control leaves
+    /// before the branch's end.
+    ///
+    /// Recurses through an `else if` chain, whose arms are nested `If` values rather than
+    /// blocks, so a value-carrying middle arm is reached too.
+    fn void_dropped_statement_arms(v: &mut Value) {
+        match v {
+            Value::Span(b) => Self::void_dropped_statement_arms(&mut b.1),
+            Value::If(_, t, f) => {
+                Self::void_dropped_statement_arms(t);
+                Self::void_dropped_statement_arms(f);
+            }
+            Value::Block(bl) => {
+                if matches!(bl.result, Type::Void | Type::Never) {
+                    return;
+                }
+                if let Some(tail) = bl.operators.last_mut()
+                    && !matches!(tail.unspan(), Value::Drop(_))
+                {
+                    let value = std::mem::replace(tail, Value::Null);
+                    *tail = Value::Drop(Box::new(value));
+                }
+                bl.result = Type::Void;
+            }
+            _ => {}
+        }
     }
 
     fn block_defines_var(l: &[Value], v: u16) -> bool {
