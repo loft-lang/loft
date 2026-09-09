@@ -49,6 +49,9 @@
 // capture arm is released while its variable is live.  Neither answer is right twice, which
 // is loft#1186 and needs the fn-ref call site to own its heap return buffer the way it
 // already owns its `&text` ones.  A place tail cannot join, which is why it can be read.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct P { n: integer }
 struct Q { xs: vector<integer>, p: P }

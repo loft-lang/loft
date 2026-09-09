@@ -20,6 +20,13 @@
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  Eight interpreter cells moved
 //   (every bind position); on native only the branch-join cell moved, and the two nullable
 //   cells' leak sits behind the assertion channel on that build.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 12e58a4d; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the channel above moved
+//   anyway, so the instrument is not needed to see it.
 
 enum SeSh { SeCi { n: integer }, SeSq { n: integer } }
 enum SeHp { SeTag { n: integer, tags: vector<integer> }, SeBare { n: integer } }

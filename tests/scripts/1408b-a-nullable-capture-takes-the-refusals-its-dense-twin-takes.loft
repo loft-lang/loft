@@ -24,6 +24,9 @@
 //   completion, which is the defect; the dense twin of each was refused on that build too, so
 //   the pair is what moved, not the message.
 //
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 // @EXPECT_ERROR: is mutated through a closure and captured by 2 closures
 // @EXPECT_ERROR: is mutated through a closure and captured by 2 closures
 

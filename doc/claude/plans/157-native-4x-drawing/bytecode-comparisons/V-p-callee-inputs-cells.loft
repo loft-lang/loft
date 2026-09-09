@@ -1,0 +1,123 @@
+// @PLN157 § V-p cells — a callee's INVARIANT INPUTS cross the call (@FR-R-Inputs).
+// A callee admitted under @FR-R-Callee reads scalar fields of a record parameter it never
+// writes, and views or indexes vector fields of it; a caller loop that hoisted those for the
+// argument variable calls the callee's TWIN with the hoisted values as extra parameters.
+// The interpreter (no rewrite) is the oracle; native must answer the same under
+// LOFT_HOIST_VERIFY=1, and the emission (which callees get a twin, which calls use it) is
+// pinned by tests/callee_inputs.rs.  Expected values are hand-computed in each cell's comment.
+struct Cv { width: integer, height: integer, data: vector<integer> }
+struct Ph { scale: float, on: boolean, data: vector<float> }
+struct Sz { w: integer, h: integer }
+struct Box { size: Sz, data: vector<integer> }
+struct Other { n: integer }
+struct H { cv: Cv }
+
+// The pixel methods: three scalar reads, a view, one element read / write.
+fn getp(self: const Cv, gx: integer, gy: integer) -> integer {
+  if gx < 0 or gx >= self.width or gy < 0 or gy >= self.height {
+    0
+  } else {
+    idx = gy * self.width + gx;
+    d = &self.data;
+    if idx < len(d) { d[idx] ?? 0 } else { 0 }
+  }
+}
+fn setp(self: Cv, sx: integer, sy: integer, color: integer) {
+  if sx >= 0 and sx < self.width and sy >= 0 and sy < self.height {
+    idx = sy * self.width + sx;
+    d = &self.data;
+    if idx < len(d) { d[idx] = color; }
+  }
+}
+fn bumpw(self: Cv, i: integer) { self.width = self.width + i; }
+fn setw(o: Cv, w: integer) { o.width = w; }
+fn blend(src: const Cv, dst: Cv, i: integer) {
+  d = &dst.data;
+  if i < len(d) { d[i] = (src.data[i] ?? 0) + dst.width; }
+}
+fn samp(self: const Ph, i: integer) -> float { if self.on { (self.data[i] ?? 0.0) * self.scale } else { 0.0 } }
+fn cnt(self: const Cv) -> integer { d = &self.data; len(d) }
+fn getp2(self: const Cv, gx: integer, gy: integer) -> integer { self.getp(gx, gy) }
+fn readw(c: const Cv) -> integer { c.width }
+fn walk(self: const Cv, i: integer) -> integer { if i >= self.width { 0 } else { (self.data[i] ?? 0) + self.walk(i + 1) } }
+fn area(self: const Box) -> integer { self.size.w * self.size.h }
+fn poke(o: Other, v: integer) { o.n = v; }
+
+fn grid() -> Cv { c = Cv { width: 4, height: 3, data: [] }; for i in 0..12 { c.data += [i * 10] } c }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+// c1 — the composite shape: getp then setp per pixel; both twins.  Reads sum 660, then every
+// element +1 → 672, data[5] = 51; the two out-of-range reads answer 0.
+fn c1() {
+  cv = grid(); s = 0;
+  for j in 0..3 { for i in 0..4 { p = cv.getp(i, j); s += p; cv.setp(i, j, p + 1); } }
+  println("c1 {s} {total(cv.data)} {cv.data[5]?} {cv.getp(4, 0)} {cv.getp(0, 3)}");
+}
+// c2 — the callee WRITES the field it reads: no input for width, a plain call.  4, 5, 7 → 16.
+fn c2() { cv = grid(); s = 0; for i in 0..3 { cv.bumpw(i); s += cv.width; } println("c2 {s} {cv.width}"); }
+// c3 — the CALLER's loop writes the field: (Cv, 0) evicted, a plain call.  width 2/3/4 → idx 3/4/5 → 30+40+50.
+fn c3() { cv = grid(); s = 0; for i in 0..3 { cv.width = i + 2; s += cv.getp(1, 1); } println("c3 {s}"); }
+// c4 — a callee writing the field through ANOTHER parameter name evicts it: plain calls.
+// width 4 → 50, then 2 → 30, then 3 → 40; final width 4.
+fn c4() { cv = grid(); s = 0; for i in 0..3 { s += cv.getp(1, 1); setw(cv, i + 2); } println("c4 {s} {cv.width}"); }
+// c5 — the argument is a field PATH, not a variable: a plain call.  3 × getp(1,0) of a 2×2 = 3 × 2.
+fn c5() { h = H { cv: Cv { width: 2, height: 2, data: [1, 2, 3, 4] } }; s = 0; for _k in 0..3 { s += getp(h.cv, 1, 0); } println("c5 {s}"); }
+// c6 — the argument is an OPTIONAL element view (`cvs[k]?`): not a plain record, a plain call.  2 + 6.
+fn c6() {
+  cvs: vector<Cv> = [Cv { width: 2, height: 2, data: [1, 2, 3, 4] }, Cv { width: 3, height: 1, data: [5, 6, 7] }];
+  s = 0;
+  for k in 0..2 { cur = cvs[k]?; s += getp(cur, 1, 0); }
+  println("c6 {s}");
+}
+// c7 — two record variables in one loop: two twin calls with their own inputs.  3+5+4+6.
+fn c7() {
+  a = Cv { width: 2, height: 2, data: [1, 2, 3, 4] }; b = Cv { width: 3, height: 1, data: [5, 6, 7] };
+  s = 0;
+  for i in 0..2 { s += getp(a, i, 1) + getp(b, i, 0); }
+  println("c7 {s}");
+}
+// c8 — a callee with TWO record parameters, one indexed directly, one viewed and read:
+// b.data = [1+3, 2+3, 3+3], the fourth index off the end → 15, len 3.
+fn c8() {
+  a = Cv { width: 2, height: 2, data: [1, 2, 3, 4] }; b = Cv { width: 3, height: 1, data: [5, 6, 7] };
+  for i in 0..4 { blend(a, b, i); }
+  println("c8 {total(b.data)} {len(b.data)}");
+}
+// c9 — a call outside any loop, and inside a loop that GROWS a vector: plain calls.
+// getp(1,1) = 50; the growing loop reads data[0] = 0 twice; 12 + 2 elements.
+fn c9() { cv = grid(); x = cv.getp(1, 1); s = 0; for i in 0..2 { cv.data += [i]; s += cv.getp(0, 0); } println("c9 {x} {s} {len(cv.data)}"); }
+// c10 — float and boolean inputs: (1+2+4)·2.5 = 17.5 with `on`, 0 without.
+fn c10() {
+  ph = Ph { scale: 2.5, on: true, data: [1.0, 2.0, 4.0] }; ph2 = Ph { scale: 2.5, on: false, data: [1.0, 2.0, 4.0] };
+  t = 0.0; u = 0.0;
+  for i in 0..3 { t += ph.samp(i); }
+  for i in 0..3 { u += ph2.samp(i); }
+  println("c10 {(t * 10.0) as integer} {(u * 10.0) as integer}");
+}
+// c11 — a view whose only use is its LENGTH earns no header and so no input: a plain call.  3 × 12.
+fn c11() { cv = grid(); s = 0; for _i in 0..3 { s += cv.cnt(); } println("c11 {s}"); }
+// c12 — TRANSITIVE: getp2 passes self on to getp; its twin calls getp's twin.  Row 2: 80+90+100+110.
+fn c12() { cv = grid(); s = 0; for i in 0..4 { s += cv.getp2(i, 2); } println("c12 {s}"); }
+// c13 — a `&`-bound alias of the record as the argument: the alias's own hoist, a twin call.  Row 0: 0+10+20+30.
+fn c13() { cv = grid(); v = &cv; s = 0; for i in 0..4 { s += v.getp(i, 0); } println("c13 {s}"); }
+// c14 — a FREE function whose body is one field read (not a stdlib wrapper: it stays a call,
+// @FR-R-Wrapper) with one scalar input: the twin answers the parameter.  3 × 4.
+fn c14() { cv = grid(); s = 0; for _i in 0..3 { s += readw(cv); } println("c14 {s}"); }
+// c15 — a RECURSIVE reader is not admitted (@FR-R-Callee): a plain call.  2 × (0+10+20+30).
+fn c15() { cv = grid(); s = 0; for _k in 0..2 { s += cv.walk(0); } println("c15 {s}"); }
+// c16 — a read through a NESTED record path is not a candidate: a plain call.  3 × 4·5.
+fn c16() { bx = Box { size: Sz { w: 4, h: 5 }, data: [] }; s = 0; for _i in 0..3 { s += bx.area(); } println("c16 {s}"); }
+// c17 — a callee writing ANOTHER type at the same offset beside the twin call: (Other, 0)
+// does not evict (Cv, 0).  0+10+20, n = 2.
+fn c17() { cv = grid(); ot = Other { n: 0 }; s = 0; for i in 0..3 { s += cv.getp(i, 0); poke(ot, i); } println("c17 {s} {ot.n}"); }
+// c18 — a plain-record `&` view REBOUND in the loop: no hoist for it, plain calls.
+// First a (width 2: 2 + data[1] = 2), then b (width 3: 3 + data[1] = 6) → 13; a hoist taken
+// before the loop would read a's width for b (12).
+fn c18() {
+  a = Cv { width: 2, height: 2, data: [1, 2, 3, 4] }; b = Cv { width: 3, height: 1, data: [5, 6, 7] };
+  cur = &a; s = 0;
+  for _k in 0..2 { s += readw(cur) + getp(cur, 1, 0); cur = &b; }
+  println("c18 {s}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); }

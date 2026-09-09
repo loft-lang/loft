@@ -1,0 +1,8 @@
+struct C46 { a: integer }
+fn mk46(n: integer) -> C46 { C46 { a: n } }
+fn probe() -> fn() -> integer {
+  out = fn() -> integer { 0 };
+  for i in 0..3 { s: C46? = C46 { a: 5 + i }; out = fn() -> integer { if s == null { -1 } else { s.a } }; }
+  out
+}
+fn main() { r = probe(); println("{r()}"); }

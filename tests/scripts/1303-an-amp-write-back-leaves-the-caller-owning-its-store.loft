@@ -40,6 +40,8 @@
 //   The leak and use-after-free channels move with them: `LOFT_STRICT_STORES=1` on the
 //   hash/sorted/index/struct alias cells reported one store never freed each, and on the
 //   callee-local cells 8, 6, 4 and 2 use-after-free reads.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1303 { k: integer, v: integer }
 struct Pad1303 { a: integer, b: integer, c: integer }

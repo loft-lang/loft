@@ -1,0 +1,4 @@
+struct S { a: integer }
+fn f(p: vector<S>) -> S { for e in p { return e; } S { a: 0 } }
+fn bump(s: S) { s.a = s.a + 1; }
+fn main() { q: vector<S> = [S { a: 7 }]; bump(f(q)); println("{f(q).a}"); }

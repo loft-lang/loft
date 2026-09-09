@@ -38,6 +38,11 @@
 //   The interpreter half is INERT and must be: this is a backend DIVERGENCE, so only one side
 //   can move.  The interpreter answered 88 before the fix and answers 88 after, which is
 //   exactly the fact that made the native answer wrong rather than merely different.
+// @falsified-by: tests/falsified/1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
 
 struct E1463 { a: integer }
 

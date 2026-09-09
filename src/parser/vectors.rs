@@ -1859,6 +1859,8 @@ or build a local and use that."
             // before the fn-ref escapes the defining scope.
             let fn_type = Type::Function(visible_params, Box::new(ret_tp.clone()), Deps::frame1(w));
             let mut alloc_steps: Vec<Value> = Vec::new();
+            // loft#1483 — the stores this rebuild DISPLACES, spliced in front below.
+            let mut displaced: Vec<Value> = Vec::new();
             // Allocate and populate the closure record w.
             alloc_steps.push(crate::data::v_set(w, Value::Null));
             alloc_steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp_nr)]));
@@ -1892,6 +1894,26 @@ or build a local and use that."
                         let backing = self.null_capture_backing(v_nr);
                         alloc_steps.extend(backing);
                     }
+                    // loft#1483, `@FR-L-CapOwn` — release the store this capture slot DISPLACES.
+                    if v_nr != u16::MAX
+                        && self.assign_target != v_nr
+                        && !crate::parser::vectors::is_collection(self.vars.tp(v_nr))
+                        && matches!(
+                            self.data.attr_type(closure_rec_d, aid).base(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _)
+                        )
+                    {
+                        let pos = self
+                            .database
+                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                        let held =
+                            self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+                        let release = self.cl("OpFreeRefIfDistinct", &[held, fill.clone()]);
+                        let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+                        let has_store = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+                        let exists = crate::data::v_if(is_null, Value::Boolean(false), has_store);
+                        displaced.push(crate::data::v_if(exists, release, Value::Null));
+                    }
                     alloc_steps.push(self.set_field_no_check(
                         closure_rec_d,
                         aid,
@@ -1910,6 +1932,9 @@ or build a local and use that."
                     // load-bearing `OpIncRc`; dropping it unblocks removing the
                     // ref-count entirely (Phase C).
                 }
+            }
+            if !displaced.is_empty() {
+                alloc_steps.splice(0..0, displaced);
             }
             self.last_closure_captured_vars = captured_var_nrs;
             // Block result: push d_nr (4B via OpConstInt) + closure DbRef (12B via OpVarRef).
@@ -3267,6 +3292,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             "OpFinishRecord",
             &[vec_expr.clone(), Value::Var(elm), known, fld],
         ));
+        // @PLN157 § V-m — the comprehension's per-element triple fuses exactly as
+        // `new_record`'s does; `fld` is `u16::MAX` here, so `vec_expr` IS the vector.
+        if !self.first_pass && crate::keys::fused_append_enabled() && !self.keyed_local_kind(vec) {
+            self.fuse_scalar_append(&mut lp, elm, vec_expr);
+        }
         let mut for_steps: Vec<Value> = Vec::new();
         if fill != Value::Null {
             for_steps.push(fill);
@@ -3669,6 +3699,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // marks it, for the same conditional shape.
                 if let Some(&db) = self.vars.tp(vec).depend().last() {
                     self.vars.mark_inline_ref(db);
+                    // loft#1486, `@FR-O-Proxy` — and the local OWNS its store on both paths,
+                    // which the dep list cannot say because it must keep naming the backing for
+                    // the element writes to resolve it.  The mint is exactly the thing that may
+                    // not run: where it did, the local names the backing's store; where it did
+                    // not, it still holds what it was bound from — a callee's returned
+                    // collection, which was then released by nobody, one store per call and
+                    // unbounded, every value correct.
+                    //
+                    // Freeing what the LOCAL names is already per-run, so no witness is needed:
+                    // the local keeps its free and the backing is `skip_free`'d so scopes does
+                    // not free the same store twice.  That is `vector_db_init`'s own REBIND arm
+                    // five lines up, which reaches for the same pair for the same reason.
+                    self.vars.set_skip_free(db);
                 }
                 let absent = self.cl("OpVectorIsNull", &[Value::Var(vec)]);
                 ls.push(v_if(absent, Value::Insert(db_ops), Value::Null));
@@ -4757,6 +4800,32 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         matches!(val.unspan(), Value::Call(o, _) if *o == self.data.def_nr("OpGetDbRef"))
     }
 
+    /// Is this expression a WHOLE-VALUE read of a CAPTURED variable — an `OpGetDbRef` whose
+    /// BASE is the closure record itself?
+    ///
+    /// A closure reaches a capture through its record, so the read wears a PROJECTION's
+    /// spelling while naming a whole value the author bound by NAME — the same thing a
+    /// PARAMETER names.  `calls.md` `(F-ParamHeap)` and `closures.md` `(L-CapHeap)` share
+    /// that value in both cases, and `binding.md` `(B-Copy)` then copies a plain bind out of
+    /// it: `e = p` inside a plain function and `e = q` inside a closure are one rule wearing
+    /// two ops.
+    ///
+    /// [`Self::is_captured_dbref`] is the LOOSE spelling of the same op and stays loose on
+    /// purpose: its callers ask *"is this a DbRef-producing append lvalue"*, and an
+    /// auto-`Reference` POINTER FIELD (`h.link`) belongs to that question.  A BIND has to
+    /// tell the two apart, because a pointer-field read IS the `(B-View)` projection this is
+    /// not — so this one asks about the base.
+    pub(crate) fn reads_a_capture_whole(&self, val: &Value) -> bool {
+        let Value::Call(o, args) = val.unspan() else {
+            return false;
+        };
+        *o == self.data.def_nr("OpGetDbRef")
+            && matches!(
+                args.first().map(Value::unspan),
+                Some(Value::Var(v)) if *v < self.vars.count() && self.vars.name(*v) == "__closure"
+            )
+    }
+
     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {
         if let Value::Call(_, ps) = val.unspan() {
             let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
@@ -4950,6 +5019,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // Only a struct field reached directly — not through an index, not through a
         // capture — can use the field-numbered form.
         let field_form = is_field && vector_elem_target.is_none() && cap_target.is_none();
+        // @PLN157 § V-m — the vector reference a fused push addresses.  The plain form's
+        // `container` IS the vector; the field form addresses the vector through its parent
+        // record and field number, which `record_new` may REDIRECT (a `__nullable<S>`
+        // payload, an enum variant's owning field) — only when it would not is the field
+        // access `val` the same slot, and only then may the push take it.
+        let fused_container: Option<Value> = if !field_form {
+            Some(container.clone())
+        } else if let Value::Call(_, ps) = val.unspan()
+            && ps.len() >= 3
+            && let Value::Int(pos) = ps[1]
+            && let Value::Int(content) = ps[2]
+            && let (Ok(pos), Ok(content)) = (u16::try_from(pos), u16::try_from(content))
+        {
+            let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
+            (parent != u16::MAX
+                && self.database.key_owner(parent) == parent
+                && self.database.variant_owning_field(parent, pos, content) == parent)
+                .then(|| val.clone())
+        } else {
+            None
+        };
         for p in res {
             // route through `vector_of` so narrow integer
             // aliases (i32, u8) produce the same narrow-element vector
@@ -5227,8 +5317,171 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 )
             };
             ls.push(finish);
+            // @PLN157 § V-m — a scalar element on a plain vector: the three ops just
+            // pushed become ONE fused push (the switch and the ops' doc in
+            // `default/01_code.loft`; `keys::fused_append_enabled`).
+            if !self.first_pass
+                && crate::keys::fused_append_enabled()
+                && !self.keyed_local_kind(vec)
+                && let Some(target) = &fused_container
+            {
+                self.fuse_scalar_append(&mut ls, elm, target);
+            } else if std::env::var_os("LOFT_TRACE_FUSE").is_some() {
+                eprintln!(
+                    "[fuse] fn={} decline=gate first_pass={} keyed={} container={}",
+                    self.data.def(self.context).name(),
+                    self.first_pass,
+                    self.keyed_local_kind(vec),
+                    fused_container.is_some()
+                );
+            }
         }
         ls
+    }
+
+    /// The fused scalar append (@PLN157 § V-m): when `ls` ends in exactly
+    /// `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for one
+    /// of the seven scalar setter kinds, replace the three with `OpPush<Kind>(container,
+    /// val)` — `container` the vector reference the caller decided (`fused_container`).  `val` moves verbatim — every
+    /// conversion the literal lowering applied is already inside it.  A setter with a
+    /// `min` operand (the narrow-int kinds), a keyed container (`keyed_local_kind` at the
+    /// call site), a record or collection element (a different setter) and the field form
+    /// all fall through and keep the general path — the fallback is the shape as it was.
+    fn fuse_scalar_append(&mut self, ls: &mut Vec<Value>, elm: u16, container: &Value) {
+        let n = ls.len();
+        let trace = std::env::var_os("LOFT_TRACE_FUSE").is_some();
+        if n < 3 {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=short({n})",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        let name_of = |d: u32| self.data.def(d).name().to_string();
+        let new_ok = matches!(&ls[n - 3], Value::Set(v, inner)
+            if *v == elm
+                && matches!(inner.unspan(), Value::Call(d, args)
+                    if name_of(*d) == "OpNewRecord" && args.len() == 3));
+        let fin_ok = matches!(&ls[n - 1], Value::Call(d, args)
+            if name_of(*d) == "OpFinishRecord"
+                && args.len() >= 2
+                && args[1] == Value::Var(elm));
+        let Value::Call(set_d, set_args) = &ls[n - 2] else {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=no-setter-call",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        };
+        if !new_ok || !fin_ok || set_args.len() != 3 {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=shape new_ok={new_ok} fin_ok={fin_ok} nargs={}",
+                    self.data.def(self.context).name(),
+                    set_args.len()
+                );
+            }
+            return;
+        }
+        // The container must be a PLAIN vector of a scalar kind, read off the schema and
+        // not off the op shape: a one-field record (`Rec { nr }`) lowers to exactly this
+        // triple, and an `index<Rec[nr]>` of them turns `OpFinishRecord` into the keyed
+        // insert — fused by shape, every walk of that collection answered empty.
+        let new_args = match &ls[n - 3] {
+            Value::Set(_, inner) => match inner.unspan() {
+                Value::Call(_, args) => args,
+                _ => return,
+            },
+            _ => return,
+        };
+        let (Value::Int(tp), Value::Int(fld)) = (new_args[1].unspan(), new_args[2].unspan()) else {
+            return;
+        };
+        if !self.fusable_scalar_vector(*tp, *fld) {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=container tp={tp} fld={fld}",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        if set_args[0] != Value::Var(elm) || set_args[1] != Value::Int(0) {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=operands",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        let set_name = name_of(*set_d);
+        let Some((_, push)) = super::FUSED_PUSH_KINDS
+            .iter()
+            .find(|(set, _)| *set == set_name)
+        else {
+            if trace {
+                eprintln!(
+                    "[fuse] fn={} decline=kind {set_name}",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        };
+        let val = set_args[2].clone();
+        ls.truncate(n - 3);
+        let fused = self.cl(push, &[container.clone(), val]);
+        ls.push(fused);
+        if trace {
+            eprintln!(
+                "[fuse] fn={} fused={push}",
+                self.data.def(self.context).name()
+            );
+        }
+    }
+
+    /// Does `OpNewRecord(_, tp, fld)` name a PLAIN vector whose elements are one scalar —
+    /// the only container a fused push (@PLN157 § V-m) may address?  `fld == u16::MAX`
+    /// means `tp` IS the vector's schema type; otherwise `tp` is the parent record and
+    /// `fld` the field that holds it.  A keyed kind, an array, and a vector of records
+    /// (even a one-field record, whose element build has the same three-op shape) all
+    /// answer `false` and keep the general path.
+    fn fusable_scalar_vector(&self, tp: i32, fld: i32) -> bool {
+        use crate::database::Parts;
+        let Ok(tp) = u16::try_from(tp) else {
+            return false;
+        };
+        let vector_tp = if fld == i32::from(u16::MAX) {
+            tp
+        } else {
+            let Ok(fld) = u16::try_from(fld) else {
+                return false;
+            };
+            let holds = matches!(
+                self.database.types.get(tp as usize).map(|t| &t.parts),
+                Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) if (fld as usize) < fields.len()
+            );
+            if !holds {
+                return false;
+            }
+            self.database.field_type(tp, fld)
+        };
+        let Some(Parts::Vector(elem)) = self
+            .database
+            .types
+            .get(vector_tp as usize)
+            .map(|t| &t.parts)
+        else {
+            return false;
+        };
+        matches!(
+            self.database.types.get(*elem as usize).map(|t| &t.parts),
+            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _))
+        )
     }
 
     /// Return the database `known_type` of a `main_vector<T>` wrapper struct,

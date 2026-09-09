@@ -50,6 +50,11 @@
 //   afterwards, loft#1332's hoist declines and each arm gets a binding of its own, so the
 //   join this file is about never forms.  The tail read is what makes the binding one thing.
 //
+//   ARMED: `LOFT_POISON`, which falsify does not arm — hence the INERT row, honestly so,
+//   since every cell answers CORRECTLY on the control without it.
+//   HOLDS: unarmed, every channel is equal on both trees. The census against the control is
+//   the measurement; arm the poison to reproduce it, and treat a bulk INERT here as no
+//   evidence either way.
 struct Q1333 { xs: vector<integer> }
 
 fn field1333(q: Q1333) -> vector<integer> { q.xs }

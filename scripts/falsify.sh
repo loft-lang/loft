@@ -49,13 +49,27 @@ set -uo pipefail
 
 usage() {
   echo "usage: scripts/falsify.sh <guard.loft> <control-ref>" >&2
+  echo "       scripts/falsify.sh <guard.loft> --patch <file>  # control = HEAD + the patch" >&2
   echo "       scripts/falsify.sh --bulk <listfile>   # <guard>TAB<control-ref> per line" >&2
   exit 2
 }
 BULK=""
+REF=""
+PATCHFILE=""
+PATCH_ABS=""
 if [ "${1:-}" = "--bulk" ]; then
   [ $# -eq 2 ] || usage
   BULK="$2"; [ -f "$BULK" ] || { echo "no such list: $BULK" >&2; exit 2; }
+elif [ "${2:-}" = "--patch" ]; then
+  # The control as a PATCH rather than a ref, for a guard whose control commit no longer
+  # exists anywhere.  The patch reintroduces the defect on top of HEAD, so the receipt carries
+  # the defect itself instead of a pointer to a build that once had it — nothing outside the
+  # file has to survive for it to be re-run.
+  [ $# -eq 3 ] || usage
+  GUARD="$1"; PATCHFILE="$3"
+  [ -f "$GUARD" ] || { echo "no such guard: $GUARD" >&2; exit 2; }
+  [ -f "$PATCHFILE" ] || { echo "no such patch: $PATCHFILE" >&2; exit 2; }
+  PATCH_ABS="$(cd "$(dirname "$PATCHFILE")" && pwd)/$(basename "$PATCHFILE")"
 else
   [ $# -eq 2 ] || usage
   GUARD="$1"; REF="$2"
@@ -64,8 +78,67 @@ fi
 
 ROOT=$(git rev-parse --show-toplevel)
 CACHE="${LOFT_FALSIFY_CACHE:-${TMPDIR:-/tmp}/loft-falsify}"
-if [ -z "$BULK" ]; then
-  SHA=$(git rev-parse --short "$REF") || { echo "unknown ref: $REF" >&2; exit 2; }
+
+# Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
+# already hold it.
+#
+# A control names the build a guard was written to catch, which is a commit on the branch that
+# fixed it — and a squash-merge keeps none of those: the PR lands as ONE commit, so `main` never
+# held the original and no branch points at it afterwards.  The object is usually still on the
+# remote under the PR's own head, a namespace `git clone` and `git fetch` both skip by default,
+# so the ref is missing HERE rather than missing everywhere.  Fetch that namespace once, on the
+# first miss only, and retry.
+#
+# ⚠ This RECOVERS a control; it does not make one durable.  `refs/pull/*` is a GitHub
+# convention with no retention contract, so a mirror, a host migration or a policy change drops
+# every control that depends on it — and the receipts it cannot reach are already unreachable
+# for everyone, not just here.  Measured 2026-09-09 across the 359 guards on `main` that carry a
+# control sha: 11 resolve from `main`, 25 from another branch, 199 ONLY from a PR ref, and 124
+# from no public ref at all.  So this answers about two thirds of the corpus and cannot answer
+# the rest; a receipt whose control no longer exists needs a different FORM rather than a better
+# lookup — TESTING.md § What a falsification receipt is worth.
+#
+# Resolvability is also a property of the CHECKOUT, not of the guard: two clones disagree about
+# whether the same receipt is checkable, because each keeps whichever loose objects its own gc
+# spared.  Nothing in the file says which side you are on, which is why a miss here reports the
+# ref rather than failing silently.
+PR_REFS_FETCHED=0
+RESOLVED_SHA=""
+# The answer comes back in RESOLVED_SHA rather than on stdout so that the once-only fetch latch
+# actually latches.  Read through `sha=$(resolve_control …)` the whole function runs in a
+# SUBSHELL, where `PR_REFS_FETCHED=1` dies with it — every unresolvable control in a bulk sweep
+# then re-fetches the entire PR namespace, once per ref, and the latch reads as working because
+# a single call cannot show it failing.
+resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is unreachable
+  local ref="$1"
+  # `git rev-parse --verify --quiet` is the form that stays SILENT on a miss.  Plain
+  # `git rev-parse "$ref^{commit}"` exits non-zero but still ECHOES its own argument, so a
+  # caller testing the output for emptiness reads a missing object as a resolved one.
+  if RESOLVED_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}"); then return 0; fi
+  if [ "$PR_REFS_FETCHED" -eq 0 ]; then
+    PR_REFS_FETCHED=1
+    echo "control $ref is not in this clone — fetching refs/pull/*/head …" >&2
+    git fetch origin 'refs/pull/*/head:refs/pull/*/head' --quiet >/dev/null 2>&1 </dev/null || true
+  fi
+  RESOLVED_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}") || { RESOLVED_SHA=""; return 1; }
+  echo "control $ref recovered from a PR ref — it is on no branch, so this receipt depends on" >&2
+  echo "  GitHub retaining refs/pull/*; it is not durable.  TESTING.md § falsification receipt." >&2
+  return 0
+}
+if [ -n "$PATCHFILE" ]; then
+  # Cache the control build against the patch's CONTENT, so editing the patch rebuilds and
+  # re-running an unchanged one does not.
+  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)"
+  WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
+elif [ -z "$BULK" ]; then
+  resolve_control "$REF" || {
+    echo "unknown ref: $REF" >&2
+    echo "  The control is on no branch of this remote and under no refs/pull/*/head, so NO" >&2
+    echo "  clone can build it — this receipt records a falsification nobody can re-run." >&2
+    echo "  Re-falsify the guard against a control that still exists, or record the" >&2
+    echo "  reintroducing patch instead of a ref: TESTING.md § falsification receipt." >&2
+    exit 2; }
+  SHA=$(git rev-parse --short "$RESOLVED_SHA")
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
 fi
 
@@ -217,9 +290,16 @@ if [ -n "$BULK" ]; then
   # sweep stopped silently after 51 of 186 refs, in order, with an exit status of 0.
   while read -r ref <&3; do
     [ -n "$ref" ] || continue
+    # A control the clone cannot resolve is reported APART from a worktree that would not
+    # create.  "The receipt names a build nobody has" and "the build is here but unusable" call
+    # for different repairs — re-falsify against a live control versus fix the tree — and one
+    # status for both hid the first behind the second.
+    resolve_control "$ref" || {
+      awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-such-ref\t\n", $1, r}' "$BULK"; continue; }
+    rsha="$RESOLVED_SHA"
     wt="$CACHE/wt-$ref"
     if [ ! -d "$wt" ]; then
-      git worktree add --detach "$wt" "$ref" >/dev/null 2>&1 </dev/null || {
+      git worktree add --detach "$wt" "$rsha" >/dev/null 2>&1 </dev/null || {
         awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-worktree\t\n", $1, r}' "$BULK"; continue; }
     fi
     if ! ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); then
@@ -263,9 +343,25 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 if [ ! -x "$TGT/debug/loft" ]; then
-  [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
-    echo "cannot create a worktree at $SHA" >&2; exit 1; }
-  echo "building the control at $SHA (cached at $TGT) …" >&2
+  if [ -n "$PATCHFILE" ]; then
+    [ -d "$WT" ] || {
+      git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
+        echo "cannot create a worktree at HEAD" >&2; exit 1; }
+      # A patch receipt is checked before it is trusted.  One records the fix as it was, so it
+      # applies to the tree it was cut against and drifts out as that tree moves — refusing here
+      # is the receipt telling you it has gone stale, which a dangling sha never gets to do.
+      ( cd "$WT" && git apply "$PATCH_ABS" ) || {
+        echo "the recorded patch no longer applies to HEAD: $PATCHFILE" >&2
+        echo "  The receipt still RECORDS the defect, but it can no longer be re-run here." >&2
+        echo "  Re-derive it against a tree it applies to, or score the guard by hand." >&2
+        git worktree remove --force "$WT" >/dev/null 2>&1; exit 3; }
+    }
+    echo "building the control from $PATCHFILE (cached at $TGT) …" >&2
+  else
+    [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
+      echo "cannot create a worktree at $SHA" >&2; exit 1; }
+    echo "building the control at $SHA (cached at $TGT) …" >&2
+  fi
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
 fi
 CONTROL="$TGT/debug/loft"
@@ -363,7 +459,46 @@ elif [ $falsified_any -eq 1 ]; then
   [ -n "$INERT_SIDES" ] && CHANNELS="$CHANNELS; $INERT_SIDES INERT (expected for a
   backend-divergence guard — only one side can move)"
   echo "Paste this into $GUARD:"
-  echo "// @falsified-at: $SHA — $CHANNELS"
+  if [ -n "$PATCHFILE" ]; then
+    echo "// @falsified-by: $PATCHFILE — $CHANNELS"
+  else
+    echo "// @falsified-at: $SHA — $CHANNELS"
+    # A ref receipt starts decaying the moment its PR merges: the squash keeps no branch
+    # pointing at the control, and the count of unreachable ones grows on its own as merged
+    # branches are pruned — 124 to 133 over a few hours of one afternoon.  The patch that would
+    # rescue it is derivable exactly ONCE for free, here, where the control is still resolvable
+    # and the diff applies by construction; later it is hand-reconstruction, and for two thirds
+    # of the corpus it is already too late.  So the durable form is offered at the only moment
+    # it costs nothing.
+    pdir="$ROOT/tests/falsified"
+    pbase=$(basename "$GUARD" .loft)
+    mkdir -p "$pdir"
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ > "$pdir/$pbase.patch" 2>/dev/null || true
+    plines=$(wc -l < "$pdir/$pbase.patch" 2>/dev/null || echo 0)
+    # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit
+    # just before the fix — the documented use — the diff IS the fix and runs to a few dozen
+    # lines; run against a DISTANT control it becomes the whole source difference since, which
+    # reintroduces everything fixed in between and cannot say which one the guard caught.  A
+    # measured 47079-line "receipt" is the shape of that mistake.  The recorded receipts run
+    # 17 to 203 lines, so a bound well above them separates the two uses without tuning.
+    if [ "${plines:-0}" -eq 0 ]; then
+      rm -f "$pdir/$pbase.patch"
+      echo
+      echo "note: no durable patch written — the fix touches nothing under src/ or default/,"
+      echo "      so the control cannot be reconstructed from a source diff alone."
+    elif [ "$plines" -gt 800 ]; then
+      rm -f "$pdir/$pbase.patch"
+      echo
+      echo "note: no durable patch written — $SHA is $plines source lines from this tree, so a"
+      echo "      diff against it reintroduces everything fixed in between, not this defect."
+      echo "      Re-run against the commit immediately before the fix to get one."
+    else
+      echo
+      echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
+      echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
+      echo "// @falsified-by: tests/falsified/$pbase.patch — $CHANNELS"
+    fi
+  fi
   exit 0
 else
   echo "NOT falsified.  A guard that answers the same on the build it was written for is"

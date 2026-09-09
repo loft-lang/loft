@@ -186,7 +186,23 @@ impl Output<'_> {
         } else {
             crate::codegen_runtime::Abi::Cell
         };
-        write!(w, "{}(", self.fn_ident(def_fn))?;
+        // @PLN157 § V-p — the TWIN form (`@FR-R-Inputs`): every invariant input of the callee
+        // is a local the enclosing frames hold for the argument variable.  The definition
+        // number comes from `output_call_inner`; the identity check keeps a stale one from
+        // naming another function's twin.
+        let twin_args = if (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+        {
+            self.twin_call_inputs(self.current_call_def, vals)
+        } else {
+            None
+        };
+        write!(
+            w,
+            "{}{}(",
+            self.fn_ident(def_fn),
+            if twin_args.is_some() { "__inv" } else { "" }
+        )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
             write!(w, "cell")?;
@@ -198,6 +214,11 @@ impl Output<'_> {
             }
             first_arg = false;
             self.emit_call_arg(w, def_fn, idx, v)?;
+        }
+        if let Some(extra) = &twin_args {
+            for e in extra {
+                write!(w, ", {e}")?;
+            }
         }
         write!(w, ")")?;
         if is_generator {

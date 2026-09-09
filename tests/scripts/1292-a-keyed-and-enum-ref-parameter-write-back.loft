@@ -39,6 +39,8 @@
 //
 // @falsified-at: 4c6a7a1b — interpret exit 1 -> 0, native exit 1 -> 0.  On that build the
 //   keyed cell is an ICE and the enum cell is a parse error, so no assertion runs at all.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1292 { id: integer, name: text }
 enum Sh1292 { Circle { r: integer }, Square { s: integer } }

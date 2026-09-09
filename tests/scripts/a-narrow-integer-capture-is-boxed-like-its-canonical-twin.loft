@@ -28,6 +28,11 @@
 //   nine (the six aliases, `Small`, `u8?`, and the identity cell).  Every control cell passes
 //   on the control build, which is what says the guard is measuring the narrow widths and not
 //   the harness.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0fc01ca5; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 // Every cell compares the TEXT rendering of its two answers rather than the values.  That is
 // not a weaker assertion here — the question is whether two spellings of one write agree — and

@@ -1,0 +1,234 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A closure's CAPTURE is a whole value the body names, not a place inside a record.
+//
+// Two rules meet here, and one op hid both.  `binding.md` `(B-Copy)` makes a plain bind of a
+// whole heap value INDEPENDENT — `e = q` gives `e` its own store, and mutating it does not
+// reach `q`.  `calls.md` `(F-Ret)` makes a returned value FRESH — a caller that mutates the
+// result does not touch what the callee held.  A closure reaches its capture through the
+// closure RECORD, so `q` inside the body arrives as `OpGetDbRef(__closure, off)`: a
+// PROJECTION's spelling for a value the author bound by NAME.  Both rules were then decided
+// as if it were `(B-View)`'s interior place, and both answered wrong.
+//
+// The parameter twin is the control that says the formers themselves are fine.  A PARAMETER is
+// the same shared heap value — `(F-ParamHeap)` and `(L-CapHeap)` are the same sentence — and it
+// arrives as a bare `Var`, so `fn(p) { e = p; e }` copied and returned fresh throughout.
+//
+// **The filed issue was the RETURN half only, and it read the blocker as a missing
+// DESTINATION**: a capturing lambda's return buffer IS the tail's own local by pass 2, so a
+// per-arm copy into the buffer copies a value into itself.  That reading was right about the
+// buffer and wrong about the cure.  `e = q` is a BIND, and it had been lowered as an alias, so
+// the tail had nothing of its own to hand back — fixing the bind gives the tail an owned store
+// and the return needs no delivery of its own.  The bare-capture tail `{ q }` binds nothing,
+// and that one takes the same capture leg the RECORD former has carried since loft#1485.
+//
+// The two passes did not even agree about the bind: on pass 1 a capture is still a placeholder
+// `Var`, so the selector answered `CopyVar` there and `NotABind` on pass 2 for one body.
+//
+// This is the FIFTH time this family's selector has been the narrow part while its lowering was
+// already right — P261, loft#917, loft#1279 and loft#1326 are the others, every one of them a
+// capture wearing `OpGetDbRef` where the reader expected `Var` or `OpGetField`.
+// `reads_a_capture_whole` is where the shape lives now, and it asks about the BASE: the loose
+// spelling admits an auto-`Reference` POINTER FIELD read (`h.link`), which really is the
+// `(B-View)` projection this is not.
+//
+// @falsified-at: 503798969 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.
+//   CHANNEL: value — exit and the assertion count.  The count reads 1 because the run stops at
+//   the first failing cell; the file is ordered so that cell is the bind.
+//   WITNESS: `bind_append_1489` answers 22 where 21 is right — the append through the copy
+//   reached the captured vector, so the outer length reads 2.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and `falsify`
+//   requires HERE to be clean, so each is clean on both.  That equality is the interesting
+//   half: an ALIAS costs no store, which is why every instrument in the tree was silent on
+//   this for as long as it stood, and why a sweep scored on leaks would learn nothing.
+
+struct S1489 { a: integer }
+struct C1489 { a: integer }
+
+// --- (B-Copy): a bind out of a capture is independent -------------------------------------
+
+// The append must not reach the captured collection.
+fn bind_append_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> integer { e = q; e += [S1489 { a: 1 }]; len(e) };
+  n = g();
+  n * 10 + len(q)
+}
+
+// …and neither must an ELEMENT write through the copy.
+fn bind_element_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> integer { e = q; e[0].a = 99; e[0].a };
+  n = g();
+  n * 100 + q[0].a
+}
+
+// The RECORD twin of the two cells above: a captured struct is a whole value too, and a bind
+// out of it was the same alias.  Its lowering is not `classify_vec_bind`'s — the record bind is
+// decoded from the binding's DEPS, once per backend — so the copy is emitted in the parser,
+// into a work-ref the frame owns.  Stripping the dep instead was measured: it leaves an owner
+// whose store is the CAPTURE's, and the frame's release then kills it under the closure.
+fn bind_record_1489() -> integer {
+  c = C1489 { a: 7 };
+  g = fn() -> integer { e = c; e.a = 99; e.a };
+  n = g();
+  n * 100 + c.a
+}
+
+// The same question through a NULLABLE capture and through a struct ENUM — both already
+// answered `(B-Copy)` and must keep doing so, which is what says the dense carve-out above is
+// a carve-out and not a hole.
+struct N1489 { a: integer }
+fn bind_nullable_1489() -> integer {
+  c: N1489? = N1489 { a: 7 };
+  g = fn() -> integer { e = c; e.a = 99; e.a ?? 0 };
+  n = g();
+  n * 100 + (c.a ?? 0)
+}
+
+// Both variants declare `r`, so the read is the one shared slot and says nothing about which
+// variant is held — the question here is the BIND, not variant dispatch.
+// An ABSENT nullable capture.  `@FR-N-Shape` sends `τ?` down the same road as `τ`, so this bind
+// copies too — but there is nothing to copy, and `OpCopyRecord` of an absent source leaves an
+// allocated EMPTY record: presence standing in for absence.  The copy therefore runs under the
+// same guard the return side has carried since loft#1337.  Found by `make optional-ratchet`
+// refusing a shape test written on a bare `Type::Reference`, not by any value cell.
+fn bind_absent_1489() -> integer {
+  c: N1489? = null;
+  g = fn() -> integer { e = c; e.a ?? -1 };
+  g()
+}
+
+enum Sh1489 { Circle1489 { r: integer }, Square1489 { r: integer, s: integer } }
+fn bind_enum_1489() -> integer {
+  c: Sh1489 = Circle1489 { r: 7 };
+  g = fn() -> integer { e = c; e.r = 99; e.r };
+  n = g();
+  n * 100 + c.r
+}
+
+// A lambda inside a lambda RELAYS the capture outward, so the inner body reads it out of its
+// OWN closure record — the same op with a different record behind it (loft#1236).
+fn bind_relayed_1489() -> integer {
+  c = C1489 { a: 7 };
+  outer = fn() -> integer {
+    inner = fn() -> integer { e = c; e.a = 99; e.a };
+    inner()
+  };
+  n = outer();
+  n * 100 + c.a
+}
+
+// --- (F-Ret): what the lambda hands back is fresh ------------------------------------------
+
+// The bound spelling: the tail is a local the body copied into.
+fn return_bound_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> vector<S1489> { e = q; e };
+  r = g();
+  r += [S1489 { a: 1 }];
+  len(g()) * 10 + len(r)
+}
+
+// The BARE spelling: the tail IS the capture, so no bind exists to fix and the delivery is
+// what has to copy.
+fn return_bare_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> vector<S1489> { q };
+  r = g();
+  r += [S1489 { a: 1 }];
+  len(g()) * 10 + len(r)
+}
+
+// The two halves COMPOSED: a record capture bound and then returned.  The bind's copy lives in
+// a work-ref this frame owns, so the return has to deliver out of that — which is loft#1485's
+// leg, and this cell is what says the two do not fight.
+fn return_record_bind_1489() -> integer {
+  c = C1489 { a: 7 };
+  g = fn() -> C1489 { e = c; e };
+  r = g();
+  r.a = 99;
+  c.a * 100 + g().a
+}
+
+// --- the controls -------------------------------------------------------------------------
+
+// A PARAMETER, the same shared heap value reached by the other spelling.  Correct throughout,
+// which is what says the formers are fine and the capture's op was the whole difference.
+fn return_param_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn(p: vector<S1489>) -> vector<S1489> { e = p; e };
+  r = g(q);
+  r += [S1489 { a: 1 }];
+  len(g(q)) * 10 + len(r)
+}
+
+// `(B-View)`: a captured struct's FIELD is an interior place and must keep aliasing.  This is
+// the cell a cure written on the op rather than on the base would break.
+struct I1489 { v: integer }
+struct O1489 { i: I1489 }
+fn view_field_1489() -> integer {
+  o = O1489 { i: I1489 { v: 7 } };
+  g = fn() -> integer { e = o.i; e.v = 99; e.v };
+  n = g();
+  n * 100 + o.i.v
+}
+
+// `(B-View)`: a captured collection's ELEMENT is an interior place too.
+fn view_element_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> integer { e = q[0]; e.a = 99; e.a };
+  n = g();
+  n * 100 + q[0].a
+}
+
+// `(B-Ref-Alias)`: `&` is how aliasing is opted into, and it must still work.
+fn ref_alias_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> integer { e = &q; e += [S1489 { a: 1 }]; len(e) };
+  n = g();
+  n * 10 + len(q)
+}
+
+// A captured KEYED collection: this former already copied, through the keyed replace loft#1326
+// taught it.  Kept so the vector's new answer and the keyed one cannot drift apart.
+struct K1489 { id: integer, a: integer }
+fn keyed_bind_1489() -> integer {
+  h: hash<K1489[id]> = [K1489 { id: 1, a: 7 }];
+  g = fn() -> integer { e = h; e += [K1489 { id: 2, a: 8 }]; len(e) };
+  n = g();
+  n * 10 + len(h)
+}
+
+// `(L-CapHeap)` itself: a mutation THROUGH the capture still reaches the outer variable.  The
+// fix is about a BIND out of the capture, and this is the sharing it must not take away.
+fn share_through_1489() -> integer {
+  q: vector<S1489> = [S1489 { a: 7 }];
+  g = fn() -> integer { q += [S1489 { a: 1 }]; len(q) };
+  n = g();
+  n * 10 + len(q)
+}
+
+fn main() {
+  assert(bind_append_1489() == 21, "a bind out of a captured vector copies: got {bind_append_1489()}");
+  assert(bind_element_1489() == 9907, "an element write through that copy stays in it: got {bind_element_1489()}");
+  assert(bind_record_1489() == 9907, "a bind out of a captured struct copies: got {bind_record_1489()}");
+  assert(bind_nullable_1489() == 9907, "…and out of a nullable one: got {bind_nullable_1489()}");
+  assert(bind_enum_1489() == 9907, "…and out of a struct enum: got {bind_enum_1489()}");
+  assert(bind_absent_1489() == -1, "an absent capture stays absent through the copy: got {bind_absent_1489()}");
+  assert(bind_relayed_1489() == 9907, "…and out of a relayed capture: got {bind_relayed_1489()}");
+  assert(return_bound_1489() == 12, "the bound return is fresh: got {return_bound_1489()}");
+  assert(return_bare_1489() == 12, "the bare-capture return is fresh: got {return_bare_1489()}");
+  assert(return_record_bind_1489() == 707, "a record capture bound then returned: got {return_record_bind_1489()}");
+
+  assert(return_param_1489() == 12, "the parameter control: got {return_param_1489()}");
+  assert(view_field_1489() == 9999, "a captured struct's field still aliases: got {view_field_1489()}");
+  assert(view_element_1489() == 9999, "a captured vector's element still aliases: got {view_element_1489()}");
+  assert(ref_alias_1489() == 22, "`&` still aliases: got {ref_alias_1489()}");
+  assert(keyed_bind_1489() == 21, "the keyed former agrees: got {keyed_bind_1489()}");
+  assert(share_through_1489() == 22, "a mutation through the capture still shares: got {share_through_1489()}");
+
+  println("1489 OK bind={bind_append_1489()} bare={return_bare_1489()}");
+}

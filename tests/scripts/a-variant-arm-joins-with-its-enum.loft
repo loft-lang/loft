@@ -30,6 +30,13 @@
 // @falsified-at: 32e36462 — interpreter and native: `test_a_wildcard_arm_answering_the_enum`,
 //   `test_a_named_arm_answering_the_enum` and `test_the_if_twin` fail to compile
 //   ("expected Circle, got Sh on a match arm" / "on else"); the four controls pass.
+//   CHANNEL: the exit channel, measured on --interpret against 32e36462 by
+//   `scripts/falsify.sh --bulk`.
+//   WITNESS: the control's signature against 32e36462 is `exit 1 -> 0`. That line is what a
+//   re-run must reproduce; comparing it is the whole check.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum Sh { Circle { r: integer }, Square { s: integer, extra: text } }
 

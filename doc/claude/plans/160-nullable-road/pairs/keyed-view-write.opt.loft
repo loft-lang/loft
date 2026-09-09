@@ -1,0 +1,5 @@
+// loft#1456 shape — a write through a VIEW of a keyed collection.  Nullable: the VIEW
+// local carries `?`.
+struct E { id: integer, n: integer }
+struct Bag { es: hash<E[id]> }
+fn main() { b: Bag = Bag { es: [] }; b.es += [E { id: 1, n: 5 }]; v: hash<E[id]>? = b.es; println("{v[1].n ?? -1}"); }

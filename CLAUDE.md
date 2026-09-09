@@ -676,6 +676,28 @@ native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the h
 but leaves the scalar element read UNFUSED, one bisect step finer, and is the middle rung that
 showed stage 2 is worth ~3.2× on top of stage 1 (projected ~1.4×) — more than the hoist itself,
 because the second store resolution it removes costs more than the arithmetic it saves.
+**`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
+again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
+(record type, offset) over the body's typed write set — and is the bisect step for a wrong
+scalar in a loop over a record; `LOFT_HOIST_VERIFY=1` re-reads each hoisted scalar and
+panics on a stale one.  **`LOFT_NO_VIEW_HOIST=1`** (@PLN157 § V-n) makes a `&`-bound vector
+view (`d = &cv.data`) derive no header at its binding — with it on, the rest of the block
+reads `d[i]` through one header derived once — and is the bisect step for a wrong element
+read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
+call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
+op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
+(@PLN157 § V-p) emits no callee TWIN — with it on, a callee that reads a record parameter's
+scalar fields or views its vector fields gets a `<fn>__inv` twin taking those as extra
+parameters, and a loop that hoisted them for the argument calls the twin — and is the bisect
+step for a wrong value read through a record parameter inside a callee a hoisting loop calls.
+**`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
+a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
+record's capacity, a push that fits is one store and a length bump, and every read of the path
+serves from it — and is the bisect step for a wrong element or length out of an appending loop.
+The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
+**`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
+them (one holder per path per frame, no mover on a held path, a twin handed only live
+holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a

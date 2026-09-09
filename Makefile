@@ -902,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -960,6 +960,16 @@ licence-census:  ## @PLN155: how many emitted frees rest on the deps PROXY alone
 #   make free-licences ARGS=--sites     # + every construction site with its facts
 free-licences:  ## @PLN155: how many pieces of code decide *is a free needed here*?
 	@python3 scripts/free_licence_audit.py $(ARGS)
+
+# @PLN160 — do `τ` and `τ?` reach the store machinery by the same road?  Emits both spellings
+# of one program and diffs the IR with the `?` normalised away; a surviving difference is a
+# road one spelling takes and the other does not.
+#   make nullable-road                    # every pair, one verdict each
+#   make nullable-road ARGS="--diff <n>"  # the surviving diff for one pair
+#   make nullable-road ARGS=--control     # the instrument's three controls; run after editing it
+#   make nullable-road ARGS=--verify      # the plan's VERIFY: both halves, both backends, strict stores
+nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twin's?
+	@python3 scripts/nullable_road.py $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this
@@ -2467,3 +2477,15 @@ linkcheck:
 
 linkcheck-external:
 	scripts/linkcheck.sh --external
+
+# Per-release read (@FR receipts): can each guard still be re-validated, and quickly?  Whether
+# a recorded patch reintroduces THE defect cannot be gated — it costs a build per guard and the
+# answer is a judgement about channels — so it is a human pass once per cycle, and this hands
+# that human a bounded worklist.  A REPORT, never a gate; the DOCUMENTATION half is gated by
+# `doc_hygiene::every_guard_says_how_to_score_it_again` against tests/falsified_docs.baseline.
+#   make falsify-review                     # summary + the worklist
+#   make falsify-review ARGS=--all          # every under-documented receipt
+#   make falsify-review ARGS="--since <ref>"  # + how many controls went unreachable since
+.PHONY: falsify-review
+falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
+	@python3 scripts/falsify-review.py $(ARGS)

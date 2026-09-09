@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A closure rebuilt in a loop releases the capture its rebuild displaces.
+//
+// `closures.md` `(L-CapOwn)` — *a captured heap store is freed ONCE, by whichever of the two
+// outlives the other*.  The frame stands down correctly: `scopes::free_vars` emits its
+// `OpFreeRef` on the captured local under `if <record is non-null> null else …`, because the
+// record adopted the store.  But that asks *does the record EXIST* as a stand-in for *does the
+// record own THIS store*, and in a loop those diverge — the record is non-null on every
+// iteration and holds only the LAST one's capture, so every earlier one is released by nobody.
+//
+// One flag, two questions.  The missing half is asked by store IDENTITY where the displacement
+// happens: at the rebuild, free what the capture slot holds unless it is what the rebuild is
+// about to store there.
+//
+// **Five things had to be right, and each was measured wrong first.**
+//   - BEFORE the record's `OpDatabase`, which is CLEAR + CLAIM: it reuses the slot and wipes the
+//     record, so a release after it reads an empty slot and frees nothing.  The op was emitted
+//     and the leak did not move — a cure that cannot fire reads exactly like one that did not
+//     apply.
+//   - measured against the FILL, not the local: a lambda inside a lambda reads its outer capture
+//     through `relayed_capture_read`, and comparing against the local named a variable that
+//     frame does not have (an ICE on `1236-a-lambda-inside-a-lambda-sees-the-enclosing-scope`).
+//   - `OpFreeRefIfDistinct` and not `OpFreeRef`: the unconditional release closes every cell here
+//     and installs a USE-AFTER-FREE at the escaping one — `1446`'s `e10` cell read `3` where `7`
+//     is right, `LOFT_STRICT_STORES` naming it *killed by the free of `<cascade>`*.
+//   - RECORD captures only.  A captured COLLECTION arrives wearing a `Reference` handle wrapper
+//     (loft#1131) so the attribute's type admits it, and `owner_witness_locals` records that a
+//     collection release by this same guard *"releases a store the record still holds"*.  The
+//     captured LOCAL's type is what tells them apart.
+//   - and NOT where the captured local is the statement's own assignment TARGET.  That shape is
+//     `s = build(|i| { s.a + i })`, whose local already has an `__own_` witness (loft#1336) doing
+//     this exact release — a second one is a double free, and it faulted on `--native` alone.
+//     The cell is `test_an_inline_closure_in_a_loop` in
+//     `a-captured-local-reassigned-after-the-build-frees-its-own-store`, and the control below
+//     is its shape, kept here so the exclusion cannot be dropped without something saying so.
+//
+// The leak SCALES on two axes and the store count hides both: the report reads `1 stores` while
+// the RECORD count grows, because `OpDatabase` reuses one store and appends to it.  So the cells
+// vary the iteration count AND the call count, and read the second number.
+//
+// @falsified-at: c6ad862bd — interpret leaked `kt=81 C1483×106` -> clean, native leaked
+//   `kt=81 C1483×106` -> clean.  The LEAK is the only channel that moves: every value here was
+//   already right on the control build, which is the shape of the defect.
+//   CHANNEL: leak.
+//   ARMED: none — this sweep ran without `LOFT_STRICT_STORES`, and the leak channel moved
+//   anyway, so the instrument is not needed to see it.
+//   WITNESS: the store SHAPE `C1483×106` (the `kt=` number shifts with the type table between
+//   builds); the RECORD count is what scales, not the store count, which reads `1 stores`
+//   throughout.
+//   HOLDS: exit, assertions, panic, free-refusal and expectations are equal on both trees.
+
+struct C1483 { a: integer }
+struct S1483 { a: integer }
+
+fn probe_1483(n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    s: C1483 = C1483 { a: 5 + i };
+    k = fn() -> integer { s.a };
+    t = t + k();
+  }
+  t
+}
+
+// No closure in the body, so the frame frees the local itself and nothing was suppressed.
+fn no_closure_1483(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { s: C1483 = C1483 { a: 5 + i }; t = t + s.a; }
+  t
+}
+
+// A capture bound from a MINTING CALL — clean before this fix, because the call hands over a
+// store the sweep already tracks.  It must stay clean.
+fn mk_1483(v: integer) -> C1483 { C1483 { a: v } }
+fn from_call_1483(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { s: C1483 = mk_1483(5 + i); k = fn() -> integer { s.a }; t = t + k(); }
+  t
+}
+
+// The local HOISTED out of the loop: one store, rebound in place, the record names it
+// throughout.  Nothing is displaced, so nothing may be freed.
+fn hoisted_1483(n: integer) -> integer {
+  s: C1483 = C1483 { a: 5 };
+  t = 0;
+  for i in 0..n { s = C1483 { a: 5 + i }; k = fn() -> integer { s.a }; t = t + k(); }
+  t
+}
+
+// The EXCLUSION's own shape: the captured local is the assignment target of the statement that
+// builds the closure, so the `__own_` witness (loft#1336) is what releases the displaced store
+// and this fix must not add a second release.  `a-captured-local-reassigned-...`'s
+// `test_an_inline_closure_in_a_loop` is the file that scores it; this is the reminder.
+fn build_1483(f: fn(integer) -> integer) -> S1483 { S1483 { a: f(1) } }
+fn self_assigning_1483() -> integer {
+  s = S1483 { a: 1 };
+  for _ in 0..5 { s = build_1483(fn(i: integer) -> integer { s.a + i }); }
+  s.a
+}
+
+fn escaper_1483() -> fn() -> integer {
+  out = fn() -> integer { 0 };
+  for i in 0..3 { s: C1483 = C1483 { a: 5 + i }; out = fn() -> integer { s.a }; }
+  out
+}
+
+fn main() {
+  // ITERATION axis.  1 never displaced anything; every count above it displaced `n-1`.
+  assert(probe_1483(1) == 5, "1 iteration: got {probe_1483(1)}");
+  assert(probe_1483(2) == 11, "2 iterations: got {probe_1483(2)}");
+  assert(probe_1483(3) == 18, "3 iterations: got {probe_1483(3)}");
+  assert(probe_1483(9) == 81, "9 iterations: got {probe_1483(9)}");
+
+  // CALL axis, which the filed boundary did not cover: the records accumulated ACROSS calls too,
+  // so a long-running program needed no long loop — only to call the function often.
+  c = 0;
+  i = 0;
+  while i < 40 { c = c + probe_1483(3); i = i + 1; }
+  assert(c == 720, "40 calls x 3 iterations: got {c}");
+
+  // The controls.
+  assert(no_closure_1483(9) == 81, "no closure in the body: got {no_closure_1483(9)}");
+  assert(from_call_1483(9) == 81, "capture from a minting call: got {from_call_1483(9)}");
+  assert(hoisted_1483(9) == 81, "the local hoisted out of the loop: got {hoisted_1483(9)}");
+  assert(self_assigning_1483() == 6, "the witness owns the self-assigning build: got {self_assigning_1483()}");
+
+  // A closure that ESCAPES, built in a loop: the record the LAST iteration built is the one the
+  // caller holds, and it must still answer.  The full escaping matrix is `1446`'s; this is the
+  // one cell that keeps the two files honest about each other.
+  g = escaper_1483();
+  assert(g() == 7, "the escaping closure keeps the last capture: got {g()}");
+
+  println("1483 OK probe3={probe_1483(3)} calls={c}");
+}

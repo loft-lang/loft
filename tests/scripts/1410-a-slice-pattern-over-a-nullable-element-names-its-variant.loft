@@ -34,6 +34,11 @@
 // @falsified-at: d6e665ae — interpret exit 1 -> 0, native exit 1 -> 0.  Every A/B cell above
 //   fails there: the variant spellings do not compile at all, and `[Id]` answers 5 where this
 //   file asserts -1.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against d6e665ae; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 enum Tok { Fn { x: integer }, Id { x: integer }, Num { n: integer } }
 enum Color { Red, Green }

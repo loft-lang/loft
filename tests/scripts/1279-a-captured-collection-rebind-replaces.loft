@@ -48,6 +48,8 @@
 //   The two backends disagree on the assertion COUNT (4 vs 1) because `--native` stops the
 //   file at its first failing cell where the interpreter runs on; the `exit 1 -> 0` row is
 //   the one that sees every cell.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Box1279 { items: vector<integer> }
 struct Rec1279 { k: integer, v: text }

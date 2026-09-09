@@ -39,6 +39,11 @@
 // @falsified-at: 20e25e9a — interpret exit 139 -> 0, native exit 1 -> 0
 //   (SIGSEGV at `OpFormatText`, and `E0499: cannot borrow *_farg_1 as mutable more than
 //   once at a time` from the generated dispatch arm)
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 20e25e9a; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 fn tb_named_two_buffers(tb_tag: text) -> text {
   tb_loc: text = "named-local";

@@ -42,6 +42,11 @@
 // @falsified-at: 126114af2 — interpret exit 1 -> 0, native exit 101 -> 0.  On the control every
 //   write cell is the ICE `Unknown reference variable type`, so the file cannot reach an
 //   assertion there.  Each value is hand-computed; the two backends agreeing is not the test.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 126114af2; falsify prints
+//   only the channels that MOVE, and requires HERE to be clean, so each of those is clean on
+//   both. The exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct S1454 { a: integer }
 

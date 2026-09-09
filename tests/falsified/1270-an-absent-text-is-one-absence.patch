@@ -1,0 +1,125 @@
+diff --git a/src/database/format.rs b/src/database/format.rs
+index 763e94fe0..e22a4130b 100644
+--- a/src/database/format.rs
++++ b/src/database/format.rs
+@@ -1160,26 +1160,27 @@ impl ShowDb<'_> {
+             });
+         } else if self.known_type == 5 {
+             let text_nr = self.store().get_u32_raw(self.rec, self.pos);
+-            if text_nr != 0 && text_nr >= self.store().capacity_words() {
+-                // A handle pointing OUTSIDE the store is corruption, not absence — the two
+-                // must not render alike, or a broken store reads as an empty field.  JSON and
+-                // loft have no spelling for "corrupt", so they still say `null`.
++            if text_nr == 0 || text_nr >= self.store().capacity_words() {
+                 if self.json || self.loft {
++                    // Null text renders as `null` in JSON and in loft (loft has a
++                    // `null` literal) — a re-parseable absence, not the `<bad-text>`
++                    // debug tag.
+                     s.push_str("null");
+                 } else {
+                     write!(s, "<bad-text:{text_nr}>").unwrap();
+                 }
+-            } else if self.store().text_is_null(self.rec, self.pos) {
+-                // @FR-F-Render — a null text renders as the word `null` in EVERY mode, and
+-                // @FR-L-Null-Text says which slots are null: an unset handle and an allocated
+-                // `STRING_NULL` record alike.  Rendering the sentinel raw put a NUL byte on
+-                // the wire (`{a:1,t:"\0"}`), a present, corrupt value where the program meant
+-                // nothing; in JSON and loft it also keeps SQL NULL distinct from `''` across a
+-                // round trip rather than collapsing both to a string.
+-                s.push_str("null");
+             } else {
+                 let text_val = self.store().get_str(text_nr);
+-                if self.json || self.loft {
++                if text_val == crate::state::STRING_NULL && (self.json || self.loft) {
++                    // loft#769 — an ABSENT `text?` is stored as the sentinel string
++                    // `"\0"`, not as a null pointer, so it reached the escaper and
++                    // came back as the one-character string holding a NUL: a present,
++                    // corrupt value where the program meant nothing. It is the same
++                    // absence the null-pointer branch above renders, so it renders
++                    // the same way — which is what keeps SQL NULL distinct from `''`
++                    // across a round trip rather than collapsing both to a string.
++                    s.push_str("null");
++                } else if self.json || self.loft {
+                     // loft string literals accept the same escapes as JSON
+                     // (`\"`, `\n`, `\\`, …), so the JSON escaper produces a
+                     // re-parseable loft text literal too.
+diff --git a/src/database/types.rs b/src/database/types.rs
+index 9f73787b7..48b025dc9 100644
+--- a/src/database/types.rs
++++ b/src/database/types.rs
+@@ -2428,12 +2428,11 @@ impl Stores {
+                 3 => store.get_float(rec, pos).is_nan(),
+                 4 => store.get_byte(rec, pos, 0) > 1,
+                 5 => {
+-                    // @FR-L-Null-Text — text nullity is CONTENT-based, and `Store::text_is_null`
+-                    // is its one home: an unset handle and an allocated `STRING_NULL` record are
+-                    // one absence, so a field written `t: null` is omitted exactly where a parsed
+-                    // absent one is.  @P375 still holds inside it — an allocated `""` is a present
+-                    // value and must serialise as `""`.
+-                    store.text_is_null(rec, pos)
++                    // @P375: only an UNSET text (str_rec 0) is null; an allocated
++                    // empty string "" is a present value and must serialise as ""
++                    // (was: `|| is_empty()`, which dropped "" from `{x:j}` output
++                    // and broke the save→load round-trip).
++                    store.get_u32_raw(rec, pos) == 0
+                 }
+                 _ => false,
+             }
+diff --git a/src/native.rs b/src/native.rs
+index 20c0d216b..021d0186a 100644
+--- a/src/native.rs
++++ b/src/native.rs
+@@ -2987,12 +2987,13 @@ fn reflect_field_at(
+                 (i64::from(v), 0.0, 0, v == 0)
+             }
+             Some(LayoutNode::Base(BaseKind::Text)) => {
+-                // @FR-L-Null-Text — text-null is CONTENT-based, and `Store::text_is_null`
+-                // is its one home (an unset handle and an allocated `STRING_NULL` record are
+-                // one absence).  Testing the pointer alone reads a null as the empty string,
+-                // and telling `null` from `""` is the distinction this reading exists for.
++                // **text-null is CONTENT-based**: a null `text` is a string
++                // record holding the `STRING_NULL` ("\0") bytes, not a 0
++                // pointer. Testing the pointer alone reads a null as the empty
++                // string — and telling `null` from `""` is the distinction this
++                // whole reading exists for, so the content is what decides.
+                 let r = store.get_u32_raw(value.rec, at);
+-                let null = store.text_is_null(value.rec, at);
++                let null = r == 0 || store.get_str(r) == crate::state::STRING_NULL;
+                 (0, 0.0, if null { 0 } else { r }, null)
+             }
+             // A narrow integer reports `IntegerKind`, so its width and its null
+diff --git a/src/store.rs b/src/store.rs
+index 145399faf..de287f4f3 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -3209,30 +3209,6 @@ impl Store {
+         }
+     }
+ 
+-    /// True when the `text` slot at `(rec, pos)` holds NULL.
+-    ///
+-    /// @FR-L-Null-Text — an absent text has TWO byte-level spellings and they are one
+-    /// absence: an **unset handle** (str_rec 0, the `nullref` sentinel `(L-Null)` names)
+-    /// and an **allocated record holding the `STRING_NULL` (`"\0"`) bytes**, which is what
+-    /// a written `null` and every native text-null produce.  Testing the handle alone reads
+-    /// the second spelling as a present, one-character string — and telling `null` from `""`
+-    /// is the distinction the whole reading exists for.
+-    ///
+-    /// The CONTENT test is the total one: [`Store::get_str`] maps an unset or out-of-range
+-    /// handle onto `STRING_NULL` too, so it subsumes the pointer test rather than sitting
+-    /// beside it.  This is the one home every reader asks — `Stores::is_null` (which decides
+-    /// whether a struct field is omitted), the format walk (which decides how it renders) and
+-    /// the native reader — so a render and an omission cannot disagree about whether a value
+-    /// is there.
+-    ///
+-    /// An empty string is NOT null: `""` is an allocated record whose content is `""`, a
+-    /// present value that must survive a save→load round trip (@P375).
+-    #[inline]
+-    #[must_use]
+-    pub fn text_is_null(&self, rec: u32, pos: u32) -> bool {
+-        self.get_str(self.get_u32_raw(rec, pos)) == crate::state::STRING_NULL
+-    }
+-
+     #[inline]
+     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
+         if rec == 0 || rec > i32::MAX as u32 {

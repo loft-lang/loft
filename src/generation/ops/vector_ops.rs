@@ -50,15 +50,16 @@ fn verify(ctx: &EmitCtx<'_, '_>) -> &'static str {
 ///
 /// Anything else (no header, an expression instead of a variable for the vector, a getter
 /// with a different shape) emits the `#rust` template unchanged.
+/// Emits `@FR-R-Header` (the fused element read) and falls back to `@FR-R-Scalar`.
 pub struct FusedElementReadEmitter;
 
 impl OpEmitter for FusedElementReadEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
+            return emit_hoisted_scalar_or_default(ctx, args);
         };
         let Some(header) = ctx.output.active_vec_header(&fused.path) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
+            return emit_hoisted_scalar_or_default(ctx, args);
         };
         let (header, ty, absent) = (header.to_string(), fused.rust_type, fused.absent);
         let verify = verify(ctx);
@@ -75,6 +76,30 @@ impl OpEmitter for FusedElementReadEmitter {
         ctx.emit(fused.fld)?;
         write!(ctx.w, ") as u32, {absent}, &stores.allocations)")
     }
+}
+
+/// A record scalar read (`lay.x0`, any getter in [`crate::generation::hoist::SCALAR_GETTERS`])
+/// inside a loop that hoisted it (@PLN157 P4c): the local the prelude bound stands for the
+/// whole getter — its store resolution, its `rec == 0` test and its load.  Under
+/// `LOFT_HOIST_VERIFY=1` the getter is ALSO emitted and the two are compared, so a scalar
+/// the loop can still change under its hoist panics at the read instead of answering a
+/// stale value.  Everything else — no hoist, a read the collector did not admit — emits the
+/// `#rust` template unchanged.
+/// Emits `@FR-R-Scalar`: the hoisted local, or its checking form under `@FR-R-Switch`.
+fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+    let Some(local) = ctx
+        .output
+        .hoisted_scalar_read(ctx.def_fn.name(), args)
+        .map(str::to_owned)
+    else {
+        return super::default::DefaultEmitter.emit(ctx, args);
+    };
+    if ctx.output.hoist_verify {
+        write!(ctx.w, "vector::hoisted_scalar_verify({local}, ")?;
+        super::default::DefaultEmitter.emit(ctx, args)?;
+        return write!(ctx.w, ")");
+    }
+    write!(ctx.w, "{local}")
 }
 
 /// `OpSetInt` / `OpSetSingle` / `OpSetFloat` — a scalar write of `v[i]` inside a loop
@@ -101,6 +126,7 @@ impl OpEmitter for FusedElementReadEmitter {
 /// store, or only in place, so nothing inside it can change how many elements `v` has.
 /// Outside such a loop — and for a vector the analysis did not cover — the `#rust`
 /// template's runtime read stands, which is `DefaultEmitter`.
+/// Emits `@FR-R-Header` for `len(P)`.
 pub struct HoistedLengthEmitter;
 
 impl OpEmitter for HoistedLengthEmitter {
@@ -116,6 +142,7 @@ impl OpEmitter for HoistedLengthEmitter {
     }
 }
 
+/// Emits `@FR-R-Header` (the fused element write) under `@FR-R-InPlace`.
 pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {
@@ -200,5 +227,53 @@ impl OpEmitter for OpGetVectorEmitter {
         )?;
         ctx.emit(size_val)?;
         write!(ctx.w, ") as u32, __vi)}}")
+    }
+}
+
+/// `OpPushInt` / `OpPushSingle` / `OpPushFloat` — `v += [x]` inside a loop that hoisted a
+/// PUSH header for `v` (@PLN157 § V-q, `@FR-R-Push`), emitted as ONE call that tests the
+/// capacity, stores the element and bumps the length, re-entering the runtime's append only
+/// at a growth step.  The value is bound to a local before the call for the template's own
+/// reason (@P321d / @P338): the helper takes `&mut stores`, and the value may still be
+/// evaluating its own `stores` borrow when that one is taken.
+///
+/// Anything else — no push header, a kind this table does not fuse — emits the `#rust`
+/// template unchanged.
+pub struct HoistedPushEmitter;
+
+impl OpEmitter for HoistedPushEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let Some((fused, header)) = ctx.output.fused_push(ctx.def_fn.name(), args) else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let (ty, size) = (fused.rust_type, fused.size);
+        let verify = verify(ctx);
+        write!(ctx.w, "{{ let __pv = (")?;
+        ctx.emit(fused.val)?;
+        write!(
+            ctx.w,
+            "); stores.push_hoisted::<{ty}, {verify}>(&mut {header}, &("
+        )?;
+        ctx.emit(fused.vector)?;
+        write!(ctx.w, "), {size}, __pv) }}")
+    }
+}
+
+/// `OpPreAllocVector` — the reservation the parser emits before a push to a local vector.
+/// Inside a loop that holds a push header for the path it is emitted as NOTHING (@PLN157
+/// § V-q): the push grows the vector on demand, and the reservation would cost a store
+/// resolution per iteration for a record that is either already there or about to be
+/// claimed by the push's own growth step.  Everywhere else the `#rust` template stands.
+pub struct PreAllocEmitter;
+
+impl OpEmitter for PreAllocEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let held = !ctx.output.push_hoist_disabled
+            && crate::generation::hoist::pre_alloc_path(ctx.output.data, ctx.def_fn.name(), args)
+                .is_some_and(|path| ctx.output.active_push_header(&path).is_some());
+        if held {
+            return write!(ctx.w, "()");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
     }
 }

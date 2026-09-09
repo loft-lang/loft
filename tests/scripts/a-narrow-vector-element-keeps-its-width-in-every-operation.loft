@@ -42,6 +42,14 @@
 //   exit 1 -> 0, native 1 assertion failures -> 0 (`make falsify`, both backends, a full build of
 //   that commit).  The first failing cell there is `i8 head/tail: 57345386150500` against the 105
 //   wanted — the head read swallowing its neighbours, which is the fault this file is named for.
+// @falsified-by: tests/falsified/a-narrow-vector-element-keeps-its-width-in-every-operation.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
+//   channel is the whole measurement here; a run scored on leaks would learn nothing.
 
 fn s8(v: vector<i8>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }
 fn u8s(v: vector<u8>) -> text { r = ""; for e in v { r = "{r}{e},"; } return r; }

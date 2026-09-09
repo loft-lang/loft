@@ -32,6 +32,11 @@
 //   `trie` and `spatial` cells are the ICE, so the file cannot reach an assertion there, while
 //   the other four already passed — which is the shape of the defect: four kinds right and two
 //   missing from a list, with nothing to distinguish them but the list.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 1d95fa50a; falsify prints
+//   only the channels that MOVE, and requires HERE to be clean, so each of those is clean on
+//   both. The exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct E1445 { k: integer, v: integer }
 struct T1445 { k: text, v: integer }

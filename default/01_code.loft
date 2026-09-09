@@ -145,7 +145,7 @@ fn OpConstFalse() -> boolean;
 fn OpCastTextFromBool(v1: boolean) -> text;
 #rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
-#rust"*s.get_var::<u8>(@pos)"
+#rust"s.get_var::<u8>(@pos)"
 fn OpPutBool(var: const u16, value: boolean);
 #rust"s.put_var(@var, @value);"
 fn OpNot(v1: boolean) -> boolean;
@@ -194,9 +194,9 @@ fn OpConstShort(val: const i16) -> integer;
 fn OpConstTiny(val: const i8) -> integer;
 #rust"i64::from(@val)"
 fn OpVarInt(pos: const u16) -> integer;
-#rust"*s.get_var::<i64>(@pos)"
+#rust"s.get_var::<i64>(@pos)"
 fn OpVarCharacter(pos: const u16) -> character;
-#rust"*s.get_var::<char>(@pos)"
+#rust"s.get_var::<char>(@pos)"
 fn OpPutInt(pos: const u16, value: integer);
 #rust"s.put_var(@pos, @value);"
 fn OpPutCharacter(pos: const u16, value: character);
@@ -315,7 +315,7 @@ pub fn floor_mod(both: integer, divisor: integer) -> integer? {
 fn OpConstSingle(val: const single) -> single;
 #rust"@val"
 fn OpVarSingle(pos: const u16) -> single;
-#rust"*s.get_var::<f32>(@pos)"
+#rust"s.get_var::<f32>(@pos)"
 fn OpPutSingle(pos: const u16, value: single);
 #rust"s.put_var(@pos, @value);"
 fn OpConvSingleFromNull() -> single;
@@ -470,7 +470,7 @@ fn OpFormatStackSingle(
 fn OpConstFloat(val: const float) -> float;
 #rust"@val"
 fn OpVarFloat(pos: const u16) -> float;
-#rust"*s.get_var::<f64>(@pos)"
+#rust"s.get_var::<f64>(@pos)"
 fn OpPutFloat(pos: const u16, value: float);
 #rust"s.put_var(@pos, @value);"
 fn OpConvFloatFromNull() -> float;
@@ -824,7 +824,7 @@ fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
 type enumerate size(1);
 fn OpVarEnum(pos: const u16) -> enumerate;
-#rust"*s.get_var::<u8>(@pos)"
+#rust"s.get_var::<u8>(@pos)"
 fn OpConstEnum(val: const enumerate) -> enumerate;
 #rust"@val"
 fn OpPutEnum(pos: const u16, value: enumerate);
@@ -916,7 +916,7 @@ fn OpFreeScratch(scratch: reference);
 #rust"s.database.free_iteration_scratch(&@scratch);"
 fn OpSizeofRef(val: reference) -> integer;
 fn OpVarRef(pos: const u16) -> reference;
-#rust"{{let r = *s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
+#rust"{{let r = s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
 fn OpPutRef(pos: const u16, value: reference);
 #rust"s.put_var(@pos, @value);"
 fn OpEqRef(v1: reference, v2: reference) -> boolean;
@@ -1068,7 +1068,7 @@ type vector size(4);
 type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
-#rust"*s.get_var::<DbRef>(@pos)"
+#rust"s.get_var::<DbRef>(@pos)"
 // Plan-07 phase 4e.3 — tag the next format-string null render with a
 // fault-kind label.  Emitted by 4e.1's format-scope swap immediately
 // before each fault-prone Nullable peer so the format conversion op
@@ -1227,6 +1227,35 @@ fn OpFinishRecord(data: reference, rec: reference, parent_tp: const u16, fld: co
 // Add all elements of another vector with the same type
 fn OpAppendVector(r: vector, other: vector, tp: const u16);
 #rust"s.database.vector_add(&@r, &@other, @tp);"
+// @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
+// was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
+// per element each resolving the store and re-reading the headers the previous one
+// read (35 % of the drawing pass's `lock_curved` row).  Each of these is one
+// resolution, one capacity test, one write and one length bump, on both backends.
+// The parser's `new_record` fuses the three-op shape for a plain `Parts::Vector` at
+// `field == u16::MAX`; keyed kinds, record elements and the narrow-int kinds with a
+// `min` operand keep the general path.  A null (absent) vector is the no-op it was.
+#impure(parent_write)
+fn OpPushInt(r: vector, val: integer);
+#rust"s.database.append_i64(&@r, @val);"
+#impure(parent_write)
+fn OpPushInt4(r: vector, val: integer);
+#rust"{{let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; s.database.append_i32(&@r, v);}}"
+#impure(parent_write)
+fn OpPushFloat(r: vector, val: float);
+#rust"s.database.append_f64(&@r, @val);"
+#impure(parent_write)
+fn OpPushSingle(r: vector, val: single);
+#rust"s.database.append_f32(&@r, @val);"
+#impure(parent_write)
+fn OpPushBoolean(r: vector, val: boolean);
+#rust"s.database.append_byte(&@r, i32::from(@val));"
+#impure(parent_write)
+fn OpPushEnum(r: vector, val: enumerate);
+#rust"s.database.append_byte(&@r, i32::from(@val));"
+#impure(parent_write)
+fn OpPushCharacter(r: vector, val: character);
+#rust"s.database.append_u32(&@r, @val as u32);"
 #impure(parent_write)
 // Replace `r`'s content with `other`'s, aliasing-safe: a no-op when `r` and
 // `other` are the SAME backing vector (NRVO return-into-own-buffer), so the

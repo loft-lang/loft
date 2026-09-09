@@ -1,0 +1,6 @@
+// loft#1421 shape at a COLLECTION element type — the control for `ret-view-of-param`.  Dense.
+// A nullable VECTOR return keeps its `__retbuf`; a nullable STRUCT return loses it.  That is
+// what makes the struct case an accident rather than a consequence of the `?`.
+struct S { a: integer }
+fn view(p: vector<vector<S>>) -> vector<S> { p[0] }
+fn main() { q: vector<vector<S>> = [[S { a: 7 }]]; v = view(q); println("{len(v)}"); }

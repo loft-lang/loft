@@ -32,6 +32,8 @@
 //
 // @falsified-at: b29f198b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn a_every_mismatching_kind_answers_null() {
   j = json_parse("{{\"s\":\"hi\",\"n\":7,\"f\":1.5,\"b\":true,\"z\":null,\"a\":[1],\"o\":{{\"k\":1}}}}");

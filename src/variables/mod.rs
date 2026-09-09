@@ -3847,7 +3847,17 @@ impl Function {
     pub fn proxy_says_owned(&self, v: u16) -> bool {
         // @FR-O-Proxy asks free — this IS the free question, and @FR-O-Override is the
         // conjunct beside it, which is the whole point of the predicate.
-        self.tp(v).depend().is_empty() && !self.is_skip_free(v)
+        //
+        // loft#1486 — and a dep naming a GUARDED BACKING is not a borrow.  Derived rather than
+        // stored: the append's conditional mint marks its backing `skip_free` (nobody frees it
+        // but the local) and `inline_ref` (its null-init allocates nothing, because the mint
+        // may not run), and those two together say the local owns whatever it NAMES on either
+        // path.  Folded in HERE rather than at the free sites for the reason this predicate
+        // exists — the conjunction was written out at six of them and each had to be taught
+        // the veto separately, so a second spelling of the ownership half would drift the same
+        // way.
+        (self.tp(v).depend().is_empty() || self.deps_are_guarded_backings(v))
+            && !self.is_skip_free(v)
     }
 
     /// Is `v` a text temp that STAGES a value across the statement or the return that reads
@@ -3914,6 +3924,35 @@ impl Function {
     }
 
     #[track_caller]
+    /// loft#1486 — does every dep of `v` name a GUARDED BACKING rather than a store somebody
+    /// else owns?
+    ///
+    /// A guarded mint attaches its backing so the element writes can resolve it, and the mint
+    /// itself may not run — so the dep list has to keep naming the backing while the OWNERSHIP
+    /// answer is *yes on both paths*.  The two marks the guarded mint already sets are what
+    /// separate the cases: `skip_free` says nobody but this local releases the backing, and
+    /// `inline_ref` says its null-init allocates nothing because the mint is conditional.  A
+    /// plain borrow's dep has neither.
+    fn deps_are_guarded_backings(&self, v: u16) -> bool {
+        // A REBOUND PARAMETER's backing carries the same two marks — `vector_db_init`'s rebind
+        // arm sets them for its own reason — and its release is already emitted, as the
+        // param's `OpFreeRefIfDistinct(v, witness)`.  Answering yes there is a SECOND free of
+        // one store: measured on `87-p2-reassign-locality`, whose repeated-rebind cell read a
+        // length of 0 where 3 is right.  The marks are the same; the mechanism is not, and
+        // `rebind_orig` is what says which one set them.
+        if self.rebind_orig(v).is_some() {
+            return false;
+        }
+        let deps = self.tp(v).depend();
+        !deps.is_empty()
+            && deps.iter().all(|&d| {
+                (d as usize) < self.variables.len()
+                    && self.variables[d as usize].skip_free
+                    && self.inline_ref_vars.contains(&d)
+                    && self.variables[d as usize].name.starts_with("__vdb")
+            })
+    }
+
     pub fn set_skip_free(&mut self, v: u16) {
         if let Ok(want) = std::env::var("LOFT_SKIPFREE_TRACE")
             && (want == "*" || self.variables[v as usize].name == want)

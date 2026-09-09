@@ -1,0 +1,86 @@
+// @PLN157 § V-n (loft#1426 M2) — a `&`-bound vector VIEW (`d = &cv.data`) derives its
+// header ONCE at the binding, for the rest of the block that indexes it, on the native
+// backend; the interpreter reads through the runtime and is the oracle.  The cells pin the
+// boundary from both sides:
+//   - the set_pixel / get_pixel shapes (bind, test the length, read or write one element)
+//     answer the same values;
+//   - a growing write between the binding and the reads — through the view, through a
+//     callee, one that RELOCATES the record — declines the header, so the reads follow the
+//     moved vector;
+//   - a rebound view, a view bound inside an arm or a loop body, and sibling views keep
+//     their values apart.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-n-view-def-header-cells.loft
+// (tests/view_header.rs pins which bindings earn a header); this file carries the VALUE
+// cells that must hold whatever the emitter decides.
+// `LOFT_NO_VIEW_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-09) — `hoist::view_def_header` made to
+// skip the remainder gate (every binding earns a header) turns the RELOCATING cell red on
+// --native (c18 206 → 199: the stale header names the record the growth moved away from)
+// and LOFT_HOIST_VERIFY=1 panics at the first stale read; the growing cells whose reads
+// fall off the stale range (c3, c6) only trip the verifier, which is why c18 exists.
+// Restored byte-identically, interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_VIEW_HOIST
+// all green.
+
+struct Cv { w: integer, data: vector<integer> }
+struct P2 { xs: vector<integer>, ys: vector<integer> }
+
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn bump(cv: Cv, i: integer) { cv.data[i] = (cv.data[i] ?? 0) + 100; }
+fn grow(cv: Cv, v: integer) { cv.data += [v]; }
+
+/// The set_pixel shape.
+fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) { d[i] = v; } }
+/// The get_pixel shape.
+fn getp(cv: const Cv, i: integer) -> integer { d = &cv.data; if i >= 0 && i < len(d) { d[i] ?? -1 } else { 0 } }
+/// A growth through the view between the binding and the reads.
+fn grown_through_view(cv: Cv) -> integer { d = &cv.data; d += [9]; (d[0] ?? 0) + (d[2] ?? 0) + len(d) }
+/// A callee that writes in place between the binding and the reads.
+fn bumped_between(cv: Cv) -> integer { d = &cv.data; bump(cv, 1); (d[0] ?? 0) + (d[1] ?? 0) }
+/// A callee that grows the vector between the binding and the reads.
+fn grown_between(cv: Cv) -> integer { d = &cv.data; grow(cv, 7); grow(cv, 8); (d[2] ?? -1) + len(d) }
+/// A growth that RELOCATES the record, then an in-range read.
+fn relocated(cv: Cv) -> integer { d = &cv.data; for i in 0..100 { d += [i]; } (d[0] ?? -1) + (d[99] ?? -1) + len(d) }
+/// The view rebound in the same block.
+fn rebound(a: Cv, b: Cv) -> integer { d = &a.data; x = d[1] ?? 0; d = &b.data; y = d[1] ?? 0; x * 100 + y }
+/// Two sibling views.
+fn siblings(p: P2) -> integer { a = &p.xs; b = &p.ys; (a[1] ?? 0) * 10 + (b[0] ?? 0) }
+/// A view bound inside a loop body, per iteration.
+fn per_iteration(cvs: vector<Cv>) -> integer { s = 0; for k in 0..2 { c = cvs[k]?; d = &c.data; s += (d[0] ?? 0) * 10 + (d[1] ?? 0); } s }
+
+fn main() {
+  cv1 = Cv { w: 0, data: [0, 0, 0] };
+  for i in 0..4 { setp(cv1, i, 10 + i); }
+  println("c1 total={total(cv1.data)} len={len(cv1.data)}");
+  assert(total(cv1.data) == 33 && len(cv1.data) == 3, "set_pixel shape: 10+11+12, the out-of-range write refused");
+
+  cv2 = Cv { w: 0, data: [5, 6, 7] };
+  g = getp(cv2, 0) + getp(cv2, 2) + getp(cv2, 3) + getp(cv2, -1);
+  assert(g == 12, "get_pixel shape: 5+7, the out-of-range reads answer 0");
+
+  cv3 = Cv { w: 0, data: [1, 2] };
+  assert(grown_through_view(cv3) == 13 && len(cv3.data) == 3, "a growth through the view: 1+9+3, and it reached cv");
+
+  cv5 = Cv { w: 0, data: [1, 2, 3] };
+  assert(bumped_between(cv5) == 103, "an in-place callee between: 1+102");
+
+  cv6 = Cv { w: 0, data: [1] };
+  assert(grown_between(cv6) == 11, "a growing callee between: 8+3");
+
+  cv18 = Cv { w: 0, data: [7] };
+  r = relocated(cv18);
+  println("c18 relocated={r}");
+  assert(r == 206, "a relocating growth: 7+98+101 — the read follows the moved record");
+
+  a = Cv { w: 0, data: [1, 2] }; b = Cv { w: 0, data: [30, 40] };
+  assert(rebound(a, b) == 240, "a rebound view reads each binding's vector: 2, 40");
+
+  p = P2 { xs: [1, 2], ys: [3, 4] };
+  assert(siblings(p) == 23, "sibling views stay apart: 2*10+3");
+
+  cvs: vector<Cv> = [Cv { w: 0, data: [1, 2] }, Cv { w: 0, data: [3, 4] }];
+  assert(per_iteration(cvs) == 46, "a view bound per iteration: 12+34");
+
+  println("view-header ok");
+}

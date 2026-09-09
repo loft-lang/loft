@@ -23,4 +23,14 @@ struct K { k: integer }
 fn c13() { s: sorted<K[k]> = []; s += [K { k: 5 }]; s += [K { k: 1 }]; s += [K { k: 3 }]; first = 0; for e in s { first = e.k; break; } three = s[3]?; println("c13 {len(s)} {first} {three.k}"); }
 fn c14() { v: vector<integer> = []; for i in 0..3 { v += [i]; } w = v; w += [99]; println("c14 {len(v)} {len(w)} {isum(v)} {isum(w)}"); }
 fn c15() { v: vector<integer> = [1, 2]; for i in 0..3 { v += [v[i]? + 1]; } println("c15 {len(v)} {isum(v)}"); }
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); }
+// c16 — a vector of ONE-FIELD records: the same three-op element shape as a scalar, but the
+// container is `vector<Solo>`, so the general path stays (records, not pushes).
+struct Solo { snr: integer }
+fn c16() { vs: vector<Solo> = [Solo { snr: 3 }, Solo { snr: 4 }]; vs += [Solo { snr: 5 }]; s = 0; for e in vs { s += e.snr; } println("c16 {s} {len(vs)}"); }
+// c17 — a KEYED collection of one-field records in a struct field (the loft test 1272 shape):
+// `OpFinishRecord` is the keyed insert, so the walk must answer the sorted order.
+struct Rec { nr: integer }
+struct Asc { m: index<Rec[nr]> }
+fn c17() { a = Asc { m: [Rec { nr: 3 }, Rec { nr: 1 }, Rec { nr: 2 }] }; o = ""; for r in a.m { o += "{r.nr}"; } println("c17 {o} {len(a.m)}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); }

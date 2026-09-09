@@ -1,0 +1,6 @@
+// loft#1422 shape — a local bound from a PARAMETER and rebound from a MINTING call.  Nullable:
+// the LOCAL carries `?`.
+struct S { a: integer }
+fn mint(n: integer) -> S { S { a: n } }
+fn run(p: S, c: boolean) -> integer { d: S? = p; if c { d = mint(9); } d.a ?? -1 }
+fn main() { s = S { a: 1 }; println("{run(s, true)} {run(s, false)}"); }

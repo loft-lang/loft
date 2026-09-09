@@ -22,6 +22,9 @@
 //   which is the defect.  Each dense twin was refused on that build, so what moved is the
 //   pairing, not the message.
 //
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 // @EXPECT_ERROR: Cannot modify const parameter
 // @EXPECT_ERROR: Cannot modify const parameter
 // @EXPECT_ERROR: Cannot write to the `&` parameter

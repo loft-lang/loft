@@ -1,0 +1,37 @@
+// @PLN157 § V-o cells — a call to a stdlib ONE-OP wrapper (`len(v)` is `OpLengthVector(v)`,
+// `sqrt(x)` is `OpMathFuncFloat(9, x)`) emits the op itself on the native backend, so the
+// registry's header-aware emitters can serve it.  The interpreter (which calls the wrapper)
+// is the oracle; native must answer the same under LOFT_HOIST_VERIFY=1.
+struct Cv { w: integer, data: vector<integer> }
+
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+// c1 — `len(v)` inside a loop that hoists `v`: the length comes off the header.
+fn h1(v: vector<integer>, n: integer) -> integer { s = 0; for i in 0..n { s += len(v) + (v[i] ?? 0); } s }
+fn c1() { v: vector<integer> = [10, 20, 30]; println("c1 {h1(v, 3)}"); }
+// c2 — the set_pixel shape: `len(d)` after a view binding, then the element write.
+fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) { d[i] = v; } }
+fn c2() { cv = Cv { w: 0, data: [0, 0, 0] }; for i in 0..4 { setp(cv, i, 10 + i); } println("c2 {total(cv.data)} {len(cv.data)}"); }
+// c3 — `len` of a text and of a character: other wrappers of the same name.
+fn c3() { t = "héllo"; c = 'é'; println("c3 {len(t)} {len(c)}"); }
+// c4 — the libm wrappers with a constant selector: values unchanged.
+fn c4() { x = 2.0; println("c4 {((sqrt(x) ?? 0.0) * 1000.0) as integer} {(sin(0.5) * 1000.0) as integer} {abs(-7)} {(abs(-2.5) * 10.0) as integer}"); }
+// c5 — a two-parameter wrapper.
+fn c5() { println("c5 {(atan2(1.0, 1.0) * 1000.0) as integer} {(pow(2.0, 10.0) ?? 0.0) as integer}"); }
+// c6 — a wrapper whose op answers the null sentinel: the `?` discharge still sees it.
+fn c6() { r = sqrt(-1.0) ?? -1.0; println("c6 {r as integer}"); }
+// c7 — `exp` is NOT a plain wrapper (its first operand is `E as single`): it stays a call.
+fn c7() { println("c7 {(exp(1.0) * 1000.0) as integer}"); }
+// c8 — a stdlib function with a real body is untouched.
+fn c8() { t = "  pad  "; println("c8 [{t.trim()}] {len(t.trim())}"); }
+// c9 — `len` of a growing vector read per iteration: no header, the op sees each growth.
+fn h9(v: vector<integer>) -> integer { s = 0; for i in 0..3 { v += [i]; s += len(v); } s }
+fn c9() { v: vector<integer> = [1]; println("c9 {h9(v)} {len(v)}"); }
+// c10 — a wrapper's result feeding another wrapper, nested.
+fn c10() { v: vector<integer> = [1, 2, 3, 4]; println("c10 {abs(len(v) - 10)}"); }
+// c11 — a USER function whose body is one op stays a CALL: its call is observable (the live
+// tier may flip it to the interpreter, and its frame is on the shadow call stack).
+fn dbl(x: integer) -> integer { x * 2 }
+fn c11() { println("c11 {dbl(21)}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); }

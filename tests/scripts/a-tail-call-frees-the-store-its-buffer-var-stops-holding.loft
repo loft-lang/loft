@@ -24,6 +24,9 @@
 // the two builds.  `--native` answers identically on both trees, so `make falsify` reports
 // the native half INERT and exits non-zero: this defect only ever existed on one backend,
 // which is the point of the cell — the two backends read the same fact by different routes.
+//   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
+//   prints `stores not freed at program exit`; the leak channel is read straight off that
+//   stderr and an unarmed run sees it.
 
 struct TcRes { name: text = "", n: integer = 0 }
 

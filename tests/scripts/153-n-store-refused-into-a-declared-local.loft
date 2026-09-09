@@ -16,6 +16,11 @@
 //   REFUSES this program (`cannot change type from integer to integer?`), so the warning
 //   below is unmatched and the file fails there; on this build the store proceeds and `f`
 //   answers null.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 8498fdf1; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 // @EXPECT_WARNING: a nullable `integer?` is stored into the local `x` of the non-null type `integer`
 fn f(v: vector<integer>, i: integer) -> integer { x: integer = v[i]; return x; }
 fn main() {

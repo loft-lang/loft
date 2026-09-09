@@ -65,6 +65,8 @@
 //   channel is the process exit and no assert in this file is reached. A guard read only
 //   through the native leg would therefore report "fails before and after" for the wrong
 //   reason.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn first1451<T>(v: vector<T>) -> T? { v[0] }
 

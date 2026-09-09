@@ -24,6 +24,8 @@
 // forces that reuse rather than trusting the freed bytes to survive.  Under `LOFT_POISON=1`
 // the same pre-fix build reads 0xDEADBEEFDEADBEEF, and the vector-element cell CRASHES with
 // an out-of-bounds store access — three faces of one displaced-view free.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct In { v: integer }
 struct Out { inner: In, w: integer }

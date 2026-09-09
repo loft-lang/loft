@@ -1,0 +1,10 @@
+// @PLN150 cell bound/join/depth0 — every value must be 13, and the capture must survive.
+struct P { n: integer }
+fn main() {
+  cap = P { n: 13 };
+  maybe: P? = cap;
+  s = fn(v: integer) -> P { maybe ?? P { n: 13 } };
+  out = "";
+  for i in 0..4 { r = s(1); out = out + "{r.n} "; }
+  println("{out}| cap {cap.n}");
+}

@@ -38,6 +38,8 @@
 // family is measured against, and were correct throughout.
 //
 // @falsified-at: 9713fb58 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct KfH { kf_hk: integer, kf_hv: integer }
 struct KfS { kf_sk: integer, kf_sv: integer }

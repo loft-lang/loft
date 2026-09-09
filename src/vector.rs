@@ -248,7 +248,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // freed a store that was still named, not who computed the offset: the offset
         // is right for the type the caller thinks it is holding.  `LOFT_NO_SLOT_REUSE=1`
         // settles it in one run — if the fault vanishes, the slot had two owners.
-        let owner_words = *store.addr::<i32>(db.rec, 0);
+        let owner_words = store.read::<i32>(db.rec, 0);
         assert!(
             owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8,
             "vector_append: in store {}, field {}.{} lies outside its own record, which \
@@ -269,7 +269,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // derive a capacity and a copy length from that word, and both wrap, so the
         // failure would otherwise surface far away as an unbounded `memcpy` inside
         // `resize` — naming the copy, which is innocent.
-        let cur_words_signed = *store.addr::<i32>(vec_rec, 0);
+        let cur_words_signed = store.read::<i32>(vec_rec, 0);
         assert!(
             cur_words_signed > 0,
             "vector_append: in store {}, the vector handle in record {}.{} points at record \
@@ -611,12 +611,19 @@ pub struct VecHeader {
 /// call the `#rust` template made, not a second spelling of it.
 pub trait HoistScalar: Copy + 'static {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self);
+    /// The runtime's own append of this kind — the growth step of a hoisted push
+    /// (@PLN157 § V-q), so the capacity ladder has one definition.
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self);
 }
 
 impl HoistScalar for i64 {
     #[inline]
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_int(rec, fld, val);
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_i64(db, val);
     }
 }
 
@@ -625,6 +632,10 @@ impl HoistScalar for f32 {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_single(rec, fld, val);
     }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_f32(db, val);
+    }
 }
 
 impl HoistScalar for f64 {
@@ -632,6 +643,38 @@ impl HoistScalar for f64 {
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
         store.set_float(rec, fld, val);
     }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_f64(db, val);
+    }
+}
+
+/// A vector header a loop PUSHES through (@PLN157 § V-q, `@FR-R-Push`): the header plus the
+/// record's capacity in elements, so a push that fits is a bounds test, one store and a
+/// length bump, and only the growth step re-enters the runtime's append and re-derives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PushHeader {
+    /// The header every read of the path serves from; its `len` is kept current per push.
+    pub h: VecHeader,
+    /// Elements the record can hold before it must grow (0 for an absent vector).
+    pub cap: u32,
+}
+
+/// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
+#[must_use]
+pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
+    let h = vec_header(db, stores);
+    let cap = if h.rec == 0 {
+        0
+    } else {
+        // The claim header (a positive i32 word count) is what `vector_append` reads for
+        // the same number: words → bytes, minus the 8-byte header, over the element size
+        // — which the CALLER knows and this does not, so the capacity is kept in BYTES
+        // here and compared against `len * size` at the push.
+        let words = *keys::store(db, stores).addr::<i32>(h.rec, 0);
+        u32::try_from(words).map_or(0, |w| w.saturating_mul(8).saturating_sub(8))
+    };
+    PushHeader { h, cap }
 }
 
 /// Derive [`VecHeader`] for the vector `db` points at.
@@ -752,6 +795,51 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     } else {
         keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
     }
+}
+
+/// Equality for the checking form of a hoisted scalar (@PLN157 P4c): a float compares
+/// NaN-equal, because the getters answer `NAN` at an absent record and two such reads must
+/// agree.
+pub trait HoistEq: Copy + std::fmt::Debug {
+    fn same(self, other: Self) -> bool;
+}
+
+macro_rules! hoist_eq_exact {
+    ($($t:ty),*) => { $(impl HoistEq for $t { fn same(self, other: Self) -> bool { self == other } })* };
+}
+hoist_eq_exact!(i64, i32, u8, u32, bool, char);
+
+// Two reads of the SAME field bytes are bit-identical, so bit equality is the exact test
+// (a `float_cmp` margin would hide a real change); a NaN of another payload still counts as
+// the same absent record.
+impl HoistEq for f64 {
+    fn same(self, other: Self) -> bool {
+        self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
+    }
+}
+
+impl HoistEq for f32 {
+    fn same(self, other: Self) -> bool {
+        self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
+    }
+}
+
+/// The checking form of a hoisted record scalar read (`LOFT_HOIST_VERIFY=1`, @PLN157 P4c):
+/// `hoisted` is what the loop's prelude read once, `fresh` what the getter answers now.
+///
+/// # Panics
+///
+/// When they differ — the loop changed the field under its hoist, through a route the
+/// write-set analysis did not classify.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
+    assert!(
+        hoisted.same(fresh),
+        "hoisted record scalar is stale — the loop wrote the field it was hoisted from \
+         (hoisted {hoisted:?}, now {fresh:?})"
+    );
+    hoisted
 }
 
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later

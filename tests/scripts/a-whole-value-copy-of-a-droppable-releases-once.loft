@@ -23,6 +23,11 @@
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  The first moving cell is dc1 on
 //   both backends (the run stops at its first failed assertion); the ten cells behind it
 //   were each measured red on that build in the probe matrix the guard was cut from.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 12e58a4d; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 fn trace_path() -> text { return "loft_dropcopy_trace.tmp"; }
 

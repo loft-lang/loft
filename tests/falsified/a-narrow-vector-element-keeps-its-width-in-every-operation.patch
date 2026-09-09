@@ -1,0 +1,203 @@
+diff --git a/src/data.rs b/src/data.rs
+index 24eea6520..c3bff5d31 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -5327,30 +5327,6 @@ impl Data {
+     // semantically — future refactors (e.g. looking up an alias's
+     // captured forced_size via a Data-side registry) will need it.
+     #[allow(clippy::unused_self)]
+-    /// The narrow element a vector's STORAGE is registered with: `(spec, nullable, width)`,
+-    /// or `None` when the content is not a direct-encoded narrow integer.
+-    ///
+-    /// @FR-H-Stride — the width is the declared TYPE's and never the definition's.  One
+-    /// `integer` def serves all seven widths, so a def cannot carry one: asking it answers the
+-    /// 8-byte base for `u8` as readily as for `integer`.  This is the ONE home for the
+-    /// question, so the layout [`narrow_vector_content`] registers and the stride
+-    /// [`Parser::element_store_size`] measures are decided by the same code and cannot drift
+-    /// (loft#1420, where they had).
+-    #[must_use]
+-    pub fn narrow_vector_element(content: &Type) -> Option<(&IntegerSpec, bool, u8)> {
+-        let (spec, nullable) = match content {
+-            Type::Integer(spec) => (spec, false),
+-            // A nullable narrow element (`vector<u8?>`) reserves a null sentinel the same way a
+-            // nullable FIELD does, so its width is the NULLABLE one.
+-            Type::Optional(inner) => match &**inner {
+-                Type::Integer(spec) => (spec, true),
+-                _ => return None,
+-            },
+-            _ => return None,
+-        };
+-        Some((spec, nullable, spec.vector_narrow_width(nullable)?))
+-    }
+-
+     pub fn narrow_vector_content(
+         &self,
+         content: &Type,
+@@ -5360,7 +5336,16 @@ impl Data {
+         // same way a nullable FIELD does — peel the `Optional` and register the
+         // NULLABLE narrow Parts so the element can hold null (@PLN25 item 2).  A
+         // non-nullable `vector<u8>` element stays raw (full range, no sentinel).
+-        if let Some((spec, nullable, n)) = Self::narrow_vector_element(content) {
++        let narrow = match content {
++            Type::Integer(spec) => Some((spec, false)),
++            Type::Optional(inner) => match &**inner {
++                Type::Integer(spec) => Some((spec, true)),
++                _ => None,
++            },
++            _ => None,
++        };
++        if let Some((spec, nullable)) = narrow {
++            let n = spec.vector_narrow_width(nullable)?;
+             // The Part carries the offset the OPS encode against (`part_min`), not the
+             // declared `min` — they differ for a nullable signed narrow slot.
+             let m = spec.part_min(n, nullable);
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index a59a59d62..150fc986d 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -6148,22 +6148,12 @@ use #count instead"
+     /// Compute the in-store byte size of a vector element type.
+     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
+         let elm_td = self.data.type_elm(elm);
+-        // @FR-H-Stride — a narrow element (`u8`/`i16`/`u32`/…) is one, two or four bytes wide,
+-        // and the width is the declared TYPE's.  Must run before the generic
+-        // `known_type → database.size(...)` path below, which answers 8 for the integer base
+-        // whatever the declaration said.
+-        //
+-        // This used to ask the element's DEF (`forced_size(type_elm(elm))`) — a test that could
+-        // never pass, because `type_elm` maps every `Type::Integer` to the one `integer` def and
+-        // that def carries no width.  So the branch was dead and every narrow element measured 8
+-        // bytes, while `narrow_vector_content` had registered the STORAGE 1, 2 or 4 wide: a
+-        // stride that disagreed with the layout it was walking.  One number reached four
+-        // operations — a slice pattern's element reads, `insert`, `reverse` and `reserve` — so
+-        // `reverse` on a `vector<u8>` answered `0,0,0,0,0` and `[a, .., z]` answered
+-        // `21542142465`, which is `0x05_04_03_02_01`: the five elements swallowed whole
+-        // (loft#1420).  Ask the home the storage was registered through, so the two cannot
+-        // disagree again.
+-        if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
++        // Post-2c: honor size(N) on integer aliases.  Must run before the
++        // generic `known_type → database.size(...)` path below, because
++        // database.size for the 8-byte integer base returns 8 regardless.
++        if matches!(elm, Type::Integer(_))
++            && let Some(n) = self.data.forced_size(elm_td)
++        {
+             return i32::from(n);
+         }
+         // B5 (2026-04-13): for a mixed struct-enum element type
+@@ -6281,7 +6271,7 @@ use #count instead"
+             "OpInsertVector",
+             &[list[0].clone(), elm_size, list[1].clone(), db_tp],
+         );
+-        let set_val = self.set_element(&elm_tp, 0, Value::Var(tmp), list[2].clone());
++        let set_val = self.set_field(ed_nr, usize::MAX, 0, Value::Var(tmp), list[2].clone());
+         *val = v_block(vec![v_set(tmp, insert_call), set_val], Type::Void, "insert");
+         Type::Void
+     }
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index f531cfb22..0b64fc0e0 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -5766,19 +5766,6 @@ impl Parser {
+             _ => pos,
+         };
+         let get = self.cl("OpGetVector", &[Value::Var(v), elm_size.clone(), pos]);
+-        // @FR-H-Stride — the WIDTH of the read is the declared TYPE's.  The general path below
+-        // reaches `get_val` through `get_field(_, usize::MAX, _)`, which re-derives the type from
+-        // the DEF (`attr_type` answers `def.returned` for `usize::MAX`) — and a def cannot carry a
+-        // width, because the one `integer` def serves all seven.  So a narrow element was read
+-        // EIGHT bytes wide however the vector was declared, and `[a, .., z]` over a `vector<u8>`
+-        // answered `21542142465` = `0x05_04_03_02_01`, the five elements swallowed whole
+-        // (loft#1420).  `get_val` already selects the narrow read op from the spec when the alias
+-        // is absent; it just has to be given the type the caller still holds.
+-        if let Some((_, nullable, _)) = crate::data::Data::narrow_vector_element(elm_tp) {
+-            self.expr_not_null = !nullable;
+-            self.expr_not_null_name.clear();
+-            return self.get_val(elm_tp, nullable, 0, get, u32::MAX);
+-        }
+         let td = self.data.type_def_nr(elm_tp);
+         self.get_field(td, usize::MAX, get)
+     }
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 0bf4c36bd..1ca0939f8 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -10296,30 +10296,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Write into a vector ELEMENT slot whose declared type is `elm_tp`.
+-    ///
+-    /// @FR-H-Stride — the element's width is the declared TYPE's, and the def it resolves to
+-    /// cannot answer it, so the type is handed to the write path rather than re-derived from
+-    /// `d_nr` (loft#1420).  The read half is `read_slice_elem`.
+-    fn set_element(
+-        &mut self,
+-        elm_tp: &Type,
+-        d_pos: u16,
+-        ref_code: Value,
+-        val_code: Value,
+-    ) -> Value {
+-        let d_nr = self.data.type_def_nr(elm_tp);
+-        self.set_field_check(
+-            d_nr,
+-            usize::MAX,
+-            d_pos,
+-            ref_code,
+-            val_code,
+-            true,
+-            Some(elm_tp),
+-        )
+-    }
+-
+     fn set_field(
+         &mut self,
+         d_nr: u32,
+@@ -10328,7 +10304,7 @@ impl Parser {
+         ref_code: Value,
+         val_code: Value,
+     ) -> Value {
+-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true, None)
++        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, true)
+     }
+ 
+     /// @PLN130 F4 — writing a KEY field through an element view re-keys the element, and a
+@@ -10773,7 +10749,7 @@ impl Parser {
+         ref_code: Value,
+         val_code: Value,
+     ) -> Value {
+-        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false, None)
++        self.set_field_check(d_nr, f_nr, d_pos, ref_code, val_code, false)
+     }
+ 
+     /// @PLN25 single-payload — emit the steps that turn a `Some` record (`some_ref`, type
+@@ -11107,10 +11083,6 @@ impl Parser {
+         set_null
+     }
+ 
+-    // The field is addressed by `(d_nr, f_nr, d_pos)` and the write by `(ref_code, val_code)`;
+-    // `emit_check` and `elm_override` are the two independent switches over that. Bundling them
+-    // would name a struct after this one call site.
+-    #[allow(clippy::too_many_arguments)]
+     fn set_field_check(
+         &mut self,
+         d_nr: u32,
+@@ -11119,18 +11091,8 @@ impl Parser {
+         ref_code: Value,
+         val_code: Value,
+         emit_check: bool,
+-        elm_override: Option<&Type>,
+     ) -> Value {
+-        // @FR-H-Stride — for a vector ELEMENT (`f_nr == usize::MAX`) `attr_type` answers
+-        // `def.returned`, and a def cannot carry a width: the one `integer` def serves all
+-        // seven, so the write op below was chosen 8 bytes wide however the vector was
+-        // declared.  `insert(v, 0, 9)` into a `vector<u8>` then wrote eight bytes over a
+-        // one-byte slot and zeroed the five elements after it (loft#1420).  A caller that
+-        // holds the DECLARED element type passes it here instead.
+-        let tp = match elm_override {
+-            Some(t) => t.clone(),
+-            None => self.data.attr_type(d_nr, f_nr),
+-        };
++        let tp = self.data.attr_type(d_nr, f_nr);
+         // @PLN25 slice (b): an `Optional(τ)` field writes exactly like its base — same
+         // sentinel storage, same set-op. Peel the marker here so the whole emit path is
+         // transparent to it (nullability is read separately via `attr_nullable`).

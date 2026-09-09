@@ -14,11 +14,13 @@ SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
-`hash` 10.9× → **2.2×** consumer / 1.3–2.4× gate row (under the bar); `hair`
-4.3× → **2.1×** (under the bar); `lock` 30× → **5.2×** (3.4× gate row);
-`smooth` 262× → **16×**; `fronds` 49× → **13.8×**; `composite` 26× → **7.5×**;
-the fills 17× → **3.9–4.0×** (at the bar); `wide_line` 17× → 6.3×;
-`lock_curved` 11.9× → **7.0×** (2026-09-09, after § V-k).
+`hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
+is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `lock`
+30× → **4.4×** (2.7× gate row); `smooth` 262× → **14×**; `fronds` 49× →
+**13.0×**; `composite` 26× → **6.3×**; the fills 17× → **3.8×** (under the bar);
+`wide_line` 17× → 5.6×; `lock_curved` 11.9× → **5.7×**; `composite` 26× →
+**4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
+§ V-q (2026-09-09, both under the bar).
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -40,14 +42,32 @@ loft-native within **4×** of plain Rust on every judged row of the drawing
 performance pass, with the library's loft source unchanged and every row's
 hash unchanged.
 
+**And, since 2026-09-09, the FORMAL RULING of what the native rewrites assume
+(owner's steer):** every rewrite the plan ships is a rule in
+[formal/rewrites.md](../../formal/rewrites.md) — the hoist STATE they compose
+through (`R-State`, `R-Refresh`, `R-Alias`) and one rule per rewrite, each with
+its switch, its falsifier and its sites — and the emitted routines are VALIDATED
+against those assumptions by two instruments: the checking forms at run time
+(`LOFT_HOIST_VERIFY=1`) and the emission audit at emission time (§ V-r, queued
+first).  The emitted Rust grows with every unit; a unit is not shipped until
+its assumptions are written as a rule and checkable by both.
+
 ## Effort + design
 
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-08 (§ V-g)
+- **Last touched:** 2026-09-09 (§ V-r)
 
 ## Where to resume
+
+**Rebased onto `main` again on 2026-09-09 (e4c7db58, main's squash of this branch
+through § V-l together with 18 issues): § V-m, P4c, § V-n and § V-o were replayed
+with `git rebase --onto origin/main 91b15a44`; only the derived audit rows
+conflicted and were re-measured on the joined tree; the bundle and the surface
+index regenerated; the tip force-pushed with lease and the GitHub gate dispatched
+on it (run 34323456806).**  The four units below are the day's work; the
+scoreboard at the top is the joined tree's.
 
 Written 2026-09-08 after § V-g landed, updated the same evening: the branch
 was REBASED onto `main` (#1465 squashed this branch through § V-d together
@@ -98,22 +118,105 @@ is ranked below 4b and 5.  **§ V-k came from profiling `lock` WITH CALLERS on
 the § V-j runtime** rather than from the queue: the append path's bookkeeping
 was 40 % of that row and reached every row that appends (`lock` 6.6× → 5.2×,
 `lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×) — so the next step is the
-same instrument on the rows still over the bar, starting with `composite`
-(7.5×, the one row § V-k did not move) and `lock`'s remaining raster
-arithmetic (`n_lock_layer` 30 % self, `n_raster_segment` inlined into it),
-before the queue's 4b / 5 / the move.  Both are now measured (DESIGN.md
-§ V-k, its last three paragraphs): **the fused scalar append** (`v += [x]` is
-five runtime calls per element, ~35 % of `lock_curved` — one typed
-`OpAppend<Scalar>` op on both backends, M) and **the in-place-only writer**
-(SHIPPED as § V-l the same day: the loop hoists, −21 % on a setter-calling
-loop, but `composite` itself did not move — its cost is the pixel methods'
-own unhoisted single reads (29 %) and the caller's per-pixel scalar field
-reads (8 %), the next unit for that row).  The
+same instrument on the rows still over the bar.  Both units that ranking named
+shipped the same day: **the fused scalar append** as § V-m (`lock` 5.2× → 4.6×,
+`lock_curved` 6.9× → 5.8×, `wide_line` 6.3× → 5.5×) and **the in-place-only
+writer** as § V-l (a setter-calling loop −21 %; `composite` hoists but did not
+move — its cost is the pixel methods' own unhoisted single reads, 29 %, and the
+caller's per-pixel scalar field reads, 8 %).  § V-m's full local gate (run
+before its commit, 2026-09-09) found three more op-name lists the fused push
+had to reach — the constant-store builder, the native fn-ref collector and the
+move elision's escape test, each already guarded (DESIGN.md § V-m, the
+classifier paragraph) — so a new writing op is now EIGHT lists, and
+`parser::FUSED_PUSH_KINDS` is their one home.  Its GitHub gate then caught what
+the local curated set had not (DESIGN.md § P4c, finding 2): a keyed collection
+of ONE-FIELD records fused by shape and walked empty — the fusion now asks the
+schema what the container holds.  **P4c SHIPPED the same day** (DESIGN.md
+§ P4c): loop-invariant record scalar reads hoisted as `__vs_N` locals under the
+header gate, keyed `(record type, offset)` with an admitted callee's written
+set evicting the caller's scalars; nineteen cells, falsified by disabling the
+eviction (eight red), `LOFT_NO_SCALAR_HOIST` / `LOFT_HOIST_VERIFY`.  **§ V-n
+shipped after it** (DESIGN.md § V-n): a `&`-bound vector view derives its
+header at the binding for the rest of its block, so the pixel methods'
+element access takes one resolution instead of three (`composite` 6.3× →
+6.1×, the render rows −5–6 %).  **§ V-o shipped after it** (DESIGN.md § V-o):
+a stdlib one-op wrapper is emitted as its op, so `len(d)` reads the header —
+`composite` 6.1× → **4.4×**, the last of that row's store resolutions.
+**Next:** `composite` sits 0.4× over the bar, and its profile after § V-o (joined
+tree, `--only composite`, 1.5k samples) no longer shows a runtime helper at the
+top: `n_composite_layer` 37 % self, `get_pixel` 15 %, `set_pixel` 12 %, the fused
+write 4.4 %, `get_elem_hoisted` 4.2 %, `addr_mut` 2.4 % — the program's own
+arithmetic and the two method calls per pixel, whose bodies re-read
+`self.width` / `self.height` per call (single reads, so P4c cannot hoist them
+and the caller's hoisted scalars do not cross the call).  The unit that closes
+that is INTERPROCEDURAL — the pixel methods inlined into the caller's loop, or a
+parameter's invariant scalar fields passed across the call — an M design for the
+next session (DESIGN.md § P4 item 3's caller side, one call deep).  After it:
+the text readers off the hoist allow-list (P4c c17); § V-o's leaf-only rule
+lifted by mirroring the pre-eval map onto the cloned operands; the 27 scalar
+`OpNewRecord` sites the fusion does not reach (`parse_*`, `text.split`,
+`File.lines` — S, no judged row); then the queue's 4b / 5 / the move.  The
 scratch clone's `bench/bench.loft` carries a `--only <routine>` switch (scratch
 only, never the consumer's tree): `scripts/profile.sh --engine --calls --
 --native-release <clone>/drawing/bench/bench.loft --n 4000 --only composite`
 is how each row was ranked; an all-rows run is dominated by the unjudged
 `resize`.
+
+**§ V-p SHIPPED 2026-09-09** (DESIGN.md § V-p): the interprocedural unit above,
+decided by MEASURING both candidates on hand-edited emitted Rust first — a twin
+of each pixel method taking the caller's hoisted values as parameters and a full
+inline of the methods cost the same (rustc inlines the twin), so the rewrite passes
+values and never clones IR.  `composite` 4.41× → **2.34×**, `render_lock` /
+`render_marks` −8 %, everything else noise; seventeen cells, `tests/callee_inputs.rs`
+and `tests/scripts/157-callee-inputs.loft`, switch `LOFT_NO_CALLEE_INPUTS`.  On the
+way the rebased tree's gate turned red on a § V-o hole — a USER one-op function
+inlined as a stdlib wrapper skipped the live flip (DESIGN.md § V-o, third finding) —
+fixed with cell c11, and the whole native rewrite family got its formal chapter
+(`doc/claude/formal/rewrites.md`, `@FR-R-…`, nine rules, the code sites citing them;
+`hoist.rs` had cited none while enforcing eight).  Cell c18's INTERPRETER oracle then
+answered a garbage word: re-pointing an existing `&` link (`cur = &a; … cur = &b`) was
+broken on `--interpret` at every kind but a vector, and the rule was unwritten —
+`(B-Ref-Repoint)` now stands in `formal/binding.md` (D-bind-30 opened and closed the
+same day), `set_var`'s link branch routes the install to the link's own slot first, and
+`tests/scripts/157-link-repoint.loft` guards six kinds on both backends.  **Next:** the rows still over the
+bar are `smooth` 15.5× and `fronds` 12.9× (the allocation class — queue items 4b / 5
+and the move, DESIGN.md § V-j's ceiling), then `lock_curved` 5.6× and `wide_line`
+5.4× (profile WITH CALLERS on the § V-p runtime, as § V-k did), `lock` 4.39× a hair
+over.  The text readers off the hoist allow-list (P4c c17) and § V-o's leaf-only
+rule (a mirror of the pre-eval map onto the cloned operands) stay queued behind them.
+GitHub gate run 34344413805 is GREEN on the § V-r tip (c253383a: § V-p, § V-q, § V-r, the
+interpreter link re-point, the formal chapter's hoist-state rules and their history); build
+on that tip.
+
+**§ V-q SHIPPED 2026-09-09** (DESIGN.md § V-q): the raster rows profiled WITH callers on the
+§ V-p runtime put 30–45 % of `lock` / `lock_curved` in the scalar APPEND path — `lock_layer`'s
+seven constant-fill comprehensions, one push at a time at ~12 ns.  A loop that pushes to a
+vector path now keeps a PUSH header (the triple plus the capacity) the push itself keeps
+current, refreshed at the growth step; aliasing decided by ownership; the ceiling measured by
+hand first (−33 %).  `lock_curved` 5.64× → **3.84×**, `lock` 4.39× → **3.51×**, both under
+the bar; eighteen cells, `tests/push_hoist.rs`, `tests/scripts/157-push-hoist.loft`, switch
+`LOFT_NO_PUSH_HOIST`.  Two findings worth the next reader's time: a push whose VALUE reads the
+pushed vector is materialised by the parser as a whole-vector COPY per iteration
+(`lock_ribbons`' `lr_cum += [lr_cum[len(lr_cum)-1]? + lr_d]` is quadratic in the point
+count — a unit of its own for a long path), and a rewrite that removes a path from the read
+list must run after every collector that can add one (the § V-p twin inputs gave the pushed
+path a second, stale header until the order was fixed; the verifier caught it).  **Next:** the
+rows still over the bar are `smooth` 15.5× and `fronds` 12.9× (the allocation class, queue
+items 4b / 5 / the move) and `wide_line` 5.4× (its rasteriser's own arithmetic — profile at
+`--n 200000` to rank; the 4000-rep profile is half compile).  Check the GitHub gate dispatched
+on the § V-q commit before building on it.  **§ V-r SHIPPED the same day** (DESIGN.md
+§ V-r): `scripts/emission_audit.py` validates a `--native-emit` output against the
+hoist-state rules — `R-State` (one holder per path expression per frame, every hoisted
+read / write / push / `.len` / twin argument naming a live holder bound for its path),
+`R-Refresh` (no template append, pre-alloc or `vector_add` on a held path), `R-Inputs` (a
+twin handed only live holders) — and `tests/emission_audit.rs` runs it over the six cell
+corpora, the three hoist guards and `bench/12_drawing/bench.loft` in the gate, requiring a
+holder per corpus and the refusal of a doubled emission.  Proven to fail on the collector
+order that produced the double holder, at emission, with no run.  **Next:** the hoist-STATE
+builder (`hoistable` holds `R-State` by collector ORDER today; one `LoopState` with a single
+insert path, behaviour-preserving — byte-identical emission over the corpora, and the audit
+green — M), then the rows: `smooth` 14.3× / `fronds` 12.1× (allocation class) and
+`wide_line` 5.3×.
 
 **What § V-g taught, for the next compiler-side unit** (DESIGN.md § V-g's three
 findings): count stores from the LABELLED log, not the totals — the store the
@@ -194,6 +297,13 @@ unless said otherwise.
 | **V-j** — the copy into a fresh element: `v += [f]` cleared a destination `OpNewRecord` had just defaulted, a walk allocating child lists to find nothing; the parser marks the copy's destination fresh (`COPY_FRESH_DEST`) and both runtimes skip the clear.  The move-append's ceiling was measured on the way (−8 %, P1) and the shared-arena variant found a runtime cliff (`coalesce_free` 29.5 %, P2) | [DESIGN.md § V-j](DESIGN.md) | a cell leaks or answers wrong on either backend | **Shipped 2026-09-09** — `fronds` 838–845k → 794–801k ns/op (−5.5 %), interpreter −7 %, hashes exact; 12 cells clean under warn/leak/poison |
 | **V-k** — the append path's bookkeeping: a top-level append to a plain vector took three type lookups, the general dispatch, a `Parts::clone` per insert and a `resize` call per element (40 % of `lock`); short paths in `record_new` / `record_finish`, a copied insert kind, and `resize` on the growth step only | [DESIGN.md § V-k](DESIGN.md) | a cell leaks or answers wrong on either backend; the gate rows' hashes | **Shipped 2026-09-09** — `lock` gate row 4.4× → 3.4×; consumer `lock` 6.6× → 5.2×, `lock_curved` 9.9× → 7.0×, `fronds` 15.5× → 13.8×, `smooth` −10 %; 14/14 hashes agree |
 | **V-l** — a loop calling an IN-PLACE-ONLY writer keeps its hoisted headers: `in_place_only_writer` beside § V-c's `retbuf_only_writer`, admitted under the in-place tier (`LOFT_NO_INPLACE_CALLEE_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier); nine cells, five hoist and four must not | [DESIGN.md § V-l](DESIGN.md) | a cell hoists that must not (c2/c4/c6/c9), or the verifier panics on any cell | **Shipped 2026-09-09** — the setter-loop A/B −21 %; `composite` hoists but its cost is inside the pixel methods (next: their own reads + loop-invariant scalar fields) |
+| **V-m** — the fused scalar append: `v += [x]` on a plain vector was five runtime calls per element; seven typed `OpPush<Kind>` ops (one resolution, one capacity test, one write, one length bump, both backends), fused by the parser at `new_record` and the comprehension lowering; five writer classifiers taught the op | [DESIGN.md § V-m](DESIGN.md) | a cell leaks or answers wrong on either backend; `tests/fused_append.rs` | **Shipped 2026-09-09** — consumer `lock` 5.2× → 4.6×, `lock_curved` 6.9× → 5.8×, `wide_line` 6.3× → 5.5×, fills under the bar; 14/14 hashes agree |
+| **P4c** — loop-invariant record scalar reads hoisted as locals: `lay.x0` read once before a loop that cannot write it, keyed `(record type, offset)` over the body's typed write set plus what an admitted callee reaches (`hoist::hoistable` / `WriteSet`); `LOFT_NO_SCALAR_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § P4c](DESIGN.md) | a cell hoists a field the loop writes (the eight sabotage-red cells), or the verifier panics on any cell | **Shipped 2026-09-09** — 19 cells exact on both backends; emission pinned per cell (`tests/scalar_hoist.rs`); consumer `composite` 7.6× → 6.3× (−17 %), `lock` 4.6× → 4.4×, 14/14 hashes agree |
+| **V-n** — a `&`-bound vector VIEW (`d = &cv.data`) derives its header once at the binding for the rest of the block that indexes it (`hoist::view_def_header`, `Output::bind_view_header`): the pixel methods' `len(d)`-guarded element read/write take one store resolution instead of three; `LOFT_NO_VIEW_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-n](DESIGN.md) | a binding earns a header its remainder can invalidate (c18 red), or the verifier panics on any cell | **Shipped 2026-09-09** — 18 cells exact on both backends, emission pinned (`tests/view_header.rs`); consumer `composite` 6.3× → 6.1×, `render_lock` −6 %, `render_marks` −5 %, 14/14 hashes agree |
+| **V-o** — a stdlib ONE-OP wrapper (`len(v)`, `sqrt(x)`, 43 of them) is emitted as its op with the caller's arguments in the operand positions (`hoist::one_op_wrapper`, `Output::wrapper_op`), so the header-aware emitters see `len(d)` after a view binding and inside a hoisted loop; `LOFT_NO_WRAPPER_INLINE` off-switch | [DESIGN.md § V-o](DESIGN.md) | a wrapper call is left, or an operand lands in the wrong position (the reversed map fails to compile; the parameter swap turns `pow` wrong) | **Shipped 2026-09-09** — 10 cells exact on both backends, emission pinned (`tests/wrapper_op.rs`); consumer `composite` 6.1× → **4.4×** (−28 %), 14/14 hashes agree |
+| **V-p** — a callee's INVARIANT INPUTS cross the call: a callee admitted under `@FR-R-Callee` gets a TWIN (`<fn>__inv`) taking its record parameter's invariant scalars and vector headers as extra parameters (`hoist::callee_inputs`, transitively through pass-through callees), and a loop that hoisted them for the argument variable calls the twin (`Output::twin_call_inputs`); `LOFT_NO_CALLEE_INPUTS` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-p](DESIGN.md) | a c1–c17 cell moves; `tests/callee_inputs.rs` no longer sees a twin or a twin call; a consumer hash disagrees | **Shipped 2026-09-09** — `composite` 4.41× → 2.34× (under the bar), `render_lock` / `render_marks` −8 %; the two candidate designs measured equal by hand before the code, so the cheaper machinery was built |
+| **V-q** — a loop that PUSHES to a vector path keeps a PUSH header: (R-Header)'s triple plus the capacity, the push writes through it and refreshes it at a growth step, every read of the path serves from it (`hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `Stores::push_hoisted`, the ownership rule in `hoist::hoistable`); `LOFT_NO_PUSH_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-q](DESIGN.md) | a c1–c18 cell moves; `tests/push_hoist.rs` no longer sees a push header; a consumer hash disagrees | **Shipped 2026-09-09** — `lock_curved` 5.64× → 3.84×, `lock` 4.39× → 3.51× (both under the bar); ceiling measured by hand first at −33 % |
+| **V-r** — the EMISSION AUDIT: `scripts/emission_audit.py` validates a `--native-emit` output against the hoist-state rules (`R-State` one holder per path per frame, `R-Refresh` no mover on a held path, `R-Inputs` a twin handed only live holders); `tests/emission_audit.rs` runs it over every hoist corpus and the in-repo bench | [DESIGN.md § V-r](DESIGN.md) | a corpus audits with a violation; a corpus resolves no holder; the doubled emission is not refused | **Shipped 2026-09-09** — flags the § V-p × § V-q double holder at emission when the collector order is re-introduced; every corpus clean |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

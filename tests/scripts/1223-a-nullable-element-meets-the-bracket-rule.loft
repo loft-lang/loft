@@ -36,6 +36,8 @@
 //   expectation MATCHES, so the parent — where nothing fires — is the run that exits 1. Both
 //   cells COMPILE and run there, so a naive exit reading of the PROGRAM would call them clean:
 //   each appends its element and answers a correct length, with only an `(N-Store)` warning.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct D1223 { c: vector<integer> }
 

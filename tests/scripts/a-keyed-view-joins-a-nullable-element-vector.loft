@@ -38,6 +38,13 @@
 // is the only kind whose view saw the records at all.  `index` has a second failure mode behind
 // that one — once its element type matches, its red-black links have no home in a
 // `__nullable<S>` record and the run aborts on a corrupt reference instead.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0785871f; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct Kv { kv_k: integer, kv_k2: integer, kv_nm: text }
 

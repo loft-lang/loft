@@ -1,0 +1,116 @@
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
+index 2c69bdc49..017c44eec 100644
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
+@@ -150,13 +150,7 @@ impl Output<'_> {
+     /// tracker that disagreed with the emitter is exactly how the store leaked (loft#823).
+     fn materialises_element(&self, var: u16, to: &Value) -> bool {
+         let variables = self.data.def(self.def_nr).variables();
+-        // Through `base()`: `heap_def_nr` names the variant and not the marker, so a nullable
+-        // heap local answered `None` and this arm declined — the element stayed an ALIAS and a
+-        // write through it reached the container.  `@FR-L-Null` makes `E?` the same record
+-        // behind a nullability bit, so the copy question cannot turn on the `?`.  The
+-        // interpreter twin peels for the same reason; asked bare, the two backends disagreed
+-        // and only `--native` kept the defect (loft#1456).
+-        variables.tp(var).base().heap_def_nr().is_some()
++        variables.tp(var).heap_def_nr().is_some()
+             // @FR-O-Proxy asks copy — the arm this selects ALLOCATES a record and deep-copies
+             // into it, so a proxy that answered "owner" for a borrow costs a materialisation
+             // and never a release.
+@@ -966,10 +960,7 @@ impl Output<'_> {
+         // not for an element read, so the F2 strip alone left `--native` still reading the
+         // wrong element (probe 05: `c.n 44 want 33`) while the interpreter was already
+         // correct.  One fact, and until this both backends did not act on it.
+-        // `base()` for the same reason the predicate above peels: the marker does not change
+-        // which record this is (@FR-L-Null).  The GATE and the EMIT both ask, so peeling only
+-        // one leaves the arm selected and unreachable.
+-        if let Some(d_nr) = variables.tp(var).base().heap_def_nr()
++        if let Some(d_nr) = variables.tp(var).heap_def_nr()
+             && self.materialises_element(var, to)
+         {
+             let tp_nr = self.data.def(d_nr).known_type();
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 326cef657..ab6a40df4 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -10417,15 +10417,7 @@ impl Parser {
+     }
+ 
+     pub(crate) fn note_key_field_write(&mut self, base: u16, offset: i64) {
+-        // Through `base()`: a keyed element view is `Reference(E)` when the lookup types
+-        // non-null and `Optional(Reference(E))` once `@FR-Col-Lookup` gives the lookup its `?`
+-        // (loft#1450) — one notion, two spellings, and reading only the first skipped this
+-        // whole analysis for every keyed binding.  Measured: `c = s[30]; c.key = 5` then left
+-        // `s[30]` reachable by NO key and said nothing, which is the exact @PLN130 F4 defect
+-        // this function exists to prevent, silently reintroduced by a nullability marker.
+-        // `depend()` below is already `Optional`-transparent, so the deps arrive either way —
+-        // it was only the SHAPE test that could not see through the `?`.
+-        if !matches!(self.vars.tp(base).base(), Type::Reference(_, _)) {
++        if !matches!(self.vars.tp(base), Type::Reference(_, _)) {
+             return;
+         }
+         let deps: Vec<u16> = self.vars.tp(base).depend().clone();
+@@ -10433,14 +10425,7 @@ impl Parser {
+             if dep == u16::MAX || dep == base {
+                 continue;
+             }
+-            // Through `base()`: the container a view depends on may itself be `τ?` — a
+-            // `sorted<E[k]>?` field or local is `Optional(Sorted(…))`, and reading only the
+-            // bare spelling dropped every such container to `_ => continue`.  A key write
+-            // through a view of a NULLABLE keyed collection was then allowed in silence: the
+-            // record was re-keyed, the collection never re-indexed, the element left reachable
+-            // by no key, and the author told nothing — @PLN130 F4's defect, alive again behind
+-            // one nullability marker.
+-            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep).base() {
++            let (content, key_names): (u32, Vec<String>) = match self.vars.tp(dep) {
+                 Type::Sorted(c, keys, _) | Type::Index(c, keys, _) => {
+                     (*c, keys.iter().map(|(k, _)| k.clone()).collect())
+                 }
+diff --git a/src/scopes.rs b/src/scopes.rs
+index e9f494a54..4d7141098 100644
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -12022,19 +12022,6 @@ fn nullable_view_locals(code: &Value, function: &Function, data: &Data) -> Vec<u
+             && !function.is_argument(v)
+             && !function.is_captured(v)
+             && !function.is_compiler_generated(v)
+-            // A local whose DEP LIST is empty is not a view, whatever its defining statement
+-            // looks like — something detached it deliberately, and the only honest reading of
+-            // an owner-with-no-dep is that it owns.  `make_independent` is that something: a
+-            // write to a KEY field through a keyed element view materialises the local
+-            // (@PLN130 F4), and from there it owns the copy and must free it.
+-            //
+-            // Classifying on the defining SHAPE alone saw the projection and marked it
+-            // never-free, so no copy was made, the key write reached the collection, and the
+-            // element was left reachable by NO key — the exact defect F4 exists to prevent.
+-            // It stayed invisible while these locals were non-null; `@FR-Col-Lookup` giving a
+-            // keyed lookup its `?` (loft#1450) brought them into this classifier for the first
+-            // time and the shape test could not tell an owner from a view.
+-            && !function.tp(v).depend().is_empty()
+     });
+     out
+ }
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 4fbdf3b7a..844f5490e 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -2935,18 +2935,10 @@ impl State {
+             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
+             // through `c2`, loft#1319).
+             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
+-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
++        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
+             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
+             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
+             // the container-wide free described below; it emits no free of its own.
+-            //
+-            // Through `base()`: an element view is `Reference(E)` when the read types non-null
+-            // and `Optional(Reference(E))` when it does not, and the `?` says nothing about
+-            // whether `v` owns a store — @FR-L-Null makes `E?` the same record behind a
+-            // nullability bit.  Read bare, a nullable-typed local never materialised: it kept
+-            // the interior pointer, so a write through it reached the CONTAINER.  Measured on a
+-            // keyed element view whose KEY field is written — @PLN130 F4's materialise silently
+-            // stopped happening and the element was left reachable by no key (loft#1456).
+             && stack.function.tp(v).depend().is_empty()
+             // Not for a WITNESSED local (loft#1336, @FR-O-Witness): its deps are empty
+             // here only because a later whole-value copy stripped them, and the

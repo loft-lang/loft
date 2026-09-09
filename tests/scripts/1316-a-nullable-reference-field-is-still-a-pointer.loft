@@ -68,6 +68,9 @@
 //       with no diagnostic anywhere.  `r16_repointing` and `r16_a_bound_pointer_shares` are
 //       that cell; measured alone against the control they move the VALUE channel, and it is
 //       only the layout error above that gets to the exit code first.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct R16Leaf { r16_v: integer }
 

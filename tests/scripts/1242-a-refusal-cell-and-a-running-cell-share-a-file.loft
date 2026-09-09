@@ -31,6 +31,8 @@
 //   both lines print and a broken assertion in either cell fails the suite.
 //
 // @EXPECT_ERROR: cannot change type from hash
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1242 { k: integer }
 

@@ -28,6 +28,8 @@
 // @falsified-at: 6f9c0886 — native: `test_a_match_whose_other_arm_is_the_local` rustc
 //   "unexpected closing delimiter" -> compiles and passes (exit 1 -> 0); and by hand under
 //   `LOFT_NATIVE_LEAK_CHECK=1`, `then_taken` 1 store not freed -> 0.  Interpreter unmoved.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S { a: integer, b: text }
 

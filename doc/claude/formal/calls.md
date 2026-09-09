@@ -275,7 +275,17 @@ cannot see.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 2.**
+
+- **`D-call-19`** (loft#1484) — a generic monomorph's `-> T` record return hands back the argument
+  where its concrete twin copies; the monomorph publishes an empty dep list, D-call-13's residual.
+  Its guard reads green because every cell binds the result before mutating it, and a record bind
+  copies — so the cell measures the bind, not the return.
+- **`D-call-20`** (loft#1485) — a lambda's heap return that NAMES a capture (`fn() -> S { q }`,
+  `{ e = q; e }`) is handed out as a view; the vector former appends to the captured store, and
+  `{ e = q[0]; e }` aborts on the H5 two-pass contract.  A direct projection tail (`q[0]`) is the
+  green control.  `(L-CapHeap)` shares the store in the READ direction only, so `(F-Ret)` is
+  unopposed.
 
 The full register — every closed deviation with its dates and issue numbers, and the
 measurement that closed it — is the companion [calls-history.md](calls-history.md).

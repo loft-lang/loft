@@ -43,6 +43,15 @@
 //   weakness: on the control the file produces no output and fails no cell, because the frame
 //   goes out at the first call and nothing after it runs.  A guard scored on assertions alone
 //   would have read this as inert.  `exit` is the column that sees it.
+// @falsified-by: tests/falsified/1285-a-fn-ref-argument-reaches-a-fn-ref-callee.patch
+//   — the same channels as the control above.  That control is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on
+//   top of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   The channels matching are what say the patch reintroduces THIS defect, not a neighbour.
+//   HOLDS: the assertion channel does NOT move — the cells read the same on both
+//   trees — along with leak, panic, free-refusal and expectations.  The exit channel
+//   carries this one, so a patch that moves an assertion is reintroducing something
+//   else and must be rejected.
 
 fn dbl1285(x: integer) -> integer { x * 2 }
 fn bound1285() -> fn(integer) -> integer { dbl1285 }

@@ -40,6 +40,8 @@
 //   parse time, so the file does not run and every assertion is unmet. On the parent of loft#1215
 //   (e695a6f5) and on the shipped 2026.8.0 all four pass — this file pins behaviour those builds
 //   already had, which is what makes it a regression guard rather than a new promise.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct S1215c { n: integer }
 

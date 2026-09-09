@@ -50,6 +50,8 @@
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer(0, 255)?` is stored into element 0 of this vector literal of the non-null type `integer(0, 255)`
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct D1232 { c: vector<integer> }
 struct N1232 { c: vector<integer?> }

@@ -9,6 +9,11 @@
 //
 // @falsified-at: 8498fdf1 → here (hand-measured, a warning-only channel): the parent build
 //   refuses the program outright (`cannot change type from integer to integer?`).
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 8498fdf1; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 // @EXPECT_WARNING: a nullable `integer?` is stored into the local `c` of the non-null type `integer`
 fn f(a: integer, b: integer) -> integer { c: integer = a / b; return c; }
 fn main() {

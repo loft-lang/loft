@@ -26,11 +26,24 @@ Conventions used below:
 
 **What it does:** The entire loft runtime state lives in `Store`
 instances — a manually managed word-addressed arena backed by a single
-`*mut u8`.  `addr_mut<T>(rec, fld)` computes a byte offset into that
-buffer and returns `&mut T`.  Record sizes are encoded as a signed i32
-header (positive = claimed, negative = free); a red-black free-block
-tree lives *inside* the free blocks themselves (fields FL_LEFT /
-FL_RIGHT / FL_COLOR are u32 offsets into unrelated free blocks).
+`*mut u8`.  `read<T>(rec, fld)` / `write<T>(rec, fld, v)` move a value
+in or out at a byte offset into that buffer.  Record sizes are encoded
+as a signed i32 header (positive = claimed, negative = free); a
+red-black free-block tree lives *inside* the free blocks themselves
+(fields FL_LEFT / FL_RIGHT / FL_COLOR are u32 offsets into unrelated
+free blocks).
+
+⚠ **The buffer is PACKED, so nothing may take a reference into it
+without proving alignment.**  The allocation is
+`Layout::from_size_align(size * 8, 8)` and an address is
+`base + rec * 8 + fld`, so for any alignment up to eight the address's
+alignment IS `fld`'s — and `fld` is a byte offset the type layout
+assigns with no padding.  Measured over the corpus, `i64` fields occur
+at all seven non-zero `fld % 8`.  `read` / `write` therefore use
+`read_unaligned` / `write_unaligned`, which lower to the same single
+`mov` here; `addr` / `addr_mut` still hand out `&T` / `&mut T` for the
+values that cannot be copied (a `String` in a slot owns a heap buffer)
+and **assert the alignment they need**.  loft#1481.
 
 **Signal:**
 - `Allocating a used store` panic
@@ -52,7 +65,12 @@ FL_RIGHT / FL_COLOR are u32 offsets into unrelated free blocks).
 
 **Mitigation:**
 - `addr_mut` already asserts `!self.locked` in both debug and release
-  (S22 fix).
+  (S22 fix), and since loft#1481 also asserts that `fld` is aligned for
+  `T` — the only thing standing between a future layout change and
+  silent UB, because `<*mut T>::as_mut()` derefs inside `core`, which
+  is precompiled without `-C debug-assertions=on`, so that check never
+  runs there and the misalignment went unreported for the life of the
+  file.
 - `LOFT_STORES=warn` prints every allocation / free for post-mortem.
 - Best defence is still the regression tests under `tests/issues.rs`
   (P117 / P120 / P121 / P122 / P123 suites) — every leak / UAF that

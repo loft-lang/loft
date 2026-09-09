@@ -19,6 +19,9 @@
 // the container, which a fix that copied or dropped presence would fail.
 //
 // @falsified-at: 3614bd3c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 struct S { n: integer }
 // Three element types, one per keyed member: two keyed members over ONE element type are a
 // linked group (two routes to one record set), which is not what these cells measure.

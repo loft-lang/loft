@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 434 | 410 | **24** |
+| 445 | 422 | **23** |
 
 
 
@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 49 | **12** | 37 |
+| 51 | **12** | 39 |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 759 | 414 | 6 | **339** |
+| 766 | 422 | 6 | **338** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2616,6 +2616,51 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
+`tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →
+`445 · 422 · 23` and the Optional row `765 · 420 · 6 · 339` → `766 · 422 · 6 · 338`.**
+⚠ **The OPAQUE column FELL, and the ratchet is what earned it.** `make optional-ratchet` refused
+the join at `1510` and the two sites it named were both loft#1489's — and one of them was a
+DEFECT, not a style note: the capture bind's copy was written against a bare `Type::Reference`,
+so an ABSENT nullable capture was copied into a freshly allocated record and
+`c: S? = null; e = c; e.a ?? -1` answered 0 inside a closure where the same two lines outside one
+answer -1.  Peeling the scrutinee is what forced the absent guard `(F-Ret)`'s return-side twin
+has carried since loft#1337.  The instrument found a wrong ANSWER while asking about a wrapper.
+The second site (`bind_views_root`'s link test) peels too, which is what takes the column down.
+
+Measured ONCE on the union and taken from the run — neither branch's numbers survive a join,
+and the two rows arrived in the cherry-pick as a CONFLICT between two streams' answers, which
+is the shape that makes carrying one of them tempting.  Both `neither` / `opaque` columns are
+unchanged, so every discriminator the join added already peels.
+
+**2026-09-09, loft#1489's capture bind: the unspan row `438 · 414 · 24` → `439 · 415 · 24` and
+the Optional row `759 · 415 · 6 · 338` → `760 · 415 · 6 · 339`.**  One new discriminator on each
+axis, and they are the same function: `reads_a_capture_whole`, which tells `(B-Copy)`'s whole
+value from `(B-View)`'s interior place by asking whether an `OpGetDbRef`'s BASE is the closure
+record.  It peels `Span` (so the `neither` column is unchanged) and it is OPAQUE to `τ?` — by
+construction rather than by omission: it discriminates on a `Value`, and the `Type` it is asked
+about is peeled by its CALLER, which is where the nullable carve-out belongs and is stated.
+
+**2026-09-09, loft#1485's capture return: the unspan row `435 · 411 · 24` → `438 · 414 · 24`,
+and the Optional row does not move.**  Three new `Value` discriminators, all peeling and all one
+question — `set_rhs_names`, `place_root` and `tail_is_closure_read`, the three shapes a capture
+reaches a return through.  The `neither` column is unchanged, which is the one that matters: a
+capture is named through `__closure` and a `Span` cannot hide that.
+
+**2026-09-09, loft#1483's capture release: the Optional row `759 · 414 · 6 · 339` →
+`759 · 415 · 6 · 338`, and the unspan row does not move.**  The OPAQUE column went DOWN, which is
+the direction the ratchet exists for and the first time it has: the release asks *is this capture
+a collection?* through `is_collection`, which peels, so the function it sits in answers for `τ?`
+as well.  No new discriminator arrived — the count moved because an existing one learned to see
+through the wrapper, which is the cheapest way this number ever improves.
+
+**2026-09-09, loft#1484's leaf test: the unspan row `434 · 410 · 24` → `435 · 411 · 24`, and
+the Optional row does not move.**  A net +1 — `every_return_leaf_views_var` arrived and
+`every_return_leaf_is_var` was DELETED rather than left beside it, which is the whole shape of
+that fix: the leaf question has one home, and the widened test peels like the one it replaces.
+The Optional column is untouched because nothing in it discriminates on a `Type` variant; the
+new walker asks the RULES (`(B-View)` / `(B-Copy)`) about a `Value`, not a former about a type.
 
 **2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
 and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`
@@ -7281,6 +7326,150 @@ same drift shape and is worth its own walk.
 refuses *for the bound* (`'text' does not satisfy interface 'Addable'`) rather than for the
 unification — which is what says the generic fix did not slip past `check_satisfaction`.
 
+#### B8q — loft#1482 closed: the DENSE half of `@FR-F-Ret`, and a matrix that measured the bind instead of the return (2026-09-09)
+
+`(F-Ret)` states its own test — *a caller that mutates one call's result does not affect another
+call's result* — and B7t built the 48-cell matrix for it four days earlier.  A `-> S` return was
+still failing that test wherever the value arrived through a NAMED LOCAL: `f(q).a = 99` wrote into
+`q`, and the next `f(q)` read 99 back, on both backends with no diagnostic.
+
+**Where it was, and why it read as sound.**  The tail's local is RENAMED onto `__retbuf`, so the
+assignment overwrites the buffer's `DbRef` with the view and the caller adopts a record it already
+owned.  `classify_ret_promotion` already refuses that rename for a local viewing another LOCAL and
+stops at the frame boundary deliberately: a local's store dies with the frame, so the rename would
+DANGLE.  A parameter's store does not die.  The rename produces a perfectly live record — it is the
+caller's — so every instrument that asks *does this dangle* answers correctly and the value is
+wrong anyway.  That is the same split B7t's own D-call-17 named for the nullable half: both sites
+were right about dangling and neither was asking about FRESHNESS.
+
+`var_views_an_argument` is the argument twin, ONE HOP deep because a record bind copies
+(`(B-Copy)`): `e = p[0]; e` still looks at the caller's record, `e2 = e` owns its own.
+`return_views_an_argument` delegates to it, so the delivery selector and the promotion ladder
+cannot drift on one question.
+
+**Two things the value channel could not see.**  A candidate copied into the buffer must not have
+its deps walked into the return type — the copy SEVERS the borrow — and without that half a caller
+read the stale dep, bound the fresh copy as a view of its own store and freed nobody's: one record
+per call under `LOFT_STRICT_STORES`, every value correct, `make ci` green.  And the refusal
+answered a question `LOFT_JOIN_OWN`'s match-return pre-pass already answers, which left that
+switch unable to show its own before-half; six `tests/use_analysis.rs` oracle tests said so, and
+the refusal now stands down for a binding `is_marked_vector_borrow` says the pre-pass owns.  **A
+new leg answering a question an A/B switch already answers makes that switch vacuous, and the
+switch's own test is the only thing that can say so.**
+
+**Eight cells, nine controls, both backends.**  The filed `match` arm, a plain bind, a field
+projection of a struct parameter, an explicit `return`, a bind inside an `if` arm, a method
+receiver, a record ENUM, and a VECTOR element of a vector parameter — a former the report does not
+mention, whose sibling `e = b.v` was already right through the vector selector's own `CopyBorrow`
+leg, which is why the former looked settled.  The `if` arm moved on `--native` only, where it
+answered a zeroed record.  Controls: `p[0]` and a parameter handed straight back publish the
+borrow and the CALLER copies (loft#1368); a `for` binding, a literal and a two-hop bind own their
+store; the nullable twin, a view of a LOCAL and both arms of the `??` join were already right.
+Guard `1482-a-record-return-that-views-a-parameter-is-copied.loft`, falsified at `14ed307de` on
+both backends.  Corpus `introspect` moved in 18 of 1436 files, all in the return delivery, every
+one green on both backends with nothing unfreed and nothing exhausting the store table.
+
+⚠ **The correction this row owes B7t: its 48-cell matrix measures the BIND, not the return.**
+Every cell is `r = f(src); r.n = 99; …` — and a record bind COPIES, so the caller's own copy
+answers the question before the callee's return is ever consulted.  The three shapes that read
+green there and are wrong today are all generic (`fn g<T>(x: T) -> T { x }`, `p[0]`, and
+`e = p[0]; e`): each aliases the argument in the INLINE spelling where its concrete twin copies,
+and D-call-13's guard cannot see any of them.  Measured on the guard's own monomorph —
+`t_3Ctr_g_struct_whole` publishes `ref(Ctr)` with an EMPTY dep list and has no `__retbuf`, so the
+caller never lifts.  Filed; the cure is B7t's own recorded residual, the return buffer at
+instantiation.  **The general shape, and it is not about generics: a guard whose cells all BIND
+before observing is measuring the bind.**  `(F-Ret)`'s own sentence is written the other way
+round for exactly this reason — mutate THROUGH one call and read through another
+(`bump(f(q)); f(q).a`), which touches no binding and therefore cannot be swallowed by one.
+
+#### B8r — FOUR open issues, one absent generalisation: the owner witness stops at the call boundary (2026-09-09)
+
+⚠ **RESOLVED, and not by the generalisation — all four fell to point fixes once the shape below
+was named properly.**  loft#1486, loft#1483, loft#1485 and loft#1489 are closed.  ⚠ **And the
+last of them says this row's fourth line was about the wrong question entirely.**  loft#1489 was
+counted here as a return-buffer problem and its blocker was stated as *"the buffer IS the local
+by pass 2, so there is nothing to copy into"* — both true, and neither the defect.  `e = q` is a
+BIND, and `(B-Copy)` had never held for a bind out of a capture, so the tail had nothing of its
+own to hand back; fix the bind and the return needs no delivery at all.  Two collection
+deliveries were built against the buffer reading and measured INERT before the bind was even
+looked at.  **A boundary the filed issue draws is a hypothesis about where the defect lives, and
+this one moved a whole rule sideways** — from `(F-Ret)` to `(B-Copy)`.  The row stays because its
+*reasoning* was what unblocked them and its
+*prediction* was wrong in an instructive way: **counting four issues as one missing mechanism was
+right about the family and wrong about the cure.**  What they shared was not an absent witness but
+a flag or dep list standing in for TWO questions that diverge — see the paragraph below.
+
+**The cure that actually worked, three times.**  A stand-in is right while the two questions
+coincide, and a site is written when they do; nothing announces the day they come apart, because
+every value stays correct on the path that made the stand-in true.  loft#1486's dep list must name
+the backing AND say who owns; loft#1483's `if <record is non-null>` asks *does the record exist*
+for *does the record own THIS store*; loft#1485's `callref_captures` asks *does the closure hold a
+store* for *can the return BE it*.  Each was fixed by giving the second question its own answer —
+DERIVED from facts already recorded, never a sharper condition on the shared one.  Every attempt
+at a sharper condition traded one question for the other, measured: a leak for a wrong value, a
+leak for a use-after-free, and an inert change.
+
+Not a walk and not a fix — a count taken while closing loft#1482 and loft#1484, and the reason
+three separate point fixes were built, measured and REVERTED the same day.
+
+`@FR-O-Witness` (`__own_<name>`, loft#1336) answers *who releases this store* by IDENTITY at run
+time, for a LOCAL whose assignments mix ownership.  `(L-CapOwn)` states the same obligation one
+scope out — *a captured heap store is freed ONCE, by whichever of the two outlives the other* —
+and `(F-Ret)` a third time across a call.  **The mechanism exists only for the first.**  Every
+open store-lifetime issue on the board is a store whose owner is decided per RUN at a boundary
+the witness does not cross:
+
+| issue | the two parties | what a static answer costs |
+|---|---|---|
+| loft#1483 | a closure record rebuilt in a loop vs the frame | the frame stands down per `(L-CapOwn)`, the rebuild discards the record unfreed — `C×(n-1)`, and per CALL as well |
+| loft#1485 | a lambda's materialised capture return vs its caller | the callee copies correctly and nothing adopts it — 65535 live stores |
+| loft#1486 | a monomorph's minted vector return vs the caller's null-case buffer | exactly one of the two runs; only the buffer is freed |
+| loft#1489 | ⚠ NOT a witness question — the bind out of the capture never copied | recorded here as the buffer-vs-local pair, which is what two inert cures were built against |
+
+**Each was attempted and each failed the same way**, which is what makes this a register entry
+rather than four notes.  loft#1483's unconditional release closed the leak on every cell and
+installed a USE-AFTER-FREE at the escaping one (`1446` `e10` reads `3` where `7` is right).
+loft#1485's copy is right and left the store unowned, because `inline_struct_return` declines to
+lift a capture-returning closure on a premise the copy itself inverts.  loft#1486's honest deps
+changed nothing, because the caller never had a static question: name the parameter and it
+declines to adopt, name nothing and it double-frees on the path where buffer and result are one
+store.  **In all three the static reading is wrong in BOTH directions, which is the signature of a
+question that is not static.**
+
+⚠ **The trade each point fix offers is a leak for a UAF**, and `ownership-history.md` D-own-9
+already refuses it: *"removed the wrong answer and left both leaks — a trade, not a closure"*.
+That is why all three are reverted rather than shipped behind a switch.
+
+**The generalisation, stated once:** a store handed ACROSS a boundary — a closure record's capture
+slot, a call's returned aggregate — needs the same per-run witness a local gets, released by store
+identity against what the other party names.  It is D-call-13's recorded residual (*"wanting the
+return buffer at instantiation"*) and loft#1188's (*"a lambda whose buffer was RESERVED between
+the passes"*) meeting in one mechanism.
+
+⚠ **And the register already narrows it, which is worth reading BEFORE the next attempt.**
+`owner_witness_locals` is RECORD-ONLY, and its own comment says the collection half was built and
+measured wrong: *"A vector witness was built — a `Vector`-typed `__own_` handle, admitted here and
+released by the same identity guard — and it answers WRONG … because the witness releases a store
+the record still holds.  A leak is the better trade … until the release the record owes is decided
+per SLOT rather than per local."*  So the mechanism is not simply absent; **its per-LOCAL form has
+already failed at a collection**, and the recorded cure — per SLOT — is the same shape all four
+issues want: loft#1483 is a capture SLOT rebound in a loop, loft#1486 is a call-result SLOT that
+holds either the caller's buffer or the callee's mint, and loft#1489 was read as a return buffer
+SLOT that is also the tail's local.  A fifth attempt keyed on the LOCAL is the one already
+measured wrong.
+
+⚠ **loft#1489 has since been struck from that list, and its exit is the useful part.**  It closed
+without any witness, per-slot or per-local, because the store it was about should never have been
+shared: `(B-Copy)` says a bind out of a capture COPIES, and the copy gives the tail a store of its
+own, after which no ownership is in question at the return.  Three issues remain the per-slot
+argument; the fourth was a rule that had not been enforced.  **Before sizing a mechanism for a
+family, check that each member really needs one** — an issue in a list of four is there because
+somebody read it into the family, and a mis-read costs the whole design.
+
+Sizing it is design work, not a walk; recorded here so the next reader counts the issues rather
+than picking one, and starts from the per-slot statement rather than rediscovering why per-local
+fails.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
@@ -7296,6 +7485,11 @@ uncovered copy sites (L, cost unestablished), gate 4 durability (@PLN43, needs a
 decision), H6 `i32::MIN` (deferred).  **On `main` as of 2026-08-24** — PR #1084 absorbed the
 bulk of this thread; the branch now carries only the tranches after it.
 
+**Re-measured on the joined tree after the rebase onto `main` (e4c7db58, 2026-09-09): 440 · 416 · 24, 51 · 12 · 39, 763 · 418 · 6 · 339** — the four @PLN157 units below plus main's own sites; the per-unit lines keep the numbers each measured on the branch.  **After § V-p (2026-09-09): 440 · 417 · 23 and 764 · 419 · 6 · 339** — `hoist::callee_inputs_inner` discriminates on `Value` variants through `unspan` and asks a parameter's type through `peel_link`, so both new sites land on the aware side.  **After § V-q (2026-09-09): 765 · 420 · 6 · 339** — `hoist::owned_local` asks a root's type through `base()`; aware again.
+@PLN157 § V-o adds one peeling site and one see-through site — **432 · 408 · 24**, **755 · 407 · 6 · 342** — `Output::wrapper_op` reads each argument through its `Span` to admit only leaves, and `hoist::one_op_wrapper` asks a parameter's shape through `base()` to keep text-typed wrappers as calls.
+@PLN157 § V-n adds one see-through site — **754 · 406 · 6 · 342** — `hoist::view_def_header` asks the bound variable's shape through `peel_link` (a `&`-bound view is a vector whatever route names it).
+@PLN157 P4c adds three peeling sites, one name-keyed site and two see-through sites, all in `generation::hoist` — **430 · 406 · 24**, **51 · 12 · 39**, **753 · 405 · 6 · 342**: `scalar_read`, `setter_target` and `body_writes` read a getter's or setter's operands through their `Span` before typing them; `element_target` names `OpGetField` because it reads the schema type the projection CARRIES (a `TupleGet` carries none, and a tuple member is not a vector an element address names); and `plain_record_type` matches `Optional` by arm on purpose — a nullable record's payload offsets are a layout question the `(record type, offset)` key does not model, so it is neither hoisted nor classified as a write target.
+@PLN157 § V-m adds one peeling site inside an existing function — **427 · 403 · 24** — `scopes::grown_containers` reads a fused `OpPush<Kind>`'s container through its `Span` to tell the variable form from the field form, and the same arm is `spellings`' 50th name-keyed site (**50 · 12 · 38**): it names `OpGetField` because a `TupleGet` cannot be an append's container, exactly as the `OpNewRecord` arm beside it does.
 @PLN157 § V-g adds one peeling site — **426 · 402 · 24** on the joined tree — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
 
 @PLN157 § V-g adds one more on the OPAQUE side, also on purpose — **751 · 403 · 6 · 342** on the joined tree — `use_analysis::view_elision_bind` matches the bound local's type BARE (`Type::Reference`), because a nullable local is excluded from the elision by design: its slot may hold the sentinel and it takes the nullable join's own copy (`nullable_join_first_bind`), so asking through `base()` would admit exactly the shape the rule keeps out (guard cell c13).

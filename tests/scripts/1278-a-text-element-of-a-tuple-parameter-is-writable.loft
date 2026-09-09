@@ -54,6 +54,8 @@
 //   native column is the whole measurement, and `exit 1 -> 0` is rustc refusing the crate on
 //   the control and compiling it here.  Do not "fix" this file to make the interpreter column
 //   move; there is nothing there to catch.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn mk1278() -> text { "mk" }
 

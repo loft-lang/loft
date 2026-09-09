@@ -46,6 +46,13 @@
 //   the cells CRASH there (two SIGSEGV, one allocator panic) and the rest answer quietly with a
 //   wrong length, so an exit-status reading would score two different failures as one and would
 //   call the silent cells clean.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e695a6f5; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 enum Tg1215 { A1215, B1215 { n: integer } }
 

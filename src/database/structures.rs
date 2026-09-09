@@ -742,6 +742,73 @@ impl Stores {
         self.vector_add(db, o_db, known);
     }
 
+    /// @PLN157 § V-m — the slot of one fused scalar append: `vector_append` claims it (and
+    /// grows on the ladder), the caller writes it, and the length bump lands on the same
+    /// resolved store.  `None` for a null or absent vector, which the four-op path also
+    /// left untouched (`OpNewRecord` answered the null slot and every op after it declined).
+    #[inline]
+    fn append_slot(&mut self, db: &DbRef, size: u32) -> Option<DbRef> {
+        let slot = vector::vector_append(db, size, &mut self.allocations);
+        (slot.rec != 0).then_some(slot)
+    }
+
+    /// The length bump of [`Self::append_slot`]: `slot.rec` IS the vector record.
+    #[inline]
+    fn append_done(store: &mut Store, slot: &DbRef) {
+        let len = store.get_u32_raw(slot.rec, 4);
+        store.set_u32_raw(slot.rec, 4, len + 1);
+    }
+
+    pub fn append_i64(&mut self, db: &DbRef, v: i64) {
+        if let Some(slot) = self.append_slot(db, 8) {
+            let store = self.store_mut(&slot);
+            store.set_int(slot.rec, slot.pos, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
+    pub fn append_i32(&mut self, db: &DbRef, v: i32) {
+        if let Some(slot) = self.append_slot(db, 4) {
+            let store = self.store_mut(&slot);
+            store.set_i32_raw(slot.rec, slot.pos, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
+    pub fn append_f64(&mut self, db: &DbRef, v: f64) {
+        if let Some(slot) = self.append_slot(db, 8) {
+            let store = self.store_mut(&slot);
+            store.set_float(slot.rec, slot.pos, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
+    pub fn append_f32(&mut self, db: &DbRef, v: f32) {
+        if let Some(slot) = self.append_slot(db, 4) {
+            let store = self.store_mut(&slot);
+            store.set_single(slot.rec, slot.pos, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
+    /// A boolean or a plain enum: one byte, no sentinel (`OpSetBoolean` / `OpSetEnum`'s
+    /// `set_byte(…, 0, v)`).
+    pub fn append_byte(&mut self, db: &DbRef, v: i32) {
+        if let Some(slot) = self.append_slot(db, 1) {
+            let store = self.store_mut(&slot);
+            store.set_byte(slot.rec, slot.pos, 0, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
+    pub fn append_u32(&mut self, db: &DbRef, v: u32) {
+        if let Some(slot) = self.append_slot(db, 4) {
+            let store = self.store_mut(&slot);
+            store.set_u32_raw(slot.rec, slot.pos, v);
+            Self::append_done(store, &slot);
+        }
+    }
+
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
         // with the resolved stride — the instrument that settled the nested
@@ -806,7 +873,7 @@ impl Stores {
             let store = keys::store(o_db, &self.allocations);
             let byte_len = o_length as usize * size as usize;
             (0..byte_len)
-                .map(|i| *store.addr::<u8>(o_rec, 8 + i as u32))
+                .map(|i| store.read::<u8>(o_rec, 8 + i as u32))
                 .collect()
         } else {
             Vec::new()
@@ -831,7 +898,7 @@ impl Stores {
             // (possibly reallocated) destination record after `vector_set_size`.
             let store = keys::mut_store(db, &mut self.allocations);
             for (i, &byte) in snapshot.iter().enumerate() {
-                *store.addr_mut::<u8>(new_db.rec, new_db.pos + i as u32) = byte;
+                store.write::<u8>(new_db.rec, new_db.pos + i as u32, byte);
             }
         } else if db.store_nr == o_db.store_nr {
             // Re-read o_rec after resize in case it moved (non-self-append same-store case).

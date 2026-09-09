@@ -54,6 +54,9 @@
 //
 //   A guard asserting only lengths would have reported the first crash as its one failure and
 //   said nothing about the four silent cells, which is the reading this table exists to stop.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct E1214 { k: integer, nm: text }
 struct Nh1214 { h: hash<E1214[k]>? }

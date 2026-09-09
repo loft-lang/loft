@@ -6,30 +6,182 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **2** — `D-call-20` opened 2026-09-09 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-20 — OPEN (2026-09-09, loft#1485): a lambda's heap return that reaches a CAPTURE is handed out as a view
+
+`(F-Ret)` again, at the capture boundary.  Found by the peer stream while measuring loft#1482;
+re-measured here on `e4c7db584` before recording, on both backends, with `(F-Ret)`'s own test
+(`bump(g()); println("{g().a}")` — no binding anywhere in it, so a copy cannot swallow the answer):
+
+| lambda tail, over a capture `q` | answer | wanted |
+|---|---|---|
+| `fn() -> S { q }` | **8** | 7 |
+| `fn() -> S { e = q; e }` | **8** | 7 |
+| `fn() -> vector<S> { q }`, appended through | **len 2** | len 1 |
+| `fn() -> S { e = q[0]; e }` | **ICE** — H5 two-pass abort | 7 |
+| `fn() -> S { q[0] }` — the CONTROL | 7 | 7 |
+
+The control is what makes the rest readable: a DIRECT projection tail reaches
+`return_projects_into_local`, whose base is not an argument, so it materialises and the shape is
+already right.  What escapes is the tail that NAMES the capture, directly or through a local.
+
+The ICE is verbatim: *"H5 two-pass contract: def `n___lambda_0` (#736) grew a pass-2-only attribute
+`e` (pass1=1, pass2=3) that is not a documented lazy append"*.  It is the same rename that grows
+the attribute, but a capture is not an argument, so loft#1482's `var_views_an_argument` does not
+reach it and that fix leaves this exactly as it was.
+
+⚠ **`(L-CapHeap)` does not license this.**  It shares the store in the direction the closure READS
+and says nothing about what the closure RETURNS, so `(F-Ret)` is unopposed here — checked before
+recording rather than assumed.
+
+### D-call-19 — OPEN (2026-09-09, loft#1484): a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies
+
+`(F-Ret)` says a returned whole heap value is fresh, and *"nothing in the rule distinguishes a
+generic's instance"* — this doc's own sentence, two paragraphs above the deviation list.
+Re-measured here on `e4c7db584`, both backends:
+
+```loft
+fn idg<T>(x: T) -> T { x }      bump(idg(q)); idg(q).a  →  8    ← aliases
+fn idn(x: S)   -> S { x }       bump(idn(r)); idn(r).a  →  7    ← its concrete twin is fresh
+```
+
+`p[0]` and `e = p[0]; e` fail the same way.  The monomorph publishes `ref(S)` with an EMPTY dep
+list: D-call-13's `Own::Borrowed` re-derivation in `try_generic_instantiation` is not firing.  This
+is the residual D-call-13 itself named — *"a `-> T` that MIXES a mint and the argument … wanting
+the return buffer at instantiation"*.
+
+⚠ **And D-call-13's own guard reads GREEN over it**, which is the finding worth keeping.  Every
+cell in `a-generic-instance-returns-what-its-concrete-twin-returns.loft` binds the result before
+mutating it (`r = g_struct_whole(src); r.n = 99`) — and a record bind COPIES, so the cell measures
+the CALLER'S COPY, not the callee's return.  `t_3Ctr_g_struct_whole` publishes an empty dep list
+with every cell passing.
+
+> **A guard whose cells all bind before observing is measuring the bind, not the return.**
+
+The shape that discriminates is `(F-Ret)`'s own: mutate THROUGH one call and re-read through
+another — `bump(f(q)); println("{f(q).a}")` — which never touches a binding.  The same blindness
+cost two probes in @PLN160 before it was named; it applies to QUALITY.md § B7t's 48-cell matrix.
+
+### D-call-18 — OPENED AND CLOSED (2026-09-09, loft#1482): the DENSE half of D-call-17 aliases too, and D-call-17 closed on the belief that it does not
+
+`(F-Ret)`: *"a caller that mutates one call's result does not affect another call's result."*  Run
+as written, on both backends:
+
+```loft
+fn f(p: vector<S>) -> S { match p { [a, ..] => a, _ => S { a: 0 } } }
+fn main() { q: vector<S> = [S { a: 7 }]; bump(f(q)); println("{f(q).a}"); }   // 8, wants 7
+```
+
+**The dense return does not copy through its buffer.**  Pass 1's `Rename` leg moves the tail's own
+local ONTO `__retbuf`, and the assignment then overwrites the buffer's `DbRef` with the view rather
+than copying the record into it — `fn n_head(p, a) -> S["a", "p"]` with
+`a = OpGetField(OpGetVector(…))`, and no `OpCopyRecord` anywhere.  `return_views_an_argument`
+cannot see it either: it exempts any `v` with `is_argument(v)`, and after pass 1's rename the
+tail's local answers that TRUE — the predicate reads a fact the delivery itself created.
+
+**The boundary is wider than D-call-17's shape.**  It is any named local whose deps name a
+parameter, returned as the bare tail — `e = p[0]; e` fails identically and is not a match arm.
+`p[0]` direct, a `for` binding, a minted literal and a DECLARED parameter handed straight back all
+stay fresh; that last one is the control that leaves loft#1368's exemption standing.  The cells are
+`plans/160-nullable-road/fret-boundary/`.
+
+**Why it is open rather than closed.**  Both pass-2-only repairs were built and measured: by pass 2
+the buffer var IS the tail's local, so source and destination are one var — `MaterializeView`
+answers an empty record and orphans a store (loft#848's collision), `ForwardCopy` answers an empty
+record.  The decision has to move to PASS 1, which is what `!self.first_pass` exists to prevent,
+because a `??`-join local's deps are not pass-stable (the H5 two-pass contract).  Closing this means
+giving that guard a pass-stable predicate — a design call, not a leg to move.
+
+**How it was found, which is the reusable part.**  Not from a failing test: `@PLN160`'s pair
+instrument asked *"do `τ` and `τ?` reach the store machinery by the same road?"*, and the divergence
+it reported was read by asking WHICH half was wrong instead of assuming the dense one was right.
+A deviation register entry that names an oracle is a claim to re-measure — the same warning
+`tuples.md` carries about its own `OPEN: 0`.
+
+**CLOSED** by `3ee333f94` + `7f0f123ab` (branch `tuxedo-1481-addr-alignment`, not yet on `main`).
+Measured by the peer stream; the commits were read here to confirm the change is where the entry
+says, and this plan re-measures its own channel table on the join rather than carrying it.
+
+**It did not land where either reading pointed.**  Not `classify_reference_delivery` — the fix is
+in `classify_ret_promotion`'s `allow_rename`, whose ladder already refuses the rename for a
+candidate viewing a LOCAL and stops at the frame boundary on purpose: a local's store dies with the
+frame, so renaming it would dangle.  **A parameter's store does not die, which is exactly why this
+read as sound** — the rename produces a perfectly live record, and it is the caller's.
+`var_views_an_argument` is the argument twin, one hop deep because a record bind COPIES (`e = p[0];
+e` still looks at the caller's record; `e2 = e` owns its own).  Refused, the candidate drops to the
+`Bind` copy leg and materialises into `__retbuf`.
+
+**The pass-stability requirement is met STRUCTURALLY, not by a better predicate.**  Refusing the
+rename is what stops the tail's local from BECOMING an argument, so the fact
+`return_views_an_argument` reads is no longer one the delivery itself created, and both passes
+answer alike.  `return_views_an_argument` now delegates to the per-var predicate, so the two
+spellings cannot drift.
+
+**A second half was needed, and only a LEAK found it.**  A candidate copied into the buffer must
+not have its deps walked into the return type — the copy severs the borrow.  Without that,
+`find_join(table, …)` in `496-borrowed-view-return-dep-prune` published `-> Mon["__retbuf",
+"table"]`; the caller read the stale `table`, bound the fresh copy as a view of its own vector and
+freed nobody's.  One record per call, every value correct, `make ci` green.  `jo_arm_skip`'s walk
+already says that sentence for the vector arm pre-pass; this is the record twin.
+
+**The boundary was wider than the eight rows the issue recorded**, in both directions: a field
+projection of a struct parameter, an explicit `return e`, a method receiver, a record ENUM, and a
+vector ELEMENT of a vector parameter (`fn f(o: vector<vector<S>>) -> vector<S> { e = o[0]; e }`),
+which appended to the argument.  Its sibling `e = b.v` — a vector FIELD of a struct parameter — was
+already right through the vector selector's own `CopyBorrow` leg, which is why the former looked
+settled.  The `if`-arm cell moved on `--native` ONLY: it answered a zeroed record where
+`--interpret` was accidentally right.
+
+⚠ **The methodological finding, and it is the reusable part.**  The first gate run was RED on six
+`tests/use_analysis.rs` oracle cells: the new refusal answers the same question as the
+`LOFT_JOIN_OWN` match-return pre-pass for a `_mv_` marked vector borrow.  With the pre-pass ON
+those candidates sit in `jo_arm_skip` and the legs never meet; under `LOFT_NO_JOIN_OWN` the caller
+has asked for the pre-pre-pass emission and the new leg handed back the post-pass answer anyway —
+**so the switch could no longer show its own before-half.**  Nothing about VALUES moved; the
+runtime was clean either way, and only the pinned dep in
+`join_own_match_return_strips_the_borrow` could see it.  `7f0f123ab` stands the refusal down for a
+binding `is_marked_vector_borrow` says the pre-pass owns — @PLN155's one-home predicate, reused
+rather than respelled.
+
+> **A new leg answering a question an A/B switch already answers makes that switch VACUOUS, and the
+> switch's own test is the only thing that says so.**  A bisect control that cannot fire is worth
+> nothing, and no value channel reports its loss.
+
+Evidence at `7f0f123ab`: `make ci` ALL GATES PASSED · `LOFT_POISON=1` 2016/2016 ·
+`LOFT_VERIFY_STACK=1` 2016/2016 · corpus emit diff DIFFERENT 18 of 1436, every one clean on both
+backends with `strict=0` **and** `exhausted=0` (the second grep matters — `LOFT_STRICT_STORES`
+implies `LOFT_NO_SLOT_REUSE`, so a store-churning program aborts with *"store table exhausted"* and
+a sweep grepping only for `strict-store` scores that CLEAN).  Guard
+`tests/scripts/1482-a-record-return-that-views-a-parameter-is-copied.loft`, 8 cells + 9 controls,
+falsified at `14ed307de` on both backends.
+
 ### D-call-17 — OPENED AND CLOSED (2026-09-08, loft#1468): a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller
 
 `(F-Ret)` makes a returned value FRESH and independent — *"a function that returns a whole heap
 value hands out an OWNED value … never a view of a local. EXCEPTION: a `&T` return"*.  A DENSE
-heap return earns that through its hidden `__retbuf`: the caller allocates and `ref_return`'s
-copy leg writes into it.  A NULLABLE one has no buffer — loft#896's `__nullable<S>` is a
+heap return was believed to earn that through its hidden `__retbuf` — *"the caller allocates and
+`ref_return`'s copy leg writes into it"*.  ⚠ **@PLN160 measured that premise and it is FALSE; see
+`D-call-18` below, which is this deviation's dense half, still open.**  A NULLABLE one has no
+buffer — loft#896's `__nullable<S>` is a
 different representation, and `ret_promo_base` records that giving it one as well leaks a record
 per call — so nothing materialised it and the view escaped:
 
 ```loft
 fn head(p: vector<S>)   -> S? { match p { [a, ..] => a, _ => null } }        // aliased
-fn head_d(p: vector<S>) -> S  { match p { [a, ..] => a, _ => S { a: 0 } } }  // fresh
+fn head_d(p: vector<S>) -> S  { match p { [a, ..] => a, _ => S { a: 0 } } }  // NOT fresh — D-call-18
 ```
 
 A write through `head`'s result landed on the caller's own vector, identically on both
 backends, with no diagnostic.  That is also `(N-Shape)`'s complaint in one line — a shape
-question answering differently for `τ` and `τ?` — and the dense twin is the oracle that settles
-which answer is right.
+question answering differently for `τ` and `τ?`.  ⚠ **The dense twin was taken as the oracle that
+settles which answer is right, and it is not one:** it aliases too (`D-call-18`).  `(N-Shape)`
+says only that the two spellings must AGREE; it does not say which of them is correct, and
+`(F-Ret)` is what settles that.  Reading agreement as endorsement is how a half-fix closed.
 
 **Two sites, and the pair is the point.**  `classify_reference_delivery` never asked whether the
 tail borrows an ARGUMENT (`return_views_an_argument`, the mirror of `return_views_local`), and

@@ -1,0 +1,61 @@
+// @PLN157 § V-o (loft#1426) — a call to a stdlib ONE-OP wrapper (`len(v)` is
+// `OpLengthVector(v)`, `sqrt(x)` is `OpMathFuncFloat(9, x)`, `atan2(a, b)` is
+// `OpMathFunc2Float(0, a, b)`) is emitted as the op itself on the native backend, so a
+// `len` inside a hoisted loop or after a view binding reads the header's length.  The
+// interpreter calls the wrapper and is the oracle; the values pin that the op receives
+// the caller's arguments in the wrapper's operand order, constants included.
+// The cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-o-wrapper-op-cells.loft
+// (tests/wrapper_op.rs pins that no wrapper CALL is left and `exp` stays one).
+// `LOFT_NO_WRAPPER_INLINE=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-09) — `Output::wrapper_op` mapping the
+// operands in REVERSE order puts a libm selector in a value position and the native
+// build fails to compile (rustc E0308 in `atan2`'s template); the same swap on the two
+// PARAMETERS alone turns the `pow` cell wrong (1024 → 100).  Restored byte-identically,
+// interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_WRAPPER_INLINE all green.
+
+struct Cv { w: integer, data: vector<integer> }
+
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+/// `len(v)` inside a loop that hoists `v`: 3 * 3 + 60.
+fn len_in_loop(v: vector<integer>, n: integer) -> integer { s = 0; for i in 0..n { s += len(v) + (v[i] ?? 0); } s }
+/// The set_pixel shape: `len(d)` after a view binding, then the element write.
+fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) { d[i] = v; } }
+/// `len` of a growing vector, per iteration: 2 + 3 + 4.
+fn len_growing(v: vector<integer>) -> integer { s = 0; for i in 0..3 { v += [i]; s += len(v); } s }
+
+// A user function whose body is one op: the live tier may flip it, so it keeps its call.
+fn user_dbl(x: integer) -> integer { x * 2 }
+
+fn main() {
+  v: vector<integer> = [10, 20, 30];
+  r1 = len_in_loop(v, 3);
+  println("c1 len-in-loop={r1}");
+  assert(r1 == 69, "len inside a hoisted loop: 3*3 + 10+20+30");
+
+  cv = Cv { w: 0, data: [0, 0, 0] };
+  for i in 0..4 { setp(cv, i, 10 + i); }
+  assert(total(cv.data) == 33 && len(cv.data) == 3, "set_pixel shape: 10+11+12, the out-of-range write refused");
+
+  t = "héllo";
+  assert(len(t) == 5 && len('é') == 2, "the text and character wrappers");
+
+  assert(((sqrt(2.0) ?? 0.0) * 1000.0) as integer == 1414, "sqrt through its selector");
+  assert((sin(0.5) * 1000.0) as integer == 479, "sin through its selector");
+  assert(abs(-7) == 7 && (abs(-2.5) * 10.0) as integer == 25, "abs, integer and float");
+  assert((atan2(1.0, 1.0) * 1000.0) as integer == 785, "a two-parameter wrapper keeps its operand order");
+  assert((pow(2.0, 10.0) ?? 0.0) as integer == 1024, "pow(2, 10), not pow(10, 2)");
+  assert((sqrt(-1.0) ?? -1.0) as integer == -1, "the op's null sentinel still reaches the `??`");
+  assert((exp(1.0) * 1000.0) as integer == 2718, "exp is not a one-op wrapper and stays a call");
+
+  g: vector<integer> = [1];
+  assert(len_growing(g) == 9 && len(g) == 4, "len of a growing vector reads each growth");
+
+  w: vector<integer> = [1, 2, 3, 4];
+  assert(abs(len(w) - 10) == 6, "a wrapper feeding a wrapper");
+  assert(user_dbl(21) == 42, "a user one-op function is called, not inlined");
+
+  println("wrapper-op ok");
+}

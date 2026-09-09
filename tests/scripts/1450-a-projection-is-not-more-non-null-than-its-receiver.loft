@@ -42,6 +42,9 @@
 //   there exactly as they do here — so this guard is pinned on the diagnostic channel by
 //   necessity and would read INERT on values alone.  That IS the defect: the values were
 //   never in question, the types were.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct It1450 { k: integer, v: integer }
 struct Tk1450 { k: text, v: integer }

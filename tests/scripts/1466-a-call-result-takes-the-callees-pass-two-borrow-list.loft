@@ -54,6 +54,9 @@
 //   batch 11 widened `Type::heap_def_nr` to peel `Optional`, which sent a `-> τ?` VIEW return
 //   into the native call-result copy path for the first time); it is fixed at `record_def` on
 //   the branch that introduced it and this file goes green on native when that is joined.
+//   HOLDS: exit, assertions, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct S66 { a: integer }
 

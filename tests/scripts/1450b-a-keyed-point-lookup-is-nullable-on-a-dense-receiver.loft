@@ -32,6 +32,12 @@
 //   count rather than an assert: the VALUES below are what loft answers either way (C80 gives
 //   the null record), and what moves is whether anything says so.  The slice and write cells
 //   pass there unchanged, which is what makes them controls rather than cells.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   CHANNEL: the WARNING COUNT, not an assertion. The VALUES are what loft answers either way
+//   — C80 gives the null record on both builds — and what moves is whether anything SAYS so,
+//   so a run scored on values reads this guard as inert however loudly the diagnostic
+//   changed.
 
 struct E1450 { k: integer, v: integer }
 struct W1450 { s: text, v: integer }

@@ -23,6 +23,9 @@
 // the halt are proven where a failure can be observed.
 //
 // @falsified-at: 38d7afbf — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Aq1147P { aq_px: integer }
 fn OpEq(self: Aq1147P, other: Aq1147P) -> boolean { self.aq_px == other.aq_px }

@@ -22,6 +22,12 @@
 // channel is what moves and `falsify.sh` reads that off stderr, which a `main`-less guard
 // never prints.  A `main`-ful mirror of this file leaks `SNTup×30` at 04482989 and is clean
 // here, on BOTH backends; every assertion above passes on both trees.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   ARMED: `LOFT_STRICT_STORES=1`. This file has no `main`, so falsify routes it through
+//   --tests, where the leak column is BLIND — an unarmed run reports `leak none` on BOTH
+//   trees whatever it leaks, which records a leak guard as INERT instead of failing loudly.
+//   TESTING.md § A guard that never failed is not a guard.
 
 struct SNTup { a: integer = 0 }
 

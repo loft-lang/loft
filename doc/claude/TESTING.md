@@ -679,9 +679,14 @@ on the totals:
 
 **65 % are publicly recoverable and 35 % are not**, and the two halves want different answers.
 For the 235 the receipt is fine *provided the reader fetches PR refs*, which nobody does by
-default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'` — so a fallback fetch before
-`falsify.sh` gives up on an unknown ref is a small mitigation covering two thirds of the
-problem.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
+default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'`.  **`falsify.sh` now does that
+itself**: on the first control it cannot resolve it fetches that namespace once and retries, so
+two thirds of the corpus resolves without the reader knowing any of this.  A control recovered
+that way SAYS so, because a receipt that lives only under `refs/pull/*` is one GitHub policy
+away from unreadable, and a silent success would hide exactly the guards worth re-pointing.  The
+bulk sweep reports such a control as `no-such-ref` rather than folding it into `no-worktree` —
+"the receipt names a build nobody has" and "the build is here but unusable" want different
+repairs.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
 124 are recoverable by nobody, and they are the population a self-contained form would have to
 serve.
 
@@ -693,9 +698,122 @@ authority, and nothing in the guard file tells a reader which one they are in.
 The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
 `src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
 ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
-fail, with nothing recording when it stopped being checkable.  What a receipt should BE (gate
-on resolvability, a durable tag per control, or the reintroducing PATCH recorded inline) is an
-open design call and the owner's to make; it is stated here as measurement, not as a decision.
+fail, with nothing recording when it stopped being checkable.  Gating on resolvability is the
+move that looks right and is not: it reddens the 124 immediately, and reddens MORE in a fresh
+clone than in a warm one, so CI would fail on a clean checkout while passing locally.
+
+#### The patch receipt — `@falsified-by:`
+
+The durable form carries the defect instead of pointing at it.
+**`// @falsified-by: tests/falsified/<guard>.patch`** names a patch that reintroduces the fault
+on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactly as a ref
+control is scored.  Nothing outside the repository has to survive for it to be re-run, which is
+the one property no ref-shaped receipt can have.
+
+Deriving one is mechanical, because a control is not an arbitrary commit: it is the PARENT of
+the commit that added the guard, so the reintroducing patch is that commit's own source diff,
+reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for
+**101**; the other 32 were falsified against something else and need the patch by hand.
+
+**Where the corpus stands: 20 of the 133 publicly-unreachable guards carry a patch receipt, and
+the other 113 carry a one-line marker** saying their control is gone so a reader learns it from
+the file rather than from `falsify` exiting 2.
+
+⚠ **A patch receipt degrades too, and differently — measure before promising it.**  Retrofitting
+one is only possible while the tree still resembles the fix.  Of the derivable candidates, 22 of
+100 still APPLIED to today's tree, and of those all but one produced a control that COMPILED —
+the exception applies and then fails to build, because the code its fix introduced has been built
+on since.  So a patch stops being runnable in two ways where a ref stops in one.  The difference
+is that both are DETECTED: `falsify.sh` exits 3 saying the patch no longer applies, where a
+dangling sha reports nothing at all.  A patch that no longer applies still RECORDS the defect in
+full, which a dead sha does not.
+
+⚠ **The channel check REJECTS patches, and that is the point of having it.**  A derived patch
+reverts the whole source diff of the commit that fixed the guard, so where that commit fixed more
+than one thing the patch reintroduces more than one thing.  One of the 21 verified this way was
+rejected outright: `a-nullable-collection-local-takes-its-typed-null` was falsified on the FREE
+channel with every value already correct, and its patch moves the exit and assertion channels
+instead — some other fault of the same commit.  A receipt that moves the WRONG channel is worse
+than no receipt, because it looks like proof.  So a patch is recorded only when its channels
+agree with the control's, and the guard keeps the marker when they do not.
+
+⚠ **Score a leak-channel guard with the instrument ARMED or the check misfires.**  All three
+leak/free-channel guards in the retrofit first read as contradictions — assertions moving where
+the control line says the LEAK channel moves — purely because the sweep ran without
+`LOFT_STRICT_STORES=1`.  Re-scored armed, two reproduced their control's own channel exactly and
+the third stayed a genuine contradiction.  An unarmed run does not report a weaker result here;
+it reports a DIFFERENT one, which is indistinguishable from a bad patch until you arm it.  Note
+also that a leak's `kt=` id shifts with the type table between builds: the store SHAPE
+(`St1295×42`) identifies it, not the number.
+
+#### What a receipt owes its next reader
+
+Whether a recorded patch reintroduces THE defect cannot be gated: it costs an apply, a build
+and a run per guard, and the verdict is a judgement about which channel moved rather than a
+pass or a fail.  So it is a **read, once per release** — `make falsify-review`, checklist item
+`M-falsify-receipts` — and what decides whether that read takes an afternoon or a week is how
+well each guard documents itself.  **A guard whose receipt does not say how to score it again
+is defective on its own terms**: it claims to catch something and records no way to check the
+claim a second time.
+
+Four fields, each earned from a failure that cost real time in the 2026-09-09 retrofit:
+
+| field | what it says | what its absence cost |
+|---|---|---|
+| **CHANNEL** | which channel carries the defect | a good patch and a bad one look identical |
+| **ARMED** | the instrument the measurement needs — asked only of a leak-class guard | three leak guards read as flat contradictions until `LOFT_STRICT_STORES=1` was armed; an unarmed run gives a DIFFERENT channel, not a weaker one |
+| **WITNESS** | the concrete observation on the control — a value, a count, a leaked shape (`answers 99 where the file says 88`, `St1295×42`) | the re-read becomes a whole run instead of one comparison |
+| **HOLDS** | what must NOT move (*"every assertion passes on both trees"*) | the field that REJECTED a patch: `a-nullable-collection-local-takes-its-typed-null` moves exit and assertions where its guard was falsified on the FREE channel |
+
+Write them as LABELLED lines — that is the canonical form, and the labels satisfy the check
+directly:
+
+```text
+// @falsified-by: tests/falsified/1033-a-par-worker-gets-the-right-nested-vector.patch
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
+//   channel is the whole measurement here; a run scored on leaks would learn nothing.
+```
+
+The prose an older receipt already carries still counts, so a well-written one is not reported
+thin for missing a keyword.  But the label is what makes the standard WRITABLE: without it an
+author has to guess which words the heuristic likes, and 12 receipts documented in full read as
+thin until the labels were recognised.  A label owns its wrapped continuation lines, and the
+leak-class test that decides whether ARMED is owed reads everything EXCEPT the HOLDS section —
+`HOLDS` says what does not move, so "leak and panic are equal" is a statement that the guard is
+*not* leak-class, and reading it naively made documenting a value guard demand an instrument
+field it has no use for.
+
+The rule lives in `scripts/falsify-review.py --check` and nowhere else, so the review and the
+gate cannot disagree about what a receipt owes.  `doc_hygiene::every_guard_says_how_to_score_it
+_again` holds the line against `tests/falsified_docs.baseline`, a ratchet that only shrinks —
+331 of 382 receipts predate the standard, `HOLDS` missing from most of them, so the backlog is
+recorded honestly rather than fixed in one pass or pretended away.  A leak's `kt=` id shifts
+with the type table between builds, so a WITNESS names the store SHAPE, not the number.
+
+⚠ **Record the patch when you falsify, not when you need it.**  `falsify.sh <guard> <ref>`
+prints the durable receipt beside the ref one and writes the patch, because the derivation is
+free exactly once: at that moment the control still resolves and the diff is the fix you just
+made, so it applies by construction.  Afterwards it is hand-reconstruction, and for two thirds
+of the corpus it is already too late.  The count of unreachable controls also grows on its own
+as merged branches are pruned — 124 to 133 over a few hours — so a receipt recorded the cheap
+way is the only one that stays ahead of it.
+
+⚠ **A patch is a receipt only while it isolates ONE defect**, which is why the emitted one is
+bounded.  Against the commit immediately before the fix the diff IS the fix, a few dozen lines;
+against a DISTANT control it becomes the whole source difference since, reintroducing everything
+fixed in between with nothing to say which defect the guard caught — measured at 47 079 lines
+for a control a few months back.  Over 800 source lines `falsify.sh` writes no patch and says to
+re-run against the commit before the fix; the recorded receipts run 17 to 203 lines, so the
+bound separates the two uses without needing to be tuned.
+
+⚠ **A patch control is not the same experiment as a ref control.**  A ref rebuilds the whole
+tree as it was; a patch reverts one fix on the tree as it is.  That isolates the defect more
+cleanly, and it is a different measurement — so each patch receipt is RE-SCORED rather than
+inheriting the channel text of the ref it replaces.  All seven reproduce their control's exact
+channel signature, which is what says the patch reintroduces THAT defect rather than a
+neighbouring one; the same check answers the chaining hazard above, where a guard whose control
+is the previous fix in a series moves a channel for the earlier defect's reason.
 
 ⚠ **A method note that cost one of the two counts its first answer:** `git rev-parse
 "<sha>^{commit}"` exits non-zero for a missing object but still PRINTS its argument to stdout,
@@ -3918,6 +4036,44 @@ alone does not name a cause.  The stack half poisons at RESERVE precisely becaus
 region; a correct program never observes the sentinel, because definite assignment writes every
 slot before it is read.  So a hit there is a claim about ASSIGNMENT, and a hit in the arena half
 is a claim about LIFETIME.
+
+**The leak line carries TWO counts, and reading the wrong one turns an unbounded leak into a
+bounded note.**  `[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=81 C×2` says
+one STORE and, after the type, **two RECORDS**.  A leak that reuses its slot — `OpDatabase` on a
+non-null slot appends rather than minting — holds the store count at 1 however far it grows, so a
+reader who takes the store count sees a constant and reports "bounded".  Measured on loft#1483: the
+records are `C×(n-1)` per call and accumulate across calls (50 calls × 3 iterations → `C×100`),
+and the first published table called it *"1 — bounded, does not accumulate"* off the same output
+that carried the real number.  **Scale the shape before believing either count** — run the loop at
+2, 3, 5, 9 iterations and the function at 1 and 50 calls; a leak that is genuinely bounded stays
+flat on both axes (loft#1487 does: `P×1` at 1, 4, 20 and 50).
+
+**A control that cannot DISCRIMINATE reads exactly like a control that passes.**  The entries
+above are about a vacuous ASSERTION — the value cannot witness the defect.  This is its twin one
+level out: the assertion is fine, the cell is green, and the green means nothing because the cell
+could not have come out any other way.  Measured twice on 2026-09-09, in two subsystems, at two
+altitudes, and **neither was found by looking for it**:
+
+- **The cells bind before observing.**  `a-generic-instance-returns-what-its-concrete-twin-returns`
+  passes every cell while the monomorph it guards hands back its argument (loft#1484,
+  `D-call-19`).  Each cell reads `r = g_struct_whole(src); r.n = 99` — and a record BIND COPIES, so
+  the cell measures the caller's copy and never the callee's return.  The same shape made the first
+  three @PLN160 alias probes answer identically for the aliasing case, the fresh case and the
+  control.  The discriminating shape is `(F-Ret)`'s own: mutate THROUGH one call and re-read
+  through another — `bump(f(q)); println("{f(q).a}")` — which never touches a binding.
+- **A new leg answers the question an A/B switch already answered.**  loft#1482's argument-view
+  refusal duplicated the `LOFT_JOIN_OWN` pre-pass for a marked vector borrow, so under
+  `LOFT_NO_JOIN_OWN` the switch could no longer emit its own before-half.  Values did not move —
+  the runtime was clean either way — and the only thing that could see it was
+  `join_own_match_return_strips_the_borrow`, a test that exists to pin the switch's own effect.
+
+So two rules follow, and they cost nothing to apply.  **Before believing a green cell, ask what
+would have to change for it to go red** — if the answer is "nothing the guard is about", the cell
+is measuring something else.  And **when adding a leg near a `LOFT_NO_*` switch, run that switch's
+own test**: every one of them in CLAUDE.md is a bisect control whose whole value is that it can
+still show its before-half, and no value channel reports the loss when it stops.  A guard that
+cannot fail proves nothing, and a control that cannot discriminate is the version of that which
+still looks like evidence.
 
 So when the symptom is layout-fragile, assert what the fix DETERMINES rather than what the
 program happens to compute: the emitted IR.  `OpFreeRef(_tuphold` must not appear, because the

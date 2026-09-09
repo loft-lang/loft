@@ -9,64 +9,52 @@ Tracker: [@PLN155](https://github.com/loft-lang/plans/issues/155).
 
 ## Status
 
-**Active — arc A and phase 0 landed 2026-09-08.  Arc A does NOT confirm the plan's premise;
-phase 0 confirms it on a different measurement and the plan continues.**  @PLN153 closed the
-same day, so the sequencing hold is lifted.  **Next: the plan needs a decision it
-cannot take from measurement alone** — phase 3a's follow-up shows `deny` costs 27 of 140 files
-a leak even at the plan's own refusal set, so either the licence derivation becomes a plan of
-its own (positively classify the remaining 1464, as `is_synth_buffer` did for the buffers) or
-the refusal stays a REPORT.  Phase 4 (the heap half) is independent and can proceed either
-way.  The ownership MODEL is not reopened
-here — [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) stands, and so does `deps` as the
-carried fact.  What this plan changes is **who is allowed to free**: today that is derived
-four different ways, concluded in one function and emitted in another, and the derivation
-that decides it fails toward *permitted*.
+**Status — CLOSED 2026-09-09.**  The Done criterion is met in its SECOND form, and the plan was
+**re-aimed by its owner mid-flight**, which is the headline rather than a footnote.
 
-**What arc A measured, and what it means for the rest of this plan.**  `make campaign-review`
-on the 2026-09-08 population (642 bugs, #246-#1467) ranks ownership/free as a **walk, not a
-campaign** — it fails two of the four gates:
+**What the re-aim changed.**  The Goal as written ends *"a free without a licence is REFUSED at
+the point every free ends up"*.  Measured, that is not reachable and not wanted: phase 3a showed
+`deny` costs 27 of 140 corpus files a leak and makes one answer WRONG even at the plan's own
+refusal set, and shrinking that set by 77 % moved the cost by four files.  The owner's steer
+settled it — *the frees are fine where they are; the concern is how we derive when to free, and
+there should be a limited amount of code that verifies if a free is needed.*  So the refusal
+ladder was retired and the plan's second half became a REDUCTION, measured by
+`make free-licences`.
 
-| gate | ownership/free reads | the plan's premise said |
-|---|---|---|
-| 1 trend | **falling -3.0pp vs peak 19.3 %** (16.3 % in the last band; -3.1pp with @PLN153's own finds screened out) | "flat at its own peak", measured 2026-09-07 with 5 bands |
-| 2 spellings | **`Enum+Reference+Vector` hand-spelled at 26 sites**, one `@FR-O` rule cited from 12 files — the widest of any class | one fact in four representations ✓ |
-| 3 chokepoint | **`Type::RefVar` 78 % opaque** (584 of 751 shape-resolving functions cannot see a `&τ`) — the number the plan said did not exist | "no chokepoint for the LICENCE" ✓ |
-| 4 walk tried | **unjudged — the fall is 2.8 bugs in a 109-bug window** | "the walk was tried and measured no effect" |
+**The residual, characterised as a different mechanism.**  What stops the licence being derived
+from a positively-derived owner fact is not the licence's shape — it is the ORACLE's reach.
+1464 emitted frees rest on a fact it cannot read at all, and `is_synth_buffer` showed what
+closing that gap looks like: one predicate the codebase already had, never consulted, worth
+4948 frees.  Strengthening the oracle that way is a plan of its own and is not filed here.
 
-Gates 2 and 3 hold and are the strongest readings in the table.  Gates 1 and 4 do not, and
-both for the same reason: **the seven ownership walks landed 2026-09-04/05 and their payoff
-window has not passed.**  Four days is not a measurement — a 2.8-bug difference in a
-109-bug window separates nothing — so "the walk measured no effect" is not yet a fact, it is
-an unfinished measurement of exactly the kind gate 4 exists to refuse.  The report says so
-rather than ranking the class.
+**Phase 5 is pending DATA, not work, and that is why closing is safe.**  Its own product is the
+missing keystone row: `Function::proxy_says_owned` is registered in `scripts/bug-review.py` at
+#1479, so the class reads `MEASURING` and the next cycle scores it whether or not this plan is
+open.  Before that registration, closing would have lost the measurement; after it, holding the
+plan open would only hold a place in a queue.
 
-**Phase 0 answers what the gates could not, and it does NOT kill the plan.**  `make
-licence-census` over the whole 1412-file corpus: **6412 of 80 325 emitted frees (8.0 %) rest
-on the deps PROXY alone**, at **2478 distinct `function:binding` sites, 804 of them
-author-named bindings rather than compiler temps.**  The kill criterion was *a handful*; this
-is not one.  Phases 1-4 are worth their cost, and they are worth it on a measurement of the
-COMPILER rather than on a bug share that a three-day window cannot read.
+**What shipped.**
 
-| the fact that licensed the free | frees | share |
-|---|---|---|
-| `oracle-derived` — the oracle read the binding's own definitions and answered `Owned` | 45 192 | 56.3 % |
-| `minted` — `OpDatabase` minted a store into it; the strongest positive fact | 17 555 | 21.9 % |
-| `oracle-disagrees` — the oracle answers `Borrowed`/`Join` and a free was emitted anyway | 9 349 | 11.6 % |
-| **`proxy-alone` — empty deps, and the oracle had NOTHING to read** | **6 412** | **8.0 %** |
-| `veto` — a `skip_free` binding, whose contract is no ownership-derived free at all | 1 817 | 2.3 % |
+- **One home for the free licence** (phase 1): `Function::proxy_says_owned` — the @FR-O-Proxy /
+  @FR-O-Override pair, which six free sites spelled by hand.  Hand-written copies **12 → 7**,
+  and all seven now carry a stated reason, so the residue is principle and a new copy stands out.
+- **`Own::Unknown`** (phase 2a, `@FR-O-Unknown`): the oracle may answer *I derived nothing*, and
+  twenty readers dispose of it explicitly instead of inheriting the permissive value from a `_ =>`.
+- **Three instruments**, each with a working control: `make campaign-review` (which class earns a
+  campaign, four measured gates), `make licence-census` (what fact licensed each emitted free),
+  `make free-licences` (how much code decides whether a free is needed).
+- **The opacity screen parameterised by type former**, so `RefVar`, `Tuple` and `Rewritten` have
+  numbers where only `Optional` did.
+- **The heap half** (phase 4): `Stores::free_named` shown to be the runtime chokepoint,
+  `(H-FreeNull)` given its runtime citation, and `(H-FreeLIFO)` measured as a STALE RULE and
+  registered as **D-heap-LIFO**.
 
-Phase 0's own finding about the population, which shapes phase 2: the largest family in
-`proxy-alone` is `__ref_N` (1579 of 2478 sites) — the NRVO/return buffers, which the oracle's
-`Value::Var` arm *deliberately* cannot classify (*"a store the function minted in place with
-no `Set` at all … else a parameter"*).  So the fail-open is not an accident at the margins; it
-is load-bearing for the return-buffer machinery, and phase 2's `Own::Unknown` has to give
-those a positive answer rather than merely refuse them.
-
-⚠ **What the number is NOT.**  It is not 6412 wrong frees.  It counts what each licence RESTS
-on, not what is broken: a `__ref_N` buffer really is owned, and the oracle simply cannot see
-it.  The claim phase 0 supports is the plan's premise — that the licence is derived from a
-proxy with no positively-derived owner fact behind it at one free in twelve — and nothing
-stronger.
+**What was refuted, and is worth as much.**  All four `Own::Unknown` declines (phase 2b) — one
+is a wrong value on both backends, one moves emit with nothing observable, two are inert.  The
+`deny` ladder (3a).  And four instruments were caught reporting numbers about themselves rather
+than about the compiler: `o_proxy_check.py` could not see the scope-exit sweep, the free-licence
+audit twice, and the `@FR-N-Shape` peel list.  **Three separate times a fold made its own
+instrument go quiet** — the rule that came out of it is in `formal/IMPLEMENTATIONS.md`.
 
 ## Goal
 
@@ -82,7 +70,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
   design calls (§ Open design questions).
 - **Value category:** S (silent failure).  An over-free reads another record's bytes and a leak
   reaches the store ceiling; both answer without saying anything.
-- **Last touched:** 2026-09-09 (re-aimed onto the derivation count; two reduction rounds; phase 4 done).
+- **Last touched:** 2026-09-09 (re-aimed; two reduction rounds; phase 4 done; phase 5 started and pending data).
 
 ## Why this family, measured
 
@@ -122,9 +110,9 @@ is run on every guard and the axes it reports unreached are cells still to build
 | **2a** — the verdict exists and every reader disposes of it | `use_analysis.rs:2355` (the code names the cure) | an unnamed IR spelling DECLINES instead of freeing (`make falsify` vs the pre-loft#1248 build); corpus diff differs only in the cells phase 0 predicted, written down first | ✅ **done** — `Own::Unknown`, 20 readers disposed.  Prediction (EMPTY diff) written first and **falsified twice**, each falsification naming a reader that silently inherited the permissive answer; **IDENTICAL 1412/1412** once both were fixed |
 | **2b** — a reader DECLINES on `Unknown` | § Phase 2b | `make falsify` vs the pre-loft#1248 build; the leak each decline trades for, measured per reader | ✅ **done — all four candidates REFUTED, and none lands.**  `LOFT_OWN_DECLINE=<name>` is the instrument that says so: `witness` is a WRONG VALUE on both backends, `owned-slot` moves three files' emit with every channel unchanged (unverified, not safe), `collection` and `join` are inert |
 | **3a** — where the refusal has to LIVE, and what `deny` costs | § Phase 3a | the ladder fires at all (a gate that never fires is not a gate); the default path byte-identical | ✅ **done — and it corrects the plan twice.**  `owns_freeable_store` is NOT the sweep's licence (the ladder attached there NEVER FIRED); and `deny` is not safe-by-direction — 31 of 140 files leak, and **one answers WRONG** |
-| **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | **Open, and phase 3a's own follow-up says `deny` cannot be the top rung.**  The refusal set was shrunk 77 % (6412 → 1464 frees) and the deny cost moved by four files: 27 of 140 still leak and one still answers wrong |
+| **3b** — the ladder proper, `report → deny` | § Phase 3 | full gate + corpus green under `deny`; hand-computed position × free-spelling × backend matrix; guard falsified against a pre-phase build | ❌ **RULED OUT, not deferred.**  27 of 140 files leak and one answers WRONG even at the plan's own refusal set, and shrinking that set 77 % moved it by four files.  Superseded by the owner's re-aim: the frees are fine where they are |
 | **4** — the heap half (`@FR-H-Free`, `-FreeTwice`, `-FreeLIFO`, `-FreeNull`) | `formal/heap.md` | double-free, free-null and LIFO-order cells red before the arc, green after, both backends | ✅ **done — and the verify could not be met as written, which is the answer.**  The runtime already enforces three of the four at ONE chokepoint, so no cell was red before.  `(H-FreeLIFO)` is enforced nowhere and was deliberately retired — registered as **D-heap-LIFO**.  `tests/heap_free_discipline.rs`, 5 cells, each recording whether it was falsified: one was, two were not and say why |
-| **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | Open |
+| **5** — re-measure | `make bug-review` | the ownership/free row after this plan's watermark, plus the keyed-collection keystone's own row | ✅ **started 2026-09-09 — and it CANNOT conclude yet, which is the finding.**  The watermark is #1479 with nothing above it; the two-week window is 13 of its 14 days BEFORE the plan.  Its product is the keystone REGISTRATION that makes the class read `MEASURING` instead of earning another plan |
 
 ### Arc A — the reassessment instrument
 
@@ -485,10 +473,11 @@ frees (phase 3's ladder) and onto phase 1's question, asked exhaustively.
 | `vec_copy_needs_db`, `vector_needs_db` | alloc | param + proxy — **identical facts, identical question, two functions** |
 | `materialises_element`, `frame_owns_capture_store` | ? | proxy + witness / param + proxy |
 
-**Inline: 35 free-construction sites in 13 distinct fact-sets**, 7 of those sets used at more
-than one site.  The healthy shape is visible in the largest group: **9 constructions share ONE
-derivation** — the scope-exit sweep's `emit`, computed once from `capture + proxy + transferred
-+ veto + witness + work-ref` and read by all nine.  That is what "a limited amount of code"
+**Inline: 37 free-construction sites in 13 distinct fact-sets**, 7 of those sets used at more
+than one site.  (A DERIVED row: it read 35 on the branch that made it and 37 on the tree
+that holds all three streams — re-measure with `make free-licences`, never carry it.)  The healthy shape is visible in the largest group: **9 constructions share ONE
+derivation** — the scope-exit sweep's `emit`, computed once from `capture + proxy+veto +
+transferred + veto + witness + work-ref` and read by all nine.  That is what "a limited amount of code"
 looks like when it works.
 
 ### What the comparison exposes
@@ -630,6 +619,48 @@ not a guard, and two of five here are not — saying which is worth more than fi
 alike.  They are also the reason these live in a Rust test and not in `tests/scripts/`: **no
 loft program can express a double free, a stack free, or a free out of order**, which is
 precisely why the runtime's refusals had no coverage at all before this phase.
+
+## Phase 5 — started on a two-week window, and it cannot conclude yet (2026-09-09)
+
+**The first form of the Done criterion is unmeasurable, and the measurement is what shows it.**
+The plan's phases landed 2026-09-08/09.  The tracker's newest bug is **#1479, filed 2026-09-08**;
+nothing has been filed since.  There is no post-watermark population at all, so "did the
+ownership/free share fall after this plan's watermark" has no data on either side of the line.
+
+**The two-week window, which is what there is.**  286 bugs since 2026-08-26 (#1096-#1479)
+against 368 before it:
+
+| | before | last 2 weeks | move |
+|---|---|---|---|
+| ownership/free, raw | 48 (13.0 %) | 57 (**19.9 %**) | **+6.9pp** |
+| ownership/free, campaign's own finds removed | — | 12 of 241 (**5.0 %**) | **-8.0pp** |
+
+⚠ **Neither number is a verdict on this plan, because the window is 13 of 14 days OLDER than
+it.**  What the window does measure is worth having on its own: **79 % of the class in it — 45
+of 57 — was filed BY the stability work itself**, bodies naming a plan, a walk, or a
+`Found-via`.  Four ownership bugs in five over the last fortnight were found by the three of us
+looking, not met by a consumer.  The filing rate says the same thing from outside: 286 bugs in
+fourteen days against 368 in all prior history.  **The class's apparent size is largely a
+measure of where we were looking**, which is the bug review's own keystone-screen trap at
+whole-tracker scale.
+
+### What phase 5 actually produced: the keystone row that was missing
+
+Re-running arc A on the fresh population named **ownership/free a PLAN** — all four gates
+passing — one day after a plan finished on it.  That is arc A's own gate 4 failing to be loud,
+and the cause is exactly what it warns about: **@PLN155's keystone was not registered**, so the
+class read as a fresh candidate rather than as an unscored one.
+
+`Function::proxy_says_owned` is now in `bug-review.py`'s `KEYSTONES` at #1479, tagged `PLN155`
+so the payoff check prints the screened line beside the raw one when there is data.  With it,
+the class reads **MEASURING — "its keystone has not been scored yet, and ranking it would read
+three gates out of four"**, which is the honest state and the same one keyed collections and
+null/sentinel are in.
+
+**So phase 5 stays open by design, and it is now a one-command read** rather than a piece of
+work: when a cycle's worth of bugs has accumulated above #1479, `make bug-review` prints the
+row and `make campaign-review` stops saying MEASURING.  Nothing else is needed from this plan
+to answer it.
 
 ## Phase ordering
 

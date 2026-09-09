@@ -232,15 +232,14 @@ impl State {
         self.stack_pos -= size_ptr();
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<Str>(self.stack_cur.pos + self.stack_pos);
-        *self
-            .database
+        self.database
             .store(&self.stack_cur)
-            .addr::<Str>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos)
+            .read::<Str>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos)
     }
 
     #[inline]
     pub fn length_character(&mut self) {
-        let v_v1 = *self.get_stack::<char>();
+        let v_v1 = self.get_stack::<char>();
         let new_value: i64 = if v_v1 == char::from(0) {
             0
         } else {
@@ -344,7 +343,7 @@ impl State {
 
     #[inline]
     pub fn get_stack_text(&mut self) {
-        let r = *self.get_stack::<DbRef>();
+        let r = self.get_stack::<DbRef>();
         let t: &str = self.database.store(&r).addr::<String>(r.rec, r.pos);
         self.put_stack(Str::new(t));
     }
@@ -356,29 +355,29 @@ impl State {
     /// the 20-byte STACK blob (8 B `d_nr` + 12 B closure `DbRef`) lives where it points.
     #[inline]
     pub fn get_stack_fn_ref(&mut self) {
-        let r = *self.get_stack::<DbRef>();
-        let v = *self
+        let r = self.get_stack::<DbRef>();
+        let v = self
             .database
             .store(&r)
-            .addr::<[std::mem::MaybeUninit<u8>; 20]>(r.rec, r.pos);
+            .read::<[std::mem::MaybeUninit<u8>; 20]>(r.rec, r.pos);
         self.put_stack(v);
     }
 
     #[inline]
     pub fn get_stack_ref(&mut self) {
         let fld = self.code::<u16>();
-        let r = *self.get_stack::<DbRef>();
+        let r = self.get_stack::<DbRef>();
         let t = self
             .database
             .store(&r)
-            .addr::<DbRef>(r.rec, r.pos + u32::from(fld));
-        self.put_stack(*t);
+            .read::<DbRef>(r.rec, r.pos + u32::from(fld));
+        self.put_stack(t);
     }
 
     #[inline]
     pub fn set_stack_ref(&mut self) {
-        let v1 = *self.get_stack::<DbRef>();
-        let r = *self.get_stack::<DbRef>();
+        let v1 = self.get_stack::<DbRef>();
+        let r = self.get_stack::<DbRef>();
         let t = self.database.store_mut(&r).addr_mut::<DbRef>(r.rec, r.pos);
         *t = v1;
     }
@@ -397,9 +396,9 @@ impl State {
     #[inline]
     pub fn set_stack_fn_ref(&mut self) {
         let pos = self.code::<u16>();
-        let v = *self.get_stack::<[std::mem::MaybeUninit<u8>; 20]>();
+        let v = self.get_stack::<[std::mem::MaybeUninit<u8>; 20]>();
         let n = self.stack_step(20) as u16;
-        let link = *self.database.store(&self.stack_cur).addr::<DbRef>(
+        let link = self.database.store(&self.stack_cur).read::<DbRef>(
             self.stack_cur.rec,
             self.stack_cur.pos + self.stack_pos - u32::from(pos - n),
         );
@@ -438,7 +437,7 @@ impl State {
 
     pub fn append_stack_character(&mut self) {
         let pos = self.code::<u16>();
-        let c = *self.get_stack::<char>();
+        let c = self.get_stack::<char>();
         if c as u32 != 0 {
             // @PLAN53 cluster 2 / S4: the char pop occupies a stepped span
             // (4 off, 8 aligned) — N = bytes the op's get_stack popped.
@@ -456,7 +455,7 @@ impl State {
     #[inline]
     pub fn append_character(&mut self) {
         let pos = self.code::<u16>();
-        let c = *self.get_stack::<char>();
+        let c = self.get_stack::<char>();
         // @PLAN53 cluster 2 / S4: stepped char-pop span (4 off, 8 aligned).
         let n = self.stack_step(4) as u16;
         // A null character renders as NOTHING — `@FR-F-Render` states that exception for
@@ -482,8 +481,8 @@ impl State {
 
     #[inline]
     pub fn text_compare(&mut self) {
-        let v2 = *self.get_stack::<char>();
-        let v1 = *self.get_stack::<Str>();
+        let v2 = self.get_stack::<char>();
+        let v1 = self.get_stack::<Str>();
         let mut ch = v1.str().chars();
         self.put_stack(if let Some(f_ch) = ch.next() {
             let res = f_ch.cmp(&v2);
@@ -529,8 +528,8 @@ impl State {
 
     #[inline]
     pub fn get_text_sub(&mut self) {
-        let mut till = *self.get_stack::<i64>() as i32;
-        let mut from = *self.get_stack::<i64>() as i32;
+        let mut till = self.get_stack::<i64>() as i32;
+        let mut from = self.get_stack::<i64>() as i32;
         let v1 = self.string();
         // @FR-Slice-Value — a negative bound is `size + bound`, floored at the start:
         // the same rule the vector slice, `s[-1]` and `char_slice` follow, applied to the
@@ -686,7 +685,7 @@ impl State {
     pub(super) fn string_ref_mut(&mut self, pos: u16) -> &mut String {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<DbRef>(self.stack_cur.pos + self.stack_pos - u32::from(pos));
-        let r = *self.database.store(&self.stack_cur).addr::<DbRef>(
+        let r = self.database.store(&self.stack_cur).read::<DbRef>(
             self.stack_cur.rec,
             self.stack_cur.pos + self.stack_pos - u32::from(pos),
         );
@@ -718,13 +717,13 @@ impl State {
 
     pub fn var_text(&mut self) {
         let pos = self.code::<u16>();
-        let new_value = Str::new(self.get_var::<String>(pos));
+        let new_value = Str::new(self.get_var_ref::<String>(pos));
         self.put_stack(new_value);
     }
 
     pub fn arg_text(&mut self) {
         let pos = self.code::<u16>();
-        let new_value = *self.get_var::<Str>(pos);
+        let new_value = self.get_var::<Str>(pos);
         self.put_stack(new_value);
     }
 
@@ -741,8 +740,8 @@ impl State {
         let plus = self.code::<bool>();
         let note = self.code::<bool>();
         let dir = self.code::<i8>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<i64>();
         // Plan-07 phase 4e.3 — consume the fault tag set by the
         // 4e.1 format-scope swap's preceding `OpTagFault`.  When the
         // value is the i64 null sentinel AND a tag is set, render
@@ -764,8 +763,8 @@ impl State {
         let plus = self.code::<bool>();
         let note = self.code::<bool>();
         let dir = self.code::<i8>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<i64>();
         let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 16);
@@ -779,9 +778,9 @@ impl State {
         let token = self.code::<u8>();
         let plus = self.code::<bool>();
         let dir = self.code::<i8>();
-        let precision = *self.get_stack::<i64>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<f64>();
+        let precision = self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<f64>();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 24);
         text_tl_fmt(tl_fn, s, |s| {
@@ -794,9 +793,9 @@ impl State {
         let token = self.code::<u8>();
         let plus = self.code::<bool>();
         let dir = self.code::<i8>();
-        let precision = *self.get_stack::<i64>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<f64>();
+        let precision = self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<f64>();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 24); // f64(8)+i64(8)+i64(8) = 24 bytes popped
         text_tl_fmt(tl_fn, s, |s| {
@@ -809,9 +808,9 @@ impl State {
         let token = self.code::<u8>();
         let plus = self.code::<bool>();
         let dir = self.code::<i8>();
-        let precision = *self.get_stack::<i64>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<f32>();
+        let precision = self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<f32>();
         // @PLAN53 cluster 2 / S4: N = stepped span of the popped i64+i64+f32
         // (20 off; 24 aligned — the f32 rounds 4->8).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
@@ -827,9 +826,9 @@ impl State {
         let token = self.code::<u8>();
         let plus = self.code::<bool>();
         let dir = self.code::<i8>();
-        let precision = *self.get_stack::<i64>();
-        let width = *self.get_stack::<i64>();
-        let val = *self.get_stack::<f32>();
+        let precision = self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
+        let val = self.get_stack::<f32>();
         // @PLAN53 cluster 2 / S4: stepped span of popped i64+i64+f32 (20/24).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
@@ -843,7 +842,7 @@ impl State {
         let pos = self.code::<u16>();
         let dir = self.code::<i8>();
         let token = self.code::<u8>();
-        let width = *self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
         let val = self.string();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 8 - size_ptr() as u16);
@@ -856,7 +855,7 @@ impl State {
         let pos = self.code::<u16>();
         let dir = self.code::<i8>();
         let token = self.code::<u8>();
-        let width = *self.get_stack::<i64>();
+        let width = self.get_stack::<i64>();
         let val = self.string();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 8 - size_ptr() as u16);

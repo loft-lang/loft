@@ -34,6 +34,8 @@
 //   arena poison changes what the freed word holds and every loop cell reads garbage through
 //   `o.opt`.  The nightly poison sweep (`miri.yml`, the interpreter corpus under
 //   `LOFT_POISON=1`) is the CI leg this file bites in.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 
 

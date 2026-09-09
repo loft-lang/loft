@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic instance's heap return is as INDEPENDENT as its concrete twin's, in the spelling
+// that has no binding in it.
+//
+// `calls.md` `(F-Ret)` says the returned value is fresh, and says of a generic that *"a
+// generic's instance owes exactly this, and nothing in the rule distinguishes it … the concrete
+// twin is the oracle for the instance."*  So every cell below is a PAIR, and the concrete half
+// is not a control in the usual sense — it is the answer the generic half is required to give.
+//
+// D-call-13 closed the bound spelling.  The INLINE one still aliased: `idg(q).a = 99` wrote
+// straight into `q` where `idn(r).a = 99` writes into a copy and is lost.  Two things had to
+// meet.  The instance's declared return deps come from the oracle, and the leaf test that
+// gates them accepted only the parameter ITSELF — so `p[0]` and `e = p[0]; e` published an
+// owned return over a body handing back a view.  And the caller-side lift, which is what gives
+// the copy somewhere to happen, was gated on the `__retbuf` a monomorph never gets; #549's
+// reason for that gate — *a monomorph loses its return dep during specialization* — is what
+// D-call-13 had already made false.
+//
+// The leaf test is decided by the RULES rather than by a walk of the emitter: `(B-View)` makes
+// a struct-typed projection (`p[0]`, `o.inner`) an alias without `&`, and `(B-Copy)` makes a
+// plain bind of a WHOLE heap value independent.  That split is exactly the boundary here, and
+// the `y: T = x; y` cell is where it is measured: declaring THAT a borrow is what made three
+// corpus generics leak a record per call when D-call-13 first tried the wider rule.
+//
+// The mutation is written THROUGH the call (`f(q).a = 99`) on purpose.  A cell that binds
+// first — `r = f(q); r.a = 99` — measures the bind, because a record bind copies, and that is
+// why the 48-cell matrix in QUALITY.md § B7t reads green over all of this.
+//
+// The vector control is the BOUND spelling, restored now that loft#1486 is closed: it is the
+//   sharper question — an append reaching the argument is visible where a length alone is not.
+//
+// @falsified-at: 2abf9483d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  Per-cell on that build, taken by replacing
+//   every assert with a println of its own message: exactly THREE cells move, and all three are
+//   the generic RECORD halves — whole, element, element-bind — each reading 99 where its
+//   concrete twin already read 7.  The vector and keyed pairs answered 1 on that build too, so
+//   they are controls rather than cells; both independence controls and the mint control also
+//   already answered as they do here.  That is what says the pairs and not the harness moved.
+//   CHANNEL: value — exit and the assertion count.
+//   WITNESS: the three generic RECORD halves each read 99 where the concrete twin read 7.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and `falsify`
+//   requires HERE to be clean, so each is clean on both.  An aliasing return leaks nothing, so
+//   a run scored on leaks would learn nothing here.
+
+struct S1484 { a: integer }
+struct K1484 { k: integer, a: integer }
+
+// --- the pairs: one body, written twice ---
+
+// The parameter handed straight back.
+fn idg_1484<T>(x: T) -> T { x }
+fn idn_1484(x: S1484) -> S1484 { x }
+
+// An ELEMENT of a vector parameter, reached directly and through a local.  `(B-View)`.
+fn firstg_1484<T>(p: vector<T>) -> T { p[0] }
+fn firstn_1484(p: vector<S1484>) -> S1484 { p[0] }
+fn bindg_1484<T>(p: vector<T>) -> T { e = p[0]; e }
+fn bindn_1484(p: vector<S1484>) -> S1484 { e = p[0]; e }
+
+// The same generic body at a COLLECTION binding, where a shared store shows up as a length.
+fn idvg_1484<T>(x: T) -> T { x }
+fn idvn_1484(x: vector<S1484>) -> vector<S1484> { x }
+
+// And at a KEYED one, whose delivery is its own.
+fn idkg_1484<T>(x: T) -> T { x }
+fn idkn_1484(x: hash<K1484[k]>) -> hash<K1484[k]> { x }
+
+// --- the independence controls: bodies that OWN what they hand back ---
+
+// `(B-Copy)` — a plain bind of the WHOLE parameter copies, so the result is this body's own
+// store and the caller ADOPTS it.  Declaring this a borrow is what made three corpus generics
+// leak one record per call, so the cell is scored on the leak as much as on the value.
+fn copyg_1484<T>(x: T) -> T { y: T = x; y }
+fn copyn_1484(x: S1484) -> S1484 { y: S1484 = x; y }
+
+// A minted record borrows nothing at all.
+fn mintg_1484<T>(p: vector<T>) -> S1484 { S1484 { a: len(p) + 6 } }
+
+fn main() {
+  // Each cell writes 99 THROUGH the returned temporary and reads the source back.  7 means the
+  // return was independent of the argument; 99 means the two calls were one record.
+  g1: S1484 = S1484 { a: 7 };
+  idg_1484(g1).a = 99;
+  assert(idg_1484(g1).a == 7, "generic whole: the argument keeps 7, got {idg_1484(g1).a}");
+  n1: S1484 = S1484 { a: 7 };
+  idn_1484(n1).a = 99;
+  assert(idn_1484(n1).a == 7, "concrete whole (the oracle): got {idn_1484(n1).a}");
+
+  g2: vector<S1484> = [S1484 { a: 7 }];
+  firstg_1484(g2).a = 99;
+  assert(firstg_1484(g2).a == 7, "generic element: the argument keeps 7, got {firstg_1484(g2).a}");
+  n2: vector<S1484> = [S1484 { a: 7 }];
+  firstn_1484(n2).a = 99;
+  assert(firstn_1484(n2).a == 7, "concrete element (the oracle): got {firstn_1484(n2).a}");
+
+  g3: vector<S1484> = [S1484 { a: 7 }];
+  bindg_1484(g3).a = 99;
+  assert(bindg_1484(g3).a == 7, "generic element bind: the argument keeps 7, got {bindg_1484(g3).a}");
+  n3: vector<S1484> = [S1484 { a: 7 }];
+  bindn_1484(n3).a = 99;
+  assert(bindn_1484(n3).a == 7, "concrete element bind (the oracle): got {bindn_1484(n3).a}");
+
+  // The collection binding: appending to one call's result must not grow the argument.
+  g4: vector<S1484> = [S1484 { a: 7 }];
+  r4 = idvg_1484(g4);
+  r4 += [S1484 { a: 1 }];
+  assert(len(idvg_1484(g4)) == 1, "generic vector: the argument keeps 1, got {len(idvg_1484(g4))}");
+  n4: vector<S1484> = [S1484 { a: 7 }];
+  s4 = idvn_1484(n4);
+  s4 += [S1484 { a: 1 }];
+  assert(len(idvn_1484(n4)) == 1, "concrete vector (the oracle): got {len(idvn_1484(n4))}");
+
+  // The keyed binding, whose delivery is its own and must stay where it is.
+  g5: hash<K1484[k]> = [K1484 { k: 1, a: 7 }];
+  r5 = idkg_1484(g5);
+  r5 += [K1484 { k: 2, a: 1 }];
+  assert(len(idkg_1484(g5)) == 1, "generic keyed: the argument keeps 1, got {len(idkg_1484(g5))}");
+  n5: hash<K1484[k]> = [K1484 { k: 1, a: 7 }];
+  s5 = idkn_1484(n5);
+  s5 += [K1484 { k: 2, a: 1 }];
+  assert(len(idkn_1484(n5)) == 1, "concrete keyed (the oracle): got {len(idkn_1484(n5))}");
+
+  // --- the independence controls ---
+  // `(B-Copy)`: the callee's own store comes back, so the write lands on a copy AND the caller
+  // owns what it was handed.  The value says the copy happened; the leak channel
+  // (`LOFT_STRICT_STORES`) says the caller still adopts it, which is the half the value cannot
+  // see and the half D-call-13's narrowing was about.
+  c1: S1484 = S1484 { a: 7 };
+  copyg_1484(c1).a = 99;
+  assert(copyg_1484(c1).a == 7, "control generic copy-bind: got {copyg_1484(c1).a}");
+  c2: S1484 = S1484 { a: 7 };
+  copyn_1484(c2).a = 99;
+  assert(copyn_1484(c2).a == 7, "control concrete copy-bind: got {copyn_1484(c2).a}");
+
+  // Ten of the copy-bind in a loop: an owned return the caller declines to adopt shows up here
+  // as ten stores and nowhere in the value channel.
+  i = 0;
+  while i < 10 {
+    c3: S1484 = S1484 { a: 7 };
+    assert(copyg_1484(c3).a == 7, "control generic copy-bind loop {i}");
+    i = i + 1;
+  }
+
+  // A minted return borrows nothing, and its argument is a collection the caller still owns.
+  c4: vector<S1484> = [S1484 { a: 7 }];
+  mintg_1484(c4).a = 99;
+  assert(mintg_1484(c4).a == 7, "control generic mint: got {mintg_1484(c4).a}");
+  assert(len(c4) == 1 && c4[0].a == 7, "control generic mint: the argument is untouched");
+
+  println("1484 OK generic={idg_1484(g1).a} concrete={idn_1484(n1).a}");
+}

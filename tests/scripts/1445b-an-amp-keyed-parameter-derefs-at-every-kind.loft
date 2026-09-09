@@ -32,6 +32,8 @@
 //   is an ICE on that build — the compiler panics at src/state/codegen.rs, so the file does not
 //   run at all.  `the_three_kinds_that_already_worked` passes there, and is the control that
 //   says the defect is the missing kinds and not the `&` itself.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Row { id: integer, tag: text }
 struct Wrd { nm: text, n: integer }

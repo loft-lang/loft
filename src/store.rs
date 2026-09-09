@@ -811,12 +811,12 @@ impl Store {
     /// extent, so it is safe to call after every growth.
     pub fn extend_primary_to_store_end(&mut self) {
         let span = self.size - PRIMARY;
-        let claimed: i32 = *self.addr::<i32>(PRIMARY, 0);
+        let claimed: i32 = self.read::<i32>(PRIMARY, 0);
         // A negative header means record 1 is a FREE block — an uninitialised or
         // reset store, which the stack store never is once `State::new` has
         // claimed it. Leave it alone rather than forging a live header.
         if claimed > 0 && (claimed as u32) < span {
-            *self.addr_mut::<i32>(PRIMARY, 0) = span as i32;
+            self.write::<i32>(PRIMARY, 0, span as i32);
         }
     }
 
@@ -1188,7 +1188,7 @@ impl Store {
             self.ptr.add(4).cast::<u32>().write_unaligned(1);
         }
         // Indicate the complete store as empty
-        *self.addr_mut(1, 0) = -(self.size as i32) + 1;
+        self.write(1, 0, -(self.size as i32) + 1);
         // Reset the LLRB free-space tree and claims to match the fresh store layout.
         // Without this, a re-used store's stale tree would cause fl_take_ge to allocate
         // from old split blocks at positions other than 1, breaking the rec=1 invariant
@@ -1306,7 +1306,7 @@ impl Store {
         if root == 0 || self.fl_left(root) != 0 || self.fl_right(root) != 0 {
             return None;
         }
-        let block_size = -(*self.addr::<i32>(root, 0));
+        let block_size = -(self.read::<i32>(root, 0));
         let req_size = size as i32;
         if block_size <= req_size * 4 / 3
             || block_size - req_size < MIN_FREE_TREE
@@ -1316,12 +1316,12 @@ impl Store {
         }
         let pos = root;
         let new_free = pos + size;
-        *self.addr_mut(pos, 0) = req_size;
-        *self.addr_mut(new_free, 0) = req_size - block_size; // negative = free
+        self.write(pos, 0, req_size);
+        self.write(new_free, 0, req_size - block_size); // negative = free
         // The remainder becomes the root in place: no links, black — what a fresh
         // single-node insert leaves.
-        *self.addr_mut::<u32>(new_free, FL_LEFT) = 0;
-        *self.addr_mut::<u32>(new_free, FL_RIGHT) = 0;
+        self.write::<u32>(new_free, FL_LEFT, 0);
+        self.write::<u32>(new_free, FL_RIGHT, 0);
         self.fl_set_red(new_free, false);
         self.free_root = new_free;
         self.claims.insert(pos);
@@ -1335,15 +1335,15 @@ impl Store {
     /// Mark `pos` as claimed (splitting if the block is much larger than `size`).
     fn claim_block(&mut self, pos: u32, size: u32) -> u32 {
         let req_size = size as i32;
-        let block_size = -(*self.addr::<i32>(pos, 0));
+        let block_size = -(self.read::<i32>(pos, 0));
         assert!(block_size >= req_size, "Claimed block too small at {pos}");
         if block_size > req_size * 4 / 3 {
-            *self.addr_mut(pos, 0) = req_size;
+            self.write(pos, 0, req_size);
             let new_free = pos + size;
-            *self.addr_mut(new_free, 0) = req_size - block_size; // negative = free
+            self.write(new_free, 0, req_size - block_size); // negative = free
             self.fl_insert(new_free);
         } else {
-            *self.addr_mut(pos, 0) = block_size; // positive = claimed
+            self.write(pos, 0, block_size); // positive = claimed
         }
         self.claims.insert(pos);
         // @PLN126 — carry the high-water mark forward here, where the block becomes
@@ -1354,12 +1354,12 @@ impl Store {
         // file where the same build without the call held half of it.
         self.claimed_end = self
             .claimed_end
-            .max(pos + (*self.addr::<i32>(pos, 0)) as u32);
+            .max(pos + (self.read::<i32>(pos, 0)) as u32);
         // @PLN16.J: record the claim while edit-recording is on.  Read the *actual*
         // claimed size from the header (claim_block may take the whole block without
         // splitting), so replay's `claim_at` reproduces the exact extent.
         if self.recording.is_some() {
-            let size = (*self.addr::<i32>(pos, 0)) as u32;
+            let size = (self.read::<i32>(pos, 0)) as u32;
             if let Some(log) = self.recording.as_mut() {
                 log.push(StoreChange::Insert { pos, size });
             }
@@ -1373,7 +1373,7 @@ impl Store {
         let req_size = size as i32;
         let mut pos = PRIMARY;
         let mut last = pos;
-        let mut claim = *self.addr::<i32>(pos, 0);
+        let mut claim = self.read::<i32>(pos, 0);
         while pos < self.size && (claim >= 0 || -claim < req_size) {
             last = pos;
             pos += i32::abs(claim) as u32;
@@ -1381,7 +1381,7 @@ impl Store {
                 break;
             }
             debug_assert_ne!(pos, last, "Inconsistent database zero sized block {pos}");
-            claim = *self.addr::<i32>(pos, 0);
+            claim = self.read::<i32>(pos, 0);
             if claim == 0 {
                 // A block that owns no words cannot be stepped over: `pos` stops
                 // advancing and this walk never ends.  That assert above is the
@@ -1400,7 +1400,7 @@ impl Store {
                      words); allocating past it and leaking the remainder",
                     self.size
                 );
-                claim = *self.addr::<i32>(last, 0);
+                claim = self.read::<i32>(last, 0);
                 pos = self.size;
                 break;
             }
@@ -1438,10 +1438,10 @@ impl Store {
         self.resize_store(new_size);
         let increase = (self.size - cur) as i32;
         if last_claim < 0 {
-            *self.addr_mut(last, 0) = last_claim - increase;
+            self.write(last, 0, last_claim - increase);
             last
         } else {
-            *self.addr_mut(cur, 0) = -increase;
+            self.write(cur, 0, -increase);
             cur
         }
     }
@@ -1452,13 +1452,13 @@ impl Store {
         // that may invalidate DbRef locals (record relocation) held by suspended generators.
         self.generation = self.generation.wrapping_add(1);
         let req_size = size as i32;
-        let claim = *self.addr::<i32>(rec, 0);
+        let claim = self.read::<i32>(rec, 0);
         if claim >= req_size {
             return rec;
         }
         let next = rec + claim as u32;
         if next < self.size {
-            let next_size = *self.addr::<i32>(next, 0);
+            let next_size = self.read::<i32>(next, 0);
             if next_size < 0 && claim - next_size > req_size {
                 // The adjacent free block can cover the growth.
                 self.fl_remove(next);
@@ -1466,12 +1466,12 @@ impl Store {
                 let new_size = if claim - next_size > act {
                     let new_next = rec + act as u32;
                     let new_free_size = (-next_size) as u32 + next - new_next;
-                    *self.addr_mut(rec, 0) = act;
-                    *self.addr_mut(new_next, 0) = -(new_free_size as i32);
+                    self.write(rec, 0, act);
+                    self.write(new_next, 0, -(new_free_size as i32));
                     self.fl_insert(new_next);
                     act
                 } else {
-                    *self.addr_mut(rec, 0) = claim - next_size;
+                    self.write(rec, 0, claim - next_size);
                     claim - next_size
                 };
                 // The absorbed region (old end `claim` .. new end) held the freed block's
@@ -1540,17 +1540,17 @@ impl Store {
         // @PLN16.J: snapshot the record *before* delete repurposes its body as a
         // free-tree node (probe 5a), while edit-recording is on.
         if self.recording.is_some() {
-            let words = (*self.addr::<i32>(rec, 0)) as u32;
+            let words = (self.read::<i32>(rec, 0)) as u32;
             let before = self.read_span(rec, 0, words * 8);
             if let Some(log) = self.recording.as_mut() {
                 log.push(StoreChange::Free { pos: rec, before });
             }
         }
-        let mut claim = *self.addr::<i32>(rec, 0);
+        let mut claim = self.read::<i32>(rec, 0);
         // Coalesce with any adjacent free blocks that follow.
         while (rec + claim as u32) < self.size {
             let next_pos = rec + claim as u32;
-            let next_header = *self.addr::<i32>(next_pos, 0);
+            let next_header = self.read::<i32>(next_pos, 0);
             if next_header >= 0 {
                 break;
             }
@@ -1558,7 +1558,7 @@ impl Store {
             self.fl_remove(next_pos);
             claim -= next_header;
         }
-        *self.addr_mut(rec, 0) = -claim;
+        self.write(rec, 0, -claim);
         self.claims.remove(rec);
         // Register the (possibly coalesced) free block in the tree.
         self.fl_insert(rec);
@@ -1593,14 +1593,14 @@ impl Store {
         let mut base = PRIMARY;
         loop {
             assert!(base < self.size, "claim_at: pos {pos} past end of store");
-            let bsz = (*self.addr::<i32>(base, 0)).unsigned_abs();
+            let bsz = (self.read::<i32>(base, 0)).unsigned_abs();
             assert!(bsz > 0, "claim_at: zero-size block at {base}");
             if pos < base + bsz {
                 break;
             }
             base += bsz;
         }
-        let header = *self.addr::<i32>(base, 0);
+        let header = self.read::<i32>(base, 0);
         assert!(
             header < 0,
             "claim_at: region at {pos} is not free (covering block {base} is claimed)"
@@ -1618,7 +1618,7 @@ impl Store {
                 "claim_at: record [{pos}, {}) runs past the store end",
                 pos + size
             );
-            let next = *self.addr::<i32>(bend, 0);
+            let next = self.read::<i32>(bend, 0);
             assert!(
                 next < 0,
                 "claim_at: record [{pos}, {}) hits a claimed block at {bend}",
@@ -1629,16 +1629,16 @@ impl Store {
         }
         // [base, pos) prefix stays free.
         if base < pos {
-            *self.addr_mut::<i32>(base, 0) = -((pos - base) as i32);
+            self.write::<i32>(base, 0, -((pos - base) as i32));
             self.fl_insert(base);
         }
         // [pos, pos + size) becomes the claimed record.
-        *self.addr_mut::<i32>(pos, 0) = size as i32;
+        self.write::<i32>(pos, 0, size as i32);
         self.claims.insert(pos);
         // [pos + size, bend) suffix stays free.
         let tail = pos + size;
         if tail < bend {
-            *self.addr_mut::<i32>(tail, 0) = -((bend - tail) as i32);
+            self.write::<i32>(tail, 0, -((bend - tail) as i32));
             self.fl_insert(tail);
         }
         #[cfg(debug_assertions)]
@@ -1669,7 +1669,7 @@ impl Store {
         let mut pos = PRIMARY;
         let mut alloc = 0;
         while pos < self.size {
-            let claim = *self.addr::<i32>(pos, 0);
+            let claim = self.read::<i32>(pos, 0);
             assert!(
                 pos + i32::abs(claim) as u32 <= self.size,
                 "Incorrect record {pos} size {}",
@@ -1725,7 +1725,7 @@ impl Store {
         while pos < self.size {
             // In-bounds by the loop guard (`pos < size`): the `i32` size word at
             // byte `pos*8` lies within the `size*8`-byte arena.
-            let claim = *self.addr::<i32>(pos, 0);
+            let claim = self.read::<i32>(pos, 0);
             let span = claim.unsigned_abs();
             if span == 0 {
                 return Err(format!("zero-size block header at record {pos}"));
@@ -1771,7 +1771,7 @@ impl Store {
         let mut pos = PRIMARY;
         let mut prev_was_free = false;
         while pos < self.size {
-            let claim = *self.addr::<i32>(pos, 0);
+            let claim = self.read::<i32>(pos, 0);
             if claim == 0 {
                 break; // malformed / uninitialised tail — stop rather than spin
             }
@@ -1962,7 +1962,7 @@ impl Store {
         }
         let tail = mark.max(PRIMARY);
         if tail < self.size {
-            *self.addr_mut(tail, 0) = -((self.size - tail) as i32);
+            self.write(tail, 0, -((self.size - tail) as i32));
         }
         self.fl_rebuild();
         // The same reason `resize` bumps it: a suspended coroutine holding a
@@ -2295,31 +2295,31 @@ impl Store {
     // Only blocks with size >= MIN_FREE_TREE are tracked.
 
     fn fl_size(&self, p: u32) -> i32 {
-        -*self.addr::<i32>(p, 0)
+        -self.read::<i32>(p, 0)
     }
 
     fn fl_left(&self, p: u32) -> u32 {
-        *self.addr::<u32>(p, FL_LEFT)
+        self.read::<u32>(p, FL_LEFT)
     }
 
     fn fl_right(&self, p: u32) -> u32 {
-        *self.addr::<u32>(p, FL_RIGHT)
+        self.read::<u32>(p, FL_RIGHT)
     }
 
     fn fl_red(&self, p: u32) -> bool {
-        *self.addr::<u8>(p, FL_COLOR) != 0
+        self.read::<u8>(p, FL_COLOR) != 0
     }
 
     fn fl_set_left(&mut self, p: u32, v: u32) {
-        *self.addr_mut::<u32>(p, FL_LEFT) = v;
+        self.write::<u32>(p, FL_LEFT, v);
     }
 
     fn fl_set_right(&mut self, p: u32, v: u32) {
-        *self.addr_mut::<u32>(p, FL_RIGHT) = v;
+        self.write::<u32>(p, FL_RIGHT, v);
     }
 
     fn fl_set_red(&mut self, p: u32, v: bool) {
-        *self.addr_mut::<u8>(p, FL_COLOR) = u8::from(v);
+        self.write::<u8>(p, FL_COLOR, u8::from(v));
     }
 
     fn fl_cmp(&self, a: u32, b: u32) -> Ordering {
@@ -2587,7 +2587,7 @@ impl Store {
         self.free_root = 0;
         let mut pos = PRIMARY;
         while pos < self.size {
-            let header = *self.addr::<i32>(pos, 0);
+            let header = self.read::<i32>(pos, 0);
             let block_size = i32::abs(header);
             debug_assert!(block_size > 0, "zero-size block at {pos}");
             // A zero-size block ENDS the walk rather than repeating it. The
@@ -2634,7 +2634,7 @@ impl Store {
         // Everything past the image is free space, in one block. `init` writes
         // the same negative-header form for a whole fresh store.
         if words < self.size {
-            *self.addr_mut(words, 0) = -((self.size - words) as i32);
+            self.write(words, 0, -((self.size - words) as i32));
         }
         self.free_root = 0;
         self.fl_rebuild();
@@ -2659,7 +2659,7 @@ impl Store {
         self.claims.clear();
         let mut pos = PRIMARY;
         while pos < self.size {
-            let header = *self.addr::<i32>(pos, 0);
+            let header = self.read::<i32>(pos, 0);
             let block_size = i32::abs(header);
             if block_size <= 0 {
                 break; // a malformed image; `validate_structure` is what refuses it
@@ -2700,21 +2700,21 @@ impl Store {
     fn coalesce_free(&mut self) {
         let mut pos = PRIMARY;
         while pos < self.size {
-            let header = *self.addr::<i32>(pos, 0);
+            let header = self.read::<i32>(pos, 0);
             let mut block_size = i32::abs(header);
             debug_assert!(block_size > 0, "zero-size block at {pos}");
             if header < 0 {
                 // Absorb following adjacent free blocks into this one.
                 let mut next = pos + block_size as u32;
                 while next < self.size {
-                    let nh = *self.addr::<i32>(next, 0);
+                    let nh = self.read::<i32>(next, 0);
                     if nh >= 0 {
                         break;
                     }
                     block_size += i32::abs(nh);
                     next = pos + block_size as u32;
                 }
-                *self.addr_mut(pos, 0) = -block_size;
+                self.write(pos, 0, -block_size);
             }
             pos += block_size as u32;
         }
@@ -2893,7 +2893,7 @@ impl Store {
         if h == 0 {
             return;
         }
-        let header: i32 = *self.addr(h, 0);
+        let header: i32 = self.read(h, 0);
         debug_assert!(
             header < 0,
             "fl_validate: node at {h} has positive header {header} (should be free)"
@@ -2977,9 +2977,50 @@ impl Store {
         )
     }
 
+    /// Read a field OUT of the store.  **The ordinary way to get a value.**
+    ///
+    /// A store's allocation is `Layout::from_size_align(size * 8, 8)` and an address is
+    /// `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment IS
+    /// `fld`'s — and `fld` is a BYTE offset the type layout assigns with no padding.  A
+    /// field is therefore aligned only by accident: measured over the corpus, `i64` reads
+    /// occur at all seven non-zero `fld % 8`, and `u32`, `u16` and `f64` at every remainder
+    /// of their own.  `read_unaligned` states the alignment the data actually has; it lowers
+    /// to the same single `mov` on x86-64, so saying the truth costs nothing here.
+    ///
+    /// Prefer this everywhere.  [`Store::addr`] hands out a `&T` instead and can only be
+    /// used where the field is provably aligned — see its own note (loft#1481).
     #[inline]
+    pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
+        let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+    }
+
+    /// Borrow a field IN PLACE, for the values that cannot be copied out.
+    ///
+    /// A `String` or a `Str` living in the store owns a heap buffer, so reading it out by
+    /// value would duplicate that ownership — those callers need a reference and there is no
+    /// unaligned form of one.  **A reference to a misaligned address is undefined behaviour**,
+    /// so this asserts what it needs rather than assuming it: `fld` must be a multiple of
+    /// `T`'s alignment.
+    ///
+    /// The assert is always-on and it is not a hot path — after loft#1481 the callers are the
+    /// handful of borrows and the `u8` raw-pointer bases, none per-element.  It is also the
+    /// only thing standing between a future layout change and silent UB: the misalignment it
+    /// forbids was invisible for the life of this file, because `<*mut T>::as_mut()` derefs
+    /// inside `core`, which is precompiled without `-C debug-assertions=on`.
     pub fn addr<T>(&self, rec: u32, fld: u32) -> &T {
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        // The allocation is `Layout::from_size_align(size * 8, 8)` and the address is
+        // `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment is
+        // `fld`'s alone.  One `and` and a not-taken branch, off every per-element path.
+        assert!(
+            (fld as usize).is_multiple_of(std::mem::align_of::<T>()),
+            "Store::addr: field {fld} is not aligned for {} (needs {}) — a reference to a \
+             misaligned address is undefined behaviour; read the value with `Store::read` \
+             instead (loft#1481)",
+            std::any::type_name::<T>(),
+            std::mem::align_of::<T>(),
+        );
         // Validate field offset against record's claimed size (first word).
         // rec=0 and rec=1 are special (store header / primary record).
         #[cfg(debug_assertions)]
@@ -2997,41 +3038,12 @@ impl Store {
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
         }
-        // ⚠ **Not `&*off`.**  A store is word-addressed in FOUR-byte units, so an eight-byte
-        // field sitting at an odd word is 4-aligned and no more, and a reference to a
-        // misaligned address is undefined behaviour whatever spelling mints it.  `as_mut()`
-        // derefs inside `core`, which is precompiled without the check, so the same UB simply
-        // goes unreported there; writing the deref here instead makes `-C debug-assertions=on`
-        // abort on it (`Store::addr::<i64>` under `iter_frame_variables_at`, measured
-        // 2026-09-09).  The report is right and the ACCESS is the bug, so the cure is not to
-        // move the deref back out of sight: [`Store::read`] is the sound form for the callers
-        // that immediately copy the value out, which is nearly all of them, and the remaining
-        // `&String` / `&Str` callers want a layout ruling — loft#1481 carries the split and the
-        // ruling it owes.  Until those are migrated this keeps the spelling `main` has always
-        // had.
-        unsafe {
-            let off = self.ptr.offset(at).cast::<T>();
-            off.as_mut().expect("Reference")
-        }
-    }
-
-    /// Read a `Copy` field OUT of the store, rather than borrowing it in place.
-    ///
-    /// The sound counterpart to [`Store::addr`] for every caller that immediately writes
-    /// `*store.addr::<T>(…)`.  A store is word-addressed in four-byte units, so an `i64` or an
-    /// `f64` at an odd word is only 4-aligned, and taking a `&T` there is undefined behaviour
-    /// even though x86 loads it happily.  `read_unaligned` states the alignment the data
-    /// actually has and lowers to the same single `mov` on this target, so the soundness costs
-    /// nothing — and it drops `as_mut()`'s null test and panic path, which is what made `addr`
-    /// expensive on the hottest read in the language (`get_elem_hoisted` is 15 % of the drawing
-    /// library's bench, loft#1426).
-    ///
-    /// Migrating the rest of `addr`'s `Copy` readers here is loft#1481's mechanical half; its
-    /// `&String` / `&Str` callers are the other half and need a layout ruling first.
-    #[inline]
-    pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
-        let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
-        unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+        // Both preconditions of a reference are PROVED above rather than assumed:
+        // `offset_in_bounds` for liveness, the alignment assert for the rest.  Writing the
+        // deref HERE is also what lets `-C debug-assertions=on` corroborate that assert —
+        // `<*mut T>::as_mut()` derefs inside `core`, which is precompiled without the check,
+        // which is why the misalignment went unreported for the life of this file.
+        unsafe { &*self.ptr.offset(at).cast::<T>() }
     }
 
     /// `@FR-H-WriteLocked`'s user half: refuse the write as a loft fault.
@@ -3049,7 +3061,15 @@ impl Store {
     }
 
     #[inline]
-    pub fn addr_mut<T: 'static>(&mut self, rec: u32, fld: u32) -> &mut T {
+    /// Everything a write owes before the bytes move: the lock refusal (@FR-H-WriteLocked),
+    /// the bounds check, the record-size check, and @PLN154's shadow tag.  Answers the byte
+    /// offset the caller then writes at.
+    ///
+    /// ONE home, because [`Store::write`] and [`Store::addr_mut`] are two spellings of the
+    /// same event and the shadow hook must see both — @PLN154 counted 32 of 33 stack writers
+    /// arriving at that hook, and a second write path that skipped it would put the count
+    /// back where it started.
+    fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
         //
@@ -3103,10 +3123,41 @@ impl Store {
                 crate::stack_verify::kind_of::<T>(),
             );
         }
-        unsafe {
-            let off = self.ptr.offset(at).cast::<T>();
-            off.as_mut().expect("Reference")
-        }
+        at
+    }
+
+    /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
+    /// store a value.
+    ///
+    /// Same reason as its twin: `fld` is an unpadded byte offset, so the destination is
+    /// aligned only by accident, and `&mut T` at a misaligned address is undefined behaviour
+    /// exactly as `&T` is.  Measured — `Store::addr_mut: field 44 is not aligned for i64` on
+    /// the second test of the corpus.  `write_unaligned` states what the layout actually
+    /// guarantees (loft#1481).
+    #[inline]
+    pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
+        let at = self.begin_write::<T>(rec, fld);
+        unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
+    }
+
+    /// Borrow a field MUTABLY in place, for the values [`Store::write`] cannot store by value.
+    ///
+    /// A `String` or a `Str` in the store owns a heap buffer that the caller mutates in
+    /// place.  As with [`Store::addr`], a reference demands real alignment, so this asserts
+    /// it rather than assuming it (loft#1481).
+    pub fn addr_mut<T: 'static>(&mut self, rec: u32, fld: u32) -> &mut T {
+        assert!(
+            (fld as usize).is_multiple_of(std::mem::align_of::<T>()),
+            "Store::addr_mut: field {fld} is not aligned for {} (needs {}) — a reference to a \
+             misaligned address is undefined behaviour; store the value with `Store::write` \
+             instead (loft#1481)",
+            std::any::type_name::<T>(),
+            std::mem::align_of::<T>(),
+        );
+        let at = self.begin_write::<T>(rec, fld);
+        // Both preconditions of a reference are PROVED here rather than assumed:
+        // `offset_in_bounds` for liveness, the assert above for alignment.
+        unsafe { &mut *self.ptr.offset(at).cast::<T>() }
     }
 
     /// A raw pointer to `len` bytes at `(rec, fld)`, for a caller that writes the whole
@@ -3140,7 +3191,7 @@ impl Store {
         // which the first IS the size word this reads.  The payload therefore starts one
         // word in and is one word SHORTER than the record — a span of `size` bytes from
         // offset 8 runs exactly 8 bytes past the record's end (loft#970).
-        let size = (*self.addr::<u32>(rec, 0) as usize).saturating_sub(1) * 8;
+        let size = (self.read::<u32>(rec, 0) as usize).saturating_sub(1) * 8;
         // The length comes from the record's own header, so a corrupt header sizes
         // the slice — and a FREED record's header is negative, which reading it as
         // `u32` turns into a span of gigabytes.  Bound it before it becomes a slice.
@@ -3210,7 +3261,7 @@ impl Store {
     pub fn is_valid_record(&self, rec: u32) -> bool {
         // Record must be within the store's allocated space and have a
         // positive header (live records have size > 0; freed have size < 0).
-        rec > 0 && rec < self.size && *self.addr::<i32>(rec, 0) > 0
+        rec > 0 && rec < self.size && self.read::<i32>(rec, 0) > 0
     }
 
     /// Try to validate a record reference as much as possible.
@@ -3229,7 +3280,7 @@ impl Store {
         );
         // Read size before any multiplication to avoid overflow when fld 0 is negative
         // (a negative header means the block was freed — a bug if still in claims).
-        let size: i32 = *self.addr(rec, 0);
+        let size: i32 = self.read(rec, 0);
         debug_assert!(
             size > 0,
             "Freed record {rec} (size={size}) accessed at fld {fld}"
@@ -3282,7 +3333,7 @@ impl Store {
     /// access into a report at the first read that cannot be satisfied.
     #[inline]
     fn payload_bytes(&self, rec: u32, op: &str) -> usize {
-        let size = *self.addr::<i32>(rec, 0);
+        let size = self.read::<i32>(rec, 0);
         assert!(
             size >= 1,
             "{op}: record {rec} claims size {size}, but a record's size word must be \
@@ -3345,8 +3396,8 @@ impl Store {
     ) {
         #[cfg(debug_assertions)]
         {
-            let from_limit = *self.addr::<i32>(from_rec, 0) as isize * 8;
-            let to_limit = *self.addr::<i32>(to_rec, 0) as isize * 8;
+            let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
+            let to_limit = self.read::<i32>(to_rec, 0) as isize * 8;
             debug_assert!(
                 from_pos + size <= from_limit,
                 "copy_block src OOB: rec={from_rec} [{from_pos}..+{size}] > {from_limit} bytes"
@@ -3386,8 +3437,8 @@ impl Store {
     ) {
         #[cfg(debug_assertions)]
         {
-            let from_limit = *self.addr::<i32>(from_rec, 0) as isize * 8;
-            let to_limit = *to_store.addr::<i32>(to_rec, 0) as isize * 8;
+            let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
+            let to_limit = to_store.read::<i32>(to_rec, 0) as isize * 8;
             debug_assert!(
                 from_pos + len <= from_limit,
                 "copy_block_between src OOB: rec={from_rec} [{from_pos}..+{len}] > {from_limit} bytes"
@@ -3422,7 +3473,7 @@ impl Store {
     #[inline]
     pub fn get_int(&self, rec: u32, fld: u32) -> i64 {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             i64::MIN
         }
@@ -3431,7 +3482,7 @@ impl Store {
     #[inline]
     pub fn set_int(&mut self, rec: u32, fld: u32, val: i64) -> bool {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -3456,7 +3507,7 @@ impl Store {
             self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
-        let size: i32 = *self.addr(rec, 0);
+        let size: i32 = self.read(rec, 0);
         debug_assert!(
             size > 0,
             "Freed record {rec} (size={size}) read as a record header"
@@ -3476,7 +3527,7 @@ impl Store {
     /// does not have.
     #[must_use]
     pub fn is_claimed_record(&self, rec: u32) -> bool {
-        rec > PRIMARY && rec < self.size && *self.addr::<i32>(rec, 0) > 0
+        rec > PRIMARY && rec < self.size && self.read::<i32>(rec, 0) > 0
     }
 
     /// 4-byte unsigned raw read — for internal collection headers
@@ -3485,7 +3536,7 @@ impl Store {
     #[inline]
     pub fn get_u32_raw(&self, rec: u32, fld: u32) -> u32 {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             0
         }
@@ -3524,7 +3575,7 @@ impl Store {
     #[inline]
     pub fn set_u32_raw(&mut self, rec: u32, fld: u32, val: u32) -> bool {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -3536,7 +3587,7 @@ impl Store {
     #[inline]
     pub fn get_i32_raw(&self, rec: u32, fld: u32) -> i32 {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             i32::MIN
         }
@@ -3546,7 +3597,7 @@ impl Store {
     #[inline]
     pub fn set_i32_raw(&mut self, rec: u32, fld: u32, val: i32) -> bool {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -3556,7 +3607,7 @@ impl Store {
     #[inline]
     pub fn get_long(&self, rec: u32, fld: u32) -> i64 {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             i64::MIN
         }
@@ -3565,7 +3616,7 @@ impl Store {
     #[inline]
     pub fn set_long(&mut self, rec: u32, fld: u32, val: i64) -> bool {
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -3575,7 +3626,7 @@ impl Store {
     #[inline]
     pub fn get_short(&self, rec: u32, fld: u32, min: i32) -> i32 {
         if rec != 0 && self.valid(rec, fld) {
-            let read: u16 = *self.addr(rec, fld);
+            let read: u16 = self.read(rec, fld);
             if read != 0 {
                 i32::from(read) + min - 1
             } else {
@@ -3593,17 +3644,17 @@ impl Store {
                 // The `u16` suffix is load-bearing: a bare `0` infers `i32`, so
                 // `addr_mut::<i32>` writes 4 bytes and zeroes the two packed bytes
                 // after this 2-byte field (silent sibling corruption on a null store).
-                *self.addr_mut(rec, fld) = 0u16;
+                self.write(rec, fld, 0u16);
                 true
             } else if Self::short_fits(min, val) {
-                *self.addr_mut(rec, fld) = (val - min + 1) as u16;
+                self.write(rec, fld, (val - min + 1) as u16);
                 true
             } else {
                 // loft#984 — OUT OF RANGE: the DEFAULT (lowest in range), encoded.  The
                 // old bound was off by TWO: this encoding is `val - min + 1` and reserves
                 // raw 0 for null, so `min + 65535` encodes to 0 (reads back as NULL) and
                 // `min + 65536` to 1 (reads back as `min`).
-                *self.addr_mut(rec, fld) = 1u16;
+                self.write(rec, fld, 1u16);
                 false
             }
         } else {
@@ -3635,17 +3686,17 @@ impl Store {
     pub fn set_i16_raw(&mut self, rec: u32, fld: u32, min: i32, val: i32) -> bool {
         if rec != 0 && self.valid(rec, fld) {
             if val == i32::MIN {
-                *self.addr_mut(rec, fld) = u16::MAX;
+                self.write(rec, fld, u16::MAX);
                 true
             } else if Self::short_raw_fits(min, val) {
-                *self.addr_mut(rec, fld) = (val - min) as u16;
+                self.write(rec, fld, (val - min) as u16);
                 true
             } else {
                 // loft#984 — this had NO range check: `(val - min) as u16` is a
                 // TRUNCATING cast, so `70000` into a `limit(0, 65535)` field silently
                 // became `4464`.  Out of range now stores the DEFAULT (lowest in range)
                 // and reports `false` so the caller warns.
-                *self.addr_mut(rec, fld) = 0u16;
+                self.write(rec, fld, 0u16);
                 false
             }
         } else {
@@ -3664,7 +3715,7 @@ impl Store {
     #[inline]
     pub fn get_short_full(&self, rec: u32, fld: u32, min: i32) -> i32 {
         if rec != 0 && self.valid(rec, fld) {
-            let read: u16 = *self.addr(rec, fld);
+            let read: u16 = self.read(rec, fld);
             i32::from(read) + min
         } else {
             i32::MIN
@@ -3674,7 +3725,7 @@ impl Store {
     #[inline]
     pub fn get_byte(&self, rec: u32, fld: u32, min: i32) -> i32 {
         if rec != 0 && self.valid(rec, fld) {
-            let read: u8 = *self.addr(rec, fld);
+            let read: u8 = self.read(rec, fld);
             i32::from(read) + min
         } else {
             i32::MIN
@@ -3713,10 +3764,10 @@ impl Store {
                 // The `u8` suffix is load-bearing: a bare `255` infers `i32`, so
                 // `addr_mut::<i32>` writes 4 bytes and zeroes the three packed
                 // fields after this one (silent sibling corruption on a null store).
-                *self.addr_mut(rec, fld) = 255u8;
+                self.write(rec, fld, 255u8);
                 true
             } else if Self::byte_fits(min, val) {
-                *self.addr_mut(rec, fld) = (val - min) as u8;
+                self.write(rec, fld, (val - min) as u8);
                 true
             } else {
                 // loft#984 — OUT OF RANGE: store the type's DEFAULT, the lowest value in
@@ -3725,7 +3776,7 @@ impl Store {
                 // so it ALIASED onto `min`; anything further out was dropped, leaving
                 // whatever the field held before.  A byte encodes `val - min`, so the
                 // range is `min ..= min + 255` — one value, not 257.
-                *self.addr_mut(rec, fld) = 0u8;
+                self.write(rec, fld, 0u8);
                 false
             }
         } else {
@@ -3815,7 +3866,7 @@ impl Store {
     #[inline]
     pub fn get_boolean(&self, rec: u32, fld: u32, mask: u8) -> bool {
         if self.valid(rec, fld) {
-            let read: u8 = *self.addr(rec, fld);
+            let read: u8 = self.read(rec, fld);
             (read & mask) > 0
         } else {
             false
@@ -3825,12 +3876,12 @@ impl Store {
     #[inline]
     pub fn set_boolean(&mut self, rec: u32, fld: u32, mask: u8, val: bool) -> bool {
         if self.valid(rec, fld) {
-            let current: u8 = *self.addr(rec, fld);
+            let current: u8 = self.read(rec, fld);
             let mut write = current & !mask;
             if val {
                 write |= mask;
             }
-            *self.addr_mut(rec, fld) = write;
+            self.write(rec, fld, write);
             true
         } else {
             false
@@ -3841,13 +3892,13 @@ impl Store {
     pub fn get_float(&self, rec: u32, fld: u32) -> f64 {
         // @P284 — guard `rec != 0` like the integer getters do.  In release
         // mode `valid()` is a no-op (all the inner checks are `debug_assert`)
-        // so without this guard a null DbRef (rec=0) reads `*self.addr(0, 0)`
+        // so without this guard a null DbRef (rec=0) reads `self.read(0, 0)`
         // — the store's free-list header bytes interpreted as f64.  That
         // garbage value (~2.8e-282 in practice) is finite, so for-loop
         // iteration over `vector<float>` saw a non-null value past the end
         // and looped forever.
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             f64::NAN
         }
@@ -3856,7 +3907,7 @@ impl Store {
     #[inline]
     pub fn set_float(&mut self, rec: u32, fld: u32, val: f64) -> bool {
         if self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -3868,7 +3919,7 @@ impl Store {
         // @P284 — sibling of `get_float`'s rec=0 guard; needed for
         // `for s in vector<single>` to terminate.
         if rec != 0 && self.valid(rec, fld) {
-            *self.addr(rec, fld)
+            self.read(rec, fld)
         } else {
             f32::NAN
         }
@@ -3877,7 +3928,7 @@ impl Store {
     #[inline]
     pub fn set_single(&mut self, rec: u32, fld: u32, val: f32) -> bool {
         if self.valid(rec, fld) {
-            *self.addr_mut(rec, fld) = val;
+            self.write(rec, fld, val);
             true
         } else {
             false
@@ -4511,6 +4562,44 @@ impl Store {
 mod tests {
     use super::{MAX_STORE_WORDS, Store, slack_target};
 
+    /// loft#1481 — `Store::addr` refuses a field offset that is not aligned for `T`.
+    ///
+    /// The positive control for that assert.  Without it the assert could sit on a path
+    /// nothing reaches and a green suite would say nothing, which is exactly how the
+    /// misalignment survived: `<*mut T>::as_mut()` derefs inside `core`, precompiled without
+    /// `-C debug-assertions=on`, so the UB was never reported by anything.
+    ///
+    /// The offset is what decides it — a store's allocation is 8-aligned and an address is
+    /// `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment IS
+    /// `fld`'s.  Field 4 is 4-aligned and not 8.
+    #[test]
+    #[should_panic(expected = "is not aligned for")]
+    fn addr_refuses_a_misaligned_field() {
+        let mut store = Store::new(8);
+        store.free = false;
+        let rec = store.claim(4);
+        let _ = store.addr::<i64>(rec, 4);
+    }
+
+    /// The other half: the same read through [`Store::read`] is fine, because
+    /// `read_unaligned` states the alignment the data actually has.
+    ///
+    /// Without this the test above would pass for a reason it does not name — a `claim`
+    /// that failed, a `rec` out of bounds — rather than for the alignment.
+    #[test]
+    fn read_accepts_the_same_misaligned_field() {
+        let mut store = Store::new(8);
+        store.free = false;
+        let rec = store.claim(4);
+        store.write::<i32>(rec, 4, -7);
+        assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
+        assert_eq!(
+            store.read::<i64>(rec, 4),
+            i64::from(-7i32) & 0xffff_ffff,
+            "and `read::<i64>` at the SAME 4-aligned offset is legal, where `addr` refuses"
+        );
+    }
+
     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.
     ///
     /// It means "do not FREE my argument", and the two `0x8000` source-frees that could
@@ -4560,7 +4649,7 @@ mod tests {
         let mut store = Store::new(8);
         store.free = false;
         let rec = store.claim(3);
-        *store.addr_mut::<i32>(rec, 0) = 0; // the corruption the report observed
+        store.write::<i32>(rec, 0, 0); // the corruption the report observed
         store.zero_fill(rec);
     }
 
@@ -4575,15 +4664,11 @@ mod tests {
         store.set_i32_raw(rec, 4, 0x7f7f_7f7f);
         store.zero_fill(rec);
         assert_eq!(
-            *store.addr::<i32>(rec, 4),
+            store.read::<i32>(rec, 4),
             0,
             "the payload after the size word is cleared"
         );
-        assert_eq!(
-            *store.addr::<i32>(rec, 0),
-            3,
-            "the size word itself is kept"
-        );
+        assert_eq!(store.read::<i32>(rec, 0), 3, "the size word itself is kept");
     }
 
     /// The other direction, so the test above cannot pass by the guard being gone
@@ -4616,7 +4701,7 @@ mod tests {
     #[should_panic(expected = "Store access out of bounds")]
     fn a_corrupt_record_number_is_refused_on_the_read_path() {
         let store = Store::new(4);
-        let _ = *store.addr::<i64>(u32::MAX, 0);
+        let _ = store.read::<i64>(u32::MAX, 0);
     }
 
     /// The write half, which is the one that matters for soundness: unchecked,
@@ -4625,7 +4710,7 @@ mod tests {
     #[should_panic(expected = "Store access out of bounds")]
     fn a_corrupt_record_number_is_refused_on_the_write_path() {
         let mut store = Store::new(4);
-        *store.addr_mut::<i64>(u32::MAX, 0) = 1;
+        store.write::<i64>(u32::MAX, 0, 1);
     }
 
     /// The bound is exact, not merely a smell test for huge numbers: one word past
@@ -4634,7 +4719,7 @@ mod tests {
     #[should_panic(expected = "Store access out of bounds")]
     fn one_word_past_the_end_is_refused() {
         let store = Store::new(4); // 4 words = 32 bytes
-        let _ = *store.addr::<i64>(4, 0); // bytes 32..40
+        let _ = store.read::<i64>(4, 0); // bytes 32..40
     }
 
     /// The positive control for all three: without it they would pass just as well if
@@ -4643,9 +4728,9 @@ mod tests {
     #[test]
     fn the_last_word_of_a_store_is_still_readable() {
         let mut store = Store::new(4); // 4 words = 32 bytes
-        *store.addr_mut::<i64>(3, 0) = 0x0123_4567_89ab_cdef; // bytes 24..32
+        store.write::<i64>(3, 0, 0x0123_4567_89ab_cdef); // bytes 24..32
         assert_eq!(
-            *store.addr::<i64>(3, 0),
+            store.read::<i64>(3, 0),
             0x0123_4567_89ab_cdef,
             "the last word is inside the store and stays writable"
         );
@@ -4817,7 +4902,7 @@ mod tests {
 
         // Corrupt B's header to zero — the "malformed / uninitialised tail"
         // shape the walk breaks on.  C stays claimed above the break.
-        *store.addr_mut::<i32>(b, 0) = 0;
+        store.write::<i32>(b, 0, 0);
         let u = store.usage();
         assert!(!u.walk_complete, "the chain no longer tiles the store");
         assert_eq!(u.live_end_words, b, "the walk got no further than A");
@@ -4851,7 +4936,7 @@ mod tests {
         );
         for (pos, size) in [(a, 3), (b, 5), (c, 7)] {
             assert_eq!(
-                *store.addr::<i32>(pos, 0),
+                store.read::<i32>(pos, 0),
                 size,
                 "record {pos} keeps its size header"
             );
@@ -4865,7 +4950,7 @@ mod tests {
         assert_eq!(store.fl_left(tail), 0);
         assert_eq!(store.fl_right(tail), 0);
         assert_eq!(
-            -(*store.addr::<i32>(tail, 0)) as u32,
+            -(store.read::<i32>(tail, 0)) as u32,
             store.size - tail,
             "the remainder's header spans exactly the rest of the store"
         );
@@ -4877,7 +4962,7 @@ mod tests {
         let d = store.claim(left - 1);
         assert_eq!(d, tail);
         assert_eq!(
-            *store.addr::<i32>(d, 0) as u32,
+            store.read::<i32>(d, 0) as u32,
             left,
             "a block not much larger than the request is claimed whole"
         );
@@ -4891,9 +4976,9 @@ mod tests {
         let a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
-        *store.addr_mut::<i64>(a, 8) = 0x1111;
-        *store.addr_mut::<i64>(b, 8) = 0x2222;
-        *store.addr_mut::<i64>(c, 8) = 0x3333;
+        store.write::<i64>(a, 8, 0x1111);
+        store.write::<i64>(b, 8, 0x2222);
+        store.write::<i64>(c, 8, 0x3333);
         store.delete(c);
 
         let mark = store.usage().live_end_words;
@@ -4906,16 +4991,8 @@ mod tests {
         assert_eq!(store.len(), mark, "capacity is now the mark");
         assert!(before > mark, "the store really was bigger");
 
-        assert_eq!(
-            *store.addr::<i64>(a, 8),
-            0x1111,
-            "A survives the truncation"
-        );
-        assert_eq!(
-            *store.addr::<i64>(b, 8),
-            0x2222,
-            "B survives the truncation"
-        );
+        assert_eq!(store.read::<i64>(a, 8), 0x1111, "A survives the truncation");
+        assert_eq!(store.read::<i64>(b, 8), 0x2222, "B survives the truncation");
         let after = store.usage();
         assert!(
             after.walk_complete,
@@ -4937,7 +5014,7 @@ mod tests {
             grown >= mark,
             "the new record starts at or above the old mark"
         );
-        assert_eq!(*store.addr::<i64>(b, 8), 0x2222, "and B is still B");
+        assert_eq!(store.read::<i64>(b, 8), 0x2222, "and B is still B");
     }
 
     /// @PLN123 A1 — shrinking to somewhere ABOVE the mark leaves a free tail,
@@ -4988,7 +5065,7 @@ mod tests {
         store.free = false;
         let _a = store.claim(5);
         let b = store.claim(5);
-        *store.addr_mut::<i64>(b, 8) = 0x2222;
+        store.write::<i64>(b, 8, 0x2222);
         let before = store.len();
         let mark = store.usage().live_end_words;
 
@@ -5000,11 +5077,11 @@ mod tests {
         assert!(!store.shrink_to(before), "the current size is not a shrink");
         assert!(!store.shrink_to(before + 10), "nor is a bigger one");
         assert_eq!(store.len(), before, "every refusal left the capacity alone");
-        assert_eq!(*store.addr::<i64>(b, 8), 0x2222, "and B untouched");
+        assert_eq!(store.read::<i64>(b, 8), 0x2222, "and B untouched");
 
         // A0's gate: a chain the walk cannot follow makes the mark a lower
         // bound, and shrinking to a lower bound is what cuts live data.
-        *store.addr_mut::<i32>(b, 0) = 0;
+        store.write::<i32>(b, 0, 0);
         assert!(
             !store.shrink_to(before - 1),
             "an incomplete walk must refuse, whatever the mark says"
@@ -5116,7 +5193,7 @@ mod tests {
         let mut store = Store::new(64);
         store.free = false;
         let a = store.claim(5);
-        *store.addr_mut::<i32>(a + 5, 0) = 100; // claimed, and 100 > 64 - 6
+        store.write::<i32>(a + 5, 0, 100); // claimed, and 100 > 64 - 6
         let _ = store.usage();
     }
 
@@ -5145,15 +5222,15 @@ mod tests {
         let mut store = Store::new(64);
         store.free = false;
         let rec = store.claim(4);
-        *store.addr_mut::<i32>(rec, 0) = 42;
+        store.write::<i32>(rec, 0, 42);
         let borrow = unsafe { store.borrow_locked_for_light_worker() };
-        assert_eq!(*borrow.addr::<i32>(rec, 0), 42);
+        assert_eq!(borrow.read::<i32>(rec, 0), 42);
         assert!(borrow.read_only);
         assert!(borrow.borrowed);
         // Drop of borrow must NOT free the original's buffer.
         drop(borrow);
         assert_eq!(
-            *store.addr::<i32>(rec, 0),
+            store.read::<i32>(rec, 0),
             42,
             "original intact after borrow dropped"
         );
@@ -5192,8 +5269,8 @@ mod tests {
         let b = store.claim(16); // adjacent 16-word record
         // Garbage at HIGH offsets in b, past the free-tree node header `delete` writes into
         // b's first words — so it survives the free and is what `resize` must clear.
-        *store.addr_mut::<u32>(b, 80) = 0xDEAD_BEEF;
-        *store.addr_mut::<u32>(b, 100) = 0x00CA_FE00;
+        store.write::<u32>(b, 80, 0xDEAD_BEEF);
+        store.write::<u32>(b, 100, 0x00CA_FE00);
         store.delete(b); // b becomes a free block adjacent to a
         let a2 = store.resize(a, 12); // grow a in place into b's region
         assert_eq!(
@@ -5202,12 +5279,12 @@ mod tests {
         );
         // b started at word 4 relative to a; b byte 80/100 -> a byte 4*8+80 / 4*8+100.
         assert_eq!(
-            *store.addr::<u32>(a, 32 + 80),
+            store.read::<u32>(a, 32 + 80),
             0,
             "absorbed region must be zeroed (kept 0xDEADBEEF pre-fix)"
         );
         assert_eq!(
-            *store.addr::<u32>(a, 32 + 100),
+            store.read::<u32>(a, 32 + 100),
             0,
             "absorbed region must be zeroed (kept 0xCAFE pre-fix)"
         );

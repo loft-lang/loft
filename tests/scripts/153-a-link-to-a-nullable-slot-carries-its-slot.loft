@@ -19,6 +19,11 @@
 //
 // @falsified-at: 964bab93 — interpret exit 1 -> 0, native exit 1 -> 0 (the parent build
 //   refuses every cell below at parse time, so none of them runs there).
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal, expectations are equal on
+//   both trees, measured by `scripts/falsify.sh --bulk` against 964bab93; falsify prints only
+//   the channels that MOVE, and requires HERE to be clean, so each of those is clean on both.
+//   The exit channel carries this one on that backend. The native side was not scored in that
+//   run.
 
 struct S { n: integer }
 struct O { opt: S? }

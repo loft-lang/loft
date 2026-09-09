@@ -36,6 +36,11 @@
 // too — it reads through the old store's own handle. Both are controls here.
 //
 // @falsified-at: 048498ce — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 048498ce; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 // loft has no `==` on vectors; render both sides so a failure names what it got.
 fn shows(v: vector<integer>) -> text { "{v}" }

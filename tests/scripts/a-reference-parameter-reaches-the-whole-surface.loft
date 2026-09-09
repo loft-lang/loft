@@ -55,6 +55,8 @@
 // pre-fix run cannot reach an assertion at all.  That is the honest reading — a guard against a
 // REFUSAL falsifies on exit, and an assert-count of 0 on both sides is the expected shape here
 // rather than a sign the guard is inert.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn amp_insert(v: &vector<integer>)  { insert(v, 1, 99); }
 fn amp_reverse(v: &vector<integer>) { reverse(v); }

@@ -533,11 +533,11 @@ fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
         match k {
             // The whole cell, unnarrowed: the callee's declared width is what
             // decides the value, exactly as the native bridge treats it.
-            Kind::Int => args.push(Value::Int(*stores.get::<i64>(stack))),
-            Kind::Bool => args.push(Value::Bool(*stores.get::<bool>(stack))),
+            Kind::Int => args.push(Value::Int(stores.get::<i64>(stack))),
+            Kind::Bool => args.push(Value::Bool(stores.get::<bool>(stack))),
             // `single` is a 4-byte cell, so it pops as `f32` — reading it as an
             // `f64` would take the next argument's bytes with it.
-            Kind::Single => args.push(Value::Float(f64::from(*stores.get::<f32>(stack)))),
+            Kind::Single => args.push(Value::Float(f64::from(stores.get::<f32>(stack)))),
             Kind::Text => {
                 args.push(Value::Text(
                     stores.get::<crate::keys::Str>(stack).str().to_string(),
@@ -545,14 +545,14 @@ fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
             }
             Kind::Void => args.push(Value::Void),
             // Popped, never sent: it is the caller's answer slot, not an input.
-            Kind::WorkBuf => work_buf = Some(*stores.get::<DbRef>(stack)),
-            Kind::RetBuf(_) => ret_buf = Some(*stores.get::<DbRef>(stack)),
+            Kind::WorkBuf => work_buf = Some(stores.get::<DbRef>(stack)),
+            Kind::RetBuf(_) => ret_buf = Some(stores.get::<DbRef>(stack)),
             // A placeholder now; the real value is a record in the arena, and
             // the arena is not bound until the frame has been popped clean.
             Kind::Compound { tp, written } => {
                 compound.push(CompoundArg {
                     slot: args.len(),
-                    caller: *stores.get::<DbRef>(stack),
+                    caller: stores.get::<DbRef>(stack),
                     tp: *tp,
                     written: *written,
                 });

@@ -28,6 +28,8 @@
 //   both backends (the run stops at its first failed assertion); the seven rebind shapes
 //   behind it were each measured red on that build in the probe matrix the guard was cut
 //   from, and the two hand-off cells read a double release there.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn trace_path() -> text { return "loft_1362_trace.tmp"; }
 

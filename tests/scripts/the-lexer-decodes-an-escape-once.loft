@@ -49,6 +49,8 @@
 //
 //   `an_unrecognised_escape_stands_for_its_own_character` passes on every build: it guards a
 //   rule these fixes INTRODUCED, so it has no failing build behind it and is a lock.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 use lexer;
 
 

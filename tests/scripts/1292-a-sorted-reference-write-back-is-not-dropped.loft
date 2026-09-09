@@ -43,6 +43,8 @@
 //   before the fix: interpret 1 assertion failure -> 0.  That is the load-bearing measurement —
 //   the refusal is what a user removes by writing a second statement, and the wrong answer is
 //   what they get.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1292 { k: integer, v: integer }
 

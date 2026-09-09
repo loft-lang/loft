@@ -20,6 +20,13 @@
 // exit 1 -> 0, native 1 assertion failures -> 0.  The count is 1 because a failed assert stops
 // the run; on the control it is the first `keyed first` cell that fires, and all five of them
 // are broken there.  The `vector first` cells pass on the control and are the in-file controls.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0785871f; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct Og { og_k: integer, og_k2: integer, og_nm: text }
 

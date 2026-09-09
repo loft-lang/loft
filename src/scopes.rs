@@ -710,6 +710,27 @@ fn grown_containers(
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let name = data.def(*d).name();
+        // @PLN157 § V-m — a fused scalar append (`OpPush<Kind>`) grows its container: the
+        // variable itself in the plain form, a FIELD of it when the container is the field
+        // access `OpGetField(var, off, _)` — the same two answers `OpNewRecord` gives below.
+        if name.starts_with("OpPush") {
+            match args.first().map(Value::unspan) {
+                Some(Value::Var(c)) => {
+                    out.insert((*c, ANY_FIELD));
+                }
+                Some(Value::Call(g, gargs))
+                    if data.def(*g).name() == "OpGetField"
+                        && let Some(Value::Var(c)) = gargs.first().map(Value::unspan)
+                        && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
+                        && let Ok(off) = u32::try_from(*off)
+                        && !cleared.contains(&(*c, off)) =>
+                {
+                    out.insert((*c, off));
+                }
+                _ => {}
+            }
+            return;
+        }
         if !matches!(
             name,
             "OpNewRecord" | "OpPreAllocVector" | "OpAppendVector" | "OpInsertVector" | "OpHashAdd"
@@ -2673,6 +2694,16 @@ fn run_scan_phase(
         scopes.var_order.push(w);
         scopes.owner_witness.insert(v, w);
     }
+    // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
+    // spelling of the same mixed-ownership local answers the identical question by STORE
+    // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  C90 makes the two
+    // spellings the same slot, so nullability does not require a runtime flag here and the
+    // divergence is an accident of this site.  Reach: 5 of 1311 corpus files emit a `__lbo_`.
+    // Not folded — whether it CAN be is unmeasured (the falsification was attempted and its own
+    // control caught it going vacuous), and it belongs to @PLN155's question, "a limited amount
+    // of code that verifies if a free is needed", rather than to @PLN160's.  Note also that
+    // `__own_` has `LOFT_NO_OWNER_WITNESS=1` and this one has no `LOFT_NO_*` switch at all, so
+    // the one of the three whose necessity cannot be shown is the one with no bisect step.
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
         let name = format!("__lbo_{}", function.name(v));
@@ -3094,6 +3125,11 @@ fn move_elide(data: &mut Data) {
         op_clear: data.def_nr("OpClearVector"),
         op_new_record: data.def_nr("OpNewRecord"),
         op_finish_record: data.def_nr("OpFinishRecord"),
+        op_push: crate::parser::FUSED_PUSH_OPS
+            .iter()
+            .map(|n| data.def_nr(n))
+            .filter(|d| *d != u32::MAX)
+            .collect(),
     };
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
@@ -3683,7 +3719,8 @@ fn collect_multi_database(node: &Value, mo: &MoveOps) -> HashSet<u16> {
 }
 
 /// Does `src` ESCAPE its own construction — is it referenced anywhere OTHER than (a) as arg0 of a
-/// WRITE op that builds it (`OpPreAllocVector`/`OpNewRecord`/`OpFinishRecord`/`OpSetInt4`), or (b) as
+/// WRITE op that builds it (`OpPreAllocVector`/`OpNewRecord`/`OpFinishRecord`/`OpSetInt4`, or a
+/// fused `OpPush<Kind>`), or (b) as
 /// arg1 of the append copy that moves it? A source that is built, then READ (`"{out:j}"`, `out[i]`,
 /// passed to a fn), then moved is NOT dead-between-build-and-copy: building it directly into the
 /// destination would leave the intermediate read seeing the un-built source (`var_out` not in
@@ -3698,7 +3735,8 @@ fn source_escapes(node: &Value, src: u16, co: &ConstructOps) -> bool {
                         && (*d == co.op_prealloc
                             || *d == co.op_new_record
                             || *d == co.op_finish_record
-                            || *d == co.op_set_int4);
+                            || *d == co.op_set_int4
+                            || co.op_push.contains(d));
                     let copy_arg1 = i == 1 && *d == co.op_append;
                     if !(write_arg0 || copy_arg1) {
                         *bad = true;
@@ -3834,6 +3872,10 @@ struct ConstructOps {
     op_clear: u32,
     op_new_record: u32,
     op_finish_record: u32,
+    /// The fused scalar appends (@PLN157 § V-m, `OpPush<Kind>(container, val)`): a source's
+    /// element build in ONE op, so it counts as building the source exactly as
+    /// `OpNewRecord`/`OpFinishRecord` do, and retargets the same way.
+    op_push: Vec<u32>,
 }
 
 /// @PLN90 phase B (B1.3b) — the CONSTRUCT copy shape (`x.field += src`, lowered as a copying
@@ -6301,7 +6343,7 @@ pub(crate) fn capture_build_backings(
             // the build node is reached AFTER this one, by which time `latest` describes the
             // assignment rather than the capture.  Resolve those builds here, against
             // `latest` as it still stands, and let the walk skip them when it arrives.
-            for (record, c, backing) in captures_built_in(data, rhs, set_dbref, &latest) {
+            for (record, c, backing) in captures_built_in(data, function, rhs, set_dbref, &latest) {
                 built.insert(c);
                 if let Some(b) = backing {
                     out.backing.insert(c, b);
@@ -6328,11 +6370,12 @@ pub(crate) fn capture_build_backings(
                 out.reassigned_after_build.insert(*v);
             }
             match crate::use_analysis::view_root_slots(data, rhs).as_deref() {
-                Some([root]) if *root != *v && !function.is_argument(*root) => {
+                Some([root]) if bind_views_root(function, *v, rhs, *root) => {
                     latest.insert(*v, *root);
                 }
                 // A right-hand side that names no single root leaves no backing to remember,
-                // and the stale one would be worse than none: drop it.
+                // and the stale one would be worse than none: drop it.  So does one whose
+                // destination owns the store it ends up holding — see `bind_views_root`.
                 _ => {
                     latest.remove(v);
                 }
@@ -6386,6 +6429,7 @@ pub(crate) fn capture_build_backings(
 /// the assignment this right-hand side belongs to.
 fn captures_built_in(
     data: &Data,
+    function: &Function,
     rhs: &Value,
     set_dbref: u32,
     outer: &HashMap<u16, u16>,
@@ -6394,7 +6438,7 @@ fn captures_built_in(
     let mut found: Vec<(u16, u16, Option<u16>)> = Vec::new();
     rhs.walk(&mut |node: &Value| match node.unspan() {
         Value::Set(c, src) => match crate::use_analysis::view_root_slots(data, src).as_deref() {
-            Some([root]) if root != c => {
+            Some([root]) if bind_views_root(function, *c, src, *root) => {
                 latest.insert(*c, *root);
             }
             _ => {
@@ -6568,6 +6612,57 @@ fn capture_attr_is_cascade_relevant(data: &Data, record: u32, a: usize) -> bool 
 ///
 /// Empty when `start` owns its store directly, which is the struct case: there is nothing
 /// behind it to mark.
+/// Does the bind `v = rhs`, whose right-hand side is rooted at `root`, leave `v` VIEWING
+/// the store `root` holds?
+///
+/// [`CaptureBuilds::backing`] names the local that HOLDS the store a capture reaches, and a
+/// capture owning its store outright has none.  A right-hand side naming a single root
+/// answers neither question on its own: `mb = cap` names `cap` and still mints `mb` a store
+/// of its own, so recording `cap` as the backing suppressed a frame-exit free that the
+/// closure's cascade never took over, and the copied-from record was freed by nobody
+/// (loft#1487, one store per copy-bound capture, both backends).
+///
+/// `binding.md` is what separates the two, and it separates them by the SHAPE of the
+/// right-hand side rather than by any fact about `v`: `(B-View)` makes a PROJECTION —
+/// `q = __vdb_1[…]`, `x = b.s`, an element read — name an interior place, so the root keeps
+/// holding the store; `(B-Copy)` makes a plain bind of a whole heap value COPY, so a bare
+/// local read leaves `v` owning a store of its own.  `(B-Ref-Alias)` is the one bare-name
+/// exception, and it says so in the destination's type.
+///
+/// ⚠ **Asked of `v`'s DEPS instead, this is the wrong currency and the reassignment cells
+/// fail.** The map is built by a per-ASSIGNMENT walk because `@FR-O-Latest` needs the store
+/// the capture named AT THE BUILD; a dep read describes what the local names LAST, so a
+/// capture reassigned after its build loses the backing the record still holds and the
+/// frame frees it under the escaped closure — `1324-a-reassigned-capture-suppresses-the-\
+/// store-the-record-holds` reads `null(oob)` on exactly that.  The right-hand side is a
+/// fact about this assignment and stays true however often the local is assigned again.
+///
+/// `@FR-L-CapOwn` — a captured heap store is freed once, by whichever of the record and the
+/// frame outlives the other.  A store no capture reaches is not in that trade at all, so
+/// naming it here takes away the frame's release without giving the cascade anything.
+fn bind_views_root(function: &Function, v: u16, rhs: &Value, root: u16) -> bool {
+    // `@FR-N-Shape` — through `base()`, because "is this destination a `&` LINK" is a shape
+    // question and a `&τ?` links exactly as its dense twin does.
+    let dest = function.tp(v).base();
+    root != v
+        && !function.is_argument(root)
+        && (!rhs_is_a_bare_local_read(rhs) || matches!(dest, Type::RefVar(_)))
+}
+
+/// Is this right-hand side a bare read of another local — the `(B-Copy)` shape, as opposed
+/// to a projection naming a place inside one?
+///
+/// Peels the wrappers a right-hand side arrives in and nothing else: a `Span` is a source
+/// position, and the parser wraps a one-expression arm in a `Block` with a single operator.
+fn rhs_is_a_bare_local_read(rhs: &Value) -> bool {
+    match rhs.unspan() {
+        Value::Var(_) => true,
+        Value::Block(bl) if bl.operators.len() == 1 => rhs_is_a_bare_local_read(&bl.operators[0]),
+        Value::Insert(ops) if ops.len() == 1 => rhs_is_a_bare_local_read(&ops[0]),
+        _ => false,
+    }
+}
+
 fn backing_chain(function: &Function, start: u16) -> Vec<u16> {
     let mut chain = Vec::new();
     let mut v = start;
@@ -10497,13 +10592,21 @@ impl Scopes<'_> {
                     ));
                 }
                 if scope_debug && !emit {
+                    // Every conjunct of `emit`, because the question this line is read to
+                    // answer is WHICH of them declined.  Three of the six used to be
+                    // printed and `owns` / `captured_ref` / `free_transferred` were not,
+                    // so a suppression by one of those read as a suppression by any of
+                    // them — the reader then re-derives the verdict by hand, which is how
+                    // loft#1487 was first attributed to the wrong predicate.
                     eprintln!(
                         "[scope_debug] NOT freeing '{}' (var={v}, scope={}, to_scope={to_scope}): \
-                         dep_empty={} in_ret={in_ret} skip_free={}",
+                         dep_empty={} owns={owns} is_work_ref={is_work_ref} in_ret={in_ret} \
+                         skip_free={} free_transferred={} captured_ref={captured_ref}",
                         function.name(v),
                         self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
                         dep.is_empty(),
                         function.is_skip_free(v),
+                        self.free_transferred.contains(&v),
                     );
                 }
                 if emit {
@@ -13071,10 +13174,23 @@ impl Scopes<'_> {
             // backends — while `__retbuf`'s exemption made it worse: `{ f(x) }` never
             // delivers INTO that buffer, so the premise that the lifted temp is the
             // caller's own allocation is simply false here.
+            // loft#1484 — and a monomorph whose return BORROWS a visible parameter, which is
+            // the shape the `t_` gate above was written when it could not exist.  #549's
+            // reason is *"a monomorph LOSES its return dep during specialization, so the
+            // dep-based ownership guards cannot tell a fresh-owned return from a
+            // borrowed-arg one"* — D-call-13 gave the instance its deps back from the
+            // oracle, so `id<T>(x) -> T { x }` now publishes `["x"]` and reads as the borrow
+            // it is.  Unlifted, an inline `idg(q).a = 99` wrote straight through the returned
+            // DbRef into the caller's own record, where the concrete twin — lifted through
+            // the `__retbuf` exemption below — copies at its `Set` and stays independent
+            // (`(F-Ret)`: *the concrete twin is the oracle for the instance*).
+            let monomorph_returns_a_borrow =
+                def.name.starts_with("t_") && def.returns_borrowed_view();
             let lift_owned_return = if def.has_fnref_return_site() {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
                 def.name.starts_with("n_")
+                    || monomorph_returns_a_borrow
                     || (def.name.starts_with("t_")
                         && (def.attr_names.contains_key("__retbuf")
                             || def.monomorph_return_is_fresh()
@@ -13150,6 +13266,16 @@ impl Scopes<'_> {
                 if returned.heap_def_nr().is_some()
                     && (!def.returns_borrowed_view()
                         || def.attr_names.contains_key("__retbuf")
+                        // loft#1484 — the monomorph twin of the `__retbuf` exemption beside
+                        // it, and it is the SAME reason rather than a second one.  What makes
+                        // that exemption safe is not the buffer but the guarded copy the
+                        // lift's own `Set` emits for a borrow-returning callee: it adopts
+                        // when the store that came back is fresh and deep-copies when it is
+                        // the argument's, which is decided per execution by identity.  A
+                        // monomorph has no buffer and the same guard, so the same lift is
+                        // safe — and it is the only thing that gives the inline spelling
+                        // anywhere to put the copy.
+                        || monomorph_returns_a_borrow
                         || lift_by_oracle)
                 {
                     return Some(Self::reopt(opt, returned.with_deps(&Deps::none())));

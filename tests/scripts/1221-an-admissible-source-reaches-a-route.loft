@@ -37,6 +37,13 @@
 //   hash, sorted, index, trie and spatial. No single kind carries the file, and the assert
 //   count of 1 is an artefact of where the run stops rather than a measure of how many cells
 //   were broken.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e695a6f5; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct E1221 { k: integer, n: integer }
 struct P1221 { x: integer, y: integer, n: integer }

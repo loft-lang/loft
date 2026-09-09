@@ -4833,6 +4833,25 @@ impl State {
             // the write op is the slot's, and whether the slot may hold null is
             // @FR-N-Store's question rather than the op's.
             let tp = Box::new(tp.base().clone());
+            // `@FR-B-Ref-Repoint` — `p = &q` on a link RE-POINTS it: the new cell replaces the
+            // old one in `p`'s OWN slot (the raw write the first bind makes, `OpPutRef` of the
+            // 12-byte stack cell), nothing is written through the link, and nothing is freed —
+            // a link owns nothing (`@FR-B-Ref-Alias`).  Every kind takes this path FIRST: the
+            // branches below write a VALUE through the link, and a stack cell is not one.
+            // Measured before it existed: the cell went THROUGH the link into the old source's
+            // slot and the displaced-store free ran on a stack ref — a struct read garbage and
+            // lost the second record's field, a text was CLEARED through the link and read
+            // empty, an integer kept the first source, while a vector re-pointed and native
+            // re-pointed every kind.
+            if matches!(value.unspan(), Value::Call(d, _)
+                if stack.data.def(*d).name() == "OpCreateStack")
+            {
+                self.generate(value, stack, false);
+                let var_pos = stack.var_pos(var);
+                stack.add_op("OpPutRef", self);
+                self.code_add(var_pos);
+                return;
+            }
             if matches!(*tp, Type::Text(_)) {
                 if value == &Value::Text(String::new()) {
                     // @P346: assigning "" to a RefVar(Text) is NOT a no-op — it
@@ -4941,10 +4960,9 @@ impl State {
             // local `&` bind — `@FR-B-Ref-Uniform`: a `&τ` variable is used exactly like a τ
             // variable, and how the link was INTRODUCED is not the question.  The one value
             // excluded is the link INSTALL itself (`OpCreateStack(src)`), which gives the
-            // variable its link and is not a fn-ref reaching a slot through one (loft#1454).
-            let installs_link = matches!(value.unspan(), Value::Call(d, _)
-                if stack.data.def(*d).name() == "OpCreateStack");
-            if matches!(*tp, Type::Function(_, _, _)) && !installs_link {
+            // variable its link and is not a fn-ref reaching a slot through one (loft#1454) —
+            // it is the re-point above, and never reaches here.
+            if matches!(*tp, Type::Function(_, _, _)) {
                 self.gen_fn_ref_value_node(IrNode::Native(value), stack);
                 // AFTER the push: `var_pos` is relative to the current stack top, so the
                 // pair has to be on it already.  The runtime subtracts the popped span

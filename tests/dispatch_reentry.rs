@@ -44,12 +44,12 @@ thread_local! {
 }
 
 fn n_probe_stash(stores: &mut Stores, stack: &mut DbRef) {
-    let r = *stores.get::<DbRef>(stack);
+    let r = stores.get::<DbRef>(stack);
     STASH_RES.with(|s| s.set(r));
 }
 
 fn n_probe_stash_vec(stores: &mut Stores, stack: &mut DbRef) {
-    let v = *stores.get::<DbRef>(stack);
+    let v = stores.get::<DbRef>(stack);
     STASH_VEC.with(|s| s.set(v));
 }
 

@@ -202,6 +202,25 @@ with the closure's environment in scope.
 
 **OPEN: 1.**
 
+- **D-clo-34** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(F-Ret)` did not hold for
+  a COLLECTION a lambda hands back out of its CAPTURE.  `fn() -> vector<S> { q }` and
+  `fn() -> vector<S> { e = q; e }` gave the caller a view of the enclosing frame's own vector, so
+  appending to one call's result grew `q`.  The RECORD former of the same question was closed by
+  loft#1485; the collection former had no capture leg in its delivery selector at all, and the
+  bind form was `(B-Copy)`'s [binding.md](binding.md) D-bind-31 rather than a return question.
+  **The filed blocker was real and was not the cure.**  A capturing lambda's return buffer IS the
+  tail's own local by pass 2 — the promotion renames it there — so a per-arm copy into the buffer
+  copies a value into itself, and both collection deliveries were built and measured INERT
+  against exactly that.  What the reading missed is that `e = q` is a BIND: fix it and the tail
+  owns a store of its own, so the return needs no delivery.  Only the BARE tail `{ q }` binds
+  nothing, and that one takes the same capture leg `classify_reference_delivery` has carried
+  since loft#1485 — reached ABOVE the empty-`ls` branch, because a bare capture tail publishes no
+  dep at all on pass 1.
+  The caller's side is where it reads: `r: vector<integer>["g"]` becomes `r: vector<integer>`
+  with an `OpFreeRef(r)` beside it — the caller owns its copy, which is what `(F-Ret)` asks for.
+  Guard `1489-a-capture-is-bound-and-returned-as-a-whole-value.loft`; the two cells
+  `1485-…` had frozen at the wrong answer now assert the right one, and five other capture
+  guards changed EMISSION with no cell moving.
 - **D-clo-33** *(CLOSED 2026-09-09, loft#1476)* — `record_leaves_frame` is one static answer to
   a per-run question, so a closure record the return delivers on SOME path was exempt from the
   frame's free on ALL of them, and the runs that dropped it leaked the record and the capture its

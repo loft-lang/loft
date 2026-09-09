@@ -17,6 +17,11 @@
 //   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 ->
 //   10/10: on the control not one of the ten refusals fires, every cell runs, and the file
 //   reaches its `unreached` assertions.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 14b50b1f; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 enum Ch1380d {
   Alpha { n: integer = 1 },

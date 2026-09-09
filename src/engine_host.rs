@@ -672,8 +672,8 @@ fn bind_reuseaddr(port: u16) -> Option<TcpListener> {
 /// and, on the same port number, the state-sync UDP socket (05a).  A UDP bind
 /// failure is a warning, not an error: everything rides WS until a restart.
 pub fn n_kernel_listen(stores: &mut Stores, stack: &mut DbRef) {
-    let tick_us = *stores.get::<i64>(stack);
-    let port = *stores.get::<i64>(stack);
+    let tick_us = stores.get::<i64>(stack);
+    let port = stores.get::<i64>(stack);
     let ok = listen_impl(port, tick_us);
     stores.put(stack, ok);
 }
@@ -988,7 +988,7 @@ pub fn n_kernel_event_kind(stores: &mut Stores, stack: &mut DbRef) {
 /// natives): the caller allocates the destination and passes its `DbRef`;
 /// routed by `is_text_dest_native("n_kernel_event_payload")`.
 pub fn n_kernel_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = with_kernel(|k| k.last.payload.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
@@ -1063,7 +1063,7 @@ fn deliver(k: &mut Kernel, cid: usize, msg: &str, sync: bool) -> bool {
 /// `kernel_send(cid, msg) -> boolean` — class-routed delivery (see `deliver`).
 pub fn n_kernel_send(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
-    let cid = *stores.get::<i64>(stack);
+    let cid = stores.get::<i64>(stack);
     let sync = is_sync_msg(&msg);
     let ok = with_kernel(|k| deliver(k, cid as usize, &msg, sync)).unwrap_or(false);
     stores.put(stack, ok);
@@ -1096,7 +1096,7 @@ pub fn n_kernel_broadcast(stores: &mut Stores, stack: &mut DbRef) {
 /// `kernel_idle(max_us)` — sleep, but never past the next tick boundary.
 /// Called by the loft loop only when a turn produced no work.
 pub fn n_kernel_idle(stores: &mut Stores, stack: &mut DbRef) {
-    let max_us = *stores.get::<i64>(stack);
+    let max_us = stores.get::<i64>(stack);
     let sleep_us = with_kernel(|k| {
         let now = k.start.elapsed().as_micros() as i64;
         let until_tick = if k.last_tick_us == 0 {
@@ -1170,7 +1170,7 @@ pub fn n_kernel_post(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 /// `udp_bound(cid) -> boolean` — does this client have a live UDP path?
 pub fn n_kernel_udp_bound(stores: &mut Stores, stack: &mut DbRef) {
-    let cid = *stores.get::<i64>(stack);
+    let cid = stores.get::<i64>(stack);
     let v =
         with_kernel(|k| k.net.get(cid as usize).is_some_and(|n| n.path.is_some())).unwrap_or(false);
     stores.put(stack, v);
@@ -1182,7 +1182,7 @@ pub fn n_kernel_udp_bound(stores: &mut Stores, stack: &mut DbRef) {
 /// and inbound datagrams of that kind conflate.  Data, not a per-call API —
 /// the developer states what a message IS once; the kernel picks transports.
 pub fn n_kernel_sync_class(stores: &mut Stores, stack: &mut DbRef) {
-    let msg_id = *stores.get::<i64>(stack);
+    let msg_id = stores.get::<i64>(stack);
     SYNC_IDS.with(|s| {
         s.borrow_mut().insert(msg_id, false);
     });
@@ -1192,7 +1192,7 @@ pub fn n_kernel_sync_class(stores: &mut Stores, stack: &mut DbRef) {
 /// entity id: conflation keeps the newest per (peer, kind, entity), so one
 /// kind carries N entities' latest-values ("state-sync keyed by cid").
 pub fn n_kernel_sync_class_keyed(stores: &mut Stores, stack: &mut DbRef) {
-    let msg_id = *stores.get::<i64>(stack);
+    let msg_id = stores.get::<i64>(stack);
     SYNC_IDS.with(|s| {
         s.borrow_mut().insert(msg_id, true);
     });
@@ -1233,7 +1233,7 @@ fn deliver_keyframe(k: &mut Kernel, cid: usize, msg: &str) -> bool {
 /// `kernel_keyframe(cid, msg) -> boolean` — see `deliver_keyframe`.
 pub fn n_kernel_keyframe(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
-    let cid = *stores.get::<i64>(stack);
+    let cid = stores.get::<i64>(stack);
     let ok = with_kernel(|k| deliver_keyframe(k, cid as usize, &msg)).unwrap_or(false);
     stores.put(stack, ok);
 }
@@ -1279,7 +1279,7 @@ pub fn n_kernel_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = with_kernel(|k| k.last_sync.2.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
@@ -1387,8 +1387,8 @@ fn write_frame_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std
 /// auth), capture the `X-Loft-UDP` cookie, prepare the UDP socket.  Queues a
 /// kind-0 event so `on_event` sees the connect like the listener side does.
 pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
-    let tick_us = *stores.get::<i64>(stack);
-    let port = *stores.get::<i64>(stack);
+    let tick_us = stores.get::<i64>(stack);
+    let port = stores.get::<i64>(stack);
     let host = stores.get::<Str>(stack).str().to_owned();
     let ok = client_connect(&host, port as u16, tick_us).is_some();
     stores.put(stack, ok);
@@ -1401,7 +1401,7 @@ pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
 /// server.  `client_send` reports false; the event queue only ever holds
 /// what a future local source enqueues.
 pub fn n_kernel_local(stores: &mut Stores, stack: &mut DbRef) {
-    let tick_us = *stores.get::<i64>(stack);
+    let tick_us = stores.get::<i64>(stack);
     local_init(tick_us);
     stores.put(stack, true);
 }
@@ -1781,7 +1781,7 @@ pub fn n_kernel_client_event_cid(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = with_client(|c| c.last.payload.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
@@ -1814,7 +1814,7 @@ fn tick_due_client(c: &mut ClientKernel) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_client_idle(max_us)` — sleep, capped at the next tick boundary.
 pub fn n_kernel_client_idle(stores: &mut Stores, stack: &mut DbRef) {
-    let max_us = *stores.get::<i64>(stack);
+    let max_us = stores.get::<i64>(stack);
     let sleep_us = with_client(|c| {
         let now = c.now_us();
         let until_tick = if c.last_tick_us == 0 {
@@ -1908,7 +1908,7 @@ pub fn n_kernel_client_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = with_client(|c| c.last_sync.1.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
@@ -1933,7 +1933,7 @@ pub fn n_kernel_client_frame(_stores: &mut Stores, _stack: &mut DbRef) {}
 /// script doesn't say: `LOFT_HOST` env, else loopback.  The browser variant
 /// returns the page's serving origin (the cabinet).  Destination-passing.
 pub fn n_kernel_default_host_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = std::env::var("LOFT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     stores
         .store_mut(&dest)
@@ -2380,7 +2380,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
 /// `swap_world(w: reference) -> boolean` (stack native).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_swap_world(stores: &mut Stores, stack: &mut DbRef) {
-    let w = *stores.get::<DbRef>(stack);
+    let w = stores.get::<DbRef>(stack);
     let resumed = swap_world_impl(stores, w);
     stores.put(stack, resumed);
 }
@@ -2457,7 +2457,7 @@ pub mod browser {
     /// swap target's boot), restore it INTO `w` in place — the same
     /// in-place-restore contract as the native LOFT_RESUME leg.
     pub fn n_swap_world(stores: &mut Stores, stack: &mut DbRef) {
-        let w = *stores.get::<DbRef>(stack);
+        let w = stores.get::<DbRef>(stack);
         let kt = stores.allocations[w.store_nr as usize].known_type;
         if kt == u16::MAX {
             eprintln!("loft-swap: swap_world got a record with no known type; swaps disabled");
@@ -2537,7 +2537,7 @@ pub mod browser {
     /// WebSocket (`ws: -1`, guarded in pump/send); `opened` so nothing waits
     /// on a handshake that never comes.
     pub fn n_kernel_local(stores: &mut Stores, stack: &mut DbRef) {
-        let tick_us = *stores.get::<i64>(stack);
+        let tick_us = stores.get::<i64>(stack);
         CLIENT.with(|c| {
             *c.borrow_mut() = Some(BrowserClient {
                 ws: -1,
@@ -2564,8 +2564,8 @@ pub mod browser {
     /// `kernel_connect(host, port, tick_interval_us) -> boolean` — open the
     /// browser WebSocket (async; the pump completes the handshake contract).
     pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
-        let tick_us = *stores.get::<i64>(stack);
-        let port = *stores.get::<i64>(stack);
+        let tick_us = stores.get::<i64>(stack);
+        let port = stores.get::<i64>(stack);
         let host = stores.get::<Str>(stack).str().to_owned();
         let ws = host_ws_connect(&format!("ws://{host}:{port}/ws"));
         let ok = ws >= 0;
@@ -2682,7 +2682,7 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-        let dest = *stores.get::<DbRef>(stack);
+        let dest = stores.get::<DbRef>(stack);
         let v = with_client(|c| c.last.payload.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
@@ -2712,7 +2712,7 @@ pub mod browser {
     /// `kernel_client_idle(max_us)` — a no-op in the browser: the event loop
     /// IS the idle (the per-turn frame yield returns control to it).
     pub fn n_kernel_client_idle(stores: &mut Stores, stack: &mut DbRef) {
-        let _ = *stores.get::<i64>(stack);
+        let _ = stores.get::<i64>(stack);
     }
 
     /// `client_send(msg)` — everything rides the WebSocket (a browser cannot
@@ -2761,7 +2761,7 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
-        let dest = *stores.get::<DbRef>(stack);
+        let dest = stores.get::<DbRef>(stack);
         let v = with_client(|c| c.last_sync.1.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
@@ -2782,7 +2782,7 @@ pub mod browser {
 
     /// `default_host()` in the browser = the cabinet that served the page.
     pub fn n_kernel_default_host_dest(stores: &mut Stores, stack: &mut DbRef) {
-        let dest = *stores.get::<DbRef>(stack);
+        let dest = stores.get::<DbRef>(stack);
         let v = host_origin_host();
         stores
             .store_mut(&dest)

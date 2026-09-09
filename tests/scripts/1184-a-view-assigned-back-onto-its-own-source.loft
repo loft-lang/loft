@@ -35,6 +35,11 @@
 // which is what says the guard scores the alias and not just the copy; and native reports one
 // failure where the interpreter reports six because it stops at the first, which is the same
 // context-dependence the issue recorded rather than a row this file does not reach.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 1c554d16; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct Inner { v: vector<single>, n: integer }
 struct Outer { inner: Inner, k: integer }

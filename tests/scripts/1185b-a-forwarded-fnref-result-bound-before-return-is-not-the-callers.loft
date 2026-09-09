@@ -1,0 +1,167 @@
+// @PLN150 — *does a fn-ref call hand back a store the caller may free?*  The callee answers PER
+// RUN: a capture on one arm, its own mint on the other.  `COPY_FREE_SOURCE` (the `0x8000` bit on
+// `OpCopyRecord`) claims "the source is a callee's fresh temporary nobody else frees", and it is
+// decided statically at the caller's bind — so for a forwarded fn-ref result it was guessing.
+//
+// loft#1185 closed the TAIL spelling `{ f(v) }` by materialising a fresh temporary.  The BOUND
+// spelling `{ r = f(v); r }` binds first, so the tail is a `Var` and no tail-shaped rule reaches
+// it — `formal/closures-history.md` D-clo-12 records that residual and names this plan.
+//
+// Measured before the fix, INTERPRETER only (native was already clean, via its own adopt-vs-copy
+// test around the same op): the first call freed the CALLER'S capture and every call after read
+// freed bytes — `13 0 0 0 | cap 0` where `13 13 13 13 | cap 13` is wanted, with 4 strict-store
+// violations.  The value channel alone cannot see it: under `LOFT_STRICT_STORES` (which implies
+// no slot reuse) the freed record keeps its bytes and every cell reads CORRECT.
+//
+// The cure is the per-run answer `release_fnref_bufs` was already computing and discarding — the
+// `alloc_serial` stamp against the snapshot taken when the call began — carried one hop to the
+// bind.  A store that predates the call is a capture; the bit is cleared and the copy leaves it
+// alone.  What makes it the right channel rather than a trade: the MINT arm still frees, so
+// closing the capture arm does not leak the other one, which every static reading of this
+// question does (the plan's own table).
+//
+// @falsified-at: 31c4e04da — interpret exit 1 -> 0, interpret 2 assertion failures -> 0; native INERT.
+// @falsified-at: ace157ea4 — native exit 1 -> 0, native 1 assertion failure -> 0; interpret INERT.
+//
+// TWO reference commits, one per half, and each reads INERT on the backend the other fixed — which
+// is what a backend-divergence guard must do: only one side can move at a time.  The question is
+// one (*may the caller free what a fn-ref call handed back?*), the answer was wrong on both
+// backends in DIFFERENT shapes, and each backend had a test the other did not:
+//   * `31c4e04da` — the interpreter froze the caller's capture for a LOCAL destination, because
+//     `copy_ref_or_null` had no equivalent of native's adopt-vs-copy test around the same op;
+//   * `ace157ea4` — native froze it for a FIELD destination, because `cr_fnref_minted` computed
+//     MINTED-or-BORROWED and discarded the borrow half, exactly as the interpreter had.
+struct P1185 { n: integer }
+
+fn tail_fwd(f: fn(integer) -> P1185, v: integer) -> P1185 { f(v) }
+fn bound_fwd(f: fn(integer) -> P1185, v: integer) -> P1185 { r = f(v); r }
+fn bound_fwd2(f: fn(integer) -> P1185, v: integer) -> P1185 { r = bound_fwd(f, v); r }
+
+// The capture arm: the lambda hands back a record the CALLER owns.  Freeing it is the defect.
+fn test_a_bound_forwarder_does_not_free_the_capture() {
+  cap = P1185 { n: 13 };
+  s = fn(v: integer) -> P1185 { cap };
+  for i in 0..4 {
+    r = bound_fwd(s, 1);
+    assert(r.n == 13, "bound forwarder, call {i}: got {r.n}");
+  }
+  assert(cap.n == 13, "the caller's capture survives: got {cap.n}");
+}
+
+// Two frames between, which is what separated the halves of loft#1183.
+fn test_two_frames_of_bound_forwarding() {
+  cap = P1185 { n: 13 };
+  s = fn(v: integer) -> P1185 { cap };
+  for i in 0..4 {
+    r = bound_fwd2(s, 1);
+    assert(r.n == 13, "two bound frames, call {i}: got {r.n}");
+  }
+  assert(cap.n == 13, "the capture survives two frames: got {cap.n}");
+}
+
+// CONTROL — the MINT arm must still be freed by somebody.  This is the half every static reading
+// of the question loses: refuse the free to save the capture and this leaks one store per call.
+fn test_a_forwarded_mint_still_has_an_owner() {
+  fresh = fn(v: integer) -> P1185 { P1185 { n: v } };
+  for i in 0..4 {
+    r = bound_fwd(fresh, 7);
+    assert(r.n == 7, "forwarded mint, call {i}: got {r.n}");
+  }
+}
+
+// CONTROL — the TAIL spelling was already correct and must stay so.
+fn test_the_tail_spelling_is_unchanged() {
+  cap = P1185 { n: 41 };
+  s = fn(v: integer) -> P1185 { cap };
+  for i in 0..4 {
+    r = tail_fwd(s, 1);
+    assert(r.n == 41, "tail forwarder, call {i}: got {r.n}");
+  }
+  assert(cap.n == 41, "the capture survives the tail spelling: got {cap.n}");
+}
+
+struct Box1185 { p: P1185 }
+
+// The DESTINATION axis the plan's scope names — local, rebind, return, forwarded — plus a FIELD,
+// which is where the NATIVE half of this defect lived.  The interpreter was already correct here
+// and native froze the caller's capture, the mirror image of the local case above: one question,
+// two backends, and each had a test the other did not.
+fn test_the_destination_is_a_field_of_a_struct_the_caller_owns() {
+  cap = P1185 { n: 13 };
+  s = fn(v: integer) -> P1185 { cap };
+  b = Box1185 { p: P1185 { n: 0 } };
+  for i in 0..4 {
+    b.p = bound_fwd(s, 1);
+    assert(b.p.n == 13, "field destination, call {i}: got {b.p.n}");
+  }
+  assert(cap.n == 13, "the capture survives a field destination: got {cap.n}");
+}
+
+// The destination is a REBIND over a local that already owns a store.
+fn test_the_destination_is_a_rebind() {
+  cap = P1185 { n: 13 };
+  s = fn(v: integer) -> P1185 { cap };
+  r = P1185 { n: 99 };
+  for i in 0..4 {
+    r = bound_fwd(s, 1);
+    assert(r.n == 13, "rebind destination, call {i}: got {r.n}");
+  }
+  assert(cap.n == 13, "the capture survives a rebind: got {cap.n}");
+}
+
+// The destination is another function's RETURN.
+fn outer1185(f: fn(integer) -> P1185) -> P1185 { r = bound_fwd(f, 1); r }
+
+fn test_the_destination_is_a_return() {
+  cap = P1185 { n: 13 };
+  s = fn(v: integer) -> P1185 { cap };
+  for i in 0..4 {
+    r = outer1185(s);
+    assert(r.n == 13, "return destination, call {i}: got {r.n}");
+  }
+  assert(cap.n == 13, "the capture survives a returned forward: got {cap.n}");
+}
+
+// CONTROL — a field destination on the MINT arm must still be freed by somebody.
+fn test_a_field_destination_on_the_mint_arm_still_has_an_owner() {
+  fresh = fn(v: integer) -> P1185 { P1185 { n: v } };
+  b = Box1185 { p: P1185 { n: 0 } };
+  for i in 0..4 {
+    b.p = bound_fwd(fresh, 7);
+    assert(b.p.n == 7, "field destination, mint arm, call {i}: got {b.p.n}");
+  }
+}
+
+// CONTROL — depth 0.  No forwarder at all, so nothing here depends on the channel.
+fn test_the_direct_call_is_unchanged() {
+  cap = P1185 { n: 5 };
+  s = fn(v: integer) -> P1185 { cap };
+  for i in 0..4 {
+    r = s(1);
+    assert(r.n == 5, "direct call {i}: got {r.n}");
+  }
+  assert(cap.n == 5, "the capture survives a direct call: got {cap.n}");
+}
+
+// ⚠ THE CELL THAT SAYS THE CHANNEL DID NOT OVER-REACH, added after the fix cost a regression.
+//
+// "The store predates the call" was read as "it belongs to a frame further up", and the two
+// come apart at exactly one store: the hidden return BUFFER this call site allocated for the
+// callee.  `fn_call_ref` records it before taking the snapshot, so its stamp is at or below the
+// snapshot as a capture's is — and it is the opposite case, the one store the caller certainly
+// owns.  Refusing the caller's free of it left one buffer per CALL alive to the caller's own
+// return.
+//
+// It is a WATERMARK defect, and that is why it needs a cell of its own: the allocation and free
+// COUNTS were unchanged, every value was right, and the leak gate saw nothing — the only signal
+// is how many stores are live at once.  The scale is the assertion: at 70000 calls the store
+// table (a `u16`, 65535 slots) is exhausted and the run stops, where a released buffer keeps
+// the working set flat.  A four-iteration cell like the ones above cannot see it.
+fn test_a_borrowed_return_still_releases_the_calls_own_buffer() {
+  cap = P1185 { n: 3 };
+  g = fn(k: integer) -> P1185 { cap };
+  s = 0;
+  for _ in 0..70000 { s += g(0).n; }
+  assert(s == 210000, "70000 calls each answering the captured struct, got {s}");
+  assert(cap.n == 3, "the capture survives all of them: got {cap.n}");
+}

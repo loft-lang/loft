@@ -41,6 +41,15 @@ const QUALITY: &str = "doc/claude/QUALITY.md";
 /// // @falsified-at: 3ca5ec79 — interpret leaked kt=78 Sk×156 -> clean, native leaked … -> clean
 /// ```
 ///
+/// `// @falsified-by: tests/falsified/<guard>.patch` is the same receipt carrying the
+/// defect instead of pointing at it — the patch reintroduces the fault on top of HEAD, so
+/// nothing outside the repository has to survive for the guard to be re-run.  It is the
+/// form for a control that no longer exists anywhere: a squash-merge keeps no branch
+/// pointing at the commit a guard was falsified against, and 124 of the 359 receipts on
+/// `main` name a build no clone can rebuild (TESTING.md).  `scripts/falsify.sh <guard>
+/// --patch <file>` scores one, and refuses when the patch has drifted out of applying —
+/// which is the receipt reporting its own staleness, something a dangling sha cannot do.
+///
 /// `// @falsified-at: none — <reason>` is the honest opt-out for a file that genuinely
 /// cannot fail on any earlier build (a corpus that predates what it exercises, a
 /// refusal-only file).  Stating the reason is the point: the failure this gate exists to
@@ -48,6 +57,92 @@ const QUALITY: &str = "doc/claude/QUALITY.md";
 ///
 /// `tests/falsified.baseline` carries the files that predate the requirement.  It is a
 /// RATCHET — it only ever shrinks, and a new file must not be added to it.
+/// A guard whose receipt does not say how to SCORE it again is defective on its own terms.
+///
+/// Whether a recorded patch reintroduces THE defect cannot be checked here — it costs an
+/// apply, a build and a run per guard, and the answer is a judgement about which channel
+/// moved.  That is a per-release READ (`make falsify-review`).  What decides whether that
+/// read takes an afternoon or a week is whether each receipt states the four things the
+/// reader needs, so this gate holds the line on the DOCUMENTATION while the human keeps the
+/// judgement.
+///
+/// The fields, each earned from a failure that cost real time (TESTING.md): CHANNEL, which
+/// channel carries the defect; ARMED, the instrument the measurement needs, asked only of a
+/// leak-class guard because an unarmed leak run reports a DIFFERENT channel rather than a
+/// weaker one; WITNESS, the concrete observation on the control, which is what makes the
+/// re-read quick; and HOLDS, what must NOT move, which is the field that rejects a patch
+/// reintroducing some neighbouring fault.
+///
+/// `tests/falsified_docs.baseline` carries the guards that predate the standard.  Like the
+/// falsification ratchet it only ever SHRINKS: a new guard must meet the standard, and a
+/// baseline line must go once its guard does.
+///
+/// The rule itself lives in `scripts/falsify-review.py --check` and nowhere else — a second
+/// copy here would drift, and then the gate and the review would disagree about what a
+/// receipt owes.
+#[test]
+fn every_guard_says_how_to_score_it_again() {
+    let out = std::process::Command::new("python3")
+        .args(["scripts/falsify-review.py", "--check"])
+        .output()
+        .expect("cannot run scripts/falsify-review.py");
+    assert!(
+        out.status.success(),
+        "falsify-review.py --check failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let thin: std::collections::HashMap<String, String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(n, f)| (n.to_string(), f.to_string()))
+        .collect();
+
+    let baseline_src = fs::read_to_string("tests/falsified_docs.baseline")
+        .expect("cannot read tests/falsified_docs.baseline");
+    let baseline: std::collections::HashSet<&str> = baseline_src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+
+    let mut added: Vec<String> = thin
+        .iter()
+        .filter(|(n, _)| !baseline.contains(n.as_str()))
+        .map(|(n, f)| format!("  {n} — its receipt does not state: {f}"))
+        .collect();
+    added.sort();
+
+    let mut fixed: Vec<String> = baseline
+        .iter()
+        .filter(|b| !thin.contains_key(**b))
+        .map(|b| format!("  {b}"))
+        .collect();
+    fixed.sort();
+
+    assert!(
+        added.is_empty() && fixed.is_empty(),
+        "the receipt-documentation ratchet slipped:\n{}{}",
+        if added.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "these receipts do not say how to score them again (see TESTING.md \u{a7} The \
+                 patch receipt; `make falsify-review` explains each field):\n{}\n",
+                added.join("\n")
+            )
+        },
+        if fixed.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "these now meet the standard — delete their lines from \
+                 tests/falsified_docs.baseline (the ratchet only shrinks):\n{}\n",
+                fixed.join("\n")
+            )
+        }
+    );
+}
+
 #[test]
 fn every_new_guard_records_its_control() {
     let baseline_src = fs::read_to_string("tests/falsified.baseline")
@@ -74,7 +169,7 @@ fn every_new_guard_records_its_control() {
             .expect("non-utf8 script name")
             .to_string();
         let src = fs::read_to_string(&path).unwrap_or_default();
-        let records = src.contains("@falsified-at:");
+        let records = src.contains("@falsified-at:") || src.contains("@falsified-by:");
         if records && baseline.contains(name.as_str()) {
             // Retrofitted: the baseline line is now the stale half.
             missing.push(format!(

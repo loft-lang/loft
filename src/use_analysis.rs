@@ -147,6 +147,7 @@ fn projection_ops(data: &Data) -> HashSet<u32> {
 /// its SECOND arg (the dest), handled separately.
 fn is_first_arg_write_name(n: &str) -> bool {
     n.starts_with("OpSet")
+        || n.starts_with("OpPush")
         || n.starts_with("OpAppendStack")
         || n.starts_with("OpClearStack")
         || matches!(
@@ -3298,7 +3299,18 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     // conservative answer and deliberately keeps the pre-existing leak on the minting arm of
     // a capturing lambda — a leak is recoverable where a premature free is not, and the bind
     // still COPIES, so `(B-Copy)` holds either way.
-    if callref_captures(data, d_nr, call) {
+    //
+    // loft#1485 — asked through [`callref_capture_blocks`] rather than the bare
+    // [`callref_captures`], because *does this closure hold a store* stopped being the same
+    // question as *can what comes back BE that store*.  A capture-viewing return now
+    // materialises before it escapes (`classify_reference_delivery`'s capture leg), so the
+    // callee hands back a copy and its return summary says so — names only hidden buffers,
+    // never `__closure`.  The refined predicate already reads exactly that summary and was
+    // written for the same distinction one shape over (a `??` over a captured collection,
+    // whose chosen arm is copied into the caller's `__retbuf`).  Left on the crude one, the
+    // copy is made and then owned by nobody: 70000 calls exhausted the store table on
+    // `1248-a-capture-that-cannot-be-borrowed-from-does-not-decline-the-lift`.
+    if callref_captures(data, d_nr, call) && capture_can_be_returned(data, d_nr, call) {
         return false;
     }
     !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
@@ -3866,6 +3878,39 @@ pub fn callref_capture_blocks(data: &Data, d_nr: u32, call: &Value) -> bool {
         return true;
     }
     !matches!(ownership_of(data, d_nr, call), Own::Join { base } if base != u16::MAX)
+}
+
+/// loft#1485 — CAN what this call returns be one of the closure's captures?
+///
+/// The narrow half of [`callref_capture_blocks`], and the only half the source-free gate wants.
+/// `callref_captures` asks whether the closure HOLDS a store, which stopped being the same
+/// question once a capture-viewing return began to materialise before it escapes: the callee then
+/// hands back a copy, and its return summary says so by naming only hidden buffers.
+///
+/// Deliberately NOT the full `callref_capture_blocks`, which also answers on
+/// `capture_return_offsets` and on an `Own::Join` base.  Those legs are right for the sites that
+/// ask them and licensed frees this gate must keep declining — five corpus files, four of them
+/// `--native` only, when the whole predicate was substituted here.  One question per site: this
+/// one asks only whether the RETURN can be the capture.
+#[must_use]
+pub fn capture_can_be_returned(data: &Data, d_nr: u32, call: &Value) -> bool {
+    let Value::CallRef(v_nr, _) = call.unspan() else {
+        return false;
+    };
+    let targets =
+        crate::scopes::collect_fnref_targets(&data.def(d_nr).code, data.def(d_nr).variables());
+    // An unresolved target keeps the conservative answer, for the reason `callref_captures`
+    // gives about a capture that cannot be read.
+    let Some(callee) = targets.get(v_nr).copied().filter(|d| *d != u32::MAX) else {
+        return true;
+    };
+    let def = data.def(callee);
+    let closure_attr = def
+        .attributes()
+        .iter()
+        .position(|a| a.name == "__closure")
+        .map_or(u16::MAX, |i| i as u16);
+    def.returned().depend().contains(&closure_attr)
 }
 
 /// Does this call go through a fn-ref that captures something a RETURN COULD BORROW FROM?

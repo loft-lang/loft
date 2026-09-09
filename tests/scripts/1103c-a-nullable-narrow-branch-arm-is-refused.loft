@@ -11,6 +11,11 @@
 //
 // @falsified-at: 8498fdf1 → here (hand-measured): the parent build refuses it with a
 //   different text (`cannot change type from integer(0, 255) to integer(0, 255)?`).
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 8498fdf1; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 // @EXPECT_ERROR: a nullable `integer(0, 255)?` cannot be stored into the local `x` of the non-null type `integer(0, 255)`
 fn maybe_u8_1103c(k: integer) -> u8? { if k > 5 { 7 as u8 } else { null } }
 

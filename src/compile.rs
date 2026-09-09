@@ -401,10 +401,35 @@ fn extract_literal_values(code: IrNode, data: &Data) -> Result<Vec<ConstElement>
             in_element = false;
             continue;
         }
+        let name = data.def(fn_nr).name().to_string();
+        // A fused scalar append (@PLN157 § V-m, `OpPush<Kind>(vector, val)`) is a whole
+        // element in one op: the `OpSet<Kind>` at offset 0 that the three-op form wrote,
+        // folded with the open and the close.  Read it as that element, through the same
+        // fold and the same refusals.
+        if let Some((setter, _)) = crate::parser::FUSED_PUSH_KINDS
+            .iter()
+            .find(|(_, push)| *push == name)
+        {
+            let args = op.call_args();
+            let field = if args.len() == 2 {
+                fold_const_field(setter, &args.get(1), data)
+            } else {
+                None
+            };
+            let Some(field) = field else {
+                return Err(
+                    "an element value that is only known at run time, or a field of a kind a \
+                     constant cannot hold"
+                        .to_string(),
+                );
+            };
+            elements.push(vec![(0, field)]);
+            in_element = false;
+            continue;
+        }
         if !in_element {
             continue;
         }
-        let name = data.def(fn_nr).name().to_string();
         // Every field write is an `OpSet…` of at least (record, offset, value).  Anything
         // else inside an element is bookkeeping and carries no field data; an `OpSet…`
         // this builder does not know is a field it cannot write, and falls to the refusal

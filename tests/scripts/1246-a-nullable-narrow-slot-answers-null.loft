@@ -42,6 +42,9 @@
 //   non-nullable control pass on it, which is what makes them controls.  The two backends
 //   report different failure COUNTS because a run stops at the first failing assertion in
 //   a function and the two orders differ — the channel that matters is the exit.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct S1246 {
   au: u8?,          al: integer limit(0,255)?,

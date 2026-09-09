@@ -11,6 +11,13 @@
 //   its expectation MATCHES, so the parent — where nothing fires — is the run that exits 1. The
 //   cell COMPILES and runs there, so a naive exit reading of the PROGRAM would call it clean:
 //   it writes nothing, `len` reads 0, and there is no diagnostic.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e695a6f5; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 struct E1221c { k: integer, n: integer }
 struct D1221c { h: hash<E1221c[k]> }

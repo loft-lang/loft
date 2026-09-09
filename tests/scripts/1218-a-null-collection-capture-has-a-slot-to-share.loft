@@ -62,6 +62,11 @@
 //   101 -> 0, native panicked -> clean.  On the control the file does not reach an assertion:
 //   the first capture is the internal compiler error loft#1209 filed, raised in the parser, so
 //   both backends move on the panic channel.
+//   HOLDS: on --interpret, assertions, leak, free-refusal, expectations are equal on both
+//   trees, measured by `scripts/falsify.sh --bulk` against 05fb07dc; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/panic channel carries this one on that backend. The native side was not scored in
+//   that run.
 
 fn mk1218() -> vector<integer>? {
   [1, 2]

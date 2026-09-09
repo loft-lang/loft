@@ -143,6 +143,14 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   NON-OWNING (the source frees the store).  `&` is how you OPT INTO
                   aliasing; without it a heap bind copies.  This is B-Ref-Write for a
                   vector lvalue.
+  (B-Ref-Repoint) `p = &q` on a variable that IS a `&τ` link RE-POINTS the link to `q`:
+                  the link's own slot takes the new cell, the old source is neither
+                  written nor released (a link owns nothing, B-Ref-Alias), and reads
+                  and writes through `p` reach `q` from then on.  The `&` on the right
+                  is what tells a re-point from B-Ref-Write's write-through:
+                      a = S{n:2}; b = S{n:3}; p = &a; p = &b; p.n = 9;  a.n == 2, b.n == 9
+                      c = "ab"; d = "cde"; pc = &c; pc = &d;           len(c) == 2, len(pc) == 3
+                  Every τ alike — scalar, text, vector, record — and both backends.
   (B-View)        a STRUCT-typed PROJECTION (`s = o.inner`, `e = v[i]` where the element
                   IS a struct) is a VIEW that aliases WITHOUT `&` ([heap.md](heap.md)
                   H-View: `c = o.i; c.v=9` ⇒ `o.i.v==9`) — the one place aliasing is the
@@ -357,6 +365,41 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 0.**
 
+* **D-bind-32** *(opened 2026-09-09, CLOSED 2026-09-09; numbered 30 on its own branch, where
+  `D-bind-30` was already spent by the `(B-Ref-Reshape)` entry closed a day earlier — the join is
+  what showed the collision)* — `(B-Ref-Repoint)` on `--interpret`,
+  at every τ but a vector.  The rule was not written: B-Ref-Write said what a heap write
+  through a link does ("it does not re-point the link") and nothing said what `p = &q` on an
+  existing link does, while the parser had long lowered it to the link's install op
+  (`Set(p, OpCreateStack(q))`) and native ran it as a re-point (`var_p = addr_of_mut!(var_q)`).
+  The interpreter's `set_var` link branch recognised the install value only to keep a fn-ref
+  off the write-through, and every other kind fell into the write-through: the cell went
+  THROUGH the link into the old source's slot and the displaced-store free ran on a stack ref
+  (`BUG (#306)`), so a struct read a garbage word and lost the second record's field, a text
+  was cleared through the link and read empty, an integer kept its first source.  Found by
+  @PLN157 § V-p's cell c18 (a plain-record `&` view rebound in a loop), whose interpreter
+  oracle answered 34359738373 for 13.  Closed with the rule written and the install routed
+  to the link's own slot FIRST, before any kind's write-through — `state/codegen.rs::set_var`
+  cites it; `tests/scripts/157-link-repoint.loft` carries the six kinds and the control.
+* **D-bind-31** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(B-Copy)` did not hold for
+  a bind out of a CLOSURE CAPTURE.  `e = q` inside a lambda ALIASED the captured collection or
+  record: `e += […]` grew the outer `q`, `e[0].a = 99` and `e.a = 99` reached it, on both
+  backends, with nothing saying so.  The same bind out of a PARAMETER — the identical shared heap
+  value, `(F-ParamHeap)` and `(L-CapHeap)` being one sentence — copied throughout, which is what
+  named the difference.
+  **One op, two notions.**  A closure reaches its capture through the closure record, so the
+  source arrives as `OpGetDbRef(__closure, off)`: a PROJECTION's spelling for a whole value the
+  author bound by name.  Every reader that had to tell `(B-Copy)`'s whole value from
+  `(B-View)`'s interior place tested for a bare `Var` or an `OpGetField` and answered "not a
+  bind" — the FIFTH time this family's selector has been the narrow part while its lowering was
+  already right (P261, loft#917, loft#1279, loft#1326).  `reads_a_capture_whole` is the one home
+  now, and it asks about the BASE, because the loose spelling also admits an auto-`Reference`
+  POINTER FIELD read (`h.link`), which really is the projection this is not.
+  The two passes did not agree either: on pass 1 a capture is still a placeholder `Var`, so the
+  vector selector answered `CopyVar` there and `NotABind` on pass 2 for one body.
+  Guard `1489-a-capture-is-bound-and-returned-as-a-whole-value.loft`, whose `(B-View)` and
+  `(B-Ref-Alias)` cells are what say the copy did not swallow the aliasing that is meant to
+  stay.
 * **D-bind-29** *(opened 2026-09-08, CLOSED 2026-09-08, loft#1463)* — the FUNCTION half of
   `(B-Ref-Uniform)`, on `--native` only.  A write through a `&fn(…) -> τ` link did not land when
   the caller's slot already held a CAPTURING closure: the interpreter wrote it, native left the

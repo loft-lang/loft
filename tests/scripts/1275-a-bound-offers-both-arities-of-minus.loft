@@ -31,6 +31,8 @@
 //   assertion count reads 0|0 on both trees: a guard whose program does not compile cannot
 //   report which of its asserts would have failed.  That is why the cells below carry their
 //   own controls (the unary arity, the stdlib generics) rather than relying on the count.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Money1275 { cents: integer }
 

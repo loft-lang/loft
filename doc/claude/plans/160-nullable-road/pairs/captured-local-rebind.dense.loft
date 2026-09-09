@@ -1,0 +1,3 @@
+// loft#1447 shape — a captured struct local REBOUND after the closure is built.  Dense.
+struct S { a: integer }
+fn main() { x: S = S { a: 1 }; g = fn() -> integer { x.a }; x = S { a: 2 }; println("{g()}"); }

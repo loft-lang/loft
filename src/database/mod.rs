@@ -1900,15 +1900,66 @@ impl Stores {
                     "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
                 );
             }
-            *self.allocations[h.store_nr as usize].addr_mut::<T>(
+            // `write`, not `addr_mut` — an element's offset is `index * stride + fld`, and a
+            // record whose stride is not a multiple of the scalar's alignment puts every odd
+            // element at a misaligned address (`Lay` in `157-scalar-hoist`: element 1's `i64`
+            // lands at 34).  Minting a `&mut T` there is undefined behaviour, which is what
+            // `Store::addr_mut`'s own assert says; `Store::write` is the pair loft#1481 added
+            // for exactly this — a value write through `write_unaligned`, which is what the
+            // layout guarantees and what this has always been.
+            self.allocations[h.store_nr as usize].write::<T>(
                 h.rec,
                 crate::vector::checked_vec_pos(index as u32, size) + fld,
-            ) = val;
+                val,
+            );
         } else {
             let elem = self.vec_get_or_raise_runtime(db, size, index);
             if elem.rec != 0 {
                 T::set_in(self.store_mut(&elem), elem.rec, elem.pos + fld, val);
             }
+        }
+    }
+
+    /// @PLN157 § V-q — ONE push through a hoisted [`crate::vector::PushHeader`]
+    /// (`@FR-R-Push`, and the refresh `@FR-R-Refresh` asks for): when the element fits, a bounds test against the capacity, one
+    /// typed store at the next slot and a length bump written to BOTH the header and the
+    /// record (a runtime reader inside the loop — a callee's `len(v)` — sees every push);
+    /// otherwise the runtime's own append (its growth ladder, its checks) and a fresh
+    /// header, since the growth may have moved the record.  `size` is the element width
+    /// the op carries.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
+    /// before the push — the point of the switch.  Never in the emitted default.
+    #[inline]
+    pub fn push_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        val: T,
+    ) {
+        if p.h.rec != 0 && p.h.len.saturating_add(1).saturating_mul(size) <= p.cap {
+            if VERIFY {
+                assert_eq!(
+                    *p,
+                    crate::vector::push_header(db, &self.allocations),
+                    "hoisted push header is stale — the loop moved the vector it pushes to"
+                );
+            }
+            // `write` for the same reason as the hoisted element set above: the slot's offset
+            // is `len * stride`, which a stride the scalar's alignment does not divide puts at
+            // a misaligned address.  The length at offset 4 is aligned by construction and
+            // takes the same verb, because one spelling for "store a scalar by value" is what
+            // keeps the next slot from being written the other way (loft#1481).
+            let store = &mut self.allocations[p.h.store_nr as usize];
+            store.write::<T>(p.h.rec, crate::vector::checked_vec_pos(p.h.len, size), val);
+            p.h.len += 1;
+            store.write::<u32>(p.h.rec, 4, p.h.len);
+        } else {
+            T::append_in(self, db, val);
+            *p = crate::vector::push_header(db, &self.allocations);
         }
     }
 
@@ -1993,7 +2044,7 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn get<T: 'static>(&mut self, stack: &mut DbRef) -> &T {
+    pub fn get<T: 'static + Copy>(&mut self, stack: &mut DbRef) -> T {
         // @PLAN53 cluster 2 / S4: pop the value's STEPPED span (8-rounded in
         // aligned mode) so a native arg occupying a stepped slot is reached
         // correctly; identity (real size_of) when off → flag-OFF unchanged.
@@ -2006,11 +2057,11 @@ impl Stores {
             step,
         );
         stack.pos -= step;
-        let r = self.store(stack).addr::<T>(stack.rec, stack.pos);
+        let r = self.store(stack).read::<T>(stack.rec, stack.pos);
         #[cfg(debug_assertions)]
         {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
-                let db: &DbRef = unsafe { &*(r as *const T as *const DbRef) };
+                let db: &DbRef = unsafe { &*(std::ptr::from_ref(&r).cast::<DbRef>()) };
                 debug_assert!(
                     db.store_nr == u16::MAX || (db.store_nr as usize) < self.allocations.len(),
                     "get<DbRef>: OOB store_nr={} (allocations.len()={}) \

@@ -14,6 +14,11 @@
 // @falsified-at: e9f45817 — INERT by design: every cell is accepted and correct on both
 //   builds, which is what it is here to keep true.  Its falsification is `1428`'s, which goes
 //   from two unreported cells to two refusals; scored by hand, both backends.
+//   HOLDS: EVERY channel holds — exit, assertions, leak, panic, free-refusal and
+//   expectations are all equal on both trees.  That is this file's assertion rather than a
+//   failure to make one: it is the POSITIVE control beside the guard named above, here to
+//   stay correct while its twin tightens, so anything moving is the regression it watches
+//   for.  A patch receipt is therefore not applicable — there is no defect to reintroduce.
 
 struct E28d { k: integer, j: integer, v: integer }
 struct E28e { k: integer, v: integer }

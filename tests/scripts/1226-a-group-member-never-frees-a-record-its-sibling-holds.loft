@@ -44,6 +44,8 @@
 //   second append, on both backends, and the two-text and reversed-order cells sit behind it.
 //   The distinct-key and no-group cells pass on the parent too, so a build that simply stopped
 //   freeing would not satisfy them — `n1226` is the one that fails on the over-wide cure.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Wg1226 { nm: text, n: integer }
 struct Gg1226 { ordered: vector<Wg1226>, by_nm: hash<Wg1226[nm]> }

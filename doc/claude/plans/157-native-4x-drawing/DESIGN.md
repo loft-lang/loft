@@ -1490,38 +1490,584 @@ a loop calling a setter that writes the hoisted field · a `&`-bound alias of th
 a rebind of the record inside the loop · a record that is an element view (`f = w[k]?`)
 with an element write beside it.
 
-## V-m — the fused scalar append: cells written (2026-09-09)
+## V-m — the fused scalar append (2026-09-09)
 
-The unit § V-k measured (five runtime calls per scalar element, ~35 % of `lock_curved`)
-starts the plan's way: `bytecode-comparisons/V-m-fused-append-cells.loft`, fifteen cells with
-hand-computed expectations, passing on both backends under `LOFT_STORES=warn` and the native
-leak check on today's four-op lowering — c1 a thousand integer appends (three growth steps) ·
-c2 floats · c3 booleans · c4 characters from a multi-byte text · c5 an enum · c6 a
-`vector<integer?>` with a null appended · c7 two vector FIELDS of a record · c8 a `&`-bound
-alias of a field vector · c9 a three-element literal per iteration · c10 a loop whose bound
-re-reads the length it grows · c11 `reserve` then appends · c12 the element a call result ·
-c13 a `sorted<K[k]>` (keyed — must keep the general path) · c14 a copy appended after the
-source · c15 an element read of the vector being appended.  Two of the expectations were
-wrong on the first pass and both backends agreed against them — a loop bound re-reads
-`len(v)` per iteration (c10), and c15's third append reads the element it appended — which
-is the oracle doing its job.
+**The unit § V-k measured**: `v += [x]` on a plain vector was `OpPreAllocVector · OpNewRecord
+· OpSet<Kind> · OpFinishRecord` — five runtime calls per scalar element, each resolving the
+store and re-reading the headers the previous one read, ~35 % of `lock_curved`.
 
-Writing c13 surfaced an ICE: `sorted<integer>` is refused at its declaration ("Expect token
-[", `(Col-Sorted)` keys on a field), but a SUBSCRIPT on the refused collection reached
-`Parser::parse_key` with an empty key list and `key_types[0]` panicked.  Fixed in
-`parse_key` (parse the key, leave the poisoned value, the declaration's diagnostic is the
-one the reader sees); `tests/keyless_sorted_subscript.rs` runs the CLI on the probe, because
-the test runner's recovery on that source never reaches the site.
+**Cells before the code** (`bytecode-comparisons/V-m-fused-append-cells.loft`, fifteen with
+hand-computed expectations): c1 a thousand integer appends (three growth steps) · c2 floats
+· c3 booleans · c4 characters from a multi-byte text · c5 an enum · c6 a `vector<integer?>`
+with a null appended · c7 two vector FIELDS of a record · c8 a `&`-bound alias of a field
+vector · c9 a three-element literal per iteration · c10 a loop whose bound re-reads the
+length it grows · c11 `reserve` then appends · c12 the element a call result · c13 a
+`sorted<K[k]>` (keyed — the general path) · c14 a copy appended after the source · c15 an
+element read of the vector being appended.  Two expectations were wrong on the first pass
+and both backends agreed against them (c10's bound re-reads `len(v)` per iteration; c15's
+third append reads the element it appended) — the oracle doing its job.  Writing c13
+surfaced the `parse_key` ICE (fixed in 91b15a44, `tests/keyless_sorted_subscript.rs`).
 
-The op design, for the code: one typed `OpAppend<Kind>(v: vector, val: <kind>)` per scalar
-setter kind (`Int`, `Int4`, `Float`, `Single`, `Boolean`, `Character`, `Byte`, `Short`,
-`Enum` — the `OpSet*` family's spelling), `#rust` template `s.database.append_<kind>(&v, val)`
-= one store resolution, one capacity test (growth on the ladder), one write, one length
-bump; emitted by `new_record`'s scalar arm for a `Parts::Vector` of that kind at
-`field == u16::MAX`, the keyed kinds and record elements keeping the four ops.  A new op
-renumbers `index/target_surface.json` (`make surface-gen` after the wasm rlib is rebuilt)
-and regenerates `fill.rs`.  The hoist gate needs nothing: an op absent from its allow-list
-blocks, which a growth must.
+**The ops.**  Seven typed `OpPush<Kind>(r: vector, val)` beside `OpAppendVector` in
+`default/01_code.loft` — `Int`, `Int4`, `Float`, `Single`, `Boolean`, `Enum`, `Character`,
+the `OpSet*` family's spelling (`OpAppendCharacter` was taken: it is the text op) — each a
+one-line `#rust` template over `Stores::append_<width>`: `append_slot` (`vector_append`,
+growth on the ladder) → the typed write → the length bump on the SAME resolved store
+(`append_done`).  A null or absent vector is the no-op the four-op path was.  Regenerated
+`fill.rs` (`make fill`) gives the interpreter the same seven; the native emitter inlines
+the template.  Every op carries `#impure(parent_write)`.
+
+**The peephole** (`Parser::fuse_scalar_append`, vectors.rs): where the per-element list ends
+in exactly `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for
+one of the seven setter kinds, the three become `OpPush<Kind>(container, val)`, `val` moving
+verbatim (every conversion the literal lowering applied is already inside it).  Two call
+sites: `new_record`'s element loop — the plain form's `container` IS the vector; the field
+form (`b.xs += [x]`) addresses the vector through its parent and field number, which
+`record_new` may REDIRECT (a `__nullable<S>` payload, an enum variant's owning field), so
+the field access `val` is taken as the container only when `key_owner` and
+`variant_owning_field` both answer the parent itself — and the COMPREHENSION lowering
+(`[for i in … { x }]`), whose own triple is the same shape with `fld == u16::MAX`.  A setter
+with a `min` operand (the narrow-int kinds), a record or collection element (another
+setter), a keyed container and a redirected field all fall through and keep the general
+path.  Switch `LOFT_NO_FUSED_APPEND` (parse time); `LOFT_TRACE_FUSE=1` prints one line per
+site, fused or declined with the reason — it is what found the comprehension: `lock_layer`'s
+seven scalar appends never reached the first site, because they are `[for …]` fills.
+
+**Eight classifiers had to learn the op**, and that is the finding worth keeping: a NEW
+writing op is invisible to every op-name list that says "this writes its first argument"
+or "this builds an element".  Five surfaced when the consumer bench refused to compile —
+the `&`-parameter lint (`op_writes_first_arg`: *"Parameter 'starts' has & but is never
+modified"*), `find_field_written_vars`, `use_analysis::is_first_arg_write_name`, the
+capture-mutation `is_mutating_op`, and `scopes::grown_containers` (where the field form's
+`OpGetField(var, off, _)` container names `(var, off)` as `OpNewRecord`'s field number did)
+— and three more only in the full gate, each behind a test that already existed: the
+CONSTANT-STORE builder (`compile::extract_literal_values` read a literal as
+`OpNewRecord`-delimited elements, so every file-scope scalar vector constant was refused as
+*"built from no elements the constant store can build"* — p127/p128/p175), the native
+FN-REF collector (`collect_fn_ref_literals`' @P299 recovery read the lambda d_nr out of
+`OpSetInt4`'s third operand; a `vector<fn(…)>` literal now writes it as `OpPushInt4`'s
+second, and the dispatch had no arm — `invalid fn-ref: 741`), and the move elision's
+ESCAPE test (`scopes::source_escapes` counted a push at arg 0 as a READ of the source, so
+`d.c += s` kept its copy and `s` its slot — loft#1241's guard).  The seven names now have
+ONE home, `parser::FUSED_PUSH_KINDS` / `FUSED_PUSH_OPS`, which `is_mutating_op`, the
+constant builder and `ConstructOps::op_push` read; the lists that test a prefix
+(`starts_with("OpPush")`) need no table.  Found by tests, not by reading — the drifted-list
+class PERFORMANCE.md § P8 names, and the reason the gate ran BEFORE the commit.
+
+**Measured** (shipped tier, hashes exact on both backends, the fifteen cells clean under
+warn/leak on both and with the switch off):
+
+| row | § V-k | § V-m |
+|---|---:|---:|
+| `lock` (consumer) | 5.19× (7.97M) | **4.59×** (7.07M) |
+| `lock_curved` | 6.92× (9.14M) | **5.76×** (7.62M) |
+| `fronds` | 13.8× (708k) | **12.9×** (676k) |
+| `wide_line` | 6.30× | **5.46×** |
+| `fill_star` / `fill_circle` | 4.04× / 3.91× | **3.72× / 3.84×** |
+| `render_lock` / `render_marks` | 37.8M / 17.0M | 33.8M / 14.5M |
+| `lock` gate row | 3.4× | **2.7×** |
+
+The consumer program carries 375 fused appends; 27 scalar `OpNewRecord` sites remain in
+lowerings the peephole does not see (`parse_*`, `text.split`, `File.lines` — none on a judged
+row).  `index/target_surface.json` moved by its builtin count only: the wasm rlib must be
+built with the Makefile's features (`--no-default-features --features random`) before
+`make surface-gen`, or the generator records the new ops as unavailable in the browser
+(it did, once, against the stale rlib).
+
+## P4c — loop-invariant record scalars hoisted as locals (2026-09-09)
+
+**The shape** (§ V-l's last paragraph): the emitted hot loops read a record parameter's
+scalar fields per iteration through a store resolution each — `n_raster_segment` 15
+(`lay.*`), `n_lock_layer` 9 (`st.*`, `br.*`), `n_composite_layer` 7 (`lay.*`, 8 % of the
+row).  Each is `OpGet<Kind>(Var(lay), const fld)`: resolve the store, test `rec`, load.
+
+**Invariant.**  *A scalar field the loop body cannot write holds one value for the whole
+loop, so the getter may run once, before it.*  What the body can write is decided by the
+same gate as the vector headers (`body_blocks_hoist`, hoist.rs — ONE gate, so a scalar is
+admitted only in a loop whose store writes are all in place) and then by the body's
+**write set**: every in-place setter's target typed as `(record type, offset)` — the
+variable's own type, the schema type an `OpGetField` carries, or the element type of the
+vector an element address names (a `vector<integer>` element written at offset 0 reaches no
+record's field) — plus what an admitted callee reaches (`callee_writes`: an in-place-only
+writer's own set, its parameters typed by its own table, so `l.lw = w` is `(Lay, lw)` for
+every caller; a return-buffer writer's record type WHOLE, since § V-d may hand it a record
+the caller offered) and the whole type of a record the body frees.  A target the walk
+cannot type — an `Optional`, a struct-enum, an `OpGetVectorNullable` payload, a computed
+offset — empties the loop's scalar hoist rather than guessing; a rebind of the variable
+removes its candidates as it removes headers.  Keys carry the TYPE and not the variable
+because aliasing is decided by what a write can reach: a `&`-bound alias, an element view
+(`f = pts[1]?`, `(B-View-Depth)`) and a callee's parameter all write the same `(Lay, 0)`.
+
+**The emission.**  `hoist::hoistable` answers a `LoopHoist` (headers + scalars);
+`begin_vector_hoist` binds `let __vs_N = <the getter call, emitted once>;` in the same
+prelude block as the headers — the `#rust` template is the one definition of the value, the
+`rec == 0` sentinel included, so no per-kind table exists; `FusedElementReadEmitter`, now
+registered for all fourteen `SCALAR_GETTERS`, emits the local (element fusion first for the
+three fusable kinds).  The pre-eval that lifts a getter nested in a user call lifts the
+local, which is harmless.  Under `LOFT_HOIST_VERIFY=1` every hoisted read is emitted as
+`vector::hoisted_scalar_verify(local, <fresh getter>)` — NaN-equal for floats — and panics
+on the first stale value; `LOFT_NO_SCALAR_HOIST=1` (generation time) restores the
+per-iteration reads with the headers untouched.
+
+**Cells before the code** (`bytecode-comparisons/P4c-scalar-hoist-cells.loft`, nineteen with
+hand-computed expectations, `matrix_axes.py` run to find the narrow-int, if-arm and
+call-argument gaps c17–c19 fill): c1 the raster shape (a parameter, two scalars, an
+in-place element write) · c2 the loop writes the field · c3 another type at the same
+offset · c4 a callee writes it · c5 a `&`-alias writes it · c6 a view rebound in the loop
+· c7 an element view beside an element write of the same type · c8 nested loops with the
+outer writing between · c9 a growing write · c10 boolean / enum / character / float · c11
+a callee writing a DIFFERENT field · c12 a return-buffer writer beside a rebound result ·
+c13 a const-path read (`h.sub.x0`) · c14 an element write of ANOTHER type · c15 of the
+SAME type beside an unaliased local · c16 a nested-path write of another root · c17 a text
+field read · c18 `i32` / `u8` fields · c19 the read as a call argument in an if-arm.  All
+nineteen matched on both backends BEFORE the emitter existed; the predicted emission
+(which cells hoist, how many) was written first and matched exactly on the first run
+except that c7 and c15 also keep the vector header for `pts`, which the prediction had not
+listed.  `tests/scalar_hoist.rs` pins the per-cell emission, the verify form and the
+switch; `tests/scripts/157-scalar-hoist.loft` carries the value cells.  **Falsified**:
+`WriteSet::evicts` made to answer `false` turns eight cells red on native (c2 `6 4` →
+`0 1`, c3, c4, c5, c7, c8, c11, c13 answer the pre-loop value) and the verifier panics at
+the first stale read.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree, the § V-m column from the
+same instrument earlier the same day):
+
+| row | § V-m | P4c |
+|---|---:|---:|
+| `composite` | 7.6× (769k) | **6.30×** (638k, −17 %) |
+| `lock` | 4.59× (7.07M) | **4.39×** (6.89M) |
+| `lock_curved` | 5.76× | 5.71× |
+| `hash` | 241–248k ns/op | 240–248k (unchanged: its loop is arithmetic; the 2.2× → 2.5× in the table is the reference lane's swing, DESIGN.md § V-f) |
+| `fronds` / `smooth` / fills / `wide_line` | | 13.0× / 14.3× / 3.85× · 3.77× / 5.50× — noise |
+
+`composite`'s move is the caller-side 8 % § V-l attributed plus the seven `lay.*` reads
+per pixel it named; what the row still carries is the pixel methods' own reads (29 %),
+the next unit.  `n_raster_segment`'s fifteen `lay.*` reads per pixel now bind before the
+loop, which is the `lock` gain.
+
+**Two findings.**  (1) A loop that reads a TEXT field cannot hoist anything today:
+`OpGetText`, `t_4text_len`'s body and `OpFreeText` are off the read-only allow-list, so the
+gate reads them as writers (c17) — the allow-list doctrine at work, and a widening to weigh
+when a judged row shows it.  (2) The § V-m commit's GitHub gate (its ASan and
+`stack_align_guard` jobs, both running `wrap`'s script suite) caught a silent wrong answer
+the local curated gate had not: `tests/scripts/1272-a-remove-inside-a-keyed-range.loft`
+walked EMPTY under the fusion.  A one-field record (`Rec { nr }`) lowers to exactly the
+scalar triple, and an `index<Rec[nr]>` of them lowers `OpFinishRecord` into the keyed insert
+— fused by SHAPE, the insert was gone.  `Parser::fusable_scalar_vector` now asks the schema
+what the container holds (`Parts::Vector` of a base / enum / int4 element, reached through
+`OpNewRecord`'s own `(tp, fld)` operands), `tests/fused_append.rs` pins both record shapes
+on the general path, and V-m cells c16/c17 carry the values.  The general lesson matches
+§ V-m's: a peephole that matches an op SHAPE must also ask the TYPE the shape stands for.
+
+## V-n — a vector view derives its header at the binding (2026-09-09)
+
+**The shape** (§ V-l's finding, re-measured after P4c): `composite`'s two pixel methods are
+`sp_d = &self.data; if sp_idx < len(sp_d) { sp_d[sp_idx] = color }` — a view bound, a
+length read, one element write — and the row spent ~30 % in their reads: `t_6vector_len`
+resolves the store once, `vec_get_or_raise_runtime` again (store, slot, length, element
+`DbRef`), the typed setter a third time through that `DbRef`.  There is no loop inside the
+method for the header hoist to attach to.
+
+**Invariant.**  *A view's `DbRef` is fixed at its binding, so the header derived there
+describes the vector for as long as nothing after the binding can move it* — the loop
+hoist's promise applied to the STATEMENTS AFTER a `Set(d, <pure path>)` instead of a loop
+body.  `hoist::view_def_header` admits a binding when `d` is vector-typed, the right-hand
+side is a pure path with another root, the remainder of the block passes
+`blocks_header_hoist` (the in-place tier), never rebinds `d`, and indexes `d` at least
+once (a length read alone is cheaper through the runtime than through a header).  A rebind
+of the path's ROOT after the binding does not matter: `d` keeps the `DbRef` it was given —
+and the reassignment that would move the record is a store write the gate sees (c9, where
+the compiler's own advice says it copied `d` out first).  `Output::bind_view_header` emits
+`let __vh_N = vector::vec_header(&var_d, …);` as the statement after the binding and pushes
+a frame `output_block` pops before its closing brace, so the local's scope and the frame's
+agree; every existing header consumer (`get_elem_hoisted`, the fused write,
+`HoistedLengthEmitter`, a nested loop's own prelude, which skips a path already covered)
+serves it unchanged.  Switch `LOFT_NO_VIEW_HOIST` (generation time); `LOFT_HOIST_VERIFY=1`
+re-derives every read.
+
+**Cells before the code** (`bytecode-comparisons/V-n-view-def-header-cells.loft`, eighteen,
+hand-computed): c1 the set_pixel shape · c2 get_pixel · c3 a growth through the view ·
+c4 the view rebound · c5 an in-place callee between · c6 a growing callee between · c7
+bound inside an if-arm · c8 bound inside a loop body · c9 the root reassigned · c10 two
+sibling views · c11 a nested path · c12 only the length read · c13 reads inside a nested
+loop and if · c14 the binding last · c15 a keyed collection · c16 a float vector with a
+fused write · c17 a vector of vectors · c18 a growth that RELOCATES the record, then an
+in-range read.  Two lessons from writing them: a cell's reads must live in a HELPER — a
+`println` in the same block is text work the gate reads as a store write, and the first
+draft measured that instead of its own axis; and c9's expectation was wrong by hand (10)
+and right by the oracle (4), because the compiler copies a view out of a record about to
+be reassigned and says so.  Emission (which bindings earn a header) predicted and pinned
+in `tests/view_header.rs`: eleven helpers bind one, `h10` two; the growing, rebound,
+length-only, keyed, trailing and `?? []`-defaulting shapes (c17: the default allocates)
+bind none.  **Falsified**: `view_def_header` made to skip the remainder gate turns c18 red
+on plain native (206 → 199: the stale header names the record the growth moved away from)
+and panics under the verifier — and c3/c6 do NOT go red, because their reads fall off the
+stale header's range and take the runtime path, which is why c18 was added before the
+record was written.  `tests/scripts/157-view-header.loft` carries the value cells.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree): `composite` 638k → **618k**
+ns/op (6.30× → 6.10×); `render_lock` 35.2M → **33.1M** (−6 %), `render_marks` 15.1M →
+**14.3M** (−5 %); the standalone A/B on one binary form (`--only composite`, the switch off
+vs on) −6 to −8 %; every other row noise.
+
+**Finding.**  `len(d)` is a CALL to the stdlib's `t_6vector_len`, whose whole body is
+`OpLengthVector`, so a header never serves it: `HoistedLengthEmitter` fires only where the
+parser emits the op itself (a `for` bound).  A stdlib wrapper whose body is one op over its
+parameters could emit the op — an S item that would give every `len(v)` in a hoisted loop or
+after a view binding the header's length, and is the next step for the pixel methods (their
+`sp_idx < len(sp_d)` still resolves the store once per call).
+
+## V-o — a stdlib one-op wrapper is emitted as its op (2026-09-09)
+
+**The shape** (§ V-n's finding): `len(v)` is a CALL to the stdlib's `pub fn len(both:
+vector) -> integer { OpLengthVector(both) }` — `t_6vector_len(cell, var_d)` in the emitted
+Rust — so the registry's `HoistedLengthEmitter`, which serves `OpLengthVector` from a hoisted
+header, never saw it: the pixel methods' `sp_idx < len(sp_d)` still resolved the store once
+per call after § V-n, and every `len(v)` inside a hoisted loop did too.  A census of
+`default/*.loft` finds 43 such wrappers — `len` (three overloads), `abs`, the libm family
+(`sqrt` is `OpMathFuncFloat(9, both)`, a constant selector beside the parameter), `atan2`,
+`pow`, `log`.
+
+**Invariant.**  *A wrapper whose whole body is one native op over its own parameters
+computes exactly that op, so emitting the op with the caller's arguments in its operand
+positions changes nothing the program can observe* — the wrapper's compiled Rust body IS the
+op's template.  `hoist::one_op_wrapper` recognises the body (one statement, line markers
+aside, possibly under a `Return`; a native callee with a template; every operand a
+parameter index or an integer constant; no return buffer) and answers the op plus an
+operand map; `Output::wrapper_op` memoises it and substitutes the call's arguments;
+`output_call_inner` emits the op through its ordinary path, registry emitters included.
+`exp` — whose body passes `E as single` — is not a one-op wrapper and stays a call, as does
+every function with a real body.  Switch `LOFT_NO_WRAPPER_INLINE` (generation time).
+
+**Cells before the code** (`bytecode-comparisons/V-o-wrapper-op-cells.loft`, ten,
+hand-computed): c1 `len(v)` in a hoisted loop · c2 the set_pixel shape · c3 the text and
+character `len` · c4 the libm selectors · c5 a two-parameter wrapper · c6 a wrapper whose op
+answers the null sentinel (`sqrt(-1.0) ?? -1.0`) · c7 `exp` · c8 `trim`, a real body · c9
+`len` of a growing vector per iteration · c10 a wrapper feeding a wrapper.  All ten matched
+on both backends before the change.  Emission pinned in `tests/wrapper_op.rs`: no CALL to
+`t_6vector_len` / `t_5float_sin` / `t_5float_sqrt` / `t_5float_atan2` remains (their
+definitions may), `exp` keeps its one call, and the loop cell and the set_pixel cell read
+`__vh_1.len`.  **Falsified**: the operand map reversed puts a selector in a value position
+and the native build fails to compile (rustc E0308 inside `atan2`'s template); swapping only
+the two parameters turns the `pow` cell wrong (1024 → 100).
+`tests/scripts/157-wrapper-op.loft` carries the value cells.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree):
+
+| row | § V-n | § V-o |
+|---|---:|---:|
+| `composite` | 618k (6.10×) | **446k** (**4.41×**, −28 %) |
+| `composite`, one binary form, switch off vs on | 604k | **449k** (−26 %) |
+| `render_lock` / `render_marks` | 33.1M / 14.3M | 32.8M / 14.5M |
+| `hash` (re-timed alone, on vs off) | 239–243k | 239k (unchanged; the full run's 320k was the lane's swing) |
+| `lock` / `lock_curved` / fills / `wide_line` | | 4.47× / 5.69× / 3.87× · 3.83× / 5.64× — noise |
+
+`composite`'s move is the pixel methods' last store resolution: with § V-n's header and
+this op, `set_pixel` is one `vec_header`, one bounds test and one store, and `get_pixel`
+one `vec_header` and one `get_elem_hoisted`.  The `sin`/`sqrt` sites in `seed_wave` and the
+rasteriser emit the template's constant `match`, which LLVM folds; no row moved on them.
+
+**Two findings from the local gate, both narrowing the rule.**  (1) A TEXT-typed wrapper
+(`print(both: text)`, `len(both: text)`) stays a call: the user-call path converts a
+`String` result to the `&str` a parameter takes and hands a work buffer for a text answer,
+and a template's operands get neither — `p299_d3` failed to compile with a `String` where
+`print_or_capture` wanted `&str`.  (2) Only a call whose arguments are all LEAVES (a
+variable, a literal) is inlined: the op's operands are emitted from a fresh list, and the
+pre-evaluation map keys on the ORIGINAL nodes' addresses, so a cloned block or call
+argument missed its `_pre_N` binding and was emitted raw (`let` inside an expression — ten
+corpus scripts failed to compile) or ran a second time beside its pre-evaluation (two
+scripts answered wrong: a store minted twice).  `len(cv.data)` and `sqrt(-1.0)` therefore
+keep their calls; the pixel methods' `len(sp_d)` and every `len(v)` on a variable are the
+op.  A mirror of the pre-eval map onto the cloned tree would lift the restriction; nothing
+measured asks for it.
+
+**A third finding, from the rebased tree's GitHub gate (run 34323456806).**  The recogniser
+asked the body's SHAPE and not the definition's ORIGIN, so a USER function whose body is one
+op — `fn reader(w: W) -> integer { w.a }`, `fn writer(w: W) { w.b = 999; }` — was emitted as
+its op too.  The values were right; what was lost is that a user function's CALL is itself
+observable: the live tier may flip it to the interpreter, and its frame is on the shadow
+call stack.  `html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm` flipped
+both functions and counted **0** dispatches where it expected 2, because neither call
+existed any more.  The rule was always "a STDLIB wrapper" (a `t_` method carries no frame
+and no live check, so for it the op IS the call); `one_op_wrapper` now asks
+`def.source() == STD_SOURCE`, cell c11 (a user one-op function) pins that its call stays,
+and `tests/scripts/157-wrapper-op.loft` carries the value.  The § P4c lesson in its third
+form: a peephole that matches an op SHAPE must also ask what the shape stands for — the
+TYPE (§ P4c), the CONTAINER (§ V-m), and now the ORIGIN.
+
+## V-p — a callee's invariant inputs cross the call (2026-09-09)
+
+**The shape** (§ V-o's closing profile): `composite` at 4.4× no longer spent its time in a
+runtime helper — `n_composite_layer` 37 % self, `get_pixel` 15 %, `set_pixel` 12 %.  The
+two pixel methods read `self.width` / `self.height` and view `self.data` PER CALL: single
+reads, so P4c cannot hoist them inside the callee, and the caller's hoisted `__vs_N` /
+`__vh_N` do not cross the call.  Six store resolutions and two header derivations per
+pixel, all of a record the caller's loop had already proved invariant.
+
+**The two designs, measured before choosing.**  The README named two: the pixel methods
+INLINED into the caller's loop (IR cloning, a variable-table merge, tail-return handling,
+the pre-eval map over cloned nodes — § V-o's finding 2 in full), or the parameter's
+invariant fields PASSED across the call.  Both were built by hand in the emitted Rust of
+the bench (`loft --native-release --native-emit`, rebuilt with the exact `rustc` line loft
+runs, captured with `strace`) and timed on the same binary form:
+
+| form | ns/op | vs Rust (101k) |
+|---|---:|---:|
+| the shipped emission | 421–428k | 4.2× |
+| a twin of each pixel method taking `w`, `h`, `hdr` as parameters | 235–236k | 2.33× |
+| both methods inlined into the loop by hand | 236–237k | 2.33× |
+
+Identical, hash unchanged: rustc inlines the small twin, so all of the win is the values
+crossing the call, none of it the call itself.  That settles the design as the cheaper
+machinery — pass values, never clone IR.  (`design-protocol`: the constructive instrument,
+a concrete instance of the answer, read before the first line of compiler code.)
+
+**Invariant** (`@FR-R-Inputs`, [formal/rewrites.md](../../formal/rewrites.md)).  *A callee
+admitted under (R-Callee) has, of a plain-struct parameter it never rebinds, invariant
+inputs: the scalar fields its own write set does not reach, and the vector paths it views
+or indexes.  A caller loop holding the value of each for its leaf argument variable —
+under (R-Scalar) and (R-Header), which proved them invariant across the call, its write
+set including what the callee writes — hands them to the callee's TWIN, the same body
+emitted with those values as extra parameters, read in place of the record.*  A call
+missing any input keeps the plain form (all-or-nothing keeps the twin's signature one
+per callee); the twin exists beside the original, never instead of it.
+
+**The code.**  `hoist::callee_inputs` (memoised, seeded `None` while open so a recursive
+edge sees nothing) answers a `CalleeInputs` — `(parameter, field, the getter as the body
+spells it)` and `(parameter, path, the path expression)` — for a loft body with no template,
+no return buffer, not a generator, store-free or in-place-only, whose write set
+`body_writes` can type; the scalar reads are `scalar_read` hits over a never-rebound
+plain-record parameter not evicted by that set, the headers the paths `is_element_address`
+indexes or `view_def_header` admits at a binding.  A callee this body passes the parameter
+on to contributes ITS inputs re-spelled over the parameter (`substitute_root`), filtered by
+this body's write set, which already carries what that callee writes — so `getp2(self) {
+self.getp(…) }` earns getp's inputs and its twin calls getp's twin.  `hoist::hoistable`
+adds, for every admitted callee a loop calls with a plain variable, the callee's inputs
+re-spelled over that variable to the loop's candidates, where the same eviction judges
+them.  `Output::output_functions` emits the twin right after the original (`fn_ident` +
+`__inv`, the extra parameters typed as each getter's result — `i64`, `f64`, `u8` — and
+`vector::VecHeader` by value); `output_function` pushes a scalar frame and a header frame
+naming `__is_k` / `__ih_k` around the body, so every existing consumer (the scalar read, the
+fused element read and write, the hoisted length) serves from the parameters; the twin
+re-uses the original's live-dispatch check (same flip flag, same interpreter entry — the
+inputs are derived from the declared parameters).  `bind_view_header` copies a held
+header when the view's path already has one (`let __vh_1 = __ih_0;`), which a plain
+loop that binds a view of a path it hoisted gets as well.  `user_fn_call_body` emits the
+twin form when `twin_call_inputs` finds every input active for the argument variable;
+the definition number reaches it through `current_call_def`, set by `output_call_inner`
+and identity-checked against the `Definition` the registry hands over.  Switch
+`LOFT_NO_CALLEE_INPUTS` (generation time); falsifier `LOFT_HOIST_VERIFY=1`, under which
+the twin re-reads every input against the record.
+
+**Cells before the code** (`bytecode-comparisons/V-p-callee-inputs-cells.loft`, seventeen,
+hand-computed, all matching the interpreter before the emitter existed): c1 the composite
+shape · c2 the callee writes the field it reads · c3 the caller's loop writes it · c4 a
+writer through another parameter name · c5 a field-path argument · c6 a rebound argument
+· c7 two records in one loop · c8 two record parameters · c9 outside a loop, and beside a
+growth · c10 float and boolean inputs · c11 a length-only view · c12 transitive · c13 a `&`
+alias · c14 a one-read free function (the § V-o refusal and this twin compose) · c15 a
+recursive reader · c16 a nested-path read · c17 another type written at the same offset.
+Predicted emission, matched exactly on the first run: twins for `getp`, `setp`, `blend`,
+`samp`, `getp2`, `readw`; none for `bumpw`, `setw`, `cnt`, `walk`, `area`, `poke`; twin
+calls at c1 (2), c7 (2), c8, c10 (2), c12 (and one inside getp2's twin), c13, c14, c17.
+`tests/callee_inputs.rs` pins it and the switch; `tests/scripts/157-callee-inputs.loft`
+carries the values.  **Falsified**: the twin's frames made to name a callee's two `OpGetInt`
+inputs ROTATED (`self.width` served by the height's parameter and vice versa) turns the
+composite-shape cell red on native and the verifier panics at the twin's first read
+(`hoisted 3, now 4`); restored byte-identically.  A blunter sabotage — every scalar input
+reversed — does not compile (c10's twin takes a `u8` and an `f64`), which is a refusal and
+not a measurement, and hid the same-typed swap until the rotation was restricted to it.
+
+**Measured** (shipped tier, best of 3, 14/14 hashes agree):
+
+| row | § V-o | § V-p |
+|---|---:|---:|
+| `composite` | 446k (4.41×) | **237k** (**2.34×**, −47 %) |
+| `render_lock` / `render_marks` | 32.8M / 14.5M | **30.1M** / **13.3M** (−8 %) |
+| `lock` / `lock_curved` / `wide_line` | 4.47× / 5.69× / 5.64× | 4.39× / 5.64× / 5.36× |
+| fills / `hair` | 3.87× · 3.83× / 2.10× | 3.80× · 3.59× / 2.09× |
+| `smooth` / `fronds` | 15.4× / 12.9× | 15.5× / 12.9× |
+
+`composite` is under the bar with margin; the row's remaining 2.3× is its own arithmetic
+(three `i64` divisions per pixel with the sentinel test each, the `?? 0` discharges) and
+the per-pixel range test the reference does not do.  Twins also appear for a few stdlib
+readers of record parameters (`sum_of`, `File.exists`) — dead unless a hoisting loop
+calls them, and stripped by rustc when so.
+
+**Two findings from the cells.**  (1) c18 — a plain-record `&` view rebound inside the
+loop (`cur = &a; for … { … readw(cur) …; cur = &b }`), added because c6's rebound argument
+turned out to be an OPTIONAL element view, which the record-type check refuses before the
+rebound test ever decides — answered 13 on native and **34359738373 on the interpreter**,
+the oracle.  Re-pointing an existing `&` link to a second source was broken on
+`--interpret` at every kind but a vector: `set_var`'s link branch recognised the install
+value (`OpCreateStack`) only to keep a fn-ref off the write-through, and every other kind
+wrote the new cell THROUGH the link into the old source's slot and ran the displaced-store
+free on a stack ref (`BUG (#306)`) — a struct read garbage and lost the second record's
+field, a text was cleared and read empty, an integer kept its first source.  The rule was
+not written either: `(B-Ref-Write)` says a heap write does not re-point, and nothing said
+what `p = &q` does.  Fixed at that branch (the install now takes the link's own slot FIRST,
+for every kind), written as `(B-Ref-Repoint)` in `formal/binding.md` with D-bind-30 opened
+and closed, guarded by `tests/scripts/157-link-repoint.loft` (six kinds and the
+write-through control, both backends).  The hand computation was what caught it: an oracle
+that agrees with the emitter under test is only as good as the cell's expected value.
+(2) Two sabotages stayed GREEN, and each says where the invariant is actually held.  The
+callee's own write-set filter skipped (a field the callee writes still becomes an input):
+the caller's loop evicts `(Cv, 0)` on its own write set, which already carries the callee's
+writes through `callee_writes`, so the twin is never called for it — the callee-side filter
+is a second assertion of one invariant, kept because it keeps a twin's signature free of
+inputs no caller can ever hold.  The rebound test on the input candidates skipped: c18's
+loop re-points a link, and `OpCreateStack` takes a reference operand, so
+`native_op_is_store_free` declines it and the GATE hoists nothing in that loop — the
+rebound test on this path is reached by no cell, and stays as the same guard the loop's own
+candidates carry (P4c c6).
+
+**What it does not cover, by construction.**  A read through a nested record path
+(`self.size.w`, c16) is no `scalar_read` candidate anywhere in the family; a length-only
+view earns no header (c11) as § V-n decided; a return-buffer writer (§ V-c) is admitted
+by the caller's gate but earns no twin — nothing measured asks for it; and only a leaf
+argument variable qualifies (c5, c6), the same rule the loop's own candidates follow.
+
+## V-q — a loop that pushes keeps a push header (2026-09-09)
+
+**The shape** (the profiles of the two raster rows still over the bar, WITH callers on the
+§ V-p runtime): `lock_curved` spent 26 % in `append_f64` self, 11 % in `vector_append` and
+another 8 % in its helpers — ~45 % of the row — and `lock` ~30 %, all called from
+`n_lock_layer`'s seven comprehension loops: `Lay { best: [for _i in 0..ll_n { 2.0 }], sb:
+[for _i in 0..ll_n { 0.0 }], … }`, seven vectors of `lw × lh` floats filled one push at a
+time — 268 000 pushes per `lock_curved` rep at ~12 ns each, where a `Vec::push` is one.  Each
+push resolved the store twice, read the vector slot, the length and the claim header,
+computed the capacity, and wrote the element and the length through checked accessors.
+
+**The ceiling, measured first.**  The emitted Rust of the bench rebuilt by hand with a
+push header per fill loop (header + capacity derived once; a push that fits one store and
+a length bump; a growth step the runtime's append and a re-derive): `lock_curved` 7.40M →
+**4.98M** ns/op (−33 %, hash unchanged).  That is the number the unit is built against.
+
+**Invariant** (`@FR-R-Push`, [formal/rewrites.md](../../formal/rewrites.md)).  *A growth
+moves the pushed vector's RECORD and nothing else — the container record, every other
+vector's record and every scalar keep their numbers — so the only header a push can
+invalidate is one naming the SAME vector, and the push's own is refreshed at the site.*  The
+loop keeps a PUSH header for each pushed path: (R-Header)'s triple plus the record's
+capacity in bytes; the fast path is `len·size + size ≤ cap`, one typed store at
+`8 + len·size`, `len += 1` written to the header and the record (a runtime reader inside
+the loop — an admitted callee's `len(v)` — must see every push); the growth step is the
+kind's own runtime append (`HoistScalar::append_in`, one growth ladder) and a fresh header.
+Aliasing is decided by OWNERSHIP: a single push beside no other candidate has nothing to
+alias with and is admitted whatever its root (a view, a parameter's field); otherwise every
+push root must be EXCLUSIVE — a local that owns its store (its dep list empty or naming
+only its own `__vdb_N` witness, not a `&` link, not captured, not a parameter) or the
+function's return buffer — and a read candidate is kept only when its root is an owned
+local, or a parameter while no push targets the return buffer (a parameter cannot alias a
+local's store, but it can alias a buffer the caller offered, § V-d).  A push that fails the
+rule declines the WHOLE loop, as a growth always did: a push left to its template would
+move a record a kept header still describes.  The `OpPreAllocVector` the parser emits before
+a push to a LOCAL claims a record only for an ABSENT vector and never moves one, so it is
+admitted with the push and emitted as nothing where a push header is held.
+
+**The code.**  `hoist::FUSABLE_PUSHES` (the three `HoistScalar` kinds — `OpPushInt`,
+`OpPushSingle`, `OpPushFloat`; a boolean, enum, character or narrow push keeps its template
+AND blocks the loop, because only a push emitted through the refreshing helper leaves the
+header current) and `hoist::fused_push` (the one recogniser: a fusable kind over a pure
+path); `blocks_header_hoist` admits a fusable push and its pre-alloc under `allow_push`;
+`hoist::hoistable` collects the push paths AFTER every read candidate (its own, and § V-p's
+callee inputs) and applies the ownership rule, removing the push paths from the read list —
+the ordering is load-bearing, see finding 1; `body_writes` counts a push as writing no
+scalar; `Output::begin_vector_hoist` binds `let mut __ph_N = vector::push_header(…)` and
+registers the path as `__ph_N.h` for every existing header consumer (the fused read and
+write, the hoisted length, § V-p's twin inputs by value); the registry's
+`HoistedPushEmitter` emits `stores.push_hoisted::<T, VERIFY>(&mut __ph_N, &path, size, v)`
+and `PreAllocEmitter` emits `()` under a held header.  Runtime: `vector::PushHeader`,
+`vector::push_header`, `Stores::push_hoisted`.  Switch `LOFT_NO_PUSH_HOIST` (generation
+time); falsifier `LOFT_HOIST_VERIFY=1`, under which the push re-derives its header before
+each fast-path store and the reads verify as before.
+
+**Cells before the code** (`bytecode-comparisons/V-q-hoisted-push-cells.loft`, eighteen,
+hand-computed, all matching the interpreter before the emitter existed — c6's comment
+miscounted its iterations and the oracle corrected it): c1 the constant-fill comprehension
+into a record's fields · c2 a push of a value read from another vector · c3 the ribbons
+shape, the pushed vector read at its last element · c4 two pushed vectors · c5 a push through
+a view · c6 an alias of the pushed local read in the loop · c7 a push in an inner loop under
+an outer header · c8 the pushed root rebound · c9 a parameter's field pushed from a callee ·
+c10 a 5000-element growth ladder · c11 integer, boolean and character pushes · c12 a push
+beside an in-place write · c13 beside a callee reading the length · c14 `len(v)` after the
+push · c15 the element just pushed read back · c16 an empty start · c17 two owners · c18 a
+record append beside the push.  Emission (`tests/push_hoist.rs`): push headers at c1 (2),
+c2, c4 (2), c5, c6 (the view `w` dropped, a runtime read), c7, c9, c10, c12–c17; none at c8
+(rebound), c11 (a non-fusable kind blocks), c18 (a record append blocks) — and none at c3,
+which the prediction had listed: a push whose VALUE reads the pushed vector is materialised
+by the parser as `OpDatabase · OpAppendVector` — a COPY of the whole vector per iteration —
+before the push (finding 2).  `tests/scripts/157-push-hoist.loft` carries the values.
+
+**Findings.**  (1) The first emission gave the callee-inputs guard's growing loop TWO
+headers for one path — the push header and, from § V-p's twin inputs, a plain one — and
+the verifier caught the twin reading one push behind; the push block had run before the
+input candidates were collected.  A rewrite that removes a path from the read list must run
+after every collector that can add one.  (2) c3: `px += [px[len(px)-1]? + …]` copies `px`
+into a fresh store on every iteration before pushing — the parser's materialisation of a
+self-reading append.  `lock_ribbons` has that exact shape (`lr_cum += [lr_cum[len(lr_cum) -
+1]? + lr_d]`), quadratic in the point count; small for this consumer's paths, a unit of its
+own for a long one (the value is computed before the push, so no copy is needed).  (3) A
+push to a bare LOCAL is preceded by `OpPreAllocVector`, which the first emission did not
+admit, so c2–c17 declined while the field-path cells hoisted; and a local vector's dep list
+names its own `__vdb_N` store witness, which an "owns its store" test spelled as "no deps"
+refused.  Both were visible only in the emission pin, not in the values.
+
+**Measured** (shipped tier, `--only`, two runs each, hashes unchanged):
+
+| row | § V-p | § V-q |
+|---|---:|---:|
+| `lock_curved` | 7.46M (5.64×) | **5.07M** (**3.84×**, −32 %) |
+| `lock` | 6.77M (4.39×) | **5.42M** (**3.51×**, −20 %) |
+| `wide_line` | 31.6k (5.36×) | 32.6–33.0k (unchanged: its cost is the rasteriser's own arithmetic) |
+
+Both raster rows are under the bar.  The full lane (`compare.py --repeat 3`, 14/14 hashes
+agree): `lock` **3.57×**, `lock_curved` **3.89×**, `composite` 2.34×, the fills 3.72× ·
+3.64×, `hair` 2.04×; the unjudged rows that build lock layers moved with them —
+`render_lock` 30.1M → **25.2M**, `render_marks` 13.3M → **11.2M** (−16 %), `resize` 260M →
+227M; `smooth` 14.3× and `fronds` 12.1× (the allocation class) and `wide_line` 5.3× (its
+rasteriser's arithmetic) are what remain over the bar.  `hash` read 3.43× in that run
+against 2.2× before — re-timed alone below, since the table ran beside a build.
+
+## V-r — the emission audit: the emitted routines validated against their assumptions (2026-09-09)
+
+**The steer** (owner, 2026-09-09): keep the formal ruling as a goal of the plan — the
+emitted Rust grows with every rewrite, so its assumptions need a way to be validated.  Two
+instruments now do that.  At run time, the checking forms under `LOFT_HOIST_VERIFY=1`
+(R-Switch) re-derive every held fact at every use.  At EMISSION time, this unit:
+`scripts/emission_audit.py <emitted.rs>` reads a `--native-emit` output and checks each
+function against the hoist-state rules of `formal/rewrites.md` before anything runs.
+
+**What it checks, and how.**  Textually, by design: the emitter spells a path by ONE
+expression text wherever it names it, so string equality is the pairing.  Per function,
+with brace depth as the frame: a `let __vh_N = vector::vec_header(&(P), …)`, a `let mut
+__ph_N = vector::push_header(&(P), …)`, a view header (`//… view header for var_d` — the
+emitter now names the view variable in that comment for exactly this reader) and a `let
+__vs_N = <getter>` (its key read off the getter's `db = (var_x)` and `pos + (N_i64)`) each
+bind a HOLDER live until its frame closes; a twin's `__is_k` / `__ih_k` parameters are
+holders for the whole body.  R-State: a binding for a path already held in a live frame is a
+violation; every `get_elem_hoisted` / `vec_set_hoisted_or_raise_runtime` / `push_hoisted`
+names a live holder bound for the path it reads; every `(i64::from(H.len))` and `__vs_N`
+names a live holder; every twin call hands in live holders (R-Inputs).  R-Refresh: a
+template append, a `pre_alloc_vector` or a `vector_add` on a held path is a violation.  A
+runtime read (`vec_get_or_raise_runtime`, `length_vector`) on a held path is a NOTE — a
+missed hoist, never a wrong answer.  The summary counts holders bound and uses resolved, so
+a vacuous pass is visible.
+
+**Proven to fail before it was trusted.**  A hand-made second header for one path is
+refused (`R-State — __vh_999 binds path var_v already held by __vh_1`), and — the
+falsification that matters — the collector order that produced today's double holder
+(`hoistable`'s push block moved back before § V-p's callee inputs) makes the audit flag
+`n_outside_and_growing: __vh_2 binds path … already held by __ph_1` on the callee-inputs
+guard's emission, with no program run.  Restored, every corpus is clean: the six cell
+corpora, the three hoist guards and the in-repo `bench/12_drawing/bench.loft` (26–46
+holders, 39–46 uses each); `tests/emission_audit.rs` runs exactly that in the gate, and
+requires at least one holder per corpus and the refusal of the doubled emission.
+
+**What it cannot see.**  A twin's inputs are holders with no path text (the callee's own
+variables name them), so R-Inputs is checked for liveness, not for pairing; a `.len` read
+carries the holder and not the path, so it is checked for liveness only.  Both are where
+the state-builder refactor (next) and a path-carrying comment on those emissions would
+sharpen it.
 
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 

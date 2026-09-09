@@ -1344,31 +1344,31 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     for &t in sig.pops.iter().rev() {
         let slot = match t {
             ArgT::I32 | ArgT::I64 => LibArg {
-                scalar: *stores.get::<i64>(stack),
+                scalar: stores.get::<i64>(stack),
                 ..LibArg::ZERO
             },
             ArgT::F64 => LibArg {
-                scalar: (*stores.get::<f64>(stack)).to_bits() as i64,
+                scalar: (stores.get::<f64>(stack)).to_bits() as i64,
                 ..LibArg::ZERO
             },
             ArgT::F32 => LibArg {
-                scalar: i64::from((*stores.get::<f64>(stack) as f32).to_bits()),
+                scalar: i64::from((stores.get::<f64>(stack) as f32).to_bits()),
                 ..LibArg::ZERO
             },
             ArgT::Bool => LibArg {
-                scalar: i64::from(*stores.get::<bool>(stack)),
+                scalar: i64::from(stores.get::<bool>(stack)),
                 ..LibArg::ZERO
             },
             // The raw stack DbRef, passed UNCHANGED (the --native body consumes
             // the indirect-header form, not the dereferenced direct record).
             ArgT::Ref | ArgT::Vec => LibArg {
-                dbref: *stores.get::<DbRef>(stack),
+                dbref: stores.get::<DbRef>(stack),
                 ..LibArg::ZERO
             },
             // Text arg → `&str` for the body: the store-backed bytes (borrowed for
             // the call's duration, valid because the store is shared and live).
             ArgT::Text => {
-                let s = *stores.get::<crate::keys::Str>(stack);
+                let s = stores.get::<crate::keys::Str>(stack);
                 LibArg {
                     text_ptr: s.ptr,
                     text_len: s.len as usize,
@@ -1606,18 +1606,18 @@ fn dispatch_via_bridge(
         let v = match t {
             // No pre-narrowing: pass the whole i64 cell; the bridge casts to
             // the impl's real width (i32/u16/…) per its Rust signature.
-            ArgT::I32 | ArgT::I64 => LoftValue::int(*stores.get::<i64>(stack)),
-            ArgT::F32 | ArgT::F64 => LoftValue::float(*stores.get::<f64>(stack)),
-            ArgT::Bool => LoftValue::boolean(*stores.get::<bool>(stack)),
+            ArgT::I32 | ArgT::I64 => LoftValue::int(stores.get::<i64>(stack)),
+            ArgT::F32 | ArgT::F64 => LoftValue::float(stores.get::<f64>(stack)),
+            ArgT::Bool => LoftValue::boolean(stores.get::<bool>(stack)),
             ArgT::Text => {
-                let s = *stores.get::<Str>(stack);
+                let s = stores.get::<Str>(stack);
                 LoftValue::text(FfiStr {
                     ptr: s.str().as_ptr(),
                     len: s.str().len(),
                 })
             }
             ArgT::Ref => {
-                let r = *stores.get::<crate::keys::DbRef>(stack);
+                let r = stores.get::<crate::keys::DbRef>(stack);
                 LoftValue::reference(FfiRef {
                     store_nr: r.store_nr,
                     rec: r.rec,
@@ -1626,7 +1626,7 @@ fn dispatch_via_bridge(
             }
             ArgT::Vec => {
                 // Same indirect-vector deref as the legacy marshal.
-                let r = *stores.get::<crate::keys::DbRef>(stack);
+                let r = stores.get::<crate::keys::DbRef>(stack);
                 let rec = if r.rec == 0 || r.pos == 0 {
                     0
                 } else {

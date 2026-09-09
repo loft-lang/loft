@@ -14,6 +14,8 @@
 // argument back, because the over-free is invisible until something lands in the slot.
 //
 // @falsified-at: e575a33f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Node { value: integer, next: reference<Node>? }
 

@@ -51,6 +51,8 @@
 //   run stops at the first: on the parent the first scored row answers len 2 with both elements
 //   7, on both backends, and the two later rows sit behind it.  The two control cells pass on
 //   the parent too, so a build that merely stopped emitting the concat would not satisfy them.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 fn main() {
   // ---- the defect: append into a vector held in a tuple element ----

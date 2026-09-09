@@ -54,6 +54,8 @@
 //
 // A cell for either would lock someone else's defect into this guard rather than protect
 // this one.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct Ytg { n: integer, tag: integer = 0 }
 struct Ytg2 { m: integer }

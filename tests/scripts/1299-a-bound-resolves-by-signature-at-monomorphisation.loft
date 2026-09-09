@@ -41,6 +41,8 @@
 //
 // @falsified-at: 52e3c0ac — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 interface Sub1299 { op - (self: Self, other: Self) -> Self }
 interface Mul1299 { op * (self: Self, other: Self) -> Self }

@@ -26,6 +26,15 @@
 //
 // @falsified-at: cb2dca92 — `test_the_overwrite_shape` read 1 on `--native` and 0 on
 //   `--interpret`, with `kt=82 Pay×1` not freed on the native side; every control unmoved.
+//   CHANNEL: assertions and leak, on `--native` only. `test_the_overwrite_shape` read 1
+//   native against 0 interpret, with `kt=82 Pay×1` not freed on the native side. This is a
+//   backend-divergence guard, so the interpret side is INERT by construction rather than by
+//   failing to catch anything, and only one side can move.
+//   ARMED: none needed for the ASSERTION half, which is what a re-run compares first —
+//   `test_the_overwrite_shape` reads 1 against 0 without any instrument. The leak half is on
+//   the NATIVE side, where falsify does not read the interpreter's `stores not freed` stderr,
+//   so confirming `kt=82 Pay×1` needs `LOFT_STRICT_STORES=1`; the assertion is sufficient to
+//   score the guard and the leak is corroboration.
 
 struct Pay { a: integer }
 enum Subj { Holder { inner: Pay }, Empty { z: integer }, Many { xs: vector<integer> }, Lab { s: text } }

@@ -42,6 +42,8 @@
 //   its loop, and the native channel names where: "panicked at src/database/allocation.rs",
 //   which is the u16 store table exhausting at 65535 live stores.  The other three cells pass
 //   on both builds, which is what makes them controls rather than a second copy of the guard.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct P1248 { n: integer }
 

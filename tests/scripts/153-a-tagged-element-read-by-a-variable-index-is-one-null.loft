@@ -23,6 +23,9 @@
 // beside it answered `-1`.
 //
 // @falsified-at: 3614bd3c — interpret exit 1 -> 0, native exit 1 -> 0 (the control REFUSES the program: `x` typed `S?` on one pass and `__nullable<S>?` on the other)
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 struct S { n: integer }
 fn rdn(s: S?) -> integer { if s != null { s.n } else { -1 } }
 fn re(v: vector<S?>, i: integer) -> S? { v[i] }

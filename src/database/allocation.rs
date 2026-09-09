@@ -920,6 +920,12 @@ impl Stores {
         if displaced.store_nr == witness.store_nr {
             return;
         }
+        // ABSENT displaces nothing — the sentinel is a value, not a store.  Guarded here rather
+        // than at the callers for the reason `close_file_handle` states with the same test.
+        if displaced.store_nr == u16::MAX || (displaced.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
         // @FR-H-Free — `store(r) ≠ 0`.  Guarded by `stack_store_at_zero` for the same reason
         // `free_named`'s `#306` check is: store 0 is only the eval stack once the interpreter
         // has claimed it, and a durable/embedded `Stores` numbers its first real store 0.
@@ -3856,7 +3862,7 @@ impl Stores {
             if s.free || s.known_type == u16::MAX {
                 return false;
             }
-            let header = *s.addr::<i32>(PRIMARY, 0);
+            let header = s.read::<i32>(PRIMARY, 0);
             if header <= 0 {
                 return false;
             }
@@ -4542,7 +4548,7 @@ impl Stores {
         // whose own header is zero, which `claim_scan` walks by adding zero to
         // its position: an unbounded loop inside the next `claim`, on a store
         // the program only asked to LOAD (`store_load` never returned).
-        let dst_header = *dst.addr::<i32>(PRIMARY, 0);
+        let dst_header = dst.read::<i32>(PRIMARY, 0);
         // Carry the root block's raw bytes first: `copy_claims` rebuilds the
         // heap children and rewrites the pointers into them, but says nothing
         // about any inline bytes sharing the record.
@@ -4569,7 +4575,7 @@ impl Stores {
         // Re-assert the destination's own block header: the raw copy above
         // brought the SOURCE's size word with it, and the two blocks are the
         // same size only when the destination's claim happened not to round up.
-        *self.allocations[dst_slot as usize].addr_mut::<i32>(PRIMARY, 0) = dst_header;
+        self.allocations[dst_slot as usize].write::<i32>(PRIMARY, 0, dst_header);
         self.copy_claims(&src, &to, tp);
         // The scratch carries the schema it was rebuilt from. `compact_slot` sets
         // this on the way out and could leave it until then; a caller that runs a
@@ -4626,7 +4632,7 @@ impl Stores {
             if s.known_type == u16::MAX {
                 return Err("store records no type, so there is no schema to walk");
             }
-            let header = *s.addr::<i32>(PRIMARY, 0);
+            let header = s.read::<i32>(PRIMARY, 0);
             if header <= 0 {
                 return Err("the root block is free or malformed");
             }

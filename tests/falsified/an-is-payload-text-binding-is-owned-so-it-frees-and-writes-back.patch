@@ -1,0 +1,40 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 53b4322de..f531cfb22 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -9755,29 +9755,12 @@ impl Parser {
+                                     Type::Reference(variant_def_nr, Deps::none()),
+                                 ),
+                             );
+-                            // A HEAP capture binds a borrowed view into the subject's
+-                            // record — scope cleanup must not emit OpFreeRef for it (see
+-                            // the same note at parse_match_enum_field_bindings in this
+-                            // file for the match-arm path).
+-                            //
+-                            // A TEXT payload is the exception, and it is the same
+-                            // exception the match site already carries: `_mv_<f> =
+-                            // OpGetText(subj, off)` is typed plain `text`, an OWNED copy
+-                            // with its own allocation, so scope cleanup must free it.
+-                            // `skip_free` there leaks that copy once per taken arm, which
+-                            // is invisible to the store-leak gate (the buffer belongs to a
+-                            // Rust `String`, not to a store record) and shows up only
+-                            // under valgrind.  Freeing is safe in the NOT-taken arm for
+-                            // the reason it is safe at the match site: the binding is
+-                            // default-initialised to `""` at block entry, and
+-                            // `OpFreeText("")` is a no-op that reads no garbage.
+-                            // Registering the view is what gives a write spelled through
+-                            // the binding its route back to the field, as `match` has.
+-                            if matches!(field_type.base(), Type::Text(_)) {
+-                                self.record_text_payload_view(v_nr, &field_read);
+-                            } else {
+-                                self.vars.set_skip_free(v_nr);
+-                            }
++                            // The capture binds a borrowed view into the
++                            // subject's record — scope cleanup must not
++                            // emit OpFreeRef for it (see the same
++                            // note at parse_match_enum_field_bindings in
++                            // this file for the match-arm path).
++                            self.vars.set_skip_free(v_nr);
+                             // ...and the borrow must be in the TYPE, which is the other half
+                             // of that note and was applied only to the `match` path.  #429
+                             // gave a HEAP payload binding a frame dep on its subject because

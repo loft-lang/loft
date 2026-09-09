@@ -328,8 +328,15 @@ fn collect_fn_ref_literals(
             // over-approximates (a plain int field equal to a fn d_nr would
             // mark that fn reachable too) but reachability over-approximation
             // is correctness-safe — it only ever emits an unused candidate.
-            if callee.name == "OpSetInt4"
-                && let Some(arg2) = args.get(2)
+            // The fused append (@PLN157 § V-m) writes the same d_nr as `OpPushInt4(vector,
+            // Int(<lambda d_nr>))` — a `vector<fn(…)>` literal's elements — one operand
+            // earlier.
+            let fn_ref_operand = match callee.name.as_str() {
+                "OpSetInt4" => args.get(2),
+                "OpPushInt4" => args.get(1),
+                _ => None,
+            };
+            if let Some(arg2) = fn_ref_operand
                 && let Value::Int(dn) = arg2.unspan()
                 && *dn >= 0
                 && (*dn as u32) < data.definitions()
@@ -599,9 +606,58 @@ pub struct Output<'a> {
     /// other read emits unchanged. One frame is pushed per `Value::Loop`, so a frame is
     /// popped exactly where the local it names goes out of scope.
     pub vec_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
+    /// `(variable, field offset)` → the Rust local holding the value the prelude read
+    /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
+    pub scalar_hoists: Vec<HashMap<hoist::ScalarKey, String>>,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
+    /// Per-callee memo of what an admitted writing callee reaches (@PLN157 P4c), shared
+    /// across every loop in the program.
+    pub scalar_write_cache: hoist::WriteCache,
+    /// `LOFT_NO_SCALAR_HOIST=1` — read every record scalar field per iteration, as before
+    /// @PLN157 P4c.  One step finer than `LOFT_NO_VECTOR_HOIST` when bisecting a wrong
+    /// answer in a loop that reads a record's fields; `LOFT_HOIST_VERIFY=1` is the
+    /// falsifier (each hoisted read is re-derived and compared).
+    pub scalar_hoist_disabled: bool,
+    /// `LOFT_NO_VIEW_HOIST=1` — a `&`-bound vector view (`d = &cv.data`) derives no header
+    /// at its binding, so every later `len(d)` / `d[i]` in the block resolves the store
+    /// again, as before @PLN157 § V-n.  The bisect step for a wrong element read through
+    /// such a view outside a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub view_hoist_disabled: bool,
+    /// `LOFT_NO_WRAPPER_INLINE=1` — a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`)
+    /// is emitted as the CALL again, as before @PLN157 § V-o, instead of as its op; the
+    /// bisect step for a wrong length or libm value on native, and the before-half of the
+    /// A/B.  See [`hoist::one_op_wrapper`].
+    pub wrapper_inline_disabled: bool,
+    /// Per-definition memo of [`hoist::one_op_wrapper`].
+    wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
+    /// @PLN157 § V-q — the push headers of the enclosing loops, innermost last: path → the
+    /// Rust local holding its [`crate::vector::PushHeader`] (`__ph_N`); the same path is in
+    /// [`Self::vec_headers`] as `__ph_N.h` for every read.  Pushed and popped beside them.
+    pub push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// `LOFT_NO_PUSH_HOIST=1` — a loop that pushes to a vector hoists nothing, as before
+    /// @PLN157 § V-q (`@FR-R-Push`); the bisect step for a wrong element or length out of a
+    /// loop that appends.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub push_hoist_disabled: bool,
+    /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
+    pub input_cache: hoist::InputCache,
+    /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
+    /// form, as before @PLN157 § V-p (`@FR-R-Inputs`): the bisect step for a wrong value read
+    /// through a record parameter inside a callee that a hoisting loop calls.
+    /// `LOFT_HOIST_VERIFY=1` is the falsifier — inside the twin every input is re-read.
+    pub callee_inputs_disabled: bool,
+    /// The inputs of the TWIN being emitted — `Some` only while [`Self::output_function`]
+    /// emits one: the extra parameters, and the frames that serve the body's reads from them.
+    twin: Option<std::rc::Rc<hoist::CalleeInputs>>,
+    /// The live-dispatch entry check a definition's ORIGINAL emission produced, so its twin
+    /// re-uses the same table index instead of allocating a second one.
+    live_check_by_def: HashMap<u32, String>,
+    /// The definition of the user call being emitted, set by `output_call_inner` and read by
+    /// `user_fn_call_body` to decide the twin form — the emitter registry hands that only the
+    /// `Definition`, which carries no number.
+    current_call_def: u32,
     /// Names the hoisted headers of the function being emitted (`__vh_1`, `__vh_2`, …).
     pub hoist_counter: u32,
     /// `LOFT_HOIST_VERIFY=1` — emit the CHECKING form of every hoisted read, which
@@ -1496,6 +1552,20 @@ impl<'a> Output<'a> {
             dup_fn_names: HashSet::new(),
             loop_stack: Vec::new(),
             vec_headers: Vec::new(),
+            scalar_hoists: Vec::new(),
+            scalar_write_cache: HashMap::new(),
+            scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
+            view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
+            wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
+                .is_ok_and(|v| v != "0"),
+            wrapper_cache: HashMap::new(),
+            input_cache: HashMap::new(),
+            push_headers: Vec::new(),
+            push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
+            callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
+            twin: None,
+            live_check_by_def: HashMap::new(),
+            current_call_def: u32::MAX,
             hoist_cache: HashMap::new(),
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
@@ -1738,37 +1808,76 @@ impl Output<'_> {
         self.predeclared.clear();
         self.next_format_count = 0;
         self.vec_headers.clear();
+        self.scalar_hoists.clear();
+        self.push_headers.clear();
         self.hoist_counter = 0;
     }
 
-    /// loft#885 — open a loop with the headers of the vectors it only reads.
+    /// loft#885 — open a loop with the headers of the vectors it only reads, and
+    /// (@PLN157 P4c) the record scalars it only reads.
     ///
-    /// Emits `{ let __vh_N = vector::vec_header(…);` per hoistable vector and answers
-    /// whether that wrapper block was opened, which [`Self::end_vector_hoist`] closes. The
-    /// wrapper is what makes the prelude legal wherever a loop can appear — a loop is an
-    /// expression in Rust, and a bare `let` before one would not be.
+    /// Emits `{ let __vh_N = vector::vec_header(…);` per hoistable vector and
+    /// `let __vs_N = <the getter, once>;` per hoistable scalar, and answers whether that
+    /// wrapper block was opened, which [`Self::end_vector_hoist`] closes. The wrapper is
+    /// what makes the prelude legal wherever a loop can appear — a loop is an expression in
+    /// Rust, and a bare `let` before one would not be.
     ///
-    /// A vector already covered by an enclosing loop's prelude is skipped: the enclosing
-    /// header is still current, because the promise that let it be hoisted covers this
-    /// loop too.
+    /// A vector or scalar already covered by an enclosing loop's prelude is skipped: the
+    /// enclosing binding is still current, because the promise that let it be hoisted
+    /// covers this loop too (the enclosing body contains this one).
+    /// Emits `@FR-R-Header` and `@FR-R-Scalar`: the prelude that binds a loop's headers and scalars once.
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
         let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
-        let candidates = if self.hoist_disabled {
-            Vec::new()
+        let mut scalar_frame: HashMap<hoist::ScalarKey, String> = HashMap::new();
+        let hoisted = if self.hoist_disabled {
+            hoist::LoopHoist::default()
         } else {
-            hoist::hoistable_vectors(
+            hoist::hoistable(
                 lp,
                 self.data,
+                self.stores,
                 self.def_nr,
                 &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
                 !self.write_hoist_disabled,
+                !self.scalar_hoist_disabled,
+                (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+                !self.push_hoist_disabled,
             )
         };
+        let hoist::LoopHoist {
+            vectors: candidates,
+            scalars,
+            pushes,
+        } = hoisted;
+        let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
+        // `@FR-R-State` — one holder per path per frame: a pushed path binds its push header
+        // here and is absent from `candidates`; an enclosing frame's holder is re-used.
+        for (path, expr) in pushes {
+            // An enclosing loop that pushes the same path already holds its header (a push
+            // anywhere in a body makes the path a push path at every enclosing level).
+            if self.push_headers.iter().any(|f| f.contains_key(&path)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__ph_{}", self.hoist_counter);
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!(
+                "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@PLN157 § V-q push header"
+            ));
+            frame.insert(path.clone(), format!("{name}.h"));
+            push_frame.insert(path, name);
+        }
         for (path, expr) in candidates {
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
@@ -1792,6 +1901,25 @@ impl Output<'_> {
             ));
             frame.insert(path, name);
         }
+        for (key, call) in scalars {
+            if self.scalar_hoists.iter().any(|f| f.contains_key(&key)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&key.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__vs_{}", self.hoist_counter);
+            // The getter call itself, emitted once: its `#rust` template is the one
+            // definition of the value (the `rec == 0` sentinel included), so the local
+            // holds exactly what a per-iteration read would.  The loop's own frame is not
+            // pushed yet, so this emission cannot resolve to the local it is defining.
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &call)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!("let {name} = {operand};"));
+            scalar_frame.insert(key, name);
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -1802,16 +1930,208 @@ impl Output<'_> {
             self.indent(w)?;
         }
         self.vec_headers.push(frame);
+        self.scalar_hoists.push(scalar_frame);
+        self.push_headers.push(push_frame);
         Ok(opened)
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
+        self.scalar_hoists.pop();
+        self.push_headers.pop();
         if opened {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// @PLN157 § V-n — after statement `at` of a block was emitted: if it bound a vector
+    /// VIEW whose header the rest of the block may share ([`hoist::view_def_header`]),
+    /// emit `let __vh_N = vector::vec_header(&var_d, …);` as the next statement and push a
+    /// frame for it.  Answers whether a frame was pushed; [`Self::output_block`] pops what
+    /// it pushed before the block closes, so the local's scope and the frame's agree.
+    /// Emits `@FR-R-View`.
+    pub(super) fn bind_view_header(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+        at: usize,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || self.view_hoist_disabled {
+            return Ok(false);
+        }
+        let Some(d) = hoist::view_def_header(
+            stmts,
+            at,
+            self.data,
+            self.def_nr,
+            &mut self.hoist_cache,
+            !self.write_hoist_disabled,
+        ) else {
+            return Ok(false);
+        };
+        let path: hoist::PathKey = (d, Vec::new());
+        if self.vec_headers.iter().any(|f| f.contains_key(&path))
+            || self.coroutine_persistent_fields.contains_key(&d)
+        {
+            return Ok(false);
+        }
+        self.hoist_counter += 1;
+        let name = format!("__vh_{}", self.hoist_counter);
+        // @PLN157 § V-p — a view of a path whose header is already held (a loop's prelude, or
+        // a twin's input) copies that header: the binding's `DbRef` is the path's, so the
+        // header derived from either is the same one (`@FR-R-State`).
+        let held = match stmts[at].unspan() {
+            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs)
+                .and_then(|p| self.active_vec_header(&p).map(str::to_owned)),
+            _ => None,
+        };
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(d))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        // The comment names the VIEW variable the header serves, which is what the emission
+        // audit (`scripts/emission_audit.py`, @PLN157 § V-r) keys the holder on.
+        if let Some(held) = held {
+            writeln!(
+                w,
+                "let {name} = {held}; //@PLN157 § V-n view header for {operand}, copied from the held path (§ V-p)"
+            )?;
+        } else {
+            writeln!(
+                w,
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header for {operand}"
+            )?;
+        }
+        self.vec_headers.push(HashMap::from([(path, name)]));
+        Ok(true)
+    }
+
+    /// @PLN157 § V-o — the op a call to `def_nr` stands for, with the caller's `vals` put in
+    /// the op's operand positions, when `def_nr` is a stdlib one-op wrapper and the switch
+    /// is on; `None` otherwise.
+    /// Emits `@FR-R-Wrapper`.
+    pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
+        if self.wrapper_inline_disabled {
+            return None;
+        }
+        // Only LEAF arguments: the op's operands are emitted from a fresh list, and the
+        // pre-evaluation map keys on the original nodes' addresses — a cloned block or call
+        // argument would miss its `_pre_N` binding and be emitted raw (a `let` inside an
+        // expression) or run a second time.  A call whose argument is an expression stays a
+        // call, as before.
+        if !vals.iter().all(|v| {
+            matches!(
+                v.unspan(),
+                Value::Var(_)
+                    | Value::Int(_)
+                    | Value::Long(_)
+                    | Value::Float(_)
+                    | Value::Single(_)
+                    | Value::Boolean(_)
+            )
+        }) {
+            return None;
+        }
+        let data = self.data;
+        let (op, operands) = self
+            .wrapper_cache
+            .entry(def_nr)
+            .or_insert_with(|| hoist::one_op_wrapper(data, def_nr))
+            .as_ref()?;
+        let mut args = Vec::with_capacity(operands.len());
+        for o in operands {
+            match o {
+                hoist::WrapperOperand::Param(i) => args.push(vals.get(*i as usize)?.clone()),
+                hoist::WrapperOperand::Const(c) => args.push(c.clone()),
+            }
+        }
+        Some((*op, args))
+    }
+
+    /// @PLN157 § V-p — the invariant inputs of `def_nr` (`@FR-R-Inputs`), or `None` when it
+    /// has no twin or the mechanism is off.  A whole-hoist switch (`LOFT_NO_VECTOR_HOIST`)
+    /// leaves no caller holding anything to hand over, so it emits no twin either.
+    fn callee_inputs_of(&mut self, def_nr: u32) -> Option<std::rc::Rc<hoist::CalleeInputs>> {
+        if self.callee_inputs_disabled || self.hoist_disabled {
+            return None;
+        }
+        hoist::callee_inputs(
+            def_nr,
+            self.data,
+            self.stores,
+            &mut self.hoist_cache,
+            &mut self.scalar_write_cache,
+            &mut self.input_cache,
+        )
+    }
+
+    /// The Rust expressions a call to `def_nr` with arguments `vals` hands its twin — one
+    /// per invariant input, in the twin's parameter order — when the enclosing frames hold
+    /// EVERY one of them for the argument variable; `None` keeps the plain call.
+    fn twin_call_inputs(&mut self, def_nr: u32, vals: &[Value]) -> Option<Vec<String>> {
+        let inputs = self.callee_inputs_of(def_nr)?;
+        let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
+        for (p, fld, _) in &inputs.scalars {
+            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
+                return None;
+            };
+            args.push(self.active_scalar_hoist(&(*c, *fld))?.to_owned());
+        }
+        for (p, offs, _) in &inputs.headers {
+            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
+                return None;
+            };
+            args.push(self.active_vec_header(&(*c, offs.clone()))?.to_owned());
+        }
+        Some(args)
+    }
+
+    /// The frames a twin's body reads its inputs from: `(parameter, field)` → `__is_k`,
+    /// `(parameter, path)` → `__ih_k`.  Pushed around the body, popped after it.
+    fn push_twin_frames(&mut self) {
+        let Some(t) = self.twin.clone() else { return };
+        let scalars: HashMap<hoist::ScalarKey, String> = t
+            .scalars
+            .iter()
+            .enumerate()
+            .map(|(k, (p, fld, _))| ((*p, *fld), format!("__is_{k}")))
+            .collect();
+        let headers: HashMap<hoist::PathKey, String> = t
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ih_{k}")))
+            .collect();
+        self.scalar_hoists.push(scalars);
+        self.vec_headers.push(headers);
+    }
+
+    fn pop_twin_frames(&mut self) {
+        if self.twin.is_some() {
+            self.scalar_hoists.pop();
+            self.vec_headers.pop();
+        }
+    }
+
+    /// The Rust local holding `key`'s hoisted scalar, when an enclosing loop read it once
+    /// (@PLN157 P4c).
+    #[must_use]
+    pub fn active_scalar_hoist(&self, key: &hoist::ScalarKey) -> Option<&str> {
+        self.scalar_hoists
+            .iter()
+            .rev()
+            .find_map(|f| f.get(key).map(String::as_str))
+    }
+
+    /// Whether this getter call reads a record scalar an enclosing loop hoisted
+    /// (@PLN157 P4c): the shape qualifies ([`hoist::scalar_read`]) and the loop bound a
+    /// local for it.  Answers that local's name.
+    #[must_use]
+    pub fn hoisted_scalar_read(&self, getter: &str, args: &[Value]) -> Option<&str> {
+        let key = hoist::scalar_read(getter, args)?;
+        self.active_scalar_hoist(&key)
     }
 
     /// The Rust local holding `var`'s hoisted header, when an enclosing loop derived one.
@@ -1821,6 +2141,32 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// @PLN157 § V-q — the push header an enclosing loop holds for `path`, when one does.
+    #[must_use]
+    pub fn active_push_header(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.push_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// Whether this push is emitted through a hoisted push header (@PLN157 § V-q): the
+    /// shape qualifies ([`hoist::fused_push`]), an enclosing loop bound a push header for
+    /// the path, and the mechanism is on.  Answers the fused shape with the header's name.
+    #[must_use]
+    pub fn fused_push<'a>(
+        &self,
+        op: &str,
+        args: &'a [Value],
+    ) -> Option<(hoist::FusedPush<'a>, String)> {
+        if self.push_hoist_disabled {
+            return None;
+        }
+        let fused = hoist::fused_push(self.data, op, args)?;
+        let header = self.active_push_header(&fused.path)?.to_owned();
+        Some((fused, header))
     }
 
     /// Whether this call is emitted as ONE fused element read (loft#885 stage 2) — the
@@ -1893,6 +2239,7 @@ impl Output<'_> {
     /// calls (`Op*`, `#rust`-bodied stubs) are the body's work, not routes
     /// back into user code.  `stack_trace()`/`assert`/`panic` are calls,
     /// so a leaf can never ask for the frame it does not have.
+    /// Decides `@FR-R-Leaf`: a body that calls no user function and no fn-ref.
     fn is_elidable_leaf(&mut self, def_nr: u32) -> bool {
         if let Some(&v) = self.leaf_cache.get(&def_nr) {
             return v;
@@ -4245,6 +4592,13 @@ extern crate loft;"
                 continue;
             }
             self.output_function(w, dnr, program_store.as_ref())?;
+            // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
+            // with its invariant inputs as extra parameters.
+            if let Some(inputs) = self.callee_inputs_of(dnr) {
+                self.twin = Some(inputs);
+                self.output_function(w, dnr, program_store.as_ref())?;
+                self.twin = None;
+            }
         }
         Ok(())
     }
@@ -4952,15 +5306,33 @@ extern crate loft;"
         if !def.position().file.is_empty() {
             writeln!(w, "// loft:{}:{}", def.position().file, def.position().line)?;
         }
+        let twin = self.twin.clone();
         write!(
             w,
-            "{}fn {}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
             self.fn_inline_attr(),
-            self.fn_ident(def)
+            self.fn_ident(def),
+            if twin.is_some() { "__inv" } else { "" }
         )?;
         for a in def.attributes() {
             let tp = rust_type(&a.typedef, &Context::Argument);
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
+        }
+        if let Some(t) = &twin {
+            // @PLN157 § V-p — the invariant inputs: each scalar typed as its getter's result
+            // (the same type the caller's `__vs_N` local infers), each header by value.
+            for (k, (_, _, getter)) in t.scalars.iter().enumerate() {
+                let tp = match getter.unspan() {
+                    Value::Call(g, _) => {
+                        rust_type(self.data.def(*g).returned(), &Context::Variable)
+                    }
+                    _ => "i64".to_string(),
+                };
+                write!(w, ", __is_{k}: {tp}")?;
+            }
+            for k in 0..t.headers.len() {
+                write!(w, ", __ih_{k}: vector::VecHeader")?;
+            }
         }
         write!(w, ") ")?;
         if *def.returned() != Type::Void {
@@ -5218,7 +5590,16 @@ extern crate loft;"
                 // entirely (and, as a side effect, `self.live_fns` stays empty
                 // because `live_entry_check` — its sole producer — never runs).
                 let live_check = if self.emit_live {
-                    self.live_entry_check(def).unwrap_or_default()
+                    // A twin re-uses the ORIGINAL's check: the same flip flag, the same
+                    // interpreter entry (which takes the declared parameters only — the
+                    // inputs are derived from them).
+                    if let Some(s) = self.twin.as_ref().and(self.live_check_by_def.get(&def_nr)) {
+                        s.clone()
+                    } else {
+                        let s = self.live_entry_check(def).unwrap_or_default();
+                        self.live_check_by_def.insert(def_nr, s.clone());
+                        s
+                    }
                 } else {
                     String::new()
                 };
@@ -5285,7 +5666,9 @@ extern crate loft;"
                     "{live_check}  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\
                      {push}{fnref_guard}{vdb_prologue}"
                 ));
+                self.push_twin_frames();
                 self.output_block(w, body, returns_text, true)?;
+                self.pop_twin_frames();
                 self.call_stack_prefix = None;
             } else {
                 // Non-instrumented user-fn (e.g. `t_…` methods) — still
@@ -5294,7 +5677,9 @@ extern crate loft;"
                 self.call_stack_prefix = Some(format!(
                     "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};{vdb_prologue}"
                 ));
+                self.push_twin_frames();
                 self.output_block(w, body, returns_text, true)?;
+                self.pop_twin_frames();
                 self.call_stack_prefix = None;
             }
         } else if *def.code() == Value::Null {

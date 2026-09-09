@@ -1,0 +1,85 @@
+// @PLN157 § V-n cells — a `&`-bound VIEW of a vector (`d = &cv.data`) derives its header once,
+// at the binding, for the rest of the block that reads it through an element address.
+// The interpreter (no hoist) is the oracle; native must answer the same under LOFT_HOIST_VERIFY=1.
+// Expected values are hand-computed in V-n-view-def-header-cells.expected; the emission per
+// cell (which view-defs bind a header) is pinned by tests/view_header.rs.
+struct Cv { w: integer, data: vector<integer> }
+struct P2 { xs: vector<integer>, ys: vector<integer> }
+struct Sub2 { xs: vector<integer> }
+struct H { sub: Sub2 }
+
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn bump(cv: Cv, i: integer) { cv.data[i] = (cv.data[i] ?? 0) + 100; }
+fn grow(cv: Cv, v: integer) { cv.data += [v]; }
+
+// c1 — the set_pixel shape: bind the view, test the length, write the element in place.
+fn setp(cv: Cv, i: integer, v: integer) { d = &cv.data; if i >= 0 && i < len(d) { d[i] = v; } }
+fn c1() { cv = Cv { w: 0, data: [0, 0, 0] }; for i in 0..4 { setp(cv, i, 10 + i); } println("c1 {total(cv.data)} {len(cv.data)}"); }
+// c2 — the get_pixel shape: the read side, with the null discharge.
+fn getp(cv: const Cv, i: integer) -> integer { d = &cv.data; if i >= 0 && i < len(d) { d[i] ?? -1 } else { 0 } }
+fn c2() { cv = Cv { w: 0, data: [5, 6, 7] }; println("c2 {getp(cv, 0) + getp(cv, 2) + getp(cv, 3) + getp(cv, -1)}"); }
+// Each cell's reads live in a HELPER, as the pixel methods' do: a `println` in the same
+// block would be text work the hoist gate reads as a store write, and the cell would
+// measure that instead of its own axis.
+// c3 — a GROWING write through the view between the binding and the reads: no header.
+fn h3(cv: Cv) -> integer { d = &cv.data; d += [9]; (d[0] ?? 0) + (d[2] ?? 0) + len(d) }
+fn c3() { cv = Cv { w: 0, data: [1, 2] }; s = h3(cv); println("c3 {s} {len(cv.data)}"); }
+// c4 — the view REBOUND in the same block: the first binding gets no header, the second may.
+fn h4(a: Cv, b: Cv) -> integer { d = &a.data; x = d[1] ?? 0; d = &b.data; y = d[1] ?? 0; x * 100 + y }
+fn c4() { a = Cv { w: 0, data: [1, 2] }; b = Cv { w: 0, data: [30, 40] }; r = h4(a, b); println("c4 {r / 100} {r % 100}"); }
+// c5 — a callee writing IN PLACE between the binding and the reads: the header stays.
+fn h5(cv: Cv) -> integer { d = &cv.data; bump(cv, 1); (d[0] ?? 0) + (d[1] ?? 0) }
+fn c5() { cv = Cv { w: 0, data: [1, 2, 3] }; println("c5 {h5(cv)}"); }
+// c6 — a callee GROWING the vector between: no header, the reads see the growth.
+fn h6(cv: Cv) -> integer { d = &cv.data; grow(cv, 7); grow(cv, 8); (d[2] ?? -1) + len(d) }
+fn c6() { cv = Cv { w: 0, data: [1] }; println("c6 {h6(cv)}"); }
+// c7 — the binding inside an `if` arm: the header is scoped to that arm.
+fn h7(cv: Cv) -> integer { s = 0; if len(cv.data) > 2 { d = &cv.data; s += d[2] ?? 0; } s += cv.data[0] ?? 0; s }
+fn c7() { cv = Cv { w: 0, data: [4, 5, 6] }; println("c7 {h7(cv)}"); }
+// c8 — the binding inside a loop body: derived per iteration, after the binding.
+fn h8(cvs: vector<Cv>) -> integer { s = 0; for k in 0..2 { c = cvs[k]?; d = &c.data; s += (d[0] ?? 0) * 10 + (d[1] ?? 0); } s }
+fn c8() { cvs: vector<Cv> = [Cv { w: 0, data: [1, 2] }, Cv { w: 0, data: [3, 4] }]; println("c8 {h8(cvs)}"); }
+// c9 — the ROOT reassigned after the binding: the compiler COPIES `d` out of `cv` first (its
+// advice says so), so `d` holds [1, 2] and reads 1; the reassignment is a store write the
+// gate sees either way.
+fn h9() -> integer { cv = Cv { w: 1, data: [1, 2] }; d = &cv.data; cv = Cv { w: 2, data: [7, 8, 9] }; (d[0] ?? -1) + len(cv.data) }
+fn c9() { println("c9 {h9()}"); }
+// c10 — two views of SIBLING fields: two headers, kept apart.
+fn h10(p: P2) -> integer { a = &p.xs; b = &p.ys; (a[1] ?? 0) * 10 + (b[0] ?? 0) }
+fn c10() { p = P2 { xs: [1, 2], ys: [3, 4] }; println("c10 {h10(p)}"); }
+// c11 — a view of a NESTED path.
+fn h11(h: H) -> integer { d = &h.sub.xs; (d[2] ?? 0) + len(d) }
+fn c11() { h = H { sub: Sub2 { xs: [5, 6, 7] } }; println("c11 {h11(h)}"); }
+// c12 — only the LENGTH is read through the view: no element access, so no header.
+fn h12(cv: Cv) -> integer { d = &cv.data; len(d) * 2 }
+fn c12() { cv = Cv { w: 0, data: [1, 2, 3] }; println("c12 {h12(cv)}"); }
+// c13 — the view read inside a nested block of the remainder, twice.
+fn h13(cv: Cv) -> integer { d = &cv.data; s = 0; for i in 0..3 { if i < len(d) { s += (d[i] ?? 0) * (d[0] ?? 0); } } s }
+fn c13() { cv = Cv { w: 0, data: [2, 3, 4] }; println("c13 {h13(cv)}"); }
+// c14 — the binding is the last statement: nothing to serve.
+fn last(cv: Cv) -> integer { n = len(cv.data); d = &cv.data; n }
+fn c14() { cv = Cv { w: 0, data: [1] }; println("c14 {last(cv)}"); }
+// c15 — a view of a KEYED collection: no element address, so nothing to serve.
+struct Rec { nr: integer }
+struct K { m: index<Rec[nr]> }
+fn h15(k: K) -> text { d = &k.m; o = ""; for r in d { o += "{r.nr}"; } o + " {len(d)}" }
+fn c15() { k = K { m: [Rec { nr: 3 }, Rec { nr: 1 }, Rec { nr: 2 }] }; println("c15 {h15(k)}"); }
+// c16 — a FLOAT vector view with an in-place element write: the fused write applies.
+struct F { fs: vector<float> }
+fn h16(f: F) -> integer { d = &f.fs; if 1 < len(d) { d[1] = (d[1] ?? 0.0) * 4.0; } ((d[1] ?? 0.0) as integer) * 10 + ((d[2] ?? 0.0) as integer) }
+fn c16() { f = F { fs: [1.5, 2.5, 3.5] }; r = h16(f); println("c16 {r / 10} {r % 10}"); }
+// c17 — a view of a vector of VECTORS: the outer header serves the element address; the
+// inner read is an expression the fusion leaves alone.
+struct NV { rows: vector<vector<integer>> }
+fn h17(n: NV) -> integer { d = &n.rows; s = 0; for i in 0..len(d) { s += len(d[i] ?? []) + (d[i][0] ?? 0); } s }
+fn c17() { n = NV { rows: [[1, 2], [3, 4, 5]] }; println("c17 {h17(n)}"); }
+
+// c18 — a growth that RELOCATES the record between the binding and an in-range read: the
+// gate declines (a growing write), so the read follows the moved vector.  This is the cell a
+// wrong gate answers WRONG on plain native (a stale header names the old record), where c3
+// and c6 only trip the verifier — their reads fall off the stale header's range and go to
+// the runtime, and `len(d)` is a stdlib call the header never serves.
+fn h18(cv: Cv) -> integer { d = &cv.data; for i in 0..100 { d += [i]; } (d[0] ?? -1) + (d[99] ?? -1) + len(d) }
+fn c18() { cv = Cv { w: 0, data: [7] }; println("c18 {h18(cv)}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); }

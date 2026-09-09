@@ -42,6 +42,11 @@
 //   answers a garbage number there that varies run to run (8858, 9303) on `--interpret` and `0`
 //   on `--native`, where this file asserts 16.  e3 answers the empty text on the same build and
 //   e4 the same garbage; they are behind e1 in the same run.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 // e1 — one dense implementation, one on a nullable receiver.
 enum Shape { Circle { r: integer }, Square { s: integer } }

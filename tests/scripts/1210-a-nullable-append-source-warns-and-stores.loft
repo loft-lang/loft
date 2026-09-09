@@ -57,6 +57,8 @@
 // not in the schema's debug spelling.  `name` and `source_name` are one body carrying a flag
 // through its own recursion, so a wrapper cannot re-spell the payload it wraps.
 // @EXPECT_WARNING: a nullable `vector<E1210>?` is stored into the appended value of the non-null type `hash<E1210[k]>`
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
 
 struct E1210 { k: integer, nm: text }
 struct D1210 { c: vector<integer> }

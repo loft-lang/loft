@@ -1,0 +1,7 @@
+struct C { a: integer }
+fn probe() -> fn() -> integer {
+  out = fn() -> integer { 0 };
+  for i in 0..1 { s: C = C { a: 5 + i }; out = fn() -> integer { s.a }; }
+  out
+}
+fn main() { r = probe(); println("{r()}"); }

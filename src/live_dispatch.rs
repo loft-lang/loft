@@ -910,7 +910,7 @@ pub fn n_live_flip(_cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
 /// Interp stack native: under the interpreter everything is already
 /// interpreted, so a flip is a no-op `false` — the differential stays clean.
 pub fn n_live_flip_stack(stores: &mut Stores, stack: &mut DbRef) {
-    let _on = *stores.get::<u8>(stack);
+    let _on = stores.get::<u8>(stack);
     let _name = stores.get::<crate::keys::Str>(stack).str().to_owned();
     stores.put(stack, false);
 }
@@ -950,7 +950,7 @@ pub fn n_rebuild_status_stack(stores: &mut Stores, stack: &mut DbRef) {
 /// Destination-passing text return (the `is_text_dest_native` route).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_rebuild_artifact_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = *stores.get::<DbRef>(stack);
+    let dest = stores.get::<DbRef>(stack);
     let v = rebuild_artifact();
     stores
         .store_mut(&dest)

@@ -29,6 +29,13 @@
 //   constructor sites asked what their source is.  The two counts differ because the
 //   native control stops at its first failing cell while the interpreter reports all
 //   six; both are the same six cells.
+//   ⚠ That control is on no public ref, so this receipt records a falsification that
+//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against 0b1c65c31; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   assertions/exit channel carries this one on that backend. The native side was not scored
+//   in that run.
 
 struct K1266 { k: integer, k2: integer, nm: text }
 

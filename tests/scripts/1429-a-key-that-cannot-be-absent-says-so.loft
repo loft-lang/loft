@@ -31,6 +31,11 @@
 //   `spatial` cells report NOTHING and the trie cell reports the coordinates-or-a-number advice
 //   instead; the two type-KIND controls match on both builds, which is what keeps this file
 //   from passing by refusing everything.
+//   HOLDS: on --interpret, assertions, leak, panic, free-refusal are equal on both trees,
+//   measured by `scripts/falsify.sh --bulk` against e9f45817; falsify prints only the
+//   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
+//   exit/expectations channel carries this one on that backend. The native side was not
+//   scored in that run.
 
 struct Tk1429 { k: text?, n: integer }
 struct Sw1429 { w: text?, n: integer }

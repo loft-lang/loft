@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A lambda's RECORD return is a fresh value, even when the value it hands back was reached
+// through a CAPTURE.
+//
+// `calls.md` `(F-Ret)` says the value a function returns is fresh and independent, and a lambda
+// is a function.  It was handing back a view of the enclosing frame's store instead, and one of
+// the four shapes did not compile at all — `fn() -> S { e = q[0]; e }` aborted on the H5 two-pass
+// contract, because the two passes classified different candidates and each grew a buffer
+// attribute of its own.
+//
+// `(L-CapHeap)` is NOT what licensed the view: it shares the store in the direction the closure
+// READS — *a mutation-through the source after capture is visible inside the closure* — and says
+// nothing about what the closure returns.  Checked before the cure, because a rule that already
+// answered would have made the cure a deviation instead of a fix.
+//
+// **It takes a PAIR, and the callee half alone is a leak.**  The callee materialises the capture
+// view before it escapes, so what comes back is a copy.  Nothing then owned that copy: the
+// caller's source-free gate declined on `callref_captures`, which asks *does this closure hold a
+// store* — the right question while the return WAS the capture, and the wrong one once it is a
+// copy.  70000 calls exhausted the store table on
+// `1248-a-capture-that-cannot-be-borrowed-from-does-not-decline-the-lift`.  The gate now asks
+// `capture_can_be_returned` instead: whether the callee's return summary still names `__closure`.
+//
+// **Two spellings, because the two PASSES represent a capture differently.**  On pass 1 it is a
+// NAME (`captured_names`, empty again by pass 2); by pass 2 it is a read out of the closure
+// RECORD, so the fact has moved into a dep naming `__closure`.  A matcher keyed on either alone
+// fires on one pass and not the other — which turned `e = q; e` from a wrong answer into a second
+// H5 abort.
+//
+// ⚠ **And `OpGetDbRef` names two notions.**  It is the closure read AND the auto-Reference
+// POINTER FIELD read (`h.link`), so a tail test keyed on the op alone materialised an absent
+// pointer field and stopped it answering null, on both backends
+// (`1374-an-absent-pointer-leaves-its-slot-as-nullref`).  The BASE has to be the closure record.
+//
+// ⚠ **The COLLECTION former was recorded OPEN here and is now CLOSED (loft#1489)** — the two
+// cells below assert `1` where they froze `2`, which is what freezing the wrong answer is for.
+// The destination the analysis said was missing was never the blocker: `e = q` is a `(B-Copy)`
+// bind that had been lowered as an ALIAS, so the tail had nothing of its own to hand back, and
+// `fn() -> vector<S> { q }` needed the capture leg `classify_reference_delivery` has carried
+// since this issue.
+//
+// @falsified-at: 9b1768acf — interpret exit 101 -> 0, interpret panicked -> clean, native exit
+//   101 -> 0, native panicked -> clean.  The channel that moves is the PANIC one and not the
+//   assertion count, which is the first cell doing its job: on that build `e = q[0]; e` aborted
+//   both backends with the H5 contract before any assertion ran, so `asserts` reads 0 on both
+//   sides.  The other two record cells read 8 where they now read 7, measured one file at a time
+//   against the same build, because this file cannot reach them there.
+//   CHANNEL: panic — and the exit code with it; NOT the assertion count, which reads 0 on both
+//   sides because the abort precedes every assert.
+//   WITNESS: the H5 two-pass contract abort on `e = q[0]; e`, and 8 where 7 is right in the two
+//   record cells that can be reached one file at a time.
+//   HOLDS: leak, free-refusal and expectations are equal on both trees, and `falsify` requires
+//   HERE to be clean, so each is clean on both.  The three cells that do not abort hand out a
+//   live alias, which leaks nothing — a run scored on leaks would learn nothing here.
+
+struct S1485 { a: integer }
+
+fn main() {
+  // --- the cells: a RECORD reached through a capture ---
+
+  // The filed ICE: a local bound from an ELEMENT of a captured vector.
+  q1: vector<S1485> = [S1485 { a: 7 }];
+  g1 = fn() -> S1485 { e = q1[0]; e };
+  g1().a = 99;
+  assert(g1().a == 7, "capture element bind: the capture keeps 7, got {g1().a}");
+  assert(q1[0].a == 7, "capture element bind: the frame's own vector keeps 7, got {q1[0].a}");
+
+  // The WHOLE capture handed straight back — no binding and no projection, so on pass 1 it
+  // publishes no dep and only the tail names the capture.
+  q2: S1485 = S1485 { a: 7 };
+  g2 = fn() -> S1485 { q2 };
+  g2().a = 99;
+  assert(g2().a == 7, "whole capture: the capture keeps 7, got {g2().a}");
+  assert(q2.a == 7, "whole capture: the frame's own record keeps 7, got {q2.a}");
+
+  // The whole capture through a local.  On pass 1 this binding has NO deps at all, which is why
+  // the pass-1 spelling reads the body rather than a dep list.
+  q3: S1485 = S1485 { a: 7 };
+  g3 = fn() -> S1485 { e = q3; e };
+  g3().a = 99;
+  assert(g3().a == 7, "whole capture bind: the capture keeps 7, got {g3().a}");
+  assert(q3.a == 7, "whole capture bind: the frame's own record keeps 7, got {q3.a}");
+
+  // Called repeatedly: the callee's copy has to be owned by somebody, which is the half the
+  // value channel cannot see.  `LOFT_STRICT_STORES` scores it.
+  i = 0;
+  while i < 30 {
+    assert(g1().a == 7, "loop {i}: the element capture stays 7");
+    assert(g3().a == 7, "loop {i}: the bound capture stays 7");
+    i = i + 1;
+  }
+
+  // --- the controls ---
+
+  // A projection tail was already fresh — `return_projects_into_local` materialises it, because
+  // its base is not an argument.  It is the delivery the three cells above now take.
+  q4: vector<S1485> = [S1485 { a: 7 }];
+  g4 = fn() -> S1485 { q4[0] };
+  g4().a = 99;
+  assert(g4().a == 7, "control projection tail: got {g4().a}");
+
+  // A PARAMETER, fresh for a reason a capture cannot borrow — the return can NAME it, so the
+  // caller copies (loft#1482).
+  q5: vector<S1485> = [S1485 { a: 7 }];
+  g5 = fn(p: vector<S1485>) -> S1485 { e = p[0]; e };
+  g5(q5).a = 99;
+  assert(g5(q5).a == 7, "control parameter: got {g5(q5).a}");
+
+  // A lambda that MINTS from a capture borrows nothing, and its capture must survive being read.
+  //
+  // ⚠ This control also carries loft#1488, which the same fix closed.  Several lambdas of
+  // DIFFERENT shapes in one program leaked one record on `--native` alone — not a count (six
+  // identical lambdas were clean), not any pair, and every cell clean on its own; the filed
+  // repro was four shapes together, exactly the four this file now holds.  The mint control was
+  // left OUT of the first draft of this guard because of that leak, so its presence here is what
+  // says the leak is gone: put it back and the file leaks again the day it returns.
+  q6: S1485 = S1485 { a: 7 };
+  g6 = fn() -> S1485 { S1485 { a: q6.a } };
+  g6().a = 99;
+  assert(g6().a == 7, "control mint: got {g6().a}");
+  assert(q6.a == 7, "control mint: the capture is untouched, got {q6.a}");
+
+  // --- the COLLECTION former, closed by loft#1489 ---
+  // Neither spelling aliases any more, so appending to one call's result leaves the frame's own
+  // vector at the length it had.  These two cells asserted `2` while the issue was open.
+  q7: vector<S1485> = [S1485 { a: 7 }];
+  g7 = fn() -> vector<S1485> { e = q7; e };
+  r7 = g7();
+  r7 += [S1485 { a: 1 }];
+  assert(len(g7()) == 1, "a captured vector through a local: got {len(g7())}");
+
+  q8: vector<S1485> = [S1485 { a: 7 }];
+  g8 = fn() -> vector<S1485> { q8 };
+  r8 = g8();
+  r8 += [S1485 { a: 1 }];
+  assert(len(g8()) == 1, "a captured vector handed straight back: got {len(g8())}");
+
+  // The parameter twin of those two: the control that says the former is not the problem.
+  q9: vector<S1485> = [S1485 { a: 7 }];
+  g9 = fn(p: vector<S1485>) -> vector<S1485> { e = p; e };
+  r9 = g9(q9);
+  r9 += [S1485 { a: 1 }];
+  assert(len(g9(q9)) == 1, "control vector parameter: the argument keeps 1, got {len(g9(q9))}");
+
+  // Printed WITH the calls in it, which is the other half of loft#1488's shape: an interpolated
+  // lambda call at the end is two more calls, and the first draft of this file had to leave them
+  // out too.
+  println("1485 OK capture={g1().a} whole={g2().a}");
+}
