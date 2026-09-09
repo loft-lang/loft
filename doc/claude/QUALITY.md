@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 434 | 410 | **24** |
+| 435 | 411 | **24** |
 
 
 
@@ -2616,6 +2616,13 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 (*"Tuple types require at least 2 elements"*), and `&fn() -> integer?` binds the `?` to the
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
+
+**2026-09-09, loft#1484's leaf test: the unspan row `434 · 410 · 24` → `435 · 411 · 24`, and
+the Optional row does not move.**  A net +1 — `every_return_leaf_views_var` arrived and
+`every_return_leaf_is_var` was DELETED rather than left beside it, which is the whole shape of
+that fix: the leaf question has one home, and the widened test peels like the one it replaces.
+The Optional column is untouched because nothing in it discriminates on a `Type` variant; the
+new walker asks the RULES (`(B-View)` / `(B-Copy)`) about a `Value`, not a former about a type.
 
 **2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
 and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`
