@@ -679,9 +679,14 @@ on the totals:
 
 **65 % are publicly recoverable and 35 % are not**, and the two halves want different answers.
 For the 235 the receipt is fine *provided the reader fetches PR refs*, which nobody does by
-default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'` — so a fallback fetch before
-`falsify.sh` gives up on an unknown ref is a small mitigation covering two thirds of the
-problem.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
+default — `git fetch origin 'refs/pull/*/head:refs/pull/*/head'`.  **`falsify.sh` now does that
+itself**: on the first control it cannot resolve it fetches that namespace once and retries, so
+two thirds of the corpus resolves without the reader knowing any of this.  A control recovered
+that way SAYS so, because a receipt that lives only under `refs/pull/*` is one GitHub policy
+away from unreadable, and a silent success would hide exactly the guards worth re-pointing.  The
+bulk sweep reports such a control as `no-such-ref` rather than folding it into `no-worktree` —
+"the receipt names a build nobody has" and "the build is here but unusable" want different
+repairs.  It is not durability: `refs/pull/*` is GitHub's convention, not git's.  The remaining
 124 are recoverable by nobody, and they are the population a self-contained form would have to
 serve.
 

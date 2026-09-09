@@ -64,8 +64,62 @@ fi
 
 ROOT=$(git rev-parse --show-toplevel)
 CACHE="${LOFT_FALSIFY_CACHE:-${TMPDIR:-/tmp}/loft-falsify}"
+
+# Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
+# already hold it.
+#
+# A control names the build a guard was written to catch, which is a commit on the branch that
+# fixed it — and a squash-merge keeps none of those: the PR lands as ONE commit, so `main` never
+# held the original and no branch points at it afterwards.  The object is usually still on the
+# remote under the PR's own head, a namespace `git clone` and `git fetch` both skip by default,
+# so the ref is missing HERE rather than missing everywhere.  Fetch that namespace once, on the
+# first miss only, and retry.
+#
+# ⚠ This RECOVERS a control; it does not make one durable.  `refs/pull/*` is a GitHub
+# convention with no retention contract, so a mirror, a host migration or a policy change drops
+# every control that depends on it — and the receipts it cannot reach are already unreachable
+# for everyone, not just here.  Measured 2026-09-09 across the 359 guards on `main` that carry a
+# control sha: 11 resolve from `main`, 25 from another branch, 199 ONLY from a PR ref, and 124
+# from no public ref at all.  So this answers about two thirds of the corpus and cannot answer
+# the rest; a receipt whose control no longer exists needs a different FORM rather than a better
+# lookup — TESTING.md § What a falsification receipt is worth.
+#
+# Resolvability is also a property of the CHECKOUT, not of the guard: two clones disagree about
+# whether the same receipt is checkable, because each keeps whichever loose objects its own gc
+# spared.  Nothing in the file says which side you are on, which is why a miss here reports the
+# ref rather than failing silently.
+PR_REFS_FETCHED=0
+RESOLVED_SHA=""
+# The answer comes back in RESOLVED_SHA rather than on stdout so that the once-only fetch latch
+# actually latches.  Read through `sha=$(resolve_control …)` the whole function runs in a
+# SUBSHELL, where `PR_REFS_FETCHED=1` dies with it — every unresolvable control in a bulk sweep
+# then re-fetches the entire PR namespace, once per ref, and the latch reads as working because
+# a single call cannot show it failing.
+resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is unreachable
+  local ref="$1"
+  # `git rev-parse --verify --quiet` is the form that stays SILENT on a miss.  Plain
+  # `git rev-parse "$ref^{commit}"` exits non-zero but still ECHOES its own argument, so a
+  # caller testing the output for emptiness reads a missing object as a resolved one.
+  if RESOLVED_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}"); then return 0; fi
+  if [ "$PR_REFS_FETCHED" -eq 0 ]; then
+    PR_REFS_FETCHED=1
+    echo "control $ref is not in this clone — fetching refs/pull/*/head …" >&2
+    git fetch origin 'refs/pull/*/head:refs/pull/*/head' --quiet >/dev/null 2>&1 </dev/null || true
+  fi
+  RESOLVED_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}") || { RESOLVED_SHA=""; return 1; }
+  echo "control $ref recovered from a PR ref — it is on no branch, so this receipt depends on" >&2
+  echo "  GitHub retaining refs/pull/*; it is not durable.  TESTING.md § falsification receipt." >&2
+  return 0
+}
 if [ -z "$BULK" ]; then
-  SHA=$(git rev-parse --short "$REF") || { echo "unknown ref: $REF" >&2; exit 2; }
+  resolve_control "$REF" || {
+    echo "unknown ref: $REF" >&2
+    echo "  The control is on no branch of this remote and under no refs/pull/*/head, so NO" >&2
+    echo "  clone can build it — this receipt records a falsification nobody can re-run." >&2
+    echo "  Re-falsify the guard against a control that still exists, or record the" >&2
+    echo "  reintroducing patch instead of a ref: TESTING.md § falsification receipt." >&2
+    exit 2; }
+  SHA=$(git rev-parse --short "$RESOLVED_SHA")
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
 fi
 
@@ -217,9 +271,16 @@ if [ -n "$BULK" ]; then
   # sweep stopped silently after 51 of 186 refs, in order, with an exit status of 0.
   while read -r ref <&3; do
     [ -n "$ref" ] || continue
+    # A control the clone cannot resolve is reported APART from a worktree that would not
+    # create.  "The receipt names a build nobody has" and "the build is here but unusable" call
+    # for different repairs — re-falsify against a live control versus fix the tree — and one
+    # status for both hid the first behind the second.
+    resolve_control "$ref" || {
+      awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-such-ref\t\n", $1, r}' "$BULK"; continue; }
+    rsha="$RESOLVED_SHA"
     wt="$CACHE/wt-$ref"
     if [ ! -d "$wt" ]; then
-      git worktree add --detach "$wt" "$ref" >/dev/null 2>&1 </dev/null || {
+      git worktree add --detach "$wt" "$rsha" >/dev/null 2>&1 </dev/null || {
         awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-worktree\t\n", $1, r}' "$BULK"; continue; }
     fi
     if ! ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); then
