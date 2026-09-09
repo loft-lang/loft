@@ -7,11 +7,27 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Steps 0–3 are DONE and `??` now reaches the narrow widths** — `x = (x + 10) ?? 255` into a
-`u8` answers `255` on both backends, where it was refused before. Steps 3–7 open. Shipped along the way:
-loft#1305 and loft#1306. The measurement record that redirected this plan three times is in
+**CLOSED — every step is done.** Both halves of the ask ship: `??` chooses the value
+(`x = (x + 10) ?? 255` into a `u8` answers `255`, where it was refused before) and `!` sees
+the failure (`x += 10; if !x { … }` answers true exactly when the store did not fit, on
+both backends and at every place a narrow store takes). Shipped along the way: loft#1305,
+loft#1306, and the `redundant-null-negation` hole below.
+
+The measurement record that redirected this plan four times is in
 [MEASUREMENTS.md](MEASUREMENTS.md); the arc-B design detail is in
-[ARC-B-DESIGN.md](ARC-B-DESIGN.md).
+[ARC-B-DESIGN.md](ARC-B-DESIGN.md). The rule is `@FR-E-Uncomp-Seen`
+([formal/operational.md](../../formal/operational.md) § Observability); the mechanism's one
+home is [`src/parser/fit.rs`](../../../../src/parser/fit.rs).
+
+⚠ **This plan's own closing measurement said arc B was ergonomics on a working capability,
+and that reading was half right.** `fit = (x + 10) as u8?; x = fit ?? 0; if !fit` does work,
+and the fused form removes one temp from it — ergonomics. What that reading missed is that
+**the temp it removes is the one an author gets wrong**: bound as `u8?` (the obvious
+spelling, and the one the plan itself hand-wrote and called proven) it reports `255` as a
+failure, because a `u8?` gives its top code up to hold null. The mechanism that ships binds
+a full-width `integer?`, so the trap is not reachable from the surface at all. That is a
+correctness argument, not an ergonomic one, and it was found by running the hand-written
+target shape at the edge nobody had tried.
 
 Tracker: [@PLN152](https://github.com/loft-lang/plans/issues/152).
 
@@ -68,8 +84,9 @@ That is the whole defect.
 ## What has to change, and what must not
 
 **Change:** those five types gain somewhere for a failure to live, so `??` and `!` have
-something to act on. That is the selective boolean — introduced only for a variable whose
-status the program actually observes, never for arithmetic at large.
+something to act on — an ordinary `integer?` local minted only where an author wrote the
+test, never for arithmetic at large. (This began as a "selective boolean"; what it became
+is a temp, which is smaller and needs no representation change at all.)
 
 **Must not change:**
 
@@ -154,11 +171,11 @@ The rule decides a question this plan had left open, and it decides it against o
 sketches that motivated the plan:
 
 ```loft
-x = (x + 10) ?? 255;                  // ✅ the bit rides the expression, `??` consumes it
-if !(x + 10) { … }                    // ✅ `!` reads the bit of the expression beside it
+x = (x + 10) ?? 255;                  // ✅ the guard goes inside the discharge (step 2)
+if !(x + 10) { … }                    // ❌ retired — a free expression cannot fail (step 4)
 
 f.i += 100;                           // ✅ ADJACENT FORM — the `if` directly follows,
-if !f.i { … }                         //    so the bit lives in a temp across the pair
+if !f.i { … }                         //    so the status lives in a temp across the pair
 
 f.i += 100;                           // ❌ a statement intervenes: nothing carries the
 log("…");  if !f.i { … }              //    status that far without storing it
@@ -190,23 +207,45 @@ warning[redundant-null-negation]: '!' on a 'not null' integer(0, 255) is always 
 So the design's job is to make that warning **stop firing in the fused position and keep
 firing everywhere else**. Then moving a line restores it, and an author who writes the check
 too far from the assignment is told that it is always false rather than left believing it
-works. The guard rail exists; it needs teaching, not building — and it gives S3 an exact
-gate rather than a judgement call.
+works.
 
-## Mechanism
+⚠ **The guard rail was measured on ONE spelling and did not exist on the other two.** The
+warning above was read off `if !f.i`, a struct FIELD. Its predicate was `IntegerSpec::not_null`
+— a flag only a field DECLARATION sets — so `if !a` over a `u8` LOCAL and `if !v[0]` over a
+`vector<u8>`, the identical type and equally always false, said nothing at all. Two thirds of
+the rail this design leans on had to be BUILT, not taught (step 5a), and the fused form
+needed no teaching in the end: its operand is a real `integer?`, which the existing check
+already stays quiet on.
 
-A fit-failing operation evaluates to its value **and** a validity bit, for the five widths
-that cannot represent their own failure. The bit is available only to a validator in the same
-expression:
+## Mechanism — as shipped
 
-- **`??`** consumes it — the author's fallback replaces the type's default, routed into
-  `OpRangeDefault`'s `dflt`, which is already the fallback slot (Phase E).
-- **`!`** reads it — *did this fail to produce a value?* — either of the expression it is
-  applied to, or of the assignment in the immediately preceding statement when it names that
-  same place.
+No bit, in the end. A store into a narrow slot already lowers to
+`OpRangeDefault(value, lo, hi, dflt)` on both backends; where an `if !place` stands as the
+very next statement, the parser splits that one node in two:
 
-Where neither appears, the bit is never produced and emission is byte-identical: that is the
-opt-in claim, and it is checkable with an `introspect` diff rather than argued.
+```
+place op= expr;          __fit_N: integer? = <expr, checked against the slot's range>;
+if !place { … }     ⟹    place = OpRangeDefault(__fit_N, lo, hi, dflt);
+                         if !__fit_N { … }
+```
+
+`OpRangeDefault` answers `dflt` for the null the checked cast produces, and passes an
+in-range value straight through — so the stored value is what it was, by construction and
+not by a matching pair of behaviours. `??` reaches the same slot through `dflt`, which was
+Phase E's work.
+
+- **`??`** chooses the value — `range_guard_inside_discharge` (step 2).
+- **`!`** sees the failure — `src/parser/fit.rs` (step 5), for the `if` that is the next
+  statement.
+
+Where neither appears, nothing is produced and emission is byte-identical. Measured, not
+argued: `scripts/introspect_diff.sh` over the whole corpus reads **DIFFERENT 2 of 1437**,
+and both are this plan's own guard files.
+
+The one thing that is NOT free-standing is the temp's type. It is a full-width `integer?`,
+never `Optional(τ)` for the narrow τ — a `u8?` sacrifices its top code to hold null
+(`@FR-N-Reserve`), so a `u8?` temp turns the perfectly good answer `255` into a reported
+failure. That is the trap the plan's own hand-written target shape fell into.
 
 Ordinary arithmetic is untouched. `integer`, `float` and `single` keep a sentinel, so their
 failure is already a value and they never produce a bit — which is what bounds the cost, and
@@ -246,14 +285,15 @@ claim has the same shape of check, an `introspect` diff over a corpus that write
 | **2** | `??` reaches a non-null narrow — guard INSIDE the discharge, sentinel as its default | `tests/scripts/152-a-coalesce-chooses-the-fallback-for-a-narrow-slot.loft`, falsified at `4f229521` (the shape was refused before, so the guard cannot compile on the control) — both backends; the three probe channels unchanged. | **Done** |
 | **3** | `??` at the remaining positions: field, element, argument, return, struct literal | `tests/scripts/152-the-fallback-reaches-every-position-a-narrow-store-takes.loft`, falsified at `4f229521`, both backends. **Came free with step 2** — wiring both seams covered all five; each cell uses a distinct fallback so none can pass on a neighbour's answer. | **Done** |
 | **4** | ~~`!` in-expression~~ | **RETIRED — not implementable.** `x + 10` widens to `integer` and `260` is a good one, so a free expression has no narrow type, no range, and no failure to read. The failure is a property of a STORE ([MEASUREMENTS.md](MEASUREMENTS.md)). Folded into step 5. | **Retired** |
-| **5** | **`!` in the adjacent form**: `f.i += 100;` then `if !f.i { … }` — now the ONLY spelling in which the question can be asked, since the assignment is what supplies the target | The lint is silent when fused and **fires one statement later**; `probes/diag` already scores that channel. Red if fusion reaches across an intervening statement, or misses an adjacent one. | Open |
-| **6** | **Cost where the bit is live** (a bound, not a gate — § Why this is worth doing). | A narrow-width benchmark, which `bench/` does not contain and this step writes. Records a number; does not block. | Open |
-| **7** | **Docs and diagnostics agree with what shipped** — the narrowing error already advertises `?? d`. | The advertised cure works when followed. Red if the message still prescribes something that does not work in the position it is offered. | Open |
+| **5** | **`!` in the adjacent form**: `f.i += 100;` then `if !f.i { … }` — the ONLY spelling in which the question can be asked, since the assignment is what supplies the target | `tests/scripts/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft`, falsified at `e6922e9fa`, both backends: five widths + `limit(…)`, four places, the fits/overflow/underflow/sentinel fault shapes, and the three types that carry their own failure as controls. The lint is silent when fused and fires one statement later, pinned in `152-the-fallback-and-failure-spellings-that-already-work.loft`. Opt-in proved by `introspect_diff.sh`: **DIFFERENT 2 of 1437**, both of them these two files. | **Done** |
+| **5a** | **The lint had holes, and it is step 5's whole safety** — `redundant-null-negation` asked `spec.not_null`, which only a FIELD declaration sets, so `if !a` on a `u8` local and `if !v[0]` on a `vector<u8>` were always-false code with nothing said about them. | `IntegerSpec::non_null_reads_null` is the one home for *"can this read back null?"*; the corpus scan finds exactly one site that draws the widened warning, and it is the deliberate one. | **Done** |
+| **6** | **Cost where the mechanism is live** (a bound, not a gate — § Why this is worth doing). | `probes/step6-cost/` — three arms, one binary, interleaved: a `u8` loop with no test, the same loop with the test, and an `integer` control that must not move. Numbers in [MEASUREMENTS.md](MEASUREMENTS.md). | **Done** |
+| **7** | **Docs and diagnostics agree with what shipped** — the narrowing error already advertises `?? d`. | `tests/scripts/152-the-narrowing-message-names-cures-that-work.loft` (shipped as CONTROL.md's N1/N2), and LOFT.md § narrow widths now documents the adjacent test beside the `??` it pairs with. | **Done** |
 
-## Step 5's target shape — proven, so the peephole is translation not invention
+## Step 5's target shape — and the cell that was missing from it
 
 The loft-codegen gate is *do not edit the compiler until you can point at the working form*.
-Here it is, hand-written and running today ([`probes/step5-target-shape.loft`](probes/step5-target-shape.loft)):
+The form written here before any code ([`probes/step5-target-shape.loft`](probes/step5-target-shape.loft)):
 
 ```loft
 fit = (f.i + 100) as u8?;   // null when it does not fit — the CHECKED cast already does this
@@ -261,26 +301,71 @@ f.i = fit ?? 0;             // the slot still takes the type's default, exactly 
 if !fit { … }               // and `!` reads the failure
 ```
 
-`f.i = 200` plus 100 does not fit, so `fit` is null, `!fit` is true, and `f.i` is `0` — the
-same value the slot takes today. `g.i = 100` plus 100 fits, so the control branch runs and
-`g.i` is `200`.
-
-**Every construct in it already exists.** `as τ?` is the checked cast, `??` the discharge, `!`
-the presence test. No new op, no new runtime, nothing stored — `fit` is an ordinary
-`integer?` temp, which is the plan's constraint satisfied by construction.
-
-So step 5 is a mechanical rewrite of an adjacent pair:
+It runs, on both backends, and it was proven on two cells: `f.i = 200` plus 100 (does not
+fit → `fit` null, `f.i` 0) and `g.i = 100` plus 100 (fits → 200). **It is wrong on a third,
+and the third is an ordinary value.**
 
 ```
-place op= expr;            __fit_N = (place op expr) as <narrow>?;
-if !place { … }      ⟹     place    = __fit_N ?? <type default>;
+start  fused  today  failed
+  250    255    255   false      ← what it must answer
+  250      0    255   TRUE       ← what the hand-written shape answered
+```
+
+`fit` is inferred, so it takes the checked cast's own type `u8?`, and a `u8?` gives its TOP
+code up to hold null (`@FR-N-Reserve`) — so `255`, a perfectly good `u8`, does not fit the
+temp and comes back as a reported failure with the slot set to `0`. Two cells agreed with
+today's answer and the third silently did not.
+
+The fix is one word: the temp is a full-width `integer?`. Declared as `fit: integer? = (f.i
++ 100) as u8?` the same source shape answers correctly at every value from 0 to 255. What
+ships builds the temp directly, so the surface cannot express the wrong version.
+
+**The lesson is the plan's own method rule, applied to its own artefact.** The probe varied
+one axis (does it fit) with two values and hand-checked both; the value that breaks it is
+the BOUNDARY of the range, which `scripts/matrix_axes.py` names as an axis and which the
+two chosen cells straddle without touching. A shape called *proven* was proven on the cells
+someone chose.
+
+So step 5 is a rewrite of an adjacent pair, at the store's own range guard:
+
+```
+place op= expr;            __fit_N: integer? = <expr, checked against the slot's range>;
+if !place { … }      ⟹     place = OpRangeDefault(__fit_N, lo, hi, dflt);
                            if !__fit_N { … }
 ```
 
-What remains genuinely open in it: where the peephole runs (a post-pass over the completed
-statement list is cleanest — the list is built in `parse_block_inner` with `Value::Line`
-markers interleaved, which the pair-matching must skip), minting `__fit_N` safely on both
-passes, and teaching `redundant-null-negation` to go silent for the fused `!` only.
+What was genuinely open in it, and how each closed:
+
+- **where the peephole runs** — in `parse_block_inner`'s own loop, which is the only place
+  that knows what the PREVIOUS statement of THIS block was. A candidate is offered at the
+  compound-assignment seam (the one seam a local, a field and an element all pass through
+  with the target still a readable place), armed for the next statement only if it opens
+  with `if`, and consumed by the `!`. Nothing is looked ahead: the lexer is never scanned
+  and reverted, which `parse_block_inner`'s own comment records as having mis-positioned
+  250 tests when it was tried for a different question.
+- **minting `__fit_N` safely on both passes** — it is minted on pass 2 only, which is what
+  `dn4_checked_cast` already does through `range_guard_inside_discharge`. There is no
+  pass-1 fact to record, so the hazard the arc-B sketch carried never arises.
+- **teaching `redundant-null-negation` to go silent for the fused `!`** — it needed no
+  teaching. The fused operand IS an `integer?`, so the existing check sees a nullable
+  operand and says nothing. What it DID need was the opposite fix: it was silent on two of
+  the three spellings it should always have reported (step 5a).
+
+## What the fused form does not reach, and why each is right
+
+Measured rather than assumed ([`probes/`](probes/), and the matrix in
+[MEASUREMENTS.md](MEASUREMENTS.md)). None of these is silent: every one of them still draws
+`redundant-null-negation` where the `!` is always false, which is the point.
+
+| shape | fused? | why |
+|---|---|---|
+| a statement between the store and the `if` | no | past the next statement only the PLACE could carry the status, and the place is storage |
+| `!place` in the `if`'s BODY, or in a `while` | no | the body is past the pair; a `while` would spin on a status that cannot change |
+| `!place` in an `else if` arm | no | it is not the condition of the statement's own `if` |
+| a place whose read contains a CALL — `w[bump()]` | no | the fused form DROPS the second read, so a read that can do more than fetch must not match |
+| a keyed element — `ks[1].v` | no | the read is already nullable (the key may be absent), so `!` has a meaning there and keeps it |
+| `place = (place + 10) ?? d` then `if !place` | no | the author already chose the value; arc A owns that store |
+| `i32`, `integer`, `u8?` | no | they keep a code for their own failure, and `!` reads it anywhere |
 
 ## Ordering, and why each boundary is where it is
 
@@ -298,21 +383,24 @@ passes, and teaching `redundant-null-negation` to go silent for the fused `!` on
    count; detect-only cannot supply a value inline. Either alone leaves the case
    half-handleable, which is the state being complained about.
 
-## Open questions
+## Open questions — all closed
 
-1. **Constant or expression fallback?** `dflt` is `const integer` today, so a constant is
-   nearly free and an expression needs evaluating at the collapse.
-2. **`u32`** — its spare code exists but sits at the top where no non-null read tests for it.
-   Phase B measured it defaulting with the four; confirm it is not a third case.
-3. **Does `!` on an expression conflict with its existing meaning?** `!` tests presence today,
-   and on a non-null narrow expression it is currently always false — `redundant-null-negation`
-   says so and would have to learn this case. Check that the lint and the new reading agree
-   rather than one silently outranking the other.
-4. **Double evaluation.** `if !(x + 10) { … } else { x = (x + 10) ?? 0; }` writes the
-   expression twice, which C92 made *"evaluate the place exactly once"* for compound
-   assignment precisely because double evaluation is a silent-wrong when the expression has
-   effects. If that shape is the one authors will write, it wants a form that does not repeat
-   the expression — which is a surface question for S2/S3, not an implementation detail.
+1. **Constant or expression fallback?** Moot. `dflt` is still `const integer` and still
+   compiler-chosen for the `!` half; an author who wants to choose the value writes `??`,
+   which is arc A and shipped in step 2.
+2. **`u32`** — not a third case. Its spare code sits at the TOP, so no non-null read tests
+   for it and an overflow answers `0` like the other four. It fuses with them, and
+   `IntegerSpec::non_null_reads_null` gives that answer in one place rather than four sites
+   agreeing by accident. CONTROL.md's **O2** can be closed against this.
+3. **Does `!` on an expression conflict with its existing meaning?** No, and the two do not
+   need reconciling: in the fused position the operand IS a nullable temp, so `!` keeps its
+   one meaning (*is this null*) and the lint keeps its one rule (*warn when the type has no
+   code for null*). Neither outranks the other because they never disagree.
+4. **Double evaluation.** Does not arise. The rewrite moves the composed expression into the
+   temp and the store then reads the TEMP, so `place op= expr` evaluates `expr` exactly once
+   — C92's rule, preserved by construction rather than by care. The place read is dropped
+   rather than repeated, which is why `same_place` admits only nodes whose read is a fetch:
+   a place whose read could do anything else does not match, and does not fuse.
 
 **Resolved by the expression-local constraint** (recorded so they are not re-opened): whether
 a marked variable's null becomes representable — there are no marked variables; and how far a

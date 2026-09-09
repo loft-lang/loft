@@ -2617,6 +2617,18 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
 
+**2026-09-09, @PLN152 step 5: the unspan row `434 · 410 · 24` → `437 · 413 · 24`.**  Three
+new `Value` discriminators, all in `src/parser/fit.rs`, and all peeling — the OPAQUE column
+does not move, and the Optional row does not move at all (these three ask about `Value`
+variants, not `Type` ones).
+That is not luck: `same_place` and `guard_slot` compare an IR node the parser has just built
+against one it built a statement earlier, and a `Span` sits over exactly the fault-prone
+nodes those two ask about, so a bare match would have failed to recognise the pair on the
+spellings that carry a position and recognised it on the ones that do not — the fused form
+would have worked for a local and silently not for a field.  Written peeling from the first
+line, because `Value::unspan`'s own doc block says so and this table is what makes that
+readable.
+
 **2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
 `tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →
 `445 · 422 · 23` and the Optional row `765 · 420 · 6 · 339` → `766 · 422 · 6 · 338`.**

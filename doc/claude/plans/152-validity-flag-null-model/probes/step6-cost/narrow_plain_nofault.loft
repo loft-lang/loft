@@ -1,0 +1,14 @@
+// CONTROL for the reporting effect: the same loop with a store that ALWAYS fits, so no
+// `RangeDefaulted` raise fires in either arm and the comparison is the added checks alone.
+fn main() {
+  n = 20000000;
+  sink = 0;
+  t0 = ticks();
+  for i in 0..n {
+    acc: u8 = 0;
+    acc += (i & 7) as u8;
+    sink += acc;
+  }
+  ms = (ticks() - t0) / 1000;
+  println("result: {sink}  time: {ms}ms");
+}

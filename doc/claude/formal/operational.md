@@ -155,7 +155,10 @@ range admits it.  What it is never allowed to be is whatever the hardware happen
 in the register: a wrapped or truncated result is in range, type-correct and unrelated to the
 computation, which makes it indistinguishable from an answer.  Null says "this did not
 happen"; the default says "this did not happen and I could not tell you"; a wrapped number
-says nothing at all, and says it convincingly. Comparisons are the first exception to contagion: they let you *test* for null
+says nothing at all, and says it convincingly.  *"I could not tell you"* is the half
+(E-Uncomp-Seen) removes: an author who cares writes `if !place` on the next line and is
+told, while the value the slot holds is untouched — so the default stays the default for
+every program that says nothing. Comparisons are the first exception to contagion: they let you *test* for null
 (`x == null`) and give a **total order** with null sorting first, and this is **uniform across
 scalar types** — `null == null` is always true, never type-dependent. (`float`/`single` null was
 a NaN, so `null == null` used to be false and ordering unordered — deviation D-op-null-1, CLOSED
@@ -294,6 +297,18 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                silent `*Nullable` op and reports NOTHING (the guard owns the null).
                Integer OVERFLOW is silent at every site (the null IS the signal — also
                the rustc-release default); the value is null, never a wrapped wrong answer.
+
+  (E-Uncomp-Seen)  where (E-Uncomp-NN) applies — the target type cannot hold null, so the
+               slot took `default(τ)` and the null IS NOT the signal — the failure is
+               nonetheless OBSERVABLE, by `!place` in the condition of the `if` that is the
+               statement immediately after the store.  It answers true exactly when
+               (E-Uncomp-NN) fired for that store and false otherwise, and it changes
+               NOTHING else: the slot holds the same `default(τ)` it holds with no test
+               written, and the store is then a GUARDED site under (E-Report).
+               One statement further apart the observation is not available, because the
+               only thing that could carry it is the place, and the place is storage —
+               a status bit beside every element would cost the density the narrow widths
+               are declared for.  Absent the test, nothing is produced.
 ```
 
 **In words.** The fault stays a *value*, never a halt (E-Uncomp), but loft is not blind to it:

@@ -335,6 +335,42 @@ impl IntegerSpec {
         self.min < 0 && self.range() < (1_i64 << (8 * i64::from(size)))
     }
 
+    /// Can a value held in a NON-nullable slot of this spec ever read back as null?
+    ///
+    /// `!x` tests whether `x` is the null sentinel, so this is the question
+    /// `redundant-null-negation` asks of its operand: a spec that answers `false` kept no
+    /// code back for a failure, so `!x` on it is always false and a fit-failure leaves
+    /// nothing in the value to see (@PLN152).
+    ///
+    /// Three families, and the split is about which code the type kept back rather than
+    /// about the `?`:
+    ///
+    /// 1. `not_null` says the slot gave the sentinel up to widen its range by one, so
+    ///    there is no code left for null whatever the width — this is how a struct field
+    ///    declared `i: u8` (and one declared `x: integer`) reaches here;
+    /// 2. the plain `integer` and `i32` templates reserve the BOTTOM code
+    ///    (`i64::MIN` / `i32::MIN`), which is exactly what a non-null read reports as
+    ///    null — so `!x` on either is a real test and must not be flagged;
+    /// 3. every remaining spec is a declared range, and
+    ///    [`Self::reserves_sentinel_unconditionally`] is the one home for whether it kept
+    ///    a bottom code: `u8`/`i8`/`u16`/`i16` fill their fixed width, `u32`'s spare code
+    ///    is at the TOP where no non-null read tests for it, and an un-annotated
+    ///    `limit(lo, hi)` takes its own default rather than a sentinel.
+    ///
+    /// The store side of the same fact is `uncomputable_default`'s `dflt`, read through
+    /// `Parser::compound_range`: a target whose `dflt` is `i64::MIN` is one this answers
+    /// `true` for.  Two readers, one fact — kept apart only because one is handed a spec
+    /// and the other a store target.
+    #[must_use]
+    pub fn non_null_reads_null(&self) -> bool {
+        if self.not_null {
+            return false;
+        }
+        self.is_wide_template()
+            || self.is_signed32_template()
+            || self.reserves_sentinel_unconditionally()
+    }
+
     fn reserves_narrow_sentinel(&self, nullable: bool) -> bool {
         if !nullable {
             return false;

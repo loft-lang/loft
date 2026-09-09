@@ -1,0 +1,13 @@
+// A `u8` accumulator loop with no fit test written: the opt-in arm.
+fn main() {
+  n = 20000000;
+  acc: u8 = 0;
+  sink = 0;
+  t0 = ticks();
+  for i in 0..n {
+    acc += (i & 7) as u8;
+    sink += acc;
+  }
+  ms = (ticks() - t0) / 1000;
+  println("result: {sink}  time: {ms}ms");
+}

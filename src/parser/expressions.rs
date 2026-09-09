@@ -7206,17 +7206,25 @@ use a separate collection or add after the loop"
     /// (`is_narrowing_int_store`), and `declared_range`'s own comment records what happens
     /// when a runtime default is added on top of a check that already holds — it handed 24
     /// of the stdlib's own `i8` stores a `-128`.
-    pub(crate) fn guard_compound_range(&mut self, code: &mut Value, target: &Type, nullable: bool) {
-        let Some((lo, hi, dflt)) = Self::compound_range(target, nullable) else {
-            return;
-        };
+    ///
+    /// Answers the range it applied, so a caller that must know whether this store is
+    /// bounded — and whether the bound has a code for its own failure — reads it off the
+    /// one site that decided rather than asking again (@PLN152 step 5). `None` means no
+    /// guard was added: an unbounded target, or a value already carrying one.
+    pub(crate) fn guard_compound_range(
+        &mut self,
+        code: &mut Value,
+        target: &Type,
+        nullable: bool,
+    ) -> Option<(i64, i64, i64)> {
+        let (lo, hi, dflt) = Self::compound_range(target, nullable)?;
         // Two seams can reach one store, so never wrap a guard in a guard: harmless
         // arithmetically (the inner already answers a value in range) but it would judge
         // the same write twice.  Mirrors `guard_declared_range`.
         if let Value::Call(d, _) = code.unspan()
             && self.data.def(*d).name() == "OpRangeDefault"
         {
-            return;
+            return None;
         }
         let guarded = self.cl(
             "OpRangeDefault",
@@ -7228,6 +7236,7 @@ use a separate collection or add after the loop"
             ],
         );
         *code = guarded;
+        Some((lo, hi, dflt))
     }
 
     /// The bounded range a compound assignment's target declares — `None` when it
