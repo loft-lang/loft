@@ -214,6 +214,47 @@ this branch still recorded as "open" was already "closed" there.  Keep `main`'s 
 those.  Keep BOTH sides only for append-only files like `CHANGELOG.md`, where the two sides
 are independent entries rather than two versions of one.
 
+### Joining sibling checkouts — the branch is the unit, not its tip
+
+Three checkouts of this repo work in parallel and continuously cherry-pick from one
+another, so "join `../loft2`, `../loft3` and `origin/<branch>`" is a routine task rather
+than an event.  Four things about it are not obvious, and each was measured on a join.
+
+**Classify every source commit before picking any.**  The ladder is in
+[CLAUDE.md](../../CLAUDE.md) and in the memory note it points at: ancestry is blind after
+the first pick, `patch-id` is blind after the first CONFLICT-RESOLVED pick, subject match
+finds those but cannot tell a rework from what it replaced, and grepping for the change's
+own new names is the only real test.  Run it as a table over the whole source branch —
+the commits you already carry are usually a contiguous PREFIX, which turns three joins
+into three ranges instead of seventy-six decisions.
+
+**A source branch's own REVERT makes a sequence NET-ZERO — skip it whole.**  A branch that
+tried a mechanism, measured a peer's as sufficient and withdrew its own leaves a
+self-cancelling run in its log.  Picking it is worse than wasteful: the revert was written
+against ITS tree, where the withdrawn work was the only implementation, and replayed onto
+a tree that closed the same issue by another route it deletes the JOINING branch's fix
+instead.  Measured 2026-09-09 — four commits (a pick of this branch's own fix, two of the
+source's, and the revert) where `git diff <commit-before> <revert>` is EMPTY.  That diff
+is the test: run it before choosing a range, and cut the range around the run.
+
+**A DERIVED row is re-measured on the join, never carried.**  Two branches that each
+lowered a count hold two true numbers and neither is the merged tree's; the same trap has
+cost QUALITY.md's audit row a false figure on eight consecutive joins.  Resolve such a
+conflict to either side to unblock, keep a list, and re-run every instrument once at the
+end — `ir_walker_audit.py optional --write-ratchet`, `o_proxy_check.py`,
+`rule_tags.py check` — in one commit, so the baseline in the diff is the receipt.
+
+**Build after EACH source, not once at the end.**  A join can hold a defect neither branch
+could see: one branch gives an enum a third variant and makes every reader dispose of it
+explicitly, the other adds a reader, and only the union fails to compile.  Neither
+branch's gate could have gone red.  `cargo check --all-targets` between sources attributes
+such a failure to the source that caused it instead of to the whole join.
+
+**The gate is not the whole verification of a join.**  `make ci` arms neither the
+`LOFT_POISON` / `LOFT_VERIFY_STACK` sweeps ([CI_BUDGET.md](CI_BUDGET.md) — a minute each on
+this box) nor the shipped libraries (`scripts/revalidate_libs_local.sh`, below).  A join of
+store-lifetime and codegen work is exactly the change class both cover.
+
 ### Sprint branch naming
 
 ```
