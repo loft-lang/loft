@@ -665,6 +665,19 @@ control is loft#1471's fix and loft#1479's is loft#1478's, so scoring either at 
 green receipt for the wrong cause.  Say in the join's report which shas depend on which branch
 instead, so the rebuild is a decision rather than an accident.
 
+**How far this already goes, measured 2026-09-09 on `origin/main`:** 359 guards there carry a
+control sha and **11** of them name a commit reachable from `main`.  The other 348 name commits
+that survive only as loose objects from squash-merged branches, so a FRESH CLONE resolves
+almost none of them — and resolvability is therefore PER-CHECKOUT, not a property of the
+receipt: of four controls dead in one checkout on this box, three resolve in another.  The rot
+is invisible because the gate does not check what it appears to
+(`doc_hygiene.rs`'s `src.contains("@falsified-at:")` tests that the STRING is present, never
+that the ref resolves), so a receipt degrades from re-runnable proof to an assertion that
+someone once watched it fail, with nothing recording when it stopped being checkable.  What a
+receipt should BE is an open design call — gate on resolvability, push a durable tag per
+control, or record the reintroducing PATCH so the line is self-contained — and it is the
+owner's to make.
+
 ### The defect no guard can catch — the corpus EMISSION diff
 
 `make falsify` scores a guard, and a guard scores a program someone wrote.  Neither sees the
