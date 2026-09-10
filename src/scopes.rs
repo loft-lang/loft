@@ -212,6 +212,24 @@ struct Scopes<'s> {
     /// loft#849 / @PLN139 — vars that no longer OWN what they hold, so their scope end must
     /// not drop it.  See [`collect_drop_transferred`].
     drop_transferred: HashSet<u16>,
+    /// loft#1511 / `formal/heap.md (H-Drop)` — a TUPLE local's elements minted by the
+    /// element's own initializing CALL: tuple var → (element index → the call's hidden
+    /// buffer var, or `None` for a bufferless mint such as a nullable return).  A tuple has
+    /// no dep list of its own, so the element's free site cannot see that the record it
+    /// releases is a frame-minted droppable — this map carries that fact from the `Set` that
+    /// established it to [`tuple_owned_elem_frees`], which then runs the type's cascade
+    /// before the free and disarms the buffer's own scope-end claim.  Path-sensitive like
+    /// [`Self::owned_refs`]: intersect-merged at every join, so a pairing that holds on one
+    /// path only is dropped (losing the hook, never doubling it).
+    tuple_call_mint: HashMap<u16, HashMap<u16, Option<u16>>>,
+    /// loft#1510 / `formal/heap.md` D-heap-4 — a local whose LATEST assignment delivered a
+    /// CONSTRUCTION's work-ref record (`construction_work_ref`), mapped to that work-ref.
+    /// Read by the owned→view transition free: releasing the store by identity there must
+    /// run the type's cascade first and then disarm the work-ref, whose own scope-end drop
+    /// covers the record on the paths where no transition fires.  Same intersect-merge
+    /// discipline as [`Self::owned_refs`]; an entry that does not survive a join falls back
+    /// to the bare free (losing the hook, never doubling it).
+    construction_backing: HashMap<u16, u16>,
     /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
     /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
     /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
@@ -2167,8 +2185,21 @@ fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut Hash
             // path (its declared type is the enum, the constructed one the variant, so the
             // record cannot be built in place) and `w: W = WH { h: c }` cascaded twice.
             Value::Set(v, rhs) => {
+                // loft#1510 / D-heap-4 — hand the work-ref's drop over ONLY to a binding
+                // that will actually run it.  The premise of this transfer is "only the
+                // binding owns it", and for a view-typed (dep-carrying) binding that premise
+                // fails: its scope end runs no drop, so the transfer loses the hook and the
+                // resource is released by nobody's cascade.  Such a binding keeps the record
+                // through the work-ref, whose own scope-end drop+free then covers it (or the
+                // owned→view transition free releases it earlier and disarms the work-ref —
+                // `Scopes::construction_backing`).
+                //
+                // @FR-O-Proxy asks free — the answer places the scope-end DROP (suppress the
+                // work-ref's, because the binding's own release covers the record), and the
+                // @FR-O-Override veto rides inside `proxy_says_owned` as one question.
                 if let Some(w) = construction_work_ref(rhs, function)
                     && w != *v
+                    && function.proxy_says_owned(*v)
                 {
                     out.insert(w);
                 }
@@ -2591,6 +2622,7 @@ fn tuple_owned_elem_frees(
     v: u16,
     data: &Data,
     function: &crate::variables::Function,
+    call_mints: Option<&HashMap<u16, Option<u16>>>,
 ) -> Vec<Value> {
     let mut out = Vec::new();
     for &(_offset, idx) in crate::data::owned_elements(elems).iter().rev() {
@@ -2616,12 +2648,81 @@ fn tuple_owned_elem_frees(
         {
             continue;
         }
+        // loft#1511 / `(H-Drop)` — an element whose record was minted by the element's own
+        // initializing CALL is a frame-owned droppable: run the type's cascade before the
+        // free (the bare free released the resource without its hook), then disarm the
+        // call's hidden buffer, whose own scope-end drop+free claims the same record on the
+        // callees that deliver into it.  The sentinel is also what makes a LOOP re-mint per
+        // iteration instead of overwriting the record in place (`OpDatabase` reuses a live
+        // slot, which would lose every hook but the last one's).
+        if let Some(&buf) = call_mints.and_then(|m| m.get(&(idx as u16))) {
+            let elem = || Value::TupleGet(v, idx as u16);
+            if let Some(d) = elems[idx].base().heap_def_nr() {
+                let cascade = data.drop_cascade_nr(d);
+                if cascade != u32::MAX {
+                    out.push(v_if(
+                        Value::Call(data.def_nr("OpConvBoolFromRef"), vec![elem()]),
+                        Value::Call(cascade, vec![elem()]),
+                        Value::Null,
+                    ));
+                }
+            }
+            out.push(Value::Call(data.def_nr("OpFreeRef"), vec![elem()]));
+            if let Some(b) = buf {
+                out.push(v_set(
+                    b,
+                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                ));
+            }
+            continue;
+        }
         out.push(Value::Call(
             data.def_nr("OpFreeRef"),
             vec![Value::TupleGet(v, idx as u16)],
         ));
     }
     out
+}
+
+/// loft#1511 — the elements of a tuple-literal RHS that are MINTED by their own initializing
+/// call: element index → the call's hidden return buffer (`None` for a bufferless mint, e.g.
+/// a nullable return).  `Some(map)` whenever the RHS is a tuple literal (so a reassignment
+/// replaces a stale pairing with an empty one); `None` for any other RHS, telling the caller
+/// to clear what it tracked.
+///
+/// Only a pairing this can PROVE is recorded — a loft-defined callee whose return either
+/// delivers through the hidden buffer minted for this argument slot or adopts a fresh store
+/// (`return_adopts_fresh_store`).  A callee whose return is tied to a real argument answers
+/// neither and is skipped: the element then views storage somebody else owns, and the
+/// fall-through keeps today's bare free.
+fn tuple_call_mints(
+    rhs: &Value,
+    function: &Function,
+    data: &Data,
+) -> Option<HashMap<u16, Option<u16>>> {
+    let Value::Tuple(members) = rhs.unspan() else {
+        return None;
+    };
+    let mut out = HashMap::new();
+    for (idx, m) in members.iter().enumerate() {
+        let Value::Call(fn_nr, args) = m.unspan() else {
+            continue;
+        };
+        let def = data.def(*fn_nr);
+        if !def.is_loft_defined() {
+            continue;
+        }
+        if let Some(i) = def.hidden_return_buffer_attr() {
+            if let Some(Value::Var(vr)) = args.get(i).map(Value::unspan)
+                && function.is_caller_hidden_buf(*vr)
+            {
+                out.insert(idx as u16, Some(*vr));
+            }
+        } else if def.return_adopts_fresh_store() && def.returned().base().heap_def_nr().is_some() {
+            out.insert(idx as u16, None);
+        }
+    }
+    Some(out)
 }
 /// @PLN157 § V (Route R, caller half) — allocate a call's hidden RECORD buffer ONCE, so a
 /// callee that builds its return into the buffer it was handed reuses one record per call
@@ -2806,6 +2907,8 @@ fn run_scan_phase(
         views_to_materialise,
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         drop_transferred: collect_drop_transferred(orig_code, orig_vars, data),
+        tuple_call_mint: HashMap::new(),
+        construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
@@ -7098,9 +7201,15 @@ impl Scopes<'_> {
                 // the body touches is unreliable afterwards.  Keep only the
                 // entries the body left unchanged.
                 let owned_before = self.owned_refs.clone();
+                let backing_before = self.construction_backing.clone();
+                let mints_before = self.tuple_call_mint.clone();
                 let ls = self.convert(lp, function, data, false);
                 self.owned_refs
                     .retain(|k, depth| owned_before.get(k) == Some(depth));
+                self.construction_backing
+                    .retain(|k, w| backing_before.get(k) == Some(w));
+                self.tuple_call_mint
+                    .retain(|k, m| mints_before.get(k) == Some(m));
                 self.loops.pop();
                 self.exit_scope();
                 Value::Loop(Box::new(Block {
@@ -7276,6 +7385,34 @@ impl Scopes<'_> {
                 }
             }
             Value::Call(d_nr, args) => {
+                // loft#1510 / D-heap-4 — an IN-PLACE literal rebuild (`parse_object`'s
+                // in-place arm) reaches the scan as a bare `OpDatabase` on the local, never
+                // as a `Set`, so the owner witness would keep naming the store this clears
+                // and the record's hook would be lost at the overwrite.  Run the hook first
+                // — by identity, through the witness, which holds the sentinel whenever the
+                // local does not own its store — and re-point the witness after: the rebuilt
+                // record is a store the local mints.  The store itself is reused in place,
+                // so nothing is freed here.
+                if *d_nr == data.def_nr("OpDatabase")
+                    && let Some(Value::Var(ov0)) = args.first().map(Value::unspan)
+                {
+                    let v = *self.var_mapping.get(ov0).unwrap_or(ov0);
+                    if let Some(&w) = self.owner_witness.get(&v) {
+                        let mut ops = Vec::new();
+                        if let Some(hook) = drop_hook(function, w, data) {
+                            ops.push(hook);
+                        }
+                        ops.push(v_set(
+                            w,
+                            Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                        ));
+                        let mut call_args = vec![Value::Var(v)];
+                        call_args.extend(args.iter().skip(1).cloned());
+                        ops.push(Value::Call(*d_nr, call_args));
+                        ops.push(witness_points_at(w, v, data));
+                        return Value::Insert(ops);
+                    }
+                }
                 let (preamble, ls, postamble) = self.scan_args(args, function, data, *d_nr);
                 let call = Value::Call(*d_nr, ls);
                 if preamble.is_empty() && postamble.is_empty() {
@@ -7372,10 +7509,16 @@ impl Scopes<'_> {
                 // #316 — `next`/`extra` execute once per iteration: drop any
                 // ownership entry they touch (same rationale as Value::Loop).
                 let owned_before = self.owned_refs.clone();
+                let backing_before = self.construction_backing.clone();
+                let mints_before = self.tuple_call_mint.clone();
                 let scanned_next = self.scan(next, function, data);
                 let scanned_extra = self.scan(extra, function, data);
                 self.owned_refs
                     .retain(|k, depth| owned_before.get(k) == Some(depth));
+                self.construction_backing
+                    .retain(|k, w| backing_before.get(k) == Some(w));
+                self.tuple_call_mint
+                    .retain(|k, m| mints_before.get(k) == Some(m));
                 Value::Iter(
                     *idx,
                     Box::new(scanned_create),
@@ -7582,7 +7725,8 @@ impl Scopes<'_> {
             && !value.reads_var(ov)
         {
             let elems = elems.clone();
-            let frees = tuple_owned_elem_frees(&elems, v, data, function);
+            let frees =
+                tuple_owned_elem_frees(&elems, v, data, function, self.tuple_call_mint.get(&v));
             if !frees.is_empty() {
                 transition_free = Some(Value::Insert(frees));
             }
@@ -7712,7 +7856,29 @@ impl Scopes<'_> {
             && !value.reads_var(v)
             && !value.reads_var(ov)
         {
-            transition_free = Some(call("OpFreeRef", v, data));
+            // loft#1510 / D-heap-4 — this releases a store the frame minted, so where the
+            // mint is a CONSTRUCTION whose backing work-ref is known, the type's cascade runs
+            // first and the work-ref is disarmed: the hand-off to this view-typed binding was
+            // vetoed (`drop_handoff_node`), so the work-ref still owns the drop, and without
+            // the sentinel its scope-end cascade would run on the store freed here.  The
+            // sentinel also makes a loop's next `OpDatabase` mint fresh instead of reusing
+            // the freed slot.  A backing this scan could not track (a join dropped it) keeps
+            // the bare free — losing the hook, never doubling it.
+            transition_free = Some(match self.construction_backing.get(&v) {
+                Some(&w) => {
+                    let mut ops = Vec::with_capacity(3);
+                    if let Some(hook) = drop_hook(function, v, data) {
+                        ops.push(hook);
+                    }
+                    ops.push(call("OpFreeRef", v, data));
+                    ops.push(v_set(
+                        w,
+                        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                    ));
+                    Value::Insert(ops)
+                }
+                None => call("OpFreeRef", v, data),
+            });
         }
         // Track the LATEST assignment's ownership for this var.  Through `base()`: a nullable
         // record local holds the same record behind a nullability marker (`@FR-L-Null`), and
@@ -7728,6 +7894,31 @@ impl Scopes<'_> {
                 }
                 RefRhs::View => {
                     self.owned_refs.remove(&v);
+                }
+            }
+        }
+        // loft#1510 / D-heap-4 — remember which work-ref backs the record a CONSTRUCTION
+        // just delivered to a binding that will not run its scope-end drop (the hand-off is
+        // vetoed for it, see `drop_handoff_node`).  The owned→view transition free reads
+        // this to run the cascade and disarm the work-ref; any other assignment retires the
+        // pairing (@FR-O-Latest — the fact belongs to the latest assignment).
+        match construction_work_ref(value, function) {
+            Some(w) if w != v && !function.proxy_says_owned(v) => {
+                self.construction_backing.insert(v, w);
+            }
+            _ => {
+                self.construction_backing.remove(&v);
+            }
+        }
+        // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
+        // own call, for the element frees at reassignment and scope exit.
+        if matches!(function.tp(v), Type::Tuple(_)) {
+            match tuple_call_mints(value, function, data) {
+                Some(m) => {
+                    self.tuple_call_mint.insert(v, m);
+                }
+                None => {
+                    self.tuple_call_mint.remove(&v);
                 }
             }
         }
@@ -8634,12 +8825,12 @@ impl Scopes<'_> {
                     data.def_nr("OpDistinctStore"),
                     vec![Value::Var(w), Value::Var(v)],
                 ),
-                release_witness(w, data),
+                release_witness(w, function, data),
                 Value::Null,
             );
             match kind {
                 WitnessSet::Mint => {
-                    prefix.insert(0, release_witness(w, data));
+                    prefix.insert(0, release_witness(w, function, data));
                     witness_ops.push(witness_points_at(w, v, data));
                 }
                 WitnessSet::MintReading => {
@@ -8888,11 +9079,19 @@ impl Scopes<'_> {
         // fixes — it is a miscompile or a leak.  Erring toward "not owned" here is why the
         // reconcile intersects rather than unions.
         let owned_before = self.owned_refs.clone();
+        let backing_before = self.construction_backing.clone();
+        let mints_before = self.tuple_call_mint.clone();
         let scanned_true = self.scan(t_val, function, data);
         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
+        let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+        let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
         let scanned_false = self.scan(f_val, function, data);
         self.owned_refs
             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
+        self.construction_backing
+            .retain(|k, w| backing_after_true.get(k) == Some(w));
+        self.tuple_call_mint
+            .retain(|k, m| mints_after_true.get(k) == Some(m));
         let scanned_if = Value::If(
             Box::new(scanned_test),
             Box::new(scanned_true),
@@ -10509,7 +10708,7 @@ impl Scopes<'_> {
                 {
                     guarded.push(free_unless_record_built(v, &records, Some(w), data));
                 }
-                ls.push(release_witness(w, data));
+                ls.push(release_witness(w, function, data));
                 continue;
             }
             // on=4 iteration scratch (`hash_scratch`): a `return` out of an exposed loop
@@ -10525,7 +10724,13 @@ impl Scopes<'_> {
             // T1.3: tuple scope exit — free owned elements in reverse index order.
             if let Type::Tuple(elems) = function.tp(v) {
                 let elems = elems.clone();
-                ls.extend(tuple_owned_elem_frees(&elems, v, data, function));
+                ls.extend(tuple_owned_elem_frees(
+                    &elems,
+                    v,
+                    data,
+                    function,
+                    self.tuple_call_mint.get(&v),
+                ));
                 continue;
             }
             if matches!(function.tp(v).base(), Type::Text(_)) {
@@ -14432,11 +14637,23 @@ fn captures_built_in_value(value: &Value, data: &Data) -> Vec<(u16, u16)> {
 /// unit, because `OpFreeRef` of a variable does not reset its slot on the interpreter, and a
 /// witness left naming a freed store would release whatever the allocator hands that slot
 /// next.
-fn release_witness(w: u16, data: &Data) -> Value {
-    Value::Insert(vec![
-        call("OpFreeRef", w, data),
-        v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
-    ])
+fn release_witness(w: u16, function: &Function, data: &Data) -> Value {
+    // loft#1510 / `(H-Drop)` — the witness releases a store the FRAME minted, so the type's
+    // cascade runs first: the bare free released the resource without its hook.  Guarded on
+    // the witness holding a record (`ConvBoolFromRef` reads the sentinel's `rec == 0` as
+    // false), so a witness that took no store hooks nothing.  Exactly one mechanism claims a
+    // witnessed store — the witnessed local never drops (view-typed) and the call's hidden
+    // buffer keeps a bare, hook-less free — so the hook here cannot double.
+    let mut ops = Vec::with_capacity(3);
+    if let Some(hook) = drop_hook(function, w, data) {
+        ops.push(hook);
+    }
+    ops.push(call("OpFreeRef", w, data));
+    ops.push(v_set(
+        w,
+        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+    ));
+    Value::Insert(ops)
 }
 
 /// Point owner witness `w` at the store local `v` now holds — an ALIAS, where a plain

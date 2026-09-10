@@ -358,12 +358,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE;
+OPEN: **3** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE;
 `D-heap-3`, a struct field projected off a CALL result, where the copy-out hand-off now
 carries the dense family and two shapes remain: the `?` join's alias and the return-of-view
-copy (loft#1506);
-`D-heap-4`, a mixed own/view LOCAL whose owned record's hook never runs — the release by
-identity frees the store and drops nothing; and
+copy (loft#1506); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -372,7 +370,8 @@ stale.  `D-heap-2` (a cascade that reached three of the member kinds it owned) o
 CLOSED 2026-09-10, below; it is why D-heap-1's own list never counted it.  That list has
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
-open TODAY and not the original filing.
+open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
+freed without its hook) opened and CLOSED 2026-09-10, below.
 
 ### D-heap-1 — OPEN (2026-09-05): a copy of a tuple member releases its resource twice
 
@@ -503,14 +502,28 @@ tuple released twice — not one twice and one once — which is what says the b
 for the whole tuple rather than paired to the wrong work-ref.
 
 ⚠ **A tuple release bug that is NOT this entry, and the direction is how to tell.**  Every
-shape here releases TWICE; loft#1511 releases NEVER — a call result placed directly in a tuple
-literal member (`u = (mk(1), 9)`) runs no hook at all, while the same call bound to a local
+shape here releases TWICE; loft#1511 released NEVER — a call result placed directly in a tuple
+literal member (`u = (mk(1), 9)`) ran no hook at all, while the same call bound to a local
 first, or placed in a struct FIELD or a vector ELEMENT, releases once.  The store IS freed, so
-nothing warns.  `Parser::tuple_member_owned_copy` takes its `_ => return None` arm for a call
+nothing warned.  `Parser::tuple_member_owned_copy` takes its `_ => return None` arm for a call
 source, which is right for the aliasing question it was written for — `(T-Cons)` holds, a
 `vector` member built from a call reads its own length — and leaves the OWNERSHIP half
-unanswered: the free analysis finds an owner for that record and the drop analysis does not.
-Closer in kind to `D-heap-2` below, which is the same question asked of a cascade.
+unanswered: the free analysis found an owner for that record and the drop analysis did not.
+**CLOSED 2026-09-10**: the element free (`scopes::tuple_owned_elem_frees`) concluded
+ownership from the member type's empty dep list and released the record with a bare
+`OpFreeRef` — the hook was owed exactly there.  The scan now records which elements a
+tuple-literal RHS minted by their own call (`Scopes::tuple_call_mint`, path-sensitive with
+`owned_refs`'s intersect-merge; a call is a mint when its return delivers through the hidden
+buffer minted for that slot, or adopts a fresh store — a nullable return, which has no
+buffer), and the element free runs the type's cascade first, then writes the SENTINEL into
+the call's buffer: the buffer's own scope-end drop+free otherwise claims the same record on a
+callee that delivers into it, and the sentinel is also what makes a loop mint per pass
+instead of rebuilding the freed slot.  Guard
+`tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft`, 13 cells, hook
+sequences plus the five sibling-container controls and the return path unchanged.
+⚠ One shape stays open, filed apart: the same literal in ARGUMENT position
+(`show((mk(1), 9))`, loft#1512) binds no variable, so no element-free site exists — the record leaks
+whole, hook included, on both backends.
 
 ⚠ **A fifth shape was here and did not belong to this entry.**  `h = Holder { t: (s, 5) };
 u = h.t` released the resource NEVER — the OPPOSITE fault, which is why it is worth stating
@@ -686,7 +699,7 @@ control unmoved at 1, and `LOFT_POISON=1` over the 889 guard clean.
    USER local with possibly many exits, so the per-variable pairing above must not reach it —
    a skip keyed on the var would leak the field on every path that does not return it.
 
-### D-heap-4 — OPEN (2026-09-10): a mixed own/view local's owned record is freed without its hook (loft#1510)
+### D-heap-4 — OPENED AND CLOSED (2026-09-10): a mixed own/view local's owned record is freed without its hook (loft#1510)
 
 `(H-Drop)` runs the hook at the record's death; `(O-Latest)` says a static deps list cannot
 carry per-assignment ownership, which is what the owner witness (`@FR-O-Witness`) exists for —
@@ -711,6 +724,41 @@ cascade first, exactly as `scope_end_drop` does.  ⚠ Two of the mechanisms can 
 record (the work-ref's scope end and the binding's rebind), so a cure that adds the hook to
 both is the double release coming back — the conformance cells must assert the count on ALL
 THREE spellings plus the D-heap-3 guard's rebound cells, which pin the fixed neighbours.
+
+**CLOSED 2026-09-10**, at that shared clause, in four pieces — and it took FOUR mechanisms,
+one more than the entry's own list, which the boundary matrix found:
+
+- **the witness releases hook-first**: `scopes::release_witness` — the ONE home for all
+  three witness frees (the rebind-distinct release, the `(O-Detach)` release, the scope-end
+  release) — runs `drop_hook` before the `OpFreeRef`, guarded on the witness holding a
+  record, so the sentinel hooks nothing.  Exactly one mechanism claims a witnessed store:
+  the witnessed local never drops and the call's hidden buffer keeps its bare free.
+- **the hand-off is made only to a binding that will run it**: `drop_handoff_node`'s Set
+  arm transfers the work-ref's drop only where `proxy_says_owned(binding)` — a view-typed
+  binding runs no scope-end drop, so the old transfer lost the hook between the two
+  mechanisms.  A vetoed transfer leaves the work-ref's own scope-end drop+free as the
+  releaser (the view-then-own spelling).
+- **the owned→view transition free hooks and disarms**: the loft#1202 arm, releasing a
+  literal-minted store the binding is about to stop naming, runs the cascade first and
+  writes the SENTINEL into the backing work-ref (`Scopes::construction_backing`, a
+  path-sensitive map with `owned_refs`'s intersect-merge) — without the sentinel the
+  now-un-transferred scope-end drop re-runs on the freed store, and WITH it a loop's next
+  `OpDatabase` mints fresh instead of rebuilding the freed slot.  A backing a join dropped
+  keeps the bare free: the hook is lost on that path, never doubled.
+- **the in-place literal rebuild hooks through the witness**: `parse_object`'s in-place arm
+  reaches the scan as a bare `OpDatabase` on the local — no `Set` — so the witness kept
+  naming the store being cleared and the record's hook was lost at the overwrite (the
+  three-assignment cell `r = mk_h(); r = CfH{…}; r = d.h` found it: 65 and 9 hooked, 4
+  silently overwritten).  The scan now runs the hook through the witness before the clear
+  and re-points the witness after; nothing is freed, the store is reused as before.
+
+Guard `tests/scripts/1510-a-mixed-own-view-locals-record-hooks-once.loft` — 11 cells
+asserting exact hook SEQUENCES (both loop orders, the conditional construction on both
+paths, the three-mechanism frame, and the uniform-owner/uniform-view controls unchanged);
+the D-heap-3 guard's rebound cells pin the fixed neighbours.  A residual stated while
+closing: a heap PARAMETER rebuilt in place keeps its hook-less overwrite (the in-place arm's
+argument path frees through `OpFreeRefIfDistinct` against the entry witness and hooks
+nothing) — out of this entry's mixed-LOCAL scope, noted for the walk that owns parameters.
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
 

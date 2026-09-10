@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 453 | 429 | **24** |
+| 454 | 430 | **24** |
 
 
 
@@ -2662,6 +2662,12 @@ span-wrapped spelling, and they pass.  Writing a redundant `.unspan()` at the si
 column would make the metric agree and the code worse — `tail` is the one home for *descend to
 where control leaves*, and a second peel beside it is exactly the restated predicate this
 document is otherwise about.
+
+**2026-09-10, loft#1511's mint classifier moves it to `454 · 430 · 24`.**  One new
+discriminator, `scopes::tuple_call_mints`, and it peels: it reads a tuple-literal RHS and its
+call members to record which elements were minted by their own call, so the element free can
+run the type's cascade before releasing a record the member type's empty dep list could not
+mark as a frame-owned droppable.
 
 **2026-09-10, D-heap-1's nested read sites move it to `453 · 429 · 24`.**  Two new
 discriminators, `scopes::block_tail_var` and `scopes::tuple_projection_of`, and both PEEL.
