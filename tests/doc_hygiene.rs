@@ -2820,13 +2820,31 @@ fn every_ignore_reason_says_how_it_runs() {
 /// that report — which the message prints verbatim.
 #[test]
 fn every_test_binary_matches_a_subject() {
-    let out = std::process::Command::new("bash")
-        .args([
-            "-c",
-            "source scripts/test_subjects.sh && unmatched_binaries",
-        ])
-        .output()
-        .expect("bash + scripts/test_subjects.sh");
+    // Two different failures wear one exit code here, and only one of them is this guard's
+    // subject.  The script REFUSING (a binary no subject reaches) prints the name on stdout;
+    // the shell failing to RUN prints nothing at all.  The Windows daily hit the second and
+    // reported it as the first, twice — nextest's own retry saw the same thing — and a
+    // windows-probe run of the identical command passed with exit 0 and zero unmatched
+    // binaries (bash 5.3.15, Cygwin), so the cause is load on the runner rather than
+    // anything in the map.  So: a non-zero exit with BOTH streams empty is retried once,
+    // and either way the message names what actually happened.  The retry cannot mask a
+    // genuine finding, because a genuine finding has stdout.
+    let run = || {
+        std::process::Command::new("bash")
+            .args([
+                "-c",
+                "source scripts/test_subjects.sh && unmatched_binaries",
+            ])
+            .output()
+            .expect("bash + scripts/test_subjects.sh")
+    };
+    let mut out = run();
+    let mut retried = false;
+    if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        out = run();
+        retried = true;
+    }
     let stdout = String::from_utf8_lossy(&out.stdout);
     let unmatched: Vec<&str> = stdout
         .lines()
@@ -2843,7 +2861,8 @@ fn every_test_binary_matches_a_subject() {
         out.status.success(),
         "scripts/test_subjects.sh failed: exit {:?}\n  stderr ({} bytes): {}\n  stdout ({} bytes): {}\n  \
          (an empty stderr with a non-zero exit is the shell dying rather than the script \
-         refusing — on Windows this ran green in isolation under windows-probe)",
+         refusing — on Windows this ran green in isolation under windows-probe; \
+         retried_once={retried})",
         out.status.code(),
         out.stderr.len(),
         String::from_utf8_lossy(&out.stderr),
