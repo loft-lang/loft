@@ -8,8 +8,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 > **This is the one home for the scoreboard.**
-> [loft#1426](https://github.com/loft-lang/loft/issues/1426) is the *surfaced report* — what crawler hit, and whether it is resolved for them — and it carries
-> `status:planned` pointing here.  Its table is the FILED baseline, frozen as evidence and not
+> [loft#1426](https://github.com/loft-lang/loft/issues/1426) is the *surfaced report* —
+> what crawler hit, and whether it is resolved for them — and it carries `status:planned`
+> pointing here.  Its table is the FILED baseline, frozen as evidence and not
 > maintained.  **Do not copy per-row numbers back into the issue**: they were in both places and
 > drifted twice in one day (one taken on a branch, one on a join), and a wrong attribution had to
 > be corrected in two places.  Report progress by editing this section; comment on the issue only
