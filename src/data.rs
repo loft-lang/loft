@@ -2545,6 +2545,39 @@ impl Type {
         }
     }
 
+    /// This type carrying `src`'s deps MEMBER BY MEMBER — the tuple-aware
+    /// [`Self::with_deps_of`].
+    ///
+    /// A tuple has no dep list of its own, so `with_deps_of` cannot reach one and the
+    /// tuple-shaped way to say *"the declared type says the SHAPE, the value in hand says
+    /// what it owns"* is to pair the members up.  Giving every member the UNION instead says
+    /// something weaker and loses a fact: which work-ref backs which member.  That pairing is
+    /// what every store-lifetime decision about a single member reads
+    /// (`scopes::tuple_member_backing`), and the union cannot be taken apart again — a `text`
+    /// member contributes a dep without being a heap leaf, so counting back to the member a
+    /// dep belongs to is wrong in both directions.
+    ///
+    /// Falls back to `with_deps_of` wherever the two are not tuples of the same arity: there
+    /// is no pairing to make, and the deps still reach the members through
+    /// [`Self::with_deps`].
+    #[must_use]
+    pub fn with_member_deps_of(&self, src: &Type) -> Type {
+        match self {
+            Type::RefVar(tp) => Type::RefVar(Box::new(tp.with_member_deps_of(src))),
+            Type::Optional(tp) => Type::optional(tp.with_member_deps_of(src)),
+            Type::Tuple(mine) => match src.base() {
+                Type::Tuple(theirs) if mine.len() == theirs.len() => Type::Tuple(
+                    mine.iter()
+                        .zip(theirs)
+                        .map(|(m, t)| m.with_member_deps_of(t))
+                        .collect(),
+                ),
+                _ => self.with_deps_of(src),
+            },
+            other => other.with_deps_of(src),
+        }
+    }
+
     /// This type widened to borrow whatever EITHER side borrows — the type-level
     /// half of a branch join (loft#978).
     ///
@@ -5469,6 +5502,68 @@ pub fn is_dbref(tp: &Type) -> bool {
             | Type::Trie(_, _, _)
             | Type::Enum(_, true, _)
     )
+}
+
+/// How many HEAP LEAVES a tuple type holds, counting THROUGH nested tuples.
+///
+/// The pre-order this counts in is the order a tuple's members are laid out and the order
+/// its dep list runs in, so it is also the ordinal a leaf is addressed by
+/// (`scopes::tuple_leaf_at`) and the index [`tuple_own_backings`] records against.  One home
+/// for all three: a second spelling of this walk could only agree by accident, and the
+/// ordinal it produces addresses a store.
+#[must_use]
+pub fn tuple_heap_leaves(tp: &Type) -> usize {
+    match tp.base() {
+        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
+        other => usize::from(is_dbref(other)),
+    }
+}
+
+/// The single dep each of a tuple type's heap leaves carries of its OWN, in
+/// [`tuple_heap_leaves`] pre-order — `None` when `tp` is not a tuple with heap leaves.
+///
+/// A tuple has no dep list of its own, so the deps of a freshly built tuple LITERAL sit in
+/// its members, one per member that carries one: `(s, w)` spells
+/// `(ref(S)["__ref_1"], text["w"])`, where `__ref_1` backs the record member and `w` is what
+/// the text member borrows.  That is the pairing every store-lifetime decision about a member
+/// needs, and it survives only until the variable is given the union
+/// (`Vars::depend_on_all`), which writes the whole list into every member.
+///
+/// `u16::MAX` marks a leaf this cannot name — one carrying no dep, or already carrying more
+/// than one — so the position of the leaves that CAN be named is still right.  A reader must
+/// treat that entry as "no answer" rather than as a variable number, which is the same
+/// convention a dep list itself uses for the share marker.
+#[must_use]
+pub fn tuple_own_backings(tp: &Type) -> Option<Vec<u16>> {
+    if !matches!(tp.base(), Type::Tuple(_)) {
+        return None;
+    }
+    let mut out = Vec::new();
+    collect_own_backings(tp, &mut out);
+    // A tuple type NO leaf of which names a backing says nothing about the pairing — the
+    // declared type of `t: (S?, text) = …` before the value's deps are carried across is
+    // exactly that, every member empty.  Answering `[MAX, MAX]` would make it an assignment
+    // that DISAGREES with the real one, which is not what an empty annotation is.
+    (out.iter().any(|d| *d != u16::MAX)).then_some(out)
+}
+
+fn collect_own_backings(tp: &Type, out: &mut Vec<u16>) {
+    match tp.base() {
+        Type::Tuple(elems) => {
+            for e in elems {
+                collect_own_backings(e, out);
+            }
+        }
+        other if is_dbref(other) => {
+            let own = other.depend();
+            out.push(if own.len() == 1 && own[0] != u16::MAX {
+                own[0]
+            } else {
+                u16::MAX
+            });
+        }
+        _ => {}
+    }
 }
 
 /// Does a value of this type REACH a store — directly, or through a tuple element?
