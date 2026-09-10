@@ -476,7 +476,20 @@ the same call in which it duplicates `h`.
    released: a leak in place of a double release.
 2. **The `0x8000` move bit** on `OpCopyRecord`, which frees the source store inside the op. The
    store is the whole parent record, so `g` dies unreleased. Worse than (1).
-3. **"Null the slot so the cascade finds nothing"** (the loft#1476 precedent). Does not reach:
+3. **Adopt the BASE instead of copying the field** — attempted 2026-09-10 and REVERTED. The
+   most promising of the four, because it needs no new mechanism: where the projection's base is
+   a direct call, let the work-ref adopt the callee's fresh store and read the projection off it,
+   so one record has one owner and its own cascade releases each resource once. It measured
+   RIGHT on every count cell — `x = mk_dense().h.id` 2 -> 1, and the two-droppable-field record
+   at one release each, which is what excluded (1) and (2). ⚠ And it reintroduced @PLN85: the
+   curated suite failed `store_lifetime_890_889::call_field_cells_poison_{interpret,native}`, and
+   `tests/scripts/889-collection-through-a-call-s-field.loft` read
+   `a field of a field: -2401053088876216593, expected 7` under `LOFT_POISON=1` on BOTH backends.
+   A deeper chain reads through the adopted store after something frees it, which is exactly the
+   dangling read the copy exists to prevent — the count was right and the memory was not. **A
+   cure here cannot be scored on release counts alone; the poison sweep is part of its
+   boundary.**
+4. **"Null the slot so the cascade finds nothing"** (the loft#1476 precedent). Does not reach:
    the generated cascade guards each field on the PARENT's `rec` — `if (self + off).rec != 0` on
    a DbRef derived from `self` — so the guard is the same expression for every field and zeroing
    a field's bytes changes none of it.
