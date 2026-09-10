@@ -24,6 +24,9 @@
 //
 // @falsified-at: 7e61fc15c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-tuple-member-declared-nullable-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
 // CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends —
 //   this is not a backend divergence, both released twice.  NOT the leak channel: the second
 //   release is of a record that genuinely exists, so nothing leaks and a run scored on leaks
