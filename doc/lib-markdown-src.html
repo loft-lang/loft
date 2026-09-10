@@ -23,19 +23,19 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>markdown source</h1>
 <article>
-<p><a href="lib-markdown.html">← markdown</a> · <a href="lib-markdown-api.html">API reference</a> · version 0.2.2</p>
-<p class="lib-legend">2 file(s), 1323 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-markdown.html">← markdown</a> · <a href="lib-markdown-api.html">API reference</a> · version 0.2.3</p>
+<p class="lib-legend">2 file(s), 1327 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
 <tr><td><code>html_escape</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L80">80</a></td><td>—</td><td><a href="#src-markdown-loft-L133">133</a> <a href="#src-markdown-loft-L134">134</a> <a href="#src-markdown-loft-L152">152</a> <a href="#src-markdown-loft-L160">160</a> <a href="#src-markdown-loft-L260">260</a> <a href="#src-markdown-loft-L293">293</a> … (16 total)</td></tr>
 <tr><td><code>render</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L111">111</a></td><td>—</td><td><a href="#tests-01-render-loft-L64">64</a> <a href="#tests-01-render-loft-L66">66</a> <a href="#tests-01-render-loft-L69">69</a> <a href="#tests-01-render-loft-L72">72</a> <a href="#tests-01-render-loft-L76">76</a> <a href="#tests-01-render-loft-L78">78</a> … (43 total)</td></tr>
-<tr><td><code>slugify</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L448">448</a></td><td>—</td><td><a href="#src-markdown-loft-L151">151</a> <a href="#src-markdown-loft-L159">159</a> <a href="#src-markdown-loft-L292">292</a> <a href="#src-markdown-loft-L1001">1001</a> <a href="#src-markdown-loft-L1010">1010</a> <a href="#src-markdown-loft-L1027">1027</a> … (9 total)</td></tr>
+<tr><td><code>slugify</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L448">448</a></td><td>—</td><td><a href="#src-markdown-loft-L151">151</a> <a href="#src-markdown-loft-L159">159</a> <a href="#src-markdown-loft-L292">292</a> <a href="#src-markdown-loft-L1003">1003</a> <a href="#src-markdown-loft-L1012">1012</a> <a href="#src-markdown-loft-L1029">1029</a> … (9 total)</td></tr>
 <tr><td><code>render_inline</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L599">599</a></td><td>—</td><td><a href="#src-markdown-loft-L153">153</a> <a href="#src-markdown-loft-L161">161</a> <a href="#src-markdown-loft-L211">211</a> <a href="#src-markdown-loft-L214">214</a> <a href="#src-markdown-loft-L236">236</a> <a href="#src-markdown-loft-L239">239</a> … (26 total)</td></tr>
 <tr><td><code>rewrite_link</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L860">860</a></td><td>—</td><td><a href="#src-markdown-loft-L797">797</a> <a href="#tests-01-render-loft-L49">49</a> <a href="#tests-01-render-loft-L51">51</a> <a href="#tests-01-render-loft-L52">52</a> <a href="#tests-01-render-loft-L54">54</a> <a href="#tests-01-render-loft-L56">56</a> … (8 total)</td></tr>
-<tr><td><code>Heading</code> <span class="search-kind">struct</span></td><td><a href="#src-markdown-loft-L963">963</a></td><td>—</td><td><a href="#src-markdown-loft-L979">979</a> <a href="#src-markdown-loft-L980">980</a> <a href="#src-markdown-loft-L998">998</a> <a href="#src-markdown-loft-L1007">1007</a> <a href="#src-markdown-loft-L1024">1024</a></td></tr>
-<tr><td><code>extract_headings</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L979">979</a></td><td>—</td><td><a href="#tests-01-render-loft-L256">256</a> <a href="#tests-01-render-loft-L258">258</a> <a href="#tests-01-render-loft-L262">262</a> <a href="#tests-01-render-loft-L264">264</a> <a href="#tests-01-render-loft-L265">265</a> <a href="#tests-01-render-loft-L266">266</a> … (14 total)</td></tr>
+<tr><td><code>Heading</code> <span class="search-kind">struct</span></td><td><a href="#src-markdown-loft-L965">965</a></td><td>—</td><td><a href="#src-markdown-loft-L981">981</a> <a href="#src-markdown-loft-L982">982</a> <a href="#src-markdown-loft-L1000">1000</a> <a href="#src-markdown-loft-L1009">1009</a> <a href="#src-markdown-loft-L1026">1026</a></td></tr>
+<tr><td><code>extract_headings</code> <span class="search-kind">fn</span></td><td><a href="#src-markdown-loft-L981">981</a></td><td>—</td><td><a href="#tests-01-render-loft-L258">258</a> <a href="#tests-01-render-loft-L260">260</a> <a href="#tests-01-render-loft-L264">264</a> <a href="#tests-01-render-loft-L266">266</a> <a href="#tests-01-render-loft-L267">267</a> <a href="#tests-01-render-loft-L268">268</a> … (14 total)</td></tr>
 </table>
 <h2 id="src-markdown-loft">src/markdown.loft</h2>
 <pre class="src"><code><span id="src-markdown-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -916,168 +916,170 @@
 <span id="src-markdown-loft-L876">    }</span>
 <span id="src-markdown-loft-L877">    anchor = <span class="st">""</span>;</span>
 <span id="src-markdown-loft-L878">    target = url;</span>
-<span id="src-markdown-loft-L879">    hash_at = url.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"#"</span>);</span>
-<span id="src-markdown-loft-L880">    <span class="kw">if</span> hash_at &gt;= <span class="nm">0</span> {</span>
-<span id="src-markdown-loft-L881">        ulen = url.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
-<span id="src-markdown-loft-L882">        target = url[<span class="nm">0..</span>hash_at];</span>
-<span id="src-markdown-loft-L883">        anchor = url[hash_at..ulen];</span>
-<span id="src-markdown-loft-L884">    }</span>
-<span id="src-markdown-loft-L885">    cleaned = target;</span>
-<span id="src-markdown-loft-L886">    while cleaned.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"./"</span>) {</span>
-<span id="src-markdown-loft-L887">        cl = cleaned.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
-<span id="src-markdown-loft-L888">        cleaned = cleaned[<span class="nm">2..</span>cl];</span>
-<span id="src-markdown-loft-L889">    }</span>
-<span id="src-markdown-loft-L890">    cur_base = base_dir;</span>
-<span id="src-markdown-loft-L891">    while cleaned.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"../"</span>) {</span>
-<span id="src-markdown-loft-L892">        cur_base = <span class="fn-call">parent_dir</span>(cur_base);</span>
-<span id="src-markdown-loft-L893">        cl = cleaned.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
-<span id="src-markdown-loft-L894">        cleaned = cleaned[<span class="nm">3..</span>cl];</span>
-<span id="src-markdown-loft-L895">    }</span>
-<span id="src-markdown-loft-L896">    <span class="kw">if</span> cur_base == <span class="st">""</span> {</span>
-<span id="src-markdown-loft-L897">        <span class="kw">return</span> <span class="st">"/file/{cleaned}{anchor}"</span>;</span>
-<span id="src-markdown-loft-L898">    }</span>
-<span id="src-markdown-loft-L899">    <span class="st">"/file/{cur_base}/{cleaned}{anchor}"</span></span>
-<span id="src-markdown-loft-L900">}</span>
-<span id="src-markdown-loft-L901"></span>
-<span id="src-markdown-loft-L902"><span class="kw">fn</span> <span class="fn-call">parent_dir</span>(p: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-markdown-loft-L903">    last_slash = p.<span class="fn-call"><a href="stdlib-text.html">rfind</a></span>(<span class="st">"/"</span>);</span>
-<span id="src-markdown-loft-L904">    <span class="kw">if</span> last_slash &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-markdown-loft-L905">    p[<span class="nm">0..l</span>ast_slash]</span>
-<span id="src-markdown-loft-L906">}</span>
-<span id="src-markdown-loft-L907"></span>
-<span id="src-markdown-loft-L908"><span class="cm">// Try to match a tracker-tag identifier starting at `start`</span></span>
-<span id="src-markdown-loft-L909"><span class="cm">// in `src`.  Returns the END byte offset of a successful</span></span>
-<span id="src-markdown-loft-L910"><span class="cm">// match (so `src[start..end]` is the bare-name like "P259"</span></span>
-<span id="src-markdown-loft-L911"><span class="cm">// or "PLAN35-01"), or `start` itself if no match.</span></span>
-<span id="src-markdown-loft-L912"><span class="cm">//</span></span>
-<span id="src-markdown-loft-L913"><span class="cm">// Patterns:</span></span>
-<span id="src-markdown-loft-L914"><span class="cm">//   P\d+([a-z])?          — P-issues like P259, P229b</span></span>
-<span id="src-markdown-loft-L915"><span class="cm">//   PLAN\d+(-[\w]+)*      — plans + phases like PLAN35-01,</span></span>
-<span id="src-markdown-loft-L916"><span class="cm">//                          PLAN22-2d-iii.a</span></span>
-<span id="src-markdown-loft-L917"><span class="kw">fn</span> <span class="fn-call">match_tracker_tag</span>(src: <span class="ty"><a href="stdlib-types.html">text</a></span>, start: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-markdown-loft-L918">    <span class="kw">if</span> start &gt;= n { <span class="kw">return</span> start; }</span>
-<span id="src-markdown-loft-L919">    c0 = (src[start] ?? <span class="ch">'\0'</span>);</span>
-<span id="src-markdown-loft-L920">    <span class="kw">if</span> c0 != <span class="ch">'P'</span> { <span class="kw">return</span> start; }</span>
-<span id="src-markdown-loft-L921">    <span class="cm">// Try PLAN prefix first (longer match).</span></span>
-<span id="src-markdown-loft-L922">    <span class="kw">if</span> start + <span class="nm">4</span> &lt; n &amp;&amp; (src[start + <span class="nm">1</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'L'</span> &amp;&amp; (src[start + <span class="nm">2</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'A'</span> &amp;&amp; (src[start + <span class="nm">3</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'N'</span> {</span>
-<span id="src-markdown-loft-L923">        i = start + <span class="nm">4</span>;</span>
-<span id="src-markdown-loft-L924">        <span class="cm">// Must have at least one digit after PLAN.</span></span>
-<span id="src-markdown-loft-L925">        digits = <span class="nm">0</span>;</span>
-<span id="src-markdown-loft-L926">        while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'0'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'9'</span> {</span>
-<span id="src-markdown-loft-L927">            i = i + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L928">            digits = digits + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L929">        }</span>
-<span id="src-markdown-loft-L930">        <span class="kw">if</span> digits == <span class="nm">0</span> { <span class="kw">return</span> start; }</span>
-<span id="src-markdown-loft-L931">        <span class="cm">// Optionally consume `-segment` parts: -[a-zA-Z0-9_.]+</span></span>
-<span id="src-markdown-loft-L932">        while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) == <span class="ch">'-'</span> {</span>
-<span id="src-markdown-loft-L933">            j = i + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L934">            seg = <span class="nm">0</span>;</span>
-<span id="src-markdown-loft-L935">            while j &lt; n {</span>
-<span id="src-markdown-loft-L936">                cj = (src[j] ?? <span class="ch">'\0'</span>);</span>
-<span id="src-markdown-loft-L937">                ok = (cj &gt;= <span class="ch">'a'</span> &amp;&amp; cj &lt;= <span class="ch">'z'</span>) || (cj &gt;= <span class="ch">'A'</span> &amp;&amp; cj &lt;= <span class="ch">'Z'</span>) || (cj &gt;= <span class="ch">'0'</span> &amp;&amp; cj &lt;= <span class="ch">'9'</span>) || cj == <span class="ch">'_'</span> || cj == <span class="ch">'.'</span>;</span>
-<span id="src-markdown-loft-L938">                <span class="kw">if</span> !ok { <span class="kw">break</span>; }</span>
-<span id="src-markdown-loft-L939">                j = j + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L940">                seg = seg + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L941">            }</span>
-<span id="src-markdown-loft-L942">            <span class="kw">if</span> seg == <span class="nm">0</span> { <span class="kw">break</span>; }</span>
-<span id="src-markdown-loft-L943">            i = j;</span>
-<span id="src-markdown-loft-L944">        }</span>
-<span id="src-markdown-loft-L945">        <span class="kw">return</span> i;</span>
-<span id="src-markdown-loft-L946">    }</span>
-<span id="src-markdown-loft-L947">    <span class="cm">// P&lt;digits&gt;([a-z])?</span></span>
-<span id="src-markdown-loft-L948">    i = start + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L949">    digits = <span class="nm">0</span>;</span>
-<span id="src-markdown-loft-L950">    while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'0'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'9'</span> {</span>
-<span id="src-markdown-loft-L951">        i = i + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L952">        digits = digits + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L953">    }</span>
-<span id="src-markdown-loft-L954">    <span class="kw">if</span> digits == <span class="nm">0</span> { <span class="kw">return</span> start; }</span>
-<span id="src-markdown-loft-L955">    <span class="kw">if</span> i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'a'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'z'</span> {</span>
-<span id="src-markdown-loft-L956">        i = i + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L957">    }</span>
-<span id="src-markdown-loft-L958">    i</span>
-<span id="src-markdown-loft-L959">}</span>
-<span id="src-markdown-loft-L960"></span>
-<span id="src-markdown-loft-L961"><span class="cm">// ── TOC extraction ───────────────────────────────────────────</span></span>
+<span id="src-markdown-loft-L879">    <span class="cm">// `find` answers `integer?` — null for a miss, which the `&gt;= 0` test below reads as</span></span>
+<span id="src-markdown-loft-L880">    <span class="cm">// absent.  `?? -1` names that miss once, so the two slices below are byte offsets.</span></span>
+<span id="src-markdown-loft-L881">    hash_at = url.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"#"</span>) ?? -<span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L882">    <span class="kw">if</span> hash_at &gt;= <span class="nm">0</span> {</span>
+<span id="src-markdown-loft-L883">        ulen = url.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-markdown-loft-L884">        target = url[<span class="nm">0..</span>hash_at];</span>
+<span id="src-markdown-loft-L885">        anchor = url[hash_at..ulen];</span>
+<span id="src-markdown-loft-L886">    }</span>
+<span id="src-markdown-loft-L887">    cleaned = target;</span>
+<span id="src-markdown-loft-L888">    while cleaned.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"./"</span>) {</span>
+<span id="src-markdown-loft-L889">        cl = cleaned.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-markdown-loft-L890">        cleaned = cleaned[<span class="nm">2..</span>cl];</span>
+<span id="src-markdown-loft-L891">    }</span>
+<span id="src-markdown-loft-L892">    cur_base = base_dir;</span>
+<span id="src-markdown-loft-L893">    while cleaned.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"../"</span>) {</span>
+<span id="src-markdown-loft-L894">        cur_base = <span class="fn-call">parent_dir</span>(cur_base);</span>
+<span id="src-markdown-loft-L895">        cl = cleaned.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-markdown-loft-L896">        cleaned = cleaned[<span class="nm">3..</span>cl];</span>
+<span id="src-markdown-loft-L897">    }</span>
+<span id="src-markdown-loft-L898">    <span class="kw">if</span> cur_base == <span class="st">""</span> {</span>
+<span id="src-markdown-loft-L899">        <span class="kw">return</span> <span class="st">"/file/{cleaned}{anchor}"</span>;</span>
+<span id="src-markdown-loft-L900">    }</span>
+<span id="src-markdown-loft-L901">    <span class="st">"/file/{cur_base}/{cleaned}{anchor}"</span></span>
+<span id="src-markdown-loft-L902">}</span>
+<span id="src-markdown-loft-L903"></span>
+<span id="src-markdown-loft-L904"><span class="kw">fn</span> <span class="fn-call">parent_dir</span>(p: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-markdown-loft-L905">    last_slash = p.<span class="fn-call"><a href="stdlib-text.html">rfind</a></span>(<span class="st">"/"</span>) ?? -<span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L906">    <span class="kw">if</span> last_slash &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-markdown-loft-L907">    p[<span class="nm">0..l</span>ast_slash]</span>
+<span id="src-markdown-loft-L908">}</span>
+<span id="src-markdown-loft-L909"></span>
+<span id="src-markdown-loft-L910"><span class="cm">// Try to match a tracker-tag identifier starting at `start`</span></span>
+<span id="src-markdown-loft-L911"><span class="cm">// in `src`.  Returns the END byte offset of a successful</span></span>
+<span id="src-markdown-loft-L912"><span class="cm">// match (so `src[start..end]` is the bare-name like "P259"</span></span>
+<span id="src-markdown-loft-L913"><span class="cm">// or "PLAN35-01"), or `start` itself if no match.</span></span>
+<span id="src-markdown-loft-L914"><span class="cm">//</span></span>
+<span id="src-markdown-loft-L915"><span class="cm">// Patterns:</span></span>
+<span id="src-markdown-loft-L916"><span class="cm">//   P\d+([a-z])?          — P-issues like P259, P229b</span></span>
+<span id="src-markdown-loft-L917"><span class="cm">//   PLAN\d+(-[\w]+)*      — plans + phases like PLAN35-01,</span></span>
+<span id="src-markdown-loft-L918"><span class="cm">//                          PLAN22-2d-iii.a</span></span>
+<span id="src-markdown-loft-L919"><span class="kw">fn</span> <span class="fn-call">match_tracker_tag</span>(src: <span class="ty"><a href="stdlib-types.html">text</a></span>, start: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-markdown-loft-L920">    <span class="kw">if</span> start &gt;= n { <span class="kw">return</span> start; }</span>
+<span id="src-markdown-loft-L921">    c0 = (src[start] ?? <span class="ch">'\0'</span>);</span>
+<span id="src-markdown-loft-L922">    <span class="kw">if</span> c0 != <span class="ch">'P'</span> { <span class="kw">return</span> start; }</span>
+<span id="src-markdown-loft-L923">    <span class="cm">// Try PLAN prefix first (longer match).</span></span>
+<span id="src-markdown-loft-L924">    <span class="kw">if</span> start + <span class="nm">4</span> &lt; n &amp;&amp; (src[start + <span class="nm">1</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'L'</span> &amp;&amp; (src[start + <span class="nm">2</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'A'</span> &amp;&amp; (src[start + <span class="nm">3</span>] ?? <span class="ch">'\0'</span>) == <span class="ch">'N'</span> {</span>
+<span id="src-markdown-loft-L925">        i = start + <span class="nm">4</span>;</span>
+<span id="src-markdown-loft-L926">        <span class="cm">// Must have at least one digit after PLAN.</span></span>
+<span id="src-markdown-loft-L927">        digits = <span class="nm">0</span>;</span>
+<span id="src-markdown-loft-L928">        while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'0'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'9'</span> {</span>
+<span id="src-markdown-loft-L929">            i = i + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L930">            digits = digits + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L931">        }</span>
+<span id="src-markdown-loft-L932">        <span class="kw">if</span> digits == <span class="nm">0</span> { <span class="kw">return</span> start; }</span>
+<span id="src-markdown-loft-L933">        <span class="cm">// Optionally consume `-segment` parts: -[a-zA-Z0-9_.]+</span></span>
+<span id="src-markdown-loft-L934">        while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) == <span class="ch">'-'</span> {</span>
+<span id="src-markdown-loft-L935">            j = i + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L936">            seg = <span class="nm">0</span>;</span>
+<span id="src-markdown-loft-L937">            while j &lt; n {</span>
+<span id="src-markdown-loft-L938">                cj = (src[j] ?? <span class="ch">'\0'</span>);</span>
+<span id="src-markdown-loft-L939">                ok = (cj &gt;= <span class="ch">'a'</span> &amp;&amp; cj &lt;= <span class="ch">'z'</span>) || (cj &gt;= <span class="ch">'A'</span> &amp;&amp; cj &lt;= <span class="ch">'Z'</span>) || (cj &gt;= <span class="ch">'0'</span> &amp;&amp; cj &lt;= <span class="ch">'9'</span>) || cj == <span class="ch">'_'</span> || cj == <span class="ch">'.'</span>;</span>
+<span id="src-markdown-loft-L940">                <span class="kw">if</span> !ok { <span class="kw">break</span>; }</span>
+<span id="src-markdown-loft-L941">                j = j + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L942">                seg = seg + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L943">            }</span>
+<span id="src-markdown-loft-L944">            <span class="kw">if</span> seg == <span class="nm">0</span> { <span class="kw">break</span>; }</span>
+<span id="src-markdown-loft-L945">            i = j;</span>
+<span id="src-markdown-loft-L946">        }</span>
+<span id="src-markdown-loft-L947">        <span class="kw">return</span> i;</span>
+<span id="src-markdown-loft-L948">    }</span>
+<span id="src-markdown-loft-L949">    <span class="cm">// P&lt;digits&gt;([a-z])?</span></span>
+<span id="src-markdown-loft-L950">    i = start + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L951">    digits = <span class="nm">0</span>;</span>
+<span id="src-markdown-loft-L952">    while i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'0'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'9'</span> {</span>
+<span id="src-markdown-loft-L953">        i = i + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L954">        digits = digits + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L955">    }</span>
+<span id="src-markdown-loft-L956">    <span class="kw">if</span> digits == <span class="nm">0</span> { <span class="kw">return</span> start; }</span>
+<span id="src-markdown-loft-L957">    <span class="kw">if</span> i &lt; n &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &gt;= <span class="ch">'a'</span> &amp;&amp; (src[i] ?? <span class="ch">'\0'</span>) &lt;= <span class="ch">'z'</span> {</span>
+<span id="src-markdown-loft-L958">        i = i + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L959">    }</span>
+<span id="src-markdown-loft-L960">    i</span>
+<span id="src-markdown-loft-L961">}</span>
 <span id="src-markdown-loft-L962"></span>
-<span id="src-markdown-loft-L963"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Heading</span> {</span>
-<span id="src-markdown-loft-L964">    level: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-markdown-loft-L965">    <span class="ty"><a href="stdlib-types.html">text</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-markdown-loft-L966">    slug: <span class="ty"><a href="stdlib-types.html">text</a></span></span>
-<span id="src-markdown-loft-L967">}</span>
-<span id="src-markdown-loft-L968"></span>
-<span id="src-markdown-loft-L969"><span class="cm">// Extract every heading from `source` in source order — both</span></span>
-<span id="src-markdown-loft-L970"><span class="cm">// ATX (`# Title`) and setext (`Title\n===` / `Title\n---`).</span></span>
-<span id="src-markdown-loft-L971"><span class="cm">// Each entry carries the level (1..6), the heading's plain</span></span>
-<span id="src-markdown-loft-L972"><span class="cm">// text (BEFORE inline rendering — the caller can pass it</span></span>
-<span id="src-markdown-loft-L973"><span class="cm">// through render_inline if needed), and a GitHub-compatible</span></span>
-<span id="src-markdown-loft-L974"><span class="cm">// slug (the same one the rendered headings get as `id=`).</span></span>
-<span id="src-markdown-loft-L975"><span class="cm">//</span></span>
-<span id="src-markdown-loft-L976"><span class="cm">// Useful for building an in-page table of contents: walk the</span></span>
-<span id="src-markdown-loft-L977"><span class="cm">// returned vector, indent by `level`, link each entry to</span></span>
-<span id="src-markdown-loft-L978"><span class="cm">// `#&lt;slug&gt;`.</span></span>
-<span id="src-markdown-loft-L979"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">extract_headings</span>(source: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Heading</span>&gt; {</span>
-<span id="src-markdown-loft-L980">    out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Heading</span>&gt; = [];</span>
-<span id="src-markdown-loft-L981">    src = <span class="fn-call">strip_cr</span>(source);</span>
-<span id="src-markdown-loft-L982">    lines = src.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
-<span id="src-markdown-loft-L983">    in_code = <span class="kw">false</span>;</span>
-<span id="src-markdown-loft-L984">    prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L985">    <span class="kw">for</span> line <span class="kw">in</span> lines {</span>
-<span id="src-markdown-loft-L986">        <span class="kw">if</span> in_code {</span>
-<span id="src-markdown-loft-L987">            <span class="kw">if</span> line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"```"</span>) { in_code = <span class="kw">false</span>; }</span>
-<span id="src-markdown-loft-L988">            prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L989">            <span class="kw">continue</span>;</span>
-<span id="src-markdown-loft-L990">        }</span>
-<span id="src-markdown-loft-L991">        <span class="kw">if</span> line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"```"</span>) {</span>
-<span id="src-markdown-loft-L992">            in_code = <span class="kw">true</span>;</span>
-<span id="src-markdown-loft-L993">            prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L994">            <span class="kw">continue</span>;</span>
-<span id="src-markdown-loft-L995">        }</span>
-<span id="src-markdown-loft-L996">        <span class="kw">if</span> prev != <span class="st">""</span> {</span>
-<span id="src-markdown-loft-L997">            <span class="kw">if</span> <span class="fn-call">is_setext_underline</span>(line, <span class="ch">'='</span>) {</span>
-<span id="src-markdown-loft-L998">                out += [<span class="en">Heading</span> {</span>
-<span id="src-markdown-loft-L999">                    level: <span class="nm">1</span>,</span>
-<span id="src-markdown-loft-L1000">                    <span class="ty"><a href="stdlib-types.html">text</a></span>: prev,</span>
-<span id="src-markdown-loft-L1001">                    slug: <span class="fn-call">slugify</span>(prev)</span>
-<span id="src-markdown-loft-L1002">                }];</span>
-<span id="src-markdown-loft-L1003">                prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L1004">                <span class="kw">continue</span>;</span>
-<span id="src-markdown-loft-L1005">            }</span>
-<span id="src-markdown-loft-L1006">            <span class="kw">if</span> <span class="fn-call">is_setext_underline</span>(line, <span class="ch">'-'</span>) {</span>
-<span id="src-markdown-loft-L1007">                out += [<span class="en">Heading</span> {</span>
-<span id="src-markdown-loft-L1008">                    level: <span class="nm">2</span>,</span>
-<span id="src-markdown-loft-L1009">                    <span class="ty"><a href="stdlib-types.html">text</a></span>: prev,</span>
-<span id="src-markdown-loft-L1010">                    slug: <span class="fn-call">slugify</span>(prev)</span>
-<span id="src-markdown-loft-L1011">                }];</span>
-<span id="src-markdown-loft-L1012">                prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L1013">                <span class="kw">continue</span>;</span>
-<span id="src-markdown-loft-L1014">            }</span>
-<span id="src-markdown-loft-L1015">            prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L1016">        }</span>
-<span id="src-markdown-loft-L1017">        hlevel = <span class="fn-call">atx_heading_level</span>(line);</span>
-<span id="src-markdown-loft-L1018">        <span class="kw">if</span> hlevel &gt; <span class="nm">0</span> {</span>
-<span id="src-markdown-loft-L1019">            ln = line.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
-<span id="src-markdown-loft-L1020">            start = hlevel + <span class="nm">1</span>;</span>
-<span id="src-markdown-loft-L1021">            txt = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L1022">            <span class="kw">if</span> start &lt; ln { txt = line[start..ln]; }</span>
-<span id="src-markdown-loft-L1023">            txt = <span class="fn-call">strip_trailing_hashes</span>(txt);</span>
-<span id="src-markdown-loft-L1024">            out += [<span class="en">Heading</span> {</span>
-<span id="src-markdown-loft-L1025">                level: hlevel,</span>
-<span id="src-markdown-loft-L1026">                <span class="ty"><a href="stdlib-types.html">text</a></span>: txt,</span>
-<span id="src-markdown-loft-L1027">                slug: <span class="fn-call">slugify</span>(txt)</span>
-<span id="src-markdown-loft-L1028">            }];</span>
-<span id="src-markdown-loft-L1029">            <span class="kw">continue</span>;</span>
-<span id="src-markdown-loft-L1030">        }</span>
-<span id="src-markdown-loft-L1031">        <span class="kw">if</span> line != <span class="st">""</span> &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"- "</span>) &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"* "</span>)</span>
-<span id="src-markdown-loft-L1032">            &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"&gt; "</span>) &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"|"</span>)</span>
-<span id="src-markdown-loft-L1033">            &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"    "</span>) {</span>
-<span id="src-markdown-loft-L1034">            prev = line;</span>
-<span id="src-markdown-loft-L1035">        } <span class="kw">else</span> {</span>
-<span id="src-markdown-loft-L1036">            prev = <span class="st">""</span>;</span>
-<span id="src-markdown-loft-L1037">        }</span>
-<span id="src-markdown-loft-L1038">    }</span>
-<span id="src-markdown-loft-L1039">    out</span>
-<span id="src-markdown-loft-L1040">}</span>
+<span id="src-markdown-loft-L963"><span class="cm">// ── TOC extraction ───────────────────────────────────────────</span></span>
+<span id="src-markdown-loft-L964"></span>
+<span id="src-markdown-loft-L965"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Heading</span> {</span>
+<span id="src-markdown-loft-L966">    level: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-markdown-loft-L967">    <span class="ty"><a href="stdlib-types.html">text</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-markdown-loft-L968">    slug: <span class="ty"><a href="stdlib-types.html">text</a></span></span>
+<span id="src-markdown-loft-L969">}</span>
+<span id="src-markdown-loft-L970"></span>
+<span id="src-markdown-loft-L971"><span class="cm">// Extract every heading from `source` in source order — both</span></span>
+<span id="src-markdown-loft-L972"><span class="cm">// ATX (`# Title`) and setext (`Title\n===` / `Title\n---`).</span></span>
+<span id="src-markdown-loft-L973"><span class="cm">// Each entry carries the level (1..6), the heading's plain</span></span>
+<span id="src-markdown-loft-L974"><span class="cm">// text (BEFORE inline rendering — the caller can pass it</span></span>
+<span id="src-markdown-loft-L975"><span class="cm">// through render_inline if needed), and a GitHub-compatible</span></span>
+<span id="src-markdown-loft-L976"><span class="cm">// slug (the same one the rendered headings get as `id=`).</span></span>
+<span id="src-markdown-loft-L977"><span class="cm">//</span></span>
+<span id="src-markdown-loft-L978"><span class="cm">// Useful for building an in-page table of contents: walk the</span></span>
+<span id="src-markdown-loft-L979"><span class="cm">// returned vector, indent by `level`, link each entry to</span></span>
+<span id="src-markdown-loft-L980"><span class="cm">// `#&lt;slug&gt;`.</span></span>
+<span id="src-markdown-loft-L981"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">extract_headings</span>(source: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Heading</span>&gt; {</span>
+<span id="src-markdown-loft-L982">    out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Heading</span>&gt; = [];</span>
+<span id="src-markdown-loft-L983">    src = <span class="fn-call">strip_cr</span>(source);</span>
+<span id="src-markdown-loft-L984">    lines = src.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
+<span id="src-markdown-loft-L985">    in_code = <span class="kw">false</span>;</span>
+<span id="src-markdown-loft-L986">    prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L987">    <span class="kw">for</span> line <span class="kw">in</span> lines {</span>
+<span id="src-markdown-loft-L988">        <span class="kw">if</span> in_code {</span>
+<span id="src-markdown-loft-L989">            <span class="kw">if</span> line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"```"</span>) { in_code = <span class="kw">false</span>; }</span>
+<span id="src-markdown-loft-L990">            prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L991">            <span class="kw">continue</span>;</span>
+<span id="src-markdown-loft-L992">        }</span>
+<span id="src-markdown-loft-L993">        <span class="kw">if</span> line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"```"</span>) {</span>
+<span id="src-markdown-loft-L994">            in_code = <span class="kw">true</span>;</span>
+<span id="src-markdown-loft-L995">            prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L996">            <span class="kw">continue</span>;</span>
+<span id="src-markdown-loft-L997">        }</span>
+<span id="src-markdown-loft-L998">        <span class="kw">if</span> prev != <span class="st">""</span> {</span>
+<span id="src-markdown-loft-L999">            <span class="kw">if</span> <span class="fn-call">is_setext_underline</span>(line, <span class="ch">'='</span>) {</span>
+<span id="src-markdown-loft-L1000">                out += [<span class="en">Heading</span> {</span>
+<span id="src-markdown-loft-L1001">                    level: <span class="nm">1</span>,</span>
+<span id="src-markdown-loft-L1002">                    <span class="ty"><a href="stdlib-types.html">text</a></span>: prev,</span>
+<span id="src-markdown-loft-L1003">                    slug: <span class="fn-call">slugify</span>(prev)</span>
+<span id="src-markdown-loft-L1004">                }];</span>
+<span id="src-markdown-loft-L1005">                prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L1006">                <span class="kw">continue</span>;</span>
+<span id="src-markdown-loft-L1007">            }</span>
+<span id="src-markdown-loft-L1008">            <span class="kw">if</span> <span class="fn-call">is_setext_underline</span>(line, <span class="ch">'-'</span>) {</span>
+<span id="src-markdown-loft-L1009">                out += [<span class="en">Heading</span> {</span>
+<span id="src-markdown-loft-L1010">                    level: <span class="nm">2</span>,</span>
+<span id="src-markdown-loft-L1011">                    <span class="ty"><a href="stdlib-types.html">text</a></span>: prev,</span>
+<span id="src-markdown-loft-L1012">                    slug: <span class="fn-call">slugify</span>(prev)</span>
+<span id="src-markdown-loft-L1013">                }];</span>
+<span id="src-markdown-loft-L1014">                prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L1015">                <span class="kw">continue</span>;</span>
+<span id="src-markdown-loft-L1016">            }</span>
+<span id="src-markdown-loft-L1017">            prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L1018">        }</span>
+<span id="src-markdown-loft-L1019">        hlevel = <span class="fn-call">atx_heading_level</span>(line);</span>
+<span id="src-markdown-loft-L1020">        <span class="kw">if</span> hlevel &gt; <span class="nm">0</span> {</span>
+<span id="src-markdown-loft-L1021">            ln = line.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-markdown-loft-L1022">            start = hlevel + <span class="nm">1</span>;</span>
+<span id="src-markdown-loft-L1023">            txt = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L1024">            <span class="kw">if</span> start &lt; ln { txt = line[start..ln]; }</span>
+<span id="src-markdown-loft-L1025">            txt = <span class="fn-call">strip_trailing_hashes</span>(txt);</span>
+<span id="src-markdown-loft-L1026">            out += [<span class="en">Heading</span> {</span>
+<span id="src-markdown-loft-L1027">                level: hlevel,</span>
+<span id="src-markdown-loft-L1028">                <span class="ty"><a href="stdlib-types.html">text</a></span>: txt,</span>
+<span id="src-markdown-loft-L1029">                slug: <span class="fn-call">slugify</span>(txt)</span>
+<span id="src-markdown-loft-L1030">            }];</span>
+<span id="src-markdown-loft-L1031">            <span class="kw">continue</span>;</span>
+<span id="src-markdown-loft-L1032">        }</span>
+<span id="src-markdown-loft-L1033">        <span class="kw">if</span> line != <span class="st">""</span> &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"- "</span>) &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"* "</span>)</span>
+<span id="src-markdown-loft-L1034">            &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"&gt; "</span>) &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"|"</span>)</span>
+<span id="src-markdown-loft-L1035">            &amp;&amp; !line.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"    "</span>) {</span>
+<span id="src-markdown-loft-L1036">            prev = line;</span>
+<span id="src-markdown-loft-L1037">        } <span class="kw">else</span> {</span>
+<span id="src-markdown-loft-L1038">            prev = <span class="st">""</span>;</span>
+<span id="src-markdown-loft-L1039">        }</span>
+<span id="src-markdown-loft-L1040">    }</span>
+<span id="src-markdown-loft-L1041">    out</span>
+<span id="src-markdown-loft-L1042">}</span>
 </code></pre>
 <h2 id="tests-01-render-loft">tests/01-render.loft</h2>
 <pre class="src"><code><span id="tests-01-render-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -1220,149 +1222,151 @@
 <span id="tests-01-render-loft-L138">                 <span class="st">"blockquote merges consecutive lines"</span>);</span>
 <span id="tests-01-render-loft-L139">    bq2 = markdown::<span class="fn-call">render</span>(<span class="st">"&gt; a\n\n&gt; b\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
 <span id="tests-01-render-loft-L140">    bq2_count = <span class="nm">0</span>;</span>
-<span id="tests-01-render-loft-L141">    bi = bq2.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"&lt;blockquote&gt;"</span>);</span>
-<span id="tests-01-render-loft-L142">    while bi &gt;= <span class="nm">0</span> {</span>
-<span id="tests-01-render-loft-L143">        bq2_count = bq2_count + <span class="nm">1</span>;</span>
-<span id="tests-01-render-loft-L144">        rest = bq2[bi + <span class="nm">12..</span>];</span>
-<span id="tests-01-render-loft-L145">        next = rest.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"&lt;blockquote&gt;"</span>);</span>
-<span id="tests-01-render-loft-L146">        <span class="kw">if</span> next &lt; <span class="nm">0</span> { bi = -<span class="nm">1</span>; }</span>
-<span id="tests-01-render-loft-L147">        <span class="kw">else</span> { bi = bi + <span class="nm">12</span> + next; }</span>
-<span id="tests-01-render-loft-L148">    }</span>
-<span id="tests-01-render-loft-L149">    <span class="kw">if</span> bq2_count != <span class="nm">2</span> {</span>
-<span id="tests-01-render-loft-L150">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: blockquote separated by blank — got {bq2_count} blockquotes"</span>);</span>
-<span id="tests-01-render-loft-L151">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  rendered: {bq2}"</span>);</span>
-<span id="tests-01-render-loft-L152">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"blockquote separated by blank line"</span>);</span>
-<span id="tests-01-render-loft-L153">    }</span>
-<span id="tests-01-render-loft-L154"></span>
-<span id="tests-01-render-loft-L155">    <span class="cm">// ── Fenced code block ────────────────────────────────</span></span>
-<span id="tests-01-render-loft-L156">    fc = markdown::<span class="fn-call">render</span>(<span class="st">"```rust\nfn x() {{}}\n```\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L157">    <span class="fn-call">must_contain</span>(fc, <span class="st">"&lt;pre&gt;&lt;code class=\"</span>language-rust\<span class="st">"&gt;fn x() {{}}\n&lt;/code&gt;&lt;/pre&gt;"</span>,</span>
-<span id="tests-01-render-loft-L158">                 <span class="st">"fenced code with lang"</span>);</span>
-<span id="tests-01-render-loft-L159">    fc2 = markdown::<span class="fn-call">render</span>(<span class="st">"```\nplain\n```\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L160">    <span class="fn-call">must_contain</span>(fc2, <span class="st">"&lt;pre&gt;&lt;code&gt;plain\n&lt;/code&gt;&lt;/pre&gt;"</span>, <span class="st">"fenced code no lang"</span>);</span>
-<span id="tests-01-render-loft-L161"></span>
-<span id="tests-01-render-loft-L162">    <span class="cm">// ── Lists (UL / OL / continuation) ───────────────────</span></span>
-<span id="tests-01-render-loft-L163">    ul = markdown::<span class="fn-call">render</span>(<span class="st">"- one\n- two\n- three\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L164">    <span class="fn-call">must_contain</span>(ul, <span class="st">"&lt;ul&gt;&lt;li&gt;one&lt;/li&gt;&lt;li&gt;two&lt;/li&gt;&lt;li&gt;three&lt;/li&gt;&lt;/ul&gt;"</span>,</span>
-<span id="tests-01-render-loft-L165">                 <span class="st">"ul three items"</span>);</span>
-<span id="tests-01-render-loft-L166">    ol = markdown::<span class="fn-call">render</span>(<span class="st">"1. one\n2. two\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L167">    <span class="fn-call">must_contain</span>(ol, <span class="st">"&lt;ol&gt;&lt;li&gt;one&lt;/li&gt;&lt;li&gt;two&lt;/li&gt;&lt;/ol&gt;"</span>, <span class="st">"ol two items"</span>);</span>
-<span id="tests-01-render-loft-L168">    cont = markdown::<span class="fn-call">render</span>(<span class="st">"- first line\n  continuation\n- second\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L169">    <span class="fn-call">must_contain</span>(cont, <span class="st">"&lt;li&gt;first line continuation&lt;/li&gt;"</span>,</span>
-<span id="tests-01-render-loft-L170">                 <span class="st">"list-item continuation merge"</span>);</span>
-<span id="tests-01-render-loft-L171"></span>
-<span id="tests-01-render-loft-L172">    <span class="cm">// ── Task lists ───────────────────────────────────────</span></span>
-<span id="tests-01-render-loft-L173">    tl = markdown::<span class="fn-call">render</span>(<span class="st">"- [ ] todo\n- [x] done\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L174">    <span class="fn-call">must_contain</span>(tl, <span class="st">"&lt;input type=\"</span>checkbox\<span class="st">" disabled&gt; todo"</span>, <span class="st">"unchecked task"</span>);</span>
-<span id="tests-01-render-loft-L175">    <span class="fn-call">must_contain</span>(tl, <span class="st">"&lt;input type=\"</span>checkbox\<span class="st">" disabled checked&gt; done"</span>, <span class="st">"checked task"</span>);</span>
-<span id="tests-01-render-loft-L176"></span>
-<span id="tests-01-render-loft-L177">    <span class="cm">// ── Tables (header + alignment + body) ───────────────</span></span>
-<span id="tests-01-render-loft-L178">    tbl = markdown::<span class="fn-call">render</span>(<span class="st">"| col1 | col2 |\n|---|---|\n| a | b |\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L179">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;table&gt;&lt;thead&gt;"</span>, <span class="st">"table thead"</span>);</span>
-<span id="tests-01-render-loft-L180">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;th&gt;col1&lt;/th&gt;"</span>, <span class="st">"table header cell"</span>);</span>
-<span id="tests-01-render-loft-L181">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;td&gt;a&lt;/td&gt;"</span>, <span class="st">"table body cell"</span>);</span>
-<span id="tests-01-render-loft-L182">    tbl_align = markdown::<span class="fn-call">render</span>(<span class="st">"| L | C | R |\n|:--|:--:|--:|\n| a | b | c |\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L183">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:left\<span class="st">""</span>, <span class="st">"table align left"</span>);</span>
-<span id="tests-01-render-loft-L184">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:center\<span class="st">""</span>, <span class="st">"table align center"</span>);</span>
-<span id="tests-01-render-loft-L185">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:right\<span class="st">""</span>, <span class="st">"table align right"</span>);</span>
-<span id="tests-01-render-loft-L186"></span>
-<span id="tests-01-render-loft-L187">    <span class="cm">// ── HTML comments stripped ───────────────────────────</span></span>
-<span id="tests-01-render-loft-L188">    cmt = markdown::<span class="fn-call">render</span>(<span class="st">"&lt;!-- hide me --&gt;\nshow me\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L189">    <span class="fn-call">must_not_contain</span>(cmt, <span class="st">"hide me"</span>, <span class="st">"html comment stripped"</span>);</span>
-<span id="tests-01-render-loft-L190">    <span class="fn-call">must_contain</span>(cmt, <span class="st">"show me"</span>, <span class="st">"non-comment line preserved"</span>);</span>
-<span id="tests-01-render-loft-L191"></span>
-<span id="tests-01-render-loft-L192">    <span class="cm">// ── CRLF handling ────────────────────────────────────</span></span>
-<span id="tests-01-render-loft-L193">    crlf = markdown::<span class="fn-call">render</span>(<span class="st">"# Title\r\n\r\nbody\r\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L194">    <span class="fn-call">must_contain</span>(crlf, <span class="st">"&lt;h1 id=\"</span>title\<span class="st">"&gt;Title&lt;/h1&gt;"</span>, <span class="st">"CRLF heading"</span>);</span>
-<span id="tests-01-render-loft-L195">    <span class="fn-call">must_contain</span>(crlf, <span class="st">"&lt;p&gt;body&lt;/p&gt;"</span>, <span class="st">"CRLF paragraph"</span>);</span>
-<span id="tests-01-render-loft-L196">    <span class="fn-call">must_not_contain</span>(crlf, <span class="st">"\r"</span>, <span class="st">"CRLF \\r stripped"</span>);</span>
-<span id="tests-01-render-loft-L197"></span>
-<span id="tests-01-render-loft-L198">    <span class="cm">// ── UTF-8 multi-byte preservation (P272 regression) ──</span></span>
-<span id="tests-01-render-loft-L199">    utf = markdown::<span class="fn-call">render</span>(<span class="st">"# Arrow → here\n\nan em-dash — here\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L200">    <span class="fn-call">must_contain</span>(utf, <span class="st">"Arrow → here"</span>, <span class="st">"UTF-8 in heading"</span>);</span>
-<span id="tests-01-render-loft-L201">    <span class="fn-call">must_contain</span>(utf, <span class="st">"em-dash — here"</span>, <span class="st">"UTF-8 in paragraph"</span>);</span>
-<span id="tests-01-render-loft-L202">    <span class="fn-call">must_not_contain</span>(utf, <span class="st">"———"</span>, <span class="st">"no em-dash widening"</span>);</span>
-<span id="tests-01-render-loft-L203">    <span class="fn-call">must_not_contain</span>(utf, <span class="st">"→→"</span>, <span class="st">"no arrow widening"</span>);</span>
-<span id="tests-01-render-loft-L204"></span>
-<span id="tests-01-render-loft-L205">    <span class="cm">// ── UTF-8 across slice-bearing constructs (@PLN110 len→size regression) ──</span></span>
-<span id="tests-01-render-loft-L206">    <span class="cm">// Byte-slice / byte-index bounds (links, fenced code, list items, heading text</span></span>
-<span id="tests-01-render-loft-L207">    <span class="cm">// past the marker) must be sized in BYTES, not the character count `len` now</span></span>
-<span id="tests-01-render-loft-L208">    <span class="cm">// returns — otherwise multi-byte content truncates or the inline cursor re-emits</span></span>
-<span id="tests-01-render-loft-L209">    <span class="cm">// characters (`café` → `caféé`).</span></span>
-<span id="tests-01-render-loft-L210">    u2 = markdown::<span class="fn-call">render</span>(<span class="st">"## Héllo wörld\n\n[café](/naïve)\n\n```txt\n— ok\n```\n\n- café item\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L211">    <span class="fn-call">must_contain</span>(u2, <span class="st">"Héllo wörld"</span>, <span class="st">"UTF-8 heading text past the ## marker"</span>);</span>
-<span id="tests-01-render-loft-L212">    <span class="fn-call">must_contain</span>(u2, <span class="st">"&lt;a href=\"</span>/naïve\<span class="st">"&gt;café&lt;/a&gt;"</span>, <span class="st">"UTF-8 in link text and href"</span>);</span>
-<span id="tests-01-render-loft-L213">    <span class="fn-call">must_contain</span>(u2, <span class="st">"— ok"</span>, <span class="st">"UTF-8 in fenced code"</span>);</span>
-<span id="tests-01-render-loft-L214">    <span class="fn-call">must_contain</span>(u2, <span class="st">"café item"</span>, <span class="st">"UTF-8 in list item"</span>);</span>
-<span id="tests-01-render-loft-L215">    <span class="fn-call">must_not_contain</span>(u2, <span class="st">"caféé"</span>, <span class="st">"no multi-byte character duplication"</span>);</span>
-<span id="tests-01-render-loft-L216"></span>
-<span id="tests-01-render-loft-L217">    <span class="cm">// ── HTML in source escaped (no raw HTML passthrough) ──</span></span>
-<span id="tests-01-render-loft-L218">    htm = markdown::<span class="fn-call">render</span>(<span class="st">"a &lt;script&gt;x&lt;/script&gt; b\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L219">    <span class="fn-call">must_contain</span>(htm, <span class="st">"&amp;lt;script&amp;gt;"</span>, <span class="st">"raw HTML escaped"</span>);</span>
-<span id="tests-01-render-loft-L220">    <span class="fn-call">must_not_contain</span>(htm, <span class="st">"&lt;script&gt;x&lt;/script&gt;"</span>, <span class="st">"no raw HTML passthrough"</span>);</span>
-<span id="tests-01-render-loft-L221"></span>
-<span id="tests-01-render-loft-L222">    <span class="cm">// ── Tracker-tag autolink (high-impact extension) ─────</span></span>
-<span id="tests-01-render-loft-L223">    tag_p = markdown::<span class="fn-call">render</span>(<span class="st">"see @P259 for the fix.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L224">    <span class="fn-call">must_contain</span>(tag_p, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">P259</span>\<span class="st">"&gt;@P259&lt;/a&gt;"</span>,</span>
-<span id="tests-01-render-loft-L225">                 <span class="st">"tag autolink @P259"</span>);</span>
-<span id="tests-01-render-loft-L226">    tag_plan = markdown::<span class="fn-call">render</span>(<span class="st">"phase @PLAN35-01 status.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L227">    <span class="fn-call">must_contain</span>(tag_plan, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">PLAN35</span>-<span class="nm">01</span>\<span class="st">"&gt;@PLAN35-01&lt;/a&gt;"</span>,</span>
-<span id="tests-01-render-loft-L228">                 <span class="st">"tag autolink @PLAN35-01"</span>);</span>
-<span id="tests-01-render-loft-L229">    tag_subph = markdown::<span class="fn-call">render</span>(<span class="st">"@PLAN22-2d-iii.a sub-phase.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L230">    <span class="fn-call">must_contain</span>(tag_subph, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">PLAN22</span>-<span class="nm">2</span>d-iii.a\<span class="st">"&gt;@PLAN22-2d-iii.a&lt;/a&gt;"</span>,</span>
-<span id="tests-01-render-loft-L231">                 <span class="st">"tag autolink with sub-phases (-/.)"</span>);</span>
-<span id="tests-01-render-loft-L232">    tag_off = markdown::<span class="fn-call">render</span>(<span class="st">"see @P259 here.\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L233">    <span class="fn-call">must_not_contain</span>(tag_off, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink off when prefix empty"</span>);</span>
-<span id="tests-01-render-loft-L234">    <span class="fn-call">must_contain</span>(tag_off, <span class="st">"@P259"</span>, <span class="st">"tag literal preserved when off"</span>);</span>
-<span id="tests-01-render-loft-L235">    tag_inword = markdown::<span class="fn-call">render</span>(<span class="st">"user@P259.com address.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L236">    <span class="fn-call">must_not_contain</span>(tag_inword, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink skips inside word"</span>);</span>
-<span id="tests-01-render-loft-L237">    tag_code = markdown::<span class="fn-call">render</span>(<span class="st">"see `@P259` literally.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L238">    <span class="fn-call">must_not_contain</span>(tag_code, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink skipped inside `code`"</span>);</span>
-<span id="tests-01-render-loft-L239"></span>
-<span id="tests-01-render-loft-L240">    <span class="cm">// ── Image URL rewriting (image_url_prefix) ───────────</span></span>
-<span id="tests-01-render-loft-L241">    img_rw = markdown::<span class="fn-call">render</span>(<span class="st">"![pic](images/logo.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
-<span id="tests-01-render-loft-L242">    <span class="fn-call">must_contain</span>(img_rw, <span class="st">"&lt;img src=\"</span>/raw/doc/images/logo.png\<span class="st">" alt=\"</span>pic\<span class="st">"&gt;"</span>,</span>
-<span id="tests-01-render-loft-L243">                 <span class="st">"image relative URL rewritten through prefix"</span>);</span>
-<span id="tests-01-render-loft-L244">    img_abs = markdown::<span class="fn-call">render</span>(<span class="st">"![ext](https://example.com/x.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
-<span id="tests-01-render-loft-L245">    <span class="fn-call">must_contain</span>(img_abs, <span class="st">"&lt;img src=\"</span>https:<span class="cm">//example.com/x.png\" alt=\"ext\"&gt;",</span></span>
-<span id="tests-01-render-loft-L246">                 <span class="st">"image absolute URL passes through"</span>);</span>
-<span id="tests-01-render-loft-L247">    img_off = markdown::<span class="fn-call">render</span>(<span class="st">"![pic](images/logo.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
-<span id="tests-01-render-loft-L248">    <span class="fn-call">must_contain</span>(img_off, <span class="st">"&lt;img src=\"</span>images/logo.png\<span class="st">" alt=\"</span>pic\<span class="st">"&gt;"</span>,</span>
-<span id="tests-01-render-loft-L249">                 <span class="st">"image not rewritten when prefix empty"</span>);</span>
-<span id="tests-01-render-loft-L250">    img_dotdot = markdown::<span class="fn-call">render</span>(<span class="st">"![up](../images/logo.png)\n"</span>, <span class="st">"doc/sub"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
-<span id="tests-01-render-loft-L251">    <span class="fn-call">must_contain</span>(img_dotdot, <span class="st">"&lt;img src=\"</span>/raw/doc/images/logo.png\<span class="st">" alt=\"</span>up\<span class="st">"&gt;"</span>,</span>
-<span id="tests-01-render-loft-L252">                 <span class="st">"image ../ path resolved"</span>);</span>
-<span id="tests-01-render-loft-L253"></span>
-<span id="tests-01-render-loft-L254">    <span class="cm">// ── extract_headings (TOC support) ───────────────────</span></span>
-<span id="tests-01-render-loft-L255">    src_h = <span class="st">"# Top\n\n## Open work\n\n## P259 (closed)\n\nbody\n\nSetext H1\n=====\n\n### nested"</span>;</span>
-<span id="tests-01-render-loft-L256">    hs = markdown::<span class="fn-call">extract_headings</span>(src_h);</span>
-<span id="tests-01-render-loft-L257">    <span class="kw">if</span> hs.<span class="bi"><a href="stdlib-text.html">len</a></span>() != <span class="nm">5</span> {</span>
-<span id="tests-01-render-loft-L258">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: extract_headings count — got {hs.len()}, expected 5"</span>);</span>
-<span id="tests-01-render-loft-L259">        <span class="kw">for</span> h <span class="kw">in</span> hs {</span>
-<span id="tests-01-render-loft-L260">            <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  L{h.level} [{h.slug}] {h.text}"</span>);</span>
-<span id="tests-01-render-loft-L261">        }</span>
-<span id="tests-01-render-loft-L262">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings count"</span>);</span>
-<span id="tests-01-render-loft-L263">    }</span>
-<span id="tests-01-render-loft-L264">    <span class="fn-call">must_eq</span>(hs[<span class="nm">0</span>].slug, <span class="st">"top"</span>, <span class="st">"extract_headings[0].slug"</span>);</span>
-<span id="tests-01-render-loft-L265">    <span class="fn-call">must_eq</span>(hs[<span class="nm">1</span>].slug, <span class="st">"open-work"</span>, <span class="st">"extract_headings[1].slug"</span>);</span>
-<span id="tests-01-render-loft-L266">    <span class="fn-call">must_eq</span>(hs[<span class="nm">2</span>].slug, <span class="st">"p259-closed"</span>, <span class="st">"extract_headings[2].slug"</span>);</span>
-<span id="tests-01-render-loft-L267">    <span class="fn-call">must_eq</span>(hs[<span class="nm">3</span>].slug, <span class="st">"setext-h1"</span>, <span class="st">"extract_headings[3].slug (setext)"</span>);</span>
-<span id="tests-01-render-loft-L268">    <span class="fn-call">must_eq</span>(hs[<span class="nm">4</span>].slug, <span class="st">"nested"</span>, <span class="st">"extract_headings[4].slug"</span>);</span>
-<span id="tests-01-render-loft-L269">    <span class="kw">if</span> hs[<span class="nm">0</span>].level != <span class="nm">1</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[0].level should be 1"</span>); }</span>
-<span id="tests-01-render-loft-L270">    <span class="kw">if</span> hs[<span class="nm">3</span>].level != <span class="nm">1</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[3].level should be 1 (setext)"</span>); }</span>
-<span id="tests-01-render-loft-L271">    <span class="kw">if</span> hs[<span class="nm">4</span>].level != <span class="nm">3</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[4].level should be 3"</span>); }</span>
-<span id="tests-01-render-loft-L272">    src_h2 = <span class="st">"# real\n\n```md\n# fake\n```\n\n## also real"</span>;</span>
-<span id="tests-01-render-loft-L273">    hs2 = markdown::<span class="fn-call">extract_headings</span>(src_h2);</span>
-<span id="tests-01-render-loft-L274">    <span class="kw">if</span> hs2.<span class="bi"><a href="stdlib-text.html">len</a></span>() != <span class="nm">2</span> {</span>
-<span id="tests-01-render-loft-L275">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: extract_headings should skip code-fenced — got {hs2.len()}"</span>);</span>
-<span id="tests-01-render-loft-L276">        <span class="kw">for</span> h <span class="kw">in</span> hs2 {</span>
-<span id="tests-01-render-loft-L277">            <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  L{h.level} [{h.slug}] {h.text}"</span>);</span>
-<span id="tests-01-render-loft-L278">        }</span>
-<span id="tests-01-render-loft-L279">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings skip code-fenced"</span>);</span>
-<span id="tests-01-render-loft-L280">    }</span>
-<span id="tests-01-render-loft-L281"></span>
-<span id="tests-01-render-loft-L282">    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ALL TESTS PASSED"</span>);</span>
-<span id="tests-01-render-loft-L283">}</span>
+<span id="tests-01-render-loft-L141">    <span class="cm">// `find` answers `integer?` — null for a miss.  `?? -1` names the miss once at</span></span>
+<span id="tests-01-render-loft-L142">    <span class="cm">// each door, so the offsets that reach the slice are plain byte positions.</span></span>
+<span id="tests-01-render-loft-L143">    bi = bq2.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"&lt;blockquote&gt;"</span>) ?? -<span class="nm">1</span>;</span>
+<span id="tests-01-render-loft-L144">    while bi &gt;= <span class="nm">0</span> {</span>
+<span id="tests-01-render-loft-L145">        bq2_count = bq2_count + <span class="nm">1</span>;</span>
+<span id="tests-01-render-loft-L146">        rest = bq2[bi + <span class="nm">12..</span>];</span>
+<span id="tests-01-render-loft-L147">        next = rest.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"&lt;blockquote&gt;"</span>) ?? -<span class="nm">1</span>;</span>
+<span id="tests-01-render-loft-L148">        <span class="kw">if</span> next &lt; <span class="nm">0</span> { bi = -<span class="nm">1</span>; }</span>
+<span id="tests-01-render-loft-L149">        <span class="kw">else</span> { bi = bi + <span class="nm">12</span> + next; }</span>
+<span id="tests-01-render-loft-L150">    }</span>
+<span id="tests-01-render-loft-L151">    <span class="kw">if</span> bq2_count != <span class="nm">2</span> {</span>
+<span id="tests-01-render-loft-L152">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: blockquote separated by blank — got {bq2_count} blockquotes"</span>);</span>
+<span id="tests-01-render-loft-L153">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  rendered: {bq2}"</span>);</span>
+<span id="tests-01-render-loft-L154">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"blockquote separated by blank line"</span>);</span>
+<span id="tests-01-render-loft-L155">    }</span>
+<span id="tests-01-render-loft-L156"></span>
+<span id="tests-01-render-loft-L157">    <span class="cm">// ── Fenced code block ────────────────────────────────</span></span>
+<span id="tests-01-render-loft-L158">    fc = markdown::<span class="fn-call">render</span>(<span class="st">"```rust\nfn x() {{}}\n```\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L159">    <span class="fn-call">must_contain</span>(fc, <span class="st">"&lt;pre&gt;&lt;code class=\"</span>language-rust\<span class="st">"&gt;fn x() {{}}\n&lt;/code&gt;&lt;/pre&gt;"</span>,</span>
+<span id="tests-01-render-loft-L160">                 <span class="st">"fenced code with lang"</span>);</span>
+<span id="tests-01-render-loft-L161">    fc2 = markdown::<span class="fn-call">render</span>(<span class="st">"```\nplain\n```\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L162">    <span class="fn-call">must_contain</span>(fc2, <span class="st">"&lt;pre&gt;&lt;code&gt;plain\n&lt;/code&gt;&lt;/pre&gt;"</span>, <span class="st">"fenced code no lang"</span>);</span>
+<span id="tests-01-render-loft-L163"></span>
+<span id="tests-01-render-loft-L164">    <span class="cm">// ── Lists (UL / OL / continuation) ───────────────────</span></span>
+<span id="tests-01-render-loft-L165">    ul = markdown::<span class="fn-call">render</span>(<span class="st">"- one\n- two\n- three\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L166">    <span class="fn-call">must_contain</span>(ul, <span class="st">"&lt;ul&gt;&lt;li&gt;one&lt;/li&gt;&lt;li&gt;two&lt;/li&gt;&lt;li&gt;three&lt;/li&gt;&lt;/ul&gt;"</span>,</span>
+<span id="tests-01-render-loft-L167">                 <span class="st">"ul three items"</span>);</span>
+<span id="tests-01-render-loft-L168">    ol = markdown::<span class="fn-call">render</span>(<span class="st">"1. one\n2. two\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L169">    <span class="fn-call">must_contain</span>(ol, <span class="st">"&lt;ol&gt;&lt;li&gt;one&lt;/li&gt;&lt;li&gt;two&lt;/li&gt;&lt;/ol&gt;"</span>, <span class="st">"ol two items"</span>);</span>
+<span id="tests-01-render-loft-L170">    cont = markdown::<span class="fn-call">render</span>(<span class="st">"- first line\n  continuation\n- second\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L171">    <span class="fn-call">must_contain</span>(cont, <span class="st">"&lt;li&gt;first line continuation&lt;/li&gt;"</span>,</span>
+<span id="tests-01-render-loft-L172">                 <span class="st">"list-item continuation merge"</span>);</span>
+<span id="tests-01-render-loft-L173"></span>
+<span id="tests-01-render-loft-L174">    <span class="cm">// ── Task lists ───────────────────────────────────────</span></span>
+<span id="tests-01-render-loft-L175">    tl = markdown::<span class="fn-call">render</span>(<span class="st">"- [ ] todo\n- [x] done\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L176">    <span class="fn-call">must_contain</span>(tl, <span class="st">"&lt;input type=\"</span>checkbox\<span class="st">" disabled&gt; todo"</span>, <span class="st">"unchecked task"</span>);</span>
+<span id="tests-01-render-loft-L177">    <span class="fn-call">must_contain</span>(tl, <span class="st">"&lt;input type=\"</span>checkbox\<span class="st">" disabled checked&gt; done"</span>, <span class="st">"checked task"</span>);</span>
+<span id="tests-01-render-loft-L178"></span>
+<span id="tests-01-render-loft-L179">    <span class="cm">// ── Tables (header + alignment + body) ───────────────</span></span>
+<span id="tests-01-render-loft-L180">    tbl = markdown::<span class="fn-call">render</span>(<span class="st">"| col1 | col2 |\n|---|---|\n| a | b |\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L181">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;table&gt;&lt;thead&gt;"</span>, <span class="st">"table thead"</span>);</span>
+<span id="tests-01-render-loft-L182">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;th&gt;col1&lt;/th&gt;"</span>, <span class="st">"table header cell"</span>);</span>
+<span id="tests-01-render-loft-L183">    <span class="fn-call">must_contain</span>(tbl, <span class="st">"&lt;td&gt;a&lt;/td&gt;"</span>, <span class="st">"table body cell"</span>);</span>
+<span id="tests-01-render-loft-L184">    tbl_align = markdown::<span class="fn-call">render</span>(<span class="st">"| L | C | R |\n|:--|:--:|--:|\n| a | b | c |\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L185">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:left\<span class="st">""</span>, <span class="st">"table align left"</span>);</span>
+<span id="tests-01-render-loft-L186">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:center\<span class="st">""</span>, <span class="st">"table align center"</span>);</span>
+<span id="tests-01-render-loft-L187">    <span class="fn-call">must_contain</span>(tbl_align, <span class="st">"style=\"</span><span class="ty"><a href="stdlib-types.html">text</a></span>-align:right\<span class="st">""</span>, <span class="st">"table align right"</span>);</span>
+<span id="tests-01-render-loft-L188"></span>
+<span id="tests-01-render-loft-L189">    <span class="cm">// ── HTML comments stripped ───────────────────────────</span></span>
+<span id="tests-01-render-loft-L190">    cmt = markdown::<span class="fn-call">render</span>(<span class="st">"&lt;!-- hide me --&gt;\nshow me\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L191">    <span class="fn-call">must_not_contain</span>(cmt, <span class="st">"hide me"</span>, <span class="st">"html comment stripped"</span>);</span>
+<span id="tests-01-render-loft-L192">    <span class="fn-call">must_contain</span>(cmt, <span class="st">"show me"</span>, <span class="st">"non-comment line preserved"</span>);</span>
+<span id="tests-01-render-loft-L193"></span>
+<span id="tests-01-render-loft-L194">    <span class="cm">// ── CRLF handling ────────────────────────────────────</span></span>
+<span id="tests-01-render-loft-L195">    crlf = markdown::<span class="fn-call">render</span>(<span class="st">"# Title\r\n\r\nbody\r\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L196">    <span class="fn-call">must_contain</span>(crlf, <span class="st">"&lt;h1 id=\"</span>title\<span class="st">"&gt;Title&lt;/h1&gt;"</span>, <span class="st">"CRLF heading"</span>);</span>
+<span id="tests-01-render-loft-L197">    <span class="fn-call">must_contain</span>(crlf, <span class="st">"&lt;p&gt;body&lt;/p&gt;"</span>, <span class="st">"CRLF paragraph"</span>);</span>
+<span id="tests-01-render-loft-L198">    <span class="fn-call">must_not_contain</span>(crlf, <span class="st">"\r"</span>, <span class="st">"CRLF \\r stripped"</span>);</span>
+<span id="tests-01-render-loft-L199"></span>
+<span id="tests-01-render-loft-L200">    <span class="cm">// ── UTF-8 multi-byte preservation (P272 regression) ──</span></span>
+<span id="tests-01-render-loft-L201">    utf = markdown::<span class="fn-call">render</span>(<span class="st">"# Arrow → here\n\nan em-dash — here\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L202">    <span class="fn-call">must_contain</span>(utf, <span class="st">"Arrow → here"</span>, <span class="st">"UTF-8 in heading"</span>);</span>
+<span id="tests-01-render-loft-L203">    <span class="fn-call">must_contain</span>(utf, <span class="st">"em-dash — here"</span>, <span class="st">"UTF-8 in paragraph"</span>);</span>
+<span id="tests-01-render-loft-L204">    <span class="fn-call">must_not_contain</span>(utf, <span class="st">"———"</span>, <span class="st">"no em-dash widening"</span>);</span>
+<span id="tests-01-render-loft-L205">    <span class="fn-call">must_not_contain</span>(utf, <span class="st">"→→"</span>, <span class="st">"no arrow widening"</span>);</span>
+<span id="tests-01-render-loft-L206"></span>
+<span id="tests-01-render-loft-L207">    <span class="cm">// ── UTF-8 across slice-bearing constructs (@PLN110 len→size regression) ──</span></span>
+<span id="tests-01-render-loft-L208">    <span class="cm">// Byte-slice / byte-index bounds (links, fenced code, list items, heading text</span></span>
+<span id="tests-01-render-loft-L209">    <span class="cm">// past the marker) must be sized in BYTES, not the character count `len` now</span></span>
+<span id="tests-01-render-loft-L210">    <span class="cm">// returns — otherwise multi-byte content truncates or the inline cursor re-emits</span></span>
+<span id="tests-01-render-loft-L211">    <span class="cm">// characters (`café` → `caféé`).</span></span>
+<span id="tests-01-render-loft-L212">    u2 = markdown::<span class="fn-call">render</span>(<span class="st">"## Héllo wörld\n\n[café](/naïve)\n\n```txt\n— ok\n```\n\n- café item\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L213">    <span class="fn-call">must_contain</span>(u2, <span class="st">"Héllo wörld"</span>, <span class="st">"UTF-8 heading text past the ## marker"</span>);</span>
+<span id="tests-01-render-loft-L214">    <span class="fn-call">must_contain</span>(u2, <span class="st">"&lt;a href=\"</span>/naïve\<span class="st">"&gt;café&lt;/a&gt;"</span>, <span class="st">"UTF-8 in link text and href"</span>);</span>
+<span id="tests-01-render-loft-L215">    <span class="fn-call">must_contain</span>(u2, <span class="st">"— ok"</span>, <span class="st">"UTF-8 in fenced code"</span>);</span>
+<span id="tests-01-render-loft-L216">    <span class="fn-call">must_contain</span>(u2, <span class="st">"café item"</span>, <span class="st">"UTF-8 in list item"</span>);</span>
+<span id="tests-01-render-loft-L217">    <span class="fn-call">must_not_contain</span>(u2, <span class="st">"caféé"</span>, <span class="st">"no multi-byte character duplication"</span>);</span>
+<span id="tests-01-render-loft-L218"></span>
+<span id="tests-01-render-loft-L219">    <span class="cm">// ── HTML in source escaped (no raw HTML passthrough) ──</span></span>
+<span id="tests-01-render-loft-L220">    htm = markdown::<span class="fn-call">render</span>(<span class="st">"a &lt;script&gt;x&lt;/script&gt; b\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L221">    <span class="fn-call">must_contain</span>(htm, <span class="st">"&amp;lt;script&amp;gt;"</span>, <span class="st">"raw HTML escaped"</span>);</span>
+<span id="tests-01-render-loft-L222">    <span class="fn-call">must_not_contain</span>(htm, <span class="st">"&lt;script&gt;x&lt;/script&gt;"</span>, <span class="st">"no raw HTML passthrough"</span>);</span>
+<span id="tests-01-render-loft-L223"></span>
+<span id="tests-01-render-loft-L224">    <span class="cm">// ── Tracker-tag autolink (high-impact extension) ─────</span></span>
+<span id="tests-01-render-loft-L225">    tag_p = markdown::<span class="fn-call">render</span>(<span class="st">"see @P259 for the fix.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L226">    <span class="fn-call">must_contain</span>(tag_p, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">P259</span>\<span class="st">"&gt;@P259&lt;/a&gt;"</span>,</span>
+<span id="tests-01-render-loft-L227">                 <span class="st">"tag autolink @P259"</span>);</span>
+<span id="tests-01-render-loft-L228">    tag_plan = markdown::<span class="fn-call">render</span>(<span class="st">"phase @PLAN35-01 status.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L229">    <span class="fn-call">must_contain</span>(tag_plan, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">PLAN35</span>-<span class="nm">01</span>\<span class="st">"&gt;@PLAN35-01&lt;/a&gt;"</span>,</span>
+<span id="tests-01-render-loft-L230">                 <span class="st">"tag autolink @PLAN35-01"</span>);</span>
+<span id="tests-01-render-loft-L231">    tag_subph = markdown::<span class="fn-call">render</span>(<span class="st">"@PLAN22-2d-iii.a sub-phase.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L232">    <span class="fn-call">must_contain</span>(tag_subph, <span class="st">"&lt;a class=\"</span>tag-ref\<span class="st">" href=\"</span>/tag/<span class="en">PLAN22</span>-<span class="nm">2</span>d-iii.a\<span class="st">"&gt;@PLAN22-2d-iii.a&lt;/a&gt;"</span>,</span>
+<span id="tests-01-render-loft-L233">                 <span class="st">"tag autolink with sub-phases (-/.)"</span>);</span>
+<span id="tests-01-render-loft-L234">    tag_off = markdown::<span class="fn-call">render</span>(<span class="st">"see @P259 here.\n"</span>, <span class="st">""</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L235">    <span class="fn-call">must_not_contain</span>(tag_off, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink off when prefix empty"</span>);</span>
+<span id="tests-01-render-loft-L236">    <span class="fn-call">must_contain</span>(tag_off, <span class="st">"@P259"</span>, <span class="st">"tag literal preserved when off"</span>);</span>
+<span id="tests-01-render-loft-L237">    tag_inword = markdown::<span class="fn-call">render</span>(<span class="st">"user@P259.com address.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L238">    <span class="fn-call">must_not_contain</span>(tag_inword, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink skips inside word"</span>);</span>
+<span id="tests-01-render-loft-L239">    tag_code = markdown::<span class="fn-call">render</span>(<span class="st">"see `@P259` literally.\n"</span>, <span class="st">""</span>, <span class="st">"/tag/"</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L240">    <span class="fn-call">must_not_contain</span>(tag_code, <span class="st">"tag-ref"</span>, <span class="st">"tag autolink skipped inside `code`"</span>);</span>
+<span id="tests-01-render-loft-L241"></span>
+<span id="tests-01-render-loft-L242">    <span class="cm">// ── Image URL rewriting (image_url_prefix) ───────────</span></span>
+<span id="tests-01-render-loft-L243">    img_rw = markdown::<span class="fn-call">render</span>(<span class="st">"![pic](images/logo.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
+<span id="tests-01-render-loft-L244">    <span class="fn-call">must_contain</span>(img_rw, <span class="st">"&lt;img src=\"</span>/raw/doc/images/logo.png\<span class="st">" alt=\"</span>pic\<span class="st">"&gt;"</span>,</span>
+<span id="tests-01-render-loft-L245">                 <span class="st">"image relative URL rewritten through prefix"</span>);</span>
+<span id="tests-01-render-loft-L246">    img_abs = markdown::<span class="fn-call">render</span>(<span class="st">"![ext](https://example.com/x.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
+<span id="tests-01-render-loft-L247">    <span class="fn-call">must_contain</span>(img_abs, <span class="st">"&lt;img src=\"</span>https:<span class="cm">//example.com/x.png\" alt=\"ext\"&gt;",</span></span>
+<span id="tests-01-render-loft-L248">                 <span class="st">"image absolute URL passes through"</span>);</span>
+<span id="tests-01-render-loft-L249">    img_off = markdown::<span class="fn-call">render</span>(<span class="st">"![pic](images/logo.png)\n"</span>, <span class="st">"doc"</span>, <span class="st">""</span>, <span class="st">""</span>);</span>
+<span id="tests-01-render-loft-L250">    <span class="fn-call">must_contain</span>(img_off, <span class="st">"&lt;img src=\"</span>images/logo.png\<span class="st">" alt=\"</span>pic\<span class="st">"&gt;"</span>,</span>
+<span id="tests-01-render-loft-L251">                 <span class="st">"image not rewritten when prefix empty"</span>);</span>
+<span id="tests-01-render-loft-L252">    img_dotdot = markdown::<span class="fn-call">render</span>(<span class="st">"![up](../images/logo.png)\n"</span>, <span class="st">"doc/sub"</span>, <span class="st">""</span>, <span class="st">"/raw/"</span>);</span>
+<span id="tests-01-render-loft-L253">    <span class="fn-call">must_contain</span>(img_dotdot, <span class="st">"&lt;img src=\"</span>/raw/doc/images/logo.png\<span class="st">" alt=\"</span>up\<span class="st">"&gt;"</span>,</span>
+<span id="tests-01-render-loft-L254">                 <span class="st">"image ../ path resolved"</span>);</span>
+<span id="tests-01-render-loft-L255"></span>
+<span id="tests-01-render-loft-L256">    <span class="cm">// ── extract_headings (TOC support) ───────────────────</span></span>
+<span id="tests-01-render-loft-L257">    src_h = <span class="st">"# Top\n\n## Open work\n\n## P259 (closed)\n\nbody\n\nSetext H1\n=====\n\n### nested"</span>;</span>
+<span id="tests-01-render-loft-L258">    hs = markdown::<span class="fn-call">extract_headings</span>(src_h);</span>
+<span id="tests-01-render-loft-L259">    <span class="kw">if</span> hs.<span class="bi"><a href="stdlib-text.html">len</a></span>() != <span class="nm">5</span> {</span>
+<span id="tests-01-render-loft-L260">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: extract_headings count — got {hs.len()}, expected 5"</span>);</span>
+<span id="tests-01-render-loft-L261">        <span class="kw">for</span> h <span class="kw">in</span> hs {</span>
+<span id="tests-01-render-loft-L262">            <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  L{h.level} [{h.slug}] {h.text}"</span>);</span>
+<span id="tests-01-render-loft-L263">        }</span>
+<span id="tests-01-render-loft-L264">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings count"</span>);</span>
+<span id="tests-01-render-loft-L265">    }</span>
+<span id="tests-01-render-loft-L266">    <span class="fn-call">must_eq</span>(hs[<span class="nm">0</span>].slug, <span class="st">"top"</span>, <span class="st">"extract_headings[0].slug"</span>);</span>
+<span id="tests-01-render-loft-L267">    <span class="fn-call">must_eq</span>(hs[<span class="nm">1</span>].slug, <span class="st">"open-work"</span>, <span class="st">"extract_headings[1].slug"</span>);</span>
+<span id="tests-01-render-loft-L268">    <span class="fn-call">must_eq</span>(hs[<span class="nm">2</span>].slug, <span class="st">"p259-closed"</span>, <span class="st">"extract_headings[2].slug"</span>);</span>
+<span id="tests-01-render-loft-L269">    <span class="fn-call">must_eq</span>(hs[<span class="nm">3</span>].slug, <span class="st">"setext-h1"</span>, <span class="st">"extract_headings[3].slug (setext)"</span>);</span>
+<span id="tests-01-render-loft-L270">    <span class="fn-call">must_eq</span>(hs[<span class="nm">4</span>].slug, <span class="st">"nested"</span>, <span class="st">"extract_headings[4].slug"</span>);</span>
+<span id="tests-01-render-loft-L271">    <span class="kw">if</span> hs[<span class="nm">0</span>].level != <span class="nm">1</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[0].level should be 1"</span>); }</span>
+<span id="tests-01-render-loft-L272">    <span class="kw">if</span> hs[<span class="nm">3</span>].level != <span class="nm">1</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[3].level should be 1 (setext)"</span>); }</span>
+<span id="tests-01-render-loft-L273">    <span class="kw">if</span> hs[<span class="nm">4</span>].level != <span class="nm">3</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings[4].level should be 3"</span>); }</span>
+<span id="tests-01-render-loft-L274">    src_h2 = <span class="st">"# real\n\n```md\n# fake\n```\n\n## also real"</span>;</span>
+<span id="tests-01-render-loft-L275">    hs2 = markdown::<span class="fn-call">extract_headings</span>(src_h2);</span>
+<span id="tests-01-render-loft-L276">    <span class="kw">if</span> hs2.<span class="bi"><a href="stdlib-text.html">len</a></span>() != <span class="nm">2</span> {</span>
+<span id="tests-01-render-loft-L277">        <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"FAIL: extract_headings should skip code-fenced — got {hs2.len()}"</span>);</span>
+<span id="tests-01-render-loft-L278">        <span class="kw">for</span> h <span class="kw">in</span> hs2 {</span>
+<span id="tests-01-render-loft-L279">            <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"  L{h.level} [{h.slug}] {h.text}"</span>);</span>
+<span id="tests-01-render-loft-L280">        }</span>
+<span id="tests-01-render-loft-L281">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"extract_headings skip code-fenced"</span>);</span>
+<span id="tests-01-render-loft-L282">    }</span>
+<span id="tests-01-render-loft-L283"></span>
+<span id="tests-01-render-loft-L284">    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ALL TESTS PASSED"</span>);</span>
+<span id="tests-01-render-loft-L285">}</span>
 </code></pre>
 
   </article>
