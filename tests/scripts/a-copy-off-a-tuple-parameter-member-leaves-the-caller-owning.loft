@@ -22,6 +22,9 @@
 //
 // @falsified-at: 424e4840d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Re-derived against the COMMITTED fix.
 // CHANNEL: the trace string on both backends — this is not a backend divergence, both released
 //   twice.  NOT the leak channel: the second release is of a record that genuinely exists, so
 //   nothing leaks and a run scored on leaks learns nothing here.
