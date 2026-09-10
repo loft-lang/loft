@@ -2402,24 +2402,31 @@ pub(crate) fn drop_bearing_source(src: &Value, function: &Function) -> Option<u1
 /// [`tuple_copy_source_path`] walks `Function::tuphold_origin` to the tuple the chain starts
 /// from and the PATH to the leaf inside it.
 ///
-/// **Which dep.** The dep lists are UNIONED across the tuple's heap members and spread back
-/// into every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints
-/// as `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is
-/// in MEMBER order and recurses into a nested tuple in that same order, so the backing of a
-/// leaf is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the
-/// `WT` above, not the `__ref_1` that `first()` answers. Member order, not the order the
-/// work-refs were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the
-/// inner literal's work-ref was created first, which is what says the index is positional
-/// and not a happy accident of the numbering.
+/// **Which dep.** Asked twice, because the pairing survives in two different states.
+///
+/// `Vars::tuple_backings` has it as the members themselves spelled it — one backing per heap
+/// leaf, recorded before a tuple variable was given the union of its members' deps. That is
+/// the answer wherever it exists, and it needs no reasoning about the list at all.
+///
+/// The dep LIST is the older read, for a tuple that already carried the union by the time its
+/// variable was typed. The lists are UNIONED across the heap members and spread back into
+/// every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints as
+/// `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is in
+/// MEMBER order and recurses into a nested tuple in that same order, so the backing of a leaf
+/// is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the `WT`
+/// above, not the `__ref_1` that `first()` answers. Member order, not the order the work-refs
+/// were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the inner
+/// literal's work-ref was created first, which is what says the index is positional and not a
+/// happy accident of the numbering.
 ///
 /// The count is what makes that positional read safe rather than a convention this function
 /// hopes for: if the list is not exactly as long as the tuple's heap leaves, the order it
 /// would be indexed by is not established, so this DECLINES instead of naming a work-ref it
 /// guessed. Declining costs the hand-off (the pre-loft#1361 double release) and never
-/// suppresses the release of a member that is still live. A `text` or a re-copied tuple is
-/// what reaches it — a text member carries a dep of its own without being a heap leaf, and a
-/// copy of a copy unions the source's deps in beside its own — and `formal/heap.md` D-heap-1
-/// keeps those shapes.
+/// suppresses the release of a member that is still live. That is also why the count read
+/// cannot be the ONLY one: a `text` or a value-enum member carries a dep without being a heap
+/// leaf, so the list outruns the walk and every such tuple declined — which is the half
+/// `tuple_backings` exists to answer.
 fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
     let (root, path) = tuple_copy_source_path(base, i, function);
     // A PARAMETER's members are the CALLER's, and its deps are not frame variables of this
@@ -2435,11 +2442,22 @@ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
     if !crate::data::is_dbref(leaf.base()) {
         return None;
     }
+    // The pairing as the members themselves spelled it, recorded before the union was
+    // written over them (`Vars::tuple_backings`).  It is the same question the dep list is
+    // read for below, answered without having to infer which entry belongs to this leaf.
+    if let Some(dep) = function
+        .tuple_backings
+        .get(&root)
+        .and_then(|b| b.get(ordinal).copied())
+        && dep != u16::MAX
+    {
+        return Some(dep);
+    }
     let deps = match leaf.base() {
         Type::Reference(_, deps) | Type::Enum(_, true, deps) => deps,
         _ => return None,
     };
-    if deps.len() != tuple_heap_leaves(root_tp) {
+    if deps.len() != crate::data::tuple_heap_leaves(root_tp) {
         return None;
     }
     let dep = *deps.get(ordinal)?;
@@ -2504,7 +2522,7 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
     let before: usize = elems
         .iter()
         .take(usize::from(*i))
-        .map(tuple_heap_leaves)
+        .map(crate::data::tuple_heap_leaves)
         .sum();
     let elem = elems.get(usize::from(*i))?;
     if rest.is_empty() {
@@ -2512,15 +2530,6 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
     }
     let (leaf, inner) = tuple_leaf_at(elem, rest)?;
     Some((leaf, before + inner))
-}
-
-/// How many HEAP leaves a tuple type holds, counting through nested tuples — the length its
-/// dep list must have for member order to index them.
-fn tuple_heap_leaves(tp: &Type) -> usize {
-    match tp.base() {
-        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
-        other => usize::from(crate::data::is_dbref(other)),
-    }
 }
 
 /// Which DEFINITION each fn-ref variable in `code` was assigned, `u32::MAX` where the

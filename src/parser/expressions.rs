@@ -4373,11 +4373,12 @@ use a separate collection or add after the loop"
             // owns — it was written before that value existed.  `Type::with_deps_of` states
             // that rule for the shapes it reaches, and a TUPLE is not one of them: a tuple
             // carries no dep list of its own (`deps_ref` answers `None`), so calling it here
-            // would be a silent no-op.  The literal's deps are read and re-applied the
-            // tuple-aware way instead — `depend()` unions them over the members and
-            // `with_deps` gives every member the union, which is the shape a tuple's dep
-            // lists already have (`scopes::tuple_member_backing` reads them positionally on
-            // exactly that premise).
+            // would be a silent no-op.  `with_member_deps_of` is the tuple-aware form and
+            // pairs the members up, which is what keeps *which work-ref backs which member*
+            // readable afterwards (`scopes::tuple_member_backing`).  Handing every member the
+            // UNION instead — the shape this site carried first — closed the nullable member
+            // and left a `text` member releasing twice, because a union cannot be taken
+            // apart again.
             //
             // Without this the backing is dropped for a member the annotation makes
             // NULLABLE, and only for that member: a declared `(S, integer)` is `is_equal` to
@@ -4386,11 +4387,10 @@ use a separate collection or add after the loop"
             // the two types differ, which is what routes it here, which is what loses the
             // backing.  A copy of the tuple then had no work-ref to hand its release to and
             // released the member's resource TWICE (`formal/heap.md` D-heap-1).
-            let carried = s_type.depend();
-            if carried.is_empty() {
+            if s_type.depend().is_empty() {
                 f_type.clone()
             } else {
-                f_type.with_deps(&crate::data::Deps::frame(carried))
+                f_type.with_member_deps_of(&s_type)
             }
         } else {
             s_type
