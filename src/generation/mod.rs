@@ -1850,11 +1850,13 @@ impl Output<'_> {
                 self.def_nr,
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
-                !self.write_hoist_disabled,
-                !self.scalar_hoist_disabled,
+                hoist::HoistTiers {
+                    in_place: !self.write_hoist_disabled,
+                    scalars: !self.scalar_hoist_disabled,
+                    push: !self.push_hoist_disabled,
+                    mint: !self.mint_hoist_disabled,
+                },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
-                !self.push_hoist_disabled,
-                !self.mint_hoist_disabled,
             )
         };
         let hoist::LoopHoist {

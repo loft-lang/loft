@@ -173,10 +173,32 @@ pub fn hoistable_vectors(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
 ) -> Vec<(PathKey, Value)> {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, false, false) {
+    let tiers = HoistTiers {
+        in_place: allow_in_place,
+        ..HoistTiers::default()
+    };
+    if body_blocks_hoist(body, data, def_nr, cache, tiers) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
+}
+
+/// The generation-time tiers of the hoist family — one flag per admitted rewrite, each an
+/// `LOFT_NO_*` environment switch read once by `Output::new`.  Grouped so the gate, the
+/// collector and the emitter read ONE value and cannot disagree about which tiers are on.
+// Four bools by design: each IS one independently switchable rewrite tier (R-Switch), and a
+// substructure would only put a name between a switch and its rule.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Default)]
+pub struct HoistTiers {
+    /// `(R-InPlace)` — in-place scalar sets admitted (`LOFT_NO_WRITE_HOIST` off).
+    pub in_place: bool,
+    /// `(R-Scalar)` — record scalars hoisted (`LOFT_NO_SCALAR_HOIST` off).
+    pub scalars: bool,
+    /// `(R-Push)` — fusable pushes admitted under a push header (`LOFT_NO_PUSH_HOIST` off).
+    pub push: bool,
+    /// `(R-Mint)` — the record mint group admitted as a mover (`LOFT_NO_MINT_HOIST` off).
+    pub mint: bool,
 }
 
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
@@ -189,9 +211,7 @@ fn body_blocks_hoist(
     data: &Data,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
-    allow_in_place: bool,
-    allow_push: bool,
-    allow_mint: bool,
+    tiers: HoistTiers,
 ) -> bool {
     let mut fresh: HashSet<u16> = HashSet::new();
     body.operators.iter().any(|op| {
@@ -200,10 +220,8 @@ fn body_blocks_hoist(
             data,
             cache,
             &mut HashSet::new(),
-            allow_in_place,
             Some(data.def(def_nr).variables()),
-            allow_push,
-            allow_mint,
+            tiers,
             &mut fresh,
         )
     })
@@ -359,6 +377,10 @@ pub struct LoopHoist {
 // The eight parameters are the loop, the two things that type it (the IR and the schema),
 // the two memos shared across every loop of the program, and the two switches; a struct
 // would put a name between each and the one call site without removing anything.
+// The eight parameters are the loop, the two things that type it (the IR and the schema),
+// the two memos shared across every loop of the program, the tier switches and the § V-p
+// memo; a struct would put a name between each and the one call site without removing
+// anything.
 #[allow(clippy::too_many_arguments)]
 /// Enforces `@FR-R-Scalar` (the candidates and the write set) beside `@FR-R-Header`.
 pub fn hoistable(
@@ -368,13 +390,10 @@ pub fn hoistable(
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     writes: &mut WriteCache,
-    allow_in_place: bool,
-    scalars: bool,
+    tiers: HoistTiers,
     inputs: Option<&mut InputCache>,
-    allow_push: bool,
-    allow_mint: bool,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, allow_push, allow_mint) {
+    if body_blocks_hoist(body, data, def_nr, cache, tiers) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
@@ -386,7 +405,7 @@ pub fn hoistable(
     let rebound = rebound_vars(body);
     // (key, record type, the call) in first-appearance order.
     let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
-    if scalars {
+    if tiers.scalars {
         for op in &body.operators {
             op.any_node(&mut |n| {
                 if let Value::Call(d, args) = n
@@ -422,7 +441,7 @@ pub fn hoistable(
                                 .push(((*c, offs.clone()), substitute_root(path, *pf, *c)));
                         }
                     }
-                    if scalars {
+                    if tiers.scalars {
                         for (pf, fld, getter) in &fi.scalars {
                             if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
                                 && !rebound.contains(c)
@@ -452,7 +471,7 @@ pub fn hoistable(
     // A push that fails the rule declines the WHOLE loop, as a growth always did — a push
     // left to its template would move a record a kept header still describes.
     let mut pushes: Vec<(PathKey, Value)> = Vec::new();
-    if allow_push {
+    if tiers.push {
         for op in &body.operators {
             op.any_node(&mut |n| {
                 if let Value::Call(d, args) = n
@@ -472,7 +491,7 @@ pub fn hoistable(
     // the path only has to LEAVE the read list.  The gate admitted every mint in the body
     // as one over a plain bare-variable vector, so this collection cannot disagree with it.
     let mut mints: Vec<PathKey> = Vec::new();
-    if allow_mint {
+    if tiers.mint {
         for op in &body.operators {
             op.any_node(&mut |n| {
                 if let Value::Call(d, args) = n
@@ -489,7 +508,12 @@ pub fn hoistable(
     }
     if !pushes.is_empty() || !mints.is_empty() {
         let mover = |q: &PathKey| pushes.iter().any(|(p, _)| p == q) || mints.contains(q);
-        if pushes.iter().map(|(p, _)| p).chain(mints.iter()).any(|p| rebound.contains(&p.0)) {
+        if pushes
+            .iter()
+            .map(|(p, _)| p)
+            .chain(mints.iter())
+            .any(|p| rebound.contains(&p.0))
+        {
             return LoopHoist::default();
         }
         let retbuf = retbuf_var(data, def_nr);
@@ -523,8 +547,16 @@ pub fn hoistable(
     // binds its element variable in one statement and the field writes follow in the next.
     let mut fresh: HashSet<u16> = HashSet::new();
     for op in &body.operators {
-        let Some(w) = body_writes(op, data, stores, vars, cache, writes, &mut HashSet::new(), &mut fresh)
-        else {
+        let Some(w) = body_writes(
+            op,
+            data,
+            stores,
+            vars,
+            cache,
+            writes,
+            &mut HashSet::new(),
+            &mut fresh,
+        ) else {
             return out;
         };
         written.extend(&w);
@@ -1081,10 +1113,11 @@ pub fn view_def_header(
             data,
             cache,
             &mut HashSet::new(),
-            allow_in_place,
             Some(vars),
-            false,
-            false,
+            HoistTiers {
+                in_place: allow_in_place,
+                ..HoistTiers::default()
+            },
             &mut HashSet::new(),
         )
     }) {
@@ -1468,7 +1501,15 @@ fn writes_store(
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
 ) -> bool {
-    blocks_header_hoist(node, data, cache, active, false, vars, false, false, &mut HashSet::new())
+    blocks_header_hoist(
+        node,
+        data,
+        cache,
+        active,
+        vars,
+        HoistTiers::default(),
+        &mut HashSet::new(),
+    )
 }
 
 /// @PLN157 § V-c — the frees whose operand is a RECORD variable of the enclosing body.
@@ -1502,10 +1543,8 @@ fn blocks_header_hoist(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
-    allow_in_place: bool,
     vars: Option<&crate::variables::Function>,
-    allow_push: bool,
-    allow_mint: bool,
+    tiers: HoistTiers,
     fresh: &mut HashSet<u16>,
 ) -> bool {
     node.any_node(&mut |n| match n {
@@ -1513,7 +1552,7 @@ fn blocks_header_hoist(
         // so far, in the same preorder the write-set walk uses (see `body_writes` for why
         // that order is the execution order of the group).
         Value::Set(v, inner) => {
-            if allow_mint
+            if tiers.mint
                 && matches!(inner.unspan(), Value::Call(d, args)
                     if (*d as usize) < data.definitions.len()
                         && data.def(*d).name() == "OpNewRecord"
@@ -1528,7 +1567,7 @@ fn blocks_header_hoist(
         Value::Call(d, args) => {
             let known = (*d as usize) < data.definitions.len();
             let in_place_setter =
-                known && allow_in_place && IN_PLACE_SET_OPS.contains(&data.def(*d).name());
+                known && tiers.in_place && IN_PLACE_SET_OPS.contains(&data.def(*d).name());
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
@@ -1537,7 +1576,7 @@ fn blocks_header_hoist(
             // through the push itself; `hoistable` decides the aliasing.  The value operand
             // still walks below this node.
             let fusable_push = known
-                && allow_push
+                && tiers.push
                 && (fused_push(data, data.def(*d).name(), args).is_some()
                     || pre_alloc_path(data, data.def(*d).name(), args).is_some());
             // @PLN157 § V-s (`@FR-R-Mint`) — a record MINT into a plain vector is a mover
@@ -1549,10 +1588,10 @@ fn blocks_header_hoist(
             // own this-iteration buffer, neither of which a prelude holder can name; it is
             // admitted only while its DESTINATION is a fresh mint variable.
             let record_mint = known
-                && allow_mint
+                && tiers.mint
                 && vars.is_some_and(|v| mint_path(data, data.def(*d).name(), args, v).is_some());
             let fresh_delivery = known
-                && allow_mint
+                && tiers.mint
                 && data.def(*d).name() == "OpCopyRecord"
                 && args.len() == 3
                 && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e));
@@ -1570,7 +1609,7 @@ fn blocks_header_hoist(
                 // (its writes move nothing).  The arguments still walk below this node,
                 // so a growing op inside one blocks on its own.
                 !(known
-                    && allow_in_place
+                    && tiers.in_place
                     && crate::keys::inplace_callee_hoist_enabled()
                     && in_place_only_writer(*d, data, cache, active))
             } else {
