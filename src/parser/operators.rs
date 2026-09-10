@@ -1613,6 +1613,17 @@ impl Parser {
                                     self.change_var_type(w, &tmp_tp);
                                 }
                                 let orig = code.clone();
+                                // Which member this temp is a view OF — the same fact a
+                                // `_tuphold` records, and for the same reason: a copy reading
+                                // a heap leaf through the temp has no way back to the tuple
+                                // whose type pairs that leaf with the work-ref backing it
+                                // (`scopes::tuple_member_backing`), because the temp's own dep
+                                // list names the tuple it was projected from and nothing else.
+                                // Only a member read answers — a call result or a block names
+                                // no tuple to walk back to.
+                                if let Some((pb, pi)) = crate::scopes::tuple_projection_of(&orig) {
+                                    self.vars.tuphold_origin.insert(w, (pb, Some(pi)));
+                                }
                                 *code = Value::TupleGet(w, idx as u16);
                                 // Prepend Set(w, orig) in a block.
                                 *code = crate::data::v_block(

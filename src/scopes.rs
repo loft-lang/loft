@@ -2148,16 +2148,59 @@ fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut Hash
 
 /// The work-ref a CONSTRUCTION block hands to its target, if that is what `rhs` is.
 ///
-/// Deliberately not a bare `Var`: `x = y` between two locals deep-copies, so both keep their
-/// own store and both must release. Only a block/insert whose tail is a work-ref delivers
-/// the record itself.
+/// Deliberately not a bare `Var` at the top: `x = y` between two locals deep-copies, so both
+/// keep their own store and both must release. Only a block/insert whose tail is a work-ref
+/// delivers the record itself.
+///
+/// And the TAIL must be that work-ref by name, not merely resolve to one — which is why this
+/// peels with [`block_tail_var`] rather than with [`drop_bearing_source`]. The two answer
+/// different questions: `drop_bearing_source` says *which slot does this copy SOURCE name*, and
+/// a tuple member read names the work-ref backing that member without the block having built
+/// anything. Read through it, a PROJECTION block (`u = t.0.0`, materialised through a temp)
+/// looked like a construction and the member's backing was marked handed-off — while the
+/// binding it was handed to is a VIEW, which drops nothing, so the resource was released by
+/// nobody.
 fn construction_work_ref(rhs: &Value, function: &Function) -> Option<u16> {
     match rhs.unspan() {
         Value::Block(_) | Value::Insert(_) => {
-            let v = drop_bearing_source(rhs, function)?;
+            let v = block_tail_var(rhs)?;
             let n = function.name(v);
             (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(v)
         }
+        _ => None,
+    }
+}
+
+/// The tuple MEMBER a value reads — `(base variable, member index)` — looking through the
+/// block wrappers a lowering may have put around it.
+///
+/// A projection reaches a site either as a bare `TupleGet` or as a lowered block whose TAIL is
+/// one: `t.0.0.0` materialises each level into a temp, so the second level's source is a block
+/// ending in the first level's read.  Both spellings name the same member, and a site that
+/// matched only the bare one saw a nested projection as naming nothing (`formal/heap.md`
+/// D-heap-1: a nested member RETURNED released twice).
+///
+/// Lives here rather than beside `Value` in `data.rs` so the `unspan` audit can see it — that
+/// audit skips `data.rs`, and a shape-discriminating helper hidden from the instrument that
+/// asks *who reads a `Value` shape without peeling `Span`* is the one place it should not sit.
+/// `pub(crate)` because the PARSER records the projection and the scope pass reads it back, so
+/// the two must agree about which shapes count as one.
+pub(crate) fn tuple_projection_of(v: &Value) -> Option<(u16, u16)> {
+    match v.unspan() {
+        Value::TupleGet(base, i) => Some((*base, *i)),
+        Value::Block(bl) => bl.operators.last().and_then(tuple_projection_of),
+        Value::Insert(ops) => ops.last().and_then(tuple_projection_of),
+        _ => None,
+    }
+}
+
+/// The variable a block or insert ENDS in, looking through nesting — its tail read as a bare
+/// `Var`, and `None` for a tail that is anything else.
+fn block_tail_var(v: &Value) -> Option<u16> {
+    match v.unspan() {
+        Value::Var(var) => Some(*var),
+        Value::Block(bl) => bl.operators.last().and_then(block_tail_var),
+        Value::Insert(ops) => ops.last().and_then(block_tail_var),
         _ => None,
     }
 }

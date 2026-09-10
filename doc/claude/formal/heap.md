@@ -381,8 +381,9 @@ Most of the family holds: the whole-tuple bind, two droppable members, a member 
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
 (`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FIVE
-shapes do not, both backends, silently — re-measured 2026-09-10, the last two of them found
-by loft#1509's own guard reaching past its subject:
+shapes do not, both backends, silently — re-measured 2026-09-10.  The list has been re-cut
+three times as it was measured: two of these were found by a guard reaching past its own
+subject, which is what an over-wide cell is for:
 
 - a copy off a tuple PARAMETER — `fn f(p: (S, integer)) { u = p; }`, where `(H-Drop)`'s
   closing clause says the CALLER owns and nothing in the callee should release: twice;
@@ -402,10 +403,33 @@ by loft#1509's own guard reaching past its subject:
   shape (a copy whose SOURCE is a view, discussed in its own paragraph below), with the
   difference that a tuple member's backing is a nameable work-ref, so a cure exists here
   where a vector element has none;
-- a nested member RETURNED — `return t.0.0`: twice.  The read materialises through a
-  `tuple_tmp` work-ref rather than a `_tuphold`, so `Function::tuphold_origin` has no entry
-  for it and the chain walk stops there, at a temp whose dep names the tuple LOCAL.  The cure
-  is the one the nested COPY already got, recorded at the second site.
+- a returned member guarded by `??` — `return t.0.0 ?? d`, and `return t.0 ?? d` at FLAT depth
+  too, so the axis is the `??` and not the nesting: twice.  Measured on the pristine control and
+  unchanged by either read-site fix below, so it is neither of them; what the `??` does to the
+  return path has not been read off the IR yet.
+
+✓ **A nested member RETURNED — `t = ((s, 1), 2); return t.0.0` — CLOSED 2026-09-10.**  One
+question, two read sites.  A nested COPY reads each leaf through a `_tuphold`; a nested READ
+materialises through a `tuple_tmp` work-ref instead, which `Function::tuphold_origin` had no
+entry for, so the walk back to the tuple carrying the leaf/work-ref pairing stopped at a temp
+whose dep names the tuple LOCAL.  The second site now records its projection the way the first
+does.  At depth THREE the projection arrives wrapped in the lowered block of the level below
+it, so the record is taken through `data::tuple_projection_of` — matching the bare `TupleGet`
+alone left `t.0.0.0` releasing twice while the two shallower cells passed, which is the shape a
+one-cell probe would have called closed.  Nullable or dense makes no difference (`@FR-N-Shape`).
+Guard `a-nested-tuple-member-returned-releases-once.loft`, 12 cells.
+
+⚠ **And it took a second chokepoint, which the OVER-REACH cell found.**
+`scopes::construction_work_ref` asks *does this block hand its target a record it BUILT*, and
+it asked by resolving the block's tail to a work-ref — a question a member read now answers.
+So `u = t.0.0` read as a construction, the member's backing was marked handed-off, and the
+binding it was handed to is a VIEW that drops nothing: the resource was released by NOBODY,
+which is the opposite fault and one no cell of the returning family could see.  The predicate
+reads the tail by NAME now (`block_tail_var`), which is the honest statement of what a
+construction is: a block that ends IN the work-ref it filled, where a projection ends in a
+member read.  The general form is worth keeping in view — a hand-off is only sound when the
+destination will actually run the hook, and `(H-Drop)` says a copy moves the release, not that
+something else will make it.
 
 ✓ **A NESTED tuple — `t = ((s, 1), 2); u = t` — CLOSED 2026-09-10.**  `(L-Tuple)` makes a
 tuple a synthetic struct, so a tuple inside a tuple is a container inside a container and the
@@ -508,10 +532,9 @@ goes stale: it is a statement about two trees, and one of them moved.  Per the b
 **Closes when** the five shapes above read exactly one release on both backends and the
 guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The
 parameter shape wants the argument rule, not a member pairing.  The `text` neighbour wants the
-pairing carried rather than inferred from a count.  The nested RETURN wants the second read
-site recorded the way the copy site now is.  The bound projection and the loop variable are one
-question — a copy whose source is a VIEW — and want the design call above answered before a
-cure is chosen for either.
+pairing carried rather than inferred from a count.  The `??`-guarded return wants its own read
+off the IR first.  The bound projection and the loop variable are one question — a copy whose
+source is a VIEW — and want the design call above answered before a cure is chosen for either.
 
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind

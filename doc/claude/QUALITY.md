@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 451 | 427 | **24** |
+| 453 | 429 | **24** |
 
 
 
@@ -2662,6 +2662,22 @@ span-wrapped spelling, and they pass.  Writing a redundant `.unspan()` at the si
 column would make the metric agree and the code worse — `tail` is the one home for *descend to
 where control leaves*, and a second peel beside it is exactly the restated predicate this
 document is otherwise about.
+
+**2026-09-10, D-heap-1's nested read sites move it to `453 · 429 · 24`.**  Two new
+discriminators, `scopes::block_tail_var` and `scopes::tuple_projection_of`, and both PEEL.
+They exist because two questions had been sharing one spelling: *which slot does this copy
+SOURCE name* and *does this block hand over a record it BUILT*.  Reading the second through the
+first made a projection look like a construction, and the resource was then released by nobody.
+The Optional row does not move — both ask about `Value` variants, not `Type` ones.
+
+⚠ **The second of them was written in `data.rs` first, and the audit read `452` — a +1 for two
+functions.**  `audit_unspan` SKIPS `data.rs` (with the IR serialisers, on the ground that they
+walk a node by kind rather than pattern-matching a shape they expect), so a shape-discriminating
+helper placed there is invisible to the instrument that asks who reads a `Value` shape without
+peeling `Span`.  It moved to `scopes.rs`, beside its sibling and its consumer.  Worth recording
+as a property of the instrument rather than of the fix: this table cannot see the one file whose
+name says it is the keystone's home, so a helper that belongs under it must not be put there for
+convenience.
 
 @PLN152 step 5 is three of the new discriminators, all in `src/parser/fit.rs`, and all
 peeling — which is why the OPAQUE column falls rather than rises, and why the Optional row is
