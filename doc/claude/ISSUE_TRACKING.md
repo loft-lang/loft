@@ -23,6 +23,16 @@ files.
 | **Benign tradeoffs / open work** (not defects) | `QUALITY.md § Open work` | a known tradeoff with a fix mapped, not a bug |
 | **Plan sub-tasks** (the dependency-ordered work-items WE decompose from a plan + fix in sequence) | the plan doc (`plans/*/ROADMAP.md`) | self-created, self-fixed, transient; **don't file them as GitHub Issues** |
 
+**A surfaced issue whose fix path IS a plan carries `status:planned`.**  The two
+statements above look contradictory and are not: what earns the Issue is that a
+consumer surfaced it; what the label records is that no SHORT-TERM fix will be taken,
+because the work has no discrete "fixed" moment — a performance class judged against a
+bar, a multi-phase class fix.  The issue stays open (the consumer's complaint is live
+until the bar is met) and the label must NAME its plan, which is what separates it from
+`status:deferred`.  It exists so that *"no open issue without a fix"* is a single
+honest query rather than a condition only satisfiable by closing something — see
+[LABELS.md § Lifecycle](../../.github/LABELS.md).
+
 **An Issue is earned by being *surfaced*, not by being *planned*.**  A defect
 found in the wild — especially one that blocks, recurs, or another repo hits —
 becomes a GitHub Issue (commodity record, external discoverability, cross-repo

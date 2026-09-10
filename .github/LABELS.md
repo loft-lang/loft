@@ -306,6 +306,33 @@ it.  Apply at most one; remove it once the blocker clears.
 |---|---|---|
 | `fixed-pending-merge` | The fix has landed on a **long-lived working branch** but is **not yet in `main`** (the release branch).  The issue stays **open** so the tracker doesn't claim "fixed" while released code still has the bug — but it is **not a pick-up**: no agent work remains, only the merge.  The fixing commit's `Fixes #NNN` line **auto-closes it on merge to `main`**, in one clean transition (no manual close → reopen → close ping-pong).  The full lifecycle is **automated off that one trailer**: [`apply-fixed-pending-merge.yml`](workflows/apply-fixed-pending-merge.yml) adds the label (+ a bookkeeping comment) when a `Fixes #NNN` commit is pushed to any non-`main` branch; the merge to `main` auto-closes the issue; [`strip-fixed-pending-merge.yml`](workflows/strip-fixed-pending-merge.yml) removes the label on close (a closed issue is never "pending merge").  So multiple actors can fix bugs on their own branches concurrently with the tracker staying correct. | **Automatic** — just write `Fixes #NNN` in the commit; the label is applied on push.  The author still adds the **substantive comment** (regression test, verified `wa:*`, or a "still unverified" caveat) — the workflow's auto-comment is mechanical only.  Never close such an issue by hand; let the merge close it.  See [ISSUE_TRACKING.md § Issue lifecycle](../doc/claude/ISSUE_TRACKING.md). |
 
+| `status:planned` | The issue is **being worked, but not as a short-term fix**: its fix path is a **PLAN**, and progress is measured there rather than by a fix commit.  For work with no discrete "fixed" moment — a PERFORMANCE class judged against a bar, a multi-phase class fix — where `Fixes #N` never applies cleanly because closing it is a ratio crossing a line, not a commit landing.  The issue stays **open** because it is usually a CONSUMER's surfaced report (`hit-by:`), and their complaint is live until the bar is met; closing it would tell them a resolved thing that is not. | Apply with the plan **named in a comment** — `@PLN157`, or the `doc/claude/plans/<dir>` it lives in.  ⚠ **A `status:planned` issue that does not name a plan is not planned, it is ignored**, and that is the whole difference from `status:deferred`.  Clear it when the plan's last row lands: the work then takes an ordinary `Fixes #N` and the normal `fixed-pending-merge` → close-on-merge lifecycle. |
+
+### Why this label exists: it makes the board self-describing
+
+Without it the board mixes two shapes of work that read identically — **fix-shaped**
+(a discrete `Fixes #N`, `fixed-pending-merge`, closes on merge) and **bar-shaped**
+(a ratio a plan moves across sessions).  Any goal or query of the form *"no open
+issue without a fix"* is then unsatisfiable while one bar-shaped issue is
+legitimately open, and its only exits are to **close** or **relabel** the issue —
+both of which hide unfinished work from the consumer who reported it, and the first
+of which CLAUDE.md forbids outright.
+
+With it the question is one query again:
+
+```sh
+gh issue list --state open --json number,labels \
+  --jq '.[] | select([.labels[].name] | (contains(["fixed-pending-merge"]) or contains(["status:planned"])) | not) | .number'
+```
+
+— *every open issue either has a fix or names the plan that is moving it.*  Nothing
+is satisfied by tidying the board.
+
+**It is not a parking label.**  `status:deferred` means nobody is working it (parked,
+with an un-defer trigger); `status:planned` means it **is** being worked, on a
+cadence a plan sets.  The named plan is the commitment, and it is checkable: open the
+plan and read its status.
+
 ## `contract:` — what closing it did to the STANDARD
 
 Set at **fix time**, on the issue being closed.  `sev:`/`wa:` describe the bug as
