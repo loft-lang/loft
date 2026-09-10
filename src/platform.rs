@@ -397,7 +397,60 @@ fn pid_alive(pid: u32) -> Option<bool> {
         }
         Some(std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH))
     }
-    #[cfg(not(unix))]
+    // Windows has no `kill(pid, 0)`, but a process HANDLE answers the same question.
+    //
+    // The safety DIRECTION matters more here than completeness: the dead-only sweep
+    // DELETES what this calls dead, and a sweep destroying the `.rs` a live compile had
+    // just emitted is the exact failure the pid check exists to prevent (see the module
+    // doc above).  So anything unrecognised answers `None` — unknowable, fall back to the
+    // age rule — and never `Some(false)`.  Being slow to reclaim costs disk; being wrong
+    // costs the build.
+    #[cfg(windows)]
+    {
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const ERROR_ACCESS_DENIED: u32 = 5;
+        const ERROR_INVALID_PARAMETER: u32 = 87;
+        const WAIT_OBJECT_0: u32 = 0;
+        const WAIT_TIMEOUT: u32 = 0x0000_0102;
+        unsafe extern "system" {
+            fn OpenProcess(desired: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+            fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+            fn WaitForSingleObject(handle: *mut core::ffi::c_void, ms: u32) -> u32;
+            fn GetLastError() -> u32;
+        }
+        // 0 is the System Idle Process and no handle opens it.  The unix arm answers DEAD
+        // because 0 addresses a process GROUP there; a `0` embedded in a scratch filename
+        // has to mean the same thing on both hosts, so it is answered the same way.
+        if pid == 0 {
+            return Some(false);
+        }
+        // SAFETY: `OpenProcess` takes three integers by value and returns a handle or
+        // null, touching no memory this process owns.  Every path that obtains a handle
+        // closes it exactly once.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // SAFETY: reads the calling thread's last-error value; no arguments, no memory.
+            return match unsafe { GetLastError() } {
+                // The process exists and simply is not ours to open — the EPERM arm.
+                ERROR_ACCESS_DENIED => Some(true),
+                // No process carries this id.
+                ERROR_INVALID_PARAMETER => Some(false),
+                _ => None,
+            };
+        }
+        // SAFETY: `handle` is a live process handle from the call above; a zero timeout
+        // polls without blocking, and the handle is closed immediately after.
+        let waited = unsafe { WaitForSingleObject(handle, 0) };
+        // SAFETY: closing a handle this function opened, exactly once.
+        unsafe { CloseHandle(handle) };
+        match waited {
+            // A process object becomes signalled exactly when the process exits.
+            WAIT_TIMEOUT => Some(true),
+            WAIT_OBJECT_0 => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         None
