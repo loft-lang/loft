@@ -3910,7 +3910,7 @@ impl Parser {
         match v {
             Value::Span(b) => Self::tail_block_ops(&mut b.1),
             Value::Return(inner) => Self::tail_block_ops(inner),
-            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Never) => {
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Never) => {
                 Some(&mut bl.operators)
             }
             Value::Insert(ops) => Some(ops),
@@ -12548,7 +12548,7 @@ impl Parser {
                 Self::void_statement_arm(f);
             }
             Value::Block(bl) => {
-                if matches!(bl.result, Type::Void | Type::Never) {
+                if matches!(bl.result.base(), Type::Void | Type::Never) {
                     return;
                 }
                 if let Some(tail) = bl.operators.last_mut()

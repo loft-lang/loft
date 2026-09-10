@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 768 | 423 | 6 | **339** |
+| 768 | 425 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2623,15 +2623,19 @@ loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.
 
 loft#1494, loft#1495, loft#1496 and the nested-block buffer bind then move it to
 **`451 · 427 · 24`** — `void_dropped_statement_arms` and `tail_block_ops` both peel, so both land
-on the peeling side, and the OPAQUE column rises by loft#1495's site alone.  The `optional` row
-moves with them to **`768 · 422 · 6 · 340`**, and that one rise is `tail_block_ops` asking *does
-this block yield a value* as `matches!(bl.result, Type::Void | Type::Never)` — a test on its own
-scrutinee that does not peel `Optional`.  MEASURED rather than argued, because that is what this
-table is for: `@FR-L-Null` gives `τ?` the same storage as `τ`, a nullable collection return leaked
-×5 on the control exactly like its dense twin, and the `nullable` cell of
-`tests/scripts/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.loft` is the
-receipt.  The test stays as it is: a `Type::Optional(Void)` is not a thing the language can build,
-so peeling here would guard against nothing.  That one rise is the only time in this table's history
+on the peeling side, and the OPAQUE column rises by loft#1495's site alone.  The `optional` row ends at
+**`768 · 425 · 6 · 337`**, back at the `@FR-N-Shape` ratchet's baseline.
+
+⚠ **It did not get there by argument.**  Two of these sites — `control::tail_block_ops` and
+`control::void_statement_arm` — asked *does this block yield a value* as
+`matches!(bl.result, Type::Void | Type::Never)`, a test on its own scrutinee that does not peel
+`Optional`, and I first wrote here that they should STAY that way because a `Type::Optional(Void)`
+is not a thing the language can build, so peeling would guard against nothing.  `make
+optional-ratchet` refused the tree over exactly those two (`opaque_functions 337 → 339`), and its
+error message carries the better argument: peel, or spell the nullability question — the rule is
+about a `τ?` that ARRIVES there in future falling to a missing arm, not about one that can arrive
+today.  Forward compatibility is the point of a ratchet, and `.base()` costs nothing.  Both peel
+now, every guard is unchanged on both backends, and the row is back at baseline.  That one rise is the only time in this table's history
 that a fix has added a blind site rather than a peeling one — the only time in this table's history that a fix has added a blind site rather than
 a peeling one, so it is worth saying why it is not one.  `generation::emit::arm_diverges` asks
 whether a branch arm leaves through `return` / `break` / `continue`, and it asks it of
