@@ -208,6 +208,17 @@ it, not a standing fact.
   entry's cells, and this doc's counts, have been read over `(integer, integer)` shapes.  **Any
   cell added here should carry a `text` member.**
 
+  ✅ **That instruction is DISCHARGED for this entry's own cells, 2026-09-10.**  All six were
+  re-run over `(integer, text)` on both backends and answer exactly as the `(integer, integer)`
+  re-measurement above records: the LANDING type is still refused (*"cannot change type from
+  `(integer?, text?)` to `(integer, text)?`"*), `v[i].0` / `.1` by a variable index answer
+  `null(oob)` / `null`, `==` `null` answers `true` on BOTH spellings, `v[i] ?? (7, "def")` gives
+  `(7, "def")`, `v[i]?` gives the members' defaults `(0, "")`, and a PARTLY present
+  `(null, "keep") ?? (9, "def")` keeps the `"keep"` and reports `== null` false.  So the
+  deviation is one cell over the heap population as well as the scalar one, and the count above
+  is not an artefact of the shape it was read on.  The instruction still stands for cells ADDED
+  here — it is the entry's measured cells that are now clear, not the class.
+
   A third defect came out from under it — the same read through a struct FIELD's vector leaks
   its work-ref record on `--native` (loft#1479) — which is newly REACHABLE rather than newly
   broken, since that cell did not compile before.
@@ -290,7 +301,17 @@ the companion [tuples-history.md](tuples-history.md).
   one member of a family is a claim about that member (see the history file's note on the
   keyed half), so the front/back/middle split is the point of the list rather than its length.
 - **Construct + project (`T-Cons` / `T-Proj`)** — `t = (3, 7); t.0` is `3`, `t.1` is `7`.
-- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.
+- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.  With a HEAP member and on
+  both backends (2026-09-10), each binding is a COPY as `B-Copy` requires, checked by mutating
+  each side and reading the other: from a LOCAL tuple (`t = ("alpha", v)`, then `v += […]` and
+  `b += […]` leave `t.1` at its own length), from a CALL return, from a vector ELEMENT by a
+  constant index, from a struct FIELD, from a LOOP variable, and at arity 3 with the heap member
+  in the MIDDLE.  By a VARIABLE index it is refused — that value is `(τ, τ)?` by `(N-Index)` and
+  the refusal names the two cures, which is `(T-Absent)` and not a gap.
+- **Return independence (`T-Ret`)** — a tuple built from a LOCAL that dies at the return is
+  live at the caller: `fn mk() -> (text, vector<integer>) { local = [7,8,9]; ("alpha", local) }`
+  unpacks to a 3-element vector reading `7` and `9` at its ends, both backends, under strict
+  stores.
 - **Tuple return + unpack (`T-Ret` + `T-Destr`)** — `fn pair() -> (integer,integer) { (2,3) }`,
   `(x, y) = pair()` binds `x=2, y=3`.
 - **Reference tuple (`T-Ref`)** — `fn sw(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t }`
