@@ -28,6 +28,7 @@ LOFT_LOG=full cargo test -- my_test 2>&1
 - [The debug-assertions calibration run (`target-da`)](#the-debug-assertions-calibration-run-target-da)
 - [Debugging a validate_slots Panic](#debugging-a-validate_slots-panic)
 - [Debugging a Scope Analysis Bug](#debugging-a-scope-analysis-bug)
+- [Read the fix back against the cause](#read-the-fix-back-against-the-cause-before-you-build-either)
 - [Reading a defect — the shapes that keep recurring](#reading-a-defect--the-shapes-that-keep-recurring)
 - [Using the Test Framework for Quick Iteration](#using-the-test-framework-for-quick-iteration)
 - [Open work](#open-work)
@@ -397,6 +398,29 @@ Windows ignore the config (different target triples) and use
 their platform-native linkers.
 
 ---
+
+## Read the fix back against the cause, before you build either
+
+The cheapest check in this file, and it costs one line of thought. Having written *"the cause
+is X"* and *"the fix is Y"*, read Y against X ALONE and ask: **does Y touch the site X names?**
+
+Two failures that check catches, both measured on 2026-09-10 within one hour, both by people
+who had the right diagnosis in hand:
+
+- **The fix that cannot reach the cause.** A diagnosis named the SEED — a whole-body walk that
+  arms a fact before any branch structure exists — and the proposed cure edited the RECONCILE,
+  which runs after. Both halves were locally plausible and sat two paragraphs apart in one
+  message, so reading it did not catch it; the rung was built and measured BYTE-IDENTICAL on
+  all 19 cells. A green build reads as "the cure is not needed" exactly as easily as "the cure
+  works".
+- **The fix whose PREMISE was never probed.** A cure turned on *"on the path that ran, these
+  two name one record"* — and in loft the plain bind COPIES (`binding.md (B-Copy)`), so they
+  never do. The design was sound given its premise and no amount of reviewing the design could
+  find that; one probe (`x = a; x.id = 99;` then read `a`) settles it.
+
+So the order is: name the cause, name the site, then check the fix lands ON that site and that
+every *"these two are the same X"* in it has been probed rather than assumed. The matrix below
+is what settles the question either way — but it is expensive, and these two checks are not.
 
 ## Boundary-matrix runner (`scripts/probe-matrix`)
 
