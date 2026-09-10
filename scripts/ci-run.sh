@@ -127,7 +127,21 @@ case "${1:-status}" in
       echo "DIED after $(( $(date +%s) - epoch ))s — SIGKILL/uncatchable (oomd cgroup kill?); no verdict written"
       exit 2
     fi
-    [ "$st" = RUNNING ] && echo "RUNNING ${rest} for $(( $(date +%s) - epoch ))s" || echo "$st $rest"
+    # A FINISHED verdict carries its age too.  Without it `PASSED 1019s` reads the same
+    # whether the run ended a minute or two days ago — which is the second failure mode in
+    # this file's own header ("a verdict from a PREVIOUS run is still in the file"), closed
+    # for RUNNING and left open for the case a waiter actually reads.  Measured: a `PASSED`
+    # from 2026-09-08 was taken for the current tree on 2026-09-10.
+    if [ "$st" = RUNNING ]; then
+      echo "RUNNING ${rest} for $(( $(date +%s) - epoch ))s"
+    else
+      age=$(( $(date +%s) - epoch ))
+      if [ $age -ge 3600 ]; then
+        echo "$st $rest (verdict is $(( age / 3600 ))h old — for commit $(git rev-parse --short HEAD 2>/dev/null); re-run if the tree moved)"
+      else
+        echo "$st $rest ($((age / 60))m ago)"
+      fi
+    fi
     ;;
   wait|notify)
     # Designed to be launched with the Bash tool's `run_in_background`: the harness
