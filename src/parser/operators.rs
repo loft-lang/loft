@@ -1579,8 +1579,16 @@ impl Parser {
                             // a `Str` whose ptr points into a freed host.
                             let parent_deps = t.depend();
                             t = elems[idx].clone();
-                            for on in parent_deps {
-                                t = t.depending(on);
+                            // `@FR-O-Oracle`: a projection is Borrowed(BASE), so the element
+                            // carries what the whole base borrows — ALL of it.  A tuple's base
+                            // deps are the union of its elements' (`Type::depend`), so a literal
+                            // built from two hosts (`(h0.s, h1.s).0`) has two, and carrying them
+                            // one at a time through `depending` REPLACES rather than accumulates:
+                            // only the LAST survived, so every index but the last named the wrong
+                            // host.  Reachable only without an intervening bind — a bound tuple
+                            // collapses to a single dep on its own variable.
+                            if !parent_deps.is_empty() {
+                                t = t.with_deps(&crate::data::Deps::frame(parent_deps));
                             }
                             // T1.4: emit TupleGet IR for codegen.
                             // Plan-07 phase 1: unspan() so wraps on `.`
@@ -1700,11 +1708,16 @@ impl Parser {
                             *code =
                                 self.get_val(&elem_tp, false, elem_offset, code.clone(), u32::MAX);
                             t = elem_tp;
-                            for on in parent_deps {
-                                t = t.depending(on);
-                            }
+                            // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
+                            // base is a VARIABLE that variable IS the base, so it alone is the
+                            // borrow — which is why the parent deps were dead here (717 of 741
+                            // corpus reaches take this arm and the old loop's result was
+                            // overwritten by it).  Only a base with no variable of its own falls
+                            // back to the union.
                             if let Some(nr) = base_var {
                                 t = t.depending(nr);
+                            } else if !parent_deps.is_empty() {
+                                t = t.with_deps(&crate::data::Deps::frame(parent_deps));
                             }
                         }
                     } else {
