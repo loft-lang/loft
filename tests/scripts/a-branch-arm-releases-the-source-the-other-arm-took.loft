@@ -24,12 +24,13 @@
 // the branch that makes the copy conditional is no longer in view.  That is why the fact is
 // CARRIED (`Scopes::arm_lift_temps`) rather than read back off the IR.
 //
-// ⚠ The rule is scoped to a per-ARM destination and c_shared is not this file's subject for
-// that reason.  Where the arms assign one SHARED local (`if c { x = a } else { x = b }`) the
-// destination genuinely owns what it took on the path that ran, so stopping it would lose that
-// release instead; that shape wants the source released inside the omitting arms and is open
-// as loft#1515 (`ownership.md` D-own-39).  Its cell is here as a CONTROL, recording what it
-// does today.
+// ⚠ c_shared is the SECOND shape and it takes the opposite cure, which is why it is here.
+// Where the arms assign one SHARED local (`if c { x = a } else { x = b }`) the destination
+// genuinely owns what it took on the path that ran, so stopping IT would lose that release
+// instead — neither side can be chosen statically.  That one is closed by materialising the
+// path fact as a runtime flag (`Scopes::handed_off`, loft#1515), the shape loft#1200 already
+// uses for the free it guards; this file keeps the cell so the two cures stay visible as one
+// question with two answers.
 //
 // @falsified-at: e5c65698e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  c_if is the first moving cell on
@@ -189,7 +190,7 @@ fn main() {
   assert(got == "V161,161", "CONTROL both arms build fresh values: {got}");
 
   c_shared(true); got = drain();
-  assert(got == "173,V171,171", "CONTROL a shared destination is loft#1514's residual: {got}");
+  assert(got == "173,V171,171,172", "a SHARED destination releases both arms' sources: {got}");
 
   if !delete(trace_path()) { println("trace cleanup failed"); }
   println("branch arm drop ok");

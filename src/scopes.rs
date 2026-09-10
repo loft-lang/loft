@@ -257,6 +257,27 @@ struct Scopes<'s> {
     /// branch that makes the copy conditional is no longer in view. Recorded where the temps
     /// are made and read by [`handoff_target`], so both deciders answer from the same fact.
     arm_lift_temps: HashSet<u16>,
+    /// loft#1515 — a SOURCE whose release is handed off inside a branch ARM to a destination
+    /// that is not per-arm, mapped to the boolean recording whether that hand-off actually
+    /// RAN.
+    ///
+    /// `(H-Drop)` moves a release with a copy and `(O-Complete)` makes that fact per path.
+    /// Where the arms lift into a temp of their own the fact needs no value — the temp is null
+    /// on the paths that did not take it, so stopping the temp is enough ([`Self::
+    /// arm_lift_temps`]). Where the arms assign one SHARED local it does: on the path that ran
+    /// the destination owns what it took and must keep its release, on the path that did not
+    /// the source still owes one, and no static answer covers both. So the path fact is
+    /// MATERIALISED, exactly as loft#1200's [`Self::local_owns`] materialises sole ownership
+    /// for the free it guards.
+    ///
+    /// Read at the source's scope-end release, set at the hand-off, and cleared when the
+    /// SOURCE is reassigned — `@FR-O-Latest`: what it holds from there on is its own again.
+    handed_off: HashMap<u16, u16>,
+    /// The `(destination, source)` pairs [`Self::handed_off`] was minted for — the copies
+    /// whose hand-off is per path. Keyed by the PAIR because one source may be handed to
+    /// different destinations on different arms, and a bare source would then set the flag at
+    /// a copy that is not the one it stands for.
+    per_path_pairs: HashSet<(u16, u16)>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -2120,6 +2141,35 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
     data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
 }
 
+/// The `(destination, source)` pairs of whole-value copies written inside a branch ARM.
+///
+/// A copy that only some runs perform cannot move a release on all of them
+/// (`ownership.md (O-Complete)`), and this is how those copies are found: structurally, off
+/// the pre-scan IR, before any arm lift exists — so every pair here is one an author wrote,
+/// `if c { x = a; } else { x = b; }`, rather than one the branch lowering produced.
+///
+/// Only a bare `Var` right-hand side qualifies: anything else is a value with no source
+/// variable whose release could have moved.
+fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
+    let mut out: HashSet<(u16, u16)> = HashSet::new();
+    fn arm(a: &Value, out: &mut HashSet<(u16, u16)>) {
+        a.walk(&mut |m| {
+            if let Value::Set(v, rhs) = m.unspan()
+                && let Value::Var(src) = rhs.unspan()
+            {
+                out.insert((*v, *src));
+            }
+        });
+    }
+    code.walk(&mut |n| {
+        if let Value::If(_, t, e) = n.unspan() {
+            arm(t, &mut out);
+            arm(e, &mut out);
+        }
+    });
+    out
+}
+
 /// Which side of a whole-value copy stops dropping — `None` where the copy moves nothing.
 ///
 /// The ONE home for the DIRECTION, because two sites decide it about the same copy and a
@@ -2992,6 +3042,8 @@ fn run_scan_phase(
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         arm_lift_temps: HashSet::new(),
+        handed_off: HashMap::new(),
+        per_path_pairs: HashSet::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
     };
@@ -3062,6 +3114,28 @@ fn run_scan_phase(
     // of code that verifies if a free is needed", rather than to @PLN160's.  Note also that
     // `__own_` has `LOFT_NO_OWNER_WITNESS=1` and this one has no `LOFT_NO_*` switch at all, so
     // the one of the three whose necessity cannot be shown is the one with no bisect step.
+    // loft#1515 — the per-path hand-offs an author wrote, and one boolean per SOURCE to
+    // record whether the copy that would have taken its release actually ran.  Minted here
+    // rather than during the scan for the reason `local_owns` is: the flag has to exist
+    // before the body is walked, so its `false` initialiser can be placed at the top.
+    // Only where the release would move to the DESTINATION, which is what leaves the source
+    // without one.  `copy_moves_drop_from` answers a copy off a PARAMETER the other way round
+    // — it stops the destination, because the caller owns — and there is nothing per-path
+    // about that: the caller's release is not on either of these arms.
+    scopes.per_path_pairs = per_path_handoffs(orig_code)
+        .into_iter()
+        .filter(|&(dst, src)| copy_moves_drop_from(&function, data, dst, src, false) == Some(src))
+        .collect();
+    let mut handed_sources: Vec<u16> = scopes.per_path_pairs.iter().map(|&(_, src)| src).collect();
+    handed_sources.sort_unstable();
+    handed_sources.dedup();
+    for src in handed_sources {
+        let name = format!("__hoff_{}", function.name(src));
+        let flag = function.add_temp_var(&name, &Type::Boolean);
+        scopes.var_scope.insert(flag, 0);
+        scopes.var_order.push(flag);
+        scopes.handed_off.insert(src, flag);
+    }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
         let name = format!("__lbo_{}", function.name(v));
@@ -3103,6 +3177,18 @@ fn run_scan_phase(
         && let Value::Block(bl) = &mut code
     {
         let mut flags: Vec<u16> = scopes.local_owns.values().copied().collect();
+        flags.sort_unstable();
+        for flag in flags.into_iter().rev() {
+            bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
+        }
+    }
+    // loft#1515 — and every hand-off flag, for the same reason: before the branch runs no
+    // copy has taken the source's release, so an uninitialised slot would read as garbage and
+    // suppress a release that is owed.
+    if !scopes.handed_off.is_empty()
+        && let Value::Block(bl) = &mut code
+    {
+        let mut flags: Vec<u16> = scopes.handed_off.values().copied().collect();
         flags.sort_unstable();
         for flag in flags.into_iter().rev() {
             bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
@@ -7188,9 +7274,24 @@ impl Scopes<'_> {
         data: &Data,
         path_skip: Option<(u16, u16)>,
     ) -> Option<Value> {
-        if self.drop_transferred.contains(&v) {
+        // loft#1515 — a source whose hand-off is PER PATH keeps its release and guards it on
+        // whether the copy ran, rather than being stopped statically for every path.  The
+        // static answer is the defect: one arm's copy suppressed the source on the arm that
+        // did not copy, and the resource was never released at all.
+        //
+        // Two things the guard deliberately does NOT do.  It does not choose WHICH members
+        // the release covers — the skip below still decides that, because a member handed
+        // out on this path is handed out whether or not the whole record's release runs.  And
+        // it bypasses `drop_transferred` rather than reading it: the hand-off recorded `v`
+        // there, and replacing that static suppression with the runtime one is the fix.
+        let handed = self.handed_off.get(&v).copied();
+        if handed.is_none() && self.drop_transferred.contains(&v) {
             return None;
         }
+        let guard = |d: Option<Value>| match handed {
+            Some(flag) => d.map(|d| v_if(Value::Var(flag), Value::Null, d)),
+            None => d,
+        };
         // D-heap-3 (loft#1506) — one field of this lift was copied out, so its release
         // belongs to the copy: run the skip-capable cascade over everything else.  A type
         // without the variant (enum payloads, or a stale parse tail) falls back to the full
@@ -7205,7 +7306,7 @@ impl Scopes<'_> {
             let nr = data.drop_cascade_except_nr(*d);
             if nr != u32::MAX {
                 let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
-                return Some(Value::If(
+                return guard(Some(Value::If(
                     Box::new(live),
                     Box::new(Value::Call(
                         nr,
@@ -7216,10 +7317,10 @@ impl Scopes<'_> {
                         ],
                     )),
                     Box::new(Value::Null),
-                ));
+                )));
             }
         }
-        drop_hook(function, v, data)
+        guard(drop_hook(function, v, data))
     }
 
     /// Record what the `__lift_N` temp `tmp` — holding argument `arg_idx` of the call
@@ -8888,6 +8989,26 @@ impl Scopes<'_> {
             witness_update = Some(match witness_update {
                 Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(sole))]),
                 None => v_set(flag, Value::Boolean(sole)),
+            });
+        }
+        // loft#1515 — this copy is one of the per-path hand-offs, so record that it RAN.  The
+        // source's scope-end release reads the flag: on this path the destination owns what it
+        // took, on the other the source still owes its own.
+        if let Value::Var(src) = value.unspan()
+            && self.per_path_pairs.contains(&(v, *src))
+            && let Some(&flag) = self.handed_off.get(src)
+        {
+            witness_update = Some(match witness_update {
+                Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(true))]),
+                None => v_set(flag, Value::Boolean(true)),
+            });
+        }
+        // `@FR-O-Latest` — assigning the SOURCE itself retires the hand-off: what it holds
+        // from here on is its own to release, whichever arm ran before.
+        if let Some(&flag) = self.handed_off.get(&v) {
+            witness_update = Some(match witness_update {
+                Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(false))]),
+                None => v_set(flag, Value::Boolean(false)),
             });
         }
         // loft#1336 / @FR-O-Witness — keep the OWNER WITNESS naming exactly the store the
