@@ -1629,7 +1629,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
     if let Some(v) = &a.verified_release {
         println!("  ok      {v} downloaded and matches the signed registry index");
     }
-    let checks = local_checks(staged);
+    let checks = local_checks(staged, None);
     for c in &checks {
         match c {
             Check::Ok(m) => println!("  ok      staged {m}"),
@@ -1878,7 +1878,16 @@ fn verify_self_cmd() -> i32 {
         );
         return 1;
     };
-    let mut checks = local_checks(&root);
+    // Where the RUNTIME will load `default/` from — asked of the resolver loft itself uses,
+    // so the verifier and the loader cannot disagree.  They did: `bundle_root` is
+    // `<exe>/../..` unconditionally, while `project_root_for` prefers `<prefix>/share/loft`
+    // whenever it exists, so a prefix holding both a self-updated bundle and an older source
+    // install verified one stdlib and parsed the other — loft#1497, which passed
+    // verification and then segfaulted in `OpFreeText` on `println("hello")`.
+    let loaded = exe
+        .parent()
+        .map(|d| std::path::PathBuf::from(native_utils::project_root_for(d)).join("default"));
+    let mut checks = local_checks(&root, loaded.as_deref());
     // Only consult the registry for something that IS a bundle; a source checkout has
     // no manifest to anchor, and a network round-trip to say so would be noise.
     if !checks.iter().all(|c| matches!(c, Check::Skipped(_))) {
@@ -1922,8 +1931,14 @@ fn verify_self_cmd() -> i32 {
         println!(
             "This installation does not match the manifests it shipped with.  A changed\n\
              stdlib file with an unchanged binary is the usual cause — a partial upgrade —\n\
-             and loft loads its stdlib from <binary-dir>/../default, so it would run with\n\
-             the mismatch.  Reinstall the release rather than replacing single files."
+             and loft would run with the mismatch rather than refuse.  Reinstall the release\n\
+             rather than replacing single files.\n\
+             \n\
+             A `loaded stdlib` failure is a different shape: the bundle is intact and is not\n\
+             what runs.  loft takes its stdlib from <prefix>/share/loft/default when that\n\
+             directory exists and from <binary-dir>/../default otherwise, so a prefix holding\n\
+             both — a self-update over an older source install — verifies one and parses the\n\
+             other.  Remove the tree that is not the release."
         );
         return 1;
     }

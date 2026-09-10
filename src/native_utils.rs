@@ -1407,7 +1407,7 @@ const PROJECT_ROOT_SEARCH_DEPTH: usize = 6;
 ///
 /// Split out from [`project_dir`] so every layout can be tested without planting a
 /// binary in each one.
-fn project_root_for(dir: &std::path::Path) -> String {
+pub(crate) fn project_root_for(dir: &std::path::Path) -> String {
     // Strip target/release or target/debug to get the project root.
     if (dir.ends_with("target/release") || dir.ends_with("target\\release"))
         && let Some(root) = dir.parent().and_then(|p| p.parent())

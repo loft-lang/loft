@@ -346,7 +346,7 @@ pub fn apply_bundle(root: &Path, staged: &Path, force: bool) -> Result<Vec<Strin
     //    around.  The default protects against the accident (a truncated download, a
     //    half-copied directory); `force` covers the case where they mean it.
     if !force {
-        for check in crate::verify_self::local_checks(staged) {
+        for check in crate::verify_self::local_checks(staged, None) {
             if let crate::verify_self::Check::Failed(m) = check {
                 return Err(format!("staged bundle failed its own manifest: {m}"));
             }
@@ -409,7 +409,7 @@ pub fn apply_bundle(root: &Path, staged: &Path, force: bool) -> Result<Vec<Strin
 
     // 4. And the result must verify — when there is something to verify it against.
     if result.is_ok() && described && !force {
-        for check in crate::verify_self::local_checks(root) {
+        for check in crate::verify_self::local_checks(root, None) {
             if let crate::verify_self::Check::Failed(m) = check {
                 result = Err(format!("updated installation failed verification: {m}"));
                 break;
@@ -713,7 +713,7 @@ mod tests {
             "new\n"
         );
         assert!(
-            !crate::verify_self::local_checks(&root)
+            !crate::verify_self::local_checks(&root, None)
                 .iter()
                 .any(crate::verify_self::Check::failed),
             "the updated installation must verify"
