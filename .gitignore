@@ -157,3 +157,11 @@ target-*/
 # Gate verdict written by scripts/ci-run.sh — local run state, never committed.
 .ci-verdict
 
+# A root `loft.toml` makes the loft REPO ITSELF a loft package, which silently changes two
+# repo-wide behaviours: diagnostic REACH is scoped to the nearest `loft.toml` above the entry
+# (so `source_is_owned` flips and lint tests see different diagnostics), and `use` resolution
+# gains a declared-dependency set.  `loft install` writes one into whatever directory it is
+# run from, so a single `loft install` in a checkout root is enough — and it was, once: four
+# tests failed across `lsp_diagnostics` and `n3_use_native` with nothing in the diff that
+# looked related.  Nothing in this repo needs one.
+/loft.toml
