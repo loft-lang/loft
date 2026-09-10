@@ -3363,12 +3363,18 @@ impl Parser {
     /// projection subject (`o.inner ?? d`) stays the view it is (`@FR-B-View`), and a
     /// bare variable is never hoisted at all.
     fn owned_record_subject(&self, lhs_type: &Type, code: &Value) -> bool {
-        matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
-            && match code.unspan() {
-                Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
-                Value::CallRef(_, _) => true,
-                _ => false,
-            }
+        // `.base()` — "is this a heap RECORD" is a SHAPE question, and `@FR-N-Shape` says a
+        // shape question answers alike for `τ` and `τ?`.  A `-> S?` callee delivers the same
+        // record a `-> S` one does (`@FR-L-Null`: same layout, same store), so a bare
+        // `matches!` here would answer NO for exactly the subjects `?` is written on.
+        matches!(
+            lhs_type.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) && match code.unspan() {
+            Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
+            Value::CallRef(_, _) => true,
+            _ => false,
+        }
     }
 
     /// The same record type, re-typed as a VIEW of frame variable `tmp`.
