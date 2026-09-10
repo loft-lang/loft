@@ -356,12 +356,15 @@ runtime — it is discharged statically by [ownership.md](ownership.md)'s `deps`
 emits a free on a store the value provably OWNS, at its last use, so LIFO holds, the stack is
 never freed, and nothing freed is later read.
 
-⚠ **That discharge is only as strong as the checker's register, and the register is not at
-zero.** `ownership.md` is at `OPEN: 1` — `D-own-8` (*"a Join's ownership fact is true on one
-path only"*); `D-own-16` and `D-own-26` both closed 2026-09-03. What is left is a
-PATH-COMPLETENESS gap, precisely the property `H-Sound` leans on. So
-the free rules below are currently discharged by a checker with an open hole in the relevant
-direction. Re-read that entry before treating a free fault here as impossible. This doc
+⚠ **That discharge is only as strong as the checker's register, so READ THAT REGISTER — do not
+read a number restated here.** This paragraph named `D-own-8` and a path-completeness gap for a
+cycle after `D-own-8` closed, while `ownership.md` itself read `OPEN: 0`; the two disagreed and
+the gated side was the other document's. As of 2026-09-11 ownership.md is at `OPEN: 1` with
+`D-own-40` — `(O-Witness)` armed where its premise is false, which is an ARMING defect rather
+than the path-completeness one this paragraph used to describe, so it does not bear on `H-Sound`
+the same way. Open [ownership.md](ownership.md)'s own `OPEN` line and its entries before treating
+a free fault here as impossible; a count copied into this file is the way that reading goes
+stale. This doc
 defines the cliff; ownership.md proves the program walks the path beside it. The
 `LOFT_POISON` harness is the empirical cross-check: it overwrites freed stores with a poison
 pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted read.
@@ -1129,11 +1132,11 @@ arming read off `introspect`):
   so the correction disarms its witness — measured off `introspect`: `__own_c` on `main`, none
   after.  `1085b-a-nullable-local-frees-what-it-displaces.loft` loses two cells.
   `nullable_locals_that_displace` excludes a never-free local, so one release mechanism serves
-  each local and `c` falls from the witness to the `__lbo_` flag; which of the two is WRONG is
-  not measured here and is the open question — either that path mis-frees a local the witness
-  was covering, or such a local must stay witnessed and the arming predicate has to say so for
-  a reason that is true.  Attributing it to `__lbo_` is the inference this entry deliberately
-  does not make.
+  each local and `c` falls from the witness to the `__lbo_` flag.  Which of the two is wrong was
+  left open here and the RULES answer it — see the paragraph below: that local must not be
+  witnessed, so the witness is the deviation and the other path is what has to be fixed first.
+  Attributing the wrong answer to `__lbo_`'s internals is still an inference this entry does not
+  make; which mechanism must OWN the release is what the rules settle.
 - **Cure B — separate the two questions** (a fourth `WitnessSet::MintIntoWorkRef`: owning for
   the intersection test, not-pointable for the maintenance site).  The decomposition is right
   and the variant is the honest shape, but it ARMS witnesses that `main` does not: `q1085b`
@@ -1141,14 +1144,41 @@ arming read off `introspect`):
   gains one, moving its displaced hook from the rebind to scope exit — the right COUNT at the
   wrong time, which `(H-Drop)`'s reassignment clause does not allow.
 
-⚠ **So `q1085b` passes on `main` through a witness armed for a reason that is false.**  The
-false reason and the right answer are load-bearing together, which is what makes this entry
-bigger than its own predicate: correcting the arming population is a VALUE regression until the
-question above is settled, and it has to be settled first.  Not filed as an issue — it does not
-reproduce on `main`, where the mask holds, so it belongs here rather than in the tracker.  Note
-that the `__lbo_` mechanism has no `LOFT_NO_*` switch of its own (recorded in `scopes.rs` beside
-the arming loop), so there is no one-command A/B for it the way `LOFT_NO_OWNER_WITNESS=1` is one
-for the witness; giving it one is the cheapest first step for whoever takes this.
+⚠ **So `q1085b` passes on `main` through a witness armed for a reason that is false** — and the
+rules SETTLE which half is wrong, where this entry first recorded an open question.
+`(O-Witness)` conditions the witness on the assignments MIXING; `q1085b`'s are a CONSTRUCTION
+(classification arm (e): a record construction is `Owned`, fresh, `(O-Owner)`) and a call whose
+return borrows its parameter, which `(O-Move)` covers explicitly — *"if the return borrows a
+parameter, the return type records it and the caller COPIES to obtain its own store"*.  Both
+OWN, so there is no mix.  Measured rather than read off the rule: `c.x = 99` after
+`c: K? = keep_k(src)` leaves `src` at `7` on both backends, where a `(B-View)` projection writes
+through.
+
+So the local must NOT be witnessed, the witness on it is itself a deviation
+([ownership.md](ownership.md) `D-own-40`), and the other path's `0` is the defect to fix FIRST.
+The cure ORDER is derived from the rules rather than chosen, and *"keep the witness because
+removing it breaks something"* is not an available answer.  Not filed as an issue — it does not
+reproduce on `main`, where the mask holds, so it belongs here rather than in the tracker.  The
+`__lbo_` mechanism has no `LOFT_NO_*` switch of its own (recorded in `scopes.rs` beside the
+arming loop), so there is no one-command A/B for it the way `LOFT_NO_OWNER_WITNESS=1` is one for
+the witness; giving it one is the cheapest first step.
+
+⚠ **Cure B's late release is inadmissible by RULE, not by taste.**  `(H-Drop)` states the
+reassignment clause with its timing: the displaced record's hook runs *"after the new value has
+been computed and before anything after the statement runs"*.  Moving it to scope exit — what
+arming a witness on `qview` does — keeps the COUNT and breaks the WHEN, so it is a deviation and
+not a cheaper cure.  ⚠ Note also that the clause's illustrative list names *"a rebuild in place,
+a call result, a rebind to null"* and NOT a whole-value copy, which is exactly loft#1517's
+spelling.  The governing phrase covers it (*"a REASSIGNMENT of the owner that displaces the
+record"*), so this is a rule whose EXAMPLE list wants extending, not a rule that cannot express
+the case.
+
+⚠ **No gate sees this defect.**  `(O-Override)`'s gate is `ownership_cfg`'s Check D
+(`LOFT_OWN_ORACLE=check`), and over both guards it reports `clean — 0 RED`: nothing frees
+illicitly, what is missing is a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not
+ordered the way a free's are, and this is that asymmetry showing up in the instruments — the free
+side has a checker, the drop side has only per-guard traces.  A gate for `(H-Drop)`'s three
+deaths is the gap, and it would have caught both populations.
 
 ⚠ **And the reading that nearly shipped cure A was a control firing on both trees.**  `q1085b`'s
 two cells fail under `LOFT_NO_OWNER_WITNESS=1` on `main` as well — they are that guard's own
@@ -1211,7 +1241,8 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Free discipline (`H-Free*`)** — the `LOFT_POISON` suite + the ownership fuzz gate are the
   standing falsifiers: any `H-FreeTwice` / use-after-free / out-of-LIFO free surfaces as a
   poisoned read or a leak-count mismatch. The register that guarantees they never fire is
-  ownership.md (0 open).
+  [ownership.md](ownership.md)'s — read its own `OPEN` line, which is not zero (this row said
+  "0 open" while that register carried an open entry).
 
 D-op-1's falsifier applies here too: any program where the interpreter and `--native` diverge
 on a heap step is the definitional error, and this doc is the definition it fails against.
