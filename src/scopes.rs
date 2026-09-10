@@ -222,6 +222,17 @@ struct Scopes<'s> {
     /// [`Self::owned_refs`]: intersect-merged at every join, so a pairing that holds on one
     /// path only is dropped (losing the hook, never doubling it).
     tuple_call_mint: HashMap<u16, HashMap<u16, Option<u16>>>,
+    /// D-heap-3 (loft#1506) — a local BOUND to a projection of another local, and the
+    /// `(offset, depth)` path from that local's record to the member it views.
+    ///
+    /// `(B-View)` makes `e = d.h` a view, and a `return e` publishes an owned COPY of it —
+    /// so `(H-Drop)`'s responsibility clause moves the member's release to that copy, and
+    /// `d`'s cascade must leave it alone.  The copy names the VIEW, not the projection, so
+    /// the path has to be carried from the bind that established it to the return that
+    /// hands it out.  Path-sensitive like [`Self::owned_refs`]: intersect-merged at every
+    /// join, and retired when either end is reassigned (@FR-O-Latest — the fact belongs to
+    /// the latest assignment, and a view whose BASE was rebuilt names a different record).
+    view_backing: HashMap<u16, (u16, (u16, u16))>,
     /// loft#1510 / `formal/heap.md` D-heap-4 — a local whose LATEST assignment delivered a
     /// CONSTRUCTION's work-ref record (`construction_work_ref`), mapped to that work-ref.
     /// Read by the owned→view transition free: releasing the store by identity there must
@@ -2908,6 +2919,7 @@ fn run_scan_phase(
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         drop_transferred: collect_drop_transferred(orig_code, orig_vars, data),
         tuple_call_mint: HashMap::new(),
+        view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         free_transferred: HashSet::new(),
@@ -7215,11 +7227,14 @@ impl Scopes<'_> {
                 // the body touches is unreliable afterwards.  Keep only the
                 // entries the body left unchanged.
                 let owned_before = self.owned_refs.clone();
+                let views_before = self.view_backing.clone();
                 let backing_before = self.construction_backing.clone();
                 let mints_before = self.tuple_call_mint.clone();
                 let ls = self.convert(lp, function, data, false);
                 self.owned_refs
                     .retain(|k, depth| owned_before.get(k) == Some(depth));
+                self.view_backing
+                    .retain(|k, b| views_before.get(k) == Some(b));
                 self.construction_backing
                     .retain(|k, w| backing_before.get(k) == Some(w));
                 self.tuple_call_mint
@@ -7523,12 +7538,15 @@ impl Scopes<'_> {
                 // #316 — `next`/`extra` execute once per iteration: drop any
                 // ownership entry they touch (same rationale as Value::Loop).
                 let owned_before = self.owned_refs.clone();
+                let views_before = self.view_backing.clone();
                 let backing_before = self.construction_backing.clone();
                 let mints_before = self.tuple_call_mint.clone();
                 let scanned_next = self.scan(next, function, data);
                 let scanned_extra = self.scan(extra, function, data);
                 self.owned_refs
                     .retain(|k, depth| owned_before.get(k) == Some(depth));
+                self.view_backing
+                    .retain(|k, b| views_before.get(k) == Some(b));
                 self.construction_backing
                     .retain(|k, w| backing_before.get(k) == Some(w));
                 self.tuple_call_mint
@@ -7923,6 +7941,18 @@ impl Scopes<'_> {
             _ => {
                 self.construction_backing.remove(&v);
             }
+        }
+        // D-heap-3 (loft#1506) — remember the member a view-bound local NAMES, so a
+        // `return e` can hand its release to the copy it publishes.  Retired from BOTH
+        // ends: writing `v` replaces what it views, and rebuilding a BASE leaves every
+        // view of it naming a record that no longer holds what the path said.
+        self.view_backing.remove(&v);
+        self.view_backing.retain(|_, (base, _)| *base != v);
+        if let Some((base, path)) = projection_root(value, data.def_nr("OpGetField"))
+            && base != v
+            && !function.is_argument(base)
+        {
+            self.view_backing.insert(v, (base, path));
         }
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
@@ -9094,16 +9124,20 @@ impl Scopes<'_> {
         // reconcile intersects rather than unions.
         let owned_before = self.owned_refs.clone();
         let backing_before = self.construction_backing.clone();
+        let views_before = self.view_backing.clone();
         let mints_before = self.tuple_call_mint.clone();
         let scanned_true = self.scan(t_val, function, data);
         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+        let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
         let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
         let scanned_false = self.scan(f_val, function, data);
         self.owned_refs
             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
         self.construction_backing
             .retain(|k, w| backing_after_true.get(k) == Some(w));
+        self.view_backing
+            .retain(|k, b| views_after_true.get(k) == Some(b));
         self.tuple_call_mint
             .retain(|k, m| mints_after_true.get(k) == Some(m));
         let scanned_if = Value::If(
@@ -9967,7 +10001,7 @@ impl Scopes<'_> {
         };
         // D-heap-3 (loft#1506) — the member this RETURN hands to its own copy.
         let path_skip = if is_return {
-            return_copy_out(expr, function, data)
+            return_copy_out(expr, function, data, &self.view_backing)
                 .map_or_else(HashMap::new, |(v, skip)| HashMap::from([(v, skip)]))
         } else {
             HashMap::new()
@@ -15740,8 +15774,8 @@ struct Delivered {
     field_skip: HashMap<u16, (u16, u16)>,
 }
 
-/// D-heap-3 (loft#1506) — the `(local, byte offset)` a RETURN copies out of a record it
-/// owns, so that local's scope-end cascade can leave that member to the copy.
+/// D-heap-3 (loft#1506) — the `(local, path)` a RETURN copies out of a record it owns, so
+/// that local's scope-end cascade can leave that member to the copy.
 ///
 /// `materialize_return_into` publishes an owned copy of a projection (`return d.h`) because
 /// `@FR-F-Ret` wants a fresh value, and `@FR-H-Drop`'s responsibility clause then moves the
@@ -15762,10 +15796,15 @@ struct Delivered {
 /// Declined: a PARAMETER source — `@FR-H-Drop`: *"a copy off a PARAMETER moves nothing: the
 /// caller owns"*, so there is no release here to suppress (`D-heap-1` owns that shape).  A
 /// decline keeps the full cascade — the pre-transfer double release, never a leak.
-fn return_copy_out(expr: &Value, function: &Function, data: &Data) -> Option<(u16, (u16, u16))> {
+fn return_copy_out(
+    expr: &Value,
+    function: &Function,
+    data: &Data,
+    views: &HashMap<u16, (u16, (u16, u16))>,
+) -> Option<(u16, (u16, u16))> {
     let tail = match expr.unspan() {
-        Value::Return(inner) => return return_copy_out(inner, function, data),
-        Value::Insert(ops) => return return_copy_out(ops.last()?, function, data),
+        Value::Return(inner) => return return_copy_out(inner, function, data, views),
+        Value::Insert(ops) => return return_copy_out(ops.last()?, function, data, views),
         other => other,
     };
     let Value::Block(bl) = tail else {
@@ -15783,7 +15822,13 @@ fn return_copy_out(expr: &Value, function: &Function, data: &Data) -> Option<(u1
         if *d != copy_nr {
             return None;
         }
-        let (src, skip) = projection_root(args.first()?, get_field_nr)?;
+        // The copy reads the member directly, or names a LOCAL that views it — `e = d.h;
+        // return e` publishes the same copy of the same member, and the view carries the
+        // path the projection would have spelled out.
+        let (src, skip) = match args.first()?.unspan() {
+            Value::Var(v) => *views.get(v)?,
+            proj => projection_root(proj, get_field_nr)?,
+        };
         if function.is_argument(src) {
             return None;
         }
@@ -15797,7 +15842,13 @@ fn return_copy_out(expr: &Value, function: &Function, data: &Data) -> Option<(u1
 /// Struct members are laid out INSIDE the record that owns them (`formal/layout.md`), so a
 /// chain of field reads is one address and its offsets add up; the depth is how many links
 /// the chain has below the first.  Both are needed because a member at offset 0 shares its
-/// owner's address, so an offset alone cannot say WHICH of them the chain named.  Returns
+/// owner's address, so an offset alone cannot say WHICH of them the chain named.
+///
+/// The TUPLE spelling (`TupleGet`) is deliberately absent: a tuple member's backing is
+/// carried by `tuple_member_backing` and released by `tuple_owned_elem_frees`, which is
+/// D-heap-1's mechanism with its own pairing — recognising it here too would give one member
+/// two claimants.  This reader answers only for the inline struct members `OpGetField` names.
+///
 /// `None` for a base that is not a plain variable — an element read, a call temporary or a
 /// keyed lookup names a place this frame's scope-end release does not reach.
 fn projection_root(expr: &Value, get_field_nr: u32) -> Option<(u16, (u16, u16))> {
