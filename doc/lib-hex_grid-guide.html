@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_grid guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_grid — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_grid-guide.html">
+<meta property="og:title" content="hex_grid guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_grid — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_grid-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_grid guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_grid — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_grid guide</h1>
+<article>
+<p><a href="lib-hex_grid.html">← hex_grid</a> · <a href="lib-hex_grid-api.html">API reference</a> · <a href="lib-hex_grid-src.html">source</a></p>
+<p><code>hex_grid</code> is the coordinate layer the whole <code>hex_*</code> family rests on: hex ↔ world-plane conversion, the six neighbours, distance, corners, and the canonical name of an edge. Pure functions over <code>(q, r)</code> — no structs, no state, nothing to construct or free.</p>
+<p>It is not the map. <code>hex_field</code> holds occupancy and outlines, <code>hex_shape</code> the line/box/arc vocabulary, <code>hex_form</code> turtle forms, <code>hex_terrain</code> heights and water. Reach for <code>hex_grid</code> when you need to know WHERE a cell is; reach for one of those when you need to know what is in it.</p>
+<p>The convention is pointy-top, <strong>odd-r offset</strong>, <code>L = √3</code> per hex step. It is shared executable ground with the games built on it, which is the point of the package: two programs that disagree about where a hex centre is do not interoperate.</p>
+<pre><code><span class="kw">use</span> hex_grid;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  (x, y) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">2</span>, <span class="nm">3</span>);
+  (q, r) = hex_grid::<span class="fn-call">px_to_hex</span>(x, y);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"centre  : ({x}, {y})"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"back    : ({q}, {r})"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"distance: {hex_grid::hex_distance(0, 0, 2, 3)}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(y == <span class="nm">4.5</span>, <span class="st">"y is 1.5 · row, exactly"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q == <span class="nm">2</span> <span class="kw">and</span> r == <span class="nm">3</span>, <span class="st">"hex_to_px and px_to_hex round-trip"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_distance</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">2</span>, <span class="nm">3</span>) == <span class="nm">4</span>, <span class="st">"four steps, not the five a square grid counts"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">axial_and_offset_are_both_two_integers</span>();
+  <span class="fn-call">minus_one_is_a_direction_not_a_refusal</span>();
+  <span class="fn-call">the_odd_rows_are_the_ones_that_break</span>();
+  <span class="fn-call">an_edge_has_one_name_and_two_owners</span>();
+  <span class="fn-call">the_square_basis_points_the_other_way</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  centre  : (4.330127018922193, 4.5)
+  back    : (2, 3)
+  distance: 4
+</code></pre>
+<h2 id="the-one-that-bites-axial-and-offset-are-both-integer-integer">The one that bites: axial and offset are both <code>(integer, integer)</code></h2>
+<p>Two coordinate systems run through hex code, and this package speaks one of them. <code>(q, r)</code> here is always the ODD-R OFFSET pair — <code>(col, row)</code>. <code>hex_round</code> is the exception, and it says so: it answers AXIAL, because that is the space cube rounding happens in.</p>
+<p>Both are <code>(integer, integer)</code>. So handing an axial pair to <code>hex_to_px</code> type-checks, runs, and answers the centre of a DIFFERENT HEX — one step away, every time, silently.</p>
+<p>⚠ <strong>And it is invisible on row 0</strong>, where the two systems coincide: <code>col = q + (r - (r&amp;1))/2</code> is <code>q</code> when <code>r</code> is 0. A test written along the top row passes under either reading, which is how this survives to the first diagonal.</p>
+<p><code>px_to_hex</code> is the door to reach for — it takes world coordinates and answers the offset pair everything else here expects. Use <code>hex_round</code> only when you already hold axial.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">axial_and_offset_are_both_two_integers</span>() {</code></pre>
+<p>Read as OFFSET (2,3) — what every function in this package means by (2,3).</p>
+<pre><code>  (ox, oy) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">2</span>, <span class="nm">3</span>);</code></pre>
+<p>The hex that AXIAL (2,3) actually names: col = 2 + (3 - 1)/2 = 3.</p>
+<pre><code>  (ax, ay) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">3</span>, <span class="nm">3</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ox != ax, <span class="st">"one integer pair, two different places: {ox} vs {ax}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(oy == ay, <span class="st">"…on the same row, which is what makes it look right"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_distance</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">3</span>) == <span class="nm">1</span>, <span class="st">"exactly one step wrong — never far enough to look broken"</span>);</code></pre>
+<p>Row 0 is where the two readings agree, so it cannot witness the mistake.</p>
+<pre><code>  (za, _zb) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">2</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(za == hex_grid::<span class="en">SQRT3</span> * <span class="nm">2.0</span>, <span class="st">"on row 0, axial (2,0) and offset (2,0) are the same hex"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"axial   : offset(2,3) at x={ox}, axial(2,3) at x={ax} — one step apart"</span>);
+}</code></pre>
+<h2 id="1-is-a-refusal-that-every-direction-taking-function-accepts"><code>-1</code> is a refusal that every direction-taking function accepts</h2>
+<p><code>hex_neighbor_dir</code> answers which of the six directions leads from one hex to an adjacent one, and <code>-1</code> when they are not adjacent. That <code>-1</code> is an ordinary <code>integer</code>, not a null — nothing stops it flowing onward.</p>
+<p>And onward it goes: <code>hex_neighbor</code> and <code>hex_edge_corners</code> both fall through to their direction-5 arm rather than raising, so an unchecked <code>-1</code> does not fail. It answers the NORTH-EAST neighbour, confidently, for a pair that were never neighbours at all.</p>
+<p>Check it at the call site. There is no second answer to look for.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">minus_one_is_a_direction_not_a_refusal</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_neighbor_dir</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">3</span>) == <span class="nm">0</span>, <span class="st">"adjacent: direction 0, due east"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_neighbor_dir</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">9</span>, <span class="nm">9</span>) == -<span class="nm">1</span>, <span class="st">"not adjacent: -1"</span>);</code></pre>
+<p>What -1 does next, if nobody looks at it.</p>
+<pre><code>  (mq, mr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, -<span class="nm">1</span>);
+  (fq, fr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">5</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mq == fq <span class="kw">and</span> mr == fr, <span class="st">"-1 is absorbed as direction 5 — a real neighbour, wrongly"</span>);</code></pre>
+<pre><code>  (ma, mb) = hex_grid::<span class="fn-call">hex_edge_corners</span>(-<span class="nm">1</span>);
+  (fa, fb) = hex_grid::<span class="fn-call">hex_edge_corners</span>(<span class="nm">5</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ma == fa <span class="kw">and</span> mb == fb, <span class="st">"…and the edge lookup does the same"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"refusal : -1 answers ({mq}, {mr}) — the same as direction 5, and nothing says so"</span>);
+}</code></pre>
+<h2 id="the-odd-rows-are-the-ones-that-break">The odd rows are the ones that break</h2>
+<p>Odd-r offset shifts every odd row half a hex to the right, so four of the six neighbour deltas depend on the row's parity. Only EAST and WEST are parity-free.</p>
+<p>This is why a hardcoded six-entry delta table is the classic bug here: it is correct on every even row, and on odd rows it hands back <strong>the wrong neighbour</strong> — not an invalid cell, not a null, a real hex one place over. Use <code>hex_neighbor</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_odd_rows_are_the_ones_that_break</span>() {</code></pre>
+<p>Direction 0 (east) is parity-free: +1 column on either row.</p>
+<pre><code>  (e0q, _e0r) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">0</span>);
+  (o0q, _o0r) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e0q == <span class="nm">3</span> <span class="kw">and</span> o0q == <span class="nm">3</span>, <span class="st">"east is +1 column whatever the row"</span>);</code></pre>
+<p>Direction 1 (south-east) is not.</p>
+<pre><code>  (e1q, e1r) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">1</span>);
+  (o1q, o1r) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">1</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e1q == <span class="nm">2</span> <span class="kw">and</span> e1r == <span class="nm">1</span>, <span class="st">"even row: SE keeps the column"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(o1q == <span class="nm">3</span> <span class="kw">and</span> o1r == <span class="nm">2</span>, <span class="st">"odd row: SE advances it — a fixed table gets this one wrong"</span>);</code></pre>
+<p>Whatever the parity, all six are one step away.</p>
+<pre><code>  ring = <span class="kw">true</span>;
+  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {
+    (nq, nr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, d);
+    <span class="kw">if</span> hex_grid::<span class="fn-call">hex_distance</span>(<span class="nm">2</span>, <span class="nm">3</span>, nq, nr) != <span class="nm">1</span> { ring = <span class="kw">false</span>; }
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ring, <span class="st">"all six neighbours are at distance 1"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"parity  : SE from an even row is ({e1q}, {e1r}), from an odd row ({o1q}, {o1r})"</span>);
+}</code></pre>
+<h2 id="an-edge-has-one-name-and-two-owners">An edge has one name and two owners</h2>
+<p>The edge between two hexes is direction 0 from one and direction 3 from the other. Key a wall on the <code>(q, r, dir)</code> a caller happened to approach from and you get TWO half-walls: blocking from one side, open from the other, and each side's own tests pass.</p>
+<p><code>hex_canon_edge</code> resolves any of the six directions to the one triple both owners agree on — directions 0, 1, 2 stay on this hex, 3, 4, 5 belong to the neighbour. Call it before you key an edge on anything: a wall, a door, a river, a shared boundary.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">an_edge_has_one_name_and_two_owners</span>() {
+  (aq, ar, ad) = hex_grid::<span class="fn-call">hex_canon_edge</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">0</span>);   <span class="cm">// approached from the west hex</span>
+  (bq, br, bd) = hex_grid::<span class="fn-call">hex_canon_edge</span>(<span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">3</span>);   <span class="cm">// …and from the east one</span></code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(aq == bq <span class="kw">and</span> ar == br <span class="kw">and</span> ad == bd, <span class="st">"both sides resolve to one key: ({aq}, {ar}, {ad})"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ad &lt; <span class="nm">3</span>, <span class="st">"the canonical index is always 0, 1 or 2"</span>);</code></pre>
+<p>The canonical owner is not always the hex you asked from: directions 3, 4 and 5 hand the edge to the neighbour, which is the half a caller keying on its own (q, r) would miss.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bq != <span class="nm">3</span>, <span class="st">"asked from (3,3), the edge is owned by ({bq}, {br})"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(aq == <span class="nm">2</span> <span class="kw">and</span> ad == <span class="nm">0</span>, <span class="st">"asked from (2,3) dir 0, it is owned here — and those two agree"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"edges   : (2,3,dir 0) and (3,3,dir 3) both key ({aq}, {ar}, {ad})"</span>);
+}</code></pre>
+<h2 id="the-square-basis-points-the-other-way">The square basis points the other way</h2>
+<p><code>cell_*</code> is a square lattice for right-angled things placed on the hex world — corridors, rooms, anything a hex lattice makes painful. It mirrors the hex API name for name, which is what makes the two traps below easy to walk into.</p>
+<pre><code>- **`r` increases NORTH in `hex_*` and SOUTH in `cell_*`.** Same `(integer, integer)`,
+  same `(float, float)` for corners, opposite compass. `hex_neighbor(q, r, 5)` and
+  `cell_neighbor(q, r, 1)` answer the identical pair for opposite directions.
+- **`cell_distance` is Chebyshev**, matching 8-directional movement, while
+  `cell_neighbor` offers 4. So `cell_distance(a, b) == 1` is TRUE for a diagonal no
+  single step can reach, and is not an adjacency test. `cell_neighbor_dir(…) &gt;= 0` is.
+</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_square_basis_points_the_other_way</span>() {
+  (hq, hr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">5</span>);    <span class="cm">// hex direction 5 = north-east</span>
+  (cq, cr) = hex_grid::<span class="fn-call">cell_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">1</span>);   <span class="cm">// cell direction 1 = south</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hq == cq <span class="kw">and</span> hr == cr, <span class="st">"one pair, ({hq}, {hr}), reached going opposite ways"</span>);</code></pre>
+<pre><code>  (_hx, hy) = hex_grid::<span class="fn-call">hex_corner_offset</span>(<span class="nm">0</span>);
+  (_cx, cy) = hex_grid::<span class="fn-call">cell_corner_offset</span>(<span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hy &gt; <span class="nm">0.0</span> <span class="kw">and</span> cy &lt; <span class="nm">0.0</span>, <span class="st">"corner 0 is +y in the hex family and -y in the square one"</span>);</code></pre>
+<p>The adjacency trap.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">cell_distance</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>) == <span class="nm">1</span>, <span class="st">"Chebyshev calls the diagonal one step…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">cell_neighbor_dir</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>) == -<span class="nm">1</span>, <span class="st">"…and no single cell_neighbor reaches it"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">cell_neighbor_dir</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"an orthogonal step is direction 0"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"square  : distance says 1 for a diagonal, neighbor_dir says -1 — use neighbor_dir"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the full function table, both families side by side, and the world-scale constants (<code>SQRT3</code>, <code>HEX_SIZE</code>, <code>HEX_LEN</code>, <code>GRID_LEN</code>) a consumer works in.</li>
+<li><code>tests/03-worked-examples.loft</code> — <code>@HXG-001</code> … <code>@HXG-006</code>, the contracts above as running tests, each cited from the doc comment of the function it demonstrates.</li>
+<li><code>tests/02-parity.loft</code> — the proof that the <code>hex_*</code> and <code>cell_*</code> families answer consistently, which is what lets you learn one and read the other.</li>
+<li><code>hex_field</code> for occupancy and outlines over these coordinates, <code>hex_shape</code> for lines, boxes and arcs, and <code>hex_draw</code> to render the result.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

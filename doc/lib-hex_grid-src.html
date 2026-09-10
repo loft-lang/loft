@@ -23,36 +23,36 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_grid source</h1>
 <article>
-<p><a href="lib-hex_grid.html">← hex_grid</a> · <a href="lib-hex_grid-api.html">API reference</a> · version 0.1.0</p>
-<p class="lib-legend">2 file(s), 333 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_grid.html">← hex_grid</a> · <a href="lib-hex_grid-api.html">API reference</a> · version 0.1.1</p>
+<p class="lib-legend">4 file(s), 739 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>SQRT3</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L20">20</a></td><td>—</td><td><a href="#src-hex-grid-loft-L22">22</a> <a href="#src-hex-grid-loft-L29">29</a> <a href="#src-hex-grid-loft-L58">58</a> <a href="#src-hex-grid-loft-L123">123</a></td></tr>
-<tr><td><code>HEX_SIZE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L21">21</a></td><td>—</td><td><a href="#src-hex-grid-loft-L22">22</a> <a href="#src-hex-grid-loft-L29">29</a> <a href="#src-hex-grid-loft-L30">30</a> <a href="#src-hex-grid-loft-L58">58</a> <a href="#src-hex-grid-loft-L59">59</a> <a href="#src-hex-grid-loft-L136">136</a> … (7 total)</td></tr>
+<tr><td><code>SQRT3</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L20">20</a></td><td>—</td><td><a href="#src-hex-grid-loft-L22">22</a> <a href="#src-hex-grid-loft-L29">29</a> <a href="#src-hex-grid-loft-L65">65</a> <a href="#src-hex-grid-loft-L140">140</a> <a href="#tests-02-parity-loft-L87">87</a> <a href="#tests-02-parity-loft-L107">107</a></td></tr>
+<tr><td><code>HEX_SIZE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L21">21</a></td><td>—</td><td><a href="#src-hex-grid-loft-L22">22</a> <a href="#src-hex-grid-loft-L29">29</a> <a href="#src-hex-grid-loft-L30">30</a> <a href="#src-hex-grid-loft-L65">65</a> <a href="#src-hex-grid-loft-L66">66</a> <a href="#src-hex-grid-loft-L153">153</a> … (7 total)</td></tr>
 <tr><td><code>HEX_LEN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L22">22</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L34">34</a> <a href="#tests-01-hex-grid-loft-L36">36</a></td></tr>
-<tr><td><code>hex_to_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L27">27</a></td><td>—</td><td><a href="#src-hex-grid-loft-L134">134</a> <a href="#tests-01-hex-grid-loft-L7">7</a> <a href="#tests-01-hex-grid-loft-L15">15</a> <a href="#tests-01-hex-grid-loft-L20">20</a> <a href="#tests-01-hex-grid-loft-L29">29</a> <a href="#tests-01-hex-grid-loft-L30">30</a> … (7 total)</td></tr>
-<tr><td><code>hex_round</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L35">35</a></td><td>—</td><td><a href="#src-hex-grid-loft-L60">60</a></td></tr>
-<tr><td><code>px_to_hex</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L57">57</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L16">16</a> <a href="#tests-01-hex-grid-loft-L20">20</a></td></tr>
-<tr><td><code>hex_neighbor</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L68">68</a></td><td>—</td><td><a href="#src-hex-grid-loft-L153">153</a> <a href="#tests-01-hex-grid-loft-L27">27</a> <a href="#tests-01-hex-grid-loft-L42">42</a> <a href="#tests-01-hex-grid-loft-L45">45</a> <a href="#tests-01-hex-grid-loft-L60">60</a></td></tr>
-<tr><td><code>hex_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L86">86</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L28">28</a> <a href="#tests-01-hex-grid-loft-L49">49</a> <a href="#tests-01-hex-grid-loft-L50">50</a> <a href="#tests-01-hex-grid-loft-L51">51</a> <a href="#tests-01-hex-grid-loft-L52">52</a> <a href="#tests-01-hex-grid-loft-L53">53</a></td></tr>
-<tr><td><code>hex_neighbor_dir</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L96">96</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L43">43</a> <a href="#tests-01-hex-grid-loft-L45">45</a> <a href="#tests-01-hex-grid-loft-L61">61</a></td></tr>
-<tr><td><code>hex_corner_offset</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L122">122</a></td><td>—</td><td><a href="#src-hex-grid-loft-L135">135</a></td></tr>
-<tr><td><code>hex_corner_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L133">133</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L71">71</a></td></tr>
-<tr><td><code>hex_edge_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L140">140</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>hex_canon_edge</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L151">151</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L59">59</a> <a href="#tests-01-hex-grid-loft-L62">62</a></td></tr>
-<tr><td><code>GRID_SIZE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L159">159</a></td><td>—</td><td><a href="#src-hex-grid-loft-L208">208</a></td></tr>
-<tr><td><code>GRID_LEN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L160">160</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>cell_to_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L163">163</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L84">84</a> <a href="#tests-01-hex-grid-loft-L89">89</a></td></tr>
-<tr><td><code>px_to_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L168">168</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L85">85</a> <a href="#tests-01-hex-grid-loft-L89">89</a></td></tr>
-<tr><td><code>cell_neighbor</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L173">173</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L95">95</a> <a href="#tests-01-hex-grid-loft-L98">98</a> <a href="#tests-01-hex-grid-loft-L103">103</a></td></tr>
-<tr><td><code>cell_neighbor_dir</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L181">181</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L96">96</a> <a href="#tests-01-hex-grid-loft-L98">98</a> <a href="#tests-01-hex-grid-loft-L104">104</a></td></tr>
-<tr><td><code>cell_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L192">192</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>cell_corner_offset</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L199">199</a></td><td>—</td><td><a href="#src-hex-grid-loft-L207">207</a></td></tr>
-<tr><td><code>cell_corner_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L206">206</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>cell_edge_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L212">212</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>cell_canon_edge</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L221">221</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L102">102</a> <a href="#tests-01-hex-grid-loft-L105">105</a></td></tr>
+<tr><td><code>hex_to_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L27">27</a></td><td>—</td><td><a href="#src-hex-grid-loft-L151">151</a> <a href="#tests-01-hex-grid-loft-L7">7</a> <a href="#tests-01-hex-grid-loft-L15">15</a> <a href="#tests-01-hex-grid-loft-L20">20</a> <a href="#tests-01-hex-grid-loft-L29">29</a> <a href="#tests-01-hex-grid-loft-L30">30</a> … (15 total)</td></tr>
+<tr><td><code>hex_round</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L39">39</a></td><td><a href="#tests-03-worked-examples-loft-L35">HXG-001</a></td><td><a href="#src-hex-grid-loft-L67">67</a> <a href="#tests-03-worked-examples-loft-L57">57</a> <a href="#tests-03-worked-examples-loft-L58">58</a></td></tr>
+<tr><td><code>px_to_hex</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L64">64</a></td><td><a href="#tests-03-worked-examples-loft-L35">HXG-001</a></td><td><a href="#tests-01-hex-grid-loft-L16">16</a> <a href="#tests-01-hex-grid-loft-L20">20</a> <a href="#tests-03-worked-examples-loft-L51">51</a> <a href="#tests-03-worked-examples-loft-L52">52</a></td></tr>
+<tr><td><code>hex_neighbor</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L78">78</a></td><td><a href="#tests-03-worked-examples-loft-L72">HXG-002</a></td><td><a href="#src-hex-grid-loft-L177">177</a> <a href="#tests-01-hex-grid-loft-L27">27</a> <a href="#tests-01-hex-grid-loft-L42">42</a> <a href="#tests-01-hex-grid-loft-L45">45</a> <a href="#tests-01-hex-grid-loft-L60">60</a> <a href="#tests-03-worked-examples-loft-L80">80</a> … (17 total)</td></tr>
+<tr><td><code>hex_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L96">96</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L28">28</a> <a href="#tests-01-hex-grid-loft-L49">49</a> <a href="#tests-01-hex-grid-loft-L50">50</a> <a href="#tests-01-hex-grid-loft-L51">51</a> <a href="#tests-01-hex-grid-loft-L52">52</a> <a href="#tests-01-hex-grid-loft-L53">53</a> … (9 total)</td></tr>
+<tr><td><code>hex_neighbor_dir</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L110">110</a></td><td><a href="#tests-03-worked-examples-loft-L216">HXG-006</a></td><td><a href="#tests-01-hex-grid-loft-L43">43</a> <a href="#tests-01-hex-grid-loft-L45">45</a> <a href="#tests-01-hex-grid-loft-L61">61</a> <a href="#tests-03-worked-examples-loft-L88">88</a> <a href="#tests-03-worked-examples-loft-L123">123</a> <a href="#tests-03-worked-examples-loft-L137">137</a> … (9 total)</td></tr>
+<tr><td><code>hex_corner_offset</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L139">139</a></td><td><a href="#tests-03-worked-examples-loft-L155">HXG-004</a></td><td><a href="#src-hex-grid-loft-L152">152</a> <a href="#tests-03-worked-examples-loft-L171">171</a></td></tr>
+<tr><td><code>hex_corner_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L150">150</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L71">71</a></td></tr>
+<tr><td><code>hex_edge_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L160">160</a></td><td><a href="#tests-03-worked-examples-loft-L216">HXG-006</a></td><td><a href="#tests-03-worked-examples-loft-L228">228</a> <a href="#tests-03-worked-examples-loft-L229">229</a> <a href="#tests-03-worked-examples-loft-L230">230</a></td></tr>
+<tr><td><code>hex_canon_edge</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L175">175</a></td><td><a href="#tests-03-worked-examples-loft-L105">HXG-003</a></td><td><a href="#tests-01-hex-grid-loft-L59">59</a> <a href="#tests-01-hex-grid-loft-L62">62</a> <a href="#tests-03-worked-examples-loft-L117">117</a> <a href="#tests-03-worked-examples-loft-L124">124</a> <a href="#tests-03-worked-examples-loft-L146">146</a> <a href="#tests-03-worked-examples-loft-L238">238</a> … (7 total)</td></tr>
+<tr><td><code>GRID_SIZE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L183">183</a></td><td>—</td><td><a href="#src-hex-grid-loft-L245">245</a></td></tr>
+<tr><td><code>GRID_LEN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-grid-loft-L184">184</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>cell_to_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L187">187</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L84">84</a> <a href="#tests-01-hex-grid-loft-L89">89</a> <a href="#tests-03-worked-examples-loft-L183">183</a> <a href="#tests-03-worked-examples-loft-L184">184</a></td></tr>
+<tr><td><code>px_to_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L192">192</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L85">85</a> <a href="#tests-01-hex-grid-loft-L89">89</a></td></tr>
+<tr><td><code>cell_neighbor</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L200">200</a></td><td><a href="#tests-03-worked-examples-loft-L155">HXG-004</a></td><td><a href="#tests-01-hex-grid-loft-L95">95</a> <a href="#tests-01-hex-grid-loft-L98">98</a> <a href="#tests-01-hex-grid-loft-L103">103</a> <a href="#tests-03-worked-examples-loft-L165">165</a></td></tr>
+<tr><td><code>cell_neighbor_dir</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L211">211</a></td><td><a href="#tests-03-worked-examples-loft-L188">HXG-005</a></td><td><a href="#tests-01-hex-grid-loft-L96">96</a> <a href="#tests-01-hex-grid-loft-L98">98</a> <a href="#tests-01-hex-grid-loft-L104">104</a> <a href="#tests-03-worked-examples-loft-L196">196</a> <a href="#tests-03-worked-examples-loft-L213">213</a></td></tr>
+<tr><td><code>cell_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L225">225</a></td><td><a href="#tests-03-worked-examples-loft-L188">HXG-005</a></td><td><a href="#tests-03-worked-examples-loft-L195">195</a></td></tr>
+<tr><td><code>cell_corner_offset</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L234">234</a></td><td><a href="#tests-03-worked-examples-loft-L155">HXG-004</a></td><td><a href="#src-hex-grid-loft-L244">244</a> <a href="#tests-03-worked-examples-loft-L174">174</a></td></tr>
+<tr><td><code>cell_corner_px</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L243">243</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>cell_edge_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L249">249</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>cell_canon_edge</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-grid-loft-L258">258</a></td><td>—</td><td><a href="#tests-01-hex-grid-loft-L102">102</a> <a href="#tests-01-hex-grid-loft-L105">105</a></td></tr>
 </table>
 <h2 id="src-hex-grid-loft">src/hex_grid.loft</h2>
 <pre class="src"><code><span id="src-hex-grid-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -88,199 +88,236 @@
 <span id="src-hex-grid-loft-L31">  (hx, hy)</span>
 <span id="src-hex-grid-loft-L32">}</span>
 <span id="src-hex-grid-loft-L33"></span>
-<span id="src-hex-grid-loft-L34"><span class="cm">// Round fractional cube coords to the nearest hex; return axial (q,r).</span></span>
-<span id="src-hex-grid-loft-L35"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_round</span>(qf: <span class="ty"><a href="stdlib-types.html">float</a></span>, rf: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L36">  cx = qf;</span>
-<span id="src-hex-grid-loft-L37">  cz = rf;</span>
-<span id="src-hex-grid-loft-L38">  cy = -cx - cz;</span>
-<span id="src-hex-grid-loft-L39">  rxf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cx);</span>
-<span id="src-hex-grid-loft-L40">  ryf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cy);</span>
-<span id="src-hex-grid-loft-L41">  rzf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cz);</span>
-<span id="src-hex-grid-loft-L42">  dx = <span class="bi"><a href="stdlib-math.html">abs</a></span>(rxf - cx);</span>
-<span id="src-hex-grid-loft-L43">  dy = <span class="bi"><a href="stdlib-math.html">abs</a></span>(ryf - cy);</span>
-<span id="src-hex-grid-loft-L44">  dz = <span class="bi"><a href="stdlib-math.html">abs</a></span>(rzf - cz);</span>
-<span id="src-hex-grid-loft-L45">  <span class="kw">if</span> dx &gt; dy &amp;&amp; dx &gt; dz {</span>
-<span id="src-hex-grid-loft-L46">    rxf = -ryf - rzf;</span>
-<span id="src-hex-grid-loft-L47">  } <span class="kw">else</span> <span class="kw">if</span> dy &gt; dz {</span>
-<span id="src-hex-grid-loft-L48">    ryf = -rxf - rzf;</span>
-<span id="src-hex-grid-loft-L49">  } <span class="kw">else</span> {</span>
-<span id="src-hex-grid-loft-L50">    rzf = -rxf - ryf;</span>
-<span id="src-hex-grid-loft-L51">  }</span>
-<span id="src-hex-grid-loft-L52">  (rxf <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, rzf <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
-<span id="src-hex-grid-loft-L53">}</span>
-<span id="src-hex-grid-loft-L54"></span>
-<span id="src-hex-grid-loft-L55"><span class="cm">// World-plane point (x,y) -&gt; nearest hex (col,row). Axial-fractional inverse +</span></span>
-<span id="src-hex-grid-loft-L56"><span class="cm">// cube round, then convert axial -&gt; odd-r offset (col = q + (r - (r&amp;1))/2).</span></span>
-<span id="src-hex-grid-loft-L57"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">px_to_hex</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L58">  qf = (<span class="en">SQRT3</span> / <span class="nm">3.0</span> * x - <span class="nm">1.0</span> / <span class="nm">3.0</span> * y) / <span class="en">HEX_SIZE</span>;</span>
-<span id="src-hex-grid-loft-L59">  rf = (<span class="nm">2.0</span> / <span class="nm">3.0</span> * y) / <span class="en">HEX_SIZE</span>;</span>
-<span id="src-hex-grid-loft-L60">  (aq, ar) = <span class="fn-call">hex_round</span>(qf, rf);</span>
-<span id="src-hex-grid-loft-L61">  col = aq + (ar - (ar &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
-<span id="src-hex-grid-loft-L62">  (col, ar)</span>
-<span id="src-hex-grid-loft-L63">}</span>
-<span id="src-hex-grid-loft-L64"></span>
-<span id="src-hex-grid-loft-L65"><span class="cm">// The six neighbour directions (0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE; r increases</span></span>
-<span id="src-hex-grid-loft-L66"><span class="cm">// upward). ODD-R OFFSET, so the four diagonal deltas differ by row parity. The</span></span>
-<span id="src-hex-grid-loft-L67"><span class="cm">// compass order matches the old axial one, so edge_corners/canon_edge are unchanged.</span></span>
-<span id="src-hex-grid-loft-L68"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_neighbor</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L69">  <span class="kw">if</span> (r &amp; <span class="nm">1</span>) == <span class="nm">0</span> {</span>
-<span id="src-hex-grid-loft-L70">    <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L71">    <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r - <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L72">    <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r - <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L73">    <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L74">    <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r + <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L75">    <span class="kw">return</span> (q, r + <span class="nm">1</span>);</span>
-<span id="src-hex-grid-loft-L76">  }</span>
-<span id="src-hex-grid-loft-L77">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L78">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r - <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L79">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q, r - <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L80">  <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L81">  <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (q, r + <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L82">  (q + <span class="nm">1</span>, r + <span class="nm">1</span>)</span>
-<span id="src-hex-grid-loft-L83">}</span>
-<span id="src-hex-grid-loft-L84"></span>
-<span id="src-hex-grid-loft-L85"><span class="cm">// Hex distance in steps — convert odd-r offset -&gt; axial, then cube distance.</span></span>
-<span id="src-hex-grid-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_distance</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-grid-loft-L87">  aq1 = q1 - (r1 - (r1 &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
-<span id="src-hex-grid-loft-L88">  aq2 = q2 - (r2 - (r2 &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
-<span id="src-hex-grid-loft-L89">  dq = aq1 - aq2;</span>
-<span id="src-hex-grid-loft-L90">  dr = r1 - r2;</span>
-<span id="src-hex-grid-loft-L91">  (<span class="bi"><a href="stdlib-math.html">abs</a></span>(dq) + <span class="bi"><a href="stdlib-math.html">abs</a></span>(dq + dr) + <span class="bi"><a href="stdlib-math.html">abs</a></span>(dr)) / <span class="nm">2</span></span>
-<span id="src-hex-grid-loft-L92">}</span>
-<span id="src-hex-grid-loft-L93"></span>
-<span id="src-hex-grid-loft-L94"><span class="cm">// Which of the 6 neighbour directions leads from (q1,r1) to adjacent (q2,r2)?</span></span>
-<span id="src-hex-grid-loft-L95"><span class="cm">// Inverse of hex_neighbor (odd-r offset, parity-dependent on r1); -1 if not adjacent.</span></span>
-<span id="src-hex-grid-loft-L96"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_neighbor_dir</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-grid-loft-L97">  ndq = q2 - q1;</span>
-<span id="src-hex-grid-loft-L98">  ndr = r2 - r1;</span>
-<span id="src-hex-grid-loft-L99">  <span class="kw">if</span> (r1 &amp; <span class="nm">1</span>) == <span class="nm">0</span> {</span>
-<span id="src-hex-grid-loft-L100">    <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-grid-loft-L101">    <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-hex-grid-loft-L102">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
-<span id="src-hex-grid-loft-L103">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">3</span>; }</span>
-<span id="src-hex-grid-loft-L104">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">4</span>; }</span>
-<span id="src-hex-grid-loft-L105">    <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">5</span>; }</span>
-<span id="src-hex-grid-loft-L106">    <span class="kw">return</span> -<span class="nm">1</span>;</span>
-<span id="src-hex-grid-loft-L107">  }</span>
-<span id="src-hex-grid-loft-L108">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-grid-loft-L109">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-hex-grid-loft-L110">  <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
-<span id="src-hex-grid-loft-L111">  <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">3</span>; }</span>
-<span id="src-hex-grid-loft-L112">  <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">4</span>; }</span>
-<span id="src-hex-grid-loft-L113">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">5</span>; }</span>
-<span id="src-hex-grid-loft-L114">  -<span class="nm">1</span></span>
-<span id="src-hex-grid-loft-L115">}</span>
-<span id="src-hex-grid-loft-L116"></span>
-<span id="src-hex-grid-loft-L117"><span class="cm">// ── Edge walls (moros model): walls live on hex edges, stored on 3</span></span>
-<span id="src-hex-grid-loft-L118"><span class="cm">// canonical edges per hex (dirs 0,1,2); dirs 3,4,5 belong to the neighbour. ──</span></span>
-<span id="src-hex-grid-loft-L119"></span>
-<span id="src-hex-grid-loft-L120"><span class="cm">// Corner offset of a pointy-top unit hex (circumradius 1), corner 0 = top,</span></span>
-<span id="src-hex-grid-loft-L121"><span class="cm">// going counter-clockwise. Used to place edge endpoints and wall segments.</span></span>
-<span id="src-hex-grid-loft-L122"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_corner_offset</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-grid-loft-L123">  hw = <span class="en">SQRT3</span> / <span class="nm">2.0</span>;</span>
-<span id="src-hex-grid-loft-L124">  <span class="kw">if</span> i == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">1.0</span>); }</span>
-<span id="src-hex-grid-loft-L125">  <span class="kw">if</span> i == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">0.0</span> - hw, <span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L126">  <span class="kw">if</span> i == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">0.0</span> - hw, <span class="nm">0.0</span> - <span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L127">  <span class="kw">if</span> i == <span class="nm">3</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span> - <span class="nm">1.0</span>); }</span>
-<span id="src-hex-grid-loft-L128">  <span class="kw">if</span> i == <span class="nm">4</span> { <span class="kw">return</span> (hw, <span class="nm">0.0</span> - <span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L129">  (hw, <span class="nm">0.5</span>)</span>
-<span id="src-hex-grid-loft-L130">}</span>
-<span id="src-hex-grid-loft-L131"></span>
-<span id="src-hex-grid-loft-L132"><span class="cm">// World-plane position of corner i of hex (q,r).</span></span>
-<span id="src-hex-grid-loft-L133"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_corner_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-grid-loft-L134">  (ccx, ccy) = <span class="fn-call">hex_to_px</span>(q, r);</span>
-<span id="src-hex-grid-loft-L135">  (cox, coy) = <span class="fn-call">hex_corner_offset</span>(i);</span>
-<span id="src-hex-grid-loft-L136">  (ccx + cox * <span class="en">HEX_SIZE</span>, ccy + coy * <span class="en">HEX_SIZE</span>)</span>
-<span id="src-hex-grid-loft-L137">}</span>
-<span id="src-hex-grid-loft-L138"></span>
-<span id="src-hex-grid-loft-L139"><span class="cm">// The two corner indices bounding the edge in neighbour direction `dir`.</span></span>
-<span id="src-hex-grid-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_edge_corners</span>(dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L141">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">4</span>, <span class="nm">5</span>); }</span>
-<span id="src-hex-grid-loft-L142">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">3</span>, <span class="nm">4</span>); }</span>
-<span id="src-hex-grid-loft-L143">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">2</span>, <span class="nm">3</span>); }</span>
-<span id="src-hex-grid-loft-L144">  <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (<span class="nm">1</span>, <span class="nm">2</span>); }</span>
-<span id="src-hex-grid-loft-L145">  <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (<span class="nm">0</span>, <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L146">  (<span class="nm">5</span>, <span class="nm">0</span>)</span>
+<span id="src-hex-grid-loft-L34"><span class="cm">// Round fractional cube coords to the nearest hex; return AXIAL (q,r) — NOT the</span></span>
+<span id="src-hex-grid-loft-L35"><span class="cm">// odd-r offset (col,row) the rest of this module takes.  Both are</span></span>
+<span id="src-hex-grid-loft-L36"><span class="cm">// `(integer, integer)`, so mixing them type-checks and lands on a neighbouring</span></span>
+<span id="src-hex-grid-loft-L37"><span class="cm">// hex.  Use `px_to_hex` unless you already hold axial coordinates.</span></span>
+<span id="src-hex-grid-loft-L38"><span class="cm">// Example: @HXG-001</span></span>
+<span id="src-hex-grid-loft-L39"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_round</span>(qf: <span class="ty"><a href="stdlib-types.html">float</a></span>, rf: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L40">  cx = qf;</span>
+<span id="src-hex-grid-loft-L41">  cz = rf;</span>
+<span id="src-hex-grid-loft-L42">  cy = -cx - cz;</span>
+<span id="src-hex-grid-loft-L43">  rxf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cx);</span>
+<span id="src-hex-grid-loft-L44">  ryf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cy);</span>
+<span id="src-hex-grid-loft-L45">  rzf = <span class="bi"><a href="stdlib-math.html">round</a></span>(cz);</span>
+<span id="src-hex-grid-loft-L46">  dx = <span class="bi"><a href="stdlib-math.html">abs</a></span>(rxf - cx);</span>
+<span id="src-hex-grid-loft-L47">  dy = <span class="bi"><a href="stdlib-math.html">abs</a></span>(ryf - cy);</span>
+<span id="src-hex-grid-loft-L48">  dz = <span class="bi"><a href="stdlib-math.html">abs</a></span>(rzf - cz);</span>
+<span id="src-hex-grid-loft-L49">  <span class="kw">if</span> dx &gt; dy &amp;&amp; dx &gt; dz {</span>
+<span id="src-hex-grid-loft-L50">    rxf = -ryf - rzf;</span>
+<span id="src-hex-grid-loft-L51">  } <span class="kw">else</span> <span class="kw">if</span> dy &gt; dz {</span>
+<span id="src-hex-grid-loft-L52">    ryf = -rxf - rzf;</span>
+<span id="src-hex-grid-loft-L53">  } <span class="kw">else</span> {</span>
+<span id="src-hex-grid-loft-L54">    rzf = -rxf - ryf;</span>
+<span id="src-hex-grid-loft-L55">  }</span>
+<span id="src-hex-grid-loft-L56">  (rxf <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, rzf <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
+<span id="src-hex-grid-loft-L57">}</span>
+<span id="src-hex-grid-loft-L58"></span>
+<span id="src-hex-grid-loft-L59"><span class="cm">// World-plane point (x,y) -&gt; nearest hex (col,row). Axial-fractional inverse +</span></span>
+<span id="src-hex-grid-loft-L60"><span class="cm">// cube round, then convert axial -&gt; odd-r offset (col = q + (r - (r&amp;1))/2).</span></span>
+<span id="src-hex-grid-loft-L61"><span class="cm">// This is the conversion to reach for: it answers the OFFSET pair every other</span></span>
+<span id="src-hex-grid-loft-L62"><span class="cm">// function here expects, where `hex_round` alone answers the axial one.</span></span>
+<span id="src-hex-grid-loft-L63"><span class="cm">// Example: @HXG-001</span></span>
+<span id="src-hex-grid-loft-L64"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">px_to_hex</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L65">  qf = (<span class="en">SQRT3</span> / <span class="nm">3.0</span> * x - <span class="nm">1.0</span> / <span class="nm">3.0</span> * y) / <span class="en">HEX_SIZE</span>;</span>
+<span id="src-hex-grid-loft-L66">  rf = (<span class="nm">2.0</span> / <span class="nm">3.0</span> * y) / <span class="en">HEX_SIZE</span>;</span>
+<span id="src-hex-grid-loft-L67">  (aq, ar) = <span class="fn-call">hex_round</span>(qf, rf);</span>
+<span id="src-hex-grid-loft-L68">  col = aq + (ar - (ar &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
+<span id="src-hex-grid-loft-L69">  (col, ar)</span>
+<span id="src-hex-grid-loft-L70">}</span>
+<span id="src-hex-grid-loft-L71"></span>
+<span id="src-hex-grid-loft-L72"><span class="cm">// The six neighbour directions (0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE; r increases</span></span>
+<span id="src-hex-grid-loft-L73"><span class="cm">// upward). ODD-R OFFSET, so the four diagonal deltas differ by row parity. The</span></span>
+<span id="src-hex-grid-loft-L74"><span class="cm">// compass order matches the old axial one, so edge_corners/canon_edge are unchanged.</span></span>
+<span id="src-hex-grid-loft-L75"><span class="cm">// Only E and W are parity-free: a hardcoded six-entry delta table is right on</span></span>
+<span id="src-hex-grid-loft-L76"><span class="cm">// every even row and hands back the wrong NEIGHBOUR — not a bad cell — on odd ones.</span></span>
+<span id="src-hex-grid-loft-L77"><span class="cm">// Example: @HXG-002, @HXG-004</span></span>
+<span id="src-hex-grid-loft-L78"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_neighbor</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L79">  <span class="kw">if</span> (r &amp; <span class="nm">1</span>) == <span class="nm">0</span> {</span>
+<span id="src-hex-grid-loft-L80">    <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L81">    <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r - <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L82">    <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r - <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L83">    <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L84">    <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r + <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L85">    <span class="kw">return</span> (q, r + <span class="nm">1</span>);</span>
+<span id="src-hex-grid-loft-L86">  }</span>
+<span id="src-hex-grid-loft-L87">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L88">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r - <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L89">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q, r - <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L90">  <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L91">  <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (q, r + <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L92">  (q + <span class="nm">1</span>, r + <span class="nm">1</span>)</span>
+<span id="src-hex-grid-loft-L93">}</span>
+<span id="src-hex-grid-loft-L94"></span>
+<span id="src-hex-grid-loft-L95"><span class="cm">// Hex distance in steps — convert odd-r offset -&gt; axial, then cube distance.</span></span>
+<span id="src-hex-grid-loft-L96"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_distance</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-grid-loft-L97">  aq1 = q1 - (r1 - (r1 &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
+<span id="src-hex-grid-loft-L98">  aq2 = q2 - (r2 - (r2 &amp; <span class="nm">1</span>)) / <span class="nm">2</span>;</span>
+<span id="src-hex-grid-loft-L99">  dq = aq1 - aq2;</span>
+<span id="src-hex-grid-loft-L100">  dr = r1 - r2;</span>
+<span id="src-hex-grid-loft-L101">  (<span class="bi"><a href="stdlib-math.html">abs</a></span>(dq) + <span class="bi"><a href="stdlib-math.html">abs</a></span>(dq + dr) + <span class="bi"><a href="stdlib-math.html">abs</a></span>(dr)) / <span class="nm">2</span></span>
+<span id="src-hex-grid-loft-L102">}</span>
+<span id="src-hex-grid-loft-L103"></span>
+<span id="src-hex-grid-loft-L104"><span class="cm">// Which of the 6 neighbour directions leads from (q1,r1) to adjacent (q2,r2)?</span></span>
+<span id="src-hex-grid-loft-L105"><span class="cm">// Inverse of hex_neighbor (odd-r offset, parity-dependent on r1); -1 if not adjacent.</span></span>
+<span id="src-hex-grid-loft-L106"><span class="cm">// `-1` is an ordinary `integer`, not a null: it flows into every function that</span></span>
+<span id="src-hex-grid-loft-L107"><span class="cm">// takes a direction, where `hex_neighbor` and `hex_edge_corners` absorb it as</span></span>
+<span id="src-hex-grid-loft-L108"><span class="cm">// direction 5 and `hex_canon_edge` keeps it as an edge index.  Check it here.</span></span>
+<span id="src-hex-grid-loft-L109"><span class="cm">// Example: @HXG-006</span></span>
+<span id="src-hex-grid-loft-L110"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_neighbor_dir</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-grid-loft-L111">  ndq = q2 - q1;</span>
+<span id="src-hex-grid-loft-L112">  ndr = r2 - r1;</span>
+<span id="src-hex-grid-loft-L113">  <span class="kw">if</span> (r1 &amp; <span class="nm">1</span>) == <span class="nm">0</span> {</span>
+<span id="src-hex-grid-loft-L114">    <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-grid-loft-L115">    <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-hex-grid-loft-L116">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
+<span id="src-hex-grid-loft-L117">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">3</span>; }</span>
+<span id="src-hex-grid-loft-L118">    <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">4</span>; }</span>
+<span id="src-hex-grid-loft-L119">    <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">5</span>; }</span>
+<span id="src-hex-grid-loft-L120">    <span class="kw">return</span> -<span class="nm">1</span>;</span>
+<span id="src-hex-grid-loft-L121">  }</span>
+<span id="src-hex-grid-loft-L122">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-grid-loft-L123">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-hex-grid-loft-L124">  <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
+<span id="src-hex-grid-loft-L125">  <span class="kw">if</span> ndq == -<span class="nm">1</span> &amp;&amp; ndr == <span class="nm">0</span>  { <span class="kw">return</span> <span class="nm">3</span>; }</span>
+<span id="src-hex-grid-loft-L126">  <span class="kw">if</span> ndq == <span class="nm">0</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">4</span>; }</span>
+<span id="src-hex-grid-loft-L127">  <span class="kw">if</span> ndq == <span class="nm">1</span>  &amp;&amp; ndr == <span class="nm">1</span>  { <span class="kw">return</span> <span class="nm">5</span>; }</span>
+<span id="src-hex-grid-loft-L128">  -<span class="nm">1</span></span>
+<span id="src-hex-grid-loft-L129">}</span>
+<span id="src-hex-grid-loft-L130"></span>
+<span id="src-hex-grid-loft-L131"><span class="cm">// ── Edge walls (moros model): walls live on hex edges, stored on 3</span></span>
+<span id="src-hex-grid-loft-L132"><span class="cm">// canonical edges per hex (dirs 0,1,2); dirs 3,4,5 belong to the neighbour. ──</span></span>
+<span id="src-hex-grid-loft-L133"></span>
+<span id="src-hex-grid-loft-L134"><span class="cm">// Corner offset of a pointy-top unit hex (circumradius 1), corner 0 = top,</span></span>
+<span id="src-hex-grid-loft-L135"><span class="cm">// going counter-clockwise. Used to place edge endpoints and wall segments.</span></span>
+<span id="src-hex-grid-loft-L136"><span class="cm">// +y is NORTH here.  The cell_* family below uses +y SOUTH, with the same</span></span>
+<span id="src-hex-grid-loft-L137"><span class="cm">// `(float, float)` return type — see the example before assuming either.</span></span>
+<span id="src-hex-grid-loft-L138"><span class="cm">// Example: @HXG-004</span></span>
+<span id="src-hex-grid-loft-L139"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_corner_offset</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-grid-loft-L140">  hw = <span class="en">SQRT3</span> / <span class="nm">2.0</span>;</span>
+<span id="src-hex-grid-loft-L141">  <span class="kw">if</span> i == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">1.0</span>); }</span>
+<span id="src-hex-grid-loft-L142">  <span class="kw">if</span> i == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">0.0</span> - hw, <span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L143">  <span class="kw">if</span> i == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">0.0</span> - hw, <span class="nm">0.0</span> - <span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L144">  <span class="kw">if</span> i == <span class="nm">3</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span> - <span class="nm">1.0</span>); }</span>
+<span id="src-hex-grid-loft-L145">  <span class="kw">if</span> i == <span class="nm">4</span> { <span class="kw">return</span> (hw, <span class="nm">0.0</span> - <span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L146">  (hw, <span class="nm">0.5</span>)</span>
 <span id="src-hex-grid-loft-L147">}</span>
 <span id="src-hex-grid-loft-L148"></span>
-<span id="src-hex-grid-loft-L149"><span class="cm">// Resolve any of the 6 directions to the owning hex + canonical edge index</span></span>
-<span id="src-hex-grid-loft-L150"><span class="cm">// (0,1,2). Dirs 0,1,2 are stored on this hex; 3,4,5 on the neighbour.</span></span>
-<span id="src-hex-grid-loft-L151"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_canon_edge</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L152">  <span class="kw">if</span> dir &lt; <span class="nm">3</span> { <span class="kw">return</span> (q, r, dir); }</span>
-<span id="src-hex-grid-loft-L153">  (cnq, cnr) = <span class="fn-call">hex_neighbor</span>(q, r, dir);</span>
-<span id="src-hex-grid-loft-L154">  (cnq, cnr, dir - <span class="nm">3</span>)</span>
-<span id="src-hex-grid-loft-L155">}</span>
-<span id="src-hex-grid-loft-L156"></span>
-<span id="src-hex-grid-loft-L157"><span class="cm">// ── The square local basis (cell_*) ───────────────────────────────────────</span></span>
-<span id="src-hex-grid-loft-L158"></span>
-<span id="src-hex-grid-loft-L159"><span class="kw">pub</span> const <span class="en">GRID_SIZE</span> = <span class="nm">1.0</span>;</span>
-<span id="src-hex-grid-loft-L160"><span class="kw">pub</span> const <span class="en">GRID_LEN</span>  = <span class="nm">1.0</span>;   <span class="cm">// distance between adjacent cells = the distance-clock unit</span></span>
-<span id="src-hex-grid-loft-L161"></span>
-<span id="src-hex-grid-loft-L162"><span class="cm">// Cell (q,r) -&gt; world centre.</span></span>
-<span id="src-hex-grid-loft-L163"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_to_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-grid-loft-L164">  (q <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>, r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hex-grid-loft-L165">}</span>
-<span id="src-hex-grid-loft-L166"></span>
-<span id="src-hex-grid-loft-L167"><span class="cm">// World point -&gt; the cell containing it (cells centred on integers).</span></span>
-<span id="src-hex-grid-loft-L168"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">px_to_cell</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L169">  (<span class="bi"><a href="stdlib-math.html">round</a></span>(x) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-math.html">round</a></span>(y) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
-<span id="src-hex-grid-loft-L170">}</span>
-<span id="src-hex-grid-loft-L171"></span>
-<span id="src-hex-grid-loft-L172"><span class="cm">// 4 orthogonal directions: 0=E, 1=S, 2=W, 3=N.</span></span>
-<span id="src-hex-grid-loft-L173"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_neighbor</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L174">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L175">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r + <span class="nm">1</span>); }</span>
-<span id="src-hex-grid-loft-L176">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
-<span id="src-hex-grid-loft-L177">  (q, r - <span class="nm">1</span>)</span>
-<span id="src-hex-grid-loft-L178">}</span>
-<span id="src-hex-grid-loft-L179"></span>
-<span id="src-hex-grid-loft-L180"><span class="cm">// Inverse of cell_neighbor; -1 if not orthogonally adjacent.</span></span>
-<span id="src-hex-grid-loft-L181"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_neighbor_dir</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-grid-loft-L182">  dq = q2 - q1;</span>
-<span id="src-hex-grid-loft-L183">  dr = r2 - r1;</span>
-<span id="src-hex-grid-loft-L184">  <span class="kw">if</span> dq == <span class="nm">1</span> &amp;&amp; dr == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-grid-loft-L185">  <span class="kw">if</span> dq == <span class="nm">0</span> &amp;&amp; dr == <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-hex-grid-loft-L186">  <span class="kw">if</span> dq == -<span class="nm">1</span> &amp;&amp; dr == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
-<span id="src-hex-grid-loft-L187">  <span class="kw">if</span> dq == <span class="nm">0</span> &amp;&amp; dr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">3</span>; }</span>
-<span id="src-hex-grid-loft-L188">  -<span class="nm">1</span></span>
+<span id="src-hex-grid-loft-L149"><span class="cm">// World-plane position of corner i of hex (q,r).</span></span>
+<span id="src-hex-grid-loft-L150"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_corner_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-grid-loft-L151">  (ccx, ccy) = <span class="fn-call">hex_to_px</span>(q, r);</span>
+<span id="src-hex-grid-loft-L152">  (cox, coy) = <span class="fn-call">hex_corner_offset</span>(i);</span>
+<span id="src-hex-grid-loft-L153">  (ccx + cox * <span class="en">HEX_SIZE</span>, ccy + coy * <span class="en">HEX_SIZE</span>)</span>
+<span id="src-hex-grid-loft-L154">}</span>
+<span id="src-hex-grid-loft-L155"></span>
+<span id="src-hex-grid-loft-L156"><span class="cm">// The two corner indices bounding the edge in neighbour direction `dir`.</span></span>
+<span id="src-hex-grid-loft-L157"><span class="cm">// Out-of-range directions fall through to the direction-5 arm rather than</span></span>
+<span id="src-hex-grid-loft-L158"><span class="cm">// raising, which is how a -1 from `hex_neighbor_dir` becomes a real answer.</span></span>
+<span id="src-hex-grid-loft-L159"><span class="cm">// Example: @HXG-006</span></span>
+<span id="src-hex-grid-loft-L160"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_edge_corners</span>(dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L161">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">4</span>, <span class="nm">5</span>); }</span>
+<span id="src-hex-grid-loft-L162">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">3</span>, <span class="nm">4</span>); }</span>
+<span id="src-hex-grid-loft-L163">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">2</span>, <span class="nm">3</span>); }</span>
+<span id="src-hex-grid-loft-L164">  <span class="kw">if</span> dir == <span class="nm">3</span> { <span class="kw">return</span> (<span class="nm">1</span>, <span class="nm">2</span>); }</span>
+<span id="src-hex-grid-loft-L165">  <span class="kw">if</span> dir == <span class="nm">4</span> { <span class="kw">return</span> (<span class="nm">0</span>, <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L166">  (<span class="nm">5</span>, <span class="nm">0</span>)</span>
+<span id="src-hex-grid-loft-L167">}</span>
+<span id="src-hex-grid-loft-L168"></span>
+<span id="src-hex-grid-loft-L169"><span class="cm">// Resolve any of the 6 directions to the owning hex + canonical edge index</span></span>
+<span id="src-hex-grid-loft-L170"><span class="cm">// (0,1,2). Dirs 0,1,2 are stored on this hex; 3,4,5 on the neighbour.</span></span>
+<span id="src-hex-grid-loft-L171"><span class="cm">// Call this before you key a wall on anything.  A wall keyed on the raw</span></span>
+<span id="src-hex-grid-loft-L172"><span class="cm">// (q, r, dir) a caller happened to approach from becomes TWO half-walls that</span></span>
+<span id="src-hex-grid-loft-L173"><span class="cm">// disagree — blocking from one side and open from the other.</span></span>
+<span id="src-hex-grid-loft-L174"><span class="cm">// Example: @HXG-003, @HXG-006</span></span>
+<span id="src-hex-grid-loft-L175"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_canon_edge</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L176">  <span class="kw">if</span> dir &lt; <span class="nm">3</span> { <span class="kw">return</span> (q, r, dir); }</span>
+<span id="src-hex-grid-loft-L177">  (cnq, cnr) = <span class="fn-call">hex_neighbor</span>(q, r, dir);</span>
+<span id="src-hex-grid-loft-L178">  (cnq, cnr, dir - <span class="nm">3</span>)</span>
+<span id="src-hex-grid-loft-L179">}</span>
+<span id="src-hex-grid-loft-L180"></span>
+<span id="src-hex-grid-loft-L181"><span class="cm">// ── The square local basis (cell_*) ───────────────────────────────────────</span></span>
+<span id="src-hex-grid-loft-L182"></span>
+<span id="src-hex-grid-loft-L183"><span class="kw">pub</span> const <span class="en">GRID_SIZE</span> = <span class="nm">1.0</span>;</span>
+<span id="src-hex-grid-loft-L184"><span class="kw">pub</span> const <span class="en">GRID_LEN</span>  = <span class="nm">1.0</span>;   <span class="cm">// distance between adjacent cells = the distance-clock unit</span></span>
+<span id="src-hex-grid-loft-L185"></span>
+<span id="src-hex-grid-loft-L186"><span class="cm">// Cell (q,r) -&gt; world centre.</span></span>
+<span id="src-hex-grid-loft-L187"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_to_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-grid-loft-L188">  (q <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>, r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
 <span id="src-hex-grid-loft-L189">}</span>
 <span id="src-hex-grid-loft-L190"></span>
-<span id="src-hex-grid-loft-L191"><span class="cm">// King-move (Chebyshev) distance — matches 8-directional movement.</span></span>
-<span id="src-hex-grid-loft-L192"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_distance</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-grid-loft-L193">  dq = <span class="bi"><a href="stdlib-math.html">abs</a></span>(q1 - q2);</span>
-<span id="src-hex-grid-loft-L194">  dr = <span class="bi"><a href="stdlib-math.html">abs</a></span>(r1 - r2);</span>
-<span id="src-hex-grid-loft-L195">  <span class="kw">if</span> dq &gt; dr { dq } <span class="kw">else</span> { dr }</span>
-<span id="src-hex-grid-loft-L196">}</span>
-<span id="src-hex-grid-loft-L197"></span>
-<span id="src-hex-grid-loft-L198"><span class="cm">// Corner offsets of a unit cell (centre origin): 0=NW,1=NE,2=SE,3=SW (y down).</span></span>
-<span id="src-hex-grid-loft-L199"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_corner_offset</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-grid-loft-L200">  <span class="kw">if</span> i == <span class="nm">0</span> { <span class="kw">return</span> (-<span class="nm">0.5</span>, -<span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L201">  <span class="kw">if</span> i == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">0.5</span>, -<span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L202">  <span class="kw">if</span> i == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">0.5</span>, <span class="nm">0.5</span>); }</span>
-<span id="src-hex-grid-loft-L203">  (-<span class="nm">0.5</span>, <span class="nm">0.5</span>)</span>
-<span id="src-hex-grid-loft-L204">}</span>
-<span id="src-hex-grid-loft-L205"></span>
-<span id="src-hex-grid-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_corner_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-grid-loft-L207">  (cox, coy) = <span class="fn-call">cell_corner_offset</span>(i);</span>
-<span id="src-hex-grid-loft-L208">  (q <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> + cox * <span class="en">GRID_SIZE</span>, r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> + coy * <span class="en">GRID_SIZE</span>)</span>
-<span id="src-hex-grid-loft-L209">}</span>
-<span id="src-hex-grid-loft-L210"></span>
-<span id="src-hex-grid-loft-L211"><span class="cm">// The two corner indices bounding the edge in direction dir.</span></span>
-<span id="src-hex-grid-loft-L212"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_edge_corners</span>(dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L213">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">1</span>, <span class="nm">2</span>); }   <span class="cm">// E: NE-SE</span></span>
-<span id="src-hex-grid-loft-L214">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">2</span>, <span class="nm">3</span>); }   <span class="cm">// S: SE-SW</span></span>
-<span id="src-hex-grid-loft-L215">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">3</span>, <span class="nm">0</span>); }   <span class="cm">// W: SW-NW</span></span>
-<span id="src-hex-grid-loft-L216">  (<span class="nm">0</span>, <span class="nm">1</span>)                            <span class="cm">// N: NW-NE</span></span>
-<span id="src-hex-grid-loft-L217">}</span>
-<span id="src-hex-grid-loft-L218"></span>
-<span id="src-hex-grid-loft-L219"><span class="cm">// Resolve any of the 4 directions to the owning cell + canonical edge (0=E,1=S);</span></span>
-<span id="src-hex-grid-loft-L220"><span class="cm">// W/N delegate to the neighbour (each physical edge stored once).</span></span>
-<span id="src-hex-grid-loft-L221"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_canon_edge</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-grid-loft-L222">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q, r, <span class="nm">0</span>); }       <span class="cm">// E</span></span>
-<span id="src-hex-grid-loft-L223">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r, <span class="nm">1</span>); }       <span class="cm">// S</span></span>
-<span id="src-hex-grid-loft-L224">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r, <span class="nm">0</span>); }   <span class="cm">// W == west neighbour's E</span></span>
-<span id="src-hex-grid-loft-L225">  (q, r - <span class="nm">1</span>, <span class="nm">1</span>)                            <span class="cm">// N == north neighbour's S</span></span>
-<span id="src-hex-grid-loft-L226">}</span>
+<span id="src-hex-grid-loft-L191"><span class="cm">// World point -&gt; the cell containing it (cells centred on integers).</span></span>
+<span id="src-hex-grid-loft-L192"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">px_to_cell</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L193">  (<span class="bi"><a href="stdlib-math.html">round</a></span>(x) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-math.html">round</a></span>(y) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
+<span id="src-hex-grid-loft-L194">}</span>
+<span id="src-hex-grid-loft-L195"></span>
+<span id="src-hex-grid-loft-L196"><span class="cm">// 4 orthogonal directions: 0=E, 1=S, 2=W, 3=N.  Note `r` increases SOUTH here,</span></span>
+<span id="src-hex-grid-loft-L197"><span class="cm">// where in the hex_* family it increases NORTH — `hex_neighbor(q, r, 5)` and</span></span>
+<span id="src-hex-grid-loft-L198"><span class="cm">// `cell_neighbor(q, r, 1)` return the same pair for opposite compass directions.</span></span>
+<span id="src-hex-grid-loft-L199"><span class="cm">// Example: @HXG-004</span></span>
+<span id="src-hex-grid-loft-L200"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_neighbor</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L201">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q + <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L202">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r + <span class="nm">1</span>); }</span>
+<span id="src-hex-grid-loft-L203">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r); }</span>
+<span id="src-hex-grid-loft-L204">  (q, r - <span class="nm">1</span>)</span>
+<span id="src-hex-grid-loft-L205">}</span>
+<span id="src-hex-grid-loft-L206"></span>
+<span id="src-hex-grid-loft-L207"><span class="cm">// Inverse of cell_neighbor; -1 if not orthogonally adjacent.  This — not</span></span>
+<span id="src-hex-grid-loft-L208"><span class="cm">// `cell_distance(a, b) == 1` — is the adjacency test: the metric is Chebyshev</span></span>
+<span id="src-hex-grid-loft-L209"><span class="cm">// and answers 1 for diagonals no single step can reach.</span></span>
+<span id="src-hex-grid-loft-L210"><span class="cm">// Example: @HXG-005, @HXG-006</span></span>
+<span id="src-hex-grid-loft-L211"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_neighbor_dir</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-grid-loft-L212">  dq = q2 - q1;</span>
+<span id="src-hex-grid-loft-L213">  dr = r2 - r1;</span>
+<span id="src-hex-grid-loft-L214">  <span class="kw">if</span> dq == <span class="nm">1</span> &amp;&amp; dr == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-grid-loft-L215">  <span class="kw">if</span> dq == <span class="nm">0</span> &amp;&amp; dr == <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-hex-grid-loft-L216">  <span class="kw">if</span> dq == -<span class="nm">1</span> &amp;&amp; dr == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">2</span>; }</span>
+<span id="src-hex-grid-loft-L217">  <span class="kw">if</span> dq == <span class="nm">0</span> &amp;&amp; dr == -<span class="nm">1</span> { <span class="kw">return</span> <span class="nm">3</span>; }</span>
+<span id="src-hex-grid-loft-L218">  -<span class="nm">1</span></span>
+<span id="src-hex-grid-loft-L219">}</span>
+<span id="src-hex-grid-loft-L220"></span>
+<span id="src-hex-grid-loft-L221"><span class="cm">// King-move (Chebyshev) distance — matches 8-directional movement, which is NOT</span></span>
+<span id="src-hex-grid-loft-L222"><span class="cm">// the 4-directional move set `cell_neighbor` offers.  So `== 1` admits diagonals</span></span>
+<span id="src-hex-grid-loft-L223"><span class="cm">// and is not an adjacency test; use `cell_neighbor_dir(…) &gt;= 0` for that.</span></span>
+<span id="src-hex-grid-loft-L224"><span class="cm">// Example: @HXG-005</span></span>
+<span id="src-hex-grid-loft-L225"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_distance</span>(q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-grid-loft-L226">  dq = <span class="bi"><a href="stdlib-math.html">abs</a></span>(q1 - q2);</span>
+<span id="src-hex-grid-loft-L227">  dr = <span class="bi"><a href="stdlib-math.html">abs</a></span>(r1 - r2);</span>
+<span id="src-hex-grid-loft-L228">  <span class="kw">if</span> dq &gt; dr { dq } <span class="kw">else</span> { dr }</span>
+<span id="src-hex-grid-loft-L229">}</span>
+<span id="src-hex-grid-loft-L230"></span>
+<span id="src-hex-grid-loft-L231"><span class="cm">// Corner offsets of a unit cell (centre origin): 0=NW,1=NE,2=SE,3=SW (y down).</span></span>
+<span id="src-hex-grid-loft-L232"><span class="cm">// +y is SOUTH here, the opposite of `hex_corner_offset` above.</span></span>
+<span id="src-hex-grid-loft-L233"><span class="cm">// Example: @HXG-004</span></span>
+<span id="src-hex-grid-loft-L234"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_corner_offset</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-grid-loft-L235">  <span class="kw">if</span> i == <span class="nm">0</span> { <span class="kw">return</span> (-<span class="nm">0.5</span>, -<span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L236">  <span class="kw">if</span> i == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">0.5</span>, -<span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L237">  <span class="kw">if</span> i == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">0.5</span>, <span class="nm">0.5</span>); }</span>
+<span id="src-hex-grid-loft-L238">  (-<span class="nm">0.5</span>, <span class="nm">0.5</span>)</span>
+<span id="src-hex-grid-loft-L239">}</span>
+<span id="src-hex-grid-loft-L240"></span>
+<span id="src-hex-grid-loft-L241"><span class="cm">// One corner of a cell in pixels.  The last step before drawing: everything above it is</span></span>
+<span id="src-hex-grid-loft-L242"><span class="cm">// exact, and this is where a renderer's coordinates begin.</span></span>
+<span id="src-hex-grid-loft-L243"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_corner_px</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-grid-loft-L244">  (cox, coy) = <span class="fn-call">cell_corner_offset</span>(i);</span>
+<span id="src-hex-grid-loft-L245">  (q <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> + cox * <span class="en">GRID_SIZE</span>, r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> + coy * <span class="en">GRID_SIZE</span>)</span>
+<span id="src-hex-grid-loft-L246">}</span>
+<span id="src-hex-grid-loft-L247"></span>
+<span id="src-hex-grid-loft-L248"><span class="cm">// The two corner indices bounding the edge in direction dir.</span></span>
+<span id="src-hex-grid-loft-L249"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_edge_corners</span>(dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L250">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (<span class="nm">1</span>, <span class="nm">2</span>); }   <span class="cm">// E: NE-SE</span></span>
+<span id="src-hex-grid-loft-L251">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (<span class="nm">2</span>, <span class="nm">3</span>); }   <span class="cm">// S: SE-SW</span></span>
+<span id="src-hex-grid-loft-L252">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (<span class="nm">3</span>, <span class="nm">0</span>); }   <span class="cm">// W: SW-NW</span></span>
+<span id="src-hex-grid-loft-L253">  (<span class="nm">0</span>, <span class="nm">1</span>)                            <span class="cm">// N: NW-NE</span></span>
+<span id="src-hex-grid-loft-L254">}</span>
+<span id="src-hex-grid-loft-L255"></span>
+<span id="src-hex-grid-loft-L256"><span class="cm">// Resolve any of the 4 directions to the owning cell + canonical edge (0=E,1=S);</span></span>
+<span id="src-hex-grid-loft-L257"><span class="cm">// W/N delegate to the neighbour (each physical edge stored once).</span></span>
+<span id="src-hex-grid-loft-L258"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_canon_edge</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-grid-loft-L259">  <span class="kw">if</span> dir == <span class="nm">0</span> { <span class="kw">return</span> (q, r, <span class="nm">0</span>); }       <span class="cm">// E</span></span>
+<span id="src-hex-grid-loft-L260">  <span class="kw">if</span> dir == <span class="nm">1</span> { <span class="kw">return</span> (q, r, <span class="nm">1</span>); }       <span class="cm">// S</span></span>
+<span id="src-hex-grid-loft-L261">  <span class="kw">if</span> dir == <span class="nm">2</span> { <span class="kw">return</span> (q - <span class="nm">1</span>, r, <span class="nm">0</span>); }   <span class="cm">// W == west neighbour's E</span></span>
+<span id="src-hex-grid-loft-L262">  (q, r - <span class="nm">1</span>, <span class="nm">1</span>)                            <span class="cm">// N == north neighbour's S</span></span>
+<span id="src-hex-grid-loft-L263">}</span>
 </code></pre>
 <h2 id="tests-01-hex-grid-loft">tests/01-hex-grid.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-grid-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -390,6 +427,379 @@
 <span id="tests-01-hex-grid-loft-L105">  (q2, r2, e2) = hex_grid::<span class="fn-call">cell_canon_edge</span>(nq, nr, back);</span>
 <span id="tests-01-hex-grid-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q1 == q2 &amp;&amp; r1 == r2 &amp;&amp; e1 == e2, <span class="st">"shared cell edge canonicalizes identically"</span>);</span>
 <span id="tests-01-hex-grid-loft-L107">}</span>
+</code></pre>
+<h2 id="tests-02-parity-loft">tests/02-parity.loft</h2>
+<pre class="src"><code><span id="tests-02-parity-loft-L1"><span class="cm">// THE CROSS-LANGUAGE PARITY GATE — moros#3.</span></span>
+<span id="tests-02-parity-loft-L2"><span class="cm">//</span></span>
+<span id="tests-02-parity-loft-L3"><span class="cm">// `hex_grid` owns the convention, and it is implemented twice: here, and in</span></span>
+<span id="tests-02-parity-loft-L4"><span class="cm">// moros's `html/hex-lattice.js` for the browser world-map editor. Two</span></span>
+<span id="tests-02-parity-loft-L5"><span class="cm">// implementations of one convention is the silent-failure shape this library</span></span>
+<span id="tests-02-parity-loft-L6"><span class="cm">// exists to close — everything "works" until two components disagree about</span></span>
+<span id="tests-02-parity-loft-L7"><span class="cm">// which edge is north, and nothing reports it.</span></span>
+<span id="tests-02-parity-loft-L8"><span class="cm">//</span></span>
+<span id="tests-02-parity-loft-L9"><span class="cm">// So both sides read ONE committed file. `fixtures/lattice.tsv` is not generated</span></span>
+<span id="tests-02-parity-loft-L10"><span class="cm">// by either of them at test time; regenerating it to make a test pass is the one</span></span>
+<span id="tests-02-parity-loft-L11"><span class="cm">// move that defeats the whole arrangement.</span></span>
+<span id="tests-02-parity-loft-L12"><span class="cm">//</span></span>
+<span id="tests-02-parity-loft-L13"><span class="cm">// WHY THE FIXTURE IS INTEGERS. The obvious fixture is sampled (col,row) → (x,y)</span></span>
+<span id="tests-02-parity-loft-L14"><span class="cm">// floats, and it cannot be asserted exactly: the two sides reach the same centre</span></span>
+<span id="tests-02-parity-loft-L15"><span class="cm">// by different expression trees, so they may differ in the last ulp while both</span></span>
+<span id="tests-02-parity-loft-L16"><span class="cm">// being right. That forces a tolerance, and a tolerance is exactly where a real</span></span>
+<span id="tests-02-parity-loft-L17"><span class="cm">// half-hex error hides. The doubled integer lattice has no such problem —</span></span>
+<span id="tests-02-parity-loft-L18"><span class="cm">//</span></span>
+<span id="tests-02-parity-loft-L19"><span class="cm">//     k = 2*col + (row &amp; 1)      m = 3*row      centre = (k*sqrt(3)/2, m/2)</span></span>
+<span id="tests-02-parity-loft-L20"><span class="cm">//</span></span>
+<span id="tests-02-parity-loft-L21"><span class="cm">// — a parity drift is a drift of 1 in k, and 1 is visible with no epsilon.</span></span>
+<span id="tests-02-parity-loft-L22"><span class="cm">// The float step is checked separately below, where a tolerance is honest</span></span>
+<span id="tests-02-parity-loft-L23"><span class="cm">// because the claim there is about SCALE, not about the lattice.</span></span>
+<span id="tests-02-parity-loft-L24"><span class="kw">use</span> hex_grid;</span>
+<span id="tests-02-parity-loft-L25"></span>
+<span id="tests-02-parity-loft-L26"><span class="cm">// Relative paths resolve from the TEST FILE's directory under `loft test`,</span></span>
+<span id="tests-02-parity-loft-L27"><span class="cm">// not the package root — a doubled `tests/` is the classic way to get this wrong.</span></span>
+<span id="tests-02-parity-loft-L28">const <span class="en">FIXTURE</span> = <span class="st">"fixtures/lattice.tsv"</span>;</span>
+<span id="tests-02-parity-loft-L29"></span>
+<span id="tests-02-parity-loft-L30"><span class="kw">struct</span> <span class="en">Row</span> { rw_col: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rw_row: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rw_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rw_m: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
+<span id="tests-02-parity-loft-L31"></span>
+<span id="tests-02-parity-loft-L32"><span class="kw">fn</span> <span class="fn-call">load</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Row</span>&gt; {</span>
+<span id="tests-02-parity-loft-L33">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Row</span>&gt; = [];</span>
+<span id="tests-02-parity-loft-L34">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="en">FIXTURE</span>);</span>
+<span id="tests-02-parity-loft-L35">  <span class="kw">for</span> ln <span class="kw">in</span> <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>(f) {</span>
+<span id="tests-02-parity-loft-L36">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(ln) == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="tests-02-parity-loft-L37">    <span class="kw">if</span> (ln[<span class="nm">0</span>] ?? <span class="ch">' '</span>) == <span class="ch">'#'</span> { <span class="kw">continue</span>; }</span>
+<span id="tests-02-parity-loft-L38">    parts = <span class="fn-call"><a href="stdlib-text.html">split</a></span>(ln, <span class="ch">'\t'</span>);</span>
+<span id="tests-02-parity-loft-L39">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(parts) &lt; <span class="nm">4</span> { <span class="kw">continue</span>; }</span>
+<span id="tests-02-parity-loft-L40">    out += [<span class="en">Row</span> {</span>
+<span id="tests-02-parity-loft-L41">      rw_col: (parts[<span class="nm">0</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>,</span>
+<span id="tests-02-parity-loft-L42">      rw_row: (parts[<span class="nm">1</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>,</span>
+<span id="tests-02-parity-loft-L43">      rw_k:   (parts[<span class="nm">2</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>,</span>
+<span id="tests-02-parity-loft-L44">      rw_m:   (parts[<span class="nm">3</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>,</span>
+<span id="tests-02-parity-loft-L45">    }];</span>
+<span id="tests-02-parity-loft-L46">  }</span>
+<span id="tests-02-parity-loft-L47">  out</span>
+<span id="tests-02-parity-loft-L48">}</span>
+<span id="tests-02-parity-loft-L49"></span>
+<span id="tests-02-parity-loft-L50"><span class="cm">// The fixture has to actually be there and actually have rows. A loader that</span></span>
+<span id="tests-02-parity-loft-L51"><span class="cm">// silently returned nothing would make every assertion below vacuously true —</span></span>
+<span id="tests-02-parity-loft-L52"><span class="cm">// the sweep would pass while measuring no cells at all.</span></span>
+<span id="tests-02-parity-loft-L53"><span class="kw">fn</span> <span class="fn-call">test_the_fixture_is_present_and_covers_both_signs</span>() {</span>
+<span id="tests-02-parity-loft-L54">  rows = <span class="fn-call">load</span>();</span>
+<span id="tests-02-parity-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(rows) == <span class="nm">63</span>, <span class="st">"fixture has {len(rows)} rows, want 63 — has it been regenerated?"</span>);</span>
+<span id="tests-02-parity-loft-L56">  neg_odd = <span class="nm">0</span>;</span>
+<span id="tests-02-parity-loft-L57">  pos_odd = <span class="nm">0</span>;</span>
+<span id="tests-02-parity-loft-L58">  <span class="kw">for</span> r <span class="kw">in</span> rows {</span>
+<span id="tests-02-parity-loft-L59">    <span class="kw">if</span> r.rw_row &lt; <span class="nm">0</span> &amp;&amp; (r.rw_row &amp; <span class="nm">1</span>) == <span class="nm">1</span> { neg_odd += <span class="nm">1</span>; }</span>
+<span id="tests-02-parity-loft-L60">    <span class="kw">if</span> r.rw_row &gt; <span class="nm">0</span> &amp;&amp; (r.rw_row &amp; <span class="nm">1</span>) == <span class="nm">1</span> { pos_odd += <span class="nm">1</span>; }</span>
+<span id="tests-02-parity-loft-L61">  }</span>
+<span id="tests-02-parity-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(neg_odd &gt; <span class="nm">0</span>, <span class="st">"no ODD NEGATIVE rows in the fixture — the one case that keeps breaking"</span>);</span>
+<span id="tests-02-parity-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pos_odd &gt; <span class="nm">0</span>, <span class="st">"no odd positive rows in the fixture"</span>);</span>
+<span id="tests-02-parity-loft-L64">}</span>
+<span id="tests-02-parity-loft-L65"></span>
+<span id="tests-02-parity-loft-L66"><span class="cm">// The lattice claim, exactly: every sampled cell lands on the integer point the</span></span>
+<span id="tests-02-parity-loft-L67"><span class="cm">// fixture names. This is what the JavaScript side asserts too, against the same</span></span>
+<span id="tests-02-parity-loft-L68"><span class="cm">// bytes.</span></span>
+<span id="tests-02-parity-loft-L69"><span class="kw">fn</span> <span class="fn-call">test_every_fixture_cell_lands_on_its_integer_lattice_point</span>() {</span>
+<span id="tests-02-parity-loft-L70">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">load</span>() {</span>
+<span id="tests-02-parity-loft-L71">    k = <span class="nm">2</span> * r.rw_col + (r.rw_row &amp; <span class="nm">1</span>);</span>
+<span id="tests-02-parity-loft-L72">    m = <span class="nm">3</span> * r.rw_row;</span>
+<span id="tests-02-parity-loft-L73">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(k == r.rw_k, <span class="st">"cell {r.rw_col},{r.rw_row}: k is {k}, the fixture says {r.rw_k}"</span>);</span>
+<span id="tests-02-parity-loft-L74">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m == r.rw_m, <span class="st">"cell {r.rw_col},{r.rw_row}: m is {m}, the fixture says {r.rw_m}"</span>);</span>
+<span id="tests-02-parity-loft-L75">    <span class="cm">// and the lattice's own closure property, which a wrong parity shift breaks</span></span>
+<span id="tests-02-parity-loft-L76">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((k - m) % <span class="nm">2</span> == <span class="nm">0</span>, <span class="st">"cell {r.rw_col},{r.rw_row}: k={k} m={m} breaks k = m (mod 2)"</span>);</span>
+<span id="tests-02-parity-loft-L77">  }</span>
+<span id="tests-02-parity-loft-L78">}</span>
+<span id="tests-02-parity-loft-L79"></span>
+<span id="tests-02-parity-loft-L80"><span class="cm">// `hex_to_px` is the function everything actually calls, so the fixture has to</span></span>
+<span id="tests-02-parity-loft-L81"><span class="cm">// reach it and not just the formula restated beside it. The tolerance is honest</span></span>
+<span id="tests-02-parity-loft-L82"><span class="cm">// here: the claim is that the published position is the lattice point times the</span></span>
+<span id="tests-02-parity-loft-L83"><span class="cm">// scale, and the two sides multiply in a different order.</span></span>
+<span id="tests-02-parity-loft-L84"><span class="kw">fn</span> <span class="fn-call">test_hex_to_px_agrees_with_the_fixture_lattice</span>() {</span>
+<span id="tests-02-parity-loft-L85">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">load</span>() {</span>
+<span id="tests-02-parity-loft-L86">    (x, y) = <span class="fn-call">hex_to_px</span>(r.rw_col, r.rw_row);</span>
+<span id="tests-02-parity-loft-L87">    want_x = (r.rw_k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="en">SQRT3</span> / <span class="nm">2.0</span>;</span>
+<span id="tests-02-parity-loft-L88">    want_y = (r.rw_m <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>;</span>
+<span id="tests-02-parity-loft-L89">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(x - want_x) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-parity-loft-L90">           <span class="st">"cell {r.rw_col},{r.rw_row}: x is {x}, the fixture's lattice says {want_x}"</span>);</span>
+<span id="tests-02-parity-loft-L91">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(y - want_y) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-parity-loft-L92">           <span class="st">"cell {r.rw_col},{r.rw_row}: y is {y}, the fixture's lattice says {want_y}"</span>);</span>
+<span id="tests-02-parity-loft-L93">  }</span>
+<span id="tests-02-parity-loft-L94">}</span>
+<span id="tests-02-parity-loft-L95"></span>
+<span id="tests-02-parity-loft-L96"><span class="cm">// ⚠ THE CASE THE OTHER IMPLEMENTATION GOT WRONG. Stated on its own rather than</span></span>
+<span id="tests-02-parity-loft-L97"><span class="cm">// left inside the sweep, because this is the specific bug the fixture was built</span></span>
+<span id="tests-02-parity-loft-L98"><span class="cm">// to catch, and a reader should be able to find it by name.</span></span>
+<span id="tests-02-parity-loft-L99"><span class="kw">fn</span> <span class="fn-call">test_odd_negative_rows_are_shifted_like_odd_positive_ones</span>() {</span>
+<span id="tests-02-parity-loft-L100">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="tests-02-parity-loft-L101">    odd_neg = <span class="nm">0</span> - (<span class="nm">2</span> * i + <span class="nm">1</span>);</span>
+<span id="tests-02-parity-loft-L102">    odd_pos = <span class="nm">2</span> * i + <span class="nm">1</span>;</span>
+<span id="tests-02-parity-loft-L103">    (xn, _yn) = <span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, odd_neg);</span>
+<span id="tests-02-parity-loft-L104">    (xp, _yp) = <span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, odd_pos);</span>
+<span id="tests-02-parity-loft-L105">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(xn - xp) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-parity-loft-L106">           <span class="st">"row {odd_neg} sits at x={xn} but row {odd_pos} at x={xp} — the shift stopped below zero"</span>);</span>
+<span id="tests-02-parity-loft-L107">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(xn - <span class="en">SQRT3</span> / <span class="nm">2.0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-parity-loft-L108">           <span class="st">"row {odd_neg} is not shifted half a hex: x={xn}"</span>);</span>
+<span id="tests-02-parity-loft-L109">  }</span>
+<span id="tests-02-parity-loft-L110">  <span class="cm">// and the even rows must NOT be shifted, or the test above passes on a</span></span>
+<span id="tests-02-parity-loft-L111">  <span class="cm">// lattice that shifts everything</span></span>
+<span id="tests-02-parity-loft-L112">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="tests-02-parity-loft-L113">    (xe, _ye) = <span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, <span class="nm">0</span> - (<span class="nm">2</span> * i + <span class="nm">2</span>));</span>
+<span id="tests-02-parity-loft-L114">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(xe) &lt; <span class="nm">0.000000001</span>, <span class="st">"even row {0 - (2 * i + 2)} was shifted to x={xe}"</span>);</span>
+<span id="tests-02-parity-loft-L115">  }</span>
+<span id="tests-02-parity-loft-L116">}</span>
+</code></pre>
+<h2 id="tests-03-worked-examples-loft">tests/03-worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-03-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-03-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-03-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-03-worked-examples-loft-L4"><span class="cm">// Worked examples for `hex_grid` (@PLN141).  Each `test_*` below is a REAL,</span></span>
+<span id="tests-03-worked-examples-loft-L5"><span class="cm">// run-every-CI demonstration of a contract the signature cannot state; the</span></span>
+<span id="tests-03-worked-examples-loft-L6"><span class="cm">// function documents itself by CITING the tag with `// Example: @HXG-00N`, and</span></span>
+<span id="tests-03-worked-examples-loft-L7"><span class="cm">// `check_doc_drift.sh examples` fails if a citation goes dangling.  These are</span></span>
+<span id="tests-03-worked-examples-loft-L8"><span class="cm">// teaching examples, distinct from the correctness suite in `01-hex-grid.loft`</span></span>
+<span id="tests-03-worked-examples-loft-L9"><span class="cm">// and the cross-language parity gate in `02-parity.loft`.</span></span>
+<span id="tests-03-worked-examples-loft-L10"><span class="cm">//</span></span>
+<span id="tests-03-worked-examples-loft-L11"><span class="cm">// This library is pure geometry — no structs, no state — so every contract it</span></span>
+<span id="tests-03-worked-examples-loft-L12"><span class="cm">// has lives in what the NUMBERS mean, and the compiler sees none of it.  Two</span></span>
+<span id="tests-03-worked-examples-loft-L13"><span class="cm">// coordinate systems, two lattices and six directions all travel as bare</span></span>
+<span id="tests-03-worked-examples-loft-L14"><span class="cm">// `integer`s through signatures that read the same:</span></span>
+<span id="tests-03-worked-examples-loft-L15"><span class="cm">//</span></span>
+<span id="tests-03-worked-examples-loft-L16"><span class="cm">//   (integer, integer)        an offset (col,row) — or an axial (q,r), and the</span></span>
+<span id="tests-03-worked-examples-loft-L17"><span class="cm">//                             two are different hexes with the same type</span></span>
+<span id="tests-03-worked-examples-loft-L18"><span class="cm">//   (float, float)            a world point — with +y NORTH in one half of this</span></span>
+<span id="tests-03-worked-examples-loft-L19"><span class="cm">//                             module and +y SOUTH in the other</span></span>
+<span id="tests-03-worked-examples-loft-L20"><span class="cm">//   integer                   a direction 0..5 — or -1, meaning "there isn't one"</span></span>
+<span id="tests-03-worked-examples-loft-L21"><span class="cm">//</span></span>
+<span id="tests-03-worked-examples-loft-L22"><span class="cm">// Nothing below needs a fixture or a window; they are the cheapest tests in the</span></span>
+<span id="tests-03-worked-examples-loft-L23"><span class="cm">// repo and they pin the traps that cost the most to find.</span></span>
+<span id="tests-03-worked-examples-loft-L24"><span class="kw">use</span> hex_grid;</span>
+<span id="tests-03-worked-examples-loft-L25"></span>
+<span id="tests-03-worked-examples-loft-L26"><span class="cm">// Float comparison for world coordinates: the library reaches a point through an</span></span>
+<span id="tests-03-worked-examples-loft-L27"><span class="cm">// expression tree a caller will not reproduce exactly, so an exact `==` on a</span></span>
+<span id="tests-03-worked-examples-loft-L28"><span class="cm">// derived coordinate is a test that fails for the wrong reason.</span></span>
+<span id="tests-03-worked-examples-loft-L29"><span class="kw">fn</span> <span class="fn-call">about</span>(ab_a: <span class="ty"><a href="stdlib-types.html">float</a></span>, ab_b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-03-worked-examples-loft-L30">  d = ab_a - ab_b;</span>
+<span id="tests-03-worked-examples-loft-L31">  <span class="kw">if</span> d &lt; <span class="nm">0.0</span> { d = <span class="nm">0.0</span> - d; }</span>
+<span id="tests-03-worked-examples-loft-L32">  d &lt; <span class="nm">0.000001</span></span>
+<span id="tests-03-worked-examples-loft-L33">}</span>
+<span id="tests-03-worked-examples-loft-L34"></span>
+<span id="tests-03-worked-examples-loft-L35"><span class="cm">// @HXG-001 — `hex_round` answers AXIAL coordinates; everything else in this</span></span>
+<span id="tests-03-worked-examples-loft-L36"><span class="cm">// module takes ODD-R OFFSET.  Both are `(integer, integer)`, so handing one</span></span>
+<span id="tests-03-worked-examples-loft-L37"><span class="cm">// where the other is wanted type-checks perfectly and lands you on a DIFFERENT</span></span>
+<span id="tests-03-worked-examples-loft-L38"><span class="cm">// hex — an adjacent one, which is the worst kind of wrong because the result</span></span>
+<span id="tests-03-worked-examples-loft-L39"><span class="cm">// stays plausible for a long time.  `px_to_hex` is the function that does the</span></span>
+<span id="tests-03-worked-examples-loft-L40"><span class="cm">// conversion for you; reach for `hex_round` only if you are converting axial</span></span>
+<span id="tests-03-worked-examples-loft-L41"><span class="cm">// coordinates you already hold.</span></span>
+<span id="tests-03-worked-examples-loft-L42"><span class="kw">fn</span> <span class="fn-call">test_hex_round_answers_axial_not_offset</span>() {</span>
+<span id="tests-03-worked-examples-loft-L43">  <span class="cm">// The centre of the hex at OFFSET (0, 3).  Row 3 is odd, so it is shifted</span></span>
+<span id="tests-03-worked-examples-loft-L44">  <span class="cm">// half a hex east: x = SQRT3/2, y = 1.5 * 3.</span></span>
+<span id="tests-03-worked-examples-loft-L45">  (hx, hy) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, <span class="nm">3</span>);</span>
+<span id="tests-03-worked-examples-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">about</span>(hx, <span class="nm">0.8660254037844386</span>), <span class="st">"odd row is shifted half a hex east"</span>);</span>
+<span id="tests-03-worked-examples-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">about</span>(hy, <span class="nm">4.5</span>), <span class="st">"y = 1.5 * row"</span>);</span>
+<span id="tests-03-worked-examples-loft-L48"></span>
+<span id="tests-03-worked-examples-loft-L49">  <span class="cm">// The right way in: `px_to_hex` answers the OFFSET cell, which is what</span></span>
+<span id="tests-03-worked-examples-loft-L50">  <span class="cm">// `hex_neighbor`, `hex_distance` and `hex_to_px` all expect.</span></span>
+<span id="tests-03-worked-examples-loft-L51">  (oq, orr) = hex_grid::<span class="fn-call">px_to_hex</span>(hx, hy);</span>
+<span id="tests-03-worked-examples-loft-L52">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(oq == <span class="nm">0</span> &amp;&amp; orr == <span class="nm">3</span>, <span class="st">"px_to_hex answers offset (col,row)"</span>);</span>
+<span id="tests-03-worked-examples-loft-L53"></span>
+<span id="tests-03-worked-examples-loft-L54">  <span class="cm">// `hex_round` is the axial half of that conversion, exposed on its own.  Fed</span></span>
+<span id="tests-03-worked-examples-loft-L55">  <span class="cm">// the same fractional coordinates px_to_hex computes internally, it answers</span></span>
+<span id="tests-03-worked-examples-loft-L56">  <span class="cm">// (-1, 3) — the AXIAL name of that very same hex.</span></span>
+<span id="tests-03-worked-examples-loft-L57">  (aq, ar) = hex_grid::<span class="fn-call">hex_round</span>(<span class="nm">0.0</span> - <span class="nm">1.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-03-worked-examples-loft-L58">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(aq == -<span class="nm">1</span> &amp;&amp; ar == <span class="nm">3</span>, <span class="st">"hex_round answers axial (q,r)"</span>);</span>
+<span id="tests-03-worked-examples-loft-L59"></span>
+<span id="tests-03-worked-examples-loft-L60">  <span class="cm">// Same hex, two names — and nothing in the types says so.  Read the axial</span></span>
+<span id="tests-03-worked-examples-loft-L61">  <span class="cm">// pair as though it were offset and you are one hex west:</span></span>
+<span id="tests-03-worked-examples-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_distance</span>(oq, orr, aq, ar) == <span class="nm">1</span>,</span>
+<span id="tests-03-worked-examples-loft-L63">         <span class="st">"read as offset, the axial answer is the WEST NEIGHBOUR, not this hex"</span>);</span>
+<span id="tests-03-worked-examples-loft-L64"></span>
+<span id="tests-03-worked-examples-loft-L65">  <span class="cm">// Which is the error a caller actually makes: it is a real cell, it is next</span></span>
+<span id="tests-03-worked-examples-loft-L66">  <span class="cm">// door, and every downstream call keeps working.</span></span>
+<span id="tests-03-worked-examples-loft-L67">  (bx, by) = hex_grid::<span class="fn-call">hex_to_px</span>(aq, ar);</span>
+<span id="tests-03-worked-examples-loft-L68">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">about</span>(by, hy), <span class="st">"same row, so the mistake never shows up in y"</span>);</span>
+<span id="tests-03-worked-examples-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bx &lt; hx, <span class="st">"only x moved — by one full hex step"</span>);</span>
+<span id="tests-03-worked-examples-loft-L70">}</span>
+<span id="tests-03-worked-examples-loft-L71"></span>
+<span id="tests-03-worked-examples-loft-L72"><span class="cm">// @HXG-002 — the four DIAGONAL neighbour deltas depend on row parity.  In odd-r</span></span>
+<span id="tests-03-worked-examples-loft-L73"><span class="cm">// offset coordinates only due east and due west are parity-free; the other four</span></span>
+<span id="tests-03-worked-examples-loft-L74"><span class="cm">// shift by one column between even and odd rows.  So the obvious optimisation —</span></span>
+<span id="tests-03-worked-examples-loft-L75"><span class="cm">// a hardcoded six-entry delta table — is correct on every even row and wrong on</span></span>
+<span id="tests-03-worked-examples-loft-L76"><span class="cm">// every odd one, and the failure is not a crash or an out-of-range cell: it</span></span>
+<span id="tests-03-worked-examples-loft-L77"><span class="cm">// hands back a DIFFERENT NEIGHBOUR of the same hex, one direction over.</span></span>
+<span id="tests-03-worked-examples-loft-L78"><span class="kw">fn</span> <span class="fn-call">test_neighbor_deltas_depend_on_row_parity</span>() {</span>
+<span id="tests-03-worked-examples-loft-L79">  <span class="cm">// Direction 1 is SE.  From an even row it is (q, r-1) …</span></span>
+<span id="tests-03-worked-examples-loft-L80">  (ea, eb) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ea == <span class="nm">4</span> &amp;&amp; eb == <span class="nm">3</span>, <span class="st">"even row: SE is (q, r-1)"</span>);</span>
+<span id="tests-03-worked-examples-loft-L82">  <span class="cm">// … and from an odd row it is (q+1, r-1).</span></span>
+<span id="tests-03-worked-examples-loft-L83">  (oa, ob) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">5</span>, <span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L84">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(oa == <span class="nm">5</span> &amp;&amp; ob == <span class="nm">4</span>, <span class="st">"odd row: SE is (q+1, r-1)"</span>);</span>
+<span id="tests-03-worked-examples-loft-L85"></span>
+<span id="tests-03-worked-examples-loft-L86">  <span class="cm">// A caller who cached the even-row delta and applied it on row 5 lands on</span></span>
+<span id="tests-03-worked-examples-loft-L87">  <span class="cm">// (4, 4).  That cell is not garbage — it is this hex's SOUTH-WEST neighbour:</span></span>
+<span id="tests-03-worked-examples-loft-L88">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_neighbor_dir</span>(<span class="nm">4</span>, <span class="nm">5</span>, <span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">2</span>,</span>
+<span id="tests-03-worked-examples-loft-L89">         <span class="st">"the naive delta answers direction 2 (SW), not the 1 (SE) that was asked for"</span>);</span>
+<span id="tests-03-worked-examples-loft-L90">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">hex_distance</span>(<span class="nm">4</span>, <span class="nm">5</span>, <span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">1</span>,</span>
+<span id="tests-03-worked-examples-loft-L91">         <span class="st">"still adjacent, so nothing downstream complains"</span>);</span>
+<span id="tests-03-worked-examples-loft-L92"></span>
+<span id="tests-03-worked-examples-loft-L93">  <span class="cm">// Only east and west survive a hardcoded table, which is exactly why a</span></span>
+<span id="tests-03-worked-examples-loft-L94">  <span class="cm">// half-written one passes its first tests.</span></span>
+<span id="tests-03-worked-examples-loft-L95">  ok = <span class="kw">true</span>;</span>
+<span id="tests-03-worked-examples-loft-L96">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="tests-03-worked-examples-loft-L97">    (px, py) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">3</span>, r, <span class="nm">0</span>);</span>
+<span id="tests-03-worked-examples-loft-L98">    <span class="kw">if</span> px != <span class="nm">4</span> || py != r { ok = <span class="kw">false</span>; }</span>
+<span id="tests-03-worked-examples-loft-L99">    (mx, my) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">3</span>, r, <span class="nm">3</span>);</span>
+<span id="tests-03-worked-examples-loft-L100">    <span class="kw">if</span> mx != <span class="nm">2</span> || my != r { ok = <span class="kw">false</span>; }</span>
+<span id="tests-03-worked-examples-loft-L101">  }</span>
+<span id="tests-03-worked-examples-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"E and W are parity-free on every row; the other four are not"</span>);</span>
+<span id="tests-03-worked-examples-loft-L103">}</span>
+<span id="tests-03-worked-examples-loft-L104"></span>
+<span id="tests-03-worked-examples-loft-L105"><span class="cm">// @HXG-003 — a wall lives on the EDGE BETWEEN two hexes, and this module stores</span></span>
+<span id="tests-03-worked-examples-loft-L106"><span class="cm">// it once.  Each hex owns only directions 0, 1 and 2; a wall in direction 3, 4</span></span>
+<span id="tests-03-worked-examples-loft-L107"><span class="cm">// or 5 belongs to the neighbour.  `hex_canon_edge` is what resolves any of the</span></span>
+<span id="tests-03-worked-examples-loft-L108"><span class="cm">// six to the one slot that holds it, and skipping it does not lose the wall —</span></span>
+<span id="tests-03-worked-examples-loft-L109"><span class="cm">// it makes ONE wall into TWO half-walls that disagree, so a character is</span></span>
+<span id="tests-03-worked-examples-loft-L110"><span class="cm">// blocked walking north and walks straight through going south.</span></span>
+<span id="tests-03-worked-examples-loft-L111"><span class="cm">//</span></span>
+<span id="tests-03-worked-examples-loft-L112"><span class="cm">// `hex_place`'s @HXP-001 is the same question one level UP — one seam between</span></span>
+<span id="tests-03-worked-examples-loft-L113"><span class="cm">// two adjacent STENCILS — and there the answer is that it should not be stored</span></span>
+<span id="tests-03-worked-examples-loft-L114"><span class="cm">// at all: cut the union once and the seam is interior, so nobody owns it.</span></span>
+<span id="tests-03-worked-examples-loft-L115"><span class="kw">fn</span> <span class="fn-call">test_one_wall_has_exactly_one_canonical_slot</span>() {</span>
+<span id="tests-03-worked-examples-loft-L116">  <span class="cm">// Direction 4 (NW) from (5,5) is stored on the NEIGHBOUR, as its edge 1.</span></span>
+<span id="tests-03-worked-examples-loft-L117">  (cq, cr, ce) = hex_grid::<span class="fn-call">hex_canon_edge</span>(<span class="nm">5</span>, <span class="nm">5</span>, <span class="nm">4</span>);</span>
+<span id="tests-03-worked-examples-loft-L118">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cq == <span class="nm">5</span> &amp;&amp; cr == <span class="nm">6</span> &amp;&amp; ce == <span class="nm">1</span>, <span class="st">"dir 4 is the neighbour's edge 1"</span>);</span>
+<span id="tests-03-worked-examples-loft-L119"></span>
+<span id="tests-03-worked-examples-loft-L120">  <span class="cm">// The same physical wall, approached from the other side, resolves to the</span></span>
+<span id="tests-03-worked-examples-loft-L121">  <span class="cm">// same three numbers — which is the whole point of the canonical form.</span></span>
+<span id="tests-03-worked-examples-loft-L122">  (nq, nr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">5</span>, <span class="nm">5</span>, <span class="nm">4</span>);</span>
+<span id="tests-03-worked-examples-loft-L123">  back = hex_grid::<span class="fn-call">hex_neighbor_dir</span>(nq, nr, <span class="nm">5</span>, <span class="nm">5</span>);</span>
+<span id="tests-03-worked-examples-loft-L124">  (bq, br, be) = hex_grid::<span class="fn-call">hex_canon_edge</span>(nq, nr, back);</span>
+<span id="tests-03-worked-examples-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bq == cq &amp;&amp; br == cr &amp;&amp; be == ce, <span class="st">"both sides name the same slot"</span>);</span>
+<span id="tests-03-worked-examples-loft-L126"></span>
+<span id="tests-03-worked-examples-loft-L127">  <span class="cm">// Keyed on the raw (q, r, dir) instead, the two sides are two DIFFERENT keys.</span></span>
+<span id="tests-03-worked-examples-loft-L128">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wall_key</span>(<span class="nm">5</span>, <span class="nm">5</span>, <span class="nm">4</span>) == <span class="fn-call">wall_key</span>(nq, nr, back), <span class="st">"canonical keys agree"</span>);</span>
+<span id="tests-03-worked-examples-loft-L129">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">raw_key</span>(<span class="nm">5</span>, <span class="nm">5</span>, <span class="nm">4</span>) != <span class="fn-call">raw_key</span>(nq, nr, back),</span>
+<span id="tests-03-worked-examples-loft-L130">         <span class="st">"raw keys do not — one wall, stored twice, half of it invisible"</span>);</span>
+<span id="tests-03-worked-examples-loft-L131"></span>
+<span id="tests-03-worked-examples-loft-L132">  <span class="cm">// It holds for all six directions from any hex, which is the invariant to</span></span>
+<span id="tests-03-worked-examples-loft-L133">  <span class="cm">// rely on rather than the dir &lt; 3 arithmetic.</span></span>
+<span id="tests-03-worked-examples-loft-L134">  ok = <span class="kw">true</span>;</span>
+<span id="tests-03-worked-examples-loft-L135">  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-03-worked-examples-loft-L136">    (aq, ar) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">2</span>, <span class="nm">3</span>, d);</span>
+<span id="tests-03-worked-examples-loft-L137">    ad = hex_grid::<span class="fn-call">hex_neighbor_dir</span>(aq, ar, <span class="nm">2</span>, <span class="nm">3</span>);</span>
+<span id="tests-03-worked-examples-loft-L138">    <span class="kw">if</span> <span class="fn-call">wall_key</span>(<span class="nm">2</span>, <span class="nm">3</span>, d) != <span class="fn-call">wall_key</span>(aq, ar, ad) { ok = <span class="kw">false</span>; }</span>
+<span id="tests-03-worked-examples-loft-L139">  }</span>
+<span id="tests-03-worked-examples-loft-L140">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"every direction from a hex agrees with its neighbour's view"</span>);</span>
+<span id="tests-03-worked-examples-loft-L141">}</span>
+<span id="tests-03-worked-examples-loft-L142"></span>
+<span id="tests-03-worked-examples-loft-L143"><span class="cm">// The recommended idiom: never key a wall on the direction you happened to</span></span>
+<span id="tests-03-worked-examples-loft-L144"><span class="cm">// approach it from.  Canonicalise first, and the key is the wall.</span></span>
+<span id="tests-03-worked-examples-loft-L145"><span class="kw">fn</span> <span class="fn-call">wall_key</span>(wk_q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wk_r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wk_dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-03-worked-examples-loft-L146">  (kq, kr, ke) = hex_grid::<span class="fn-call">hex_canon_edge</span>(wk_q, wk_r, wk_dir);</span>
+<span id="tests-03-worked-examples-loft-L147">  <span class="st">"{kq}:{kr}:{ke}"</span></span>
+<span id="tests-03-worked-examples-loft-L148">}</span>
+<span id="tests-03-worked-examples-loft-L149"></span>
+<span id="tests-03-worked-examples-loft-L150"><span class="cm">// What the example above warns against — shown so the difference is readable.</span></span>
+<span id="tests-03-worked-examples-loft-L151"><span class="kw">fn</span> <span class="fn-call">raw_key</span>(rk_q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rk_r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rk_dir: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-03-worked-examples-loft-L152">  <span class="st">"{rk_q}:{rk_r}:{rk_dir}"</span></span>
+<span id="tests-03-worked-examples-loft-L153">}</span>
+<span id="tests-03-worked-examples-loft-L154"></span>
+<span id="tests-03-worked-examples-loft-L155"><span class="cm">// @HXG-004 — the two halves of this module disagree about which way `r` goes,</span></span>
+<span id="tests-03-worked-examples-loft-L156"><span class="cm">// and they do it while returning the same types.  In the HEX family `r`</span></span>
+<span id="tests-03-worked-examples-loft-L157"><span class="cm">// increases NORTH (`hex_neighbor(q, r, 5)` is NE and raises r); in the CELL</span></span>
+<span id="tests-03-worked-examples-loft-L158"><span class="cm">// family `r` increases SOUTH (`cell_neighbor(q, r, 1)` is S and raises r).  Both</span></span>
+<span id="tests-03-worked-examples-loft-L159"><span class="cm">// raise world y.  So a structure laid out in cell coordinates and placed on the</span></span>
+<span id="tests-03-worked-examples-loft-L160"><span class="cm">// hex world with the same mental picture comes out MIRRORED vertically, and</span></span>
+<span id="tests-03-worked-examples-loft-L161"><span class="cm">// every individual call was right.</span></span>
+<span id="tests-03-worked-examples-loft-L162"><span class="kw">fn</span> <span class="fn-call">test_the_two_families_disagree_on_which_way_r_goes</span>() {</span>
+<span id="tests-03-worked-examples-loft-L163">  <span class="cm">// Identical arithmetic, opposite compass.</span></span>
+<span id="tests-03-worked-examples-loft-L164">  (hq, hr) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">5</span>);</span>
+<span id="tests-03-worked-examples-loft-L165">  (sq, sr) = hex_grid::<span class="fn-call">cell_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hq == sq &amp;&amp; hr == sr, <span class="st">"both answer (4,5) — the same pair of integers"</span>);</span>
+<span id="tests-03-worked-examples-loft-L167">  <span class="cm">// hex direction 5 is NE; cell direction 1 is S.  Nothing in the result says which.</span></span>
+<span id="tests-03-worked-examples-loft-L168"></span>
+<span id="tests-03-worked-examples-loft-L169">  <span class="cm">// The corner families carry the same split.  Hex corner 0 is the TOP corner,</span></span>
+<span id="tests-03-worked-examples-loft-L170">  <span class="cm">// at +y …</span></span>
+<span id="tests-03-worked-examples-loft-L171">  (tx, ty) = hex_grid::<span class="fn-call">hex_corner_offset</span>(<span class="nm">0</span>);</span>
+<span id="tests-03-worked-examples-loft-L172">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">about</span>(tx, <span class="nm">0.0</span>) &amp;&amp; <span class="fn-call">about</span>(ty, <span class="nm">1.0</span>), <span class="st">"hex corner 0 is the top, at +y"</span>);</span>
+<span id="tests-03-worked-examples-loft-L173">  <span class="cm">// … while cell corner 0 is the NORTH-west corner, at -y.</span></span>
+<span id="tests-03-worked-examples-loft-L174">  (nx, ny) = hex_grid::<span class="fn-call">cell_corner_offset</span>(<span class="nm">0</span>);</span>
+<span id="tests-03-worked-examples-loft-L175">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">about</span>(nx, -<span class="nm">0.5</span>) &amp;&amp; <span class="fn-call">about</span>(ny, -<span class="nm">0.5</span>), <span class="st">"cell corner 0 is NW, at -y"</span>);</span>
+<span id="tests-03-worked-examples-loft-L176"></span>
+<span id="tests-03-worked-examples-loft-L177">  <span class="cm">// Read together: in the hex half, north is +y; in the cell half, north is -y.</span></span>
+<span id="tests-03-worked-examples-loft-L178">  <span class="cm">// A caller that picks one convention for the whole module is wrong for half</span></span>
+<span id="tests-03-worked-examples-loft-L179">  <span class="cm">// of it, and a vertical mirror is the symptom.</span></span>
+<span id="tests-03-worked-examples-loft-L180">  (ya, yb) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L181">  (za, zb) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-03-worked-examples-loft-L182">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(yb &gt; zb, <span class="st">"hex row 1 is NORTH of row 0, and has the larger y"</span>);</span>
+<span id="tests-03-worked-examples-loft-L183">  (wa, wb) = hex_grid::<span class="fn-call">cell_to_px</span>(<span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L184">  (va, vb) = hex_grid::<span class="fn-call">cell_to_px</span>(<span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-03-worked-examples-loft-L185">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wb &gt; vb, <span class="st">"cell row 1 is SOUTH of row 0, and also has the larger y"</span>);</span>
+<span id="tests-03-worked-examples-loft-L186">}</span>
+<span id="tests-03-worked-examples-loft-L187"></span>
+<span id="tests-03-worked-examples-loft-L188"><span class="cm">// @HXG-005 — "distance 1" and "adjacent" are the SAME question in the hex family</span></span>
+<span id="tests-03-worked-examples-loft-L189"><span class="cm">// and DIFFERENT questions in the cell family.  `cell_distance` is the Chebyshev</span></span>
+<span id="tests-03-worked-examples-loft-L190"><span class="cm">// (king-move) metric, so it answers 1 for a diagonal pair — but `cell_neighbor`</span></span>
+<span id="tests-03-worked-examples-loft-L191"><span class="cm">// offers only four orthogonal directions, so no single step gets you there.  A</span></span>
+<span id="tests-03-worked-examples-loft-L192"><span class="cm">// caller who writes `cell_distance(a, b) == 1` as an adjacency test silently</span></span>
+<span id="tests-03-worked-examples-loft-L193"><span class="cm">// admits diagonals, which is how a wall gets walked around through its corner.</span></span>
+<span id="tests-03-worked-examples-loft-L194"><span class="kw">fn</span> <span class="fn-call">test_distance_one_is_not_adjacency_for_cells</span>() {</span>
+<span id="tests-03-worked-examples-loft-L195">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">cell_distance</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>) == <span class="nm">1</span>, <span class="st">"Chebyshev: a diagonal is 1 away"</span>);</span>
+<span id="tests-03-worked-examples-loft-L196">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_grid::<span class="fn-call">cell_neighbor_dir</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>) == -<span class="nm">1</span>, <span class="st">"…and is not a neighbour"</span>);</span>
+<span id="tests-03-worked-examples-loft-L197">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">cell_adjacent</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>) == <span class="kw">false</span>, <span class="st">"the predicate to use instead"</span>);</span>
+<span id="tests-03-worked-examples-loft-L198">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">cell_adjacent</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">0</span>), <span class="st">"orthogonal pairs still adjacent"</span>);</span>
+<span id="tests-03-worked-examples-loft-L199"></span>
+<span id="tests-03-worked-examples-loft-L200">  <span class="cm">// In the hex family the two predicates coincide, because all six neighbours</span></span>
+<span id="tests-03-worked-examples-loft-L201">  <span class="cm">// are at distance 1 and nothing else is — which is why the cell case surprises.</span></span>
+<span id="tests-03-worked-examples-loft-L202">  ok = <span class="kw">true</span>;</span>
+<span id="tests-03-worked-examples-loft-L203">  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-03-worked-examples-loft-L204">    (aq, ar) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">3</span>, <span class="nm">3</span>, d);</span>
+<span id="tests-03-worked-examples-loft-L205">    <span class="kw">if</span> hex_grid::<span class="fn-call">hex_distance</span>(<span class="nm">3</span>, <span class="nm">3</span>, aq, ar) != <span class="nm">1</span> { ok = <span class="kw">false</span>; }</span>
+<span id="tests-03-worked-examples-loft-L206">    <span class="kw">if</span> hex_grid::<span class="fn-call">hex_neighbor_dir</span>(<span class="nm">3</span>, <span class="nm">3</span>, aq, ar) &lt; <span class="nm">0</span> { ok = <span class="kw">false</span>; }</span>
+<span id="tests-03-worked-examples-loft-L207">  }</span>
+<span id="tests-03-worked-examples-loft-L208">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"hex: distance 1 and adjacency agree"</span>);</span>
+<span id="tests-03-worked-examples-loft-L209">}</span>
+<span id="tests-03-worked-examples-loft-L210"></span>
+<span id="tests-03-worked-examples-loft-L211"><span class="cm">// The predicate to reach for: ask the direction function, not the metric.</span></span>
+<span id="tests-03-worked-examples-loft-L212"><span class="kw">fn</span> <span class="fn-call">cell_adjacent</span>(ca_q1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ca_r1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ca_q2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ca_r2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-03-worked-examples-loft-L213">  hex_grid::<span class="fn-call">cell_neighbor_dir</span>(ca_q1, ca_r1, ca_q2, ca_r2) &gt;= <span class="nm">0</span></span>
+<span id="tests-03-worked-examples-loft-L214">}</span>
+<span id="tests-03-worked-examples-loft-L215"></span>
+<span id="tests-03-worked-examples-loft-L216"><span class="cm">// @HXG-006 — `-1` means "there is no such direction", and it is an `integer`, so</span></span>
+<span id="tests-03-worked-examples-loft-L217"><span class="cm">// it flows straight into every function that takes a direction.  Nothing raises.</span></span>
+<span id="tests-03-worked-examples-loft-L218"><span class="cm">// `hex_edge_corners` and `hex_neighbor` both end in a fall-through arm, so -1</span></span>
+<span id="tests-03-worked-examples-loft-L219"><span class="cm">// silently BECOMES direction 5; `hex_canon_edge` takes its `dir &lt; 3` branch and</span></span>
+<span id="tests-03-worked-examples-loft-L220"><span class="cm">// hands back an edge index of -1, which then indexes a wall table.  Check the</span></span>
+<span id="tests-03-worked-examples-loft-L221"><span class="cm">// answer before you spend it — the check is one comparison and there is no</span></span>
+<span id="tests-03-worked-examples-loft-L222"><span class="cm">// null to remind you.</span></span>
+<span id="tests-03-worked-examples-loft-L223"><span class="kw">fn</span> <span class="fn-call">test_minus_one_is_not_null_and_it_indexes</span>() {</span>
+<span id="tests-03-worked-examples-loft-L224">  bad = hex_grid::<span class="fn-call">hex_neighbor_dir</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">5</span>, <span class="nm">5</span>);</span>
+<span id="tests-03-worked-examples-loft-L225">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bad == -<span class="nm">1</span>, <span class="st">"distant hexes have no direction between them"</span>);</span>
+<span id="tests-03-worked-examples-loft-L226"></span>
+<span id="tests-03-worked-examples-loft-L227">  <span class="cm">// -1 is not rejected anywhere; it is absorbed as direction 5.</span></span>
+<span id="tests-03-worked-examples-loft-L228">  (ma, mb) = hex_grid::<span class="fn-call">hex_edge_corners</span>(-<span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L229">  (fa, fb) = hex_grid::<span class="fn-call">hex_edge_corners</span>(<span class="nm">5</span>);</span>
+<span id="tests-03-worked-examples-loft-L230">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ma == fa &amp;&amp; mb == fb, <span class="st">"hex_edge_corners(-1) answers the direction-5 corners"</span>);</span>
+<span id="tests-03-worked-examples-loft-L231">  (na, nb) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, -<span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L232">  (va, vb) = hex_grid::<span class="fn-call">hex_neighbor</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">5</span>);</span>
+<span id="tests-03-worked-examples-loft-L233">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(na == va &amp;&amp; nb == vb, <span class="st">"hex_neighbor(q,r,-1) answers the direction-5 neighbour"</span>);</span>
+<span id="tests-03-worked-examples-loft-L234"></span>
+<span id="tests-03-worked-examples-loft-L235">  <span class="cm">// …except here, where it survives as an edge index of -1 rather than becoming 5.</span></span>
+<span id="tests-03-worked-examples-loft-L236">  <span class="cm">// Two different wrong answers from one bad direction is what makes this hard to</span></span>
+<span id="tests-03-worked-examples-loft-L237">  <span class="cm">// trace back: the wall is stored under an index no reader will ever ask for.</span></span>
+<span id="tests-03-worked-examples-loft-L238">  (ca, cb, ce) = hex_grid::<span class="fn-call">hex_canon_edge</span>(<span class="nm">4</span>, <span class="nm">4</span>, -<span class="nm">1</span>);</span>
+<span id="tests-03-worked-examples-loft-L239">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ca == <span class="nm">4</span> &amp;&amp; cb == <span class="nm">4</span> &amp;&amp; ce == -<span class="nm">1</span>, <span class="st">"hex_canon_edge keeps the -1 as an edge index"</span>);</span>
+<span id="tests-03-worked-examples-loft-L240"></span>
+<span id="tests-03-worked-examples-loft-L241">  <span class="cm">// The guard, in full: one comparison, before the direction is used for anything.</span></span>
+<span id="tests-03-worked-examples-loft-L242">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">step_or_stay</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="st">"4:4"</span>, <span class="st">"no direction: stay put"</span>);</span>
+<span id="tests-03-worked-examples-loft-L243">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">step_or_stay</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">5</span>, <span class="nm">4</span>) == <span class="st">"5:4"</span>, <span class="st">"a real direction: take the step"</span>);</span>
+<span id="tests-03-worked-examples-loft-L244">}</span>
+<span id="tests-03-worked-examples-loft-L245"></span>
+<span id="tests-03-worked-examples-loft-L246"><span class="cm">// The recommended idiom: turn the sentinel into a decision at the boundary,</span></span>
+<span id="tests-03-worked-examples-loft-L247"><span class="cm">// rather than letting it travel as a direction.</span></span>
+<span id="tests-03-worked-examples-loft-L248"><span class="kw">fn</span> <span class="fn-call">step_or_stay</span>(ss_q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ss_r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ss_tq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ss_tr: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-03-worked-examples-loft-L249">  d = hex_grid::<span class="fn-call">hex_neighbor_dir</span>(ss_q, ss_r, ss_tq, ss_tr);</span>
+<span id="tests-03-worked-examples-loft-L250">  <span class="kw">if</span> d &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="st">"{ss_q}:{ss_r}"</span>; }</span>
+<span id="tests-03-worked-examples-loft-L251">  (nq, nr) = hex_grid::<span class="fn-call">hex_neighbor</span>(ss_q, ss_r, d);</span>
+<span id="tests-03-worked-examples-loft-L252">  <span class="st">"{nq}:{nr}"</span></span>
+<span id="tests-03-worked-examples-loft-L253">}</span>
 </code></pre>
 
   </article>
