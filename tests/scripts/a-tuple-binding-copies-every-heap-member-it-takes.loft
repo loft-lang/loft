@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Destr)` binds a tuple's elements POSITIONALLY, and each binding is a plain bind — so
+// `binding.md` `B-Copy` governs it and a HEAP member is copied, exactly as `(T-Cons)` copies
+// one INTO a tuple.  `(T-Ret)` says the returned tuple is an INDEPENDENT value, which is the
+// same question asked across a frame that is about to die.
+//
+// Both rules had one conformance line each and both were written over `(integer, integer)`.
+// `formal/tuples.md`'s own D-tup-10 says why that is not enough: the coercions a tuple's
+// members need are the ones only a NON-`Copy` member has, so an all-integer cell cannot reach
+// them — "any cell added here should carry a `text` member".  Every cell below does.
+//
+// The SOURCE is the axis, because that is what decides where the tuple's bytes were before the
+// bind: a local built from a literal, a call return, a vector element, a struct field, a loop
+// variable.  Each is scored by mutating ONE side and reading the OTHER — a length is what
+// witnesses a copy, and asserting only the value would pass on a build that aliased.
+//
+// A VARIABLE index is refused rather than bound (`(N-Index)` makes `v[i]` a `(τ, τ)?` and
+// `(T-Absent)` refuses an undischarged destructure, naming the two cures); that refusal lives
+// in `102-expected-errors.loft`, not here.
+//
+// @falsified-at: none — a LOCK.  Every cell here passes on 4d14b3e07 and on the builds before
+//   it; no build was found where a tuple binding aliased its source.  What was missing is that
+//   `T-Destr` and `T-Ret` had no guard carrying a heap member at all, so the chapter's claims
+//   about them rested on two all-integer one-liners.  The cells exist so the next change to
+//   binding or to the tuple ABI has to come past them.
+
+struct TbHolder { p: (text, integer) }
+
+fn tb_mk() -> (text, vector<integer>) { ("alpha", [10, 20, 30]) }
+
+fn tb_mk_from_local() -> (text, vector<integer>) {
+  local = [7, 8, 9];
+  ("alpha", local)
+}
+
+fn test_a_binding_from_a_local_tuple_copies_its_heap_member() {
+  v = [10, 20, 30];
+  t = ("alpha", v);
+  (a, b) = t;
+  // Three independent lengths after this: the source vector, the bound name, the tuple's own
+  // member.  A build that aliased any pair would report the same number twice.
+  v += [40];
+  b += [99];
+  assert(a == "alpha", "text member: got {a}");
+  assert(len(v) == 4, "source vector: got {len(v)}");
+  assert(len(b) == 4, "bound member: got {len(b)}");
+  assert(len(t.1) == 3, "the tuple's own member moved: got {len(t.1)}");
+}
+
+fn test_a_binding_from_a_call_return_copies_its_heap_member() {
+  (a, b) = tb_mk();
+  b += [99];
+  assert(a == "alpha" && len(b) == 4, "call return: got {a}|{len(b)}");
+}
+
+fn test_a_returned_tuple_outlives_the_local_it_was_built_from() {
+  // `(T-Ret)` — `local` dies at the return, so reading both ENDS of the vector is what says
+  // the caller holds a live value and not a freed store's address.
+  (a, b) = tb_mk_from_local();
+  assert(a == "alpha", "returned text: got {a}");
+  assert(len(b) == 3, "returned vector length: got {len(b)}");
+  assert(b[0] == 7 && b[2] == 9, "returned vector ends: got {b[0]}|{b[2]}");
+}
+
+fn test_a_binding_from_a_vector_element_takes_the_element_it_names() {
+  v: vector<(text, integer)> = [("one", 1), ("two", 2)];
+  (a, b) = v[1];
+  assert(a == "two" && b == 2, "element by constant index: got {a}|{b}");
+}
+
+fn test_a_binding_from_a_struct_field_reads_the_field() {
+  h = TbHolder { p: ("one", 1) };
+  (a, b) = h.p;
+  assert(a == "one" && b == 1, "struct field: got {a}|{b}");
+}
+
+fn test_a_binding_from_a_loop_variable_takes_each_element() {
+  v: vector<(text, integer)> = [("one", 1), ("two", 2)];
+  seen = "";
+  for t in v {
+    (a, b) = t;
+    seen += "{a}:{b};";
+  }
+  assert(seen == "one:1;two:2;", "loop variable: got {seen}");
+}
+
+fn test_arity_three_copies_a_heap_member_in_the_middle() {
+  // The heap member is neither first nor last, so an off-by-one in the element walk shows.
+  v = [1, 2];
+  t = (5, v, "tail");
+  (x, y, z) = t;
+  y += [3];
+  assert(x == 5 && z == "tail", "scalar ends: got {x}|{z}");
+  assert(len(y) == 3, "bound middle member: got {len(y)}");
+  assert(len(t.1) == 2, "the tuple's own middle member moved: got {len(t.1)}");
+}

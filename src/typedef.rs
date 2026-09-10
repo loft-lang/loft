@@ -431,7 +431,14 @@ fn type_blocked(data: &Data, tp: &Type, seen: &mut Vec<u32>) -> bool {
     }
 }
 
-pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start_def: u32) {
+/// Resolve every pending layout, report the type cycles, and lay the records out.
+///
+/// Answers **true when a type CYCLE was reported**, which the caller needs before it lets
+/// anything else look at these types: a type that contains itself has no finite size, so
+/// `Stores::finish` recurses into the cycle and its `u16` offset accumulator wraps.  That
+/// panic reaches the user as an internal compiler error and takes the buffered diagnostics
+/// with it — including the one naming the cure — so a cyclic program reported nothing at all.
+pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start_def: u32) -> bool {
     // Re-resolve the forward references of everything still waiting for a layout.
     //
     // `actual_types_deferred` sweeps only the file it is finishing, so a struct that
@@ -453,21 +460,49 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         }
     }
     // Detect type cycles before computing sizes.
+    //
+    // An ENUM is asked as well as a struct, because a struct-enum variant's payload is stored
+    // INLINE in the host's bytes exactly as an embedded field is — so `enum E { Branch { n: E } }`
+    // has no finite size either, and with no struct anywhere in it nothing else would ask.
+    let mut found_cycle = false;
     for d_nr in start_def..data.definitions() {
-        if matches!(data.def_type(d_nr), DefType::Struct) {
+        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum) {
             let mut visiting = std::collections::HashSet::new();
             if data.has_value_cycle(d_nr, &mut visiting) {
+                // Whether or not this def is one to REPORT, its layout is now unreachable —
+                // so the flag is set before the reporting question is asked.  Getting that
+                // order wrong lets `Stores::finish` run on a cyclic type after all.
+                found_cycle = true;
+                // A GENERATED def — `__tuple<integer,Node>`, `__nullable<S>` — lies on the
+                // cycle exactly when the field that built it does, so reporting it says the
+                // same thing twice and the second time names a type nobody wrote.  The walk
+                // still travels THROUGH these defs; only the diagnostic stops at the author's
+                // own types.
+                if !data.def_is_authored(d_nr) {
+                    continue;
+                }
+                let noun = if matches!(data.def_type(d_nr), DefType::Enum) {
+                    "Enum"
+                } else {
+                    "Struct"
+                };
                 lexer.pos_diagnostic(
                     Level::Error,
                     &data.def(d_nr).position,
                     &format!(
-                        "Struct '{}' contains itself (directly or indirectly) — use reference<{}> to break the cycle",
+                        "{noun} '{}' contains itself (directly or indirectly) — use reference<{}> to break the cycle",
                         data.def(d_nr).name,
                         data.def(d_nr).name,
                     ),
                 );
             }
         }
+    }
+    if found_cycle {
+        // Every step below lays records out, and a cyclic type has no layout to reach.  The
+        // report is already made and it names the cure; going on can only replace it with a
+        // panic from inside the record builder.
+        return true;
     }
     // @PLN25 E2 — register the synthetic `__nullable<T>` enums + (gated) rewrite
     // embedded struct fields, BEFORE the unit-variant discriminant pass + the
@@ -663,6 +698,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         }
     }
     report_unknown_key_fields(data, lexer);
+    false
 }
 
 /// loft#874 — report the key fields a keyed collection named that its ELEMENT type
@@ -747,8 +783,16 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
     // absence.
     {
         for host in 0..data.definitions() {
-            // Synthetic hosts (tuples, fn-ref, and our own `__nullable<T>` variants)
-            // are skipped so the rewrite never recurses into generated layouts.
+            // ⚠ This skips the ENUM DISPATCHER and nothing else.  `Definition::synthetic` is
+            // set at exactly one site (`ir_schema.rs`, `Some("enum_dispatcher")`); the
+            // generated types this comment used to name — `__tuple<…>`, `__fn_ref`,
+            // `__nullable<T>` — are built by `add_def`, which leaves the field `None`, so the
+            // guard has never skipped one.  `Data::def_is_authored` is the predicate that
+            // would.  Recorded rather than changed because the rewrite is CORRECT on the host
+            // it actually reaches: a `Node?` tuple member is an inline position by
+            // `formal/layout.md` (L-Null-Tag), so it wants the tagged form like any embedded
+            // field.  Adding the skip would be a behaviour change with no measured case
+            // asking for it.
             if data.def(host).synthetic.is_some() {
                 continue;
             }
