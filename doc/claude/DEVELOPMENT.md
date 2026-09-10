@@ -104,7 +104,7 @@ The branch is merged to main via a single PR when all items pass CI.
   clock. **Every PR therefore serialises the whole stream**, which is a bigger cost
   than the CI round it also pays (~20–30 min).
 
-  **REVISED 2026-09-10 — the floor stands, the ceiling moved to an ARC.** "Never one or
+  **REVISED 2026-09-10 — the cadence stands; what changed is the LATENCY.** "Never one or
   a few issues" is unchanged and is why one-issue PRs are not proposed. What changed is
   the other end: the directive's cost model counted only the serialisation a PR causes,
   and not the serialisation that withholding one causes. Both are real, and the second
@@ -114,11 +114,24 @@ The branch is merged to main via a single PR when all items pass CI.
   join-only defects existed only on that union, invisible from either side. `main` is
   the only place a resolution is shared ONCE.
 
-  So the cadence is **one PR per closed ARC** rather than per day or per N issues, and
-  the countable trigger is: **a branch a sibling has joined twice is overdue.** The
-  reconciliation of the two costs is that a PR is cheap exactly when it MERGES promptly
-  and expensive when it sits — which is why the branch policy's "keep the PR mergeable
-  and land it promptly" is the load-bearing half.
+  **The cadence itself was never the problem** — one or two stable PRs a day works, and
+  it stays. What the revision adds is that the cadence must not imply a slow START. Once
+  the owner asks, opening is minutes: the PR's own `ci.yml` is a required check running
+  the same gate on the exact sha, so the opening is NOT held for a fresh local `make ci`
+  on the joined tree. That local run is a slower duplicate, and on a shared box it is
+  killable — on 2026-09-10 three of them were killed by a sibling's `pkill -f "make ci"`
+  (no path in the pattern, so it matched every checkout), costing ~50 minutes with the
+  PR still unopened while three streams kept re-joining. Run one after opening if the
+  earlier signal is wanted.
+
+  What must hold BEFORE opening is short and cheap: head current on `origin/main`,
+  everything pushed, tree clean, derived artefacts REGENERATED rather than picked, and
+  each fix carrying the verification it owed when it landed. The join-count backstop —
+  **a branch a sibling has joined twice is overdue** — should never fire at one or two a
+  day; it exists for the case where it does. The two costs reconcile on time-to-MERGE: a
+  PR is cheap exactly when it lands promptly and expensive when it sits, which is why
+  the branch policy's "keep the PR mergeable and land it promptly" is the load-bearing
+  half.
 
   **Opening a PR is still the owner's call, and still not a subject to raise.** Do not
   propose one, hint that the work is "ready" for one, or treat a finished issue as a

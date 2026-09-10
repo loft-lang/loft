@@ -240,19 +240,28 @@ src/main.rs            CLI; loads default/ then user file
    point — a closed arc, a clean endpoint — and **the owner is the one who determines that**, not
    the agent that judges its own branch ready. Keep committing and pushing to the branch; wait to
    be told.
-   ⚠ **Target cadence is roughly ONE PR PER ARC**, where an arc is a coherent unit that finishes:
-   one rule's family of defects, one subsystem's, one plan phase. Several arcs may close in a day
-   and a long one may straddle two; the axis is coherence, not the clock. And the bar for that
-   unit is not "green" — a PR that looks OK while carrying internal regressions is worse for a
-   language's users than no PR, so a walk ships only with its own verification complete (both
-   backends, the matrix built and hand-checked, guards falsified, side-findings filed rather than
-   left implicit). That bar gets CHEAPER per PR as the arc gets smaller, which is half the reason
-   for the cadence.
-   ⚠ **A branch a sibling has joined TWICE is overdue** — the one countable trigger, replacing
-   "accumulated commits are not a reason". The old rule rested on *cherry-picking makes batching
-   free*, and it is not free: measured 2026-09-10, one branch carried **9 joins** before its PR,
-   the walker-audit rows were re-measured five times, `falsified_docs.baseline` was regenerated
-   and the browser bundle rebuilt — and the siblings paid the same cost in their own trees
+   ⚠ **Target cadence is ONE OR TWO STABLE PRs A DAY** — that cadence works and is not the thing
+   to change. Shape the work into arcs that FINISH inside it (one rule's family of defects, one
+   subsystem's, one plan phase) rather than starting something that will straddle. And the bar for
+   such a unit is not "green" — a PR that looks OK while carrying internal regressions is worse
+   for a language's users than no PR, so a walk ships only with its own verification complete
+   (both backends, the matrix built and hand-checked, guards falsified, side-findings filed rather
+   than left implicit).
+   ⚠ **What the cadence does NOT mean is a slow START.** Once the owner asks, opening is minutes,
+   not an hour: the PR's own `ci.yml` is a required check that runs the SAME gate on the exact sha,
+   so **do not hold the opening for a fresh local `make ci` on the joined tree** — that is a slower
+   duplicate of a check the PR is about to run, and on a shared box a sibling's `pkill` can kill it
+   (measured 2026-09-10: three local gates killed, ~50 minutes lost, PR still unopened while three
+   streams kept re-joining). Run a local gate AFTER opening if you want the earlier signal.
+   What must be true BEFORE opening is cheap to check and is the whole list: the head is current
+   on `origin/main` (rule 6), everything is pushed, the tree is clean, derived artefacts are
+   REGENERATED rather than picked (audit rows re-measured, `falsified_docs.baseline`, the browser
+   bundle), and each fix in the arc carries the verification it owed when it landed.
+   ⚠ **A branch a sibling has joined TWICE is overdue** — a backstop, not the cadence: at one or
+   two a day it should never fire. It replaces "accumulated commits are not a reason", whose
+   premise was *cherry-picking makes batching free*. It is not free: measured 2026-09-10, one
+   branch carried **9 joins** before its PR, the walker-audit rows were re-measured five times,
+   `falsified_docs.baseline` was regenerated and the browser bundle rebuilt — and the siblings paid the same cost in their own trees
    (@PLN157 carries its own "re-measure the derived rows, re-falsify both guards" commit). `main`
    is the only place a resolution is shared ONCE; until then every stream re-derives it. Two
    join-only defects also existed only on that union, invisible from either side.
