@@ -33,8 +33,9 @@
 //   CHANNEL: exit + asserts, BOTH backends equally — on the control the first mixed cell
 //     already reads fewer hooks than records (the owned record's hook is silently lost),
 //     and each fixed cell here demands the full sequence.
-//   ARMED: nothing; a plain run scores it.  HOLDS: leak — the store was freed on both trees
-//     (that is the defect: a hook loss is invisible to the leak checker), panic, refusals.
+//   ARMED: nothing; a plain run scores it.
+//   HOLDS: leak — the store was freed on both trees (that is the defect: a hook loss is
+//     invisible to the leak checker), panic, refusals.
 
 fn trace_path() -> text { return "loft_1510_trace.tmp"; }
 

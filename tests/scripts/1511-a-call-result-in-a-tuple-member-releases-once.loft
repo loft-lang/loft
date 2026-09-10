@@ -25,8 +25,9 @@
 // @falsified-by: tests/falsified/1511-a-call-result-in-a-tuple-member-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: exit + asserts, BOTH backends equally — on the control the first call-member
 //     cell reads an empty hook trace where this guard demands the record's id.
-//   ARMED: nothing; a plain run scores it.  HOLDS: leak (the store was freed on both trees;
-//     the loss was the hook, which no leak channel sees), panic, refusals.
+//   ARMED: nothing; a plain run scores it.
+//   HOLDS: leak (the store was freed on both trees; the loss was the hook, which no leak
+//     channel sees), panic, refusals.
 
 fn trace_path() -> text { return "loft_1511_trace.tmp"; }
 
