@@ -1,0 +1,150 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` releases a resource ONCE, at the death of the record that owns it,
+// and a CONTAINER's death releases what it holds through the synthesized cascade.  So a
+// struct that owns a droppable must release it whatever KIND of field holds it.
+//
+// Two decoders answer one question here, and they disagreed.  `Data::type_owns_droppable`
+// decides WHETHER a type owns a droppable and follows a tuple member, a struct-enum payload
+// and a collection element to say so; `Parser::cascade_fields` decides HOW to reach it and
+// reported only a `Reference` field.  A type the first said yes about and the second found
+// nothing in gets no cascade declared at all — it answers "I own a resource" and then
+// releases none of it, silently, on both backends.  Five field kinds were in that gap.
+//
+// A cell asserts the release COUNT, never merely its absence: the whole fault here is a
+// hook that does not run, so a guard scoring only for a DOUBLE release reads every broken
+// cell as a pass.  c-two is the control that pins the counting — two independent resources
+// must read TWO drops in reverse declaration order — and without it every cell above would
+// pass on a harness that had simply stopped recording.
+//
+// @falsified-at: d7527ced7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_tup is the first moving cell on
+//   both backends (the run stops at its first failed assertion); the other four the fix moves
+//   are c_tup2, c_null, c_enum and c_tupn, each measured at ZERO releases on that build and
+//   one here.  HOLDS: leak, panic, free-refusal, expectations are equal on both trees.
+// @falsified-by: tests/falsified/a-drop-cascade-reaches-every-field-kind-it-owns.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
+//
+// The trace file is this guard's own, so a sibling guard run beside it cannot read its
+// notes.
+
+fn trace_path() -> text { return "loft_cascade_field_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct CfH { id: integer }
+fn OpDrop(self: CfH) { note("{self.id}"); }
+fn cf_mk(id: integer) -> CfH { return CfH { id: id }; }
+struct CfS { h: CfH }
+
+struct FRec  { f: CfS }                       // a record field — the shape that always worked
+struct FTup  { f: (CfS, integer) }            // a tuple field
+struct FTup2 { f: (integer, CfS) }            // a tuple field whose droppable is at index 1
+struct FVec  { f: vector<CfS> }               // a collection field (stage E)
+struct FNull { f: CfS? }                      // a NULLABLE record field
+struct FNest { f: FRec }                      // a nested struct field
+enum   CfW   { CfWH { s: CfS }, CfWNone }
+struct FEnum { f: CfW }                       // a struct-enum field
+struct FTupV { f: vector<(CfS, integer)> }    // a collection of tuples
+struct FTupN { f: ((CfS, integer), integer) } // a tuple nested in a tuple
+
+// A record field: `layout.md` stores it inline and its offset is the whole of what
+// releasing it needs.
+fn c_rec()  { s = CfS { h: cf_mk(1) }; c = FRec { f: s };   note("alive{c.f.h.id}"); }
+// A TUPLE field.  `layout.md (L-Tuple)` makes a tuple a synthetic struct, so it releases
+// exactly as the nested struct below does — through `__tuple<…>`'s own cascade.
+fn c_tup()  { s = CfS { h: cf_mk(2) }; c = FTup { f: (s, 5) }; note("alive{c.f.0.h.id}"); }
+// The droppable at tuple index 1, with a scalar before it: the offset is the member's, not
+// the field's.
+fn c_tup2() { s = CfS { h: cf_mk(3) }; c = FTup2 { f: (5, s) }; note("alive{c.f.1.h.id}"); }
+// A collection field releases element by element (stage E).
+fn c_vec()  { s = CfS { h: cf_mk(4) }; c = FVec { f: [s] }; note("alive{c.f[0].h.id}"); }
+// A NULLABLE record field.  `f: CfS?` is rewritten to `Enum(__nullable<CfS>, true)`, so
+// absence is a variant with nothing to release rather than a case the walk tests for.
+fn c_null() { s = CfS { h: cf_mk(5) }; c = FNull { f: s }; note("alive{c.f == null}"); }
+// A nested struct field: the cascade of the outer type calls the cascade of the inner.
+fn c_nest() { s = CfS { h: cf_mk(6) }; c = FNest { f: FRec { f: s } }; note("alive{c.f.f.h.id}"); }
+// A STRUCT-ENUM field, which releases through whichever variant it holds — so the read
+// keeps the enum spelling and the cascade tests the discriminator first.
+fn c_enum() { s = CfS { h: cf_mk(7) }; c = FEnum { f: CfWH { s: s } }; note("alive{c.f is CfWH}"); }
+// A collection of tuples: the element type reaches the walk already spelled as a reference
+// to the synthetic struct, which is why this cell passed while `c_tup` did not.
+fn c_vtup() { s = CfS { h: cf_mk(8) }; c = FTupV { f: [(s, 5)] }; note("alive{c.f[0].0.h.id}"); }
+// A tuple inside a tuple: the outer synthetic struct has no `Reference` member either, so
+// the walk has to recognise its own kind to reach the inner one.
+fn c_tupn() { s = CfS { h: cf_mk(9) }; c = FTupN { f: ((s, 1), 2) }; note("alive{c.f.0.0.h.id}"); }
+// An ABSENT nullable field releases nothing — the variant that holds no payload holds no
+// resource, and a walk that ran the hook against the tag bytes would show up here.  Read
+// with `==` rather than through `?.`, which the present cell above avoids for the same
+// reason: `?.` on an absent nullable answers its type ZERO instead of null and mints a
+// record whose scope end runs the hook, so a cell reading that way would score against that
+// defect instead of against the cascade — and it reproduces on a bare LOCAL, where no field
+// walk is involved at all.
+fn c_none() { c = FNull { f: null }; note("absent{c.f == null}"); }
+// A unit VARIANT holds no payload either, and its arm is the one `cascade_variants` omits.
+fn c_unit() { c = FEnum { f: CfWNone }; note("unit{c.f is CfWH}"); }
+// CONTROL — two independent resources release TWICE, in reverse declaration order.  This is
+// what tells "released once" from "the harness stopped recording".
+fn c_two()  { x = CfS { h: cf_mk(91) }; y = CfS { h: cf_mk(92) }; note("alive{x.h.id}{y.h.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_rec(); got = drain();
+  assert(got == "alive1,1", "a record field releases once: {got}");
+
+  c_tup(); got = drain();
+  assert(got == "alive2,2", "a tuple field releases once: {got}");
+
+  c_tup2(); got = drain();
+  assert(got == "alive3,3", "a tuple field with the droppable at index 1 releases once: {got}");
+
+  c_vec(); got = drain();
+  assert(got == "alive4,4", "a collection field releases its element once: {got}");
+
+  c_null(); got = drain();
+  assert(got == "alivefalse,5", "a nullable record field releases once: {got}");
+
+  c_nest(); got = drain();
+  assert(got == "alive6,6", "a nested struct field releases once: {got}");
+
+  c_enum(); got = drain();
+  assert(got == "alivetrue,7", "a struct-enum field releases once: {got}");
+
+  c_vtup(); got = drain();
+  assert(got == "alive8,8", "a collection of tuples releases its element once: {got}");
+
+  c_tupn(); got = drain();
+  assert(got == "alive9,9", "a tuple nested in a tuple releases once: {got}");
+
+  c_none(); got = drain();
+  assert(got == "absenttrue", "an absent nullable field releases nothing: {got}");
+
+  c_unit(); got = drain();
+  assert(got == "unitfalse", "a unit variant field releases nothing: {got}");
+
+  c_two(); got = drain();
+  assert(got == "alive9192,92,91", "CONTROL two resources release TWICE: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("cascade field kinds ok");
+}
