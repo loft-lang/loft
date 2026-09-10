@@ -8448,6 +8448,28 @@ impl Data {
         self.drop_hook_nr(type_def)
     }
 
+    /// The skip-capable variant of the cascade — `t_<LEN><Type>_OpDropAllExcept(self, skip)`
+    /// releases everything the type owns EXCEPT the inline field at byte offset `skip`.
+    ///
+    /// `(H-Drop)`'s responsibility clause, field-grained: a copy OUT of one field makes the
+    /// copy that field's owner, so the source record's death must release every OTHER member
+    /// and leave that one to the copy (D-heap-3, loft#1506). `u32::MAX` when the type has no
+    /// such variant — the caller falls back to the full cascade, which is the pre-transfer
+    /// double release rather than anything unsound.
+    #[must_use]
+    pub fn drop_cascade_except_nr(&self, type_def: u32) -> u32 {
+        if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
+            return u32::MAX;
+        }
+        let def = self.def(type_def);
+        let key = format!("t_{}{}_OpDropAllExcept", def.name.len(), def.name);
+        let nr = self.source_nr(def.source, &key);
+        if nr != u32::MAX {
+            return nr;
+        }
+        self.def_nr(&key)
+    }
+
     /// Does this type have a SYNTHESIZED drop cascade (as opposed to only its own hook)?
     ///
     /// The question stage C asks before treating a copy into a container as a MOVE: a source

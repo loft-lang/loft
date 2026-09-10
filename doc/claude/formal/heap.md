@@ -358,10 +358,12 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE;
-`D-heap-3`, a struct field projected off a CALL result, where `(B-View)` requires the copy and
-`(H-Drop)` requires the source to stop dropping that one resource and no mechanism can say so
-(loft#1506); and
+OPEN: **4** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE;
+`D-heap-3`, a struct field projected off a CALL result, where the copy-out hand-off now
+carries the dense family and two shapes remain: the `?` join's alias and the return-of-view
+copy (loft#1506);
+`D-heap-4`, a mixed own/view LOCAL whose owned record's hook never runs — the release by
+identity frees the store and drops nothing; and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -514,6 +516,70 @@ hook.
 escaping projection unchanged at 2, the non-escaping one at 1, the bound form still 1, and the
 two-droppable-field record at one release EACH — because every wrong cure above passes a boundary
 that omits one of them, and a cure that overshoots to zero is a leak reading as a fix.
+
+**The dense family CLOSED (2026-09-10)** — the fifth candidate, the one the exclusions left:
+the cascade got the skip. `synth_drop_cascades` generates `t_<LEN><T>_OpDropAllExcept(self,
+skip)` beside the full cascade, derived from `cascade_fields` in its one home — each FIELD
+release additionally guarded by `skip != off`, the own hook and collection fields
+unconditional (a copy-out never takes those over). `scan_args` records the (lift, offset)
+pairing where the materialising copy is made (`OpCopyRecord(OpGetField(__lift_N, off),
+__ref_M)` — only a `__lift_` source, minted fresh per statement, because a pooled work-ref's
+scope-end drop covers whatever record it holds LAST), and `scope_end_drop` — the one home for
+the scope-end hook — emits the Except call. A type without the variant falls back to the full
+cascade: the pre-transfer double release, never a leak or a faulting free.
+`LOFT_NO_FIELD_HANDOFF=1` is the bisect switch. The BIND shape (`r = mk().h`) rides the same
+mechanism: the projection now materialises TERMINALLY too (gated on the projected type owning
+a droppable, so a plain struct keeps the alias lowering), and the terminal block is typed
+WITHOUT deps — the binding ADOPTS the copy the way a struct literal's block is adopted, so
+the existing construction hand-off and buffer pairing release it exactly once. Typing it as a
+frame-dep view instead was built and measured: the construction hand-off gave the work-ref's
+drop to a binding that never drops, and the count read ZERO — the overshoot-to-a-leak this
+entry's own table predicted. Measured on both backends, identical: the chained projection
+2 → 1, the bound projection 2 → 1, the two-droppable-field record at one release each, depth
+three 2 → 1, a two-iteration loop 4 → 2, a rebound binding releasing the displaced copy at
+the rebind and the literal at scope end, the bound-base reference and the borrowed-argument
+control unmoved at 1, and `LOFT_POISON=1` over the 889 guard clean.
+`tests/scripts/1506-a-call-result-projection-releases-once.loft` is the conformance guard.
+
+**Two shapes remain, and the entry stays OPEN for them:**
+
+1. **The `?` strength (+1).** The `__ncc_N` join ALIASES the call temp — the join block's
+   value is `if ncc { ncc } else { default }`, both arms vars the frame owns — yet the lift
+   bound to it is typed as a fresh owner, so the record is dropped AND freed inside the
+   statement and the `ncc` var's own scope-end cascade runs again on the freed store. Under
+   `LOFT_POISON=1` that second hook reads the poison pattern into the author's `OpDrop` —
+   a use-after-free, both backends, not just a doubled count. The type-level fact is what is
+   missing: a join of frame-owned vars is a VIEW, and the block's type should say so.
+2. **The return-of-view copy** (`d = mk(); return d.h` — 2 releases). The copy into the
+   return buffer needs the same responsibility transfer, but per RETURN SITE: the source is a
+   USER local with possibly many exits, so the per-variable pairing above must not reach it —
+   a skip keyed on the var would leak the field on every path that does not return it.
+
+### D-heap-4 — OPEN (2026-09-10): a mixed own/view local's owned record is freed without its hook (loft#1510)
+
+`(H-Drop)` runs the hook at the record's death; `(O-Latest)` says a static deps list cannot
+carry per-assignment ownership, which is what the owner witness (`@FR-O-Witness`) exists for —
+release by STORE IDENTITY.  Measured: the identity release frees the store and runs **no
+hook**, on both backends, silently, in every spelling of the mix:
+
+- `r = mk_h(); r = d.h` — the witness's own canonical shape (a minting call, then a view):
+  ONE hook (the container's), the minted record's never;
+- `r = CfH { id: 4 }; r = d.h` — the literal spelling: same, via the `#316`
+  ownership-transition free, which emits `OpFreeRef` with no hook;
+- `d = mk(); r = d.h; r = CfH { … }` — view then own: the construction hand-off gives the
+  literal's work-ref drop to `r`, whose view-typed scope end runs no hook — the record is
+  freed by the work-ref's own `OpFreeRef` with the hook lost between the two mechanisms.
+
+Found while closing D-heap-3's dense family (its rebound-binding cell walked straight into
+this), and kept apart from it because no call-result projection is involved: the three
+spellings above reproduce with a plain bound base.  The shared cause is that every "release
+by identity" site — the witness's, `#316`'s transition free, the construction hand-off's
+premise — releases the STORE and not the RESOURCE.  A cure belongs at that shared clause,
+not per spelling: whichever mechanism releases a store the frame minted must run the type's
+cascade first, exactly as `scope_end_drop` does.  ⚠ Two of the mechanisms can claim the same
+record (the work-ref's scope end and the binding's rebind), so a cure that adds the hook to
+both is the double release coming back — the conformance cells must assert the count on ALL
+THREE spellings plus the D-heap-3 guard's rebound cells, which pin the fixed neighbours.
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
 

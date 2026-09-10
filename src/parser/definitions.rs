@@ -5433,6 +5433,13 @@ impl Parser {
         format!("t_{}{}_OpDropAll", n.len(), n)
     }
 
+    /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
+    /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
+    pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
+        let n = data.def(type_def).name();
+        format!("t_{}{}_OpDropAllExcept", n.len(), n)
+    }
+
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function
     /// that releases what it owns, so a container's death releases its members.
     ///
@@ -5502,8 +5509,48 @@ impl Parser {
             if self.data.def_type(t) == DefType::Enum {
                 self.fill_enum_drop_cascade(t, c_nr);
             } else {
-                self.fill_drop_cascade(t, c_nr);
+                self.fill_drop_cascade(t, c_nr, false);
             }
+        }
+        // D-heap-3 (loft#1506) — the skip-capable variant, for the mirror of
+        // `copy_hands_off`: a copy OUT of a record's field makes the copy that field's
+        // owner (`@FR-H-Drop`'s responsibility clause), so the record's own death must
+        // release everything EXCEPT that field. Only a STRUCT with releasable fields gets
+        // one: the copy-out sites project with `OpGetField`, which never reaches an enum
+        // payload or a collection element. Checked apart from `targets` above so a type
+        // whose full cascade predates this pass still gains its variant.
+        let mut except_made: Vec<(u32, u32)> = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            if self.data.def_type(d_nr) != DefType::Struct
+                || self.data.def(d_nr).known_type() == u16::MAX
+                || self.cascade_fields(d_nr).is_empty()
+                || self
+                    .data
+                    .def_nr(&Self::drop_cascade_except_name(&self.data, d_nr))
+                    != u32::MAX
+            {
+                continue;
+            }
+            let name = Self::drop_cascade_except_name(&self.data, d_nr);
+            let pos = self.data.def(d_nr).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.set_returned(c_nr, Type::Void);
+            let self_tp = self.cascade_self_type(d_nr);
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "self", self_tp);
+            let int_tp = self
+                .data
+                .def(self.data.def_nr("integer"))
+                .returned()
+                .clone();
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp);
+            except_made.push((d_nr, c_nr));
+        }
+        for (t, c_nr) in except_made {
+            self.fill_drop_cascade(t, c_nr, true);
         }
     }
 
@@ -5800,14 +5847,34 @@ impl Parser {
     }
 
     /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
-    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
-        let name = Self::drop_cascade_name(&self.data, t);
+    ///
+    /// `with_skip` builds the `…Except` variant instead: a second `skip` parameter carries a
+    /// field's byte offset, and each FIELD release is additionally guarded by `skip != off` —
+    /// the member whose responsibility a copy-out took. The type's own hook and its
+    /// collection fields are unconditional in both forms: a copy-out never takes those over.
+    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {
+        let name = if with_skip {
+            Self::drop_cascade_except_name(&self.data, t)
+        } else {
+            Self::drop_cascade_name(&self.data, t)
+        };
         let file = self.data.def(t).position().file.clone();
         let mut vars = Function::new(&name, &file);
         let self_tp = Type::Reference(t, crate::data::Deps::none());
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
+        let skip_var = with_skip.then(|| {
+            let int_tp = self
+                .data
+                .def(self.data.def_nr("integer"))
+                .returned()
+                .clone();
+            let v = vars.add_variable("skip", &int_tp, &mut self.lexer);
+            vars.become_argument(v);
+            vars.defined(v);
+            v
+        });
         // Build the body with the cascade's OWN table current, so anything `get_val` mints
         // for a field read lands in the function that will hold the code.
         let outer_vars = std::mem::replace(&mut self.vars, vars);
@@ -5844,11 +5911,19 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            ops.push(Value::If(
+            let release = Value::If(
                 Box::new(live),
                 Box::new(Value::Call(target, vec![field])),
                 Box::new(Value::Null),
-            ));
+            );
+            // The Except variant leaves the field at offset `skip` to its new owner.
+            let release = if let Some(sv) = skip_var {
+                let not_taken = self.cl("OpNeInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+                v_if(not_taken, release, Value::Null)
+            } else {
+                release
+            };
+            ops.push(release);
         }
 
         let body = v_block(ops, Type::Void, "drop_cascade");

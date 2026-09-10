@@ -212,6 +212,15 @@ struct Scopes<'s> {
     /// loft#849 / @PLN139 — vars that no longer OWN what they hold, so their scope end must
     /// not drop it.  See [`collect_drop_transferred`].
     drop_transferred: HashSet<u16>,
+    /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
+    /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
+    /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
+    /// the copied-out field is left to the copy (`@FR-H-Drop`'s responsibility clause, the
+    /// mirror of [`copy_hands_off`]'s whole-value hand-off).  Keyed per VARIABLE, which is
+    /// sound only because a lift is minted fresh per statement and dropped at that
+    /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
+    /// scope-end drop releases whatever record it holds LAST.
+    lift_field_skip: HashMap<u16, u16>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -2634,6 +2643,7 @@ fn run_scan_phase(
         views_to_materialise,
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         drop_transferred: collect_drop_transferred(orig_code, orig_vars, data),
+        lift_field_skip: HashMap::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
     };
@@ -6826,6 +6836,26 @@ impl Scopes<'_> {
     fn scope_end_drop(&self, function: &Function, v: u16, data: &Data) -> Option<Value> {
         if self.drop_transferred.contains(&v) {
             return None;
+        }
+        // D-heap-3 (loft#1506) — one field of this lift was copied out, so its release
+        // belongs to the copy: run the skip-capable cascade over everything else.  A type
+        // without the variant (enum payloads, or a stale parse tail) falls back to the full
+        // cascade — the pre-transfer double release, never a leak or a faulting free.
+        if let Some(&off) = self.lift_field_skip.get(&v)
+            && let Type::Reference(d, _) | Type::Enum(d, true, _) = function.tp(v).base()
+        {
+            let nr = data.drop_cascade_except_nr(*d);
+            if nr != u32::MAX {
+                let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                return Some(Value::If(
+                    Box::new(live),
+                    Box::new(Value::Call(
+                        nr,
+                        vec![Value::Var(v), Value::Int(i32::from(off))],
+                    )),
+                    Box::new(Value::Null),
+                ));
+            }
         }
         drop_hook(function, v, data)
     }
@@ -11142,7 +11172,8 @@ impl Scopes<'_> {
         // copy took: before the lift the IR still names the CALL, and after it nothing
         // records the pairing.  The copy's source is arg 0.
         let moved_arg = moved_source_arg(outer_call, args, data);
-        let transfer_copy = outer_call == data.def_nr("OpCopyRecord") && {
+        let copy_record_nr = data.def_nr("OpCopyRecord");
+        let transfer_copy = outer_call == copy_record_nr && {
             let moved =
                 matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0);
             moved
@@ -11311,6 +11342,46 @@ impl Scopes<'_> {
                         self.mark_lift_handoff(v, arg_idx, transfer_copy, moved_arg);
                     }
                     let final_val = it.next().unwrap();
+                    // D-heap-3 (loft#1506) — a materialising copy OUT of a lifted call
+                    // result's field: `OpCopyRecord(OpGetField(__lift_N, off), __ref_M)`.
+                    // The copy owns that field's resource from here on (`@FR-H-Drop`:
+                    // "RESPONSIBILITY moves with a copy"), so record the pairing; the lift's
+                    // scope-end release runs the `…Except` cascade over everything else.
+                    // Only a `__lift_` source qualifies — see [`Self::lift_field_skip`] —
+                    // and only the parser-materialise destination (`Var(__ref_M)`): every
+                    // other `OpCopyRecord` destination shape (a container field, a displaced
+                    // buffer, a `0x8000` move) has its own hand-off with its own rules.
+                    if crate::keys::field_handoff_enabled()
+                        && outer_call == copy_record_nr
+                        && arg_idx == 0
+                        && !transfer_copy
+                        && moved_arg.is_none()
+                        && let Value::Call(gf, gargs) = final_val.unspan()
+                        && data.def(*gf).name() == "OpGetField"
+                        && let Some(Value::Var(src)) = gargs.first().map(Value::unspan)
+                        && function.name(*src).starts_with("__lift_")
+                        && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
+                        && let Ok(off) = u16::try_from(*off)
+                        && let Some(Value::Var(dw)) = args.get(1).map(Value::unspan)
+                        && {
+                            let dw = *self.var_mapping.get(dw).unwrap_or(dw);
+                            function.name(dw).starts_with("__ref_")
+                        }
+                    {
+                        // A second field copied out of the same lift cannot be expressed as
+                        // one skip; drop the entry so the full cascade runs (today's double
+                        // release, never a leak).
+                        match self.lift_field_skip.entry(*src) {
+                            std::collections::hash_map::Entry::Vacant(e) => {
+                                e.insert(off);
+                            }
+                            std::collections::hash_map::Entry::Occupied(e) => {
+                                if *e.get() != off {
+                                    e.remove();
+                                }
+                            }
+                        }
+                    }
                     // the remaining Call may also be struct-returning
                     // (e.g. normalize3(__lift_1) inside add_dir).  Lift it too.
                     if let Some(tp) =

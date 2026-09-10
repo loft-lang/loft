@@ -1720,11 +1720,26 @@ impl Parser {
                 // it in a work-ref so scopes.rs emits OpFreeRef at end-of-scope.
                 // Without this, the store allocated by the callee leaks and the LIFO
                 // invariant in database::free() is violated.
+                //
+                // D-heap-3 (loft#1506) — a projection that ENDS the chain wraps too, when
+                // what it projects owns a droppable: `r = mk().h` otherwise binds an ALIAS
+                // of the lifted temp, and both names carry owner hooks — one record, its
+                // release run twice (and its store freed twice).  Materialising through the
+                // same work-ref makes every consumption site see the shape the chained case
+                // already produces, and the copy-out hand-off in `scopes.rs` moves the
+                // field's release to the copy (`@FR-H-Drop`).  A type with nothing to
+                // release keeps the alias lowering — the count cannot differ there, and the
+                // copy would be pure cost.
                 if !self.first_pass
                     && !matches!(code, Value::Var(_))
-                    && (self.lexer.peek_token(".") || self.lexer.peek_token("["))
                     && let Type::Reference(d_nr, dep) = &t
                     && dep.is_empty()
+                    && (self.lexer.peek_token(".")
+                        || self.lexer.peek_token("[")
+                        || (self.data.owns_droppable(*d_nr)
+                            && matches!(code.unspan(), Value::Call(pd, _)
+                                if matches!(self.data.def(*pd).name(),
+                                    "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"))))
                 {
                     let d_nr = *d_nr;
                     let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
@@ -1752,6 +1767,18 @@ impl Parser {
                         if matches!(self.data.def(*pd).name(),
                             "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"));
                     let kt = self.data.def(d_nr).known_type();
+                    // A TERMINAL wrap (no further chaining — the D-heap-3 arm of the
+                    // condition above) delivers the copy the way a struct LITERAL's block
+                    // does: typed WITHOUT deps, so the consuming site ADOPTS the record as
+                    // its owner and the existing construction hand-off + buffer pairing
+                    // release it exactly once.  A mid-chain wrap keeps the frame dep — the
+                    // rest of the chain reads through `w`, which must stay the owner.
+                    let terminal = !(self.lexer.peek_token(".") || self.lexer.peek_token("["));
+                    let block_deps = if terminal {
+                        crate::data::Deps::none()
+                    } else {
+                        crate::data::Deps::frame1(w)
+                    };
                     if is_projection && kt != u16::MAX {
                         let copy_d = self.data.def_nr("OpCopyRecord");
                         *code = v_block(
@@ -1764,7 +1791,7 @@ impl Parser {
                                 ),
                                 Value::Var(w),
                             ],
-                            Type::Reference(d_nr, crate::data::Deps::frame1(w)),
+                            Type::Reference(d_nr, block_deps.clone()),
                             "inline ref copy",
                         );
                         // @PLN130 — parser-emitted materialisation of a projection into a
@@ -1782,7 +1809,14 @@ impl Parser {
                             "inline ref",
                         );
                     }
-                    t = Type::Reference(d_nr, crate::data::Deps::frame1(w));
+                    t = Type::Reference(
+                        d_nr,
+                        if is_projection && kt != u16::MAX {
+                            block_deps
+                        } else {
+                            crate::data::Deps::frame1(w)
+                        },
+                    );
                 }
             } else if self.lexer.has_token("[") {
                 wrap_chain = true;

@@ -1,0 +1,161 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record-returning call whose result is PROJECTED releases each resource ONCE (loft#1506).
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource, and its responsibility clause
+// moves the release with a copy: the copy owns, the source stops dropping.  A projection of a
+// call result materialises a copy out of the lifted temp (`(B-View)`: the base dies inside the
+// statement), and the temp's cascade kept releasing the copied-out field — `x = mk().h.id` ran
+// the hook twice, and `r = mk().h` bound an ALIAS both of whose names carried owner hooks.
+//
+// The cure is field-grained responsibility transfer (D-heap-3): the copy-out registers the
+// (temp, offset) pairing, and the temp's scope-end release runs `t_<T>_OpDropAllExcept`, the
+// skip-capable cascade generated beside the full one from the same `cascade_fields` home.  The
+// two-droppable-field cell is the one that excluded every cheaper cure — the cascade does
+// NECESSARY work for `g` in the same call in which it duplicated `h` — so it is the
+// load-bearing cell here and must not be simplified away.
+//
+// ⚠ A release-count boundary alone cannot score this family: the adopt-base attempt (D-heap-3
+// exclusion 3) passed every count cell while reading freed memory.  The memory channel for
+// this guard is `LOFT_POISON=1` over tests/scripts/889-collection-through-a-call-s-field.loft
+// — kept there, referenced here.
+//
+// Still OPEN, deliberately not asserted here: a `?` on the receiver still adds one release
+// (the `__ncc_N` join aliases the call temp and both names carry owner hooks — with a
+// poison-visible read-after-free in the join's scope-end cascade); `d = mk(); return d.h`
+// still releases twice (the return-copy's transfer is per-PATH, not per-variable); and a
+// mixed own/view local with NO call projection (`r = d.h; r = CfH{…}` and both orders, incl.
+// the minting-call spelling `r = mk_h(); r = d.h`) loses the owned record's hook — the owner
+// witness releases the store by identity but never runs the drop.  All are D-heap-3's
+// remaining shapes; asserting their current wrong counts would freeze them.
+//
+// @falsified-at: pending
+fn trace_path() -> text { return "loft_1506_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct CfH { id: integer }
+fn OpDrop(self: CfH) { note("{self.id}"); }
+struct CfS { h: CfH }
+struct Two { h: CfH, g: CfH }
+struct Mid { h: CfH }
+struct Outer { m: Mid }
+
+fn mk_dense() -> CfS { return CfS { h: CfH { id: 9 } }; }
+fn mk_other() -> CfS { return CfS { h: CfH { id: 7 } }; }
+fn mk_two() -> Two { return Two { h: CfH { id: 1 }, g: CfH { id: 2 } }; }
+fn mk_outer() -> Outer { return Outer { m: Mid { h: CfH { id: 5 } } }; }
+
+// The reference cell: binding the call's result first is one record and one hook, and is
+// the answer every projection cell below must LAND ON — not merely fewer than two.
+fn bound_base() -> integer { d = mk_dense(); return d.h.id; }
+
+// The defect: the chained projection, one record, was TWO hooks.
+fn chained() -> integer { return mk_dense().h.id; }
+
+// The bound projection: `r` used to alias the temp with both names carrying owner hooks.
+fn bound_projection() -> integer { r = mk_dense().h; return r.id; }
+
+// The load-bearing cell: `h` is copied out, `g` is not — the temp's cascade must still
+// release `g` (a whole-cascade suppression leaks it) and must skip `h` (the full cascade
+// doubled it).  One hook EACH, and the ids say which is which.
+fn two_fields() -> integer { return mk_two().h.id; }
+
+// The same through a deeper chain — the first projection's copy takes the transfer and the
+// rest of the chain reads through it as a view.
+fn depth_three() -> integer { return mk_outer().m.h.id; }
+
+// Two temps in one statement are two records: pins the count to RESOURCES, not to "one".
+fn two_in_one_statement() -> integer { return mk_dense().h.id + mk_other().h.id; }
+
+// Per iteration: the lift and its copy are per-statement, so a loop releases once per record.
+fn in_a_loop() -> integer {
+  t = 0;
+  for i in 0..2 { t = t + mk_dense().h.id + i; }
+  return t;
+}
+
+// A projection as a call ARGUMENT is a borrow of the live temp — no copy, one hook.  This is
+// the control that says the cure did not widen into copying where nothing needed one.
+fn take(c: CfH) -> integer { return c.id; }
+fn as_argument() -> integer { return take(mk_dense().h); }
+
+// A local that holds the projection's copy and is then reassigned: the copy is displaced —
+// released through its hook at the rebind — and the literal is the binding's to release at
+// scope end.  Owner-typed adoption is what makes both fire; the aliasing lowering lost one.
+fn copy_then_own() -> integer {
+  r = mk_dense().h;
+  a = r.id;
+  r = CfH { id: 4 };
+  return a * 10 + r.id;
+}
+fn own_then_copy() -> integer {
+  r = CfH { id: 4 };
+  a = r.id;
+  r = mk_dense().h;
+  return a * 10 + r.id;
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  b = bound_base(); got = drain();
+  assert(b == 9, "the bound base reads the field: got {b}");
+  assert(got == "9", "the reference cell is ONE hook: got '{got}'");
+
+  c = chained(); got = drain();
+  assert(c == 9, "the chained projection reads the field: got {c}");
+  assert(got == "9", "a chained projection releases ONCE: got '{got}'");
+
+  r = bound_projection(); got = drain();
+  assert(r == 9, "the bound projection reads the field: got {r}");
+  assert(got == "9", "a bound projection releases ONCE: got '{got}'");
+
+  t = two_fields(); got = drain();
+  assert(t == 1, "the two-field record reads h: got {t}");
+  assert(got == "1,2" || got == "2,1", "h once AND g once: got '{got}'");
+
+  d3 = depth_three(); got = drain();
+  assert(d3 == 5, "the depth-three chain reads the leaf: got {d3}");
+  assert(got == "5", "a deeper chain still releases ONCE: got '{got}'");
+
+  w = two_in_one_statement(); got = drain();
+  assert(w == 16, "two temps in one statement sum: got {w}");
+  assert(got == "9,7" || got == "7,9", "two records release once EACH: got '{got}'");
+
+  l = in_a_loop(); got = drain();
+  assert(l == 19, "two iterations sum 9+0 + 9+1: got {l}");
+  assert(got == "9,9", "one release per iteration's record: got '{got}'");
+
+  a = as_argument(); got = drain();
+  assert(a == 9, "the argument borrow reads the field: got {a}");
+  assert(got == "9", "an argument projection is a borrow — ONE hook: got '{got}'");
+
+  co = copy_then_own(); got = drain();
+  assert(co == 94, "copy-then-own reads both records: got {co}");
+  assert(got == "9,4", "the displaced copy at the rebind, the literal at scope end: got '{got}'");
+
+  oc = own_then_copy(); got = drain();
+  assert(oc == 49, "own-then-copy reads both records: got {oc}");
+  assert(got == "4,9", "the displaced literal at the rebind, the copy at scope end: got '{got}'");
+
+  println("1506 OK chained={chained()} bound={bound_projection()}");
+}
