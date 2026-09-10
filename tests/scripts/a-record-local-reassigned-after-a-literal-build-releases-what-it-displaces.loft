@@ -38,21 +38,14 @@
 // witness is still armed for a real mix" is a fact the corpus checks rather than a claim here.
 // c_mixed and c_view_after_literal are this file's own boundary on that side.
 
-// @falsified-at: none — this guard records an OPEN defect (loft#1517, `formal/heap.md`
-//   D-heap-6), so there is no fix commit to falsify it against yet.  The falsification channel
-//   is carried per cell instead, and it is two-sided: each of the twelve broken cells asserts
-//   the trace it reads once the defect closes AND pins, in its `@EXPECT_FAIL`, the trace it
-//   reads today — so a partial fix, a widening, or a new regression moves one of those lines
-//   rather than passing silently as "still broken".  A cure that closes the defect turns twelve
-//   FAILs into twelve unexpected PASSes, which is the signal to delete the annotations and
-//   record a real receipt here.
+// @falsified-at: PENDING
 // CHANNEL: the assertion text, IDENTICALLY on both backends — `(O-NoDiverge)`, measured, not
 //   assumed.  NOT the leak channel: every record involved is freed, by the work-ref's own bare
 //   scope-end free if by nothing else.  What is lost is the HOOK, so a run scored on leaks
 //   learns nothing here.
 // ARMED: no instrument.  Each cell writes its hook calls to the shared trace file and asserts
 //   the string, so an ordinary run on either backend reports it.
-// HOLDS: eight cells pass on every tree back to the filing and each is there to hold —
+// HOLDS: eight cells passed on every tree back to the filing and each is there to hold —
 //   test_struct (the in-place twin, which has no work-ref), test_view_after_literal and
 //   test_null_then_call_field (a literal then a genuine VIEW, by a bound base and by a call's
 //   field: the population a cure must NOT move, and the cell that says the literal build is
@@ -63,12 +56,20 @@
 //   `m55,55,V56,56,56` under `LOFT_NO_OWNER_WITNESS=1`.  Prefer it when bisecting this family —
 //   a control that can only time out cannot tell you which tree moved.
 
-// Each cell is its own `fn test_*`, so the corpus runs and REPORTS them one by one — and the
-// cells loft#1517 leaves broken carry `@EXPECT_FAIL` naming what each will read once it
-// closes.  That makes this file the specification today and the regression guard the moment
-// the defect is cured, rather than something held outside the corpus where it cannot rot
-// visibly.  The trace is shared and that is safe: both runners call test functions in
-// sequence, and each cell resets before running and drains after.
+// Each cell is its own `fn test_*`, so the corpus runs and REPORTS them one by one.  Twelve of
+// them landed here as expected-failures, each pinning the trace it read while the defect was
+// open beside the assertion for the trace it reads now — two-sided on purpose, so a partial fix
+// moved a line instead of passing as "still broken", and the real cure turned twelve FAILs into
+// twelve UNEXPECTED PASSES, which is how the file said it was time to retire them.
+//
+// ⚠ Those annotations are gone, and the prose describing them may not spell the token either:
+// the parser reads any comment containing it as an annotation, and one above the first `fn`
+// binds at FILE level (`tests/common/mod.rs::expect_fail_fns`).  A sentence in this header
+// mentioning it by name would therefore excuse the whole guard, silently — which is why this
+// paragraph describes the mechanism without naming it.
+//
+// The trace is shared and that is safe: both runners call test functions in sequence, and each
+// cell resets before running and drains after.
 //
 // ⚠ The cell body stays in its OWN function and the drain happens in the caller.  Every one of
 // these cells scores records released at the frame's END, and a body inlined into the `test_`
@@ -207,67 +208,19 @@ fn c_null_then_call_field() { x: DH? = DH { id: 94 }; note("m{x.id}"); x = mk_bo
 fn c_mixed() { a = DH { id: 55 }; bx = DBox { inner: DH { id: 56 } }; cur: DH? = a; note("m{cur.id}"); cur = bx.inner; note("V{cur.id}"); }
 
 fn test_plain() { reset(); c_plain(); got = drain(); assert(got == "alive191192,192,191", "CONTROL the harness records at all: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m13,V11,e11
 fn test_enum() { reset(); c_enum(); got = drain(); assert(got == "m13,e13,V11,e11", "THE FILED SHAPE — the displaced literal releases: {got}"); }
 fn test_struct() { reset(); c_struct(); got = drain(); assert(got == "m23,23,V21,21", "CONTROL the in-place struct twin: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m33,V31,e31
 fn test_variant() { reset(); c_variant(); got = drain(); assert(got == "m33,e33,V31,e31", "across variants, the displaced tag's own cascade: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m,V,61
 fn test_cascade() { reset(); c_cascade(); got = drain(); assert(got == "m,63,V,61", "a droppable FIELD releases through the cascade: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m91,V91,91
 fn test_nullable_struct() { reset(); c_nullable_struct(); got = drain(); assert(got == "m91,93,V91,91", "a NULLABLE STRUCT is the same work-ref route: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m81,V81,e81
 fn test_nullable_enum() { reset(); c_nullable_enum(); got = drain(); assert(got == "m81,e83,V81,e81", "a nullable enum, two levels of wrapper: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m103,V101,e101
 fn test_from_call() { reset(); c_from_call(); got = drain(); assert(got == "m103,e103,V101,e101", "a minting call displaces the literal: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m71,e71,V72
 fn test_literal_last() { reset(); c_literal_last(); got = drain(); assert(got == "m71,e71,V72,e72", "SECOND FACE — a trailing literal's own record: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m53,n51,e51,V52
 fn test_chain() { reset(); c_chain(); got = drain(); assert(got == "m53,e53,n51,e51,V52,e52", "three assignments, three hooks: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: e121,e121,V121,e121
 fn test_loop() { reset(); c_loop(); got = drain(); assert(got == "e123,e121,e121,V121,e121", "the loop loses the literal's record only: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: m4344,V4142,e42,e41
 fn test_two_locals() { reset(); c_two_locals(); got = drain(); assert(got == "m4344,e43,e44,V4142,e42,e41", "two locals, each its own record: {got}"); }
 fn test_no_rebind() { reset(); c_no_rebind(); got = drain(); assert(got == "V111,e111", "CONTROL no reassignment: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: V31,e31
 fn test_arm_true() { reset(); c_arm(true); got = drain(); assert(got == "e33,V31,e31", "the arm RUNS: the displaced record and the copy: {got}"); }
-// loft#1517 — `formal/heap.md` D-heap-6.  The assertion states what this cell reads once
-//   that closes; the annotation pins what it reads NOW, so a PARTIAL fix or a new
-//   regression moves this line instead of passing silently as "still broken".
-// @EXPECT_FAIL: V33,e31
 fn test_arm_false() { reset(); c_arm(false); got = drain(); assert(got == "V33,e33,e31", "the arm is SKIPPED: both records are still this frame's: {got}"); }
 fn test_arm_literal_true() { reset(); c_arm_literal(true); got = drain(); assert(got == "e35,V36,e36", "a literal in the arm displaces a literal: {got}"); }
 fn test_arm_literal_false() { reset(); c_arm_literal(false); got = drain(); assert(got == "V35,e35", "the literal arm is SKIPPED: one record, one hook: {got}"); }

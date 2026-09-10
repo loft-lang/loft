@@ -373,7 +373,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
 list has been re-cut as each was measured; the count is what is open TODAY); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
@@ -387,13 +387,13 @@ MEMORY-only residual those left behind — a binding and its materialising work-
 store twice, in the order their declarations happened to fall, which is `D-heap-5`
 (loft#1513).  Its count read **3** while D-heap-3's own heading already said OPENED AND
 CLOSED — this line and the entry below it are two readers of one fact, and a three-handed
-close updated only the entry.  `D-heap-6` (a literal built through a work-ref reads as a VIEW,
-so a local with two OWNING assignments is witnessed as a mixed one and its records are released
-by nobody) OPENED 2026-09-11 and is the third open row — it is D-heap-4's neighbour rather than
+close updated only the entry.  `D-heap-6` (a literal built through a work-ref read as a VIEW,
+so a local with two OWNING assignments was witnessed as a mixed one and its records were released
+by nobody) opened and CLOSED 2026-09-11 — it is D-heap-4's neighbour rather than
 a re-open of it: that entry made the construction hand-off conditional on an ownership fact,
-and this one rides the fact being decided wrong.  It stays open because the fabricated mix is
-MASKING a defect in the `__lbo_` nullable-displace path, so both cures that correct the arming
-population regress a value; the entry carries both measured non-cures.  D-heap-1's list has
+and this one rides the fact being decided wrong.  It needed TWO mechanisms, because the fabricated mix was
+MASKING an `(O-Detach)` defect that made both arming cures regress a value until it was fixed
+first (`D-own-41`); the entry carries the cure that landed and the one that was not taken.  D-heap-1's list has
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
@@ -1061,7 +1061,7 @@ times where `--interpret` runs it once.  Filed rather than fixed here: the cure 
 native generator's pre-eval substitution, which matches by generated TEXT across two passes.
 The cell reads with `==` so it scores the cascade and not loft#1505.
 
-### D-heap-6 — OPEN (2026-09-11): a literal built through a work-ref reads as a VIEW, so a local whose every assignment OWNS is witnessed as a mixed one (loft#1517)
+### D-heap-6 — OPENED AND CLOSED (2026-09-11): a literal built through a work-ref read as a VIEW, so a local whose every assignment OWNS was witnessed as a mixed one (loft#1517)
 
 `(H-Drop)` releases a record through its hook when its owner dies, and the reassignment clause
 names a displaced record explicitly.  A heap-record local built from a LITERAL and then
@@ -1113,12 +1113,14 @@ predicate this defect then rides, because a local that should never have been wi
 it the way a genuine view does.  A mechanism made conditional on an ownership fact inherits
 every defect in how that fact is decided.
 
-#### Why it is still open: the arming population is load-bearing for a SECOND mechanism
+#### It took TWO mechanisms, because the arming population was MASKING a second defect
 
-Both available cures were built and measured, and **both regress**, for one reason that is the
-real finding here: the fabricated mix is currently MASKING a defect in the other release
-mechanism for nullable locals, so removing it exposes that one.  Probes (`--interpret`, and the
-arming read off `introspect`):
+Both cures for the arming predicate were built first and **both regressed**, which is how the
+second mechanism was found: the fabricated mix was masking an `(O-Detach)` defect in the
+reassignment path for nullable locals, so correcting the arming exposed it as a wrong VALUE.
+Fixing that one FIRST is what made the arming fix land, and the order was not a judgement call
+— `(O-Witness)` and `(O-Move)` decide it (see below).  Probes (`--interpret`, and the arming read
+off `introspect`):
 
 | probe | shape | arming on `main` | value |
 |---|---|---|---|
@@ -1126,9 +1128,9 @@ arming read off `introspect`):
 | `q1085b` | `c: KeepOnly? = KeepOnly{7}; loop { c = keep_k(c ?? …) }` | `__own_c` | 7, right |
 | `qview` | `x: H = H{47}; x = bx.inner` | none | right |
 
-- **Cure A — `is_view_of_storage` answers `false` for a work-ref construction.**  Fixes every
-  cell of the matrix on both backends and leaves `qview` alone.  It REGRESSES `q1085b` to `0`
-  where `7` is right: that local's `viewed` membership came ONLY from the fabricated reading,
+- **Cure A — `is_view_of_storage` answers `false` for a work-ref construction.**  THIS IS THE
+  CURE THAT LANDED, and it fixes every cell of the matrix on both backends and leaves `qview`
+  alone.  Applied on its own it REGRESSED `q1085b` to `0` where `7` is right: that local's `viewed` membership came ONLY from the fabricated reading,
   so the correction disarms its witness — measured off `introspect`: `__own_c` on `main`, none
   after.  `1085b-a-nullable-local-frees-what-it-displaces.loft` loses two cells.
   `nullable_locals_that_displace` excludes a never-free local, so one release mechanism serves
@@ -1138,9 +1140,11 @@ arming read off `introspect`):
   Attributing the wrong answer to `__lbo_`'s internals is still an inference this entry does not
   make; which mechanism must OWN the release is what the rules settle.
 - **Cure B — separate the two questions** (a fourth `WitnessSet::MintIntoWorkRef`: owning for
-  the intersection test, not-pointable for the maintenance site).  The decomposition is right
-  and the variant is the honest shape, but it ARMS witnesses that `main` does not: `q1085b`
-  still breaks (both of its assignments then read as mints, so `viewed` is empty) and `qview`
+  the intersection test, not-pointable for the maintenance site).  NOT TAKEN, and recorded so it
+  is not retried: the decomposition is right and the variant is the honest shape, but it ARMS
+  witnesses that `main` does not, which is a strictly wider change than the defect needs.
+  `q1085b` still breaks (both of its assignments then read as mints, so `viewed` is empty) and
+  `qview`
   gains one, moving its displaced hook from the rebind to scope exit — the right COUNT at the
   wrong time, which `(H-Drop)`'s reassignment clause does not allow.
 
@@ -1154,14 +1158,21 @@ OWN, so there is no mix.  Measured rather than read off the rule: `c.x = 99` aft
 `c: K? = keep_k(src)` leaves `src` at `7` on both backends, where a `(B-View)` projection writes
 through.
 
-So the local must NOT be witnessed, the witness on it is itself a deviation
-([ownership.md](ownership.md) `D-own-40`), and the other path's `0` is the defect to fix FIRST.
-The cure ORDER is derived from the rules rather than chosen, and *"keep the witness because
-removing it breaks something"* is not an available answer.  Not filed as an issue — it does not
-reproduce on `main`, where the mask holds, so it belongs here rather than in the tracker.  The
-`__lbo_` mechanism has no `LOFT_NO_*` switch of its own (recorded in `scopes.rs` beside the
-arming loop), so there is no one-command A/B for it the way `LOFT_NO_OWNER_WITNESS=1` is one for
-the witness; giving it one is the cheapest first step.
+So the local must NOT be witnessed, the witness on it was itself a deviation
+([ownership.md](ownership.md) `D-own-40`), and the other path's `0` was the defect to fix FIRST.
+The order was derived from the rules rather than chosen, and *"keep the witness because removing
+it breaks something"* was never an available answer.
+
+**And the second defect turned out to be LIVE ON `main` on its own**, which the mask hid from the
+first reading: it needs no witness suppression and no literal, only a NULLABLE local reassigned
+from a call whose return borrows a parameter that reads it.  `c: K? = mk(); c = keep(c ?? K { x:
+9 })` answered `0` on `--interpret` and `7` on `--native` — a two-line program, both facts
+measured on `main` before any of this landed.  It is not the `__lbo_` path at all, which is what
+this entry's first reading guessed and deliberately declined to assert: it is the in-place
+re-allocation in the interpreter's own reassignment lowering, `(O-Detach)`, and it has its own
+entry at [ownership.md](ownership.md) `D-own-41` with its own guard.  The first reading reached
+for `__lbo_` because that mechanism is what `nullable_locals_that_displace` hands such a local —
+a plausible neighbour, named in the same paragraph of `scopes.rs`, and the wrong one.
 
 ⚠ **Cure B's late release is inadmissible by RULE, not by taste.**  `(H-Drop)` states the
 reassignment clause with its timing: the displaced record's hook runs *"after the new value has
@@ -1173,9 +1184,10 @@ spelling.  The governing phrase covers it (*"a REASSIGNMENT of the owner that di
 record"*), so this is a rule whose EXAMPLE list wants extending, not a rule that cannot express
 the case.
 
-⚠ **No gate sees this defect.**  `(O-Override)`'s gate is `ownership_cfg`'s Check D
-(`LOFT_OWN_ORACLE=check`), and over both guards it reports `clean — 0 RED`: nothing frees
-illicitly, what is missing is a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not
+⚠ **No gate saw this defect, and that is unchanged by closing it.**  `(O-Override)`'s gate is
+`ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`), and over both guards it reported
+`clean — 0 RED` while twelve cells were wrong: nothing frees illicitly, what was missing was a
+DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not
 ordered the way a free's are, and this is that asymmetry showing up in the instruments — the free
 side has a checker, the drop side has only per-guard traces.  A gate for `(H-Drop)`'s three
 deaths is the gap, and it would have caught both populations.
@@ -1189,15 +1201,17 @@ below it, the first run of that guard as a plain script reported no failures at 
 file has no `main` and `fn test_*` only runs under `--tests`: a corpus guard run the wrong way
 passes having tested nothing.
 
-The guard is IN the corpus, as
+**CLOSED** by Cure A, on top of `D-own-41`.  The guard is IN the corpus, as
 `tests/scripts/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft`
 — 20 cells, one `fn test_*` each so they report individually.  Eight pass on every tree and are
 the boundary a cure must not move (the in-place struct twin; a literal then a genuine VIEW, by a
 bound base and by a call's field; a genuinely MIXED local; the two arm-literal cells).  The
-twelve broken ones are `@EXPECT_FAIL`, and the annotation pins the trace each reads TODAY while
-its assertion states what it reads once this closes — two-sided, so a partial fix or a new
-regression moves a line instead of passing as "still broken", and a real cure turns twelve FAILs
-into twelve unexpected PASSes.  `test_mixed` doubles as the witness control with a release-COUNT
+twelve broken ones landed as expected-failures, each pinning the trace it read while the defect
+was open beside the assertion for the trace it reads now — two-sided, so a partial fix would have
+moved a line instead of passing as "still broken".  The cure turned twelve FAILs into twelve
+UNEXPECTED PASSES, which is how the file reported that its annotations were due for retirement;
+they are gone.  ⚠ The prose describing them may not spell the token either — a comment containing
+it above the first `fn` binds at FILE level and would excuse the whole guard silently.  `test_mixed` doubles as the witness control with a release-COUNT
 channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), which is what to
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.

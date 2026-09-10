@@ -3,16 +3,17 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# formal/ownership.md — the `deps` ownership / borrow system (strict; register at `OPEN: 1`)
+# formal/ownership.md — the `deps` ownership / borrow system (strict; register at `OPEN: 0`)
 
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register is at **`OPEN: 1`** — `D-own-40` (2026-09-11, below:
-> `(O-Witness)` armed where its premise is false).  It read `OPEN: 0` from 2026-07-04 until
-> then, and what moved it was not a new defect but a VALIDATION of loft#1517 against these
-> rules; the zero had been re-measured against its oracle, which covers the JOIN family and
-> does not ask whether a witness should exist at all.  The five original `D-own-*`
+> ownership model.  The register is back at **`OPEN: 0`** — `D-own-40` and `D-own-41` both
+> opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04 until then, and what
+> moved it was not a new defect but a VALIDATION of loft#1517 against these rules: the zero had
+> been re-measured against its oracle, which covers the JOIN family and does not ask whether a
+> witness should EXIST at all.  A zero that an oracle cannot disturb is only as strong as the
+> questions that oracle asks.  The five original `D-own-*`
 > deviations remain CLOSED on the **shipped path** (@PLN85 store-lifetime,
 > @PLN87 the `&` law both landed), validated by the @PLN89 differential oracle + the
 > `program_ownership` fuzzer. This is *validation, not a machine-checked proof*: the
@@ -360,9 +361,10 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 1** — `D-own-40`, below: `(O-Witness)` is armed for locals whose assignments do NOT
-mix, and while one is armed `(O-Owner)`'s single owner is broken.  `D-own-39` opened and CLOSED
-2026-09-10, below.  Every earlier deviation this doc has carried is closed; the
+**OPEN: 0.**  `D-own-40` (`(O-Witness)` armed for locals whose assignments do NOT mix, and
+`(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
+value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
+2026-09-10.  Every earlier deviation this doc has carried is closed; the
 record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
 closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
 hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
@@ -383,7 +385,58 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
 
-### D-own-40 — OPEN (2026-09-11): `(O-Witness)` is armed where its premise is false, and `(O-Owner)` breaks while it is
+### D-own-41 — OPENED AND CLOSED (2026-09-11): the interpreter detached a local by re-allocating its store IN PLACE, wiping the value being copied into it
+
+`(O-Detach)` — DETACH AFTER THE READS — names *"the free, sentinel or RE-ALLOCATION that stops
+[a binding] naming its current store"* and requires it after every read of that binding by the
+value being assigned.  A NULLABLE heap local reassigned from a call whose return BORROWS a
+parameter that reads it answered the type's ZERO on `--interpret` and correctly on `--native`:
+
+```loft
+fn keep(s: K) -> K { s }
+c: K? = mk();  c = keep(c ?? K { x: 9 });     // --interpret 0, --native 7
+```
+
+Two lines, no loop, no literal, **live on `main`** — and a wrong value with no diagnostic, which
+makes it the more serious half of the loft#1517 arc even though it was found second.
+
+The interpreter DID defer the re-allocation past the call, which is what the rule asks.  It then
+performed it IN PLACE on the local's own store: `OpDatabase(c)` cleared the record and the
+`OpCopyRefOrNull` after it copied from the call's result — which was that same store, because
+`keep` hands back what it was given.  `--native` has a runtime same-store passthrough for exactly
+this (`generation/dispatch.rs`'s `PASSTHROUGH`, whose comment cites this rule), added when the
+backends were wrong the other way round (loft#1017b).  So `(O-NoDiverge)` was broken by a fix that
+had only ever been applied to one side.
+
+**Two reasons it stayed invisible**, and they are the reusable part:
+
+- The condition that forces a FRESH destination was gated on the local being **WITNESSED**, and
+  `(O-Detach)` carries no such qualifier — a guard narrower than the rule it cites, the third
+  instance of that shape in two days.  A witnessed local took the fresh-store path and was
+  correct, which is also why loft#1517's misclassification MASKED this: the locals that reach
+  this path were being witnessed for a false reason, and that reason was load-bearing.
+- Its other half, `value.reads_var(v)`, is SYNTACTIC and could not see the case at all.  A `??`
+  (and an `if`-valued arm) HOISTS the read of the local into a temporary in a PRIOR statement —
+  which is the lowering `(O-Detach)` itself prescribes — so the assignment arrives as
+  `Set(c, Call(keep, [__lift_1, …]))` and mentions `c` nowhere.  **The hoist moved the READ, not
+  the VALUE**: `__lift_1` is bound to `c` and names c's store, and its dep list says so
+  (`["__ref_p2_1", "c"]`).  A predicate written from the source spelling matches nothing here and
+  looks inert.
+
+**CLOSED** by asking the CALLEE's fact instead: a return whose dep names a visible parameter
+(`Def::returns_borrowed_view`, the canonical `@PLN85 D-own-1` spelling a sibling gate in the same
+function already reads) hands back a store the caller passed in, and any argument may be the
+hoisted alias.  Conservative in the admissible direction — a fresh destination is always correct
+and costs an allocation; an in-place one is correct only when the source is distinct.  One home,
+beside `rhs_reads_v`, read by both the freshness gate and the defer decision so they cannot drift.
+
+Guard `tests/scripts/a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.loft`, 11
+cells.  Its sharp control is `test_the_callee_returns_the_other_parameter`: the callee's return
+borrows, but not the parameter carrying the local, so it says the condition is *"the result may be
+the destination's own store"* and not *"the callee borrows something"* — and it is where the
+remaining conservatism (a fresh allocation bought for nothing) is visible as a choice.
+
+### D-own-40 — OPENED AND CLOSED (2026-09-11): `(O-Witness)` was armed where its premise is false, and `(O-Owner)` broke while it was
 
 `(O-Witness)` conditions the runtime witness on the local's assignments MIXING ownership — *"one
 assignment hands a heap-record local a store of its own and another hands it a VIEW"*.  Two
@@ -419,19 +472,26 @@ not solely the local's"* — and concludes the local does not own.  The rule say
 not exist; the disarm should fire.  Measured: with the witness suppressed the disarm DOES fire
 and the local adopts the store outright, so `(O-Owner)` holds for every non-witnessed spelling.
 
-**The cure ORDER is settled by these rules, not a design call.**  `D-heap-6` recorded it as an
-open question — either the `__lbo_` path mis-frees a local the witness was covering, or such a
-local must stay witnessed.  `(O-Witness)` and `(O-Move)` decide it: the local must NOT be
+**The cure ORDER was settled by these rules, not by a design call.**  `D-heap-6` recorded it as
+an open question — either the other release path mis-frees a local the witness was covering, or
+such a local must stay witnessed.  `(O-Witness)` and `(O-Move)` decide it: the local must NOT be
 witnessed, so the witness on it is this deviation and the other path's wrong answer (`0` where
-`7` is right) is the defect to fix FIRST.  Correcting the arming population before that is a
-value regression, which is why both cures measured in `D-heap-6` regress — but the order is
-derived now rather than guessed, and "keep the witness because removing it breaks something" is
-not available as an answer.
+`7` is right) is the defect to fix FIRST.  *"Keep the witness because removing it breaks
+something"* was never an available answer.  That second defect is `D-own-41` below, it turned out
+to be LIVE on `main` independently, and fixing it is what let the arming correction land.
 
-⚠ **No gate sees this, and the reason is structural.**  `(O-Override)`'s gate is
-`ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`), which reds on a FREE of a never-free
-binding.  Run over both guards it reports `clean — 0 RED`, because nothing frees illicitly: what
-is missing is a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not ordered the way a
+**CLOSED 2026-09-11** by `heap.md` D-heap-6's Cure A: `is_view_of_storage` answers `false` where
+`construction_work_ref` names a work-ref, so a construction is no longer counted as the view half
+of a mix.  `(O-Owner)` follows from the same change — an unwitnessed local reaches the hand-off
+disarm, so the work-ref stops naming the store and the single-owner property holds on that path
+again.  Guard: `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft`,
+whose `test_mixed` and `test_null_then_call_field` cells are the two directions a cure could
+over-reach in.
+
+⚠ **No gate saw this, and the reason is structural — closing it changes nothing there.**
+`(O-Override)`'s gate is `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`), which reds on a FREE
+of a never-free binding.  Run over both guards it reported `clean — 0 RED`, because nothing frees
+illicitly: what was missing was a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not ordered the way a
 free's are, and this is that asymmetry showing up in the instruments — the free side has a
 checker and the drop side has only per-guard traces.  A gate for `(H-Drop)`'s three deaths is
 the gap, and it would have caught both populations above.

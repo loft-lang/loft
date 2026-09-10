@@ -14747,7 +14747,7 @@ fn owner_witness_locals(
                 WitnessSet::Other => {
                     // A view of another variable's storage.  A null or a store nobody names
                     // is not a VIEW and does not make the ownership mixed on its own.
-                    if is_view_of_storage(val, data) {
+                    if is_view_of_storage(val, function, data) {
                         viewed.insert(*t);
                     }
                 }
@@ -14811,7 +14811,23 @@ fn owner_witness_locals(
 
 /// Does this value bind a VIEW of storage some other binding owns — a projection, a
 /// call answering a borrow, a join?  The `viewed` half of [`owner_witness_locals`].
-fn is_view_of_storage(value: &Value, data: &Data) -> bool {
+///
+/// A CONSTRUCTION into its own work-ref is NOT one, and answering `true` for it fabricated the
+/// VIEW half of a mix that does not exist (loft#1517, `formal/heap.md` D-heap-6).  The work-ref
+/// is the compiler's own temp for this very literal, so no other BINDING owns what it names, and
+/// the local adopts the store outright ([`Scopes::scan_set`]'s hand-off disarm) — which is also
+/// `@FR-O-Owner`'s single owner, and it only holds once the local is NOT witnessed.
+///
+/// [`witness_set_kind`] answers `Other` for such a value on purpose: while the work-ref still
+/// names the store it is not SOLELY the local's, which is the right answer to *"may the witness
+/// POINT here?"*.  Reading that one `Other` as a view is what made `x: SE = A { k: 3 }; x = a`
+/// — two OWNING assignments by `(B-Copy)` — carry a witness, after which
+/// `Scopes::displaced_drop` declined on `@FR-O-Override` and neither record's `OpDrop` ran.
+/// Two sites, two different questions, one answer: this is the `viewed` half only.
+fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
+    if construction_work_ref(value, function).is_some() {
+        return false;
+    }
     match value.unspan() {
         Value::Null => false,
         Value::Call(nr, args) if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel" => {
@@ -14828,7 +14844,7 @@ fn is_view_of_storage(value: &Value, data: &Data) -> bool {
         // of `x = o.opt` under `@FR-L-Null-Which`) answers as its present arm does.
         Value::If(_, _, _) => {
             let seen = crate::use_analysis::through_null_arm(data, value);
-            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, data)
+            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, function, data)
         }
         _ => false,
     }
