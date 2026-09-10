@@ -30,7 +30,13 @@
 // release instead; that shape wants the source released inside the omitting arms and is open
 // as loft#1514's residual.  Its cell is here as a CONTROL, recording what it does today.
 //
-// @falsified-at: PENDING
+// @falsified-at: e5c65698e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_if is the first moving cell on
+//   both backends (the run stops at its first failed assertion); the other eleven were
+//   measured on that same build by scoring the file with the assertions replaced by prints.
+// @falsified-by: tests/falsified/a-branch-arm-releases-the-source-the-other-arm-took.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
 // CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends — this
 //   is not a divergence, both ran one hook for two resources.  NOT the leak channel: the store
 //   is freed either way, so a run scored on leaks learns nothing here.  What is lost is the

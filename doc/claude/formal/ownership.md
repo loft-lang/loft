@@ -356,8 +356,8 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in
-[ownership-history.md](ownership-history.md).  The most recent, `D-own-38` (loft#1388), was
+**OPEN: 1** — `D-own-39`, below.  Every earlier deviation this doc has carried is closed; the
+record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
 closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
 hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
 a store — a closure capturing a VECTOR inside a loop, because the witness is record-typed — and
@@ -376,6 +376,41 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-39 — OPEN (2026-09-10): a per-path hand-off to a SHARED destination
+
+`(O-Complete)` makes the ownership fact per binding and PER PATH.  A whole-value copy written
+inside a branch arm moves a release on the runs that take that arm and on no others, and the
+hand-off is recorded once for the statement — so the arm that did not run leaves its source
+with nothing to release it, and the resource is never released at all, silently, on both
+backends.
+
+The ARM-LIFT half of this is CLOSED (loft#1514, `scopes::handoff_target`): a value `if`/`match`
+lifts each arm's value into a temp of its own, and because each temp is null until its own arm
+assigns it, keeping the release with the SOURCE and stopping the DESTINATION is correct on
+every path with no runtime witness.  Guard
+`a-branch-arm-releases-the-source-the-other-arm-took.loft`, 19 cells, 12 moving.
+
+What stays open is the case where the arms assign one SHARED local:
+
+```loft
+a = mk(1); b = mk(2); x = mk(3);
+if c { x = a; } else { x = b; }        // c=true releases 3 and 1, never 2
+```
+
+The per-arm rule does not reach it and must not: `x` genuinely owns what it took on the path
+that ran, so stopping `x` would lose THAT release instead of restoring the other.  Neither side
+can be chosen statically, which is the whole of the deviation — `(O-Complete)`'s "per path"
+has no representation at a destination that is shared across the paths.
+
+**Closes when** the source is released inside the arms that do NOT hand it out, so that the arm
+IS the path.  `scopes::free_record_in_omitting_arms` is that shape one level over (loft#1476,
+for a closure record), and the same step is what loft#1514's OTHER open shape needs — a returned
+value branch, where the delivering arm additionally needs a cascade that skips the member it
+handed out.  ⚠ The cell that decides whether the rewrite is honest is a LOOP around the branch:
+a back edge is a second path a single forward reading does not see.  And a record with TWO
+droppable fields is the cell that keeps a whole-cascade suppression from reading as a fix — on
+a one-field record it looks right and leaks the sibling.
 
 The full register — every entry, open and closed, with its dates and issue numbers — is
 the companion [ownership-history.md](ownership-history.md).
