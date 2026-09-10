@@ -875,6 +875,8 @@ TYPE_LET = re.compile(
     r"(?:^|\W)(?:if\s+let|while\s+let|let)\s+(?:Some\()?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)"
 )
 TYPE_MATCHES = re.compile(r"matches!\s*\([^;]{0,600}?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)", re.S)
+# `Type::` as a WHOLE path head — the lookbehind is what keeps `DefType::` out.
+TYPE_BARE = re.compile(r"(?<![A-Za-z0-9_])Type::")
 TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def)\s*\(")
 
 # ── the type FORMERS this screen can be pointed at ────────────────────────────
@@ -1182,7 +1184,14 @@ def shape_tests(code):
             lo, hi = row[3]
             row[3] = arm_patterns(code[lo:hi])
     for off, kind, scrut, pats in out:
-        if TYPE_ARM.search(pats) or TYPE_LET.search(pats) or "Type::" in pats:
+        # The catch-all needs the same lookbehind the two regexes beside it carry.  Written as
+        # a bare `"Type::" in pats` it also matched `DefType::` — a different enum, naming
+        # definition KINDS (`DefType::Struct`, `DefType::Enum`) and not type shapes — so every
+        # `matches!(self.def_type(d), DefType::Struct | DefType::Enum)` counted as a shape test
+        # that cannot see through a `τ?`, which it has no business seeing through.  There are
+        # 548 `DefType::` mentions in `src/`, so this silently inflated the OPAQUE side of the
+        # census the @FR-N-Shape ratchet gates on.
+        if TYPE_ARM.search(pats) or TYPE_LET.search(pats) or TYPE_BARE.search(pats):
             yield off, kind, scrut, pats
 
 

@@ -158,11 +158,18 @@ real record, and it admits any element type — `for t in [("a", "b")] { t.0 }` 
 backends, and writing `t.0` there reaches the vector. Reading `T-Ref-El` as a fact about tuples
 rather than about this binding is the mistake that boundary invites.
 
-A `text`, collection, struct or function-reference element is refused. This is a layout
-limitation, not a missing opcode: `OpGetText` / `OpSetText` exist and take the same
-`(ref, offset)`, but a reference tuple's storage is not a record with a text slot the way a
-struct is. Use a **struct** instead — its fields of any type write through a `&` parameter —
-or take the tuple by value and return a new one. The refusal message says both.
+What stays refused is what the `__tuple<…>` record cannot spell or lay out as a field: a
+NULLABLE element, a fn-ref, a nested tuple. The refusal names the element type and the two
+cures — a **struct** instead, whose fields of any type write through a `&` parameter, or the
+tuple by value with a new one returned.
+
+⚠ **This paragraph and the conformance entry below both read as a blanket `text` refusal until
+2026-09-10, and that had stopped being true on 2026-09-03**, when `(T-Ref-Rep)`'s record-backed
+form landed and `&(text, text)` began swapping a caller's pair like any other. The claim
+survived because it is prose beside a rule that contradicts it, and the guard that would have
+caught it (`reference-tuple-heap-elements-link.loft`) asserts the ADMISSION rather than the
+refusal — so nothing red ever pointed here. A conformance line is a measurement with a date on
+it, not a standing fact.
 
 ---
 
@@ -291,9 +298,11 @@ the companion [tuples-history.md](tuples-history.md).
   admitted element type — `integer`, `float`, `single`, `character`, `boolean` — uniform and
   mixed (`&(integer, boolean, character)`), and at width 3 so the last element is reached
   (`tests/scripts/1006-reference-tuple-element-types.loft`).
-- **Refused element types (`T-Ref-El`)** — `&(text, …)`, `&(fn() -> τ, …)` and a struct element
-  are STATIC errors naming the element type, never an ICE
-  (`tests/scripts/102-expected-errors.loft`).
+- **Refused element types (`T-Ref-El`)** — a NULLABLE element (`&(text?, text)`), a fn-ref
+  (`&(fn() -> τ, …)`) and a NESTED TUPLE are STATIC errors naming the element type, never an
+  ICE (`tests/scripts/102-expected-errors.loft`). A bare `text` element and a struct element
+  are ADMITTED — the record-backed form, measured 2026-09-10 on both backends and guarded by
+  `tests/scripts/reference-tuple-heap-elements-link.loft`.
 - **Static index (`T-Proj`)** — `t.5` on a 2-tuple is a compile error, not a runtime null.
 - **Heap element is COPIED (`T-Cons`)** — `t = (h, 9); h[2] = …` leaves `t.0` at its old length
   for EVERY heap element type, not just the vector the paragraph above names: `hash`, `hash<τ>?`,

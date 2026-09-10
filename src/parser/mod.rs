@@ -13776,13 +13776,20 @@ impl Parser {
             start_def,
             Some(&mut self.deferred_unknown),
         );
-        typedef::fill_all(
+        let cyclic_type = typedef::fill_all(
             &mut self.data,
             &mut self.database,
             &mut self.lexer,
             start_def,
         );
-        self.database.finish();
+        // A type that contains itself has no finite size, so there is nothing for the record
+        // builder to finish: `finish_type` follows the cycle into itself and the `u16` offset
+        // accumulator wraps.  That panic is what the user meets — an internal compiler error,
+        // and with the diagnostics still buffered, so the message naming the cure never
+        // prints.  `fill_all` has already reported; stop before the layout.
+        if !cyclic_type {
+            self.database.finish();
+        }
         // Validate layouts of all registered types — catches late-
         // mutation bugs (e.g. P191's bookkeeping fields landing at
         // overlapping positions because finish_type already ran).

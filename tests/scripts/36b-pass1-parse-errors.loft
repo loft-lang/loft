@@ -152,6 +152,44 @@ fn test_type_cycle_indirect() {
   _a = PECycA { val: 1 };
 }
 
+// The walk reaches every INLINE route, not just a bare embedded field.  `(L-Null-Tag)` names
+// them — an embedded field, a tuple member, and a variant payload, which is inline for the
+// same reason.  Each shape below reached the record BUILDER instead of this diagnostic while
+// the walk matched a bare `Reference`: an optional field printed the layout validator's
+// `field 'next' has no position (u16::MAX)`, and a tuple member had no finite size at all, so
+// the offset accumulator overflowed and the reader met an internal compiler error.  Here
+// rather than only in `tests/parse_errors.rs` because these run on BOTH backends.
+
+struct PEOptNode {
+  val: integer,
+  next: PEOptNode?,
+}
+
+// @EXPECT_ERROR: 'PEOptNode' contains itself
+fn test_type_cycle_through_an_optional_field() {
+  _n = PEOptNode { val: 1 };
+}
+
+struct PETupNode {
+  val: integer,
+  p: (integer, PETupNode),
+}
+
+// @EXPECT_ERROR: 'PETupNode' contains itself
+fn test_type_cycle_through_a_tuple_member() {
+  _n = PETupNode { val: 1 };
+}
+
+enum PECycEnum {
+  Leaf,
+  Branch { n: PECycEnum },
+}
+
+// @EXPECT_ERROR: 'PECycEnum' contains itself
+fn test_type_cycle_through_an_enum_variant_payload() {
+  _e = 1;
+}
+
 // --- spatial without its coordinate keys ---
 
 struct PEPoint {

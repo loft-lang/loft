@@ -2544,16 +2544,26 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 766 | 422 | 6 | **338** |
+| 766 | 423 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
-carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
+carries the defect is the TEST: the same run reports **2094** shape tests, **1317** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
 for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Shape`
 ([formal/types.md](formal/types.md)).  That baseline is a DERIVED row exactly as these four
 are — re-measure it on the joined tree rather than carrying either branch's number.
+
+⚠ **The TEST counts dropped by 190 on 2026-09-10, and no walk did that — the instrument was
+counting a different enum.**  `shape_tests` ended its filter with a bare `"Type::" in pats`,
+beside two regexes that both carry a `(?<![A-Za-z0-9_])` lookbehind for exactly this reason, so
+every `matches!(self.def_type(d), DefType::Struct | DefType::Enum)` was scored as a shape test
+blind to `τ?` — a question about a definition KIND, which has no `τ?` to see through.  `src/`
+carries 548 `DefType::` mentions.  The census read **2284 · 1508**; corrected it reads
+**2094 · 1317**, so 12.6 % of the queue this ratchet gates on was never in it.  Found because a
+`DefType::` `matches!` added by an unrelated fix made `opaque_tests` GROW by one, which is the
+useful shape of the failure: the ratchet fired, and what it caught was itself.
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read

@@ -369,6 +369,23 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   that copied would fail).  The tagged receiver of a field read and a method call is
   `153-a-tagged-element-read-by-a-variable-index-is-one-null.loft` and
   `153-a-method-call-on-a-tagged-element-reports-the-undischarged-receiver.loft`.
+  ⚠ **`L-Null-Tag`'s list of INLINE positions is what the cycle report has to reach, and it
+  reached one of them (2026-09-10).**  This rule names *"a `vector`/keyed element, an embedded
+  field, a tuple member"*, and `(L-Null-Which)` cites `Data::has_value_cycle` for reading the
+  same share-marker bit — but that walk matched a BARE `Reference`, so four of the five routes a
+  field reaches a record's bytes through were invisible to it.  A type it cannot see has no
+  finite size, so the reader met the record builder instead of the diagnostic: `type layout: …
+  field 'next' has no position (u16::MAX)` for `next: Node?` — the way a linked list is actually
+  written — and, for a tuple member, an internal compiler error (`attempt to add with overflow`
+  in the offset accumulator) on both backends.  The edge question has one home now
+  (`Data::inline_field_defs`, exhaustive over `Type`), and the walk asks ENUMS as well, whose
+  variants are children rather than attributes.  Guards: nine cells in `tests/parse_errors.rs`
+  from `type_cycle_self_through_an_optional_field`, each measured failing beforehand, against
+  seven controls that must keep compiling — `reference<S>?`, `vector<S>`, `vector<S?>`, a
+  `reference` tuple member, a value-enum field, an acyclic struct-enum field, and
+  `reference<E>` in a variant.  The controls are the load-bearing half: following an enum edge
+  is what could start reporting a cycle for every program that puts an enum in a struct.
+
 - **`L-Null-Text`** — `tests/scripts/1270-an-absent-text-is-one-absence.loft`, on both backends:
   every way of SAYING absent (literal `null`, an omitted field, an assignment, a call, a parse)
   writes ONE document and round-trips to itself, while an allocated `""` stays a present value.
