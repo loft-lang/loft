@@ -104,10 +104,27 @@ The branch is merged to main via a single PR when all items pass CI.
   clock. **Every PR therefore serialises the whole stream**, which is a bigger cost
   than the CI round it also pays (~20–30 min).
 
-  **Opening a PR is the owner's call, and not a subject to raise.** Do not propose one,
-  hint that the work is "ready" for one, or treat a finished issue as a milestone that
-  wants one — that pressure is why the owner holds off (2026-08-19). Fix, gate, push,
-  and say what is done.
+  **REVISED 2026-09-10 — the floor stands, the ceiling moved to an ARC.** "Never one or
+  a few issues" is unchanged and is why one-issue PRs are not proposed. What changed is
+  the other end: the directive's cost model counted only the serialisation a PR causes,
+  and not the serialisation that withholding one causes. Both are real, and the second
+  was measured — one branch reached its PR carrying **9 joins**, with the walker-audit
+  rows re-measured five times, `falsified_docs.baseline` regenerated, the browser bundle
+  rebuilt, and the siblings paying the same re-derivation in their own trees. Two
+  join-only defects existed only on that union, invisible from either side. `main` is
+  the only place a resolution is shared ONCE.
+
+  So the cadence is **one PR per closed ARC** rather than per day or per N issues, and
+  the countable trigger is: **a branch a sibling has joined twice is overdue.** The
+  reconciliation of the two costs is that a PR is cheap exactly when it MERGES promptly
+  and expensive when it sits — which is why the branch policy's "keep the PR mergeable
+  and land it promptly" is the load-bearing half.
+
+  **Opening a PR is still the owner's call, and still not a subject to raise.** Do not
+  propose one, hint that the work is "ready" for one, or treat a finished issue as a
+  milestone that wants one — that pressure is why the owner holds off (2026-08-19). Fix,
+  gate, push, and say what is done. The join-count trigger is a fact to REPORT ("this
+  branch has been joined twice"), not a request to make.
 
   One consequence to handle LOCALLY rather than by reaching for a PR: `revalidate-libs`
   — the gate that compiles every published library against this loft — triggers on

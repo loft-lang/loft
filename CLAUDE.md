@@ -236,18 +236,32 @@ src/main.rs            CLI; loads default/ then user file
 3. **Never create a branch, open, or merge a PR without an explicit user ask** ("create PR",
    "merge", "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over. If a protected branch blocks a commit, surface it and ask — don't invent a branch.
-   ⚠ **Nor is "the work looks finished" an ask.** A PR is opened when BOTH streams reach a stable
-   point — most issues fixed, a clean endpoint — and **the owner is the one who determines that**,
-   not the agent that judges its own branch ready. Accumulated commits on a work branch are not a
-   reason to propose one either: the sibling checkout cherry-picks what it needs, so work in
-   flight is reachable without a merge. Keep committing and pushing to the branch; wait to be told.
-   ⚠ **Target cadence is roughly ONE PR PER DAY of work**, and the owner actively looks for the
-   stopping point when work spills into a following day. That shapes the work rather than the
-   asking: prefer a coherent unit that FINISHES inside a day over starting something that will
-   straddle. And the bar for that unit is not "green" — a PR that looks OK while carrying
-   internal regressions is worse for a language's users than no PR, so a walk ships only with its
-   own verification complete (both backends, the matrix built and hand-checked, guards falsified,
-   side-findings filed rather than left implicit).
+   ⚠ **Nor is "the work looks finished" an ask.** A PR is opened when the work reaches a stable
+   point — a closed arc, a clean endpoint — and **the owner is the one who determines that**, not
+   the agent that judges its own branch ready. Keep committing and pushing to the branch; wait to
+   be told.
+   ⚠ **Target cadence is roughly ONE PR PER ARC**, where an arc is a coherent unit that finishes:
+   one rule's family of defects, one subsystem's, one plan phase. Several arcs may close in a day
+   and a long one may straddle two; the axis is coherence, not the clock. And the bar for that
+   unit is not "green" — a PR that looks OK while carrying internal regressions is worse for a
+   language's users than no PR, so a walk ships only with its own verification complete (both
+   backends, the matrix built and hand-checked, guards falsified, side-findings filed rather than
+   left implicit). That bar gets CHEAPER per PR as the arc gets smaller, which is half the reason
+   for the cadence.
+   ⚠ **A branch a sibling has joined TWICE is overdue** — the one countable trigger, replacing
+   "accumulated commits are not a reason". The old rule rested on *cherry-picking makes batching
+   free*, and it is not free: measured 2026-09-10, one branch carried **9 joins** before its PR,
+   the walker-audit rows were re-measured five times, `falsified_docs.baseline` was regenerated
+   and the browser bundle rebuilt — and the siblings paid the same cost in their own trees
+   (@PLN157 carries its own "re-measure the derived rows, re-falsify both guards" commit). `main`
+   is the only place a resolution is shared ONCE; until then every stream re-derives it. Two
+   join-only defects also existed only on that union, invisible from either side.
+   ⚠ **Both directions serialise the stream — pick the cheaper one, and it is time-to-MERGE that
+   decides.** GitHub has no stacked PRs, so a second PR branches off the first's tip and waits for
+   it ([DEVELOPMENT.md § Owner directive](doc/claude/DEVELOPMENT.md)); that is the cost of PRing
+   too often. But NOT PRing serialises through joins, which is the cost above. So a PR is cheap
+   exactly when it merges promptly and expensive when it sits — which makes "keep the PR
+   mergeable and land it promptly" (rule 5) the load-bearing half, not an aside.
 4. With an **open PR**, hold non-blocking pushes for the user's consent (force-push/rebase/surprise
    commits) — EXCEPT a push that unblocks a red required check (allowed; it can't merge while red).
 5. **While a PR is unmerged, branch from the TIP of that in-flight work — NEVER fork a fresh
