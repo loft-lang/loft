@@ -191,6 +191,36 @@ KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more 
 journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
 process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
+**A gate that reports `QUEUED behind another gate` may be queued behind NOTHING (2026-09-10).**
+`make ci` serialises with `exec 9>/tmp/loft-gate.lock` followed by `flock 9`, and fd 9 is
+INHERITED by every process the gate spawns — including the long-lived `loft` server children some
+tests start (`tests/engine_host_kernel.rs`'s `run_s3_scenario` spawns one per scenario). When such
+a child outlives its gate — its `Guard` drop never runs, which is exactly what the paragraph above
+describes happening to harness-child gates — it is reparented to init and keeps holding the lock.
+Every later gate on the box then blocks in `flock 9` indefinitely and reports only *"QUEUED behind
+another gate on this box"*, naming a gate that no longer exists. Measured: an orphan from an
+08:48 run held the lock while both checkouts' gates sat queued for 48 and 20 minutes with a
+one-minute load average of **0.05** — nothing was compiling, in either tree.
+
+The tell is that the holder is not a gate: `fuser -v /tmp/loft-gate.lock` names a `loft`
+process, and `ls -l /proc/<pid>/fd/9` points at the lock file. Clear it by killing that pid
+specifically — never by pattern, which reaches the sibling checkout's live gate. **The load
+average is the cheap discriminator** — a real queue has a busy box behind it.
+
+**Fixed (loft#1504) by closing the descriptor in the CHILDREN, not by releasing the lock.** The
+whole chain after the lock now runs in a subshell ending `) 9>&-`: the parent shell keeps fd 9,
+so mutual exclusion is unchanged, and every process the gate spawns gets its copy closed.
+Measured four ways before it was applied — a child without the redirection holds the lock after
+its parent exits (the bug, reproduced standalone); with it the lock is free; the parent still
+holds it while the run continues (so the gate still serialises); and closing an unopened fd 9 is
+harmless, which is the `LOFT_GATE_PARALLEL` path. A SUBSHELL rather than a `9>&-` per command
+because the per-command form is an allow-list, and a step added later would silently drop out of
+it. Bounding the spawned children's own lifetime (a `LOFT_TIMEOUT` on each) is a separate
+hardening and deliberately NOT done as an allow-list: there are **59 `.spawn()` sites across 30
+test files** (`engine_host_kernel.rs` alone has 14), so it wants a shared spawn helper, not
+59 edits that drift apart.  The count was re-measured here rather than carried: the first
+reading of it was 37 across 11.
+
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
 test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`
