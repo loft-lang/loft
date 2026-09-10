@@ -358,7 +358,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE; and
+OPEN: **2** — `D-heap-1`, below: three shapes release a tuple member's resource TWICE; and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -377,15 +377,29 @@ copied, one record wore both names and "released once" was true by accident.
 Most of the family holds: the whole-tuple bind, two droppable members, a member at index 1,
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
-(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FOUR
-shapes do not, both backends, silently — re-measured 2026-09-10, where the entry had named
-three:
+(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  THREE
+shapes do not, both backends, silently — re-measured 2026-09-10:
 
 - a nested tuple whose droppable sits in the INNER tuple — `t = ((s, 1), 2); u = t`: twice;
-- a member declared NULLABLE — `t: (S?, integer) = (s, 5); u = t`: twice;
 - a copy off a tuple PARAMETER — `fn f(p: (S, integer)) { u = p; }`, where `(H-Drop)`'s
   closing clause says the CALLER owns and nothing in the callee should release: twice;
 - a copy off a LOOP VARIABLE over a `vector<(τ, τ)>` — `for e in v { u = e; }`: twice.
+
+✓ **A member declared NULLABLE — `t: (S?, integer) = (s, 5); u = t` — CLOSED 2026-09-10.**
+The site is the one that adopts an ANNOTATION over a literal's own type
+(`parser/expressions.rs`, loft#1034's tuple conversion): a declared type says the SHAPE and
+cannot say what the value in hand owns, because it was written before that value existed, and
+adopting it whole dropped the literal's backing dep.  `Type::with_deps_of` states exactly that
+rule but does not reach a TUPLE — a tuple carries no dep list of its own and `deps_ref`
+answers `None` for it — so the deps are read with `depend()` (which unions over the members)
+and re-applied with `with_deps` (which gives every member the union), the shape a tuple's dep
+lists already have.  Only the `?` reaches that site: a declared `(S, integer)` is `is_equal`
+to the literal's type, since `is_equal` collapses deps, so it is never converted and keeps its
+backing by not taking the path at all.  Guard
+`a-tuple-member-declared-nullable-releases-once.loft`, which carries the dense and inferred
+CONTROLS for that reason.  Measured on the control, BOTH members of a two-nullable-member
+tuple released twice — not one twice and one once — which is what says the backing was lost
+for the whole tuple rather than paired to the wrong work-ref.
 
 ⚠ **A fifth shape was here and did not belong to this entry.**  `h = Holder { t: (s, 5) };
 u = h.t` released the resource NEVER — the OPPOSITE fault, which is why it is worth stating
@@ -432,13 +446,14 @@ re-measured there 2026-09-10 on both backends.  The claim that none of them repr
 was true only for the hours before that commit merged, which is how a "branch-internal" note
 goes stale: it is a statement about two trees, and one of them moved.  Per the bug policy that keeps them here rather than in the tracker.
 
-**Closes when** the four shapes above read exactly one release on both backends and the
-guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The cure
-for the first two is to give the tuple's element type its backing dep in the places that lose
-it — the declared-type path in the binding conversion, and the nested tuple's outer element —
-after which the existing `TupleGet` arm reaches them unchanged; the parameter shape wants the
-argument rule instead, not a member pairing; and the loop-variable shape wants the design
-question above answered before a cure is chosen for it.
+**Closes when** the three shapes above read exactly one release on both backends and the
+guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The
+nested tuple wants its outer element given the backing dep, the same shape the nullable member
+above needed — its source reaches the copy through a `_tuphold` temp whose element dep names
+the OUTER tuple local rather than the work-ref, so the pairing has to be resolved through that
+temp's own assignment.  The parameter shape wants the argument rule instead, not a member
+pairing.  The loop-variable shape wants the design question above answered before a cure is
+chosen for it.
 
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
