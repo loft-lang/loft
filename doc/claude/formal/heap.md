@@ -358,14 +358,15 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: five shapes get a tuple member's resource release
-WRONG (four release it twice, one never releases it at all); and `D-heap-LIFO`, stated with
-`(H-FreeLIFO)` above, where the rule names a fault the implementation deliberately stopped
-requiring.  The count read **1** while `D-heap-LIFO` was already written and marked OPEN in
-the rules section — an `OPEN: n` is a claim to re-measure, and a deviation placed beside its
-rule rather than under this heading is the way it goes stale.
+OPEN: **2** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE; and
+`D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
+implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
+already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
+and a deviation placed beside its rule rather than under this heading is the way it goes
+stale.  `D-heap-2` (a cascade that reached three of the member kinds it owned) opened and
+CLOSED 2026-09-10, below; it is why D-heap-1 counts four shapes and not five.
 
-### D-heap-1 — OPEN (2026-09-05): a tuple member's resource is released twice, or not at all
+### D-heap-1 — OPEN (2026-09-05): a copy of a tuple member releases its resource twice
 
 `(H-Drop)` runs the hook once per resource and moves the responsibility with a copy.  A
 tuple is a container like any other (`layout.md (L-Tuple)`), so `t = (s, 5); u = t` must
@@ -376,7 +377,7 @@ copied, one record wore both names and "released once" was true by accident.
 Most of the family holds: the whole-tuple bind, two droppable members, a member at index 1,
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
-(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FIVE
+(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FOUR
 shapes do not, both backends, silently — re-measured 2026-09-10, where the entry had named
 three:
 
@@ -384,19 +385,34 @@ three:
 - a member declared NULLABLE — `t: (S?, integer) = (s, 5); u = t`: twice;
 - a copy off a tuple PARAMETER — `fn f(p: (S, integer)) { u = p; }`, where `(H-Drop)`'s
   closing clause says the CALLER owns and nothing in the callee should release: twice;
-- a copy off a tuple in a STRUCT FIELD — `h = Holder { t: (s, 5) }; u = h.t`: **never**.  The
-  hook does not run at all, so the resource leaks;
 - a copy off a LOOP VARIABLE over a `vector<(τ, τ)>` — `for e in v { u = e; }`: twice.
 
-The struct-field cell is the one worth naming separately, because it is the OPPOSITE fault and
-an entry that says "releases twice" cannot cover it: a guard scoring only for a double release
-reads that cell as a pass.  A closing test must assert the release COUNT, not its absence.
+⚠ **A fifth shape was here and did not belong to this entry.**  `h = Holder { t: (s, 5) };
+u = h.t` released the resource NEVER — the OPPOSITE fault, which is why it is worth stating
+that an entry saying "releases twice" cannot cover it and that a closing guard must assert the
+release COUNT rather than its absence.  Isolating it showed the copy was not involved at all:
+`h = Holder { t: (s, 5) }` on its own, with nothing copied out of it, already leaked.  It was
+`D-heap-2` below — a cascade that never walked a tuple FIELD — and closing that closed this
+cell.  The lesson is the scoping one: the cell was filed under the copy question because the
+repro that found it contained a copy, and one probe with the copy removed said otherwise.
 
 **Two of the three shapes were scoped wider than they measure**, and the controls say so:
 a declared but NOT nullable `t: (S, integer) = (s, 5); u = t` releases ONCE (correct), so the
 axis is the `?` and not the author's annotation; and a nested tuple whose droppable sits in the
 OUTER position — `t = (s, (1, 2)); u = t` — is also correct, so it is not nesting as such but a
 droppable reached THROUGH an inner tuple.
+
+⚠ **And the LOOP-VARIABLE shape is not a tuple question either** — measured 2026-09-10, the
+same double release comes off a `match` payload binding with no tuple anywhere
+(`match w { WH{s} => { u = s; } }`).  What the two share is that the copy's SOURCE is a VIEW
+of a container's member: `(B-Copy)` makes `u = e` a copy, `(H-Drop)` says the copy owns and the
+source stops dropping, and the source's owner is a CONTAINER whose cascade releases every
+element it holds — there is no per-element suppression to reach for.  A direct projection is
+quiet because it does not copy at all (`u = v[0]` and `u = h.s` are `(B-View-Depth)` and
+`(B-View)` views, measured at one release).  So this cell wants the rules asked first: either
+the copy-out-of-a-container case is `(H-Drop)`'s `warning[double-move]` clause and the defect
+is the missing warning, or `(B-Copy)` owes a view here.  It is NOT the member-pairing cure the
+other three want.
 
 **One cause, read off the IR.**  The hand-off is recognised by resolving a copy's tuple-MEMBER
 source to the work-ref backing it, and the tuple's TYPE is where that pairing lives.  The
@@ -416,13 +432,72 @@ re-measured there 2026-09-10 on both backends.  The claim that none of them repr
 was true only for the hours before that commit merged, which is how a "branch-internal" note
 goes stale: it is a statement about two trees, and one of them moved.  Per the bug policy that keeps them here rather than in the tracker.
 
-**Closes when** the five shapes above read exactly one release on both backends and the guard's
-`@falsified-at` line covers them — scoring the COUNT, so the struct-field cell cannot pass by
-releasing nothing.  The cure is to give the tuple's element type its backing
-dep in the two places that lose it — the declared-type path in the binding conversion, and
-the nested tuple's outer element — after which the existing `TupleGet` arm reaches them
-unchanged; the parameter shape wants the argument rule instead, not a member pairing.
+**Closes when** the four shapes above read exactly one release on both backends and the
+guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The cure
+for the first two is to give the tuple's element type its backing dep in the places that lose
+it — the declared-type path in the binding conversion, and the nested tuple's outer element —
+after which the existing `TupleGet` arm reaches them unchanged; the parameter shape wants the
+argument rule instead, not a member pairing; and the loop-variable shape wants the design
+question above answered before a cure is chosen for it.
 
+
+### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
+
+`(H-Drop)` releases what a container holds at the container's death, *"its own hook first and
+then its members, through the synthesized cascade"*.  It reached a `Reference` field and a
+`Vector` field.  A TUPLE field, a STRUCT-ENUM field and a NULLABLE record field were walked by
+nothing, on both backends, silently: `struct H { t: (S, integer) }` built, read and dropped
+never ran `S`'s hook at all.
+
+**One question with two decoders, and they disagreed.**  `Data::type_owns_droppable` decides
+WHETHER a type owns a droppable and follows a tuple member, a struct-enum payload and a
+collection element to say so; `Parser::cascade_fields` decides HOW to reach one and reported
+only `Type::Reference`.  A type the first said yes about and the second found nothing in gets
+no cascade *declared* — so it answers "I own a resource" and then releases none of it.  The
+divergence is dated: `cascade_fields` carried *"an enum-payload or collection field is left for
+stages D/E"*, and stages D (an enum's own cascade) and E (a collection field) both landed
+without the FIELD walk being widened to call what they built.  The `__nullable<S>` a `S?` field
+is rewritten to is a struct-enum, so one missing arm cost two field kinds.
+
+**Cure** — `Parser::cascade_field_target`, one home for *"which definition does this field
+release through, and in what spelling do I read it?"*, cited by `cascade_fields`.  A tuple
+resolves to its `__tuple<…>` def and is read as a reference to the inline record, which is what
+`layout.md (L-Tuple)` already says it is; a struct-enum keeps its enum spelling so its cascade
+can test the discriminator before reaching a payload.  A `&τ` field stays out: it is a LINK and
+the source frees the store (`binding.md (B-Ref-Alias)`), so releasing through it would release
+what another owner still holds.
+
+**Guard** `tests/scripts/a-drop-cascade-reaches-every-field-kind-it-owns.loft`, twelve cells
+over the field kinds plus an absent nullable, a unit variant and a two-resource CONTROL,
+measured identical on both backends.  It scores the release COUNT: the fault is a hook that
+does not run, so a guard scoring only for a DOUBLE release reads every broken cell as a pass.
+
+⚠ **The missing cascade was also a CRASH, and that is the part worth carrying forward.**  A
+declared-but-undeclarable cascade does not merely skip a release: `scopes::copy_moves_drop_from`
+declines a hand-off whenever `data.drop_cascade_nr(d)` is `u32::MAX`, so a type `owns_droppable`
+says yes about and no cascade exists for gets the ownership answer for a type that owns
+NOTHING.  `o.inner.f?.h.id` over a holder with a nullable record field then freed a reference
+nobody owned, which `--interpret` refused as BUG #306 (*"a stack-record ref was treated as an
+owned heap store"*) with a `rec=65535` panic behind it — reproducing back to the shipped
+2026.8.0 and not on `--native`, which is why it read as an interpreter fault rather than as a
+missing cascade.  So the two decoders disagreeing was not a quiet omission: every downstream
+site that keys on the cascade's EXISTENCE inherited the disagreement, and this is the one that
+crashed.  Guarded apart in
+`a-nested-read-through-an-absent-nullable-field-does-not-free-the-stack-store.loft`, because it
+moves the panic channel where the release guard moves assertions and a receipt names one.
+
+⚠ **The over-reach cell is what found the neighbours.**  "An absent nullable field releases
+nothing" was written to prove the fix had not started dropping tag bytes; it failed, and the
+cause was not the cascade.  Reading an absent nullable through `?.` answers its type's ZERO
+and mints a record whose scope end runs the hook — and the ZERO half is not a defect at all:
+`types.md (N-Chain)` says a per-link `?` is `(N-Default)`, *"replace THIS structure with an
+empty one"*, and the compiler already names the trailing `??` as `advice[redundant-coalesce]`.
+The rules settled that one before any of it was worth measuring.  What IS a defect is
+loft#1505: `--native` emits that `(N-Default)` construction TWICE for a projected nullable
+FIELD — once into a `let _pre_N` binding nothing references — so the hook runs two or three
+times where `--interpret` runs it once.  Filed rather than fixed here: the cure is in the
+native generator's pre-eval substitution, which matches by generated TEXT across two passes.
+The cell reads with `==` so it scores the cascade and not loft#1505.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written

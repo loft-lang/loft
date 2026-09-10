@@ -5606,13 +5606,55 @@ impl Parser {
         self.data.def_used(c_nr);
     }
 
-    /// The DIRECT struct fields a stage-B cascade releases: `(byte offset, field type, field
+    /// The definition an inline FIELD releases through, and the type to READ the field as.
+    ///
+    /// One home for the question [`Self::cascade_fields`] asks, because a field's declared
+    /// type and the record its cascade must run on are not always the same spelling. Keeping
+    /// it here is what makes the walk agree with [`Data::type_owns_droppable`]: that predicate
+    /// decides *whether* a type owns a droppable and this decides *how to reach it*, so a
+    /// member kind the predicate follows and this one does not is a type that answers "yes, I
+    /// own a resource" and then releases nothing.
+    ///
+    /// `None` for a member that is not an inline sub-record: a collection field is
+    /// [`Self::cascade_vectors`], a scalar owns nothing, and a `&τ` field is a LINK — the
+    /// source frees the store (`@FR-B-Ref-Alias`), so releasing through it here would release
+    /// what another owner still holds.
+    ///
+    /// `@FR-H-Drop` — a container's death releases what it holds, through the cascade.
+    fn cascade_field_target(&self, tp: &Type) -> Option<(u32, Type)> {
+        match tp {
+            // `τ?` is a nullability bit over the same runtime shape (`@FR-N-Shape`), so the
+            // wrapper is peeled here rather than at the call site: this answers for the type
+            // it is handed, whichever spelling that is.
+            Type::Optional(inner) => self.cascade_field_target(inner),
+            // A dense inline sub-record, whose offset is the whole of what releasing it needs.
+            Type::Reference(fd, _) => Some((*fd, tp.clone())),
+            // A struct-enum releases through whichever variant it currently holds, so the read
+            // keeps the ENUM spelling: `fill_enum_drop_cascade`'s body tests the discriminator
+            // before it reaches a payload. This is also how a nullable struct field arrives —
+            // `typedef::synth_nullable_struct_fields` rewrites `f: S?` to
+            // `Enum(__nullable<S>, true)` — so absence is a variant with nothing to release
+            // rather than a case this has to test for.
+            Type::Enum(ed, true, _) => Some((*ed, tp.clone())),
+            // `@FR-L-Tuple` makes a tuple a synthetic struct stored inline, so it is
+            // released exactly as a nested struct field is: through `__tuple<…>`'s own cascade,
+            // reached by a reference to the record at the field's offset. The lookup is the
+            // read-only one — a shape that was never registered has no cascade to call either.
+            Type::Tuple(_) => {
+                let td = self.data.type_def_nr(tp);
+                (td != u32::MAX).then(|| (td, Type::Reference(td, crate::data::Deps::none())))
+            }
+            _ => None,
+        }
+    }
+
+    /// The DIRECT struct fields a stage-B cascade releases: `(byte offset, read type, field
     /// definition)` for each field whose own type owns a droppable, in declaration order.
     ///
-    /// Only `Reference` fields — a dense inline sub-record, whose offset is the whole of what
-    /// releasing it needs. An enum-payload or collection field is left for stages D/E and is
-    /// therefore NOT reported here, so `synth_drop_cascades` never declares a cascade it
-    /// cannot fully fill.
+    /// The inline sub-record kinds are [`Self::cascade_field_target`]'s; a collection field is
+    /// stage E ([`Self::cascade_vectors`]). Between them they cover every member
+    /// [`Data::type_owns_droppable`] follows, so `synth_drop_cascades` never declares a cascade
+    /// it cannot fully fill — and never skips one it owed.
     fn cascade_fields(&self, d_nr: u32) -> Vec<(u16, Type, u32)> {
         let kt = self.data.def(d_nr).known_type();
         let mut out = Vec::new();
@@ -5621,10 +5663,9 @@ impl Parser {
             if a.hidden {
                 continue;
             }
-            let Type::Reference(fd, _) = a.typedef.base() else {
+            let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {
                 continue;
             };
-            let fd = *fd;
             if fd == d_nr || !self.data.owns_droppable(fd) {
                 continue; // a self-field cannot exist inline; skip defensively
             }
@@ -5633,7 +5674,7 @@ impl Parser {
             if off == u16::MAX {
                 continue; // not laid out in this record — nothing to reach
             }
-            out.push((off, a.typedef.base().clone(), fd));
+            out.push((off, read_tp, fd));
         }
         out
     }
