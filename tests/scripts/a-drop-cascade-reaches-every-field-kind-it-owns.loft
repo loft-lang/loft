@@ -19,13 +19,24 @@
 // pass on a harness that had simply stopped recording.
 //
 // @falsified-at: d7527ced7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
-//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_tup is the first moving cell on
-//   both backends (the run stops at its first failed assertion); the other four the fix moves
-//   are c_tup2, c_null, c_enum and c_tupn, each measured at ZERO releases on that build and
-//   one here.  HOLDS: leak, panic, free-refusal, expectations are equal on both trees.
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
 // @falsified-by: tests/falsified/a-drop-cascade-reaches-every-field-kind-it-owns.patch —
 //   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
 //   native 1 assertion failures -> 0.
+// CHANNEL: exit and the assertion count, identically on both backends.  NOT the leak
+//   channel: a member the cascade never reached is still freed with the record that holds
+//   it, so nothing leaks and a run scored on leaks learns nothing here.  What is lost is the
+//   author's RELEASE, which only an assertion on the hook's own trace can see.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts
+//   the string, so an ordinary run on either backend reports it.
+// WITNESS: on the control `c_tup` drains `alive2` where the fix drains `alive2,2` — the
+//   record is built, read and dropped and `CfH`'s hook never runs.  `c_tup2`, `c_null`,
+//   `c_enum` and `c_tupn` each read ZERO releases there and one here; the run stops at
+//   `c_tup` because it is the first of them.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and
+//   on both backends.  The cells the fix must NOT touch stay put: `c_rec`, `c_vec`, `c_nest`
+//   and `c_vtup` pass on the control too, `c_none` and `c_unit` release nothing on either,
+//   and the `c_two` CONTROL reads two releases on both.
 //
 // The trace file is this guard's own, so a sibling guard run beside it cannot read its
 // notes.
