@@ -157,3 +157,16 @@ target-*/
 # Gate verdict written by scripts/ci-run.sh — local run state, never committed.
 .ci-verdict
 
+# ⚠ A ROOT `loft.toml` MAKES THIS REPO A LOFT PACKAGE, and that changes two
+# repo-wide behaviours at once — neither of them anywhere near the file:
+#   * diagnostic REACH is scoped to the nearest `loft.toml` ABOVE the entry, so
+#     `source_is_owned` flips and the lint tests see a different diagnostic set;
+#   * `use` resolution gains a declared-dependency set.
+# Measured 2026-09-10: one stray file failed 4 tests across two unrelated
+# binaries — `lsp_diagnostics` (2) and `n3_use_native` (2) — and removing it
+# alone made all 19 pass.  Nothing in the diff that carried it looked related to
+# either binary, which is exactly why this is ignored rather than remembered.
+# `loft.lock` and `.loft/` (its siblings) were already ignored; this one was not.
+# One `loft install` run in a checkout root is enough to recreate it.
+/loft.toml
+
