@@ -1,8 +1,8 @@
 diff --git b/src/data.rs a/src/data.rs
-index 3cfbaa211..d247df9f4 100644
+index 1086af28e..d247df9f4 100644
 --- b/src/data.rs
 +++ a/src/data.rs
-@@ -7906,44 +7906,6 @@ impl Data {
+@@ -7906,53 +7906,6 @@ impl Data {
      ///
      /// Idempotent: returns the existing def_nr on subsequent calls
      /// for the same tuple shape.
@@ -29,9 +29,18 @@ index 3cfbaa211..d247df9f4 100644
 -    ///
 -    /// The dep is a LIFETIME fact and is untouched on the variable's own type; only the
 -    /// storage spelling is normalised.
+-    /// ⚠ A `u16::MAX` in the list is not a lifetime dep at all — it is the pointer/share
+-    /// MARKER, which is how an explicitly written `reference<T>` spells itself, and `(L-Ref)`
+-    /// keeps that a 4-byte record pointer rather than inline bytes. Stripping it would inline
+-    /// the target: `struct Node { p: (integer, reference<Node>) }` became a type of infinite
+-    /// size and loft#1498's cycle report refused it, which is that guard's own control
+-    /// (`parse_errors::a_reference_self_tuple_member_is_not_a_cycle`). So the normalisation
+-    /// applies to an INFERRED dep list only, and a marked list is left exactly as written.
 -    pub fn tuple_member_stored(t: &Type) -> Type {
 -        match t {
--            Type::Reference(d, deps) if !deps.is_empty() => Type::Reference(*d, Deps::none()),
+-            Type::Reference(d, deps) if !deps.is_empty() && !deps.contains(&u16::MAX) => {
+-                Type::Reference(*d, Deps::none())
+-            }
 -            Type::Optional(inner) => {
 -                let base = Self::tuple_member_stored(inner);
 -                if &base == inner.as_ref() {
@@ -47,7 +56,7 @@ index 3cfbaa211..d247df9f4 100644
      pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {
          // Refuse while any member is still an unresolved forward reference.  BOTH things
          // this builds are derived from the members' spellings, and neither survives the
-@@ -7988,10 +7950,6 @@ impl Data {
+@@ -7997,10 +7950,6 @@ impl Data {
          let mut indices: Vec<u16> = Vec::with_capacity(types.len());
          let mut sizes_aligns: Vec<(u16, u8)> = Vec::with_capacity(types.len());
          for (i, t) in types.iter().enumerate() {
