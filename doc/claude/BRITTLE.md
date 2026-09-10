@@ -343,7 +343,13 @@ a compile error**:
   over-reach, measured as `1184-a-view-assigned-back-onto-its-own-source.loft` reading `len 0`
   where 8 is right across six cells (a view assigned back onto its own source lands in a store
   the source no longer names) plus a `??` default arm's mint released twice.  The three conditions
-  are ONE pairing, and the two wrong answers it can give are on opposite sides;
+  are ONE pairing, the two wrong answers are on OPPOSITE sides, and the middle is NARROW: three
+  candidate predicates were measured, two of them wrong in opposite directions, and every one of
+  the 70 targeted tests across eight guards was green on each.  `formal/ownership.md` D-own-41
+  carries all three.  ⚠ The leak direction is invisible to a plain run — `--interpret`,
+  `--native` and `--tests` on `303-ref-reassign-free.loft` are all clean, because only `wrap`'s
+  in-process SUITE run arms the leak gate.  Verify this area with
+  `cargo test --release --test wrap loft_suite` and nothing cheaper;
 - the per-site ownership reads (`owned_ref`, `witnessed`, `nullable_local`, `proxy_says_owned`)
   are asked by several of the arms above at different strengths, so a condition that looks local
   is usually one of a pair.

@@ -714,6 +714,18 @@ fail, with nothing recording when it stopped being checkable.  Gating on resolva
 move that looks right and is not: it reddens the 124 immediately, and reddens MORE in a fresh
 clone than in a warm one, so CI would fail on a clean checkout while passing locally.
 
+⚠ **The same presence-only check accepts a receipt that was never DERIVED, which is worse than an
+unresolvable one.**  An unresolvable ref was real once; a placeholder never was.  `// @falsified-at:
+PENDING` satisfies both gates — `doc_hygiene`'s `contains` and `falsify-review.py --check`, which
+reads the four FIELDS beside the line and not the line's own value — so a guard can ship looking
+falsified while nothing has ever been scored against it.  Measured 2026-09-11: two new guards sat
+at `PENDING` through a green `doc_hygiene` and only a by-hand read caught them.  This is the same
+class as a number restated in prose beside a gated one: **the check makes the line look
+load-bearing and thereby makes its emptiness invisible.**  Unlike resolvability, rejecting a
+placeholder has no fresh-clone asymmetry — the value is in the file — so the gate CAN be tightened
+here; what it needs is a list of spellings to refuse, which is a decision about the contract rather
+than a transcription, and is why this is written down rather than implemented in passing.
+
 #### The patch receipt — `@falsified-by:`
 
 The durable form carries the defect instead of pointing at it.

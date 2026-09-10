@@ -2223,27 +2223,36 @@ impl State {
             // OpFreeRefIfDistinct — which also degrades to a no-op for the
             // S1 in-place shapes (the new value IS the old store).
             let rhs_reads_v = value.reads_var(v);
-            // @FR-O-Detach — does the value being assigned MAY-ALIAS `v`'s own store, so that
+            // @FR-O-Detach — may the value being assigned name `v`'s OWN store, so that
             // re-initialising that store IN PLACE would wipe the record the copy reads from?
             //
-            // `rhs_reads_v` alone cannot answer it.  A `??` (and an `if`-valued arm) HOISTS the
-            // read of `v` into a temporary in a PRIOR statement — which is the lowering
-            // `(O-Detach)` itself prescribes — so `c = keep(c ?? K { x: 9 })` arrives here as
-            // `Set(c, Call(keep, [__lift_1, …]))` and mentions `c` nowhere.  The hoist moved the
-            // READ; it did not move the VALUE, because `__lift_1` is bound to `c` and so names
-            // c's store (its dep list says `["__ref_p2_1", "c"]`).
+            // Three facts were tried here and two of them are wrong in opposite directions;
+            // the measurements are in `formal/ownership.md` D-own-41, and the short form is:
             //
-            // So the second disjunct is the CALLEE's own fact: a return whose dep names a
-            // visible parameter hands back a store the caller passed IN, and any argument may be
-            // the hoisted alias of `v`.  `returns_borrowed_view` is the canonical spelling of
-            // that (the sibling gate below reads it too, and @PLN85 D-own-1 made it the one
-            // home).  Conservative in the admissible direction: a FRESH destination is always
-            // correct and only costs an allocation, while an in-place one is correct only when
-            // the source is distinct — the asymmetry `(H-Drop)` names for a drop and
-            // `(O-Detach)` names for a detach.
-            let rhs_may_alias_v = rhs_reads_v
-                || crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-                    .is_some_and(|fn_nr| stack.data.def(fn_nr).returns_borrowed_view());
+            // - `value.reads_var(v)` is SYNTACTIC and answers NO for the defect, because a `??`
+            //   HOISTS the read of `v` into a temporary in a PRIOR statement — the lowering
+            //   `(O-Detach)` itself prescribes — so the assignment mentions `v` nowhere.  It also
+            //   answers YES for `s = grow(s)`, which needs the in-place destination and leaks one
+            //   store per loop pass without it.
+            // - `Def::returns_borrowed_view` (the return's dep names a visible param) is true for
+            //   a callee that MINTS its record and carries a dep through a `text` field, so it
+            //   forces freshness on the same leaking shape.
+            //
+            // The fact that separates them is the ORACLE's borrow BASE: a `Borrowed`/`Join` whose
+            // base may hold `v`'s store.  The `??` hoist temp carries a dep naming `v` —
+            // `__lift_1` reads `["c", "__ref_p2_1"]` — because the hoist moved the READ and not
+            // the VALUE.  A view of some OTHER binding has a base whose deps do not name `v`
+            // (measured: `w`, `d`, `target` in `1184-a-view-assigned-back-onto-its-own-source`,
+            // all with empty dep lists), and that population needs the in-place destination
+            // precisely because it is assigning a view back onto its own source.
+            let rhs_may_alias_v =
+                match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value) {
+                    crate::use_analysis::Own::Borrowed { base }
+                    | crate::use_analysis::Own::Join { base } => {
+                        base == v || stack.function.tp(base).depend().contains(&v)
+                    }
+                    _ => false,
+                };
             // loft#615 — an OWNED heap variable that is re-assigned must free the
             // store it is dropping, and `Vector` was missing from this list while
             // `Reference` / `Enum` had it.  A `??` materialises its subject into a
