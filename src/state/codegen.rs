@@ -2357,12 +2357,7 @@ impl State {
             // in-place `OpDatabase` would write the copy into the viewed record.
             let witnessed = stack.function.owner_witness(v).is_some();
             let mut stash_old_for_post_free = false;
-            // `rhs_may_alias_v`, not `rhs_reads_v`: this stash is what pairs a DEFERRED,
-            // FRESH destination with a free of the store the local is leaving behind.  The two
-            // decisions have to move together — a fresh allocation that does not stash leaks the
-            // old store, which `303-ref-reassign-free.loft` measured the moment the freshness
-            // gate widened without this (2 stores at program exit).
-            if owned_ref && (rhs_may_alias_v || rhs_is_new_record || nullable_local) {
+            if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(free_pos);
@@ -2549,7 +2544,7 @@ impl State {
                     // re-init stays here, before the copy sequence.
                     // A witnessed local whose value READS it keeps its slot until the
                     // call has run (@FR-O-Detach) and takes the fresh store afterwards.
-                    let alloc_after = stash_old_for_post_free || witnessed || rhs_may_alias_v;
+                    let alloc_after = stash_old_for_post_free || (witnessed && rhs_reads_v);
                     if !alloc_after {
                         let slot_offset = stack.var_pos(v);
                         stack.add_op("OpInitRef", self);
@@ -2656,22 +2651,38 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
-                    if witnessed || rhs_may_alias_v {
+                    if (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v) {
                         // The call is done with the old store; take a FRESH one.  Two reasons,
-                        // and the rule behind each is why this is not gated on `witnessed`
-                        // alone: a WITNESSED local may be holding a view, so an in-place
-                        // `OpDatabase` would write the copy into the viewed record
-                        // (@FR-O-Witness's own clause); and a value that may alias `v`'s store
-                        // would be WIPED by that same in-place re-init before the copy reads it
-                        // (@FR-O-Detach).
+                        // each from its own rule, which is why this is not `witnessed` alone: a
+                        // WITNESSED local may be holding a view, so an in-place `OpDatabase`
+                        // would write the copy into the viewed record (@FR-O-Witness's own
+                        // clause); and a value that MAY ALIAS `v`'s store would be WIPED by that
+                        // same in-place re-init before the copy reads it (@FR-O-Detach).
                         //
-                        // Read `witnessed && rhs_reads_v`, it answered no for a nullable local
-                        // reassigned from a borrowed-view call — `c: K? = mk(); c = keep(c ?? K
-                        // { x: 9 })` — whose hoisted argument still named c's store: the
+                        // Asked as `witnessed && rhs_reads_v`, it answered no for a nullable
+                        // local reassigned from a borrowed-view call — `c: K? = mk(); c = keep(c
+                        // ?? K { x: 9 })` — whose hoisted argument still named c's store: the
                         // re-init wiped it and the copy read back the type's ZERO, on
                         // `--interpret` only, where `--native`'s runtime same-store passthrough
-                        // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly.  That
-                        // is `(O-NoDiverge)` broken by a guard narrower than the rule it cites.
+                        // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly — one
+                        // question, two decoders, and the decoders are the two BACKENDS
+                        // (@FR-O-NoDiverge, `formal/ownership.md` D-own-41).
+                        //
+                        // ⚠ The second disjunct is conjoined with `stash_old_for_post_free` and
+                        // both halves are load-bearing.  That flag is what emits the
+                        // `OpFreeRefIfDistinct` for the store `v` is LEAVING, so a fresh
+                        // allocation without it leaks the old one (measured:
+                        // `303-ref-reassign-free.loft`, 2 stores at exit).  And it is what
+                        // confines this to the population that already DEFERS the re-init past
+                        // the call: forcing freshness more widely moved a view assigned back
+                        // onto its own source into a store the source no longer names
+                        // (`1184-a-view-assigned-back-onto-its-own-source.loft`, `len 0` where 8
+                        // is right, six cells) and double-released a `??` default arm's mint.
+                        // Freshness, the deferral and the post-free are ONE pairing in three
+                        // conditions — BRITTLE.md § 7b.
+                        //
+                        // A nullable local always reaches it (`nullable_local` sets the flag), so
+                        // the defect's own population is covered without widening the flag.
                         stack.add_op("OpInitRef", self);
                         self.code_add(stack.var_pos(v));
                     }

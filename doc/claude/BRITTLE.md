@@ -316,6 +316,51 @@ depends on.
 
 ---
 
+## 7b. `src/state/codegen.rs::scan_set` — paired conditions where a partial edit LEAKS
+
+**Files:** `src/state/codegen.rs` (the `Set`-into-a-heap-local arm), `src/scopes.rs::scan_set`.
+
+**What it does:** Emits a reassignment of a heap-record local: decide whether the destination is
+re-initialised IN PLACE or allocated FRESH, whether that happens BEFORE or AFTER the right-hand
+side is evaluated, and whether the store being left behind is stashed for a post-assignment free.
+
+**Signal:**
+- `N store(s) leaked at program exit` from a corpus guard, naming a file that has nothing to do
+  with the change (`303-ref-reassign-free.loft` is the one that fires first);
+- a wrong VALUE rather than a crash, when the destination is prepared before the source is read;
+- a divergence between `--interpret` and `--native` on a program that looks backend-neutral.
+
+**Risk — the shape, not any one condition.** These decisions are separate boolean expressions
+over the same facts, and **several of them must move TOGETHER or the result is a leak rather than
+a compile error**:
+
+- the FRESHNESS gate (allocate a new store vs re-init the local's own) and the STASH that frees
+  the store being left behind (`stash_old_for_post_free`): widening freshness alone leaks the old
+  store — `303-ref-reassign-free.loft`, 2 stores at exit;
+- the FRESHNESS gate and the DEFER decision (`alloc_after`): deferring without freshness gives an
+  in-place re-init AFTER the call, which wipes a source the call handed back (`@FR-O-Detach`,
+  `formal/ownership.md` D-own-41) — and forcing freshness WITHOUT the deferral is the opposite
+  over-reach, measured as `1184-a-view-assigned-back-onto-its-own-source.loft` reading `len 0`
+  where 8 is right across six cells (a view assigned back onto its own source lands in a store
+  the source no longer names) plus a `??` default arm's mint released twice.  The three conditions
+  are ONE pairing, and the two wrong answers it can give are on opposite sides;
+- the per-site ownership reads (`owned_ref`, `witnessed`, `nullable_local`, `proxy_says_owned`)
+  are asked by several of the arms above at different strengths, so a condition that looks local
+  is usually one of a pair.
+
+⚠ **And the interpreter's arm has a NATIVE twin** (`src/generation/dispatch.rs`) that answers the
+same questions with a runtime test where this one uses a static predicate.  A fix applied to one
+and not the other is invisible to the differential oracle, because that oracle compares the two
+backends and the partial fix is what made them disagree — see D-own-41, which shipped a two-line
+wrong value for a cycle exactly that way.
+
+**Hardening path:** the facts want naming once and reading everywhere — `rhs_may_alias_v` is the
+first of them to get a single home, read by both the freshness gate and the defer decision so
+they cannot drift.  The rest are still per-site.  Beyond that, the missing instrument is a census
+over `(H-Drop)`'s three deaths (scope end, displacing reassignment, container cascade), counted
+per RESOURCE rather than per record: every defect in this section's history has been a hook or a
+free that no single gate represents, and `LOFT_OWN_ORACLE=check` is free-side only.
+
 ## 8. `src/fill.rs` — 233 opcodes, auto-generated, hand-maintained
 
 **Files:** `src/fill.rs` (~6000 lines), `tests/issues.rs::regen_fill_rs`

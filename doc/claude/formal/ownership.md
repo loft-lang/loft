@@ -408,6 +408,17 @@ this (`generation/dispatch.rs`'s `PASSTHROUGH`, whose comment cites this rule), 
 backends were wrong the other way round (loft#1017b).  So `(O-NoDiverge)` was broken by a fix that
 had only ever been applied to one side.
 
+⚠ **That is a hiding place, not bad luck, and it generalises past this entry.**  This is one
+question answered by two decoders — the usual shape — but here the two decoders are the two
+BACKENDS, and the instrument that normally finds that shape is a differential run comparing them.
+Repairing one backend and not the other therefore breaks the very cross-check that would report
+it, and the defect becomes invisible to the @PLN89 oracle by construction: the oracle asks whether
+the two agree, and the repair is what made them disagree.  A same-store, same-rule fix landed in
+`generation/dispatch.rs` or `state/codegen.rs` alone should be read as an OPEN deviation in the
+other until measured, whichever direction it goes.  Measured cost of not doing that here: a
+two-line wrong value shipped for a cycle, found only because an unrelated arming defect was being
+corrected on top of it.
+
 **Two reasons it stayed invisible**, and they are the reusable part:
 
 - The condition that forces a FRESH destination was gated on the local being **WITNESSED**, and
