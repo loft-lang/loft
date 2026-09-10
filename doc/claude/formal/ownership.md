@@ -3,13 +3,17 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# formal/ownership.md — the `deps` ownership / borrow system (strict; register at `OPEN: 0`)
+# formal/ownership.md — the `deps` ownership / borrow system (strict; register at `OPEN: 1`)
 
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model, and as of 2026-07-04 the deviation register is at **`OPEN: 0`** — all
-> five `D-own-*` deviations are CLOSED on the **shipped path** (@PLN85 store-lifetime,
+> ownership model.  The register is at **`OPEN: 1`** — `D-own-40` (2026-09-11, below:
+> `(O-Witness)` armed where its premise is false).  It read `OPEN: 0` from 2026-07-04 until
+> then, and what moved it was not a new defect but a VALIDATION of loft#1517 against these
+> rules; the zero had been re-measured against its oracle, which covers the JOIN family and
+> does not ask whether a witness should exist at all.  The five original `D-own-*`
+> deviations remain CLOSED on the **shipped path** (@PLN85 store-lifetime,
 > @PLN87 the `&` law both landed), validated by the @PLN89 differential oracle + the
 > `program_ownership` fuzzer. This is *validation, not a machine-checked proof*: the
 > `Join` fact still resolves through a runtime witness, and the pre-fact shape-scans
@@ -356,7 +360,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-39` opened and CLOSED 2026-09-10, below.  Every earlier deviation this doc has carried is closed; the
+**OPEN: 1** — `D-own-40`, below: `(O-Witness)` is armed for locals whose assignments do NOT
+mix, and while one is armed `(O-Owner)`'s single owner is broken.  `D-own-39` opened and CLOSED
+2026-09-10, below.  Every earlier deviation this doc has carried is closed; the
 record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
 closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
 hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
@@ -376,6 +382,59 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-40 — OPEN (2026-09-11): `(O-Witness)` is armed where its premise is false, and `(O-Owner)` breaks while it is
+
+`(O-Witness)` conditions the runtime witness on the local's assignments MIXING ownership — *"one
+assignment hands a heap-record local a store of its own and another hands it a VIEW"*.  Two
+measured populations carry a witness with no mix at all, so the release placement `(O-Override)`
+then vetoes is replaced by one that does not cover the same deaths.  This is the ownership half
+of loft#1517; [heap.md](heap.md) `D-heap-6` is the `(H-Drop)` half and carries the guard.
+
+- `x: SE = A { k: 3 }; x = a` — a CONSTRUCTION and a whole-value COPY.  Classification arm (e)
+  makes a record construction `Owned` (fresh, `(O-Owner)`).  For the copy the rule is
+  `binding.md (B-Copy)`, which names this spelling outright — *"a heap WHOLE-VALUE … a
+  struct-enum `c = e`: the bound variable is INDEPENDENT"* — so it is a second record the
+  binding alone names, which is owning.  (The dataflow arm that carries it is not cited here:
+  (c′)'s `reminted` test is about the LOCAL being `OpDatabase`'s arg-0, and a struct-enum
+  literal mints into a work-ref instead, so naming that arm would be an attribution rather
+  than a reading.)  Two owning assignments, no view, and a witness.
+- `c: K? = K { x: 7 }; c = keep_k(c ?? …)` where `fn keep_k(s: K) -> K { s }` — a CONSTRUCTION
+  and a call whose return BORROWS its parameter.  `(O-Move)` is explicit for that case: *"if the
+  return borrows a parameter, the return type records it and the caller COPIES to obtain its own
+  store"*.  So the local owns after the call, which is measured rather than read off the rule —
+  `c.x = 99` leaves the source at `7` on both backends, where a `(B-View)` projection writes
+  through.  Two owning assignments again.
+
+The misclassification is one `Other` read by two sites for two different questions (D-heap-6 has
+the mechanism).  What belongs HERE is the consequence for these rules, and there are two:
+
+**`(O-Owner)` is broken for as long as the witness is armed.**  A construction delivers through a
+work-ref, and `scan_set`'s hand-off disarm — which writes the sentinel into that work-ref so the
+binding becomes the store's one claimant, `D-heap-5`'s cure — is conditioned on
+`proxy_says_owned`, which a witnessed local is not.  So the work-ref and the local both name the
+store: *"every heap store has exactly one owner at any moment"* does not hold on that path.
+⚠ `witness_set_kind`'s own comment reasons FROM that state — the store is *"the work-ref's and
+not solely the local's"* — and concludes the local does not own.  The rule says the state should
+not exist; the disarm should fire.  Measured: with the witness suppressed the disarm DOES fire
+and the local adopts the store outright, so `(O-Owner)` holds for every non-witnessed spelling.
+
+**The cure ORDER is settled by these rules, not a design call.**  `D-heap-6` recorded it as an
+open question — either the `__lbo_` path mis-frees a local the witness was covering, or such a
+local must stay witnessed.  `(O-Witness)` and `(O-Move)` decide it: the local must NOT be
+witnessed, so the witness on it is this deviation and the other path's wrong answer (`0` where
+`7` is right) is the defect to fix FIRST.  Correcting the arming population before that is a
+value regression, which is why both cures measured in `D-heap-6` regress — but the order is
+derived now rather than guessed, and "keep the witness because removing it breaks something" is
+not available as an answer.
+
+⚠ **No gate sees this, and the reason is structural.**  `(O-Override)`'s gate is
+`ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`), which reds on a FREE of a never-free
+binding.  Run over both guards it reports `clean — 0 RED`, because nothing frees illicitly: what
+is missing is a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not ordered the way a
+free's are, and this is that asymmetry showing up in the instruments — the free side has a
+checker and the drop side has only per-guard traces.  A gate for `(H-Drop)`'s three deaths is
+the gap, and it would have caught both populations above.
 
 ### D-own-39 — OPENED AND CLOSED (2026-09-10): a per-path hand-off to a SHARED destination
 
