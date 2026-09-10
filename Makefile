@@ -2102,6 +2102,17 @@ ci: ci-guard
 	#      its thread count; a second gate QUEUES (result.txt says since when) and the
 	#      first runs at full width.  `LOFT_GATE_PARALLEL=1` opts back into running
 	#      beside another gate, throttled by CI_LIVE_GATES as before.
+	#      The wait is BOUNDED PER ITERATION (`flock -w 60`) and re-reports each minute
+	#      through `scripts/gate_lock.sh why`, because the old form printed one line and
+	#      then blocked in an unbounded `flock 9` forever: loft#1504 had two checkouts
+	#      queued 48 and 20 minutes behind an orphan at load 0.05, each reporting only
+	#      "QUEUED behind another gate on this box" — a claim nothing ever checked, about
+	#      a gate that did not exist.  The loop does NOT time out and fail: a slow box
+	#      must not become a failed gate.  What changed is that it cannot be SILENT, and
+	#      that `ci-run.sh status` now separates QUEUED (a live gate holds it — keep
+	#      waiting) from BLOCKED (nothing running accounts for the lock — a bug, stop).
+	#      Every reader of `.ci-running` already gated on `kill -0`; the LOCK was the one
+	#      place that did not, so the question now has ONE home in gate_lock.sh.
 	#      The whole chain after the lock runs in a SUBSHELL with fd 9 CLOSED (`) 9>&-`),
 	#      because the lock is an inheritable descriptor and a gate spawns processes that
 	#      can outlive it — `engine_host_kernel.rs` starts a `loft` server per scenario, and
@@ -2126,11 +2137,17 @@ ci: ci-guard
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
 	{ if [ -n "$${LOFT_GATE_PARALLEL:-}" ]; then :; else \
-	    exec 9>/tmp/loft-gate.lock; \
+	    exec 9>>/tmp/loft-gate.lock; \
 	    if ! flock -n 9; then \
-	      echo "make ci: QUEUED behind another gate on this box since $$(date -u +%TZ) — one gate at a time (LOFT_GATE_PARALLEL=1 to run beside it, throttled)" | tee -a result.txt; \
-	      flock 9; echo "make ci: gate lock acquired at $$(date -u +%TZ)" | tee -a result.txt; \
+	      echo "make ci: QUEUED behind another gate on this box since $$(date -u +%TZ) — $$(scripts/gate_lock.sh why)" | tee -a result.txt; \
+	      w=0; \
+	      until flock -w 60 9; do \
+	        w=$$((w+60)); \
+	        echo "make ci: still queued $${w}s — $$(scripts/gate_lock.sh why)" | tee -a result.txt; \
+	      done; \
+	      echo "make ci: gate lock acquired at $$(date -u +%TZ) after $${w}s" | tee -a result.txt; \
 	    fi; \
+	    scripts/gate_lock.sh claim $$$$ "$$(pwd -P)"; \
 	  fi; } && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
@@ -2142,6 +2159,7 @@ ci: ci-guard
 	scripts/check_doc_drift.sh >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
+	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
 	cargo build --all-targets >> result.txt 2>&1 && \

@@ -221,6 +221,51 @@ test files** (`engine_host_kernel.rs` alone has 14), so it wants a shared spawn 
 59 edits that drift apart.  The count was re-measured here rather than carried: the first
 reading of it was 37 across 11.
 
+**And the reporting was the other half — the 90 minutes went to a MESSAGE, not to the lock.**
+Closing the descriptor stops this cause; it does nothing for the next one, because the waiter
+could not tell a real queue from a stuck lock and said the reassuring thing either way. Three
+defects stacked in six lines: `flock 9` waited unbounded, the *"QUEUED behind another gate"*
+line asserted a fact nothing verified, and it printed ONCE and then went silent — so a static
+line read as normal while both boxes idled. Meanwhile every reader of `.ci-running` already
+gated on `kill -0` (seven sites: `ci-run.sh`, `box-claim.sh`, `Makefile` ×3). The LOCK was the
+one place that never asked, and it is the one that hung.
+
+So the question has ONE home, `scripts/gate_lock.sh` — `state` · `why` · `doctor` · `selftest`
+— consulted by the Makefile's waiter, by `ci-run.sh status`, and by `ci-run.sh doctor` alike,
+because a second decoder of it is what produced the defect. It answers `FREE`,
+`HELD_LIVE <pid> <cwd>` or `HELD_ORPHAN <pid> <cwd>`:
+
+* the waiter re-reports every 60 s (`flock -w 60` in a loop) with the holder and the load. It
+  deliberately does NOT time out and fail — a slow box must not become a failed gate; what it
+  may not do is be silent.
+* `ci-run.sh status` splits the two answers that need OPPOSITE responses. **QUEUED** (a live
+  gate in another checkout holds it) keeps `wait` waiting, and now says so truthfully instead
+  of reporting `RUNNING` while nothing compiles. **BLOCKED** (nothing running accounts for the
+  lock) exits 3, so `wait` stops instead of hanging as before.
+* `ci-run.sh doctor` is the front door for *"why is my gate not running"*: fd holders with
+  their ppid and cwd, orphans flagged, the load, each checkout's claim, and a verdict.
+  Enumerating that by hand is what this cost twice in one session.
+
+⚠ **The holder record never decides.** `gate_lock.sh claim` writes `<pid> <cwd>` after
+acquiring, but the state is derived from the KERNEL — a holder is accounted for when its
+`ppid != 1` (an orphan is reparented to init) or a live `.ci-running` names it. The record only
+supplies a human label. That distinction was measured the hard way while building this: the
+first version read a MISSING record as "orphan", and loft2's gate — mid-`cargo-nextest`, no
+record because it ran the older Makefile — was confidently reported as an orphan whose pid
+should be killed. A verdict that tells an operator to kill a live gate is worse than the
+silence it replaces, so the live-holder-without-a-record case is a permanent cell in the
+selftest (`make ci` runs it beside the other script self-tests; cells 3 and 4 are the two
+observations that look identical and need opposite verdicts).
+
+⚠ **`make -n ci` RUNS the gate — it is not a dry run.** The whole `ci` recipe is ONE
+backslash-continued line, and it contains `$(MAKE)`; make executes a recipe line mentioning
+`$(MAKE)` even under `-n`, so the entire chain runs. Measured 2026-09-10: `make -n ci` as a
+"does the recipe parse" check took the box lock, wrote the holder record and started
+compiling — while an unrelated gate's `result.txt` was still the current one, so the run
+appended into a file whose header names a DIFFERENT run, which is this document's own
+stale-verdict hazard arriving by a new route. To check the recipe's shape, read it, or run
+`make --dry-run` on a target that does not recurse.
+
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
 test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`

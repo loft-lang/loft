@@ -133,6 +133,34 @@ case "${1:-status}" in
     # for RUNNING and left open for the case a waiter actually reads.  Measured: a `PASSED`
     # from 2026-09-08 was taken for the current tree on 2026-09-10.
     if [ "$st" = RUNNING ]; then
+      # loft#1504 — a gate BLOCKED on the box lock is alive and compiling nothing, and
+      # reporting it as RUNNING is what cost 90 minutes: both agents polled this line,
+      # read "RUNNING for 5345s", and took it for an ordinary long gate.  The lock's
+      # holder is the fact that separates the two, and it is asked ONCE, in
+      # gate_lock.sh — the same answer the waiter prints, so the two cannot drift.
+      # Only meaningful while we do NOT hold the lock ourselves: a running gate holds it.
+      # Two different answers, because they need opposite responses.  A queue behind a
+      # LIVE gate is legitimate and `wait` must keep waiting — it just has to SAY so
+      # instead of claiming to run.  A lock held by something that is not a running gate
+      # is a BUG (loft#1504) and `wait` must stop, or it hangs exactly as before.
+      here=$(pwd -P); set -- $(scripts/gate_lock.sh state 2>/dev/null)
+      lkst=${1:-}; lkpid=${2:-0}; lkcwd=${3:-}
+      blocked=""
+      case "$lkst" in
+        HELD_LIVE)
+          if [ "$lkcwd" != "$here" ]; then
+            echo "QUEUED for $(( $(date +%s) - epoch ))s — nothing compiling here; $(scripts/gate_lock.sh why 2>/dev/null)"
+            exit 0
+          fi ;;
+        HELD_ORPHAN)
+          # Held while no running gate accounts for it.  `why` already states the fact and
+          # names the remedy, so this adds only the duration — saying it twice is noise.
+          blocked=1 ;;
+      esac
+      if [ -n "$blocked" ]; then
+        echo "BLOCKED for $(( $(date +%s) - epoch ))s — $(scripts/gate_lock.sh why 2>/dev/null)"
+        exit 3
+      fi
       echo "RUNNING ${rest} for $(( $(date +%s) - epoch ))s"
     else
       age=$(( $(date +%s) - epoch ))
@@ -154,8 +182,14 @@ case "${1:-status}" in
     # process that is already gone.
     while :; do
       out=$("$0" status); rc=$?
-      case "$out" in RUNNING*) sleep 15 ;; *) echo "$out"; exit $rc ;; esac
+      case "$out" in RUNNING*|QUEUED*) sleep 15 ;; *) echo "$out"; exit $rc ;; esac
     done
     ;;
-  *) echo "usage: ci-run.sh {start|status|wait}"; exit 1 ;;
+  doctor)
+    # The front door for "why is my gate not running".  Delegates to the one home for the
+    # lock question rather than restating it — enumerating fd-9 holders by hand is what
+    # loft#1504 cost twice in one session.
+    exec scripts/gate_lock.sh doctor
+    ;;
+  *) echo "usage: ci-run.sh {start|status|wait|doctor}"; exit 1 ;;
 esac
