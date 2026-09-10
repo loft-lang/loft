@@ -250,8 +250,20 @@ impl Claims {
     }
 
     /// Forget every claim, keeping the allocation for the store's next layout.
+    ///
+    /// The WIDTH resets with the claims.  `Vec::clear` keeps the capacity, so the next
+    /// occupant re-grows into the same allocation without inheriting the previous one's
+    /// width.  Carrying the width across occupants is what makes reusing a slot cost
+    /// O(the widest that slot has ever been) instead of O(what it now holds): the set is
+    /// indexed by record POSITION and only ever grows, so a slot that once held a large
+    /// collection charged every later occupant for it (loft#1507).
+    ///
+    /// This is a cost change, not a semantic one.  `contains` and `remove` read a missing
+    /// word and a zero word alike (`Vec::get` answers `None`), and `insert` re-grows on
+    /// demand — so after a clear the width again describes the highest position claimed,
+    /// which is what this type's own description promises.
     fn clear(&mut self) {
-        self.bits.fill(0);
+        self.bits.clear();
         self.live = 0;
     }
 
@@ -4560,7 +4572,90 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_STORE_WORDS, Store, slack_target};
+    use super::{Claims, MAX_STORE_WORDS, Store, slack_target};
+
+    /// loft#1507 — a recycled slot must not inherit the widest claims set it ever held.
+    ///
+    /// [`Claims`] is indexed by record POSITION and only ever grows, so a set that kept its
+    /// width across occupants made re-initialising a slot cost O(the widest that slot has
+    /// ever been) — on every reuse, whatever the new occupant holds.  A program that churns
+    /// stores against a constant working set then pays a linear allocation count times a
+    /// linear width, and its total cost is quadratic in its input.
+    ///
+    /// Asserted as a WIDTH and not as a timing on purpose: the width is deterministic, so
+    /// it transfers between machines exactly and cannot be argued with, where the timing
+    /// this defect was found by is neither.
+    #[test]
+    fn a_cleared_claims_set_does_not_inherit_its_width() {
+        let mut claims = Claims::default();
+        for pos in [1u32, 64, 4096, 65_536] {
+            claims.insert(pos);
+        }
+        let wide = claims.bits.len();
+        assert!(
+            wide > 1024,
+            "the set grew to describe position 65536: {wide} words"
+        );
+
+        claims.clear();
+        assert_eq!(claims.bits.len(), 0, "a cleared set describes no position");
+        assert!(
+            claims.bits.capacity() >= wide,
+            "and it keeps the allocation for the slot's next occupant"
+        );
+
+        // The next occupant pays for what IT holds, not for what the slot once held.
+        claims.insert(1);
+        assert_eq!(claims.bits.len(), 1, "one low claim needs one word");
+    }
+
+    /// The control for the guard above: resetting the width changes no answer the set gives.
+    ///
+    /// Without this, the width assertion would pass just as well if `clear` had thrown the
+    /// claims away wrongly — it is the half that says the cheaper clear is the SAME clear.
+    /// Both arms are probed on positions inside the old width, on the boundaries of it, and
+    /// beyond it, before and after the set is re-populated.
+    #[test]
+    fn a_cleared_set_answers_exactly_as_a_zeroed_one_did() {
+        let probe = [0u32, 1, 63, 64, 65, 4095, 4096, 65_535, 65_536, 70_000];
+        let (mut zeroed, mut cleared) = (Claims::default(), Claims::default());
+        for set in [&mut zeroed, &mut cleared] {
+            for pos in [1u32, 64, 4096, 65_536] {
+                set.insert(pos);
+            }
+        }
+        zeroed.bits.fill(0); // what `clear` used to do
+        zeroed.live = 0;
+        cleared.clear(); // what it does now
+
+        for pos in probe {
+            assert_eq!(
+                zeroed.contains(pos),
+                cleared.contains(pos),
+                "contains({pos})"
+            );
+            assert_eq!(zeroed.remove(pos), cleared.remove(pos), "remove({pos})");
+        }
+        assert_eq!(zeroed.len(), cleared.len(), "live counts agree");
+        assert!(cleared.is_empty(), "and the set is empty");
+
+        for pos in [2u32, 63, 4096] {
+            zeroed.insert(pos);
+            cleared.insert(pos);
+        }
+        for pos in probe {
+            assert_eq!(
+                zeroed.contains(pos),
+                cleared.contains(pos),
+                "after the slot is reused: contains({pos})"
+            );
+        }
+        assert_eq!(
+            zeroed.len(),
+            cleared.len(),
+            "and the reused live counts agree"
+        );
+    }
 
     /// loft#1481 — `Store::addr` refuses a field offset that is not aligned for `T`.
     ///
