@@ -322,25 +322,48 @@ that gate, now applied across a network boundary.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 - **D-layout-1** — residual: the load-time schema gate is built and opt-in, and closes fully when a persistence consumer wires `check_beside` into its open path
-- **D-layout-8 — OPEN (2026-09-10, loft#1503):** `(L-Tuple)` requires a tuple's two layout
-  views to compute the SAME offsets and says their agreement *"is part of the rule, not an
-  implementation detail"*.  They do not agree when a tuple type is written BOTH ways in one
-  program: the declared spelling `v: vector<(S, integer)>` lays the struct member out INLINE
-  (`__tuple<S,integer>[16/1]`, and `S` gains the tuple as a parent), the inferred spelling
-  `v = [(s, 5)]` lays it out as a 12-byte `DbRef` (`[20/1]`) — one synthetic def NAME, two
-  layouts, because `Data::tuple_def` keys the def by a name that omits the member
-  representation.  Whichever spelling the parser meets first fixes the layout, and reads
-  through the other answer `null`, a `DbRef`'s words as an integer, or an ICE
-  (`keys.rs`: *"DbRef store_nr 21 is out of range"*), on both backends with nothing said.
-  A signature is enough to trigger it, which makes it consumer-facing: a library `fn f(v:
-  vector<(S, integer)>)` mints the inline layout and every caller's own inferred read of that
-  vector answers null.  Each spelling ALONE is self-consistent, which is why the corpus never
-  caught it.  Closing it needs a design call the rules do not make — `(T-Ref-El)` reads a
-  struct member *"at the element's own offset — the same `(ref, offset)` pair an ordinary
-  struct FIELD uses"* (the inline model), while the record-backed borrow cursor (loft#821,
-  loft#857) and loft#1361's member copy are built on the `DbRef` model.
+
+D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
+views to compute the SAME offsets and says their agreement *"is part of the rule, not an
+implementation detail"*.  They did not agree when one tuple type was written BOTH ways in a
+program.  `Data::tuple_def` names the synthetic def from `Type::name`, which omits a
+`Reference`'s deps, but registered its ATTRIBUTES from the caller's spelling, which carries
+them — so `v: vector<(S, integer)>` laid the struct member out INLINE
+(`__tuple<S,integer>[16/1]`, `S` a child record, tail at 8) while `v = [(s, 5)]` laid it out as
+a 12-byte `DbRef` (`[20/1]`, tail at 12).  One name, two layouts, and whichever spelling the
+parser met FIRST fixed it.
+
+Each spelling alone is coherent — the inferred one writes `OpSetDbRef` and reads `OpGetDbRef`,
+the declared one writes `OpCopyRecord` and reads `OpGetField` — which is why the corpus never
+caught it and why only a MIXED program is wrong.  A signature was enough, so it reached
+consumers: a library `fn f(v: vector<(S, integer)>)` minted the inline layout in pass 1 and
+every caller's own inferred read of that vector answered `null`, while the callee's reads were
+right.  The other two faces were a `DbRef`'s words read as an integer (`(1 << 32) | n`) and,
+with a collection-carrying member, an ICE (*"DbRef store_nr 21 is out of range"*).
+
+**The rules chose the model, and an ordinary struct settled it.**  `struct Holder { s: PS, n:
+integer }` is `[16/8]` with `PS` a child record and the integer at offset 8, written with
+`OpCopyRecord` and read with `OpGetField` — byte for byte the ANNOTATED tuple spelling.  So
+`(L-Tuple)`'s "a tuple is a synthetic `__tuple<…>` struct" and `(T-Ref-El)`'s "read at the
+element's own offset, the same `(ref, offset)` pair an ordinary struct FIELD uses" both name
+INLINE, and the `DbRef` spelling was the deviation.  Its origin is @PLAN22 phase 02b, whose
+`typedef.rs` arm reads a non-empty dep list as *"this attribute holds a 12-byte DbRef"* under a
+comment saying the marker is for closure-record attributes and *"today's user code path always
+has empty deps"* — true until a tuple member could be inferred from a local.
+
+Cured at the one place both derivations meet: `Data::tuple_member_stored` normalises a member's
+storage spelling, and `tuple_def` registers attributes through it, so the NAME and the LAYOUT
+are derived from the same spelling.  The two member READ sites take it too, because they are
+handed the caller's type rather than the def's.  Nothing else moved: the four sites that read
+deps to pick an encoding are unchanged, and they now see a canonical attribute.  The file's own
+header had already reasoned about exactly this for `Type::Unknown` — *"BOTH things this builds
+are derived from the members' spellings"* — and deps were the second instance of that class.
+
+Guard: `a-tuple-type-written-both-ways-has-one-layout.loft`, both orders of both spellings over
+four member kinds and both member positions, each cell reading the tail as well as member 0
+because the two models put the tail at 8 and at 12.
 
 D-layout-7 closed 2026-09-10 (loft#1501): `(L-Narrow)` says a range-annotated integer stores in
 the SMALLEST width that HOLDS its range, and `(L-Narrow-Decode)` says the bytes carry
@@ -390,6 +413,14 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Tuple`, the two views AGREEING under either spelling** — a tuple type written both with a
+  type annotation and left inferred, in one program, resolves to one def with ONE layout, and a
+  read through either spelling answers the same value
+  (`a-tuple-type-written-both-ways-has-one-layout.loft`, both orders × four member kinds ×
+  both member positions, each cell reading the tail as well as member 0 because the two models
+  it used to pick between put the tail at 8 and at 12).  The golden layout test above pins the
+  offsets a given spelling produces; this is the other half — that the SPELLING does not
+  choose them.  See D-layout-8.
 - **`L-Narrow`, the DECLARED width** — a `size(…)` that cannot hold the declaration's own
   `limit(…)` is refused at the declaration, naming both halves and how many values each admits
   (`102b-pass1-expected-errors.loft`).  Checked at the boundary in both directions: every width

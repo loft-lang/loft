@@ -2227,6 +2227,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 tuple_elems.push(tagged);
                 continue;
             }
+            // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
+            // read op, because that is what set the layout.
+            let et = &crate::data::Data::tuple_member_stored(et);
             tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
         }
         v_block(

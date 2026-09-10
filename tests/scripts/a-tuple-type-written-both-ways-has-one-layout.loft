@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `layout.md (L-Tuple)` makes a tuple a synthetic `__tuple<…>` STRUCT and requires its two
+// layout views to compute the SAME offsets — "their agreement is part of the rule, not an
+// implementation detail".  `Data::tuple_def` names that def from `Type::name`, which omits a
+// `Reference`'s deps, so a tuple type spelled BOTH ways in one program resolves to ONE def;
+// its attributes were registered from whichever spelling arrived first, and a member typed
+// from a local carries a dep the same member under a type ANNOTATION does not.  One name, two
+// layouts: 16 bytes with the struct member inline, or 20 with a 12-byte DbRef.
+//
+// Each spelling ALONE is coherent — writer and reader agree within it — so the corpus never
+// caught this.  Only a program that MIXES them reads one model's bytes through the other.
+//
+// A tuple member is an ordinary struct field, so INLINE is the model both converge on:
+// `struct Holder { s: PS, n: integer }` lays PS out as a child record with the integer at
+// offset 8 and reads it with `OpGetField`, which is the annotated spelling's model byte for
+// byte.  `(T-Ref-El)` says the same in words — a member is read "at the element's own offset,
+// the same (ref, offset) pair an ordinary struct FIELD uses".
+//
+// The axis is the SPELLING ORDER, so every cell is a pair and both orders are asked: the
+// wrong-model read answers `null` one way round and a DbRef's own words as an integer the
+// other (`4294967305` = `(1 << 32) | 9`), and with a collection-carrying member it was an ICE
+// (`keys.rs`: "DbRef store_nr 21 is out of range").  Each cell reads the SECOND member too,
+// because the two models put it at 8 and at 12 — a cell that only read member 0 would pass on
+// a build that had merely moved the tail.
+//
+// @falsified-at: df917463c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c1 is the first moving cell on both
+//   backends (the run stops at its first failed assertion); c5 was measured red on that build
+//   too, as the ICE rather than an assertion — it panics in `keys.rs` before any assert runs,
+//   which is why it is placed after the cells that fail by VALUE.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees apart from c5's
+//   panic, which is the defect's own third face.
+//
+// @falsified-by: tests/falsified/a-tuple-type-written-both-ways-has-one-layout.patch — the same
+//   channels, and the receipt that does not decay once `df917463c` is old.  Score it again with
+//   `scripts/falsify.sh tests/scripts/a-tuple-type-written-both-ways-has-one-layout.loft --patch
+//   tests/falsified/a-tuple-type-written-both-ways-has-one-layout.patch`: the patch restores the
+//   dep-carrying member spelling at the def, which is the one edit that brings both layouts back.
+
+struct PH { id: integer }
+struct PS { h: PH }
+struct Flat { id: integer, tag: text }
+struct WithVec { xs: vector<integer> }
+
+fn main() {
+  // c1 — INFERRED first, then DECLARED.  The declared read used to answer a DbRef's words.
+  z1 = PS { h: PH { id: 1 } };
+  a1 = [(z1, 5)];
+  y1 = PS { h: PH { id: 9 } };
+  b1: vector<(PS, integer)> = [(y1, 7)];
+  assert(b1[0].0.h.id == 9, "c1 declared-after-inferred member: {b1[0].0.h.id}");
+  assert(b1[0].1 == 7, "c1 declared-after-inferred tail: {b1[0].1}");
+  assert(a1[0].0.h.id == 1, "c1 the inferred vector still reads: {a1[0].0.h.id}");
+  assert(a1[0].1 == 5, "c1 the inferred vector's tail: {a1[0].1}");
+
+  // c2 — DECLARED first, then INFERRED.  The inferred read used to answer null.
+  z2 = PS { h: PH { id: 2 } };
+  a2: vector<(PS, integer)> = [(z2, 5)];
+  y2 = PS { h: PH { id: 8 } };
+  b2 = [(y2, 6)];
+  assert(b2[0].0.h.id == 8, "c2 inferred-after-declared member: {b2[0].0.h.id}");
+  assert(b2[0].1 == 6, "c2 inferred-after-declared tail: {b2[0].1}");
+  assert(a2[0].0.h.id == 2, "c2 the declared vector still reads: {a2[0].0.h.id}");
+
+  // c3 — a SIGNATURE is enough, which is the consumer-facing shape: the callee's declared
+  // parameter mints the layout in pass 1 and the caller's own inferred read used to be null.
+  y3 = PS { h: PH { id: 3 } };
+  v3 = [(y3, 4)];
+  assert(callee_reads(v3) == 3, "c3 the callee's own read: {callee_reads(v3)}");
+  assert(v3[0].0.h.id == 3, "c3 the CALLER's read of the same vector: {v3[0].0.h.id}");
+  assert(v3[0].1 == 4, "c3 the caller's tail: {v3[0].1}");
+
+  // c4 — the member at index 1, so an offset that agrees at 0 by luck cannot pass.
+  z4 = PS { h: PH { id: 41 } };
+  a4 = [(5, z4)];
+  y4 = PS { h: PH { id: 42 } };
+  b4: vector<(integer, PS)> = [(6, y4)];
+  assert(b4[0].1.h.id == 42, "c4 member at index 1: {b4[0].1.h.id}");
+  assert(b4[0].0 == 6, "c4 the scalar before it: {b4[0].0}");
+  assert(a4[0].1.h.id == 41, "c4 the inferred one at index 1: {a4[0].1.h.id}");
+
+  // c5 — a member holding a COLLECTION.  This cell was the ICE, not a wrong value.
+  z5 = WithVec { xs: [51] };
+  a5: vector<(WithVec, integer)> = [(z5, 5)];
+  y5 = WithVec { xs: [52] };
+  b5 = [(y5, 6)];
+  assert(b5[0].0.xs[0] == 52, "c5 collection member, inferred after declared: {b5[0].0.xs[0]}");
+  assert(len(b5[0].0.xs) == 1, "c5 its length: {len(b5[0].0.xs)}");
+  assert(a5[0].0.xs[0] == 51, "c5 the declared one: {a5[0].0.xs[0]}");
+
+  // c6 — a FLAT struct member, with a text field, so the model change is asked of a member
+  // whose own bytes are not a single nested record.
+  z6 = Flat { id: 61, tag: "keep" };
+  a6 = [(z6, 5)];
+  y6 = Flat { id: 62, tag: "also" };
+  b6: vector<(Flat, integer)> = [(y6, 7)];
+  assert(b6[0].0.id == 62, "c6 flat member id: {b6[0].0.id}");
+  assert(b6[0].0.tag == "also", "c6 flat member text: {b6[0].0.tag}");
+  assert(a6[0].0.tag == "keep", "c6 the inferred flat member's text: {a6[0].0.tag}");
+
+  // c7 — CONTROL.  One spelling only, which was correct BEFORE the fix and must stay correct:
+  // it is what says the two models were made to AGREE rather than both moved.
+  y7 = PS { h: PH { id: 71 } };
+  b7: vector<(PS, integer)> = [(y7, 72)];
+  assert(b7[0].0.h.id == 71, "c7 CONTROL declared-only member: {b7[0].0.h.id}");
+  assert(b7[0].1 == 72, "c7 CONTROL declared-only tail: {b7[0].1}");
+  y8 = PS { h: PH { id: 81 } };
+  b8 = [(y8, 82)];
+  assert(b8[0].0.h.id == 81, "c7 CONTROL inferred-only member: {b8[0].0.h.id}");
+  assert(b8[0].1 == 82, "c7 CONTROL inferred-only tail: {b8[0].1}");
+
+  println("one layout per tuple name ok");
+}
+
+fn callee_reads(v: vector<(PS, integer)>) -> integer { return v[0].0.h.id; }

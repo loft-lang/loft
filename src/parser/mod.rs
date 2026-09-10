@@ -10392,6 +10392,10 @@ impl Parser {
                         tuple_elems.push(tagged);
                         continue;
                     }
+                    // loft#1503 — read the member in the spelling it was STORED under, not
+                    // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
+                    // against bytes the def laid out inline.
+                    let et = &crate::data::Data::tuple_member_stored(et);
                     let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
                     tuple_elems.push(elem_val);
                 }

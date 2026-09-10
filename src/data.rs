@@ -7906,6 +7906,53 @@ impl Data {
     ///
     /// Idempotent: returns the existing def_nr on subsequent calls
     /// for the same tuple shape.
+    /// The spelling a tuple MEMBER is stored under — `@FR-L-Tuple`, loft#1503.
+    ///
+    /// A `Type::Reference` carries a dep list, and four sites read a NON-EMPTY one as
+    /// *"this attribute holds a 12-byte `DbRef` sharing the source record"* rather than the
+    /// record inline. That marker belongs to @PLAN22's closure-record attributes, whose own
+    /// comment says user code always has empty deps — which stopped being true when a tuple
+    /// member could be inferred from a local, since the inferred member type carries a dep on
+    /// that local while the ANNOTATED spelling of the same tuple carries none.
+    ///
+    /// [`Self::tuple_def`] names the synthetic def from `Type::name`, which omits deps, so
+    /// both spellings resolve to ONE def — while its attributes were registered from whichever
+    /// spelling arrived first, giving one name two layouts (`__tuple<S,integer>` at 16 bytes
+    /// with the member inline, or at 20 with a `DbRef`). Reads through the other spelling then
+    /// answered `null`, a `DbRef`'s words as an integer, or an ICE.
+    ///
+    /// Canonicalising here is what keeps the two derivations in step: the NAME already drops
+    /// deps, so the LAYOUT must drop them too. A tuple member is an ordinary struct field
+    /// (`(L-Tuple)`: a tuple is a synthetic struct; `(T-Ref-El)`: a member is read at its own
+    /// offset the way a field is), and an ordinary struct field of struct type stores the
+    /// record inline — so inline is the model both spellings converge on.
+    ///
+    /// The dep is a LIFETIME fact and is untouched on the variable's own type; only the
+    /// storage spelling is normalised.
+    /// ⚠ A `u16::MAX` in the list is not a lifetime dep at all — it is the pointer/share
+    /// MARKER, which is how an explicitly written `reference<T>` spells itself, and `(L-Ref)`
+    /// keeps that a 4-byte record pointer rather than inline bytes. Stripping it would inline
+    /// the target: `struct Node { p: (integer, reference<Node>) }` became a type of infinite
+    /// size and loft#1498's cycle report refused it, which is that guard's own control
+    /// (`parse_errors::a_reference_self_tuple_member_is_not_a_cycle`). So the normalisation
+    /// applies to an INFERRED dep list only, and a marked list is left exactly as written.
+    pub fn tuple_member_stored(t: &Type) -> Type {
+        match t {
+            Type::Reference(d, deps) if !deps.is_empty() && !deps.contains(&u16::MAX) => {
+                Type::Reference(*d, Deps::none())
+            }
+            Type::Optional(inner) => {
+                let base = Self::tuple_member_stored(inner);
+                if &base == inner.as_ref() {
+                    t.clone()
+                } else {
+                    Type::Optional(Box::new(base))
+                }
+            }
+            _ => t.clone(),
+        }
+    }
+
     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {
         // Refuse while any member is still an unresolved forward reference.  BOTH things
         // this builds are derived from the members' spellings, and neither survives the
@@ -7950,6 +7997,10 @@ impl Data {
         let mut indices: Vec<u16> = Vec::with_capacity(types.len());
         let mut sizes_aligns: Vec<(u16, u8)> = Vec::with_capacity(types.len());
         for (i, t) in types.iter().enumerate() {
+            // loft#1503 — the NAME above is built from `Type::name`, which omits a
+            // `Reference`'s deps, so the LAYOUT must omit them too or one name carries two
+            // layouts.  `tuple_member_stored` is that one spelling.
+            let t = &Self::tuple_member_stored(t);
             let aname = format!("_{i}");
             let attr_idx = self.add_attribute(lexer, d, &aname, t.clone());
             // @PLN114 — a tuple element is nullable only if its TYPE says so, exactly
