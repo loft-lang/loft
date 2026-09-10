@@ -789,6 +789,27 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
         return stores[h.store_nr as usize]
             .read::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
     }
+    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+}
+
+/// The off-fast-path half of [`get_elem_hoisted`]: an out-of-range or negative index, which
+/// routes back through [`get_vector`] so a negative one still addresses from the end.
+///
+/// `#[inline(never)]` is load-bearing rather than a hint (loft#1508).  Its caller is generic
+/// and `#[inline]`, so rustc sees the whole body and decides on SIZE — and with this half
+/// folded in, the body carried a second call and a second read and lost that decision.  The
+/// caller then stayed out of line at every one of its call sites, which on a real workload
+/// cost ~11% of self time for a fast path that is a compare and a load.  Keeping the cold
+/// half behind a call is what lets the hot half be inlined into its callers.
+#[inline(never)]
+fn get_elem_hoisted_cold<T: Copy>(
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+) -> T {
     let elem = get_vector(db, size, from, stores);
     if elem.rec == 0 {
         absent
