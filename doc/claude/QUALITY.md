@@ -2555,6 +2555,23 @@ for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Sha
 ([formal/types.md](formal/types.md)).  That baseline is a DERIVED row exactly as these four
 are — re-measure it on the joined tree rather than carrying either branch's number.
 
+⚠ **And the pin is CARRYING one branch's number right now (2026-09-10) — the instruction above
+is what it violates.**  `index/optional_ratchet.json` reads `337 · 1317`, which is exactly what
+this branch's tree measured before it was rebased; the pin was cherry-picked into `main` (#1502)
+while that PR's own code measures `339 · 1319`.  So `make optional-ratchet` fails on `main`, and
+on any branch off it, for two units this walk did not add — verified by measuring all three trees:
+`f2b01b02f` (the pre-rebase branch) `424 · 337 · 2097`, `origin/main` `423 · 339 · 2099`, the
+joined tree `424 · 339 · 2101`.  A derived baseline is the one file a cherry-pick must not carry,
+because it is a statement about the tree it was measured on.
+
+Nothing in `make ci` reads it — `optional-ratchet` is a standalone target, so no gate is red — and
+that is the reason to write this down rather than re-pin quietly: a ratchet that always fails gets
+ignored, and raising a bar that only ever shrinks is a decision, not a fix.  **OPEN for the owner:**
+peel the two sites, or re-measure the pin on `main` and say in the commit that the +2 arrived with
+#1502's code rather than with a walk.  They are not identifiable at the (file, function, kind)
+granularity the audit prints — main's opaque rows are a subset of this branch's — so it is a
+function whose CLASSIFICATION flipped, which the audit would have to name.
+
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
 `745 · 400 · 5 · 340` and the sibling `741 · 384 · 6 · 351`; the join is `749 · 403 · 6 · 340`.

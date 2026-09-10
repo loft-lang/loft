@@ -191,6 +191,25 @@ KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more 
 journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
 process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
+**A gate that reports `QUEUED behind another gate` may be queued behind NOTHING (2026-09-10).**
+`make ci` serialises with `exec 9>/tmp/loft-gate.lock` followed by `flock 9`, and fd 9 is
+INHERITED by every process the gate spawns — including the long-lived `loft` server children some
+tests start (`tests/engine_host_kernel.rs`'s `run_s3_scenario` spawns one per scenario). When such
+a child outlives its gate — its `Guard` drop never runs, which is exactly what the paragraph above
+describes happening to harness-child gates — it is reparented to init and keeps holding the lock.
+Every later gate on the box then blocks in `flock 9` indefinitely and reports only *"QUEUED behind
+another gate on this box"*, naming a gate that no longer exists. Measured: an orphan from an
+08:48 run held the lock while both checkouts' gates sat queued for 48 and 20 minutes with a
+one-minute load average of **0.05** — nothing was compiling, in either tree.
+
+The tell is that the holder is not a gate: `fuser -v /tmp/loft-gate.lock` names a `loft`
+process, and `ls -l /proc/<pid>/fd/9` points at the lock file. Clear it by killing that pid
+specifically — never by pattern, which reaches the sibling checkout's live gate. Two cures, and
+they are independent: hold the lock with `flock -o` (`--close`), which closes the descriptor
+before running the command so no child can inherit it; and bound the spawned kernel child with
+`LOFT_TIMEOUT` so an orphan cannot outlive its gate without limit. **The load average is the
+cheap discriminator** — a real queue has a busy box behind it.
+
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
 test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`

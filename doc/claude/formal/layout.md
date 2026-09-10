@@ -322,8 +322,25 @@ that gate, now applied across a network boundary.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 2.**
 - **D-layout-1** — residual: the load-time schema gate is built and opt-in, and closes fully when a persistence consumer wires `check_beside` into its open path
+- **D-layout-8 — OPEN (2026-09-10, loft#1503):** `(L-Tuple)` requires a tuple's two layout
+  views to compute the SAME offsets and says their agreement *"is part of the rule, not an
+  implementation detail"*.  They do not agree when a tuple type is written BOTH ways in one
+  program: the declared spelling `v: vector<(S, integer)>` lays the struct member out INLINE
+  (`__tuple<S,integer>[16/1]`, and `S` gains the tuple as a parent), the inferred spelling
+  `v = [(s, 5)]` lays it out as a 12-byte `DbRef` (`[20/1]`) — one synthetic def NAME, two
+  layouts, because `Data::tuple_def` keys the def by a name that omits the member
+  representation.  Whichever spelling the parser meets first fixes the layout, and reads
+  through the other answer `null`, a `DbRef`'s words as an integer, or an ICE
+  (`keys.rs`: *"DbRef store_nr 21 is out of range"*), on both backends with nothing said.
+  A signature is enough to trigger it, which makes it consumer-facing: a library `fn f(v:
+  vector<(S, integer)>)` mints the inline layout and every caller's own inferred read of that
+  vector answers null.  Each spelling ALONE is self-consistent, which is why the corpus never
+  caught it.  Closing it needs a design call the rules do not make — `(T-Ref-El)` reads a
+  struct member *"at the element's own offset — the same `(ref, offset)` pair an ordinary
+  struct FIELD uses"* (the inline model), while the record-backed borrow cursor (loft#821,
+  loft#857) and loft#1361's member copy are built on the `DbRef` model.
 
 D-layout-7 closed 2026-09-10 (loft#1501): `(L-Narrow)` says a range-annotated integer stores in
 the SMALLEST width that HOLDS its range, and `(L-Narrow-Decode)` says the bytes carry
