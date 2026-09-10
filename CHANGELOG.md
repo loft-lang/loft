@@ -14,6 +14,60 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A block that hands back part of something it built keeps it alive.**  A `{ … }` used as a
+value can build a struct and hand back one of its collections:
+
+```loft
+items = { b = Basket { rows: load(), tag: 1 }; b.rows }
+println("{len(items)}");
+```
+
+The block used to give you a pointer into storage it released on the way out.  You usually got
+the right answer — the bytes were still there — and sometimes another value had already moved
+in.  Now the block hands back a copy of its own, so what you read is what it built.  Nothing to
+change in your code.
+
+**And a branch used as a statement no longer disturbs the variables around it.**  Where one
+arm ends in a value and another does not, the value is discarded — that part was always the
+intent — but the discard used to leave the interpreter's bookkeeping one step out of line, so
+locals near the branch could read back as `null`:
+
+```loft
+total = 0;
+if n > 0 { total += 1; } else { 5 }      // the 5 is discarded
+println("{total}");                      // read 0, as it should
+```
+
+Both backends now agree here, and a branch whose arm leaves early through `return` compiles on
+`--native` instead of failing to build.
+
+
+**You can now ask whether a small-width number actually fitted.**  `u8`, `i8`, `u16`, `i16`,
+`u32` and any `integer limit(lo, hi)` use every value they have room for, so when a result
+does not fit, the slot quietly takes the type's default — and a `0` that arrived that way
+looked exactly like a `0` you computed.  Write the check on the line after the store and it
+tells you:
+
+```loft
+health: u8 = 250;
+health += 10;
+if !health { println("the boost did not fit — health is {health}"); }
+```
+
+Nothing else changes: the value stored is the same one you get with no check written, and a
+program that says nothing behaves exactly as before.  The check has to be the very next
+statement — further away there would be nowhere to keep the answer except in the number
+itself, which would cost every element of a `vector<u8>` the byte the small type was chosen
+for.  Move the line and the compiler tells you the check stopped working rather than letting
+it go quiet.  `?? <value>` is the other half of the same edge, and works in the same place:
+it lets you name what the slot takes instead of the type's default.
+
+**A `!` that can never be true is now reported wherever you write it.**  `if !x` asks *is
+this absent*, and on a type with no room for an absent value the answer is always no.  That
+was reported for a struct field and silently accepted for a local variable or a vector
+element of the very same type, so `a: u8 = 250; if !a { … }` was code that could never run,
+with nothing said about it.
+
 **A crash in a browser page names the loft functions it was in again.**  A page built with
 `--html` printed only wasm function indices under a panic, so a report said where in the
 generated code the program stopped and nothing about what the program was doing.  The frame

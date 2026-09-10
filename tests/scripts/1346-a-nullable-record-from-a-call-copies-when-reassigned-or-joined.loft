@@ -30,6 +30,9 @@
 //
 // @falsified-at: dd46146c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0;
 // native INERT (expected for a backend-divergence guard — `--native` always copied).
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 struct P { x: integer, y: integer }
 struct Bag { rec: P }
 fn mk(n: integer) -> Bag { Bag { rec: P { x: n, y: 1 } } }

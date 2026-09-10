@@ -34,6 +34,13 @@
 //   on. `make falsify` cannot render that channel — its refusal column counts errors, not
 //   warnings — so the gating channel is `check_diagnostics` in `tests/wrap.rs`, measured by
 //   running the corpus on both trees.
+//   CHANNEL: an UNDECLARED DIAGNOSTIC — the cell emits a warning on the control which
+//   `tests/wrap.rs` scores and fails the corpus on. Not the exit, not an assertion, and not a
+//   channel `falsify` renders: its refusal column counts errors, so the sweep sees nothing
+//   move.
+//   HOLDS: every scored channel is equal on both trees, which is why the bulk row is INERT.
+//   The measurement lives in the corpus runner's diagnostic check, so re-validate through
+//   `tests/wrap.rs` rather than through a falsify signature.
 
 struct E1229 { k: integer, nm: text }
 struct N1229 { c: vector<integer> }

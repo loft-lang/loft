@@ -39,6 +39,9 @@
 // undoing the template's guess there needs the collection copy built at monomorph time, and
 // that copy's backing has no top-level declaration to be freed by.  `tuples.md` D-tup-9
 // keeps that half open with the measurement.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Ctr1365 { n: integer }
 fn bump(self: Ctr1365) { self.n += 1; }

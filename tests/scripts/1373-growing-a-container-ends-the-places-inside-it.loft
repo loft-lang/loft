@@ -28,6 +28,9 @@
 // parse time and cannot hear a scope-pass strip.
 //
 // @falsified-at: cbc58429 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 struct S { n: integer }
 struct W { a: vector<S>, b: vector<S> }
 struct O { inner: I }

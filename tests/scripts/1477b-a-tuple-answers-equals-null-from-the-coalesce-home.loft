@@ -29,6 +29,11 @@
 //   assertion executed, and the `??` half would have been falsified by a compile error instead
 //   of by its own wrong answers — a guard whose two halves fail on the same channel cannot say
 //   which of them the cure fixed
+//   CHANNEL: the exit channel, measured on --interpret against 4f29a473 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 // One test function per cell, so a `--tests` run names every broken one rather than halting.
 

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arguments guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library arguments — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-arguments-guide.html">
+<meta property="og:title" content="arguments guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library arguments — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-arguments-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="arguments guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library arguments — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>arguments guide</h1>
+<article>
+<p><a href="lib-arguments.html">← arguments</a> · <a href="lib-arguments-api.html">API reference</a> · <a href="lib-arguments-src.html">source</a></p>
+<p><code>arguments</code> is GNU-style command-line parsing: you declare what your program accepts, hand it <code>argv</code>, and then ask. It understands <code>--name value</code>, <code>--name=value</code>, <code>-n value</code>, glued <code>-nvalue</code>, bundled <code>-abc</code>, unambiguous prefix abbreviation (<code>--verb</code> for <code>--verbose</code>), <code>--</code> to end option parsing, and options interspersed with positionals.</p>
+<p>It is not a subcommand framework — there is no <code>git commit</code>-shaped dispatch — and it does not read the environment, a config file or a completion script. It parses one <code>argv</code> and answers questions about it.</p>
+<p>Three steps, always in this order: <strong>declare, parse, query.</strong> Declaring after parsing is not an error and simply comes too late.</p>
+<pre><code><span class="kw">use</span> arguments;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  a = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  a.<span class="fn-call">flag</span>(<span class="st">"v"</span>, <span class="st">"verbose"</span>, <span class="st">"Say more"</span>);
+  a.<span class="fn-call">option</span>(<span class="st">"n"</span>, <span class="st">"name"</span>, <span class="st">"WHO"</span>, <span class="st">"Who to greet"</span>);</code></pre>
+<pre><code>  ok = a.<span class="fn-call">parse</span>([<span class="st">"--name"</span>, <span class="st">"Ada"</span>, <span class="st">"-v"</span>, <span class="st">"extra.txt"</span>]);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"parsed  : {ok}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"name    : {a.get(\"</span>name\<span class="st">")}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"verbose : {a.has(\"</span>verbose\<span class="st">")}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"left    : {a.positionals[0]}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"the line parses"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">get</span>(<span class="st">"name"</span>) == <span class="st">"Ada"</span>, <span class="st">"a value option carries its value"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">has</span>(<span class="st">"verbose"</span>), <span class="st">"a flag is present or it is not"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.positionals[<span class="nm">0</span>] == <span class="st">"extra.txt"</span>, <span class="st">"anything that is not an option is a positional"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">help_is_yours_to_print</span>();
+  <span class="fn-call">the_four_kinds_of_option</span>();
+  <span class="fn-call">a_failed_parse_says_why</span>();
+  <span class="fn-call">what_the_syntax_accepts</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  parsed  : true
+  name    : Ada
+  verbose : true
+  left    : extra.txt
+</code></pre>
+<h2 id="the-one-that-bites-enable-help-prints-nothing">The one that bites: <code>enable_help()</code> prints nothing</h2>
+<p><code>enable_help()</code> registers <code>--help</code> / <code>-h</code> and <code>--version</code> / <code>-V</code> so they parse instead of being rejected as unknown. It does not print anything, and it does not exit. So a program that calls it and stops there answers <code>--help</code> with silence, and reads as broken.</p>
+<p>After <code>parse</code>, ASK — <code>wants_help()</code> and <code>wants_version()</code> — and render <code>help()</code> or <code>version_text()</code> yourself. That is deliberate: where the text goes, whether it pages, and what exit code follows are the program's decisions, not the parser's.</p>
+<p>A <code>--help</code> line also short-circuits the required-option check, so <code>prog --help</code> works on a program whose options are all mandatory — which is what a user asking for help needs.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">help_is_yours_to_print</span>() {
+  a = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  a.<span class="fn-call">enable_help</span>();
+  a.<span class="fn-call">parse</span>([<span class="st">"--help"</span>]);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">wants_help</span>(), <span class="st">"the flag parsed, and the ANSWER is a question you ask"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">help</span>().<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"Usage: greet"</span>), <span class="st">"help() is text — you decide where it goes"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">version_text</span>() == <span class="st">"greet 1.2"</span>, <span class="st">"and so is the version line"</span>);</code></pre>
+<p>The short-circuit: a required option is not missed when help was asked for.</p>
+<pre><code>  b = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  b.<span class="fn-call">required</span>(<span class="st">"n"</span>, <span class="st">"name"</span>, <span class="st">"WHO"</span>, <span class="st">"Who to greet"</span>);
+  b.<span class="fn-call">enable_help</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">parse</span>([<span class="st">"--help"</span>]), <span class="st">"--help parses even though --name is required"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"help    : registered, never printed — you print it"</span>);
+}</code></pre>
+<h2 id="the-four-kinds-and-the-one-that-surprises">The four kinds, and the one that surprises</h2>
+<pre><code>- `flag(short, long, desc)` — present or absent, never takes a value
+- `option(short, long, ARG, desc)` — always takes a value
+- `required(short, long, ARG, desc)` — the same, and `parse` FAILS without it
+- `optional(short, long, ARG, desc)` — takes a value only when it is GLUED
+</code></pre>
+<p>That last rule is the one to read twice. <code>--color=auto</code> and <code>-cauto</code> carry a value; <strong>bare `--color` is present with an EMPTY value and does not eat the next word</strong>. It is not an error either, so a program that expects <code>--color auto</code> to work gets an empty colour and an unexpected positional, with nothing reported.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_four_kinds_of_option</span>() {
+  a = arguments::<span class="fn-call">create</span>(<span class="st">"ls"</span>, <span class="st">"1.0"</span>, <span class="st">"List files"</span>);
+  a.<span class="fn-call">optional</span>(<span class="st">"c"</span>, <span class="st">"color"</span>, <span class="st">"WHEN"</span>, <span class="st">"Colorize the output"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">parse</span>([<span class="st">"--color"</span>, <span class="st">"file.txt"</span>]), <span class="st">"bare optional parses — it is not an error"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">has</span>(<span class="st">"color"</span>), <span class="st">"…and is present"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">get</span>(<span class="st">"color"</span>) == <span class="st">""</span>, <span class="st">"…with an empty value"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.positionals[<span class="nm">0</span>] == <span class="st">"file.txt"</span>, <span class="st">"…and the next word stays a positional"</span>);</code></pre>
+<pre><code>  b = arguments::<span class="fn-call">create</span>(<span class="st">"ls"</span>, <span class="st">"1.0"</span>, <span class="st">"List files"</span>);
+  b.<span class="fn-call">optional</span>(<span class="st">"c"</span>, <span class="st">"color"</span>, <span class="st">"WHEN"</span>, <span class="st">"Colorize the output"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">parse</span>([<span class="st">"--color=always"</span>]), <span class="st">"glued parses"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">get</span>(<span class="st">"color"</span>) == <span class="st">"always"</span>, <span class="st">"…and carries the value"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"kinds   : optional takes a value only when GLUED"</span>);
+}</code></pre>
+<h2 id="a-failed-parse-says-why-and-get-tells-absent-from-empty">A failed parse says why, and <code>get</code> tells absent from empty</h2>
+<p><code>parse</code> answers a boolean. On false, <code>error_msg()</code> is the sentence to show — it names the option and what was wrong with it. <code>ok()</code> is the same fact asked the other way.</p>
+<p>For reading values: <code>get</code> answers <code>text?</code>, so a missing option is <code>null</code> and an option given an empty value is <code>""</code> — two different things the query keeps apart. <code>get_or</code> folds them into one when you have a default, and <code>get_int</code> parses.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_failed_parse_says_why</span>() {
+  a = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  a.<span class="fn-call">required</span>(<span class="st">"n"</span>, <span class="st">"name"</span>, <span class="st">"WHO"</span>, <span class="st">"Who to greet"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!a.<span class="fn-call">parse</span>([]), <span class="st">"a missing required option fails the parse"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!a.<span class="fn-call"><a href="stdlib-file-system.html">ok</a></span>(), <span class="st">"…and ok() agrees"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">error_msg</span>() == <span class="st">"option '--name' is required"</span>, <span class="st">"…with the sentence to show"</span>);</code></pre>
+<pre><code>  b = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  b.<span class="fn-call">option</span>(<span class="st">"n"</span>, <span class="st">"name"</span>, <span class="st">"WHO"</span>, <span class="st">"Who to greet"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">parse</span>([]), <span class="st">"an ordinary option may be absent"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">get</span>(<span class="st">"name"</span>) == <span class="kw">null</span>, <span class="st">"absent is null…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">get_or</span>(<span class="st">"name"</span>, <span class="st">"world"</span>) == <span class="st">"world"</span>, <span class="st">"…which is what get_or is for"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"errors  : parse answers false, error_msg says which option"</span>);
+}</code></pre>
+<h2 id="what-the-syntax-accepts">What the syntax accepts</h2>
+<p>Prefix abbreviation resolves <code>--verb</code> to <code>--verbose</code> while it is unambiguous, and reports an error when two declared options share the prefix. Everything after <code>--</code> is a positional whatever it looks like, and a lone <code>-</code> is a positional too — the stdin convention.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_the_syntax_accepts</span>() {
+  a = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  a.<span class="fn-call">flag</span>(<span class="st">"v"</span>, <span class="st">"verbose"</span>, <span class="st">"Say more"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">parse</span>([<span class="st">"--verb"</span>]), <span class="st">"an unambiguous prefix parses"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">has</span>(<span class="st">"verbose"</span>), <span class="st">"…as the option it abbreviates"</span>);</code></pre>
+<pre><code>  b = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
+  b.<span class="fn-call">flag</span>(<span class="st">"v"</span>, <span class="st">"verbose"</span>, <span class="st">"Say more"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.<span class="fn-call">parse</span>([<span class="st">"--"</span>, <span class="st">"--verbose"</span>]), <span class="st">"-- ends option parsing"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!b.<span class="fn-call">has</span>(<span class="st">"verbose"</span>), <span class="st">"…so this one is not the flag"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b.positionals[<span class="nm">0</span>] == <span class="st">"--verbose"</span>, <span class="st">"…it is a positional that looks like a flag"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"syntax  : --verb abbreviates, -- ends the options"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the full syntax table (bundling, glued short values, GNU permutation) and the API list.</li>
+<li><code>tests/02-worked-examples.loft</code> — <code>@ARG-001</code> … <code>@ARG-004</code>, the contracts above as running tests.</li>
+<li><code>set_usage</code> / <code>set_epilog</code> / <code>set_bug_address</code> shape what <code>help()</code> renders, and <code>try_help()</code> is the one-line "try --help" pointer for an error path.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

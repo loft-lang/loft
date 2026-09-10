@@ -34,6 +34,9 @@
 // vacuous kind — and a native-only defect is exactly what it should look like.  The native
 // row says `falsified`, and that is the one to read.  Do not "fix" this by adding an
 // interpret-visible cell: there is no interpret-visible defect to guard.
+//   HOLDS: the interpret side is unmoved on every channel, so the falsify SUMMARY says NOT
+//   falsified — it requires some channel to move on both backends. NATIVE carries it: exit 1
+//   -> 0 with `error[E0425]: cannot find value t82`. Read the native row, not the summary.
 
 struct Nc { nc_k: integer, nc_v: text }
 struct NcP { nc_x: integer, nc_y: integer, nc_v: text }

@@ -27,6 +27,9 @@
 // the first defect; cell 2 was falsified SEPARATELY against the same control and aborts the
 // process there — `allocation.rs:1948` index 65535, exit 101 on `--interpret` and a panicking
 // thread on `--native`.  Two defects, one file, and the file reports the first.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 struct I { n: text, v: integer }
 struct R { items: vector<I>, by_n: hash<I[n]> }
 struct WNull { rooms: vector<R?> }

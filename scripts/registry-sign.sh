@@ -39,6 +39,18 @@
 #                         never describe one: it refuses for "asked for but
 #                         ABSENT from the diff" while the yank itself reads as
 #                         untouchable metadata drift.  The two combine.
+#     --expect-meta P     sign a METADATA correction to these packages and only
+#                         that — repeatable.  The diff must change nothing but
+#                         their description / homepage / categories, add or remove
+#                         NO version anywhere, change no `yanked` array, and leave
+#                         every other package alone.  Same bargain as
+#                         --expect-yank and for the same reason: a metadata fix
+#                         adds no version, so plain --expect can never describe
+#                         one — it refuses for "asked for but ABSENT from the
+#                         diff" while the correction itself reads as untouchable
+#                         drift.  Without it the only route left is --yes, which
+#                         asserts nothing about what is signed and is refused
+#                         off a terminal anyway.  All three combine.
 #     --yes               skip the confirm prompt (scripted use).  Prefer
 #                         --expect: --yes asserts nothing about WHAT is signed.
 #
@@ -77,7 +89,7 @@
 # at the prompt.  Needs: python3, gh (for notes), and target/release/loft-keygen.
 set -euo pipefail
 
-REG_DIR="$PWD"; REG_GIVEN=0; PR=""; SINCE=""; NOTES=0; DOWNLOAD=1; YES=0; PUSH=1; MSG=""; EXPECT=""; EXPECT_YANK=""
+REG_DIR="$PWD"; REG_GIVEN=0; PR=""; SINCE=""; NOTES=0; DOWNLOAD=1; YES=0; PUSH=1; MSG=""; EXPECT=""; EXPECT_YANK=""; EXPECT_META=""
 KEY="${LOFT_REGISTRY_KEY:-$HOME/.loft/trust-root/registry-signing-key.bin}"
 YUBIKEY=0; [ "${LOFT_REGISTRY_SIGNER:-}" = yubikey ] && YUBIKEY=1  # set -e safe: file/unset/other => 0 (local-key path)
 while [ $# -gt 0 ]; do
@@ -93,6 +105,7 @@ while [ $# -gt 0 ]; do
         --message)      MSG="$2"; shift;;
         --expect)       EXPECT="${EXPECT:+$EXPECT }$2"; shift;;
         --expect-yank)  EXPECT_YANK="${EXPECT_YANK:+$EXPECT_YANK }$2"; shift;;
+        --expect-meta)  EXPECT_META="${EXPECT_META:+$EXPECT_META }$2"; shift;;
         --yes)          YES=1;;
         -h|--help)      sed -n '2,33p' "$0"; exit 0;;
         *) echo "unknown argument: $1" >&2; exit 2;;
@@ -111,6 +124,8 @@ if [ "$YES" = 1 ] && [ ! -t 0 ]; then
     echo "!! --yes with no terminal on stdin: nothing can confirm this." >&2
     echo "   Use --expect <pkg>@<ver> — it binds the signature to what you named" >&2
     echo "   and refuses anything else in the diff, which is what --yes cannot do." >&2
+    echo "   A yank is --expect-yank <pkg>@<ver>; a description / homepage / category" >&2
+    echo "   correction that adds no version is --expect-meta <pkg>." >&2
     exit 2
 fi
 
@@ -282,7 +297,7 @@ else
 fi
 
 set +e
-NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" EXPECT_YANK="$EXPECT_YANK" python3 - "$PREV" "$INDEX" <<'PY'
+NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" EXPECT_YANK="$EXPECT_YANK" EXPECT_META="$EXPECT_META" python3 - "$PREV" "$INDEX" <<'PY'
 import json, sys, os, re, hashlib, shutil, tempfile, time, urllib.request, urllib.error, subprocess
 def load(p):
     try:
@@ -406,7 +421,16 @@ if not changes:
 # what is signed, which is exactly what this whole block exists to replace.
 expect = set((os.environ.get("EXPECT") or "").split())
 expect_yank = set((os.environ.get("EXPECT_YANK") or "").split())
-if expect or expect_yank:
+# `--expect-meta` is the THIRD bound form, for the write the other two cannot name: a
+# description / homepage / category correction adds no version and touches no `yanked`
+# array, so `--expect` refuses it as "ABSENT from the diff" while the correction itself
+# is read as untouchable drift.  Measured: `hex_grid`'s index description called a
+# pointy-top ODD-R OFFSET package "axial" for twelve days after its manifest was fixed,
+# and every route to correcting it alone was closed — `--yes` is refused off a terminal
+# by design, which left bundling it into an unrelated publish as the only path, which is
+# exactly what the scope check exists to prevent.
+expect_meta = set((os.environ.get("EXPECT_META") or "").split())
+if expect or expect_yank or expect_meta:
     got = {f"{n}@{v}" for n, v, _, _ in changes}
     removed_pkgs = sorted(set(pp) - set(cp))
     removed_vers = sorted(
@@ -427,7 +451,22 @@ if expect or expect_yank:
         skip = ("versions", "yanked") if name in yank_pkgs else ("versions",)
         return {k: x for k, x in d[name].items() if k not in skip}
 
-    drift = sorted(n for n in set(pp) & set(cp) if meta(pp, n) != meta(cp, n))
+    # Metadata drift is the finding EXCEPT on a package `--expect-meta` names, where it is
+    # the point.  Such a package still has to be byte-identical in `versions` and `yanked`
+    # — those are the two fields with consumer-visible consequences, and a metadata flag
+    # must never become a way to smuggle one past the scope check.
+    drift = sorted(n for n in set(pp) & set(cp)
+                   if n not in expect_meta and meta(pp, n) != meta(cp, n))
+    # A named package that did NOT change is a claim about a diff that is not there —
+    # the same phantom the yank path refuses, and worth refusing for the same reason:
+    # it means the operator is signing something other than what they described.
+    meta_absent = sorted(n for n in expect_meta
+                         if n not in set(pp) & set(cp) or meta(pp, n) == meta(cp, n))
+    # `versions` and `yanked` on a --expect-meta package: metadata only means metadata.
+    meta_overreach = sorted(
+        n for n in expect_meta if n in set(pp) & set(cp)
+        and ((pp[n].get("versions") or {}) != (cp[n].get("versions") or {})
+             or (pp[n].get("yanked") or []) != (cp[n].get("yanked") or [])))
     # A yank of a version the index does not list is a typo, not a yank: it would
     # sign a marker pointing at nothing (PKG_REGISTRY.md § Yanking — the `web`
     # 0.2.2 loss is what that promise is made of).
@@ -455,10 +494,17 @@ if expect or expect_yank:
     if drift:
         problems.append(("other packages' metadata changed (description / homepage / "
                          "categories / yanked)", drift))
+    if meta_absent:
+        problems.append(("--expect-meta names a package whose metadata did NOT change",
+                         meta_absent))
+    if meta_overreach:
+        problems.append(("--expect-meta package also changed versions or yanked "
+                         "(metadata only means metadata)", meta_overreach))
     print("----  scope  ----")
     if problems:
         print("!!  --expect MISMATCH — NOT signing.")
-        asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)])
+        asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)]
+                          + [f"meta {m}" for m in sorted(expect_meta)])
         print(f"    asked to sign: {asked or '(nothing)'}")
         for label, items in problems:
             print(f"      {label}:")
@@ -468,8 +514,19 @@ if expect or expect_yank:
         print("    Nothing was signed.  Either the index carries more than the publish")
         print("    you asked for, or --expect names the wrong version.")
         sys.exit(1)
-    asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)])
+    asked = ", ".join(sorted(expect) + [f"yank {y}" for y in sorted(expect_yank)]
+                      + [f"metadata of {m}" for m in sorted(expect_meta)])
     print(f"  exactly {asked} — nothing else added, removed or altered")
+    # A metadata correction has no tarball and no release, so sections 2 and 3 below print
+    # nothing for it.  Say what actually changed here or the run renders as a signature over
+    # an empty diff, which is the one thing a reviewer of this output must not conclude.
+    for m in sorted(expect_meta):
+        for k in sorted(set(meta(pp, m)) | set(meta(cp, m))):
+            was, now = meta(pp, m).get(k), meta(cp, m).get(k)
+            if was != now:
+                print(f"    {m}.{k}:")
+                print(f"      was: {was!r}")
+                print(f"      now: {now!r}")
     print()
 failures = []  # (name, ver, reason) — collected so the end-of-run summary names each
 for name, ver, meta, is_new in changes:
@@ -611,11 +668,14 @@ if [ "$USE_CARD" = 1 ]; then
     fi
 fi
 if [ -z "$SIGNED_VIA" ]; then
-    if [ -n "$EXPECT$EXPECT_YANK" ]; then
+    if [ -n "$EXPECT$EXPECT_YANK$EXPECT_META" ]; then
         # The review block above already refused anything but the named versions,
         # so the decision this would prompt for has been made and CHECKED.  Not a
-        # skipped confirmation — a mechanical one.
-        echo "  --expect satisfied: signing exactly ${EXPECT:-}${EXPECT:+ }${EXPECT_YANK:+yank }${EXPECT_YANK:-} with $(basename "$KEY")."
+        # skipped confirmation — a mechanical one.  `--expect-meta` belongs here for
+        # exactly the same reason: its scope check is stricter than the prompt, since a
+        # typed 'yes' verifies nothing while that check refuses a smuggled version, a
+        # changed `yanked` array, and a named package that did not actually change.
+        echo "  --expect satisfied: signing exactly ${EXPECT:-}${EXPECT:+ }${EXPECT_YANK:+yank }${EXPECT_YANK:-}${EXPECT_YANK:+ }${EXPECT_META:+metadata of }${EXPECT_META:-} with $(basename "$KEY")."
     elif [ "$YES" != 1 ]; then
         printf "  sign with the local key %s? type 'yes': " "$(basename "$KEY")"
         read -r ans

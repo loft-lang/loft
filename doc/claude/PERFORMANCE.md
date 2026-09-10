@@ -564,6 +564,26 @@ workloads can favour loft.
 
 ## Native vs Rust
 
+> ⚠ **A codegen A/B switch cannot measure code inside a `use`d LIBRARY.** Every switch in the
+> hoist family (`LOFT_NO_SCALAR_HOIST`, `LOFT_NO_VECTOR_HOIST`, `LOFT_NO_PUSH_HOIST`, …) is read
+> at GENERATION time, and a library runs as the cdylib loft built for it once and cached under
+> the package's `native-auto/`. Setting the switch on the consumer's run regenerates the
+> PROGRAM and leaves the library's machine code exactly as it was, so the A/B reads as a flat
+> no-difference and looks like "the optimisation does not matter here".
+>
+> Measured 2026-09-10 while attributing loft#1426's `smooth` row: baseline and
+> `LOFT_NO_SCALAR_HOIST=1` timed 394 ms and 393 ms on a 20 000-call probe whose whole hot loop
+> is inside `drawing`. Both numbers were also dominated by the rustc compile the run pays, which
+> is the second way that shape of timing misleads.
+>
+> To A/B a library's own codegen, the cdylib has to be rebuilt under the switch — clear
+> `native-auto/` (in a SCRATCH COPY of the package, never the consumer's tree) or run the lane
+> with `LOFT_NO_NATIVE_LIBS=1`, which interprets the library and measures a different thing
+> again. Attribute inside a library with `LOFT_PROFILE` under `LOFT_NO_NATIVE_LIBS=1` — the
+> sampler cannot enter a cdylib at all, so without it the library's time lands on the calling
+> line and a library doing the work reads as a hot caller.
+
+
 > **⚠ Ratios below are SUPERSEDED** by the refreshed table (2026-06-25). Current optimized-native
 > reality: compute is healthy (1–2×), the big gaps are **data structures** (matrix/word/sort
 > 18–25× — N1) and **recursive per-call overhead** (fib 6.9×, regressed from 1.84× — the

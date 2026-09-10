@@ -23,22 +23,22 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_form source</h1>
 <article>
-<p><a href="lib-hex_form.html">← hex_form</a> · <a href="lib-hex_form-api.html">API reference</a> · version 0.1.2</p>
-<p class="lib-legend">5 file(s), 1332 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_form.html">← hex_form</a> · <a href="lib-hex_form-api.html">API reference</a> · version 0.1.4</p>
+<p class="lib-legend">5 file(s), 1334 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>form_write</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L37">37</a></td><td><a href="#src-hexform-loft-L1">HXF-001</a></td><td><a href="#src-formtext-loft-L117">117</a> <a href="#tests-01-hex-form-loft-L26">26</a> <a href="#tests-01-hex-form-loft-L29">29</a> <a href="#tests-01-hex-form-loft-L40">40</a> <a href="#tests-02-worked-examples-loft-L41">41</a> <a href="#tests-02-worked-examples-loft-L53">53</a> … (10 total)</td></tr>
-<tr><td><code>form_canon</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L90">90</a></td><td><a href="#tests-02-worked-examples-loft-L114">HXF-004</a></td><td><a href="#src-formtext-loft-L117">117</a></td></tr>
-<tr><td><code>form_canon_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L117">117</a></td><td><a href="#tests-02-worked-examples-loft-L114">HXF-004</a></td><td><a href="#tests-01-hex-form-loft-L41">41</a> <a href="#tests-01-hex-form-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L136">136</a> <a href="#tests-02-worked-examples-loft-L137">137</a> <a href="#tests-02-worked-examples-loft-L148">148</a></td></tr>
-<tr><td><code>form_read_name</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L165">165</a></td><td><a href="#tests-02-worked-examples-loft-L92">HXF-003</a></td><td><a href="#tests-02-worked-examples-loft-L101">101</a></td></tr>
-<tr><td><code>form_read</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L174">174</a></td><td><a href="#tests-02-worked-examples-loft-L56">HXF-002</a></td><td><a href="#tests-01-hex-form-loft-L27">27</a> <a href="#tests-02-worked-examples-loft-L51">51</a> <a href="#tests-02-worked-examples-loft-L68">68</a> <a href="#tests-02-worked-examples-loft-L72">72</a> <a href="#tests-02-worked-examples-loft-L76">76</a> <a href="#tests-02-worked-examples-loft-L82">82</a> … (10 total)</td></tr>
-<tr><td><code>form_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L205">205</a></td><td>—</td><td><a href="#tests-01-hex-form-loft-L28">28</a> <a href="#tests-02-worked-examples-loft-L52">52</a> <a href="#tests-02-worked-examples-loft-L105">105</a></td></tr>
+<tr><td><code>form_write</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L37">37</a></td><td><a href="#src-hexform-loft-L1">HXF-001</a></td><td><a href="#src-formtext-loft-L119">119</a> <a href="#tests-01-hex-form-loft-L26">26</a> <a href="#tests-01-hex-form-loft-L29">29</a> <a href="#tests-01-hex-form-loft-L40">40</a> <a href="#tests-02-worked-examples-loft-L41">41</a> <a href="#tests-02-worked-examples-loft-L53">53</a> … (10 total)</td></tr>
+<tr><td><code>form_canon</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L92">92</a></td><td><a href="#tests-02-worked-examples-loft-L114">HXF-004</a></td><td><a href="#src-formtext-loft-L119">119</a></td></tr>
+<tr><td><code>form_canon_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L119">119</a></td><td><a href="#tests-02-worked-examples-loft-L114">HXF-004</a></td><td><a href="#tests-01-hex-form-loft-L41">41</a> <a href="#tests-01-hex-form-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L136">136</a> <a href="#tests-02-worked-examples-loft-L137">137</a> <a href="#tests-02-worked-examples-loft-L148">148</a></td></tr>
+<tr><td><code>form_read_name</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L167">167</a></td><td><a href="#tests-02-worked-examples-loft-L92">HXF-003</a></td><td><a href="#tests-02-worked-examples-loft-L101">101</a></td></tr>
+<tr><td><code>form_read</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L176">176</a></td><td><a href="#tests-02-worked-examples-loft-L56">HXF-002</a></td><td><a href="#tests-01-hex-form-loft-L27">27</a> <a href="#tests-02-worked-examples-loft-L51">51</a> <a href="#tests-02-worked-examples-loft-L68">68</a> <a href="#tests-02-worked-examples-loft-L72">72</a> <a href="#tests-02-worked-examples-loft-L76">76</a> <a href="#tests-02-worked-examples-loft-L82">82</a> … (10 total)</td></tr>
+<tr><td><code>form_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formtext-loft-L207">207</a></td><td>—</td><td><a href="#tests-01-hex-form-loft-L28">28</a> <a href="#tests-02-worked-examples-loft-L52">52</a> <a href="#tests-02-worked-examples-loft-L105">105</a></td></tr>
 <tr><td><code>HEAD_N</code> <span class="search-kind">const</span></td><td><a href="#src-hexform-loft-L49">49</a></td><td>—</td><td><a href="#src-hexform-loft-L64">64</a> <a href="#src-hexform-loft-L116">116</a></td></tr>
 <tr><td><code>EDGE_N2_4</code> <span class="search-kind">const</span></td><td><a href="#src-hexform-loft-L53">53</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>VERTEX_N2_4</code> <span class="search-kind">const</span></td><td><a href="#src-hexform-loft-L54">54</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>head_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L64">64</a></td><td>—</td><td><a href="#src-formtext-loft-L69">69</a> <a href="#src-formtext-loft-L184">184</a> <a href="#src-hexform-loft-L71">71</a> <a href="#src-hexform-loft-L95">95</a> <a href="#src-hexform-loft-L152">152</a> <a href="#src-hexform-loft-L164">164</a></td></tr>
+<tr><td><code>head_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L64">64</a></td><td>—</td><td><a href="#src-formtext-loft-L71">71</a> <a href="#src-formtext-loft-L186">186</a> <a href="#src-hexform-loft-L71">71</a> <a href="#src-hexform-loft-L95">95</a> <a href="#src-hexform-loft-L152">152</a> <a href="#src-hexform-loft-L164">164</a></td></tr>
 <tr><td><code>head_step</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L70">70</a></td><td>—</td><td><a href="#src-hexform-loft-L90">90</a> <a href="#src-hexform-loft-L117">117</a> <a href="#src-hexform-loft-L184">184</a> <a href="#src-hexform-loft-L290">290</a> <a href="#src-hexform-loft-L307">307</a></td></tr>
 <tr><td><code>head_n2_4</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L89">89</a></td><td><a href="#tests-02-worked-examples-loft-L201">HXF-007</a></td><td><a href="#tests-02-worked-examples-loft-L213">213</a> <a href="#tests-02-worked-examples-loft-L214">214</a> <a href="#tests-02-worked-examples-loft-L215">215</a></td></tr>
 <tr><td><code>head_is_edge</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L95">95</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L216">216</a> <a href="#tests-02-worked-examples-loft-L225">225</a></td></tr>
@@ -47,9 +47,9 @@
 <tr><td><code>refl_k</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L108">108</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>refl_m</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L111">111</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>head_of_step</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L115">115</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>Form</code> <span class="search-kind">struct</span></td><td><a href="#src-hexform-loft-L140">140</a></td><td>—</td><td><a href="#src-formtext-loft-L37">37</a> <a href="#src-formtext-loft-L65">65</a> <a href="#src-formtext-loft-L90">90</a> <a href="#src-formtext-loft-L117">117</a> <a href="#src-formtext-loft-L174">174</a> <a href="#src-formtext-loft-L205">205</a> … (19 total)</td></tr>
+<tr><td><code>Form</code> <span class="search-kind">struct</span></td><td><a href="#src-hexform-loft-L140">140</a></td><td>—</td><td><a href="#src-formtext-loft-L37">37</a> <a href="#src-formtext-loft-L67">67</a> <a href="#src-formtext-loft-L92">92</a> <a href="#src-formtext-loft-L119">119</a> <a href="#src-formtext-loft-L176">176</a> <a href="#src-formtext-loft-L207">207</a> … (19 total)</td></tr>
 <tr><td><code>TURN_FULL</code> <span class="search-kind">const</span></td><td><a href="#src-hexform-loft-L147">147</a></td><td>—</td><td><a href="#src-hexform-loft-L199">199</a></td></tr>
-<tr><td><code>form_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L151">151</a></td><td>—</td><td><a href="#src-formtext-loft-L96">96</a> <a href="#src-formtext-loft-L111">111</a> <a href="#src-formtext-loft-L177">177</a> <a href="#src-formtext-loft-L179">179</a> <a href="#src-formtext-loft-L180">180</a> <a href="#src-formtext-loft-L181">181</a> … (34 total)</td></tr>
+<tr><td><code>form_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L151">151</a></td><td>—</td><td><a href="#src-formtext-loft-L98">98</a> <a href="#src-formtext-loft-L113">113</a> <a href="#src-formtext-loft-L179">179</a> <a href="#src-formtext-loft-L181">181</a> <a href="#src-formtext-loft-L182">182</a> <a href="#src-formtext-loft-L183">183</a> … (34 total)</td></tr>
 <tr><td><code>form_sides</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L157">157</a></td><td>—</td><td><a href="#src-hexform-loft-L197">197</a> <a href="#tests-02-worked-examples-loft-L68">68</a> <a href="#tests-02-worked-examples-loft-L72">72</a> <a href="#tests-02-worked-examples-loft-L76">76</a> <a href="#tests-02-worked-examples-loft-L82">82</a> <a href="#tests-02-worked-examples-loft-L88">88</a> … (8 total)</td></tr>
 <tr><td><code>form_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L160">160</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L224">224</a> <a href="#tests-02-worked-examples-loft-L225">225</a></td></tr>
 <tr><td><code>form_turn_sum</code> <span class="search-kind">fn</span></td><td><a href="#src-hexform-loft-L169">169</a></td><td>—</td><td><a href="#src-hexform-loft-L199">199</a> <a href="#tests-02-worked-examples-loft-L190">190</a> <a href="#tests-02-worked-examples-loft-L196">196</a></td></tr>
@@ -146,167 +146,169 @@
 <span id="src-formtext-loft-L51"><span class="kw">fn</span> <span class="fn-call">shift_lens</span>(lens: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, s: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
 <span id="src-formtext-loft-L52">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(lens);</span>
 <span id="src-formtext-loft-L53">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formtext-loft-L54">  <span class="kw">for</span> li <span class="kw">in</span> <span class="nm">0..</span>n { out += [lens[(li + s) % n] ?? <span class="nm">0</span>]; }</span>
-<span id="src-formtext-loft-L55">  out</span>
-<span id="src-formtext-loft-L56">}</span>
-<span id="src-formtext-loft-L57"></span>
-<span id="src-formtext-loft-L58"><span class="kw">fn</span> <span class="fn-call">shift_turns</span>(turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, s: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-formtext-loft-L59">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(turns);</span>
-<span id="src-formtext-loft-L60">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formtext-loft-L61">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>n { out += [turns[(ti + s) % n] ?? <span class="nm">0</span>]; }</span>
-<span id="src-formtext-loft-L62">  out</span>
-<span id="src-formtext-loft-L63">}</span>
-<span id="src-formtext-loft-L64"></span>
-<span id="src-formtext-loft-L65"><span class="kw">fn</span> <span class="fn-call">shift_h0</span>(f: <span class="en">Form</span>, s: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formtext-loft-L66">  turns = f.fm_turn;</span>
-<span id="src-formtext-loft-L67">  h = f.fm_h0;</span>
-<span id="src-formtext-loft-L68">  <span class="kw">for</span> hi <span class="kw">in</span> <span class="nm">0..</span>s { h = h + (turns[hi] ?? <span class="nm">0</span>); }</span>
-<span id="src-formtext-loft-L69">  <span class="fn-call">head_norm</span>(h)</span>
-<span id="src-formtext-loft-L70">}</span>
-<span id="src-formtext-loft-L71"></span>
-<span id="src-formtext-loft-L72"><span class="cm">// Lexicographic compare on two equal-length integer vectors: -1, 0, +1.</span></span>
-<span id="src-formtext-loft-L73"><span class="kw">fn</span> <span class="fn-call">cmp_vec</span>(a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formtext-loft-L74">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(a);</span>
-<span id="src-formtext-loft-L75">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(b) &lt; n { n = <span class="bi"><a href="stdlib-text.html">len</a></span>(b); }</span>
-<span id="src-formtext-loft-L76">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-formtext-loft-L77">    av = a[ci] ?? <span class="nm">0</span>;</span>
-<span id="src-formtext-loft-L78">    bv = b[ci] ?? <span class="nm">0</span>;</span>
-<span id="src-formtext-loft-L79">    <span class="kw">if</span> av &lt; bv { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
-<span id="src-formtext-loft-L80">    <span class="kw">if</span> av &gt; bv { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-formtext-loft-L81">  }</span>
-<span id="src-formtext-loft-L82">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a) &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(b) { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
-<span id="src-formtext-loft-L83">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a) &gt; <span class="bi"><a href="stdlib-text.html">len</a></span>(b) { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-formtext-loft-L84">  <span class="nm">0</span></span>
-<span id="src-formtext-loft-L85">}</span>
-<span id="src-formtext-loft-L86"></span>
-<span id="src-formtext-loft-L87"><span class="cm">// THE CANONICAL SPELLING — smallest `(turns, lens, h0)` over the n cyclic starts.</span></span>
-<span id="src-formtext-loft-L88"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L89"><span class="cm">// Example: @HXF-004</span></span>
-<span id="src-formtext-loft-L90"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_canon</span>(f: <span class="en">Form</span>) -&gt; <span class="en">Form</span> {</span>
-<span id="src-formtext-loft-L91">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(f.fm_len);</span>
-<span id="src-formtext-loft-L92">  <span class="cm">// A FRESH value on this path too, never the parameter itself. Returning a by-value struct</span></span>
-<span id="src-formtext-loft-L93">  <span class="cm">// PARAMETER on one path and a fresh value on another leaks the fresh one -- one store per</span></span>
-<span id="src-formtext-loft-L94">  <span class="cm">// call, on the path that IS taken, on both backends (loft#982). `form_canon` is called once</span></span>
-<span id="src-formtext-loft-L95">  <span class="cm">// per admitted form by every enumerator, so the census leaked thousands of `Form`s.</span></span>
-<span id="src-formtext-loft-L96">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(f.fm_h0, f.fm_len, f.fm_turn); }</span>
-<span id="src-formtext-loft-L97">  bt = <span class="fn-call">shift_turns</span>(f.fm_turn, <span class="nm">0</span>);</span>
-<span id="src-formtext-loft-L98">  bl = <span class="fn-call">shift_lens</span>(f.fm_len, <span class="nm">0</span>);</span>
-<span id="src-formtext-loft-L99">  bh = <span class="fn-call">shift_h0</span>(f, <span class="nm">0</span>);</span>
-<span id="src-formtext-loft-L100">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">1..</span>n {</span>
-<span id="src-formtext-loft-L101">    ct = <span class="fn-call">shift_turns</span>(f.fm_turn, si);</span>
-<span id="src-formtext-loft-L102">    cl = <span class="fn-call">shift_lens</span>(f.fm_len, si);</span>
-<span id="src-formtext-loft-L103">    ch = <span class="fn-call">shift_h0</span>(f, si);</span>
-<span id="src-formtext-loft-L104">    ord = <span class="fn-call">cmp_vec</span>(ct, bt);</span>
-<span id="src-formtext-loft-L105">    <span class="kw">if</span> ord == <span class="nm">0</span> { ord = <span class="fn-call">cmp_vec</span>(cl, bl); }</span>
-<span id="src-formtext-loft-L106">    <span class="kw">if</span> ord == <span class="nm">0</span> {</span>
-<span id="src-formtext-loft-L107">      <span class="kw">if</span> ch &lt; bh { ord = -<span class="nm">1</span>; } <span class="kw">else</span> { ord = <span class="nm">1</span>; }</span>
-<span id="src-formtext-loft-L108">    }</span>
-<span id="src-formtext-loft-L109">    <span class="kw">if</span> ord &lt; <span class="nm">0</span> { bt = ct; bl = cl; bh = ch; }</span>
-<span id="src-formtext-loft-L110">  }</span>
-<span id="src-formtext-loft-L111">  <span class="fn-call">form_new</span>(bh, bl, bt)</span>
-<span id="src-formtext-loft-L112">}</span>
-<span id="src-formtext-loft-L113"></span>
-<span id="src-formtext-loft-L114"><span class="cm">// The canonical text of a form, whichever corner it happened to be written from.</span></span>
-<span id="src-formtext-loft-L115"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L116"><span class="cm">// Example: @HXF-004</span></span>
-<span id="src-formtext-loft-L117"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_canon_text</span>(f: <span class="en">Form</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="fn-call">form_write</span>(<span class="fn-call">form_canon</span>(f), name) }</span>
-<span id="src-formtext-loft-L118"></span>
-<span id="src-formtext-loft-L119"><span class="cm">// ── the parser ─────────────────────────────────────────────────────────────</span></span>
-<span id="src-formtext-loft-L120"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L121"><span class="cm">// Strict by design: the reader accepts exactly what `form_write` emits. A lenient reader would</span></span>
-<span id="src-formtext-loft-L122"><span class="cm">// let a non-canonical spelling in and the byte-diff gate would stop meaning anything — the text</span></span>
-<span id="src-formtext-loft-L123"><span class="cm">// IS the contract, so anything it cannot round-trip must be refused rather than repaired.</span></span>
-<span id="src-formtext-loft-L124"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L125"><span class="cm">// THAT WAS A CLAIM BEFORE IT WAS A TEST, and the claim was wrong in seven ways: a trailing</span></span>
-<span id="src-formtext-loft-L126"><span class="cm">// space, an extra field, junk after the header, a non-integer length, an empty length, an</span></span>
-<span id="src-formtext-loft-L127"><span class="cm">// unnormalised `h0` and a non-integer `h0` were all ADMITTED and then re-written differently.</span></span>
-<span id="src-formtext-loft-L128"><span class="cm">// Six of those were spelling; one was not — `len x` became `len 0`, a side that is not there,</span></span>
-<span id="src-formtext-loft-L129"><span class="cm">// admitted into the model without a word. What pins it now is a RE-SPELLING IDENTITY: a field</span></span>
-<span id="src-formtext-loft-L130"><span class="cm">// is an integer only if printing the parse reproduces the original characters, and a line is a</span></span>
-<span id="src-formtext-loft-L131"><span class="cm">// record only if it carries exactly the fields the writer emits.</span></span>
-<span id="src-formtext-loft-L132"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L133"><span class="cm">// Example: @HXF-002</span></span>
-<span id="src-formtext-loft-L134"><span class="kw">fn</span> <span class="fn-call">nth_word</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formtext-loft-L135">  parts = line.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">' '</span>);</span>
-<span id="src-formtext-loft-L136">  parts[i] ?? <span class="st">""</span></span>
-<span id="src-formtext-loft-L137">}</span>
-<span id="src-formtext-loft-L138"></span>
-<span id="src-formtext-loft-L139"><span class="cm">// The parens must NOT wrap the cast: loft wants the `??` discharged at the parse site</span></span>
-<span id="src-formtext-loft-L140"><span class="cm">// itself (`s as integer ?? 0`), not applied to an already-parenthesised fallible cast.</span></span>
-<span id="src-formtext-loft-L141"><span class="kw">fn</span> <span class="fn-call">word_int</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="fn-call">nth_word</span>(line, i) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span> }</span>
-<span id="src-formtext-loft-L142"></span>
-<span id="src-formtext-loft-L143"><span class="cm">// How many space-separated fields the line has. The layout (C4) fixes this per record, so a</span></span>
-<span id="src-formtext-loft-L144"><span class="cm">// line carrying MORE is a different line — trailing junk and a trailing space both land here.</span></span>
-<span id="src-formtext-loft-L145"><span class="kw">fn</span> <span class="fn-call">word_count</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(line.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">' '</span>)) }</span>
-<span id="src-formtext-loft-L146"></span>
-<span id="src-formtext-loft-L147"><span class="cm">// Is field `i` an integer SPELLED THE WAY `form_write` spells one?</span></span>
-<span id="src-formtext-loft-L148"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L149"><span class="cm">// Not a character class: the parse has to reproduce the original characters. That is the C1</span></span>
-<span id="src-formtext-loft-L150"><span class="cm">// rule ("integers only") and the C4 rule ("fixed layout") in one test, and it refuses `""`,</span></span>
-<span id="src-formtext-loft-L151"><span class="cm">// `x`, `007` and `+1` — each of which a fallible cast would otherwise hand back as a plausible</span></span>
-<span id="src-formtext-loft-L152"><span class="cm">// number. `x` becoming `0` was the sharpest of them: not a spelling slip but a SIDE THAT IS</span></span>
-<span id="src-formtext-loft-L153"><span class="cm">// NOT THERE, admitted into the model without a word.</span></span>
-<span id="src-formtext-loft-L154"><span class="kw">fn</span> <span class="fn-call">word_is_int</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-formtext-loft-L155">  w = <span class="fn-call">nth_word</span>(line, i);</span>
-<span id="src-formtext-loft-L156">  v = w <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>;</span>
-<span id="src-formtext-loft-L157">  <span class="st">"{v}"</span> == w</span>
-<span id="src-formtext-loft-L158">}</span>
-<span id="src-formtext-loft-L159"></span>
-<span id="src-formtext-loft-L160"><span class="cm">// The name a text was written with. It is NOT part of the model — `Form` has no name field —</span></span>
-<span id="src-formtext-loft-L161"><span class="cm">// so a round trip carries it only if the caller carries it.  Names are ONE WORD: the layout puts</span></span>
-<span id="src-formtext-loft-L162"><span class="cm">// `h0` in the third field, so a name with a space writes a text this reader refuses.</span></span>
-<span id="src-formtext-loft-L163"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L164"><span class="cm">// Example: @HXF-003</span></span>
-<span id="src-formtext-loft-L165"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_read_name</span>(t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formtext-loft-L166">  lines = t.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
-<span id="src-formtext-loft-L167">  <span class="fn-call">nth_word</span>(lines[<span class="nm">0</span>] ?? <span class="st">""</span>, <span class="nm">1</span>)</span>
-<span id="src-formtext-loft-L168">}</span>
-<span id="src-formtext-loft-L169"></span>
-<span id="src-formtext-loft-L170"><span class="cm">// Parse a canonical text back into a Form. Returns a 0-sided form if the text does not have the</span></span>
-<span id="src-formtext-loft-L171"><span class="cm">// canonical shape — the caller checks, and the gate treats that as a refusal.</span></span>
-<span id="src-formtext-loft-L172"><span class="cm">//</span></span>
-<span id="src-formtext-loft-L173"><span class="cm">// Example: @HXF-002</span></span>
-<span id="src-formtext-loft-L174"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_read</span>(t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Form</span> {</span>
-<span id="src-formtext-loft-L175">  lines = t.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
-<span id="src-formtext-loft-L176">  nl = <span class="bi"><a href="stdlib-text.html">len</a></span>(lines);</span>
-<span id="src-formtext-loft-L177">  <span class="kw">if</span> nl &lt; <span class="nm">2</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L178">  head = lines[<span class="nm">0</span>] ?? <span class="st">""</span>;</span>
-<span id="src-formtext-loft-L179">  <span class="kw">if</span> <span class="fn-call">word_count</span>(head) != <span class="nm">4</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }        <span class="cm">// C4: `stencil &lt;name&gt; h0 &lt;n&gt;`</span></span>
-<span id="src-formtext-loft-L180">  <span class="kw">if</span> <span class="fn-call">nth_word</span>(head, <span class="nm">0</span>) != <span class="st">"stencil"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L181">  <span class="kw">if</span> <span class="fn-call">nth_word</span>(head, <span class="nm">2</span>) != <span class="st">"h0"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L182">  <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(head, <span class="nm">3</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }        <span class="cm">// C1: integers only</span></span>
-<span id="src-formtext-loft-L183">  h0 = <span class="fn-call">word_int</span>(head, <span class="nm">3</span>);</span>
-<span id="src-formtext-loft-L184">  <span class="kw">if</span> <span class="fn-call">head_norm</span>(h0) != h0 { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }          <span class="cm">// C3: one heading, one spelling</span></span>
-<span id="src-formtext-loft-L185">  lens: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formtext-loft-L186">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formtext-loft-L187">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">1..</span>nl {</span>
-<span id="src-formtext-loft-L188">    ln = lines[ri] ?? <span class="st">""</span>;</span>
-<span id="src-formtext-loft-L189">    <span class="kw">if</span> <span class="fn-call">word_count</span>(ln) != <span class="nm">6</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }         <span class="cm">// C4: `side &lt;i&gt; len &lt;l&gt; turn &lt;t&gt;`</span></span>
-<span id="src-formtext-loft-L190">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">0</span>) != <span class="st">"side"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L191">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">2</span>) != <span class="st">"len"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L192">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">4</span>) != <span class="st">"turn"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L193">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">1</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }         <span class="cm">// C1: integers only</span></span>
-<span id="src-formtext-loft-L194">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">3</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L195">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">5</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
-<span id="src-formtext-loft-L196">    <span class="kw">if</span> <span class="fn-call">word_int</span>(ln, <span class="nm">1</span>) != ri - <span class="nm">1</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }   <span class="cm">// C2: index order</span></span>
-<span id="src-formtext-loft-L197">    lens += [<span class="fn-call">word_int</span>(ln, <span class="nm">3</span>)];</span>
-<span id="src-formtext-loft-L198">    turns += [<span class="fn-call">word_int</span>(ln, <span class="nm">5</span>)];</span>
-<span id="src-formtext-loft-L199">  }</span>
-<span id="src-formtext-loft-L200">  <span class="fn-call">form_new</span>(h0, lens, turns)</span>
-<span id="src-formtext-loft-L201">}</span>
-<span id="src-formtext-loft-L202"></span>
-<span id="src-formtext-loft-L203"><span class="cm">// Are two forms the same shape?  Compares the model rather than the text, which is what</span></span>
-<span id="src-formtext-loft-L204"><span class="cm">// makes `form_eq(f, form_read(form_write(f)))` a round-trip check and not a tautology.</span></span>
-<span id="src-formtext-loft-L205"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_eq</span>(a: <span class="en">Form</span>, b: <span class="en">Form</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-formtext-loft-L206">  <span class="kw">if</span> a.fm_h0 != b.fm_h0 { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-formtext-loft-L207">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a.fm_len) != <span class="bi"><a href="stdlib-text.html">len</a></span>(b.fm_len) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-formtext-loft-L208">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a.fm_turn) != <span class="bi"><a href="stdlib-text.html">len</a></span>(b.fm_turn) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-formtext-loft-L209">  <span class="kw">for</span> ei <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a.fm_len) {</span>
-<span id="src-formtext-loft-L210">    <span class="kw">if</span> (a.fm_len[ei] ?? <span class="nm">0</span>) != (b.fm_len[ei] ?? <span class="nm">0</span>) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-formtext-loft-L211">    <span class="kw">if</span> (a.fm_turn[ei] ?? <span class="nm">0</span>) != (b.fm_turn[ei] ?? <span class="nm">0</span>) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-formtext-loft-L212">  }</span>
-<span id="src-formtext-loft-L213">  <span class="kw">true</span></span>
-<span id="src-formtext-loft-L214">}</span>
+<span id="src-formtext-loft-L54">  <span class="cm">// `% n` types nullable (a zero divisor answers null); the loop does not run when</span></span>
+<span id="src-formtext-loft-L55">  <span class="cm">// `n` is 0, so `?? 0` names an unreachable index rather than a chosen one.</span></span>
+<span id="src-formtext-loft-L56">  <span class="kw">for</span> li <span class="kw">in</span> <span class="nm">0..</span>n { out += [lens[(li + s) % n ?? <span class="nm">0</span>] ?? <span class="nm">0</span>]; }</span>
+<span id="src-formtext-loft-L57">  out</span>
+<span id="src-formtext-loft-L58">}</span>
+<span id="src-formtext-loft-L59"></span>
+<span id="src-formtext-loft-L60"><span class="kw">fn</span> <span class="fn-call">shift_turns</span>(turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, s: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-formtext-loft-L61">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(turns);</span>
+<span id="src-formtext-loft-L62">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formtext-loft-L63">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>n { out += [turns[(ti + s) % n ?? <span class="nm">0</span>] ?? <span class="nm">0</span>]; }</span>
+<span id="src-formtext-loft-L64">  out</span>
+<span id="src-formtext-loft-L65">}</span>
+<span id="src-formtext-loft-L66"></span>
+<span id="src-formtext-loft-L67"><span class="kw">fn</span> <span class="fn-call">shift_h0</span>(f: <span class="en">Form</span>, s: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formtext-loft-L68">  turns = f.fm_turn;</span>
+<span id="src-formtext-loft-L69">  h = f.fm_h0;</span>
+<span id="src-formtext-loft-L70">  <span class="kw">for</span> hi <span class="kw">in</span> <span class="nm">0..</span>s { h = h + (turns[hi] ?? <span class="nm">0</span>); }</span>
+<span id="src-formtext-loft-L71">  <span class="fn-call">head_norm</span>(h)</span>
+<span id="src-formtext-loft-L72">}</span>
+<span id="src-formtext-loft-L73"></span>
+<span id="src-formtext-loft-L74"><span class="cm">// Lexicographic compare on two equal-length integer vectors: -1, 0, +1.</span></span>
+<span id="src-formtext-loft-L75"><span class="kw">fn</span> <span class="fn-call">cmp_vec</span>(a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formtext-loft-L76">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(a);</span>
+<span id="src-formtext-loft-L77">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(b) &lt; n { n = <span class="bi"><a href="stdlib-text.html">len</a></span>(b); }</span>
+<span id="src-formtext-loft-L78">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-formtext-loft-L79">    av = a[ci] ?? <span class="nm">0</span>;</span>
+<span id="src-formtext-loft-L80">    bv = b[ci] ?? <span class="nm">0</span>;</span>
+<span id="src-formtext-loft-L81">    <span class="kw">if</span> av &lt; bv { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
+<span id="src-formtext-loft-L82">    <span class="kw">if</span> av &gt; bv { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-formtext-loft-L83">  }</span>
+<span id="src-formtext-loft-L84">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a) &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(b) { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
+<span id="src-formtext-loft-L85">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a) &gt; <span class="bi"><a href="stdlib-text.html">len</a></span>(b) { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-formtext-loft-L86">  <span class="nm">0</span></span>
+<span id="src-formtext-loft-L87">}</span>
+<span id="src-formtext-loft-L88"></span>
+<span id="src-formtext-loft-L89"><span class="cm">// THE CANONICAL SPELLING — smallest `(turns, lens, h0)` over the n cyclic starts.</span></span>
+<span id="src-formtext-loft-L90"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L91"><span class="cm">// Example: @HXF-004</span></span>
+<span id="src-formtext-loft-L92"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_canon</span>(f: <span class="en">Form</span>) -&gt; <span class="en">Form</span> {</span>
+<span id="src-formtext-loft-L93">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(f.fm_len);</span>
+<span id="src-formtext-loft-L94">  <span class="cm">// A FRESH value on this path too, never the parameter itself. Returning a by-value struct</span></span>
+<span id="src-formtext-loft-L95">  <span class="cm">// PARAMETER on one path and a fresh value on another leaks the fresh one -- one store per</span></span>
+<span id="src-formtext-loft-L96">  <span class="cm">// call, on the path that IS taken, on both backends (loft#982). `form_canon` is called once</span></span>
+<span id="src-formtext-loft-L97">  <span class="cm">// per admitted form by every enumerator, so the census leaked thousands of `Form`s.</span></span>
+<span id="src-formtext-loft-L98">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(f.fm_h0, f.fm_len, f.fm_turn); }</span>
+<span id="src-formtext-loft-L99">  bt = <span class="fn-call">shift_turns</span>(f.fm_turn, <span class="nm">0</span>);</span>
+<span id="src-formtext-loft-L100">  bl = <span class="fn-call">shift_lens</span>(f.fm_len, <span class="nm">0</span>);</span>
+<span id="src-formtext-loft-L101">  bh = <span class="fn-call">shift_h0</span>(f, <span class="nm">0</span>);</span>
+<span id="src-formtext-loft-L102">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">1..</span>n {</span>
+<span id="src-formtext-loft-L103">    ct = <span class="fn-call">shift_turns</span>(f.fm_turn, si);</span>
+<span id="src-formtext-loft-L104">    cl = <span class="fn-call">shift_lens</span>(f.fm_len, si);</span>
+<span id="src-formtext-loft-L105">    ch = <span class="fn-call">shift_h0</span>(f, si);</span>
+<span id="src-formtext-loft-L106">    ord = <span class="fn-call">cmp_vec</span>(ct, bt);</span>
+<span id="src-formtext-loft-L107">    <span class="kw">if</span> ord == <span class="nm">0</span> { ord = <span class="fn-call">cmp_vec</span>(cl, bl); }</span>
+<span id="src-formtext-loft-L108">    <span class="kw">if</span> ord == <span class="nm">0</span> {</span>
+<span id="src-formtext-loft-L109">      <span class="kw">if</span> ch &lt; bh { ord = -<span class="nm">1</span>; } <span class="kw">else</span> { ord = <span class="nm">1</span>; }</span>
+<span id="src-formtext-loft-L110">    }</span>
+<span id="src-formtext-loft-L111">    <span class="kw">if</span> ord &lt; <span class="nm">0</span> { bt = ct; bl = cl; bh = ch; }</span>
+<span id="src-formtext-loft-L112">  }</span>
+<span id="src-formtext-loft-L113">  <span class="fn-call">form_new</span>(bh, bl, bt)</span>
+<span id="src-formtext-loft-L114">}</span>
+<span id="src-formtext-loft-L115"></span>
+<span id="src-formtext-loft-L116"><span class="cm">// The canonical text of a form, whichever corner it happened to be written from.</span></span>
+<span id="src-formtext-loft-L117"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L118"><span class="cm">// Example: @HXF-004</span></span>
+<span id="src-formtext-loft-L119"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_canon_text</span>(f: <span class="en">Form</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="fn-call">form_write</span>(<span class="fn-call">form_canon</span>(f), name) }</span>
+<span id="src-formtext-loft-L120"></span>
+<span id="src-formtext-loft-L121"><span class="cm">// ── the parser ─────────────────────────────────────────────────────────────</span></span>
+<span id="src-formtext-loft-L122"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L123"><span class="cm">// Strict by design: the reader accepts exactly what `form_write` emits. A lenient reader would</span></span>
+<span id="src-formtext-loft-L124"><span class="cm">// let a non-canonical spelling in and the byte-diff gate would stop meaning anything — the text</span></span>
+<span id="src-formtext-loft-L125"><span class="cm">// IS the contract, so anything it cannot round-trip must be refused rather than repaired.</span></span>
+<span id="src-formtext-loft-L126"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L127"><span class="cm">// THAT WAS A CLAIM BEFORE IT WAS A TEST, and the claim was wrong in seven ways: a trailing</span></span>
+<span id="src-formtext-loft-L128"><span class="cm">// space, an extra field, junk after the header, a non-integer length, an empty length, an</span></span>
+<span id="src-formtext-loft-L129"><span class="cm">// unnormalised `h0` and a non-integer `h0` were all ADMITTED and then re-written differently.</span></span>
+<span id="src-formtext-loft-L130"><span class="cm">// Six of those were spelling; one was not — `len x` became `len 0`, a side that is not there,</span></span>
+<span id="src-formtext-loft-L131"><span class="cm">// admitted into the model without a word. What pins it now is a RE-SPELLING IDENTITY: a field</span></span>
+<span id="src-formtext-loft-L132"><span class="cm">// is an integer only if printing the parse reproduces the original characters, and a line is a</span></span>
+<span id="src-formtext-loft-L133"><span class="cm">// record only if it carries exactly the fields the writer emits.</span></span>
+<span id="src-formtext-loft-L134"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L135"><span class="cm">// Example: @HXF-002</span></span>
+<span id="src-formtext-loft-L136"><span class="kw">fn</span> <span class="fn-call">nth_word</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formtext-loft-L137">  parts = line.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">' '</span>);</span>
+<span id="src-formtext-loft-L138">  parts[i] ?? <span class="st">""</span></span>
+<span id="src-formtext-loft-L139">}</span>
+<span id="src-formtext-loft-L140"></span>
+<span id="src-formtext-loft-L141"><span class="cm">// The parens must NOT wrap the cast: loft wants the `??` discharged at the parse site</span></span>
+<span id="src-formtext-loft-L142"><span class="cm">// itself (`s as integer ?? 0`), not applied to an already-parenthesised fallible cast.</span></span>
+<span id="src-formtext-loft-L143"><span class="kw">fn</span> <span class="fn-call">word_int</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="fn-call">nth_word</span>(line, i) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span> }</span>
+<span id="src-formtext-loft-L144"></span>
+<span id="src-formtext-loft-L145"><span class="cm">// How many space-separated fields the line has. The layout (C4) fixes this per record, so a</span></span>
+<span id="src-formtext-loft-L146"><span class="cm">// line carrying MORE is a different line — trailing junk and a trailing space both land here.</span></span>
+<span id="src-formtext-loft-L147"><span class="kw">fn</span> <span class="fn-call">word_count</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(line.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">' '</span>)) }</span>
+<span id="src-formtext-loft-L148"></span>
+<span id="src-formtext-loft-L149"><span class="cm">// Is field `i` an integer SPELLED THE WAY `form_write` spells one?</span></span>
+<span id="src-formtext-loft-L150"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L151"><span class="cm">// Not a character class: the parse has to reproduce the original characters. That is the C1</span></span>
+<span id="src-formtext-loft-L152"><span class="cm">// rule ("integers only") and the C4 rule ("fixed layout") in one test, and it refuses `""`,</span></span>
+<span id="src-formtext-loft-L153"><span class="cm">// `x`, `007` and `+1` — each of which a fallible cast would otherwise hand back as a plausible</span></span>
+<span id="src-formtext-loft-L154"><span class="cm">// number. `x` becoming `0` was the sharpest of them: not a spelling slip but a SIDE THAT IS</span></span>
+<span id="src-formtext-loft-L155"><span class="cm">// NOT THERE, admitted into the model without a word.</span></span>
+<span id="src-formtext-loft-L156"><span class="kw">fn</span> <span class="fn-call">word_is_int</span>(line: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-formtext-loft-L157">  w = <span class="fn-call">nth_word</span>(line, i);</span>
+<span id="src-formtext-loft-L158">  v = w <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> ?? <span class="nm">0</span>;</span>
+<span id="src-formtext-loft-L159">  <span class="st">"{v}"</span> == w</span>
+<span id="src-formtext-loft-L160">}</span>
+<span id="src-formtext-loft-L161"></span>
+<span id="src-formtext-loft-L162"><span class="cm">// The name a text was written with. It is NOT part of the model — `Form` has no name field —</span></span>
+<span id="src-formtext-loft-L163"><span class="cm">// so a round trip carries it only if the caller carries it.  Names are ONE WORD: the layout puts</span></span>
+<span id="src-formtext-loft-L164"><span class="cm">// `h0` in the third field, so a name with a space writes a text this reader refuses.</span></span>
+<span id="src-formtext-loft-L165"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L166"><span class="cm">// Example: @HXF-003</span></span>
+<span id="src-formtext-loft-L167"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_read_name</span>(t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formtext-loft-L168">  lines = t.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
+<span id="src-formtext-loft-L169">  <span class="fn-call">nth_word</span>(lines[<span class="nm">0</span>] ?? <span class="st">""</span>, <span class="nm">1</span>)</span>
+<span id="src-formtext-loft-L170">}</span>
+<span id="src-formtext-loft-L171"></span>
+<span id="src-formtext-loft-L172"><span class="cm">// Parse a canonical text back into a Form. Returns a 0-sided form if the text does not have the</span></span>
+<span id="src-formtext-loft-L173"><span class="cm">// canonical shape — the caller checks, and the gate treats that as a refusal.</span></span>
+<span id="src-formtext-loft-L174"><span class="cm">//</span></span>
+<span id="src-formtext-loft-L175"><span class="cm">// Example: @HXF-002</span></span>
+<span id="src-formtext-loft-L176"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_read</span>(t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Form</span> {</span>
+<span id="src-formtext-loft-L177">  lines = t.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>);</span>
+<span id="src-formtext-loft-L178">  nl = <span class="bi"><a href="stdlib-text.html">len</a></span>(lines);</span>
+<span id="src-formtext-loft-L179">  <span class="kw">if</span> nl &lt; <span class="nm">2</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L180">  head = lines[<span class="nm">0</span>] ?? <span class="st">""</span>;</span>
+<span id="src-formtext-loft-L181">  <span class="kw">if</span> <span class="fn-call">word_count</span>(head) != <span class="nm">4</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }        <span class="cm">// C4: `stencil &lt;name&gt; h0 &lt;n&gt;`</span></span>
+<span id="src-formtext-loft-L182">  <span class="kw">if</span> <span class="fn-call">nth_word</span>(head, <span class="nm">0</span>) != <span class="st">"stencil"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L183">  <span class="kw">if</span> <span class="fn-call">nth_word</span>(head, <span class="nm">2</span>) != <span class="st">"h0"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L184">  <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(head, <span class="nm">3</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }        <span class="cm">// C1: integers only</span></span>
+<span id="src-formtext-loft-L185">  h0 = <span class="fn-call">word_int</span>(head, <span class="nm">3</span>);</span>
+<span id="src-formtext-loft-L186">  <span class="kw">if</span> <span class="fn-call">head_norm</span>(h0) != h0 { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }          <span class="cm">// C3: one heading, one spelling</span></span>
+<span id="src-formtext-loft-L187">  lens: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formtext-loft-L188">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formtext-loft-L189">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">1..</span>nl {</span>
+<span id="src-formtext-loft-L190">    ln = lines[ri] ?? <span class="st">""</span>;</span>
+<span id="src-formtext-loft-L191">    <span class="kw">if</span> <span class="fn-call">word_count</span>(ln) != <span class="nm">6</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }         <span class="cm">// C4: `side &lt;i&gt; len &lt;l&gt; turn &lt;t&gt;`</span></span>
+<span id="src-formtext-loft-L192">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">0</span>) != <span class="st">"side"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L193">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">2</span>) != <span class="st">"len"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L194">    <span class="kw">if</span> <span class="fn-call">nth_word</span>(ln, <span class="nm">4</span>) != <span class="st">"turn"</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L195">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">1</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }         <span class="cm">// C1: integers only</span></span>
+<span id="src-formtext-loft-L196">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">3</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L197">    <span class="kw">if</span> !<span class="fn-call">word_is_int</span>(ln, <span class="nm">5</span>) { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }</span>
+<span id="src-formtext-loft-L198">    <span class="kw">if</span> <span class="fn-call">word_int</span>(ln, <span class="nm">1</span>) != ri - <span class="nm">1</span> { <span class="kw">return</span> <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []); }   <span class="cm">// C2: index order</span></span>
+<span id="src-formtext-loft-L199">    lens += [<span class="fn-call">word_int</span>(ln, <span class="nm">3</span>)];</span>
+<span id="src-formtext-loft-L200">    turns += [<span class="fn-call">word_int</span>(ln, <span class="nm">5</span>)];</span>
+<span id="src-formtext-loft-L201">  }</span>
+<span id="src-formtext-loft-L202">  <span class="fn-call">form_new</span>(h0, lens, turns)</span>
+<span id="src-formtext-loft-L203">}</span>
+<span id="src-formtext-loft-L204"></span>
+<span id="src-formtext-loft-L205"><span class="cm">// Are two forms the same shape?  Compares the model rather than the text, which is what</span></span>
+<span id="src-formtext-loft-L206"><span class="cm">// makes `form_eq(f, form_read(form_write(f)))` a round-trip check and not a tautology.</span></span>
+<span id="src-formtext-loft-L207"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">form_eq</span>(a: <span class="en">Form</span>, b: <span class="en">Form</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-formtext-loft-L208">  <span class="kw">if</span> a.fm_h0 != b.fm_h0 { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-formtext-loft-L209">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a.fm_len) != <span class="bi"><a href="stdlib-text.html">len</a></span>(b.fm_len) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-formtext-loft-L210">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(a.fm_turn) != <span class="bi"><a href="stdlib-text.html">len</a></span>(b.fm_turn) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-formtext-loft-L211">  <span class="kw">for</span> ei <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a.fm_len) {</span>
+<span id="src-formtext-loft-L212">    <span class="kw">if</span> (a.fm_len[ei] ?? <span class="nm">0</span>) != (b.fm_len[ei] ?? <span class="nm">0</span>) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-formtext-loft-L213">    <span class="kw">if</span> (a.fm_turn[ei] ?? <span class="nm">0</span>) != (b.fm_turn[ei] ?? <span class="nm">0</span>) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-formtext-loft-L214">  }</span>
+<span id="src-formtext-loft-L215">  <span class="kw">true</span></span>
+<span id="src-formtext-loft-L216">}</span>
 </code></pre>
 <h2 id="src-hex-form-loft">src/hex_form.loft</h2>
 <pre class="src"><code><span id="src-hex-form-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -651,7 +653,7 @@
 <span id="src-hexform-loft-L327">  <span class="kw">for</span> ei <span class="kw">in</span> <span class="nm">0..</span>n {</span>
 <span id="src-hexform-loft-L328">    ak = vk[ei] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L329">    am = vm[ei] ?? <span class="nm">0</span>;</span>
-<span id="src-hexform-loft-L330">    ej = (ei + <span class="nm">1</span>) % n;</span>
+<span id="src-hexform-loft-L330">    ej = (ei + <span class="nm">1</span>) % n ?? <span class="nm">0</span>;      <span class="cm">// n &gt;= 3 here, so the null arm is unreachable</span></span>
 <span id="src-hexform-loft-L331">    bk = vk[ej] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L332">    bm = vm[ej] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L333">    crs = (bk - ak) * (pm - am) - (bm - am) * (pk - ak);</span>
@@ -664,7 +666,7 @@
 <span id="src-hexform-loft-L340">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>n {</span>
 <span id="src-hexform-loft-L341">    ck = vk[ci] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L342">    cm = vm[ci] ?? <span class="nm">0</span>;</span>
-<span id="src-hexform-loft-L343">    cj = (ci + <span class="nm">1</span>) % n;</span>
+<span id="src-hexform-loft-L343">    cj = (ci + <span class="nm">1</span>) % n ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L344">    dk = vk[cj] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L345">    dm = vm[cj] ?? <span class="nm">0</span>;</span>
 <span id="src-hexform-loft-L346">    <span class="kw">if</span> (cm &gt; pm) != (dm &gt; pm) {</span>

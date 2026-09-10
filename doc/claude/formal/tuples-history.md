@@ -6,13 +6,44 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
+OPEN: **1** — D-tup-10, whose entry lives in the chapter next door because it is still being
+worked; this register carries the closed ones.  This line read `OPEN: 0` from 2026-09-05 until
+2026-09-10 while D-tup-10 and D-tup-11 were live in [tuples.md](tuples.md) — a register's
+headline is a claim about the chapter beside it, and it decayed the moment an entry was opened
+somewhere else.  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
 2026-08-28; D-tup-3 opened and closed 2026-08-26; D-tup-2 closed the day the
 rule it needed was written down.  Bounded by the oracle note below — **and D-tup-3 is what that
 note was warning about**: it was found by giving an element a HEAP type, which this doc's
 all-`(integer, integer)` oracle cannot express, so the zero above never covered it.  D-tup-5 and
 D-tup-6 are two more from the same blind spot, one axis further: a NULLABLE element, which the
 all-`(integer, integer)` oracle cannot express either.
+
+### D-tup-12 — OPENED AND CLOSED (2026-09-10): `_0` was a second spelling of `.0`, on one home only
+
+`(T-Proj)` says a tuple's member is a LITERAL index and a tuple has no other member.  A
+record-backed tuple is carried as the synthetic struct `__tuple<…>`, whose attributes are
+named `_0`, `_1`, … — and that home's projection site claimed the member only when the next
+token was ALREADY an integer.  A guard on the token rather than an answer about it: a named
+member fell past it to the ordinary struct-field reader, where `_0` resolved.
+
+So `t._0` READ a `vector<(integer, text)>` loop variable's element and `t._0 = 99` WROTE
+through it into the vector, on both backends, while the same source over a plain local was
+refused by name.  The five refusing homes (stack local, vector element by a constant or a
+variable index, struct field, `&(…)` parameter, function parameter, all-integer return) and
+the three admitting ones (`vector<(τ, τ)>` loop variable, nested loop variable, heap-carrying
+return) differ by a REPRESENTATION choice with nothing in the source to show it — which is why
+the boundary is worth writing down rather than the symptom.
+
+Two more defects sat on the same fallthrough: a named member reported *"Unknown field
+`__tuple<integer,text>`.name"*, naming a def the author cannot write (loft#1498's class, whose
+predicate `Data::def_is_authored` this path never reached), and the refusal at all THREE homes
+left the member in the token stream, so each dragged a second `Expect token ;` behind it.
+
+Closed by giving both questions one home — `tuple_member_not_a_literal` (which also consumes
+the member, and marks it `Value::Drop` so `t._0 = 9` does not collapse into `t = 9`) and
+`tuple_index_out_of_range` — cited from all three sites.  The lesson is the shape rather than
+the bug: THREE copies of one refusal is what let a fourth spelling of it be a token guard
+instead, and a guard reads as an answer until you ask what happens when it does not hold.
 
 ### D-tup-9 — OPENED AND CLOSED (2026-09-05, loft#1365): a tuple literal member typed by a type variable
 

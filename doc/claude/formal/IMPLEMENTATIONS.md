@@ -897,6 +897,46 @@ condition.**  From inside the code each looks like an arm to add, a variant to a
 insert — and each of those makes the immediate symptom go away while leaving the generator
 running.  The cure is structural every time: one home, one body, or one name per question.
 
+## The inline-edge question — one notion, five spellings, one of them known (2026-09-10)
+
+*Does this FIELD embed the host record's own bytes?*  The question `Data::has_value_cycle` asks
+to decide whether a struct contains itself, and the row it belongs to above is **one notion,
+many SPELLINGS** — with the sharpest version of that row's problem, because four of the five
+spellings share no token with the one the matcher named.
+
+The rules had already enumerated the set and the code had not read them.
+`formal/layout.md` `(L-Null-Tag)` lists the INLINE positions — *"a `vector`/keyed element, an
+embedded field, a tuple member"* — and `(L-Null-Which)` cites `has_value_cycle` BY NAME for
+reading the same `u16::MAX` share marker.  The walk matched `Type::Reference(child, deps)` bare.
+
+| spelling | reaches the walk as | seen? | symptom |
+|---|---|---|---|
+| `next: Node` | `Reference(Node)` | ✅ | — |
+| `next: Node?` | `Optional(Reference(Node))` — the rewrite to the tagged `__nullable<Node>` runs AFTER this pass | ❌ | `type layout: … field 'next' has no position (u16::MAX)` |
+| `p: (integer, Node)` | `Tuple([Integer, Reference(Node)])` | ❌ | **ICE** — `attempt to add with overflow`, the `u16` offset accumulator |
+| `e: E`, `enum E { Branch { n: … } }` | `Enum(E)`, whose payloads are the enum's CHILDREN and not its attributes | ❌ | layout dump |
+| `next: reference<Node>` / `reference<Node>?` | `Reference(Node, {u16::MAX})` | ✅ | correctly NOT an edge |
+
+**What makes this one worth its own section is the severity gradient.**  A missed spelling here
+does not cost a diagnostic — it costs a type that has no finite size, so the reader meets the
+record builder rather than the compiler.  The cheapest surface is a layout dump with no cure in
+it; the dearest is an internal compiler error.  A blind spot in a *reporter* is normally benign,
+and this reporter is the only thing standing between the user and an unrepresentable type.
+
+**And the spelling nobody takes is the one that worked.**  `next: Node?` is how a linked list is
+written; `next: Node` is a type nobody writes on purpose.  All three existing guards
+(`type_cycle_self`, `type_cycle_indirect`, `36b-pass1-parse-errors.loft`) assert the bare
+spelling, so the covered route was the unused one.  The sharpest cell is an INDIRECT cycle with
+a single optional hop (`A{b:B} B{a:A?}`) — the walk gets all the way around but for one step and
+reports nothing, which is what says the defect is the edge decoder and not the traversal.
+
+Cure per the row: **one body, exhaustive by construction.**  `Data::inline_field_defs` matches
+every `Type` former and is the walk's only edge question, so a new former forces a decision
+there; the walk asks ENUMS as well as structs, whose variants are children.  Nine guards, each
+measured failing first, against seven controls — the controls are the load-bearing half, because
+following an enum edge is what could start reporting a cycle for every program that puts an enum
+in a struct.
+
 ## The key-owner question — one notion, six homes, three of them short (2026-08-29)
 
 *Which field list do a keyed collection's key NUMBERS index?*  `Stores::key_owner` is the

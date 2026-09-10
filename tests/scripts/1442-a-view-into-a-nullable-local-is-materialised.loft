@@ -34,6 +34,11 @@
 //   keeps its bytes until something writes over them, so the same probe answered
 //   -2401053088876216593 in one program and 1 in another whose only difference was what ran
 //   before it.  The value channel cannot be relied on here; the store channel can.
+//   HOLDS: with `LOFT_STRICT_STORES=1` armed, assertions, leak, panic, free-refusal and
+//   expectations are all equal on both trees AND on both backends; the EXIT channel carries
+//   this one, 1 -> 0 each side. Re-measured serially — a first run taken while another
+//   falsify was building corrupted the shared HERE binary and reported the native side INERT,
+//   which reads exactly like a native regression and was not one.
 
 struct P42 { a: integer }
 struct Q42 { p: P42, v: vector<integer> }

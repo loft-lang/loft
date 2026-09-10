@@ -1813,7 +1813,26 @@ impl Parser {
         // return is discarded, so nothing is judged or reported twice.
         if op != "=" && !self.first_pass {
             let holds_null = crate::parser::expressions::target_holds_null(f_type, parent_tp);
-            self.guard_compound_range(&mut code, f_type, holds_null);
+            let bounded = self.guard_compound_range(&mut code, f_type, holds_null);
+            // `@FR-E-Uncomp-Seen` — offer this store's fit status to an `if !place { … }` that
+            // may be the very next statement.  This is the one seam every compound
+            // assignment passes through with `to` still the PLACE, so a local, a field and
+            // an element are one case here and cannot come apart later.
+            //
+            // Offered only where the failure has nowhere else to live: a `dflt` of
+            // `i64::MIN` means the target kept a code back for it (a nullable narrow, an
+            // `i32`, a plain `integer`), and `!` reads that today with no help from here.
+            self.fit_candidate = match bounded {
+                Some((_, _, dflt)) if dflt != i64::MIN => match f_type.base() {
+                    Type::Integer(spec) => Some(crate::parser::fit::FitFusion {
+                        place: to.clone(),
+                        spec: *spec,
+                        fit_var: None,
+                    }),
+                    _ => None,
+                },
+                _ => None,
+            };
         }
         if let Value::Call(d_nr, args) = to.unspan() {
             let name = self.data.def(*d_nr).name().to_string();

@@ -44,6 +44,9 @@
 //   exit 1 -> 0, native expectations FAIL/2 -> 2/2.  Re-measured after the message gained its
 //   type: the FIRST draft, with both cells expecting the bare "Too few key fields", read INERT
 //   on all four rows — the guard passed on the build it was written to catch.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct P1457 { x: integer, y: integer, v: integer }
 struct H1457 { a: integer, b: integer, v: integer }

@@ -393,6 +393,27 @@ pub struct Parser {
     /// Read once by `parse_if`, which clears it so a nested value-`if` inside a statement one
     /// does not inherit it.
     pub(crate) stmt_if_pending: bool,
+    /// @PLN152 step 5 — the narrow store the statement just parsed made, offered to an
+    /// `if !place { … }` standing as the VERY NEXT statement.
+    ///
+    /// `u8`/`i8`/`u16`/`i16`/`u32` and every `limit(lo, hi)` range fill their own width, so
+    /// a value that does not fit takes the type's default and nothing in the program can
+    /// tell that answer from a computed one.  The fit status is therefore carried in a
+    /// `__fit_N` temp beside the STORE and consumed by the `!` in the next statement's
+    /// condition — never stored in the slot, an element or a field, which is what keeps a
+    /// `vector<u8>` one byte per element.
+    ///
+    /// Set at the compound-assignment seam, promoted by [`Self::parse_block_inner`] when the
+    /// pushed statement really carries the `OpRangeDefault` guard, and dropped at the next
+    /// statement boundary — so nothing survives past the pair the author wrote.
+    pub(crate) fit_candidate: Option<crate::parser::fit::FitFusion>,
+    /// The promoted [`Self::fit_candidate`], live across exactly the following statement.
+    pub(crate) fit_armed: Option<crate::parser::fit::FitFusion>,
+    /// True only while the CONDITION of the `if` directly following such a store is parsed.
+    /// `parse_if` opens the window (it is the one site that knows statement position) and
+    /// `parse_if_expecting` closes it the moment the condition is complete, so a `!place`
+    /// in the BODY reads the slot as it always did.
+    pub(crate) fit_in_condition: bool,
     /// loft#1382 — an arm-agreement mismatch found while parsing a construct that BEGAN its
     /// statement, held until the `;` after it is visible.
     ///
@@ -1250,6 +1271,7 @@ pub(super) mod control;
 pub(super) mod definitions;
 pub(super) mod expressions;
 pub(super) mod fields;
+pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
 pub(super) mod vectors;
@@ -1373,6 +1395,9 @@ impl Parser {
             pending_param_positions: Vec::new(),
             amp_pending: false,
             stmt_if_pending: false,
+            fit_candidate: None,
+            fit_armed: None,
+            fit_in_condition: false,
             pending_arm_mismatch: None,
             arm_convert_reported: false,
             arms_of_statement_construct: false,
@@ -13776,13 +13801,20 @@ impl Parser {
             start_def,
             Some(&mut self.deferred_unknown),
         );
-        typedef::fill_all(
+        let cyclic_type = typedef::fill_all(
             &mut self.data,
             &mut self.database,
             &mut self.lexer,
             start_def,
         );
-        self.database.finish();
+        // A type that contains itself has no finite size, so there is nothing for the record
+        // builder to finish: `finish_type` follows the cycle into itself and the `u16` offset
+        // accumulator wraps.  That panic is what the user meets — an internal compiler error,
+        // and with the diagnostics still buffered, so the message naming the cure never
+        // prints.  `fill_all` has already reported; stop before the layout.
+        if !cyclic_type {
+            self.database.finish();
+        }
         // Validate layouts of all registered types — catches late-
         // mutation bugs (e.g. P191's bookkeeping fields landing at
         // overlapping positions because finish_type already ran).

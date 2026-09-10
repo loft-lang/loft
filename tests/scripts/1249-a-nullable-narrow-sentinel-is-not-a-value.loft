@@ -34,6 +34,9 @@
 //   LOCAL keeps the sentinel as an ordinary number while its field twin reads null.  The
 //   two-cure cells above pass on that build TOO, which is the point of them: they fail on the
 //   builds where those cures were live, not on the one this fixes.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct S1249 {
   au: u8?,    nu: u8,

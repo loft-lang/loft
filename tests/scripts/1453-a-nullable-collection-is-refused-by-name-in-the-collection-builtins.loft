@@ -52,6 +52,11 @@
 // message whose cure is never executed advertises a dead end.  Written as ONE file first, the
 // harness caught eleven assertions that could never run — which is the vacuous-cell defect this
 // guard is otherwise about, aimed at itself.
+//   CHANNEL: the exit/expectations channel, measured on --interpret against 98cacb724 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 // @EXPECT_ERROR: cannot map over vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be mapped, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection an empty result
 // @EXPECT_ERROR: cannot filter vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be filtered, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection an empty result
 // @EXPECT_ERROR: cannot use any on vector<It1453>? because it is NULLABLE — a `vector<It1453>` can be used, but there is no implicit unwrap.  Discharge it first: add `?` (the type's default, an empty collection) or `?? []`; either spelling gives an absent collection the answer for an empty one

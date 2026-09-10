@@ -1629,7 +1629,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
     if let Some(v) = &a.verified_release {
         println!("  ok      {v} downloaded and matches the signed registry index");
     }
-    let checks = local_checks(staged);
+    let checks = local_checks(staged, None);
     for c in &checks {
         match c {
             Check::Ok(m) => println!("  ok      staged {m}"),
@@ -1878,7 +1878,16 @@ fn verify_self_cmd() -> i32 {
         );
         return 1;
     };
-    let mut checks = local_checks(&root);
+    // Where the RUNTIME will load `default/` from — asked of the resolver loft itself uses,
+    // so the verifier and the loader cannot disagree.  They did: `bundle_root` is
+    // `<exe>/../..` unconditionally, while `project_root_for` prefers `<prefix>/share/loft`
+    // whenever it exists, so a prefix holding both a self-updated bundle and an older source
+    // install verified one stdlib and parsed the other — loft#1497, which passed
+    // verification and then segfaulted in `OpFreeText` on `println("hello")`.
+    let loaded = exe
+        .parent()
+        .map(|d| std::path::PathBuf::from(native_utils::project_root_for(d)).join("default"));
+    let mut checks = local_checks(&root, loaded.as_deref());
     // Only consult the registry for something that IS a bundle; a source checkout has
     // no manifest to anchor, and a network round-trip to say so would be noise.
     if !checks.iter().all(|c| matches!(c, Check::Skipped(_))) {
@@ -1922,8 +1931,14 @@ fn verify_self_cmd() -> i32 {
         println!(
             "This installation does not match the manifests it shipped with.  A changed\n\
              stdlib file with an unchanged binary is the usual cause — a partial upgrade —\n\
-             and loft loads its stdlib from <binary-dir>/../default, so it would run with\n\
-             the mismatch.  Reinstall the release rather than replacing single files."
+             and loft would run with the mismatch rather than refuse.  Reinstall the release\n\
+             rather than replacing single files.\n\
+             \n\
+             A `loaded stdlib` failure is a different shape: the bundle is intact and is not\n\
+             what runs.  loft takes its stdlib from <prefix>/share/loft/default when that\n\
+             directory exists and from <binary-dir>/../default otherwise, so a prefix holding\n\
+             both — a self-update over an older source install — verifies one and parses the\n\
+             other.  Remove the tree that is not the release."
         );
         return 1;
     }
@@ -3862,16 +3877,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
 
     // Parse just enough to read definitions.
     let abs = portable_path::plain_canonical(&entry);
-    let dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default();
-    let default_dir = dir.join("../default");
-    let default_str = if default_dir.exists() {
-        default_dir.to_string_lossy().to_string()
-    } else {
-        "default".to_string()
-    };
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
 
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
@@ -5125,16 +5131,7 @@ fn api_surface_of(
         return Err(format!("file {file} not found"));
     }
     let abs = portable_path::plain_canonical(&entry);
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let default_dir = exe_dir.join("../default");
-    let default_str = if default_dir.exists() {
-        default_dir.to_string_lossy().to_string()
-    } else {
-        format!("{}/default", project_dir())
-    };
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
@@ -6270,16 +6267,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
         return 1;
     }
     let abs = portable_path::plain_canonical(&entry);
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let default_dir = exe_dir.join("../default");
-    let default_str = if default_dir.exists() {
-        default_dir.to_string_lossy().to_string()
-    } else {
-        format!("{}/default", project_dir())
-    };
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
@@ -6382,16 +6370,7 @@ fn run_fix_command(args: &[String]) -> i32 {
 
     // Same stdlib resolution as `run_fmt_command`: beside the binary in a release layout,
     // else the source tree.
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let default_dir = exe_dir.join("../default");
-    let default_str = if default_dir.exists() {
-        default_dir.to_string_lossy().to_string()
-    } else {
-        format!("{}/default", project_dir())
-    };
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
 
     let mut exit = 0;
     for file in &files {
@@ -6467,16 +6446,7 @@ fn run_fmt_command(args: &[String]) -> i32 {
 
     // Resolve the stdlib `default/` dir next to the binary (release layout), else the
     // source tree — same resolution as `run_layout_command`.
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let default_dir = exe_dir.join("../default");
-    let default_str = if default_dir.exists() {
-        default_dir.to_string_lossy().to_string()
-    } else {
-        format!("{}/default", project_dir())
-    };
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut prog = match Program::from_source_with_stdlib(FMT_SRC, &default_str) {
         Ok(p) => p,
         Err(e) => {
@@ -6556,21 +6526,32 @@ fn run_fmt_command(args: &[String]) -> i32 {
 /// Resolve the stdlib `default/` dir (binary-relative, else the source tree —
 /// the resolution `run_fmt_command` uses) AND enable the startup cache, so a
 /// query warm-loads the precompiled stdlib `Data` (~10×) instead of cold-parsing.
+/// The stdlib `default/` directory, asked of the SAME resolver the loader uses.
+///
+/// Every caller of this used to try `<exe-dir>/../default` first and fall back to
+/// [`project_dir`].  That preference is inverted relative to the runtime:
+/// `native_utils::project_root_for` prefers `<prefix>/share/loft/` whenever that directory
+/// exists, so on a prefix holding BOTH trees — what a `self-update` over an older source
+/// install leaves — `loft fmt`, `loft fix`, `loft layout` and the LSP parsed
+/// `<prefix>/default` while `loft run` parsed `<prefix>/share/loft/default`.  Two stdlibs,
+/// one installation, chosen by which subcommand you typed (loft#1499, found while fixing
+/// loft#1497's verification half).
+///
+/// One resolver answers every layout, which is why the first guess is not needed rather than
+/// merely wrong: a dev tree (`target/<profile>` stripped), an installed prefix with
+/// `share/loft`, and an unpacked release bundle all come out of [`project_dir`].  Where
+/// `current_exe` fails it yields an empty root, so this degrades to the relative `default`
+/// the two literal-fallback sites used to name.
+fn stdlib_default_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(project_dir()).join("default")
+}
+
 fn lsp_default_dir() -> String {
     if std::env::var_os("LOFT_STDLIB_CACHE").is_none() {
         // SAFETY: single-threaded CLI startup, before any program runs.
         unsafe { std::env::set_var("LOFT_STDLIB_CACHE", "1") };
     }
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let default_dir = exe_dir.join("../default");
-    let dir = if default_dir.exists() {
-        default_dir
-    } else {
-        std::path::PathBuf::from(project_dir()).join("default")
-    };
+    let dir = stdlib_default_dir();
     // Canonicalize so recorded def paths are clean (no `..`, no `//`) — those
     // paths are shown to the user and pasted into `file:line` references.
     portable_path::plain_canonical(&dir)
@@ -6869,18 +6850,7 @@ fn main() {
             .position(|x| x == "--default")
             .and_then(|p| a.get(p + 1))
             .cloned()
-            .unwrap_or_else(|| {
-                let dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
-                    .unwrap_or_default()
-                    .join("../default");
-                if dir.exists() {
-                    dir.to_string_lossy().into_owned()
-                } else {
-                    "default".to_string()
-                }
-            });
+            .unwrap_or_else(|| stdlib_default_dir().to_string_lossy().into_owned());
         match (a.get(1), a.get(2)) {
             (Some(addr), Some(pkg)) => loft::lib_placement::serve_remote(
                 addr,

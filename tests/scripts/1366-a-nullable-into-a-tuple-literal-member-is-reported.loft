@@ -10,6 +10,15 @@
 //
 // @falsified-at: 806a8d84 → here (warnings 0 → 6): the six members were silent on the
 //   build this guard was written to catch, and the values were the same on both.
+//   CHANNEL: the WARNING COUNT — six silent tuple members on the control — and nothing else.
+//   Falsify has no warning column: a `@EXPECT_WARNING` file gets a direct run where warnings
+//   are not matched at all, so both trees read `expect -` and the sweep reports INERT however
+//   loudly the diagnostic fires (TESTING.md § A guard that never failed is not a guard,
+//   second blind channel).
+//   WITNESS: warnings 0 -> 6 on the control against the declared count here; that difference
+//   is the whole measurement.
+//   HOLDS: the VALUES are identical on both trees, and every channel falsify scores is equal.
+//   A run compared on values or exit learns nothing here — count the diagnostics by hand.
 // @EXPECT_WARNING: is stored into element 0 of this tuple
 struct R { n: integer }
 fn main() {

@@ -39,6 +39,9 @@
 //   does not compile at all: the first annotated declaration is reported as a missing `;` and
 //   nothing runs, so no assertion channel can move.  The exit channel is the one that carries
 //   the answer, and it moves on BOTH backends because the refusal is raised in the parser.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum C1231 { Red, Green }
 

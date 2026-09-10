@@ -41,6 +41,9 @@
 // exit 1 -> 0, native 1 assertion failures -> 0.  The count is 1 because a failed assert stops
 // the run: on the control the first `hash =` cell fires, and every keyed row above the literal
 // control is broken there.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct F1 { f1_k: integer, f1_k2: integer, f1_nm: text }
 struct F2 { f2_k: integer, f2_k2: integer, f2_nm: text }

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stage guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library stage — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-stage-guide.html">
+<meta property="og:title" content="stage guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library stage — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-stage-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="stage guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library stage — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>stage guide</h1>
+<article>
+<p><a href="lib-stage.html">← stage</a> · <a href="lib-stage-api.html">API reference</a> · <a href="lib-stage-src.html">source</a></p>
+<p>A game is a <strong>tree you mutate</strong>, not a frame loop you draw. <code>stage</code> holds that tree: nodes with a parent, a transform and a sprite rect, one pass that derives every world transform from them, and then the questions a frame actually asks — where did this land, what is under the pointer, what do I hand the renderer.</p>
+<p>It is not the renderer: <code>graphics</code> owns the canvas, and <code>stage</code> hands it a <code>draw_list()</code> or calls <code>render_stage(canvas)</code>. It is not a physics engine or a layout engine — nothing here moves a node on its own except the tween and animation clocks you start yourself.</p>
+<p>Everything below is pure computation over the tree, so this guide needs no window and no display, exactly like the package's own suite.</p>
+<pre><code><span class="kw">use</span> stage;</code></pre>
+<pre><code><span class="en">EPS</span> = <span class="nm">0.0001</span>;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
+<p>A parent at (100, 50) and a child ten to its right, in the PARENT's units.</p>
+<pre><code>  st = stage::<span class="fn-call">stage_new</span>();
+  root = st.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> { pl_x: <span class="nm">100.0</span>, pl_y: <span class="nm">50.0</span> });
+  child = st.<span class="fn-call">node_add</span>(root, stage::<span class="en">Place</span> { pl_x: <span class="nm">10.0</span> });
+  st.<span class="fn-call">compose</span>();                      <span class="cm">// one forward pass, every world transform</span></code></pre>
+<pre><code>  at = st.<span class="fn-call">world_origin</span>(child);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"child  : ({at.p_x}, {at.p_y})"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(at.p_x, <span class="nm">110.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(at.p_y, <span class="nm">50.0</span>), <span class="st">"the child rides its parent"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(st.<span class="fn-call">node_count</span>() == <span class="nm">2</span>, <span class="st">"two nodes in the tree"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">compose_is_a_step_you_take</span>();
+  <span class="fn-call">the_origin_is_the_anchor</span>();
+  <span class="fn-call">a_place_declares_its_defaults</span>();
+  <span class="fn-call">what_the_frame_asks</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  child  : (110, 50)
+</code></pre>
+<p><code>node_add(parent, place)</code> answers the new node's index, and <code>-1</code> when the parent does not exist yet — so a tree is built top-down and a bad index is a value you can test rather than a crash.</p>
+<h2 id="compose-is-a-step-you-take-and-nothing-reminds-you"><code>compose()</code> is a step you take, and nothing reminds you</h2>
+<p>Mutating the tree does not move anything. <code>compose()</code> is the single forward pass that turns every node's local <code>Place</code> into a world transform, and every world query BEFORE it answers from a transform that is still zero.</p>
+<p>That is the shape of the first bug most readers hit, and it is silent: <code>(0, 0)</code> is a perfectly good position, so a node that never composed looks like a node parked at the origin. Mutate freely, compose once per frame, then ask.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">compose_is_a_step_you_take</span>() {
+  st = stage::<span class="fn-call">stage_new</span>();
+  n = st.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> { pl_x: <span class="nm">100.0</span>, pl_y: <span class="nm">50.0</span> });</code></pre>
+<pre><code>  before = st.<span class="fn-call">world_origin</span>(n);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(before.p_x, <span class="nm">0.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(before.p_y, <span class="nm">0.0</span>),
+         <span class="st">"before compose the transform is still zero — not an error, just zero"</span>);</code></pre>
+<pre><code>  st.<span class="fn-call">compose</span>();
+  after = st.<span class="fn-call">world_origin</span>(n);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(after.p_x, <span class="nm">100.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(after.p_y, <span class="nm">50.0</span>), <span class="st">"…and after it, the truth"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"compose: (0,0) before, (100,50) after — the same call, both times"</span>);
+}</code></pre>
+<h2 id="the-origin-is-the-anchor">The origin is the anchor</h2>
+<p><code>pl_ox</code> / <code>pl_oy</code> name a point in the node's OWN units, and <code>compose</code> pins it exactly on <code>(pl_x, pl_y)</code> whatever the rotation and scale are. That is what lets a sprite stand up from its feet rather than from its top-left corner: put the origin at the feet, set the position where the feet go, and rotation and scale happen about that point.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_origin_is_the_anchor</span>() {
+  st = stage::<span class="fn-call">stage_new</span>();
+  n = st.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> {
+    pl_x: <span class="nm">100.0</span>, pl_y: <span class="nm">40.0</span>, pl_rot: <span class="nm">1.1</span>, pl_sx: <span class="nm">3.0</span>, pl_sy: <span class="nm">0.5</span>, pl_ox: <span class="nm">5.0</span>, pl_oy: <span class="nm">9.0</span>,
+  });
+  st.<span class="fn-call">compose</span>();</code></pre>
+<pre><code>  o = st.<span class="fn-call">world_origin</span>(n);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(o.p_x, <span class="nm">100.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(o.p_y, <span class="nm">40.0</span>),
+         <span class="st">"local (ox, oy) lands on (x, y) exactly, under any rotation and scale"</span>);</code></pre>
+<p>A quarter turn takes +x toward +y: local (1, 0) one step along world +y.</p>
+<pre><code>  q = stage::<span class="fn-call">stage_new</span>();
+  m = q.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> { pl_x: <span class="nm">10.0</span>, pl_y: <span class="nm">20.0</span>, pl_rot: <span class="nm">1.5707963267948966</span> });
+  q.<span class="fn-call">compose</span>();
+  p = q.<span class="fn-call">world_point</span>(m, <span class="nm">1.0</span>, <span class="nm">0.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(p.p_x, <span class="nm">10.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(p.p_y, <span class="nm">21.0</span>), <span class="st">"+x turns toward +y"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"origin : the anchor holds under rotation and scale"</span>);
+}</code></pre>
+<h2 id="a-place-declares-its-defaults-so-an-omitted-field-is-not-a-zero">A <code>Place</code> declares its defaults, so an omitted field is not a zero</h2>
+<p><code>Place</code> has twenty-two fields and you will name three of them. The rest take the value the DECLARATION chose, and several of those are deliberately not zero: scale is <code>1.0</code>, <code>pl_visible</code> is <code>true</code>, the sprite rect's <code>u1</code>/<code>v1</code> are <code>1.0</code>, and <code>pl_mask</code> is <code>-1</code> for "solid" — because <code>0</code> is a real mask index.</p>
+<p>This is the loft idiom the compiler advertises with <code>omitted-field-zero</code>: a field whose zero is a meaningful value of its own domain gets a declared default, so leaving it out means "the ordinary case" rather than "erase it".</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_place_declares_its_defaults</span>() {
+  d = stage::<span class="en">Place</span> { pl_x: <span class="nm">7.0</span> };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(d.pl_sx, <span class="nm">1.0</span>) <span class="kw">and</span> <span class="fn-call">near</span>(d.pl_sy, <span class="nm">1.0</span>), <span class="st">"scale defaults to 1, not 0"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d.pl_visible, <span class="st">"a node you did not hide is visible"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d.pl_mask == -<span class="nm">1</span>, <span class="st">"-1 is solid; 0 would be the FIRST mask"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(d.pl_u1, <span class="nm">1.0</span>), <span class="st">"the sprite rect covers the whole page by default"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"place  : name three fields, the declaration chose the rest"</span>);
+}</code></pre>
+<h2 id="what-a-frame-asks">What a frame asks</h2>
+<p>Three questions, once the tree is composed:</p>
+<pre><code>- **what do I draw** — `draw_list()` gives the rects in draw order, and
+  `render_stage(canvas)` is the one-call path that honours per-node alpha;
+- **what is under the pointer** — `pick(x, y)` answers the topmost node
+  there, or `-1`; `hits(idx, x, y)` asks about one node;
+- **where is this in the node's own units** — `to_local(idx, x, y)`, which
+  is what turns a click into a position inside a widget.
+</code></pre>
+<p>A node is only pickable and drawable once it has an extent: <code>pl_w</code> / <code>pl_h</code> default to <code>0.0</code>, and a zero-by-zero node draws nothing and catches nothing.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_the_frame_asks</span>() {
+  st = stage::<span class="fn-call">stage_new</span>();
+  n = st.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> { pl_w: <span class="nm">20.0</span>, pl_h: <span class="nm">10.0</span> });
+  st.<span class="fn-call">compose</span>();</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(st.<span class="fn-call">pick</span>(<span class="nm">5.0</span>, <span class="nm">5.0</span>) == n, <span class="st">"the pointer is over the node"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(st.<span class="fn-call">pick</span>(<span class="nm">50.0</span>, <span class="nm">50.0</span>) == -<span class="nm">1</span>, <span class="st">"…and -1 where nothing is"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(st.<span class="fn-call">hits</span>(n, <span class="nm">5.0</span>, <span class="nm">5.0</span>), <span class="st">"hits() asks about one node"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!st.<span class="fn-call">hits</span>(n, <span class="nm">50.0</span>, <span class="nm">5.0</span>), <span class="st">"…and says no outside it"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(st.<span class="fn-call">draw_list</span>()) == <span class="nm">1</span>, <span class="st">"one sized node, one rect to draw"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"frame  : draw_list, pick, to_local — all after compose"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the whole surface: views and cameras, layers and fog, lights and the light map, batching and instance packing, sequences and tweens.</li>
+<li><code>tests/stage.loft</code> — transform composition checked against hand-computed points rather than matrix entries, which is the oracle a renderer needs.</li>
+<li><code>tests/picking.loft</code>, <code>tests/views.loft</code>, <code>tests/animation.loft</code> — one file per question, and the best-explained calls in the package.</li>
+<li><code>graphics</code> — the canvas a <code>draw_list()</code> is rendered onto.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

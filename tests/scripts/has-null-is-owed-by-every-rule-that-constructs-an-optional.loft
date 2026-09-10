@@ -59,6 +59,9 @@
 //   why this file asserts the VALUES a tuple read answers rather than only that it compiles.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 fn one78() -> integer { 1 }
 fn two78() -> integer { 2 }

@@ -32,6 +32,9 @@
 //   cell fails on 2b992851 too (`200 0`), a value channel behind the crash.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Node1378 { value: integer, next: reference<Node1378>? }
 struct A1378 { n: integer, b: reference<B1378>? }

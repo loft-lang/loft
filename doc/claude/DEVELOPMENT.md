@@ -104,10 +104,40 @@ The branch is merged to main via a single PR when all items pass CI.
   clock. **Every PR therefore serialises the whole stream**, which is a bigger cost
   than the CI round it also pays (~20–30 min).
 
-  **Opening a PR is the owner's call, and not a subject to raise.** Do not propose one,
-  hint that the work is "ready" for one, or treat a finished issue as a milestone that
-  wants one — that pressure is why the owner holds off (2026-08-19). Fix, gate, push,
-  and say what is done.
+  **REVISED 2026-09-10 — the cadence stands; what changed is the LATENCY.** "Never one or
+  a few issues" is unchanged and is why one-issue PRs are not proposed. What changed is
+  the other end: the directive's cost model counted only the serialisation a PR causes,
+  and not the serialisation that withholding one causes. Both are real, and the second
+  was measured — one branch reached its PR carrying **9 joins**, with the walker-audit
+  rows re-measured five times, `falsified_docs.baseline` regenerated, the browser bundle
+  rebuilt, and the siblings paying the same re-derivation in their own trees. Two
+  join-only defects existed only on that union, invisible from either side. `main` is
+  the only place a resolution is shared ONCE.
+
+  **The cadence itself was never the problem** — one or two stable PRs a day works, and
+  it stays. What the revision adds is that the cadence must not imply a slow START. Once
+  the owner asks, opening is minutes: the PR's own `ci.yml` is a required check running
+  the same gate on the exact sha, so the opening is NOT held for a fresh local `make ci`
+  on the joined tree. That local run is a slower duplicate, and on a shared box it is
+  killable — on 2026-09-10 three of them were killed by a sibling's `pkill -f "make ci"`
+  (no path in the pattern, so it matched every checkout), costing ~50 minutes with the
+  PR still unopened while three streams kept re-joining. Run one after opening if the
+  earlier signal is wanted.
+
+  What must hold BEFORE opening is short and cheap: head current on `origin/main`,
+  everything pushed, tree clean, derived artefacts REGENERATED rather than picked, and
+  each fix carrying the verification it owed when it landed. The join-count backstop —
+  **a branch a sibling has joined twice is overdue** — should never fire at one or two a
+  day; it exists for the case where it does. The two costs reconcile on time-to-MERGE: a
+  PR is cheap exactly when it lands promptly and expensive when it sits, which is why
+  the branch policy's "keep the PR mergeable and land it promptly" is the load-bearing
+  half.
+
+  **Opening a PR is still the owner's call, and still not a subject to raise.** Do not
+  propose one, hint that the work is "ready" for one, or treat a finished issue as a
+  milestone that wants one — that pressure is why the owner holds off (2026-08-19). Fix,
+  gate, push, and say what is done. The join-count trigger is a fact to REPORT ("this
+  branch has been joined twice"), not a request to make.
 
   One consequence to handle LOCALLY rather than by reaching for a PR: `revalidate-libs`
   — the gate that compiles every published library against this loft — triggers on
@@ -128,6 +158,35 @@ The branch is merged to main via a single PR when all items pass CI.
   runtime break and asserts the two are reported DIFFERENTLY, and checks the shared matrix
   policy on inputs each of its rules has to act on. A SKIP is not a pass — it means that
   repo is not cloned beside this one.
+
+  **It answers a SECOND question now, apart from the first: can each library be built and
+  RELEASED as it stands?** A library carrying warnings cannot — its own CI runs
+  `LOFT_DENY_WARNINGS=1`, so a release cut from it fails and the next PR to that repo is red
+  before its author has typed anything. So the run prints a `RELEASE-READY` /
+  `NOT RELEASE-READY` verdict naming the packages, and carries it in the exit code.
+
+  ⚠ **The two verdicts are apart because only one of them is your change's fault.** A
+  COMPILE-BREAK is a language change retro-breaking a shipped library — the freeze's
+  question, and yours to answer. `NOT RELEASE-READY` is a fact about the ecosystem that was
+  true before you started; the closing line says so, so a red never sends you looking for a
+  regression you did not cause.
+
+  ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
+  the absolute state; a delta answers a different one. On the CI side this is the
+  `Release-ready` STEP inside each library's own matrix leg in `revalidate-libs.yml` — one
+  pass per library, reading the log that pass already wrote, so the answer costs nothing.
+  It is **advisory and must never become a required check**: `main` requires Test ×3,
+  Clippy and Format, and a library's warning debt is information, never a veto on a loft
+  PR. On a RELEASE it is blocking, which is `release-gate.yml`'s standing rule —
+  *informational on a diff, blocking on a release* — and exactly right for a question that
+  is literally "can these be released".
+
+  ⚠ **Why it is a verdict and not a dashboard line**, in one sentence, because the dashboard
+  already existed: it printed the dirty set for weeks inside a GREEN check — measured over
+  `revalidate-libs`'s own history, **2 → 11 libraries in eight days, every run green** — and
+  the first anyone heard of it was a red check in the library repos on code those authors
+  had not touched, which is exactly what the step's own comment predicted. A report whose
+  default state nobody notices is not a report.
 
   **A clean run reads `42 pass, 0 runtime/env, 0 skipped, 0 COMPILE-BREAK` and exits 0.**
   It did not until loft#1315: the matrix policy was written twice, once in the workflow and

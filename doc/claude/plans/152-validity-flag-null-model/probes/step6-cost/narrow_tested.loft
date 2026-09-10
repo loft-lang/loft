@@ -1,0 +1,15 @@
+// The same loop with the fit test on the very next line: the mechanism, live.
+fn main() {
+  n = 20000000;
+  acc: u8 = 0;
+  sink = 0;
+  wrapped = 0;
+  t0 = ticks();
+  for i in 0..n {
+    acc += (i & 7) as u8;
+    if !acc { wrapped += 1; }
+    sink += acc;
+  }
+  ms = (ticks() - t0) / 1000;
+  println("result: {sink} wrapped: {wrapped}  time: {ms}ms");
+}

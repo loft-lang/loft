@@ -158,11 +158,18 @@ real record, and it admits any element type — `for t in [("a", "b")] { t.0 }` 
 backends, and writing `t.0` there reaches the vector. Reading `T-Ref-El` as a fact about tuples
 rather than about this binding is the mistake that boundary invites.
 
-A `text`, collection, struct or function-reference element is refused. This is a layout
-limitation, not a missing opcode: `OpGetText` / `OpSetText` exist and take the same
-`(ref, offset)`, but a reference tuple's storage is not a record with a text slot the way a
-struct is. Use a **struct** instead — its fields of any type write through a `&` parameter —
-or take the tuple by value and return a new one. The refusal message says both.
+What stays refused is what the `__tuple<…>` record cannot spell or lay out as a field: a
+NULLABLE element, a fn-ref, a nested tuple. The refusal names the element type and the two
+cures — a **struct** instead, whose fields of any type write through a `&` parameter, or the
+tuple by value with a new one returned.
+
+⚠ **This paragraph and the conformance entry below both read as a blanket `text` refusal until
+2026-09-10, and that had stopped being true on 2026-09-03**, when `(T-Ref-Rep)`'s record-backed
+form landed and `&(text, text)` began swapping a caller's pair like any other. The claim
+survived because it is prose beside a rule that contradicts it, and the guard that would have
+caught it (`reference-tuple-heap-elements-link.loft`) asserts the ADMISSION rather than the
+refusal — so nothing red ever pointed here. A conformance line is a measurement with a date on
+it, not a standing fact.
 
 ---
 
@@ -201,6 +208,17 @@ or take the tuple by value and return a new one. The refusal message says both.
   entry's cells, and this doc's counts, have been read over `(integer, integer)` shapes.  **Any
   cell added here should carry a `text` member.**
 
+  ✅ **That instruction is DISCHARGED for this entry's own cells, 2026-09-10.**  All six were
+  re-run over `(integer, text)` on both backends and answer exactly as the `(integer, integer)`
+  re-measurement above records: the LANDING type is still refused (*"cannot change type from
+  `(integer?, text?)` to `(integer, text)?`"*), `v[i].0` / `.1` by a variable index answer
+  `null(oob)` / `null`, `==` `null` answers `true` on BOTH spellings, `v[i] ?? (7, "def")` gives
+  `(7, "def")`, `v[i]?` gives the members' defaults `(0, "")`, and a PARTLY present
+  `(null, "keep") ?? (9, "def")` keeps the `"keep"` and reports `== null` false.  So the
+  deviation is one cell over the heap population as well as the scalar one, and the count above
+  is not an artefact of the shape it was read on.  The instruction still stands for cells ADDED
+  here — it is the entry's measured cells that are now clear, not the class.
+
   A third defect came out from under it — the same read through a struct FIELD's vector leaks
   its work-ref record on `--native` (loft#1479) — which is newly REACHABLE rather than newly
   broken, since that cell did not compile before.
@@ -233,6 +251,48 @@ or take the tuple by value and return a new one. The refusal message says both.
   `(integer?, integer)` independently.  **The one-arm change must not be landed alone**: it
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
+
+D-tup-12 closed 2026-09-10: `(T-Proj)` spells a projection `.i` with a LITERAL index, and a
+tuple has no other member.  A record-backed tuple is carried as the SYNTHETIC STRUCT
+`__tuple<…>`, whose attributes are named `_0`, `_1`, …, and that home's projection site
+claimed the member only when the next token was ALREADY an integer — a guard on the token
+rather than an answer about it.  So a named member fell past it to the ordinary struct-field
+reader, and `_0` was a second, undocumented spelling of `.0` that both READ and WROTE: `t._0`
+answered `11` and `t._0 = 99` reached the vector's bytes, on both backends, while the same
+source over a plain local was refused by name.  Which spelling a program could use was decided
+by a REPRESENTATION choice with nothing in the source to show it — the stack local, the vector
+element by a constant or variable index, the struct field, the `&(…)` parameter, the function
+parameter and an all-integer return all refused; the `vector<(τ, τ)>` loop variable, the nested
+loop variable and a heap-carrying return admitted.
+
+Two further defects came out of the same fallthrough.  A named member reported *"Unknown field
+`__tuple<integer,text>`.name"* — loft#1498's class exactly, a diagnostic naming a def the
+author cannot write, about a member kind a tuple does not have; `Data::def_is_authored` is the
+predicate that exists for it and this path never reached one.  And the refusal at all THREE
+homes left the offending member in the token stream, so every one of them dragged a second
+`Expect token ;` behind it — the cascade loft#868 removed from the unknown-receiver path,
+still standing on this one.  Consuming the name is not enough on the LEFT of an assignment
+(`t._0 = 9` then reads as `t = 9`, and the reader is told their tuple *"cannot change type
+from `__tuple<integer,text>` to integer"*), so the errored member carries `fields.rs`'s
+`Value::Drop` marker, which the assignment path already reads.
+
+Two smaller faults on the same rule came out of the same pass and are closed with it.  The
+index was read with `has_integer`, which matches only `LexItem::Integer`; the lexer switches
+to `LexItem::Long` above `i32::MAX`, so `t.2147483647` reported out-of-range and
+`t.2147483648` reported *"requires a numeric index"* about a literal that plainly is one —
+one value apart, deciding which refusal on a width the author never chose.  And `.i` on a
+receiver that is NOT a tuple reported *"Expect a field name"*, the token rather than the
+situation; it now names the receiver's type and the cure for its kind, which is where
+`(T-Paren)`'s warning about `(e)` finally reaches a reader.
+
+Closed by giving the two questions ONE home each — `tuple_member_not_a_literal` and
+`tuple_index_out_of_range` in `parser/operators.rs`, cited from all three sites.  Three copies
+of one refusal is what let a fourth spelling of it be a token GUARD instead: the guard reads
+as an answer until you ask what happens when it does not hold.  Guards: the six cells in
+`102b-pass1-expected-errors.loft` (falsified against `2e408acc8` on both backends; the two
+stack-tuple cells are the control that says the three homes were made to AGREE rather than all
+moved).  `contract: settled` — the rule already said the member is a literal index; nothing
+about the language changed, only which spellings reach it.
 
 D-tup-11 closed 2026-09-08 (loft#1423): `(T-Absent)` says a tuple is absent when EVERY member
 is null, and the null question has ONE home shared by `t == null` and `t ?? d`.  Neither held.
@@ -283,7 +343,17 @@ the companion [tuples-history.md](tuples-history.md).
   one member of a family is a claim about that member (see the history file's note on the
   keyed half), so the front/back/middle split is the point of the list rather than its length.
 - **Construct + project (`T-Cons` / `T-Proj`)** — `t = (3, 7); t.0` is `3`, `t.1` is `7`.
-- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.
+- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.  With a HEAP member and on
+  both backends (2026-09-10), each binding is a COPY as `B-Copy` requires, checked by mutating
+  each side and reading the other: from a LOCAL tuple (`t = ("alpha", v)`, then `v += […]` and
+  `b += […]` leave `t.1` at its own length), from a CALL return, from a vector ELEMENT by a
+  constant index, from a struct FIELD, from a LOOP variable, and at arity 3 with the heap member
+  in the MIDDLE.  By a VARIABLE index it is refused — that value is `(τ, τ)?` by `(N-Index)` and
+  the refusal names the two cures, which is `(T-Absent)` and not a gap.
+- **Return independence (`T-Ret`)** — a tuple built from a LOCAL that dies at the return is
+  live at the caller: `fn mk() -> (text, vector<integer>) { local = [7,8,9]; ("alpha", local) }`
+  unpacks to a 3-element vector reading `7` and `9` at its ends, both backends, under strict
+  stores.
 - **Tuple return + unpack (`T-Ret` + `T-Destr`)** — `fn pair() -> (integer,integer) { (2,3) }`,
   `(x, y) = pair()` binds `x=2, y=3`.
 - **Reference tuple (`T-Ref`)** — `fn sw(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t }`
@@ -291,10 +361,30 @@ the companion [tuples-history.md](tuples-history.md).
   admitted element type — `integer`, `float`, `single`, `character`, `boolean` — uniform and
   mixed (`&(integer, boolean, character)`), and at width 3 so the last element is reached
   (`tests/scripts/1006-reference-tuple-element-types.loft`).
-- **Refused element types (`T-Ref-El`)** — `&(text, …)`, `&(fn() -> τ, …)` and a struct element
-  are STATIC errors naming the element type, never an ICE
-  (`tests/scripts/102-expected-errors.loft`).
+- **Refused element types (`T-Ref-El`)** — a NULLABLE element (`&(text?, text)`), a fn-ref
+  (`&(fn() -> τ, …)`) and a NESTED TUPLE are STATIC errors naming the element type, never an
+  ICE (`tests/scripts/102-expected-errors.loft`). A bare `text` element and a struct element
+  are ADMITTED — the record-backed form, measured 2026-09-10 on both backends and guarded by
+  `tests/scripts/reference-tuple-heap-elements-link.loft`.
+- **Not a tuple (`T-Paren`)** — `.i` on a receiver that is not a tuple names the receiver's
+  type and the cure for its KIND: `v.0` on a vector says to index it (`[0]`), `s.0` on a
+  struct says to name the field, and a scalar gets the rule itself — `(e)` is grouping, not a
+  1-tuple.  That last is the case `T-Paren` exists for: `x = (5); x.0` reads a tuple element
+  off an `integer`, and the reader used to be told only *"Expect a field name"*, about the
+  token rather than the situation.  A trailing comma is refused separately and by name
+  (*"Tuple literals require at least 2 elements"*), so `(5,)` is not a 1-tuple either.
 - **Static index (`T-Proj`)** — `t.5` on a 2-tuple is a compile error, not a runtime null.
+  Asked of all THREE homes a tuple has (2026-09-10, both backends): the stack `Type::Tuple`,
+  the record-backed `__tuple<…>` a `vector<(τ, τ)>` loop variable and a heap-carrying return
+  carry, and a `&(…)` reference tuple.  Each reports the same two refusals — an out-of-range
+  literal index, and a member that is not a literal at all — and each reports exactly ONE
+  error, because the refusal now consumes the offending member instead of leaving it for the
+  statement parser (`102b-pass1-expected-errors.loft`).  The index is read as a LONG, so an
+  index above `i32::MAX` reports out-of-range like every smaller one: the lexer changes token
+  kind there, and which of the two refusals a program earned used to turn on that width.  The positive half, that `.0`/`.1`
+  read the same element from every home and still WRITE through a loop variable, is
+  `822-vector-tuple-spellings.loft`.  The home is what made this worth asking three times:
+  see D-tup-12.
 - **Heap element is COPIED (`T-Cons`)** — `t = (h, 9); h[2] = …` leaves `t.0` at its old length
   for EVERY heap element type, not just the vector the paragraph above names: `hash`, `hash<τ>?`,
   `sorted`, `index`, `trie`, `spatial`, and a DEEP case with a nested `vector<text>` inside the

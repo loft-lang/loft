@@ -42,6 +42,13 @@
 //   failures are the inline read and the local-bound one; on the build BEFORE loft2's parser
 //   peel they are refusals, and on the build with the parser peel and no codegen peel the
 //   local-bound one is an ICE instead — which is why that cell is in this file at all.
+//   CHANNEL: the exit channel, measured on --interpret against bab34be2 by
+//   `scripts/falsify.sh --bulk`.
+//   WITNESS: the control's signature against bab34be2 is `exit 1 -> 0`. That line is what a
+//   re-run must reproduce; comparing it is the whole check.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Holder1423b { xs: vector<(integer, text)> }
 

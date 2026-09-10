@@ -33,6 +33,9 @@
 // what said the boundary was the five keyed kinds behind a `?` and not nullability itself.
 //
 // @falsified-at: d47714d9 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 struct Ab1150H { ab_hk: integer, ab_hv: integer }
 struct Ab1150S { ab_sk: integer, ab_sv: integer }

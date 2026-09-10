@@ -54,6 +54,11 @@
 //   still does not make it reliable — measured, the same probe answered
 //   -2401053088876216593 in one program and 7 in another whose only difference was how many
 //   closures ran before it.  That number is not assertable and is not in any cell here.
+//   HOLDS: with `LOFT_STRICT_STORES=1` armed, assertions, leak, panic, free-refusal and
+//   expectations are all equal on both trees AND on both backends; the EXIT channel carries
+//   this one, 1 -> 0 each side. Re-measured serially — a first run taken while another
+//   falsify was building corrupted the shared HERE binary and reported the native side INERT,
+//   which reads exactly like a native regression and was not one.
 
 struct C39 { a: integer }
 enum Sh39 { Ci39 { r: integer }, Sq39 { s: integer } }

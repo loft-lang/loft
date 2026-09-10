@@ -1,0 +1,143 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 4bc3ac1f8..f2a1da84d 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -1899,44 +1899,6 @@ impl Parser {
+             let w = self.materialize_view_value(td, &mut l[last]);
+             return self.vars.tp(w).clone();
+         }
+-        // loft#1494 — the COLLECTION half of the arm above, and the same rule: a block used
+-        // as a VALUE whose tail reads a collection OUT OF a local defined inside it
+-        // (`{ b = BoxF { … }; b.items }`) hands the consumer a reference into `b`'s store,
+-        // which the block frees on the way out.  The consumer then copies from a released
+-        // store — the right answer for as long as the bytes survive, `0xDEADBEEF` under
+-        // `LOFT_POISON=1`.
+-        //
+-        // The arm above cannot serve it: a collection is not a `Reference`, and
+-        // `OpCopyRecord` is not how a collection is copied.  Cure it the same way through the
+-        // collection's own copy — bind the tail to a fresh local, which gives it a buffer of
+-        // its own (`@FR-B-Copy`) — after which `b` is no longer what the block yields and
+-        // takes the ordinary block-scope sweep.
+-        //
+-        // Both halves belong to the BLOCK rather than to a consumer.  Five consumers read
+-        // such a block by wrapping it from OUTSIDE — a return delivery, a call argument, a
+-        // struct-literal field, an operator, a field write — so a delivery sunk per consumer
+-        // would have to be written five times and would still miss the sixth; the two that
+-        // were already right (a plain bind, a `for`) are the ones that sink it.
+-        //
+-        // A tail reading an OUTER local is left alone, exactly as above: the block does not
+-        // define it, so it outlives the block and the view is a borrow the consumer keeps.
+-        if context != "return from block"
+-            && crate::parser::vectors::is_collection(&tp)
+-            && let Some(tail) = l.last()
+-            && let Some((root, path)) = self.field_place(tail)
+-            // A bare `Var` tail is the whole local, not a projection out of it: that is the
+-            // ownership question `@FR-O-Move` answers, and copying it here would leave the
+-            // local's own store to nobody.
+-            && !path.is_empty()
+-            && !self.vars.is_argument(root)
+-            && Self::block_defines_var(&l[..l.len() - 1], root)
+-        {
+-            let last = l.len() - 1;
+-            let w = self.materialize_collection_value(&mut l[last], &tp);
+-            if w != u16::MAX {
+-                return self.vars.tp(w).clone();
+-            }
+-        }
+         // #416 — set when the vector match/if tail below was materialised into the
+         // return buffer; gates the type-keyed vector arm (which is reached only in
+         // the IMPLICIT-tail `t = Vector` case) so it doesn't re-process / re-promote
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index bd0dda9e2..94d52e939 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1867,89 +1867,6 @@ use a separate collection or add after the loop"
+         }
+     }
+ 
+-    /// Copy a collection VALUE into a fresh local that owns its own buffer, and answer that
+-    /// local.  `tail` becomes `Insert([<buffer alloc>, OpAppendVector(tmp, <value>, …), tmp])`,
+-    /// so it still yields a collection wherever it stood.
+-    ///
+-    /// The collection counterpart of [`Parser::materialize_view_value`], and the way to make a
+-    /// collection expression independent of the store it was read OUT of.  The copy itself
+-    /// stays in [`Parser::lower_vec_copy_bind`] — its one home — rather than being restated
+-    /// here: that routine owns the dep-strip, the buffer allocation and the two-pass counter
+-    /// parity, and a second copy of any of the three would drift from it.
+-    ///
+-    /// Answers `u16::MAX` when no local could be minted, which leaves `tail` untouched.
+-    pub(crate) fn materialize_collection_value(&mut self, tail: &mut Value, s_type: &Type) -> u16 {
+-        let tmp = self.create_unique("__blk_val", &s_type.without_deps());
+-        if tmp == u16::MAX {
+-            return u16::MAX;
+-        }
+-        self.vars.defined(tmp);
+-        // The KEYED kinds are not `Type::Vector`, and their deep copy is `OpReplaceKeyed`
+-        // rather than an element append, so they take their own leg.  The temp is minted
+-        // ABOVE this split, on both passes and for either kind: `create_unique`'s per-prefix
+-        // counter has to advance identically across the two passes, and a leg that minted on
+-        // pass 2 alone would shift every later `__blk_val` by one.
+-        if crate::parser::vectors::is_keyed(s_type) {
+-            return self.materialize_keyed_value(tail, s_type, tmp);
+-        }
+-        let to = Value::Var(tmp);
+-        let mut code = std::mem::replace(tail, Value::Null);
+-        // `CopyOwnedField` is what this IS — a projection read out of a record the caller
+-        // owns — and it is the verdict that strips the inherited dep so the temp is given a
+-        // buffer of its own instead of aliasing the field.
+-        self.lower_vec_copy_bind(
+-            &mut code,
+-            &VecBind::CopyOwnedField,
+-            &to,
+-            tmp,
+-            s_type,
+-            &Type::Void,
+-            false,
+-        );
+-        // Pass 1 emits nothing (it only advances the counters), so there is no `Insert` to
+-        // extend and the tail keeps the value it had — the shape both passes must agree on.
+-        if let Value::Insert(ops) = &mut code {
+-            ops.push(Value::Var(tmp));
+-            *tail = code;
+-        } else {
+-            *tail = code;
+-            return u16::MAX;
+-        }
+-        tmp
+-    }
+-
+-    /// The keyed half of [`Parser::materialize_collection_value`]: deep-copy a keyed
+-    /// collection value into `tmp` through `OpReplaceKeyed`, the same copy a keyed local's
+-    /// `s = other` bind takes.
+-    ///
+-    /// The leading `Set(tmp, Null)` is what gives a first-assigned keyed local its store
+-    /// (codegen's `gen_set_first_keyed_null`), and the dep-strip is what stops scope analysis
+-    /// reading `tmp` as a borrow of the record the value was read out of — the two halves the
+-    /// keyed bind pairs for the same reason.
+-    ///
+-    /// No source-free bit and no @P290 bracket: the value here is a PROJECTION out of a
+-    /// record, never a call or a join, so there is no callee-minted store to release and
+-    /// nothing whose ownership a runtime witness would have to settle.
+-    fn materialize_keyed_value(&mut self, tail: &mut Value, s_type: &Type, tmp: u16) -> u16 {
+-        let Some(kt) = self.keyed_type_id(s_type) else {
+-            return u16::MAX;
+-        };
+-        let src = std::mem::replace(tail, Value::Null);
+-        let replace = self.cl(
+-            "OpReplaceKeyed",
+-            &[src, Value::Var(tmp), Value::Int(i32::from(kt))],
+-        );
+-        for d in self.vars.tp(tmp).depend() {
+-            self.vars.make_independent(tmp, d);
+-        }
+-        *tail = Value::Insert(vec![
+-            Value::Set(tmp, Box::new(Value::Null)),
+-            replace,
+-            Value::Var(tmp),
+-        ]);
+-        tmp
+-    }
+-
+     /// `@FR-O-Complete` — a vector local bound from a value branch: write the bind out per
+     /// arm, so every path binds the local the way a single bind of that arm's tail would.
+     /// `true` when the rewrite happened; `false` where the branch has no arm a plain bind

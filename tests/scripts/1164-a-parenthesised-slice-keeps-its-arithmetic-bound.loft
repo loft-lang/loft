@@ -33,6 +33,9 @@
 // channel reads 0 on the control and that is the correct reading rather than a vacuous
 // guard: the control REFUSES the program at parse time, so no assert in it ever runs.  The
 // exit channel is the one that moves, and the refusal names `OpAddInt`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn sl_take(t: text) -> integer { return len(t); }
 struct SlBox { sb_f: text }

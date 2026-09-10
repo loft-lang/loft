@@ -13,26 +13,33 @@
 // 2. `!` reads a failure on a NULLABLE narrow.  `u8?` sacrifices an edge value to
 //    reserve a null (@FR-N-Reserve), so the fault is representable and testable.
 //
-// 3. `redundant-null-negation` FIRES on `!` over a non-null narrow.  That warning is
-//    the guard rail @PLN152 step 5 turns into an adjacency gate: it must keep firing
-//    everywhere the fused form does not apply, or a moved line silently stops testing
-//    anything.  Pinned with @EXPECT_WARNING so that a change which silences it broadly
-//    fails here rather than in review.
+// 3. `redundant-null-negation` FIRES on `!` over a non-null narrow WHEREVER the fused
+//    form does not apply.  That warning is @PLN152 step 5's adjacency gate: the fused
+//    pair is invisible in the source, so what makes it safe is that moving the `if` one
+//    line away starts reporting itself instead of silently testing nothing.  Pinned with
+//    @EXPECT_WARNING, so a change that silences it broadly fails here rather than in
+//    review — and pinned in all THREE spellings of a place, because it answered only the
+//    FIELD one until step 5 and a local or an element was always-false code with nothing
+//    said about it.
 //
 // ⚠ The `bump(2, 3)` cell is the control that matters most: a `??` that fired on every
 // call would satisfy both overflow cells and be completely wrong.
 //
 // @EXPECT_WARNING: Warning[redundant-null-negation]
 //
-// ⚠ @falsified-at: none — `make falsify` reports this file INERT against `origin/main`
-//   (e9643ff6) and that is CORRECT rather than a defect in it.  This is a LOCK, not a
-//   regression guard: every row passes on every build back to whenever these behaviours
-//   landed, because the point is that they must not START failing.  What would move it is
-//   a change made BY @PLN152 — silencing `redundant-null-negation` too broadly, or letting
-//   `??` fire on an ordinary result — which is exactly what it exists to catch, and which
-//   no past commit can demonstrate.
+// ⚠ @falsified-at: none — `make falsify` reports INERT against `06f624ca5`, and that is
+//   CORRECT rather than a defect in it.  This is a LOCK, not a regression guard: every
+//   ASSERTION here passes on every build back to whenever these behaviours landed, because
+//   the point is that they must not START failing.  Row 3's local and element cells did
+//   change — they drew no diagnostic before @PLN152 step 5 and draw one now — but
+//   `@EXPECT_WARNING` matches at-least-one and the FIELD cell already satisfied it, so that
+//   change is invisible to falsification by design.  What would move this file is a change
+//   made BY @PLN152: silencing `redundant-null-negation` too broadly, letting the fused form
+//   reach across an intervening statement, or letting `??` fire on an ordinary result —
+//   which is exactly what it exists to catch, and which no past commit can demonstrate.
 
 struct F152 { i: u8 }
+struct F152Keyed { id: integer, v: u8 }
 
 fn bump(v: integer, d: integer) -> integer { (v + d) ?? 42 }
 fn plain(v: integer, d: integer) -> integer { v + d }
@@ -55,21 +62,62 @@ fn b_a_nullable_narrow_failure_is_testable() {
   assert(w == 210, "…which is the value itself");
 }
 
-fn c_the_non_null_narrow_warning_is_the_adjacency_gate() {
+fn c_the_lint_is_the_adjacency_gate() {
+  // One statement between the store and the test is what puts this outside @PLN152's
+  // fused form: past the next statement there is nothing left to carry the fit status
+  // but the slot, and the slot is storage.  So `!` means what it has always meant here
+  // — *is this null* — and on a type that keeps no code for null it is always false.
+  // Each spelling below must SAY so; that is the whole safety of the fused form, since
+  // an author who moves the line has to be told the check stopped working.
   f = F152 { i: 200 };
   f.i += 100;
-  // Draws `redundant-null-negation` today, and must keep drawing it wherever the
-  // @PLN152 fused form does not apply.  The value cell records what the language
-  // currently answers, so a change here is visible rather than silent.
-  if !f.i {
-    assert(false, "not reachable today: a non-null u8 cannot hold the failure");
-  }
-  assert(f.i == 0, "the fit-failure took the type's default");
+  reached = false;
+  if !f.i { reached = true; }
+  assert(!reached, "a FIELD: `!` one statement later tests nothing");
+  assert(f.i == 0, "…and the fit-failure took the type's default");
+
+  a: u8 = 250;
+  a += 10;
+  seen_a = false;
+  if !a { seen_a = true; }
+  assert(!seen_a, "a LOCAL: likewise — and this spelling drew no warning before step 5");
+  assert(a == 0, "…same default");
+
+  v: vector<u8> = [250];
+  v[0] += 10;
+  seen_v = false;
+  if !v[0] { seen_v = true; }
+  assert(!seen_v, "an ELEMENT: likewise");
+  assert(v[0] == 0, "…same default");
+}
+
+fn d_two_places_the_fused_form_must_not_touch() {
+  // A TUPLE element, ADJACENT.  It reaches the store guard like any narrow place, but its
+  // read is a `TupleGet` — a variant carrying its base as a var NUMBER, not an `OpGet…`
+  // call — so `same_place` cannot match it and the pair is left exactly as it was.  The
+  // lint still speaks, which is the only promise this shape is owed.
+  t: (u8, integer) = (250, 1);
+  t.0 += 10;
+  seen_t = false;
+  if !t.0 { seen_t = true; }
+  assert(!seen_t, "a tuple element is not fused");
+  assert(t.0 == 0, "…and its value is the default, unchanged");
+
+  // A KEYED element, ADJACENT.  Here `!` already MEANS something — the key may be absent, so
+  // the read is nullable — and it keeps that meaning.  No fusion, and no warning either,
+  // because the test is not always false.
+  ks: hash<F152Keyed[id]> = [F152Keyed { id: 1, v: 250 }];
+  ks[1].v += 10;
+  seen_k = false;
+  if !ks[1].v { seen_k = true; }
+  assert(!seen_k, "a keyed element is not fused — its `!` is the absence test");
+  assert(ks[1].v == 0, "…and its value is the default, unchanged");
 }
 
 fn main() {
   a_coalesce_supplies_the_authors_value_on_a_non_null_overflow();
   b_a_nullable_narrow_failure_is_testable();
-  c_the_non_null_narrow_warning_is_the_adjacency_gate();
+  c_the_lint_is_the_adjacency_gate();
+  d_two_places_the_fused_form_must_not_touch();
   print("152 step 1 ok\n");
 }

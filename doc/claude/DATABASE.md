@@ -504,6 +504,24 @@ probe (@PLN123 B2, where compaction borrows a scratch slot on every load), and
 `slot_recycling_tests` in `src/database/mod.rs` pins both halves so the
 asymmetry stays recorded.
 
+### Storing a scalar: `Store::write`, never a reference into the slot
+
+An element's offset is `index * stride + fld`, so any stride the scalar's alignment does not
+divide puts that slot at a misaligned address — `Lay`'s element 1 puts an `i64` at 34, and
+`34 % 8 != 0`. A **reference** to a misaligned address is undefined behaviour even if it is never
+read through, which is why storing a scalar goes through `Store::write` (a `write_unaligned`) and
+not through `&mut *ptr.cast::<T>()` (loft#1481). `Store::addr_mut` exists for the values `write`
+cannot store by value — a `String` or a `Str` whose heap buffer the caller mutates in place — and
+it asserts the alignment rather than assuming it, with a plain `assert!` under no `cfg`, so a
+wrong call panics in a release build too.
+
+⚠ **If you are resolving a MERGE or a REBASE and this line is the conflict, the `addr_mut` side is
+the unsound one.** The note is here because every other note about this rule — the comment at
+`src/database/mod.rs`'s push site, `Store::write`'s own doc, and the assert's message — lives on
+the *surviving* side, so a merge that quietly takes the older `*store.addr_mut::<T>(rec, len *
+stride) = val` form shows its reader nothing at the moment the choice is made. Twice now the
+`@PLN157` native-hoist branch and loft#1481's fix have met in exactly this conflict.
+
 ### The value stack lives in ONE record, and that record has to grow with it
 
 Store index `0` is the interpreter's value stack. It is a single claimed

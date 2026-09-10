@@ -1,0 +1,245 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN152 step 5 — `!place` directly after a store into a narrow slot reads whether that
+// store fit.
+//
+// `u8`, `i8`, `u16`, `i16`, `u32` and every `integer limit(lo, hi)` fill their own range, so
+// a value that does not fit takes the type's default and leaves nothing behind: `x: u8 =
+// 250; x += 10` answers `0`, and `!x`, `x == null` and `x == 0` all say exactly what they say
+// for a computed zero.  The failure is a property of the STORE — `x + 10` widens to
+// `integer`, where `260` is a perfectly good value — so the only place the question can be
+// asked without new syntax is beside the assignment, and the `if` has to be the very next
+// statement for the status to still be reachable without storing it anywhere.
+//
+// ⚠ The cell that matters most is `b_a_value_that_fits_is_not_a_failure`, at `255`.  The
+// plan's own hand-written target shape bound the fit to a `u8?` temp and was proven on `300`
+// and on `200`; a `u8?` sacrifices its TOP code to hold null (@FR-N-Reserve), so `255` — a
+// perfectly good `u8` — came back as a reported failure with the slot set to `0`.  The temp
+// this ships is a full-width `integer?` for exactly that reason, and this cell is what says
+// so.
+//
+// The VALUES are the other half: every cell asserts what the slot holds as well as what the
+// test answered, because a mechanism that reported failures correctly while changing what
+// the store wrote would be worse than the silence it replaces.  Each is what the same
+// program answers with no `!` written at all.
+//
+// ⚠ Every flag is declared BEFORE its store, and that is not style: a statement between the
+// store and the `if` is exactly what the adjacency rule excludes, so writing `seen = false;`
+// after the `+=` would test the unfused shape and pass on any build.  The unfused shape has
+// its own cells, in `152-the-fallback-and-failure-spellings-that-already-work.loft`.
+//
+// @falsified-at: 06f624ca5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/152-a-store-that-does-not-fit-is-testable-where-it-happened.patch
+//   CHANNEL: ASSERTION (and the exit that follows it).  Not the leak channel: nothing here
+//     allocates, and both trees are leak-clean.
+//   ARMED: nothing.  A plain run on either backend reports it, because the control STOPS at
+//     the first `detected` assertion — the `!` is always false on a non-null narrow there,
+//     so the fused form does not exist.
+//   WITNESS: `assertion failed: a u8 that overflowed says so` on the control, at the first
+//     cell of `a_every_narrow_width_reports_its_own_fit_failure`.
+//   HOLDS: every VALUE assertion passes on BOTH trees — `a == 0`, `a == 255`, `c == 127`,
+//     every default — and leak, panic and free-refusal are equal on both.  That is the
+//     point of the plan: it changed what can be SEEN and nothing about what is stored, so a
+//     patch that moved a value would be a different fault.
+
+struct FitInner { i: u8 }
+struct FitOuter { inner: FitInner, n: u16 }
+
+fn a_every_narrow_width_reports_its_own_fit_failure() {
+  sa = false;
+  a: u8 = 250;
+  a += 10;
+  if !a { sa = true; }
+  assert(sa, "a u8 that overflowed says so");
+  assert(a == 0, "…and the slot still holds the type's default, exactly as before");
+
+  sc = false;
+  c: i8 = 120;
+  c += 10;
+  if !c { sc = true; }
+  assert(sc, "an i8 over its top");
+  assert(c == 0, "i8 default");
+
+  sd = false;
+  d: i8 = -120;
+  d -= 10;
+  if !d { sd = true; }
+  assert(sd, "an i8 UNDER its bottom — the other side of the range");
+  assert(d == 0, "i8 default");
+
+  se = false;
+  e: u16 = 65530;
+  e += 10;
+  if !e { se = true; }
+  assert(se, "a u16");
+  assert(e == 0, "u16 default");
+
+  sf = false;
+  f: i16 = 32760;
+  f += 10;
+  if !f { sf = true; }
+  assert(sf, "an i16");
+  assert(f == 0, "i16 default");
+
+  sg = false;
+  g: u32 = 4294967290;
+  g += 10;
+  if !g { sg = true; }
+  assert(sg, "a u32 — its spare code sits at the TOP, where no read tests for it");
+  assert(g == 0, "u32 default");
+
+  sh = false;
+  h: integer limit(0, 100) = 95;
+  h += 10;
+  if !h { sh = true; }
+  assert(sh, "`limit(lo, hi)` is the same range as an alias and must answer alike");
+  assert(h == 0, "limit default");
+}
+
+fn b_a_value_that_fits_is_not_a_failure() {
+  // 255 IS a u8.  Binding the fit to a `u8?` would report it as a failure, because a `u8?`
+  // gives its top code up to hold null — the defect this cell exists to catch.
+  sa = false;
+  a: u8 = 250;
+  a += 5;
+  if !a { sa = true; }
+  assert(!sa, "255 fits a u8 — nothing failed");
+  assert(a == 255, "…and the value is the one the arithmetic produced");
+
+  // …and the top edge of a signed width, for the same reason on the other side.
+  sc = false;
+  c: i8 = 120;
+  c += 7;
+  if !c { sc = true; }
+  assert(!sc, "127 fits an i8");
+  assert(c == 127, "i8 top edge");
+
+  // An ordinary in-range store, which is what nearly every narrow store is.
+  sd = false;
+  d: u8 = 100;
+  d += 10;
+  if !d { sd = true; }
+  assert(!sd, "CONTROL: an ordinary result reports nothing");
+  assert(d == 110, "…and is itself");
+}
+
+fn c_every_place_a_narrow_store_takes() {
+  o = FitOuter { inner: FitInner { i: 200 }, n: 65530 };
+
+  df = false;
+  o.n += 10;
+  if !o.n { df = true; }
+  assert(df, "a struct FIELD");
+  assert(o.n == 0, "field default");
+
+  dn = false;
+  o.inner.i += 100;
+  if !o.inner.i { dn = true; }
+  assert(dn, "a NESTED field — the place is a chain, and the chain is what is compared");
+  assert(o.inner.i == 0, "nested-field default");
+
+  v: vector<u8> = [250, 250];
+  de = false;
+  v[0] += 10;
+  if !v[0] { de = true; }
+  assert(de, "a vector ELEMENT");
+  assert(v[0] == 0, "element default");
+
+  idx = 1;
+  dv = false;
+  v[idx] += 10;
+  if !v[idx] { dv = true; }
+  assert(dv, "…and an element reached through a VARIABLE index");
+  assert(v[idx] == 0, "element default");
+
+  // A narrow FIELD of a struct held in a vector — the place read is two `OpGet…` links
+  // deep, and it is the shape a record-in-a-collection program actually writes.
+  es: vector<FitInner> = [FitInner { i: 200 }];
+  dr = false;
+  es[0].i += 100;
+  if !es[0].i { dr = true; }
+  assert(dr, "a field of an element");
+  assert(es[0].i == 0, "field-of-element default");
+}
+
+fn d_the_sentinel_shape_is_a_failure_too() {
+  // A different path through the guard from merely-out-of-range: the addition itself
+  // overflows to the reserved sentinel, so the value reaching the slot is `i64::MIN` rather
+  // than `260`.  Both are fit failures and both must read as one.
+  seen = false;
+  a: u8 = 250;
+  a += 9223372036854775807;
+  if !a { seen = true; }
+  assert(seen, "an arithmetic overflow that lands on the sentinel is a fit failure");
+  assert(a == 0, "…and the slot holds the default, as it did before this plan (loft#1305)");
+}
+
+fn e_the_types_that_carry_their_own_failure_are_untouched() {
+  // These three already answered this question before @PLN152 and must go on answering it
+  // the same way — they keep a code back for a failure, so nothing is fused for them.
+  p: i32 = 2147483640;
+  p += 10;
+  assert(p == null, "an i32 keeps the bottom code, so its overflow IS null");
+  assert(!p, "…and `!` reads it, as it always did");
+
+  q: integer = 9223372036854775807;
+  q += 1;
+  assert(q == null, "plain `integer` likewise");
+  assert(!q, "…and `!` reads it");
+
+  r: u8? = 250;
+  r += 10;
+  assert(r == null, "a NULLABLE narrow sacrifices an edge value to hold null");
+  assert(!r, "…and `!` reads it");
+
+  s: u8? = 100;
+  s += 10;
+  assert(!(!s), "CONTROL: `!` is false on a nullable narrow that did fit");
+  assert(s == 110, "…and the value is itself");
+}
+
+fn f_a_condition_may_carry_more_than_the_test() {
+  // The rule is the CONDITION of the next statement's `if`, not the condition BEING the test
+  // — so a fit test composed with something else still reads the fit.
+  right = false;
+  a: u8 = 250;
+  a += 10;
+  if !a and true { right = true; }
+  assert(right, "`!place` on the left of an `and`");
+
+  left = false;
+  b: u8 = 250;
+  b += 10;
+  if true and !b { left = true; }
+  assert(left, "…and on its right");
+
+  twice = false;
+  c: u8 = 250;
+  c += 10;
+  if !c or !c { twice = true; }
+  assert(twice, "two tests of one place read one temp");
+}
+
+fn g_a_loop_body_asks_the_question_every_round() {
+  rounds = 0;
+  for _round in 0..3 {
+    d: u8 = 250;
+    d += 10;
+    if !d { rounds += 1; }
+    assert(d == 0, "the value is the default on every round");
+  }
+  assert(rounds == 3, "the fused pair is re-evaluated per iteration, not hoisted");
+}
+
+fn main() {
+  a_every_narrow_width_reports_its_own_fit_failure();
+  b_a_value_that_fits_is_not_a_failure();
+  c_every_place_a_narrow_store_takes();
+  d_the_sentinel_shape_is_a_failure_too();
+  e_the_types_that_carry_their_own_failure_are_untouched();
+  f_a_condition_may_carry_more_than_the_test();
+  g_a_loop_body_asks_the_question_every_round();
+  print("152 step 5 ok\n");
+}

@@ -902,7 +902,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -936,6 +936,9 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 # rising class is worth one generalization is the judgement, and stays an agent task.
 #   make bug-review                       # fetch from gh and report
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
+work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge and status:planned)
+	@bash scripts/work-issues.sh $(ARGS)
+
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
 	@python3 scripts/bug-review.py $(ARGS)
 

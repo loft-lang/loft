@@ -1774,10 +1774,20 @@ impl Output<'_> {
         // of a statement, and reading "unknown" as void fired this on six tuple files whose
         // arms `infer_type` answers `None` for — each then lost the value the `if` was there
         // to produce (E0308 on `--native`, measured over the corpus).
+        // loft#1495 — and the void arm must be void because the `if` is a STATEMENT, not
+        // because control LEFT it.  An arm that diverges (`=> { b = …; return b.items; }`)
+        // yields nothing and so types `Void`, while its sibling carries the value the `if`
+        // is there to produce: discarding both then handed rustc a `()` where a `DbRef` was
+        // wanted, and the program loft runs would not compile at all.  Rust types a diverging
+        // arm `!`, which coerces to whatever the sibling yields, so the ordinary value
+        // emission is already right for it.
         let stmt_discard = match (self.arm_result(true_v), self.arm_result(false_v)) {
             (Some(t), Some(f)) => {
-                matches!(t, Type::Void) != matches!(f, Type::Void)
+                let t_void = matches!(t, Type::Void);
+                let f_void = matches!(f, Type::Void);
+                t_void != f_void
                     && !matches!(false_v, Value::Null)
+                    && !Self::arm_diverges(if t_void { true_v } else { false_v })
             }
             _ => false,
         };
@@ -1901,11 +1911,43 @@ impl Output<'_> {
             Value::If(_, then_arm, else_arm) if !matches!(else_arm.unspan(), Value::Null) => {
                 let then_tp = self.arm_result(then_arm)?;
                 let else_tp = self.arm_result(else_arm)?;
-                let discarded = matches!(then_tp, Type::Void) ^ matches!(else_tp, Type::Void);
-                Some(if discarded { Type::Void } else { then_tp })
+                // By the same rule the gate applies, INCLUDING loft#1495's exclusion: a
+                // nested `if` whose void arm merely DIVERGES is not discarded, so it still
+                // answers the value its other arm carries.  Reading it as `Void` here made
+                // the enclosing `if` discard a chain that does yield one — which is how a
+                // three-armed `if … return … else if … else …` failed to compile.
+                let then_void = matches!(then_tp, Type::Void);
+                let else_void = matches!(else_tp, Type::Void);
+                let discarded = then_void != else_void
+                    && !Self::arm_diverges(if then_void { then_arm } else { else_arm });
+                Some(if discarded {
+                    Type::Void
+                } else if then_void {
+                    else_tp
+                } else {
+                    then_tp
+                })
             }
             other => self.infer_type(IrNode::Native(other)),
         }
+    }
+
+    /// Does this arm never YIELD a value, because control LEAVES it rather than falling out
+    /// of the bottom?
+    ///
+    /// Such an arm types `Void` for a reason that has nothing to do with the `if` being a
+    /// statement — there is no value because control left.  Rust types it `!`, which coerces
+    /// to whatever the sibling arm yields, so the ordinary value emission serves it and the
+    /// statement discard does not.
+    ///
+    /// [`Value::tail`] is the one home for *descend to where control leaves*, through a
+    /// `Span`, a value block and an argument-lift `Insert` alike — the same helper the
+    /// diverging-return capture below asks.
+    fn arm_diverges(v: &Value) -> bool {
+        matches!(
+            v.tail(),
+            Value::Return(_) | Value::Break(_) | Value::Continue(_)
+        )
     }
 
     fn pre_declare_branch_vars(
@@ -2458,10 +2500,26 @@ impl Output<'_> {
                     // (We break here; the loop over subsequent ops continues but they
                     //  are free-ops which emit nothing harmful under allow(unreachable_code).)
                 } else {
+                    // loft#1493 — a multi-statement `Insert` in VALUE position needs braces,
+                    // for the same reason the `return` path one screen up gives: it emits
+                    // `stmt; stmt; <expr>`, so `let _ret = stmt; stmt; <expr>;` binds `_ret`
+                    // to the FIRST statement and leaves the rest dangling.  Where that first
+                    // statement is a void `if` the binding is `()` and the block fails to
+                    // compile (`expected DbRef, found ()`); where it is not, it would bind the
+                    // wrong value.  A delivery into the return buffer is exactly this shape —
+                    // clear, append, yield the buffer — so it arrives here whenever a block's
+                    // scope frees follow its value tail.
+                    let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
                     write!(w, "let _ret = ")?;
+                    if block_braces {
+                        write!(w, "{{ ")?;
+                    }
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
+                    if block_braces {
+                        write!(w, " }}")?;
+                    }
                     writeln!(w, ";")?;
                 }
             } else {

@@ -41,6 +41,12 @@
 // early return was written into the caller's `&text`); interpret INERT on the six channels
 // `make falsify` scores, because every value was always right there — measured by hand
 // under LOFT_TEXT_TIMELINE=1 instead: 106 orphaned text buffers -> 0.
+//   ARMED: `LOFT_TEXT_TIMELINE=1` for the interpret half; the native half needs nothing.
+//   HOLDS: every VALUE is correct on both trees, so the six channels falsify scores read
+//   INERT on --interpret however badly the buffers are orphaned. The native side moves exit
+//   and one assertion (d5, the early return written into the caller's `&text`), and the
+//   interpret-side evidence is a text-buffer census — 106 orphaned buffers -> 0 — which is
+//   not a scored channel at all. Comparing values here proves nothing.
 struct S { name: text, tag: text }
 fn lo(n: integer) -> text? { return "lo{n}"; }
 fn none(n: integer) -> text? { if n > 100 { return "big"; } return null; }

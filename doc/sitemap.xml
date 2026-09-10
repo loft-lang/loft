@@ -49,15 +49,18 @@
   <url><loc>https://loft-lang.org/loft/kernel-differential.html</loc></url>
   <url><loc>https://loft-lang.org/loft/kernel-swap.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-arguments-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-arguments-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-arguments-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-arguments.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-cbor-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-crypto-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-drawing-api.html</loc></url>
@@ -89,15 +92,18 @@
   <url><loc>https://loft-lang.org/loft/lib-hex_edge-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_edge.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_field-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-hex_field-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_field-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_field.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_fit-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_fit-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_fit.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_form-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-hex_form-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_form-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_form.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_grid-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-hex_grid-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_grid-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_grid.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_place-api.html</loc></url>
@@ -153,9 +159,11 @@
   <url><loc>https://loft-lang.org/loft/lib-random-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-random.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-regex-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-regex-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-regex-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-regex.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-server-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-server-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-server-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-server.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-shapes-api.html</loc></url>
@@ -165,6 +173,7 @@
   <url><loc>https://loft-lang.org/loft/lib-ssh-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-ssh.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-stage-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-stage-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-stage-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-stage.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-text2d-api.html</loc></url>
@@ -178,6 +187,7 @@
   <url><loc>https://loft-lang.org/loft/lib-tween-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-tween.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-web-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext-api.html</loc></url>

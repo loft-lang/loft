@@ -1,0 +1,78 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 2a3df7ae9..59c7face7 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -2458,26 +2458,10 @@ impl Output<'_> {
+                     // (We break here; the loop over subsequent ops continues but they
+                     //  are free-ops which emit nothing harmful under allow(unreachable_code).)
+                 } else {
+-                    // loft#1493 — a multi-statement `Insert` in VALUE position needs braces,
+-                    // for the same reason the `return` path one screen up gives: it emits
+-                    // `stmt; stmt; <expr>`, so `let _ret = stmt; stmt; <expr>;` binds `_ret`
+-                    // to the FIRST statement and leaves the rest dangling.  Where that first
+-                    // statement is a void `if` the binding is `()` and the block fails to
+-                    // compile (`expected DbRef, found ()`); where it is not, it would bind the
+-                    // wrong value.  A delivery into the return buffer is exactly this shape —
+-                    // clear, append, yield the buffer — so it arrives here whenever a block's
+-                    // scope frees follow its value tail.
+-                    let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
+                     write!(w, "let _ret = ")?;
+-                    if block_braces {
+-                        write!(w, "{{ ")?;
+-                    }
+                     self.indent += 1;
+                     self.output_code_inner(w, v)?;
+                     self.indent -= 1;
+-                    if block_braces {
+-                        write!(w, " }}")?;
+-                    }
+                     writeln!(w, ";")?;
+                 }
+             } else {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index f2a1da84d..2f68059df 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -15045,42 +15045,7 @@ impl Parser {
+         // to show it — a bisect control that cannot fire.  `is_marked_vector_borrow` is the one
+         // home for which bindings are the pre-pass's.
+         let views_argument = self.var_views_an_argument(v) && !self.vars.is_marked_vector_borrow(v);
+-        // loft#1493 — a candidate may BE the return buffer only if it has the return's own
+-        // SHAPE.  `ls` is a BORROW list: it names the locals the tail's value is reached
+-        // THROUGH, and for a projection arm (`b.items`) that is the CONTAINER — a record.
+-        // Renaming it makes the caller's `vector<u8>` buffer BE the arm's `BoxF` local, so the
+-        // arm builds the record into the buffer and the delivery then clears that same store
+-        // and appends a field of what it just cleared: the caller reads an EMPTY collection,
+-        // on both backends, with no diagnostic of any kind.
+-        //
+-        // `ls_can_be_record_buffer` is this same guard one former over (loft#877, where a
+-        // vector was renamed onto a record buffer and `make` cleared the caller's record as a
+-        // vector).  The `returns_own_field` rung above asks the same question of the TAIL
+-        // SHAPE and so cannot see through a branch's arms — `return d.value` is caught,
+-        // `match s { … => { d = …; d.value } }` is not.  The candidate's own TYPE answers it
+-        // wherever the tail sits, which is why this rung is structural and not another walker.
+-        // …and "the return's shape" means the RETURN'S OWN TYPE, not merely *a* vector: a
+-        // `vector<BoxF>` local renamed onto a `vector<u8>` buffer is the same defect one
+-        // element type over, which `w[0].items` reaches.  An UNKNOWN candidate is admitted
+-        // because `is_equal` answers TRUE for it, so refusing on that would refuse a generic's
+-        // still-unresolved local; deps and the `?` are peeled on both sides, since neither
+-        // says anything about what the buffer must HOLD (`@FR-N-Shape`).
+-        //
+-        // ⚠ A LITERAL BACKING is exempt, and it is the case this rung was first written too
+-        // wide for.  `[i, i + 1]` mints a `__vdb_N` typed `Reference(main_vector<integer>)` —
+-        // a record type by every structural test, and the very store the vector lives in, so
+-        // it IS the right candidate for a vector buffer.  Refusing it left
+-        // `fn mk(i: integer) -> vector<integer>? { [i, i + 1] }` minting one store per call
+-        // that nobody owned: ten calls, ten records, caught by `1200-a-nullable-record-local-\
+-        // frees-what-it-displaces`.  `owns_literal_backing_store` is the one home for which
+-        // names those are.
+-        let is_literal_backing = crate::variables::owns_literal_backing_store(self.vars.name(v));
+-        let wrong_shape_for_buffer = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
+-            && !is_literal_backing
+-            && !self.vars.tp(v).base().is_unknown()
+-            && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
+         let allow_rename = !(bound_already
+-            || wrong_shape_for_buffer
+             || reassigned
+             || returns_own_field
+             || bound_to_vector_join

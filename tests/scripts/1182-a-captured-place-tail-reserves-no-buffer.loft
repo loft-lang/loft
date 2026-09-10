@@ -25,6 +25,12 @@
 // is INERT, because `State::fn_return` already releases any buffer the callee did not hand
 // back (loft#1179) — the interpreter never had the leak.  A backend divergence can only move
 // one row, and the tool's verdict is the conservative AND of both.
+//   ARMED: none for the native leak, which is read at exit; the interpret row cannot move at
+//   all.
+//   HOLDS: the INTERPRET row is equal on every channel, so `make falsify` prints NOT
+//   falsified — its summary wants a channel moving on BOTH backends and this defect only
+//   exists on one. NATIVE moves the leak channel, `kt=23 main_vector<integer>×4` -> none. A
+//   both-backends verdict is the wrong question for this file.
 
 // ⚠ `P` is declared FIRST on purpose.  With `Q` naming `P` before its declaration, the
 // record cell below aborts the compiler on the H5 two-pass contract — loft#1188, a

@@ -43,6 +43,9 @@
 //   `kt=82 E76×10, kt=87 __closure_4×2, kt=88 __closure_7×2, …` (11 kinds) leaked -> clean.
 //   Every VALUE is correct on the control too — the record is simply never returned — so an
 //   unarmed run reads INERT, which is the whole shape of this ticket.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 struct E76 { a: integer }
 enum W76 { One, Two }

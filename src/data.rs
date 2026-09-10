@@ -335,6 +335,42 @@ impl IntegerSpec {
         self.min < 0 && self.range() < (1_i64 << (8 * i64::from(size)))
     }
 
+    /// Can a value held in a NON-nullable slot of this spec ever read back as null?
+    ///
+    /// `!x` tests whether `x` is the null sentinel, so this is the question
+    /// `redundant-null-negation` asks of its operand: a spec that answers `false` kept no
+    /// code back for a failure, so `!x` on it is always false and a fit-failure leaves
+    /// nothing in the value to see (@PLN152).
+    ///
+    /// Three families, and the split is about which code the type kept back rather than
+    /// about the `?`:
+    ///
+    /// 1. `not_null` says the slot gave the sentinel up to widen its range by one, so
+    ///    there is no code left for null whatever the width — this is how a struct field
+    ///    declared `i: u8` (and one declared `x: integer`) reaches here;
+    /// 2. the plain `integer` and `i32` templates reserve the BOTTOM code
+    ///    (`i64::MIN` / `i32::MIN`), which is exactly what a non-null read reports as
+    ///    null — so `!x` on either is a real test and must not be flagged;
+    /// 3. every remaining spec is a declared range, and
+    ///    [`Self::reserves_sentinel_unconditionally`] is the one home for whether it kept
+    ///    a bottom code: `u8`/`i8`/`u16`/`i16` fill their fixed width, `u32`'s spare code
+    ///    is at the TOP where no non-null read tests for it, and an un-annotated
+    ///    `limit(lo, hi)` takes its own default rather than a sentinel.
+    ///
+    /// The store side of the same fact is `uncomputable_default`'s `dflt`, read through
+    /// `Parser::compound_range`: a target whose `dflt` is `i64::MIN` is one this answers
+    /// `true` for.  Two readers, one fact — kept apart only because one is handed a spec
+    /// and the other a store target.
+    #[must_use]
+    pub fn non_null_reads_null(&self) -> bool {
+        if self.not_null {
+            return false;
+        }
+        self.is_wide_template()
+            || self.is_signed32_template()
+            || self.reserves_sentinel_unconditionally()
+    }
+
     fn reserves_narrow_sentinel(&self, nullable: bool) -> bool {
         if !nullable {
             return false;
@@ -1746,7 +1782,13 @@ pub enum Type {
     Text(Deps),
     /// Description of the possible keys on a structure (hash, index, spatial, sorted)
     Keys,
-    /// An enum value. With definition with enum type itself. With value true it is a reference.
+    /// An enum, named by its own definition.  The flag is true for a STRUCT-ENUM — one where
+    /// some variant carries a payload, so a value of it is a record — and false for a plain
+    /// value enum, which is a discriminant and nothing else.  `parse_enum_values` sets it on
+    /// the parent the moment any variant is written with braces (`typedef.rs` reads it that
+    /// way to give unit variants their discriminant field), and the synthetic `__nullable<S>`
+    /// is built with it true.  It does NOT say the value is held by reference: a struct-enum
+    /// FIELD is stored inline in its host's bytes like any embedded record (@FR-L-Null-Tag).
     Enum(u32, bool, Deps),
     /// A readonly reference to a record instance in a store.
     Reference(u32, Deps),
@@ -6506,9 +6548,121 @@ impl Data {
         }
     }
 
+    /// Is this definition one the AUTHOR wrote, rather than one loft generated for them?
+    ///
+    /// The generated ones carry a leading `__` — `__tuple<integer,Node>`, `__nullable<S>`,
+    /// `__fn_ref` — and that prefix is the discriminator the tree already uses; `Self` is the
+    /// receiver alias, which is a spelling rather than a declaration.
+    ///
+    /// Reach for this wherever a DIAGNOSTIC is about to name a type.  A generated def lies on
+    /// the same graphs its host does, so a report walking one finds both, and the second
+    /// message names something the author cannot find in their source and cannot write a cure
+    /// in terms of — *"use reference<__tuple<integer,Node>>"*.
+    #[must_use]
+    pub fn def_is_authored(&self, d_nr: u32) -> bool {
+        let name = &self.def(d_nr).name;
+        !name.starts_with("__") && name != "Self"
+    }
+
+    /// Which struct definitions does a FIELD of this type embed INLINE — in the host
+    /// record's own bytes?
+    ///
+    /// The ONE enumeration of the routes a field reaches a record's bytes through, and
+    /// the question [`has_value_cycle`](Self::has_value_cycle) asks of every field.  A
+    /// route that is inline continues a size cycle; a route that is store-backed or a
+    /// pointer ends it, which is why `kids: vector<Node>` is the idiomatic tree and
+    /// `next: reference<Node>` the idiomatic list.
+    ///
+    /// The rules already name the set: @FR-L-Null-Tag lists the INLINE positions as *"a
+    /// `vector`/keyed element, an embedded field, a tuple member"*, and @FR-L-Null-Which
+    /// makes the `u16::MAX` share marker the thing that tells an embedded field from a
+    /// pointer — citing this walk by name for reading the same bit.  A vector or keyed
+    /// element is inline in the ELEMENT record, which is a store of its own, so it ends
+    /// the HOST's cycle; the other two continue it.
+    ///
+    /// Exhaustive on purpose, like [`Type::for_each_child`]: a new type former must force
+    /// a decision here.  A former this match does not follow costs a diagnostic that
+    /// never fires — and what stands behind that diagnostic is a type of infinite size,
+    /// so the failure is not a missing warning but a layout the record builder cannot
+    /// complete.  Every route below except `Reference` was measured MISSING, each with
+    /// its own symptom, and they are one omission and not four.
+    fn inline_field_defs(tp: &Type, out: &mut Vec<u32>) {
+        // `Row?` on an embedded field is the tagged `__nullable<Row>`, which holds its payload
+        // INLINE (@FR-L-Null-Tag), so the `?` changes nothing about whether the edge continues
+        // and is peeled ONCE here rather than answered again in every arm — @FR-N-Shape's own
+        // cure.  It arrives as the `Optional` WRAPPER because the rewrite to the synthetic enum
+        // runs after the cycle report (`typedef.rs` `synth_nullable_struct_fields`), and that
+        // wrapper is exactly what hid a linked list's own terminator spelling from this walk.
+        // `reference<Row>?` peels to a MARKED `Reference` and correctly does not continue —
+        // @FR-L-Null gives the pointer's own bytes to absence.
+        match tp.base() {
+            // An EMBEDDED struct field (`item: Row`) is the host's own bytes.  A
+            // `reference<Row>` field carries the `u16::MAX` share marker (#328) and is a
+            // 12-byte pointer instead — it cannot close a size cycle, and skipping it is
+            // exactly what makes `reference<Self>` legal.
+            //
+            // The FIELD's own deps are what says "reference", not anything about the child
+            // type: `def_referenced` records that a struct has been CONSTRUCTED somewhere
+            // (`build_object_ops` and the object literals set it), so gating on that
+            // silenced the report for every cyclic struct a program actually uses — the
+            // only ones anybody writes.
+            Type::Reference(d, deps) if !deps.is_pointer_marker() => out.push(*d),
+            // A `Rewritten` wrapper records how a value is BUILT, never where it lives, so
+            // the edge is whatever it wraps.
+            Type::Rewritten(inner) => Self::inline_field_defs(inner, out),
+            // A tuple is its members' bytes (`formal/tuples.md` T-Absent), so a member
+            // embeds exactly as a field does.
+            Type::Tuple(ts) => ts.iter().for_each(|t| Self::inline_field_defs(t, out)),
+            // Store-backed: the field is a handle and the elements live in a store of
+            // their own, so the graph is finite however deep it returns to itself.
+            Type::Vector(..)
+            | Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..)
+            // A marked `Reference` — the pointer arm's complement, spelled out so the
+            // guard above cannot be read as an oversight.
+            | Type::Reference(..)
+            // Removed by the `base()` above; here so the match stays exhaustive over `Type`
+            // and a reader is not left wondering which arm takes a `τ?`.
+            | Type::Optional(..)
+            // A fn-ref is a `(d_nr, closure)` pair whose closure is a record of its own;
+            // `RefVar` and `Iterator` name storage the host does not contain.
+            | Type::Function(..)
+            | Type::RefVar(..)
+            | Type::Iterator(..)
+            | Type::Routine(..)
+            // Scalars and `text` carry no definition to return to.
+            | Type::Unknown(_)
+            | Type::Null
+            | Type::Void
+            | Type::Never
+            | Type::Integer(_)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Text(_)
+            | Type::Keys => {}
+            // An enum FIELD stores its variant inline, so a payload that returns to the
+            // host closes a cycle the same way an embedded struct does.  The walk descends
+            // into the enum's VARIANTS, which are its children rather than its attributes
+            // — a value enum has no payload at all and simply yields no edge.
+            Type::Enum(d, _, _) => out.push(*d),
+        }
+    }
+
     /// Check if struct `d_nr` contains itself as a value type (not reference)
     /// field, directly or through other structs.  (Moved from `typedef.rs` —
     /// pass-2: a walk over `Data`'s definition graph lives with `Data`.)
+    ///
+    /// The edge question is [`inline_field_defs`](Self::inline_field_defs) — read it for
+    /// which field shapes continue a cycle.  A cycle this walk misses is not a missing
+    /// message: the type has no finite size, so the record builder fails downstream with
+    /// `type layout: … field 'next' has no position (u16::MAX)` (an embedded `Row?`) or a
+    /// `u16` overflow in the offset accumulator (a tuple member), neither of which names
+    /// the cure.
     pub fn has_value_cycle(
         &self,
         d_nr: u32,
@@ -6517,32 +6671,41 @@ impl Data {
         if !visiting.insert(d_nr) {
             return true; // Already visiting this type — cycle found.
         }
+        let cyclic = self.reaches_itself_inline(d_nr, visiting);
+        visiting.remove(&d_nr);
+        cyclic
+    }
+
+    /// The body of [`has_value_cycle`](Self::has_value_cycle), split off so the `visiting`
+    /// set is inserted and removed at exactly one place each and an early return cannot
+    /// leave the walk marked as in progress.
+    fn reaches_itself_inline(
+        &self,
+        d_nr: u32,
+        visiting: &mut std::collections::HashSet<u32>,
+    ) -> bool {
+        // An enum's variants are its CHILDREN, not its attributes, and each carries its own
+        // payload fields — the same shape `owns_droppable_walk` walks for the same reason.
+        if self.def_type(d_nr) == DefType::Enum {
+            return self
+                .children_of(d_nr)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .any(|c| self.has_value_cycle(c, visiting));
+        }
+        let mut children = Vec::new();
         for a_nr in 0..self.attributes(d_nr) {
-            let a_type = self.attr_type(d_nr, a_nr);
-            // Only recurse into value-typed struct fields.  A `reference<T>`
-            // field (the `u16::MAX` share-marker dep, #328) is a 12-byte
-            // pointer, not inline bytes — it cannot cause an infinite-size
-            // cycle, and skipping it here is exactly what makes
-            // `reference<Self>` legal.
-            //
-            // The FIELD's own deps are what says "reference", not anything about the
-            // child type: `def_referenced` records that a struct has been CONSTRUCTED
-            // somewhere (`build_object_ops` and the object literals set it), so gating
-            // the recursion on it silenced the cycle report for every cyclic struct a
-            // program actually uses — the only ones anybody writes.  `struct PENode {
-            // next: PENode }` then reached layout validation instead, and the reader got
-            // `type layout: PENode: field 'next' has no position (u16::MAX)` in place of
-            // "contains itself — use reference<PENode> to break the cycle".
-            if let Type::Reference(child_nr, deps) = &a_type
-                && !deps.contains(&u16::MAX)
-                && self.def_type(*child_nr) == DefType::Struct
-                && self.has_value_cycle(*child_nr, visiting)
-            {
-                visiting.remove(&d_nr);
-                return true;
+            children.clear();
+            Self::inline_field_defs(&self.attr_type(d_nr, a_nr), &mut children);
+            for child_nr in &children {
+                if matches!(
+                    self.def_type(*child_nr),
+                    DefType::Struct | DefType::Enum | DefType::EnumValue
+                ) && self.has_value_cycle(*child_nr, visiting)
+                {
+                    return true;
+                }
             }
         }
-        visiting.remove(&d_nr);
         false
     }
 
@@ -9142,6 +9305,8 @@ impl Data {
                 ) {
                     return None;
                 }
+                // The same question `def_is_authored` answers, asked here of a `&Definition`
+                // the iterator already holds rather than of a def number.
                 if d.name.starts_with("__") || d.name == "Self" {
                     return None;
                 }

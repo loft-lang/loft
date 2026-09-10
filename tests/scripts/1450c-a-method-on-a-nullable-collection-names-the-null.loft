@@ -30,6 +30,13 @@
 //
 // @falsified-at: 8ba3e755 — reports *"Unknown field vector.sum"* there, so the
 //   `@EXPECT_ERROR` misses and the file fails.
+//   CHANNEL: the exit/expectations channel, measured on --interpret against 8ba3e755 by
+//   `scripts/falsify.sh --bulk`.
+//   WITNESS: the control's signature against 8ba3e755 is `exit 1 -> 0, expectations FAIL/1 ->
+//   1/1`. That line is what a re-run must reproduce; comparing it is the whole check.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 
 struct Bag1450c { xs: vector<integer>? }
 

@@ -33,6 +33,9 @@
 // Scoring it needed a fix to the instrument: `use <lib>` resolves `lib/` relative to the
 // process CWD, and `falsify.sh` ran both sides from the checkout, so the control read
 // THIS tree's libraries and reported INERT.  Each side now runs in the tree it scores.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 use parser;
 

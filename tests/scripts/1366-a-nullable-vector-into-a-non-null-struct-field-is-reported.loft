@@ -8,6 +8,15 @@
 //
 // @falsified-at: 806a8d84 → here (warnings 0 → 1): silent on the build this guard was
 //   written to catch, same value on both.
+//   CHANNEL: the WARNING COUNT — one silent field store on the control — and nothing else.
+//   Falsify has no warning column: a `@EXPECT_WARNING` file gets a direct run where warnings
+//   are not matched at all, so both trees read `expect -` and the sweep reports INERT however
+//   loudly the diagnostic fires (TESTING.md § A guard that never failed is not a guard,
+//   second blind channel).
+//   WITNESS: warnings 0 -> 1 on the control against the declared count here; that difference
+//   is the whole measurement.
+//   HOLDS: the VALUES are identical on both trees, and every channel falsify scores is equal.
+//   A run compared on values or exit learns nothing here — count the diagnostics by hand.
 // @EXPECT_WARNING: is stored into the field of the non-null type `vector<integer>`
 struct H { f: vector<integer> }
 fn main() {

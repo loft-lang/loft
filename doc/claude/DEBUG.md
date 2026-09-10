@@ -1492,6 +1492,53 @@ one, left thirteen matrix cells wrong with several converting a SIGSEGV into a q
 answer. A general fix that trades a loud failure for a quiet one can be worse than the bug; that
 measurement is what made both halves ship together.
 
+**The nested `{ … }` block is the forgotten spelling of every ARM fix.** When a delivery or
+store-lifetime defect is fixed for an `if` / `match` ARM, the same defect is almost always still
+live in the plain nested value block — measured twice inside one day, from two unrelated arm
+fixes. loft#1493 (an arm yielding a struct's collection field answered EMPTY) has loft#1494 as its
+nested-block sibling, a use-after-free by a different mechanism; and loft#1491 (an arm binding the
+return buffer from a call leaks one store per call) has the identical per-call leak in
+`{ v = head(n); v }`. The reason is structural: the delivery machinery is organised per CONSTRUCT
+— a function tail, a branch arm, a bind, a `for` — and the plain nested block is the construct
+with no delivery of its own, so it inherits nothing and each per-construct fix leaves it behind,
+while `(F-Block)` promises a block yields its tail *wherever the block stands*. After any arm-side
+fix, re-run the repro with the arm replaced by a bare `{ … }`. And check the CONSUMER axis
+separately: loft#1494 had five red consumers (a return delivery, a call argument, a struct-literal
+field, an operator, a field write) and two green ones, and the green ones were green because they
+SINK their copy into the block — so a per-consumer cure would have had to be written five times
+and would still have missed the sixth. That is what makes the BLOCK, not any consumer, the
+chokepoint.
+
+**A walker on a statement list matches more than the construct you meant.** When rewriting the
+ARMS of a construct, keep the arm's node kind out of the same `match` as the construct's — called
+on a statement list, the walker will also match that node kind standing ALONE and rewrite
+something that was never an arm. Measured on loft#1496: the arm-voiding walk matched
+`Span | If | Block`, meaning `Block` as the arm reached through the `If`, and also fired on a bare
+`{ … }` in statement position. A keyed literal reached through a CAPTURE arrives as exactly that —
+a block whose ops build STRAIGHT INTO its destination (@PLN93 build-into-target, loft#1326) — so
+dropping its tail and voiding its type destroyed the build and the collection read `0xDEADBEEF`.
+The cure is to split the walk: one function recognises only the construct and hands each arm to a
+second, which is the only one that rewrites, so the arm's node kind is reachable only THROUGH the
+construct. ⚠ **A green `make ci` and a clean `find_problems --changed` both passed over it; the
+`LOFT_POISON=1` sweep found it in 90 seconds** — that sweep is not optional after touching shared
+parser or codegen machinery (TESTING.md § the nightly sweeps). And bisect such a regression by
+disabling each candidate fix in place (`if false && …`, an incremental rebuild, one failing file)
+rather than by building historical commits: three ~15s cycles named it.
+
+**A "statement or value?" question is not decidable where the construct is built.** Three
+arm-side discriminators for *is this branch a statement* were each disproven by building the
+counter-example (loft#1496): the arm's expected `result` being `Void`, the arm's tail being a
+`Value::Drop`, and un-dropping the tail instead. All three are carried by the else arm of
+`if n > 0 { …; return b.items; } else { head(n) }`, whose value IS the function's — so each cure
+made that function return nothing. The fact that works is *does anything FOLLOW the construct*,
+and it is known only at the enclosing level: in `parse_block_inner`'s statement loop, past the
+point that breaks out at `}`. When a defect turns on value-vs-statement position, look for the
+parser point that has already seen what follows rather than trying to infer it from the
+construct's own type or lowering — both are set before that is known. And note the interpreter
+balances its eval stack against a block's declared TYPE, so a discard has to be total: an arm
+keeping either the value or the type alone is off by one in that half's direction, and corrupts
+every local live across the branch.
+
 **One question with several DECODERS: the defect sits in whichever one the failing route
 consults.** Three times in one cycle (loft#1444, loft#1474, loft#1477), all in the neighbourhood
 of *"which closure records does this return deliver?"* — a fn-ref variable's free read one

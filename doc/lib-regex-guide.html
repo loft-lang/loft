@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>regex guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library regex — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-regex-guide.html">
+<meta property="og:title" content="regex guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library regex — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-regex-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="regex guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library regex — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>regex guide</h1>
+<article>
+<p><a href="lib-regex.html">← regex</a> · <a href="lib-regex-api.html">API reference</a> · <a href="lib-regex-src.html">source</a></p>
+<p><code>regex</code> gives a <code>text</code> three methods: <code>search</code> for where a pattern first matches, <code>matches</code> for whether it matches at all, and <code>split_on</code> for the pieces between matches. Patterns are written inline and cached, so calling the same one in a loop is cheap.</p>
+<p>It is deliberately the SMALL-SCRIPT tool — log scanning, CLI fields, quick extraction — and not a parser. Grammars, ASTs and recursion are somebody else's job, and there is no <code>replace</code> or capture-group accessor yet.</p>
+<p>⚠ <strong>The verbs are named around the stdlib, not after the usual regex words</strong>, and that is the first thing to know. <code>text</code> already has <code>find</code> (a LITERAL substring search) and <code>split</code> (on a CHARACTER), and a method wins name resolution over an imported free function — so a bare <code>find(pattern, line)</code> compiles, type-checks and answers the stdlib's literal search instead of this one. Hence <code>search</code> and <code>split_on</code>. <code>matches</code> is collision-free and keeps its bare name.</p>
+<pre><code><span class="kw">use</span> regex;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  line = <span class="st">"order 1234 shipped 2026-09-09"</span>;</code></pre>
+<pre><code>  at = line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"first number at byte {at}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"has a 4-digit run : {line.matches(\"</span>[<span class="nm">0</span>-<span class="nm">9</span>]{<span class="nm">4</span>}\<span class="st">")}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at == <span class="nm">6</span>, <span class="st">"the first digit run starts at byte 6"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">matches</span>(<span class="st">"[0-9]{4}"</span>), <span class="st">"1234 is four digits"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!line.<span class="fn-call">matches</span>(<span class="st">"[a-z]{20}"</span>), <span class="st">"and nothing here is twenty letters"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">a_pattern_that_never_compiled</span>();
+  <span class="fn-call">the_offset_is_a_byte</span>();
+  <span class="fn-call">splitting_yields_the_gaps</span>();
+  <span class="fn-call">the_older_spellings_still_work</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  first number at byte 6
+  has a 4-digit run : true
+</code></pre>
+<h2 id="the-one-that-bites-an-invalid-pattern-answers-no-match">The one that bites: an invalid pattern answers "no match"</h2>
+<p>A pattern that does not compile is not reported. <code>search</code> answers null and <code>matches</code> answers false — the same two answers a perfectly good pattern gives when the text simply does not contain it. So a typo in a pattern reads as *this line has no numbers in it*, and a scanner built on it quietly finds nothing, for every line, forever.</p>
+<p>There is no third answer to check for, so the defence is to test the pattern against text you know it must match — once, near where the pattern is written — rather than to guard each call.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_pattern_that_never_compiled</span>() {
+  broken = <span class="st">"[unclosed"</span>;          <span class="cm">// a character class with no `]`</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc 123"</span>.<span class="fn-call">search</span>(broken) == <span class="kw">null</span>, <span class="st">"an invalid pattern answers null…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abc 123"</span>.<span class="fn-call">matches</span>(broken), <span class="st">"…and false"</span>);</code></pre>
+<p>…which is exactly what a VALID pattern answers when it does not match.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc 123"</span>.<span class="fn-call">search</span>(<span class="st">"[xyz]+"</span>) == <span class="kw">null</span>, <span class="st">"a good pattern that misses: also null"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abc 123"</span>.<span class="fn-call">matches</span>(<span class="st">"[xyz]+"</span>), <span class="st">"also false"</span>);</code></pre>
+<p>The check that works: assert the pattern against text it must match.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc 123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"the pattern compiles and finds what it should"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"invalid : answers null / false, exactly like a miss"</span>);
+}</code></pre>
+<h2 id="the-offset-is-a-byte-offset">The offset is a BYTE offset</h2>
+<p><code>search</code> answers where the match starts in BYTES, and <code>text</code> in loft is a UTF-8 buffer — so on anything but ASCII the answer is not a character index. Slice with it and compare it against <code>size()</code> (bytes); comparing it to <code>len()</code> (characters) reads correctly on ASCII and silently wrongly on everything else.</p>
+<p>A miss is <code>null</code> even though the return type says <code>integer</code>, so test the result before using it as a position.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_offset_is_a_byte</span>() {
+  ascii = <span class="st">"order 1234"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ascii.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"on ASCII, bytes and characters agree"</span>);</code></pre>
+<pre><code>  uni = <span class="st">"héllo 42"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(uni.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">7</span>, <span class="st">"é is two bytes, so the digits start at byte 7…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(uni) == <span class="nm">8</span>, <span class="st">"…where the CHARACTER index would be 6 of 8"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(uni) == <span class="nm">9</span>, <span class="st">"and the buffer is 9 bytes"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(uni.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) &lt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(uni), <span class="st">"compare an offset against size()"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"offset  : byte 7 in a 9-byte, 8-character text"</span>);
+}</code></pre>
+<h2 id="split-on-yields-the-gaps"><code>split_on</code> yields the GAPS</h2>
+<p>The pieces are what lies BETWEEN matches, which has two consequences worth seeing once: a separator at either end leaves an empty piece, and two adjacent separators leave an empty piece between them. Text with no match at all comes back as one piece — the whole text.</p>
+<p>It is lazy: the iterator yields through loft's coroutine channel, so nothing is materialised and a <code>for</code> over a large text does not build a vector of it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">splitting_yields_the_gaps</span>() {
+  pieces: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];
+  <span class="kw">for</span> piece <span class="kw">in</span> <span class="st">"a,b;;c"</span>.<span class="fn-call">split_on</span>(<span class="st">"[,;]"</span>) { pieces += [piece]; }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(pieces) == <span class="nm">4</span>, <span class="st">"four gaps between three separators, got {len(pieces)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pieces[<span class="nm">1</span>] == <span class="st">"b"</span>, <span class="st">"the middle piece"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pieces[<span class="nm">2</span>] == <span class="st">""</span>, <span class="st">"…and the empty one between the two adjacent separators"</span>);</code></pre>
+<pre><code>  whole: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];
+  <span class="kw">for</span> piece <span class="kw">in</span> <span class="st">"nothing here"</span>.<span class="fn-call">split_on</span>(<span class="st">"[0-9]"</span>) { whole += [piece]; }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">1</span> <span class="kw">and</span> whole[<span class="nm">0</span>] == <span class="st">"nothing here"</span>, <span class="st">"no match: one piece, the whole text"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"split   : 'a,b;;c' on [,;] gives a, b, '' and c"</span>);
+}</code></pre>
+<h2 id="the-older-spellings-still-work-and-say-so">The older spellings still work, and say so</h2>
+<p>An earlier release shipped a pattern-first free function (<code>regex::find</code> / <code>regex::split</code>) and a prefixed method (<code>line.regex_find</code> / <code>line.regex_split</code>). Both still work exactly as they did — nothing was removed — and the compiler steers new calls to <code>search</code> / <code>split_on</code> so the surface converges on one spelling per operation.</p>
+<p>⚠ <code>regex::find</code> is reachable only when QUALIFIED. A bare <code>find(pattern, input)</code> resolves the stdlib's <code>text</code> method first and answers a literal search — with the arguments in the other order, which is why it type-checks.</p>
+<p>Running this section PRINTS two <code>advice[superseded-call]</code> lines, and that is the steering channel working rather than a defect in the guide: the two calls below are deliberately the old spellings, so the compiler names the new one. Your own code sees the same line wherever you write them, which is how the surface converges without anything breaking.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_older_spellings_still_work</span>() {
+  line = <span class="st">"order 1234"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(regex::<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"[0-9]+"</span>, line) == <span class="nm">6</span>, <span class="st">"the qualified free function still answers"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">regex_find</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"…and so does the prefixed method"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"all three are the same operation"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"steering: find / regex_find still work, search is the one to write"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the pattern syntax the Rust <code>regex</code> crate accepts, and the roadmap (<code>match_groups</code> and <code>replace</code> are the next increment).</li>
+<li><code>tests/worked-examples.loft</code> — <code>@RGX-001</code> … <code>@RGX-004</code>, the four contracts a signature cannot state, each a running test rather than a snippet.</li>
+<li>The stdlib's own <code>find</code>, <code>split</code>, <code>contains</code> and <code>starts_with</code> for literal text work — they need no import and no pattern compilation.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

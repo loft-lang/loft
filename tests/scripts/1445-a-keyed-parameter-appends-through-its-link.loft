@@ -46,6 +46,11 @@
 //   assertion.  The vector cells pass there, which is what makes them a control.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   CHANNEL: the exit channel, measured on --interpret against afbca3342 by
+//   `scripts/falsify.sh --bulk`.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Row { id: integer, tag: text }
 struct Wrd { nm: text, n: integer }

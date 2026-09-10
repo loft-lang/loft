@@ -22,6 +22,9 @@
 //   cascades and no cell runs to fail.  An exit-only move is the weaker falsification, which is
 //   why the head controls and the two-fixed-tail cell are here — they assert VALUES, so a cure
 //   that parsed the tail but read the wrong positions fails on a number rather than passing.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum Tok { Kw { word: text }, End { e: integer }, Num { n: integer } }
 

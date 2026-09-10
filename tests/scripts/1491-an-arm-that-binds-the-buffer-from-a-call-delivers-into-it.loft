@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1491 — a branch arm that BINDS a collection local from a call and then yields it
+// leaked one store per call, on both backends.
+//
+// The buffered-return ABI hands a collection-returning function a buffer to fill. When an
+// arm's tail is a bare call (`{ head(n) }`) the call is handed the function's own return
+// buffer and there is one store. When the arm binds the result first
+// (`{ buf = head(n); buf }`), the call was handed its OWN `__ref_N` and `buf` was rebound
+// to that — so the callee filled one store, the caller handed in another, and the one the
+// caller never adopts was orphaned.
+//
+// The value was right the whole time, which is why nothing but a leak check could see it:
+// both spellings answer the same elements. `cbor::encode` writes the bound spelling in its
+// `CText` / `CBytes` / `CArray` / `CMap` arms and the direct one in `CBool` / `CInt`, so a
+// CBOR map leaked one record per KEY while its bytes were correct — measured 1, 2, 4, 8
+// entries as 1, 2, 4, 8 records.
+//
+// The cure is the redirect that already existed for the same shape one level up
+// (`nrvo_collapse_tail_set`, the `t = base(); t += …; t` merge): hand the call the buffer
+// the arm is going to yield. Emission becomes the one-buffer form the bare-call arm
+// already had.
+//
+// ⚠ The cells that make this a measurement rather than a coincidence are the ones that
+// must NOT move: `d_a_literal_built_arm` (no call to redirect), `e_a_twice_assigned_local`
+// (the redirect is declined — a second assignment means the first store is not what the
+// tail yields) and `f_a_mutated_bind` (the redirect fires and the appends must still land).
+// All three answer exactly what they answered before, which is what says the fix is a
+// DELIVERY change and not a value one.
+//
+// @falsified-at: 4e1533b74 — interpret leaked kt=85 main_vector<integer(0, 255)>×15, kt=32
+//   main_vector<text>×3 -> clean, native the same -> clean.
+// @falsified-by: tests/falsified/1491-an-arm-that-binds-the-buffer-from-a-call-delivers-into-it.patch
+//   CHANNEL: LEAK, and only leak.  Every other channel is equal on both trees, which is the
+//     whole finding — the elements, the lengths and the exit were right before the fix.
+//   ARMED: `LOFT_NATIVE_LEAK_CHECK=1` for the native side (`falsify.sh` arms it); the
+//     interpreter reports at program exit unaided.  An unarmed native run reads CLEAN on
+//     both trees and the guard looks inert.
+//   WITNESS: 18 orphaned records on the control — `main_vector<integer(0, 255)>×15` plus
+//     `main_vector<text>×3` — for 3 rounds of 6 leaking calls, which is the scaling that
+//     makes this a leak per CALL rather than one tolerated store.  The `kt=` number shifts
+//     with the type table between builds; the store SHAPE is the identity.
+//   HOLDS: every assertion passes on BOTH trees, and exit, panic and free-refusal are equal
+//     on both.  A patch that moved the value channel would be some other fault of the same
+//     commit, not this one.
+
+enum Shape1491 { Bound { n: integer }, Direct { n: integer } }
+
+fn head1491(n: integer) -> vector<u8> {
+  v: vector<u8> = [];
+  for _i in 0..n { v += [1]; }
+  return v;
+}
+
+fn heads1491(n: integer) -> vector<text> {
+  v: vector<text> = [];
+  for _i in 0..n { v += ["x"]; }
+  return v;
+}
+
+fn a_match_arm_binds_then_yields(s: Shape1491) -> vector<u8> {
+  match s {
+    Bound { n } => { buf = head1491(n); buf },
+    Direct { n } => { head1491(n) },
+  }
+}
+
+fn b_if_arms_both_bind(c: boolean, n: integer) -> vector<u8> {
+  if c { buf = head1491(n); buf } else { other = head1491(n + 1); other }
+}
+
+fn c_a_text_element(s: Shape1491) -> vector<text> {
+  match s {
+    Bound { n } => { buf = heads1491(n); buf },
+    Direct { n } => { heads1491(n) },
+  }
+}
+
+fn d_a_literal_built_arm(s: Shape1491) -> vector<u8> {
+  // CONTROL: no call to redirect, so nothing here changes.
+  match s {
+    Bound { n } => { buf: vector<u8> = []; for _i in 0..n { buf += [2]; } buf },
+    Direct { n } => { head1491(n) },
+  }
+}
+
+fn e_a_twice_assigned_local(s: Shape1491) -> vector<u8> {
+  // CONTROL: the local is assigned twice, so the first call's store is not what the tail
+  // yields and the redirect must decline.  The ANSWER is the second call's.
+  match s {
+    Bound { n } => { buf = head1491(n); buf = head1491(n + 1); buf },
+    Direct { n } => { head1491(n) },
+  }
+}
+
+fn f_a_mutated_bind(s: Shape1491) -> vector<u8> {
+  // The redirect fires here, and the append after it must still land in the same store.
+  match s {
+    Bound { n } => { buf = head1491(n); buf += [9]; buf },
+    Direct { n } => { head1491(n) },
+  }
+}
+
+fn main() {
+  // Three rounds, because a leak that scales with the call count is the shape this is
+  // about — one call could hide it behind a single tolerated store.
+  for _round in 0..3 {
+    assert(len(a_match_arm_binds_then_yields(Bound { n: 2 })) == 2, "the bound arm");
+    assert(len(a_match_arm_binds_then_yields(Direct { n: 3 })) == 3, "…and the direct one");
+    assert(len(b_if_arms_both_bind(true, 2)) == 2, "an if arm that binds");
+    assert(len(b_if_arms_both_bind(false, 2)) == 3, "…and its else");
+    assert(len(c_a_text_element(Bound { n: 2 })) == 2, "a text element type");
+    assert(len(d_a_literal_built_arm(Bound { n: 4 })) == 4, "CONTROL: a literal-built arm");
+    assert(len(e_a_twice_assigned_local(Bound { n: 2 })) == 3, "CONTROL: the SECOND call's answer");
+    assert(len(f_a_mutated_bind(Bound { n: 2 })) == 3, "a bind the arm then appends to");
+  }
+  print("1491 ok\n");
+}

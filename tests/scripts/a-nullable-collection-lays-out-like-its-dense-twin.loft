@@ -33,6 +33,9 @@
 // assertions run.  The three narrower cells were measured separately on that build: the
 // spatial local halts with BUG #306 on `--interpret` (native answers), and every omitted
 // nullable-collection field answers `false` to `== null` on both.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct NL125i { k: integer = 0, v: integer = 0 }
 struct NL125h { k: integer = 0, v: integer = 0 }

@@ -30,6 +30,9 @@
 //   the heap-position read, not with the arm alone.
 //
 // The trace file is this guard's own, so a sibling guard run beside it cannot read its notes.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 fn trace_path() -> text { return "loft_tupdrop_trace.tmp"; }
 

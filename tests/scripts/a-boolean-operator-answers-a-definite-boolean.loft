@@ -47,6 +47,9 @@
 // value cells (`r1 == false`, the field's two, the element's two, the `??` discharge) and six of
 // the seven added later (both `null` literals, the end-of-chain link, and all three positions).
 // The seventh, mid-chain, is the control noted at its own line.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 fn maybe_bool(k: integer) -> boolean? {
   if k == 0 { return null; }
   if k == 1 { return true; }

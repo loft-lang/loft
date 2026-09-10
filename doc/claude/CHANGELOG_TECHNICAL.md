@@ -9,6 +9,159 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A statement branch discards every arm, in the body and in the type (2026-09-10)
+
+`(F-Block)` says a block in statement position discards its tail.  An arm of a statement `if`
+was left disagreeing with itself: `else { 5 }` had its tail wrapped in a `Drop` while its block
+still claimed `integer`, and the value-carrying middle arm of an `else if` chain kept both its
+value and its type.  The interpreter balances its eval stack against the block's TYPE, so each
+shape left it off by one in its own direction — the first promised a value it never pushed, the
+second pushed one nothing pops — and every read after the branch was misaligned.
+`t = 0; if n > 0 { t += 1; } else { 5 }; return t` answered **null** for `n == 0`, and with two
+locals live across the branch both read null (loft#1496).
+
+`--native` compensates at emit time (`generation::emit`'s `stmt_discard`), so only the
+interpreter was wrong: a program tested on the default backend was wrong when interpreted.
+
+Normalised in `parse_block_inner`'s statement loop, past the point that breaks out at `}` —
+there another statement follows, so nothing reads what the branch yields.  Three arm-side
+discriminators were disproven by measurement first (the arm's `result` being Void, the arm's
+tail being a `Drop`, and un-dropping instead): the else arm of
+`if n > 0 { …; return b.items; } else { head(n) }` carries the same two facts while its value IS
+the function's, and un-dropping a genuine statement reopens loft#725's leak.  Whether anything
+FOLLOWS the branch is the only fact that separates the cases, and the arm cannot see it.
+
+### A diverging branch arm is not evidence that the branch is a statement (2026-09-10)
+
+The native emitter discards both arms of an `if` with exactly one `Void` arm (loft#1381).  An arm
+that leaves through `return` types `Void` because control LEFT, not because the `if` is a
+statement, and its sibling still carries the value — so discarding both emitted
+`let … : DbRef = if … { … ; } else { … ; };` and rustc refused a program the interpreter runs
+(loft#1495).  Rust types a diverging arm `!`, which coerces to the sibling's type, so the
+ordinary value emission was already right: `arm_diverges` (asking `Value::tail`, the one home for
+*where control leaves*) excludes it, and the `else if` chain leg of `arm_result` takes the same
+exclusion so a chain does not answer `Void` upward.
+
+Only a PROJECTION return reached it — `return x` and `return head(n)` always compiled — because
+that is the return shape whose retbuf delivery leaves the arm's block multi-statement and `Void`.
+
+### A nested block yielding a local's collection copies it out before the frees (2026-09-10)
+
+A value block whose tail read a COLLECTION out of a local the block defined
+(`{ b = BoxF { … }; b.items }`) handed out a reference into `b`'s store, and the block's exit
+frees `b` before the enclosing consumer copies — right for as long as the freed bytes survived,
+`0xDEADBEEF` under `LOFT_POISON=1`, and a genuinely wrong value where a second block reused the
+slot (loft#1494).
+
+`block_result` has carried this rule for the RECORD case since @PLN85 and cures it by copying the
+tail into a local of its own; a collection is not a `Reference` and `OpCopyRecord` is not how one
+is copied, so the collection half is a second arm beside it — `materialize_collection_value`,
+routing to `lower_vec_copy_bind` for a vector and `OpReplaceKeyed` for the keyed kinds rather than
+restating either copy.
+
+The invariant belongs to the BLOCK: five consumers read such a block by wrapping it from outside
+(a return delivery, a call argument, a struct-literal field, an operator, a field write) and all
+five were wrong, while the two that were right — a plain bind and a `for` — are the two that sink
+their copy into the block.  The filed boundary named the nested-block spelling; nesting depth,
+whether a call filled the field, the element former and the projection's depth are all free, and
+what decides it is whether the projection's root is defined inside the block.
+
+
+### A branch arm that binds the return buffer from a call now delivers into it (2026-09-09)
+
+An arm whose tail is a bare call (`{ head(n) }`) is handed the function's own return buffer
+and there is ONE store.  The same arm written with a bind first (`{ buf = head(n); buf }`)
+gave the call its own `__ref_N` and rebound `buf` to that, so the callee filled one store,
+the caller handed in another, and the one the caller never adopts was orphaned — **one
+leaked store per call, both backends, scaling with the call count** (loft#1491).
+
+The values were right the whole time, so only a leak channel could see it.  `cbor::encode`
+writes the bound spelling in four of its six arms, which is why a CBOR map leaked one record
+per KEY while its bytes round-tripped correctly; every `pluginabi` protocol frame is such a
+map.
+
+The cure already existed one level up: `nrvo_collapse_tail_set` redirects a `Set(cv,
+Call(…))` whose callee takes a hidden return buffer to deliver into `cv` itself, and its own
+comment named this exact failure.  It was reached only at the FUNCTION tail; the arm
+materialiser now asks it of each block it walks, gated by that function's own step (1) —
+which declines every block whose tail is not `Var(w)` — so no new rule was needed.  Emission
+becomes the one-buffer form the bare-call arm already had, and the top-level spelling of the
+same three lines already produced.
+
+Blast radius over the corpus: **DIFFERENT 1 of 1437**, and that one file is the NRVO test,
+whose single changed line is the same redirect.  Guard:
+`tests/scripts/1491-an-arm-that-binds-the-buffer-from-a-call-delivers-into-it.loft`,
+falsified at `656caffcc`.  Detail in `formal/ownership-history.md`.
+
+### `library-ci` asked for a token scope its callers had not lent (2026-09-09)
+
+Every `loft-lang/loft-libs-*` repo's `library-ci` ended in `startup_failure` — no job, no
+annotation, no log — from 2026-09-04, when the reusable gained a top-level `pull-requests:
+read` for its new `unreleased work` job.  A CALLED workflow can only REDUCE what the caller
+lends it; those repos default to `read` (contents + packages and nothing else), so the
+request exceeded the grant and GitHub refused the run before starting it (loft#1492).
+
+The scope moved to the caller, where the decision belongs: `scripts/deploy-library-ci.sh`
+writes a `permissions:` block into each stub and all eight repos carry it.
+
+⚠ **A push-triggered fleet gate looks healthy for exactly as long as nobody pushes.**  Four
+of the eight repos still showed a green `library-ci` from a run that predates the change, so
+the actions tab said the fleet was fine for five days.  Turning it back on revealed what it
+had been hiding: nine packages failing `Interpret` on accumulated warnings under
+`LOFT_DENY_WARNINGS=1`, and six repos red on the `unreleased work` job that had never run.
+
+### `@FR-E-Uncomp-Seen`: a fit-failure into a narrow slot is testable where it happened (2026-09-09)
+
+@PLN152 step 5, the arc-B half of *"a fit-failure the author can choose, and can see"*.
+`u8`, `i8`, `u16`, `i16`, `u32` and every `integer limit(lo, hi)` use every code they have, so
+`(E-Uncomp-NN)` writes the type's DEFAULT into them and the fault becomes indistinguishable
+from an answer: `x: u8 = 250; x += 10` and `x: u8 = 250; x -= 250` both leave `0`, and `!x`,
+`x == null` and `x == 0` say exactly what they say for a computed zero.  `!place` in the
+condition of the `if` that is the statement immediately after such a store now answers
+whether the store fit.
+
+Nothing is stored to make that work.  A narrow store already lowers to
+`OpRangeDefault(value, lo, hi, dflt)` on both backends; where the pair is written, the parser
+splits that one node — the composed value goes into a `__fit_N` temp through the checked
+cast, and the guard reads the temp.  `OpRangeDefault` answers `dflt` for the null the cast
+produces and passes an in-range value through, so the stored value is unchanged **by
+construction** rather than by two behaviours agreeing.  `src/parser/fit.rs` is the one home;
+the seam that offers the candidate is the compound-assignment site every local, field and
+element passes through with the target still a readable place.
+
+**The temp is a full-width `integer?`, never `Optional(τ)`.**  A `u8?` sacrifices its TOP
+code to hold null (`@FR-N-Reserve`), so a `u8?` temp reports `255` — an ordinary `u8` — as a
+failure and writes `0`.  That is what the plan's own hand-written "proven" target shape did:
+it was checked at 300 and at 200, which straddle the boundary without touching it.
+
+**Opt-in, measured not argued.**  `scripts/introspect_diff.sh` over the corpus reads
+**DIFFERENT 2 of 1437**, and both are this plan's own guard files — 1435 files emit
+byte-identically, diagnostics included.  Cost where it IS live: roughly 2× on a deliberately
+minimal interpreter loop (three source operations in the body), and no measurable cost on
+`--native`, which is the default backend.
+
+Guard: `tests/scripts/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft`,
+falsified at `e6922e9fa`.
+
+### `redundant-null-negation` asked the wrong question, and was silent on two spellings of three (2026-09-09)
+
+The lint tested `IntegerSpec::not_null`, a flag only a FIELD declaration sets.  So `if !f.i`
+on a `u8` field reported *"always false"* while `if !a` on a `u8` LOCAL and `if !v[0]` over a
+`vector<u8>` — the same type, equally always false — said nothing at all, and that code was
+dead with no diagnostic.
+
+The question is now `IntegerSpec::non_null_reads_null`: *can a value held in a non-nullable
+slot of this spec ever read back as null?*  `true` for the two templates that keep a bottom
+code (`integer`, `i32`); `false` for `not null`, for every narrow alias that fills its width,
+for `u32` (spare code at the top, which no non-null read tests for) and for an un-annotated
+`limit(lo, hi)`.  The store side of the same fact is `uncomputable_default`'s `dflt`, and the
+two are documented as one fact with two readers.
+
+This is what makes `@FR-E-Uncomp-Seen` safe: the fused pair is invisible in the source, so
+moving the `if` one line away has to REPORT itself rather than go quiet.  Blast radius of the
+widening, over `tests/scripts` + `tests/docs` + `examples` + `tools` + `lib` + `default`: one
+site, and it is the deliberate one in @PLN152's own step-1 guard.
+
 ### `@FR-N-Shape`: a shape question answers alike for `τ` and `τ?` (2026-09-08)
 
 Ten @PLN153 batches cured one mechanism — a `matches!` / `if let` / catch-all `match` over a

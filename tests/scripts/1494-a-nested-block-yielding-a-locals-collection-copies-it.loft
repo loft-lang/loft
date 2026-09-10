@@ -1,0 +1,202 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A block's value must not point into a store the block frees on its way out.
+//
+// `(F-Block)` says a `{ … }` ending in an expression YIELDS that expression and the value
+// flows out to whatever reads it.  A tail that reads a COLLECTION out of a local the block
+// itself defined — `{ b = BoxF { … }; b.items }` — was handed out as a reference into `b`'s
+// store, and the block's exit frees `b` before the enclosing consumer copies the value.  The
+// answer is right for as long as the freed bytes survive, and `0xDEADBEEF` under
+// `LOFT_POISON=1`.
+//
+// The cure is the one the RECORD half of this rule already takes in `block_result` (@PLN85
+// move-on-block-return): copy the tail into a local of its own, so the block yields something
+// independent of every store it frees and `b` goes back to the ordinary block-scope sweep.
+// `materialize_collection_value` is the collection counterpart, and it routes through
+// `lower_vec_copy_bind` / `OpReplaceKeyed` — the two homes of a collection copy — rather than
+// restating the buffer allocation.
+//
+// ⚠ **The invariant belongs to the BLOCK, and that is what the CONSUMER cells are here to
+// say.**  Five consumers read such a block by wrapping it from OUTSIDE — a return delivery,
+// a call argument, a struct-literal field, an operator, a field write — and every one of them
+// was wrong.  The two that were already right, a plain bind and a `for`, are the two that SINK
+// their copy into the block.  A delivery fixed per consumer would have to be written five
+// times over and would still say nothing about the sixth.
+//
+// ⚠ **The filed boundary named the nested-block SPELLING, and the spelling is not the axis.**
+// Nesting depth does not matter (`nesting_two`), nor whether a call filled the field
+// (`literal_filled`), nor the element former (`records`), nor how deep the projection goes
+// (`two_deep`).  What decides it is whether the projection's ROOT is defined inside the block.
+//
+// The controls say the rest of the rule is untouched: a function tail with the same statements
+// always was right, an `if`/`match` arm has its own arm delivery, a `text` field has the
+// `__blk_N` hoist, a record field takes the `Reference` arm above this one, an ELEMENT read is
+// not a projection of the container, and a root the block does NOT define — a parameter, or a
+// local declared before the block — stays the borrow the consumer keeps.
+//
+// ⚠ The gate over-approximates deliberately: a root merely REASSIGNED inside the block is
+// copied too.  Every consumer of a collection block value copies it anyway (`(B-Copy)`), so
+// the price of being wrong in that direction is one copy and never a wrong answer — which is
+// also why no cell here can witness the over-copy.
+
+// @falsified-at: bd0e795f3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1494-a-nested-block-yielding-a-locals-collection-copies-it.patch
+//   — the same four channels, so the patch reintroduces THIS defect and not another of the
+//   commit's.
+//   CHANNEL: VALUE, on a plain run of both backends.  That is what `two_blocks` exists for:
+//     every other cell reads freed bytes that still hold the right answer, so a matrix without
+//     it moves only the panic channel and needs `LOFT_POISON=1` to see anything at all.
+//   ARMED: nothing.  A plain run on either backend fails the assertion.
+//   WITNESS: `two_blocks` answers **7222922** where 3111922 is right.  Read out:
+//     `len(p) * 1000000 + p[0] * 1000 + len(q) * 100 + q[0]` gives `len(p) = 7` and
+//     `p[0] = 222`, which are `q`'s length and `q`'s element — the FIRST block's store was
+//     freed at its exit, the second block was handed the same slot, and the callee read the
+//     second collection through its first argument.
+//   HOLDS: leak, free-refusal, panic and expectations are equal on both trees, and every
+//     other assertion passes on both — the 23 remaining cells are the boundary, not the
+//     measurement.
+
+struct Box1494 { items: vector<integer>, name: text }
+struct Two1494 { a: vector<integer>, b: vector<integer> }
+struct Elm1494 { k: integer }
+struct Rows1494 { rows: vector<Elm1494> }
+struct Bag1494 { idx: hash<Elm1494[k]>, tag: integer }
+struct Inner1494 { items: vector<integer>, w: integer }
+struct Outer1494 { inner: Inner1494, tag: integer }
+
+fn head1494(n: integer, k: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for _i in 0..n { v += [k]; }
+  return v;
+}
+fn rows1494(n: integer) -> vector<Elm1494> {
+  v: vector<Elm1494> = [];
+  for i in 0..n { v += [Elm1494 { k: i }]; }
+  return v;
+}
+fn both1494(p: vector<integer>, q: vector<integer>) -> integer {
+  return len(p) * 1000000 + p[0] * 1000 + len(q) * 100 + q[0];
+}
+
+// --- the consumer axis: every one of these reads the block from OUTSIDE -----------------
+
+// The filed shape — the consumer is the function's return delivery.
+fn fn_tail(n: integer) -> vector<integer> { { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items } }
+// A call argument.
+fn call_arg(n: integer) -> integer { len({ b = Box1494 { items: head1494(n, 1), name: "x" }; b.items }) }
+// A struct-literal field.
+fn struct_literal(n: integer) -> integer {
+  s = Inner1494 { items: { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items }, w: 0 };
+  return len(s.items);
+}
+// An operator.
+fn binop(n: integer) -> integer { len({ b = Box1494 { items: head1494(n, 1), name: "x" }; b.items }) + 1 }
+// A field write.
+fn field_write(n: integer) -> integer {
+  s = Inner1494 { items: [], w: 0 };
+  s.items = { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items };
+  return len(s.items);
+}
+
+// ⚠ THE VALUE CELL.  Two block arguments to ONE call: the first block frees its store, the
+// second then ALLOCATES and can be given that same slot, and the callee reads the first
+// argument afterwards.  This is the shape in which the use-after-free stops being invisible —
+// every other cell reads freed bytes that still happen to hold the right answer, which is
+// exactly why a plain run of this guard has to contain this cell.
+fn two_blocks() -> integer {
+  both1494({ b = Box1494 { items: head1494(3, 111), name: "a" }; b.items },
+           { d = Box1494 { items: head1494(7, 222), name: "b" }; d.items })
+}
+
+// --- the axes the filed repro pinned ---------------------------------------------------
+
+// Two nested blocks, so depth is not the axis.
+fn nesting_two(n: integer) -> vector<integer> { { { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items } } }
+// The field filled by a LITERAL, so the call is not the trigger.
+fn literal_filled() -> vector<integer> { { b = Box1494 { items: [1, 1, 1], name: "x" }; b.items } }
+// A two-level projection.
+fn two_deep(n: integer) -> vector<integer> {
+  { o = Outer1494 { inner: Inner1494 { items: head1494(n, 1), w: 3 }, tag: 7 }; o.inner.items }
+}
+// Two locals; the tail projects the SECOND.
+fn two_locals(n: integer) -> vector<integer> {
+  { a = Box1494 { items: head1494(1, 9), name: "a" }; b = Box1494 { items: head1494(n, 1), name: "b" }; b.items }
+}
+// Two collection FIELDS; the tail projects one of them.
+fn two_fields(n: integer) -> vector<integer> { { t = Two1494 { a: head1494(2, 9), b: head1494(n, 1) }; t.b } }
+// A vector of RECORDS, so the element former is not the trigger.
+fn records(n: integer) -> vector<Elm1494> { { r = Rows1494 { rows: rows1494(n) }; r.rows } }
+// A KEYED field, which is not a `Type::Vector` and takes the `OpReplaceKeyed` leg.
+fn keyed() -> hash<Elm1494[k]> { { g = Bag1494 { idx: [Elm1494 { k: 1 }, Elm1494 { k: 2 }], tag: 7 }; g.idx } }
+// ⚠ Inside a LOOP.  The copy's buffer is function-scoped and reused, so its LENGTH must be
+// reset per evaluation — without that reset the block accumulates every iteration's elements
+// and this answers 45 instead of 15.
+fn in_loop() -> integer {
+  t = 0;
+  for _j in 0..3 { w: vector<integer> = { b = Box1494 { items: head1494(5, 1), name: "x" }; b.items }; t += len(w); }
+  return t;
+}
+
+// --- controls --------------------------------------------------------------------------
+
+// The same statements with NO block: always right, and the shape the fix makes this equal to.
+fn c_function_tail(n: integer) -> vector<integer> { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items }
+// An `if` arm, which has its own arm delivery.
+fn c_if_arm(n: integer) -> vector<integer> {
+  if n > 0 { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items } else { [] }
+}
+// A plain bind and a `for` — the two consumers that already sink their copy into the block.
+fn c_bind(n: integer) -> integer { w: vector<integer> = { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items }; return len(w); }
+fn c_for(n: integer) -> integer {
+  t = 0;
+  for e in { b = Box1494 { items: head1494(n, 1), name: "x" }; b.items } { t += e; }
+  return t;
+}
+// A `text` field: the `__blk_N` hoist owns this one.
+fn c_text_field(n: integer) -> text { { b = Box1494 { items: head1494(n, 1), name: "xy" }; b.name } }
+// A RECORD field: the `Reference` arm above this fix owns this one.
+fn c_record_field(n: integer) -> Inner1494 {
+  { o = Outer1494 { inner: Inner1494 { items: head1494(n, 1), w: 7 }, tag: 3 }; o.inner }
+}
+// An ELEMENT read is not a projection OF the container, and was never this.
+fn c_element(n: integer) -> Elm1494 { { r = Rows1494 { rows: rows1494(n) }; r.rows[3] } }
+// ⚠ THE GATE'S NEGATIVE CONTROLS — a root the block does NOT define.  The store outlives the
+// block, so the value stays the borrow the consumer keeps and nothing is copied.
+fn c_parameter_field(p: Box1494) -> vector<integer> { { p.items } }
+fn c_outer_local(n: integer) -> integer {
+  b = Box1494 { items: head1494(n, 1), name: "x" };
+  return len({ b.items });
+}
+
+fn main() {
+  assert(len(fn_tail(5)) == 5, "the filed shape: got {len(fn_tail(5))}");
+  assert(call_arg(5) == 5, "a call argument: got {call_arg(5)}");
+  assert(struct_literal(5) == 5, "a struct-literal field: got {struct_literal(5)}");
+  assert(binop(5) == 6, "an operator: got {binop(5)}");
+  assert(field_write(5) == 5, "a field write: got {field_write(5)}");
+  assert(two_blocks() == 3111922, "two block arguments to one call: got {two_blocks()}");
+
+  assert(len(nesting_two(5)) == 5, "two nested blocks: got {len(nesting_two(5))}");
+  assert(len(literal_filled()) == 3, "a literal-filled field: got {len(literal_filled())}");
+  assert(len(two_deep(5)) == 5, "a two-level projection: got {len(two_deep(5))}");
+  assert(len(two_locals(5)) == 5, "the second of two locals: got {len(two_locals(5))}");
+  assert(len(two_fields(5)) == 5, "one of two collection fields: got {len(two_fields(5))}");
+  assert(len(records(5)) == 5, "a vector of records: got {len(records(5))}");
+  assert(len(keyed()) == 2, "a keyed field: got {len(keyed())}");
+  assert(in_loop() == 15, "inside a loop: got {in_loop()}");
+
+  assert(len(c_function_tail(5)) == 5, "control, the function tail: got {len(c_function_tail(5))}");
+  assert(len(c_if_arm(5)) == 5, "control, an if arm: got {len(c_if_arm(5))}");
+  assert(c_bind(5) == 5, "control, a plain bind: got {c_bind(5)}");
+  assert(c_for(5) == 5, "control, a for loop: got {c_for(5)}");
+  assert(size(c_text_field(5)) == 2, "control, a text field: got {size(c_text_field(5))}");
+  assert(len(c_record_field(5).items) == 5, "control, a record field: got {len(c_record_field(5).items)}");
+  assert(c_element(5).k == 3, "control, an element read: got {c_element(5).k}");
+  assert(len(c_parameter_field(Box1494 { items: head1494(5, 1), name: "x" })) == 5,
+         "control, a parameter's field: got {len(c_parameter_field(Box1494 { items: head1494(5, 1), name: "x" }))}");
+  assert(c_outer_local(5) == 5, "control, a local defined before the block: got {c_outer_local(5)}");
+
+  println("1494 OK tail={len(fn_tail(5))} two_blocks={two_blocks()} loop={in_loop()} keyed={len(keyed())}");
+}

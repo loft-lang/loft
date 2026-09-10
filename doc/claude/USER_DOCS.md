@@ -15,10 +15,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > on the website, which can already be driven by a REPL and a debugger that the pages do not
 > expose.
 >
-> **Plan: @PLN149.** Written as a design, not a plan: one invariant, a count of what has to
-> re-state it, the failure paths written down before any code, and a check pinned to each
-> claim ([design-protocol](../../.claude/skills/design-protocol/SKILL.md)). The build order
-> is last, deliberately — the order is a consequence of the design, not the design.
+> **Plan: @PLN149 — SHIPPED 2026-09-10.** All four tiers, the guide contract, the REPL and
+> debug panel, and the retirement of the hardcoded delegation lists are built and published.
+> Written as a design, not a plan: one invariant, a count of what has to re-state it, the
+> failure paths written down before any code, and a check pinned to each claim
+> ([design-protocol](../../.claude/skills/design-protocol/SKILL.md)). The build order is
+> last, deliberately — the order is a consequence of the design, not the design.
+>
+> **Its tail is a standing practice, not an open plan.** Tier 1 is one guide per library and
+> a package published next month owes one too, so there is no state in which it is finished
+> and nothing to close. `make libraries-review` reports the queue — *N have one · N owe one ·
+> N not measured* — and [LIBRARY_DOC_REVIEW.md § 3a](LIBRARY_DOC_REVIEW.md) is the pass that
+> works it. This document stays the design; it is no longer a plan of record.
 
 ---
 

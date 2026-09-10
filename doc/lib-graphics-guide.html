@@ -24,32 +24,86 @@
 <h1>graphics guide</h1>
 <article>
 <p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · <a href="lib-graphics-src.html">source</a></p>
-<h2 id="creating-a-canvas">Creating a canvas</h2>
-<p>A canvas is a 2D pixel buffer. Create one with a width, height, and fill color:</p>
+<p><code>graphics</code> is the surface everything else in this family draws onto: a <code>Canvas</code> of packed RGBA pixels, the primitives that mark it (rectangles, lines, circles, ellipses, béziers, triangles, sprites), PNG output, and — beyond the software canvas — the OpenGL bindings, a <code>Painter2D</code> for fixed-function 2-D over GL, sprite sheets, and audio.</p>
+<p>It is deliberately not the layer above it. <code>stage</code> holds the scene TREE you mutate and hands this package a draw list; <code>text2d</code> draws text with no font file; <code>drawing</code> renders a <code>.draw</code> scene authored as lines of text; <code>tween</code> moves properties in time. Reach for <code>graphics</code> when you want to put pixels somewhere, and for one of those when you want something to decide WHICH pixels.</p>
+<p>Everything below is the software canvas, which needs no window and no display — the same half the package's own CI can run.</p>
 <pre><code><span class="kw">use</span> graphics;</code></pre>
-<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
-  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">100</span>, <span class="nm">100</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>));
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.width == <span class="nm">100</span>, <span class="st">"canvas width"</span>);
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
+<p>A canvas is a width, a height and a fill colour.</p>
+<pre><code>  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">8</span>, <span class="nm">4</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>));
+  red = graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">0</span>, <span class="nm">0</span>);
+  cv.<span class="fn-call">fill_rect</span>(<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">3</span>, <span class="nm">2</span>, red);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"canvas : {cv.width} x {cv.height}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"inside : {cv.get_pixel(2, 2) == red}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"outside: {cv.get_pixel(6, 0) == graphics::rgb(0, 0, 0)}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.width == <span class="nm">8</span> <span class="kw">and</span> cv.height == <span class="nm">4</span>, <span class="st">"the canvas is the size you asked for"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">2</span>, <span class="nm">2</span>) == red, <span class="st">"the rectangle painted where it was told to"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">6</span>, <span class="nm">0</span>) == graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>), <span class="st">"…and nowhere else"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run. This guide had exactly that defect: two of its three sections were defined and never called, so it read as verified and one third of it was.</p>
+<pre><code>  <span class="fn-call">the_alpha_byte_you_cannot_see</span>();
+  <span class="fn-call">a_zero_is_a_colour_not_an_answer</span>();
+  <span class="fn-call">the_marks_you_can_make</span>();
 }</code></pre>
-<p>The canvas stores pixels as packed RGBA integers. Use <code>rgb()</code> for opaque colors and <code>rgba()</code> when you need transparency.</p>
-<h2 id="drawing-shapes">Drawing shapes</h2>
-<p>Draw lines, rectangles, circles, and more:</p>
-<pre><code><span class="kw">fn</span> <span class="fn-call">drawing_shapes</span>() {
-  sh_cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">50</span>, <span class="nm">50</span>, <span class="nm">0</span>);
-  sh_red = graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">0</span>, <span class="nm">0</span>);</code></pre>
-<p>Draw a filled rectangle</p>
-<pre><code>  sh_cv.<span class="fn-call">fill_rect</span>(<span class="nm">5</span>, <span class="nm">5</span>, <span class="nm">20</span>, <span class="nm">10</span>, sh_red);</code></pre>
-<p>Draw a circle outline</p>
-<pre><code>  sh_cv.<span class="fn-call">draw_circle</span>(<span class="nm">25</span>, <span class="nm">25</span>, <span class="nm">10</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">255</span>));</code></pre>
-<p>Draw a line</p>
-<pre><code>  sh_cv.<span class="fn-call">draw_line</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">49</span>, <span class="nm">49</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>));
+<p>That prints:</p>
+<pre><code>  canvas : 8 x 4
+  inside : true
+  outside: true
+</code></pre>
+<h2 id="the-one-that-bites-a-colour-has-a-byte-you-did-not-write">The one that bites: a colour has a byte you did not write</h2>
+<p>A colour is ONE <code>integer</code>, packed <code>0xAARRGGBB</code>. So <code>rgb(255, 0, 0)</code> is <code>0xFFFF0000</code> — and the hex literal that names the same three channels, <code>0xFF0000</code>, leaves the top byte zero. That is a fully TRANSPARENT red.</p>
+<p>Nothing catches it. Both are <code>integer</code>, both report <code>color_r</code> 255, and <code>set_pixel</code> stores either one happily. But every compositing path reads the alpha, so the literal blends to nothing — and <code>save_png</code> picks RGB or RGBA off the pixels, so one hand-written literal in an otherwise opaque picture adds an alpha channel to the file and punches a transparent hole exactly there. In a viewer with a white background that looks like nothing at all.</p>
+<p>Write colours with <code>rgb</code> and <code>rgba</code>. If you must write a literal, write all eight digits.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_alpha_byte_you_cannot_see</span>() {
+  red = graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">0</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(red == <span class="nm">0xFFFF0000</span>, <span class="st">"rgb fills the alpha byte — the layout is 0xAARRGGBB"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(red) == <span class="nm">255</span>, <span class="st">"so a constructed colour is opaque"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_r</span>(<span class="nm">0xFF0000</span>) == <span class="nm">255</span>, <span class="st">"the literal really is full red…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(<span class="nm">0xFF0000</span>) == <span class="nm">0</span>, <span class="st">"…and fully transparent"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="nm">0xFF0000</span> != red, <span class="st">"so it is not the colour rgb(255, 0, 0) makes"</span>);</code></pre>
+<p><code>rgba</code> takes the alpha you meant, and MASKS each channel to 8 bits rather than refusing an out-of-range one — 300 becomes 44, silently.</p>
+<pre><code>  half = graphics::<span class="fn-call">rgba</span>(<span class="nm">255</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">128</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(half) == <span class="nm">128</span>, <span class="st">"rgba carries the alpha you asked for"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_r</span>(graphics::<span class="fn-call">rgba</span>(<span class="nm">300</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">255</span>)) == <span class="nm">44</span>, <span class="st">"…and wraps 300 to 44"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"alpha  : rgb {graphics::color_a(red)}, literal {graphics::color_a(0xFF0000)}"</span>);
 }</code></pre>
-<h2 id="anti-aliased-lines">Anti-aliased lines</h2>
-<p>For smoother lines, use <code>draw_aa_line()</code> which uses Xiaolin Wu's algorithm:</p>
-<pre><code><span class="kw">fn</span> <span class="fn-call">aa_example</span>() {
-  aa_cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">100</span>, <span class="nm">100</span>, <span class="nm">0</span>);
-  aa_cv.<span class="fn-call">draw_aa_line</span>(<span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">90</span>, <span class="nm">50</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">0</span>));
+<h2 id="a-zero-is-a-colour-so-it-cannot-also-be-an-answer">A zero is a colour, so it cannot also be an answer</h2>
+<p>The same fact one step further: <code>0</code> is <code>0x00000000</code>, a fully transparent black — a perfectly good pixel value. So <code>get_pixel</code> answering 0 means either *that pixel is transparent black* or *you asked outside the canvas*, and nothing distinguishes them. Bounds-check the coordinates yourself; do not read 0 as "off the edge".</p>
+<p>It is also why <code>canvas(w, h, 0)</code> saves as a fully TRANSPARENT image rather than the black its zero suggests. <code>canvas(w, h, rgb(0, 0, 0))</code> is the opaque one.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_zero_is_a_colour_not_an_answer</span>() {
+  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"the fill really is 0 — transparent black"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">99</span>, <span class="nm">99</span>) == <span class="nm">0</span>, <span class="st">"…and so is a read miles off the canvas"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(<span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"which is what makes the two indistinguishable"</span>);</code></pre>
+<pre><code>  opaque = graphics::<span class="fn-call">canvas</span>(<span class="nm">4</span>, <span class="nm">4</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(opaque.<span class="fn-call">get_pixel</span>(<span class="nm">0</span>, <span class="nm">0</span>)) == <span class="nm">255</span>, <span class="st">"rgb(0,0,0) is the black you meant"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"zero   : a colour, never a bounds answer"</span>);
 }</code></pre>
+<h2 id="the-marks-you-can-make">The marks you can make</h2>
+<p>One canvas, one colour, one call each. <code>fill_*</code> paints the interior, <code>draw_*</code> paints the outline, and both take pixel coordinates with the origin at the top left.</p>
+<pre><code>- rectangles — `fill_rect` / `draw_rect`, and `hline` / `vline` for one-pixel runs
+- lines — `draw_line`, and `draw_aa_line` for Xiaolin Wu anti-aliasing
+- curves — `draw_circle` / `fill_circle`, `draw_ellipse` / `fill_ellipse`, `draw_bezier`
+- triangles — `fill_triangle`
+- sprites — a `SpriteSheet` plus `draw_sprite`
+</code></pre>
+<p><code>set_pixel</code> writes one; <code>blend_pixel</code> composites one over what is there, which is the call that reads the alpha byte the first section is about. <code>save_png(path)</code> writes the result and answers whether it succeeded.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_marks_you_can_make</span>() {
+  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">16</span>, <span class="nm">16</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>));
+  white = graphics::<span class="fn-call">rgb</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>);</code></pre>
+<pre><code>  cv.<span class="fn-call">draw_line</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">15</span>, <span class="nm">15</span>, white);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">0</span>, <span class="nm">0</span>) == white, <span class="st">"a line starts where you put it"</span>);</code></pre>
+<pre><code>  cv.<span class="fn-call">fill_circle</span>(<span class="nm">8</span>, <span class="nm">8</span>, <span class="nm">3</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">255</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">8</span>, <span class="nm">8</span>) == graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">255</span>), <span class="st">"a filled circle covers its centre"</span>);</code></pre>
+<pre><code>  cv.<span class="fn-call">set_pixel</span>(<span class="nm">15</span>, <span class="nm">0</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">255</span>, <span class="nm">0</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">15</span>, <span class="nm">0</span>) == graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">255</span>, <span class="nm">0</span>), <span class="st">"and set_pixel is one pixel"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"marks  : line, circle and pixel all landed"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the whole surface: the OpenGL bindings, <code>Painter2D</code>, sprite sheets, audio (one contract across desktop and browser), and the <code>math</code> / <code>mesh</code> / <code>scene</code> / <code>glb</code> modules this package also carries.</li>
+<li><code>tests/worked-examples.loft</code> — <code>@GFX-001</code> … <code>@GFX-005</code>, the contracts a signature cannot state, each a running test rather than a snippet.</li>
+<li><code>stage</code> for a scene you mutate, <code>text2d</code> for text, <code>drawing</code> for an authored <code>.draw</code> scene, <code>imaging</code> for reading and writing image files.</li>
+</ul>
 
   </article>
 <script src="search-index.js"></script>

@@ -25,6 +25,9 @@
 // @falsified-at: d9aa10ac — interpret exit 1 -> 0, native exit 1 -> 0.  `asserts` reads 0 on
 // the control on purpose: there the file does not COMPILE, so the refusal is the channel and
 // no assertion is reached.  That is why these cells are not in the runtime guard beside them.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct JsP { js_r: integer, js_g: integer }
 

@@ -34,6 +34,9 @@
 // @falsified-at: 6609b01b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   6609b01b is loft#1401's fix, i.e. this guard's tree with only the release missing — the
 //   honest control, since at any earlier commit cell 9 would fail for the OTHER reason.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct E    { id: integer, tags: vector<integer> }
 struct T    { id: integer, label: text }

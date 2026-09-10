@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_form guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_form — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_form-guide.html">
+<meta property="og:title" content="hex_form guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_form — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_form-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_form guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_form — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_form guide</h1>
+<article>
+<p><a href="lib-hex_form.html">← hex_form</a> · <a href="lib-hex_form-api.html">API reference</a> · <a href="lib-hex_form-src.html">source</a></p>
+<p><code>hex_form</code> is the turtle model of a shape on the hex lattice: a start heading, then a length and a turn per side, exact in <code>ℤ²</code>. A form that closes bounds a region you can fill, and every form has a canonical text it writes and reads back byte-for-byte — which is what makes a project file diffable and an undo history exact.</p>
+<p>It is not the cell set and not the lattice. <code>hex_field</code> holds occupancy and traces outlines back out of it; <code>hex_grid</code> owns coordinates and neighbours. Reach for <code>hex_form</code> when the shape is the thing you want to store, compare or transform — a house plan, a footprint, an authored outline — rather than the cells it happens to cover.</p>
+<p>Headings live on <code>H₁₂</code>: twelve directions, 30° apart, counter-clockwise from due east. EVEN headings step to an edge neighbour, ODD ones point at a vertex.</p>
+<pre><code><span class="kw">use</span> hex_form;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
+<p>Six sides, turning two twelfths (60°) at each — a hexagon.</p>
+<pre><code>  hexa = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>]);
+  (ck, cm) = hex_form::<span class="fn-call">form_close</span>(hexa);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"sides    : {hex_form::form_sides(hexa)}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"turn sum : {hex_form::form_turn_sum(hexa)} of {hex_form::TURN_FULL}"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ends at  : ({ck}, {cm})"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"closes   : {hex_form::form_closes(hexa)}"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_turn_sum</span>(hexa) == hex_form::<span class="en">TURN_FULL</span>, <span class="st">"one full revolution"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ck == <span class="nm">0</span> <span class="kw">and</span> cm == <span class="nm">0</span>, <span class="st">"and the walk comes back to where it started"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_closes</span>(hexa), <span class="st">"so the form closes"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>
+<pre><code>  <span class="fn-call">there_is_no_square_in_a_hex_lattice</span>();
+  <span class="fn-call">closing_needs_both_halves</span>();
+  <span class="fn-call">a_heading_is_never_used_raw</span>();
+  <span class="fn-call">the_shapes_that_have_a_closed_count</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  sides    : 6
+  turn sum : 12 of 12
+  ends at  : (0, 0)
+  closes   : true
+</code></pre>
+<h2 id="the-one-that-bites-four-right-angles-and-four-equal-sides-is-not-a-square">The one that bites: four right angles and four equal sides is not a square</h2>
+<p>Two headings ninety degrees apart do exist — 0 and 3 — so a turtle cycle CAN turn a right angle, four times, and close. Give every side the same length count and you get a form that is a square by every number you wrote down.</p>
+<p>It is not one. <strong>An edge step and a vertex step are different lengths</strong>, and exactly so: <code>head_n2_4</code> answers <code>12</code> for an even heading and <code>36</code> for an odd one, so a vertex step is √3 times an edge step. Alternate them and the figure's sides alternate in the same ratio.</p>
+<p>This is a property of the lattice, not of this table. The perpendicular of <code>(k, m)</code> is <code>(-m, 3k)</code>, whose squared length is exactly <code>3 ×</code> the original — so no choice of headings gives a rectangle whose two sides are counted in the same unit. <strong>There is no square sublattice of a hexagonal lattice</strong>; a lattice cannot carry both 4-fold and 6-fold symmetry.</p>
+<p>Nothing in the API can warn you. <code>form_closes</code> says <code>true</code>, because it IS a closed form. What is false is the reader's picture of it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">there_is_no_square_in_a_hex_lattice</span>() {</code></pre>
+<p>Four sides, four right-angle turns, every side two steps long.</p>
+<pre><code>  sq = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>], [<span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">3</span>]);
+  (k, m) = hex_form::<span class="fn-call">form_close</span>(sq);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_closes</span>(sq), <span class="st">"it closes — the counts are all consistent"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(k == <span class="nm">0</span> <span class="kw">and</span> m == <span class="nm">0</span>, <span class="st">"…and returns exactly to its origin"</span>);</code></pre>
+<p>…and its sides are not the same length.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_n2_4</span>(<span class="nm">0</span>) == <span class="nm">12</span>, <span class="st">"a step along heading 0 has 4·len² = 12"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_n2_4</span>(<span class="nm">3</span>) == <span class="nm">36</span>, <span class="st">"a step along heading 3 has 36 — three times over"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_is_edge</span>(<span class="nm">0</span>), <span class="st">"heading 0 steps to an edge neighbour"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!hex_form::<span class="fn-call">head_is_edge</span>(<span class="nm">3</span>), <span class="st">"heading 3 points at a vertex"</span>);</code></pre>
+<p>The lattice fact underneath it, at the vector level.</p>
+<pre><code>  (ek, em) = hex_form::<span class="fn-call">head_step</span>(<span class="nm">0</span>);
+  pk = hex_form::<span class="fn-call">perp_k</span>(ek, em);
+  pm = hex_form::<span class="fn-call">perp_m</span>(ek, em);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">vec_n2_4</span>(pk, pm) == <span class="nm">3</span> * hex_form::<span class="fn-call">vec_n2_4</span>(ek, em),
+         <span class="st">"the perpendicular is EXACTLY three times as long, squared — so never equal"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"square   : closes={hex_form::form_closes(sq)}, but side lengths are {hex_form::head_n2_4(0)} and {hex_form::head_n2_4(3)}"</span>);
+}</code></pre>
+<h2 id="closing-needs-both-halves-and-one-of-them-is-cheap">Closing needs both halves, and one of them is cheap</h2>
+<p><code>form_closes</code> asks two independent questions: do the turns add to one full revolution, and does the walk return to its origin? Neither implies the other.</p>
+<p><code>form_turn_sum</code> is the cheap half — it reads the turn list and generates no coordinates, so it is the test to reach for while a form is being edited. <code>form_close</code> is the other half and answers where the walk actually ended, which is the useful number when it did not close: it tells you by how much you missed.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">closing_needs_both_halves</span>() {</code></pre>
+<p>Turns are perfect; one side is too long, so the walk does not return.</p>
+<pre><code>  bad = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">3</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>]);
+  (bk, bm) = hex_form::<span class="fn-call">form_close</span>(bad);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_turn_sum</span>(bad) == hex_form::<span class="en">TURN_FULL</span>, <span class="st">"the cheap half passes…"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bk != <span class="nm">0</span> <span class="kw">or</span> bm != <span class="nm">0</span>, <span class="st">"…and the walk still ends ({bk}, {bm}) away from home"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!hex_form::<span class="fn-call">form_closes</span>(bad), <span class="st">"so it does not close"</span>);</code></pre>
+<p>And a form with too few sides cannot bound a region at all.</p>
+<pre><code>  thin = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">1</span>, <span class="nm">1</span>], [<span class="nm">6</span>, <span class="nm">6</span>]);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!hex_form::<span class="fn-call">form_closes</span>(thin), <span class="st">"fewer than three sides bounds nothing"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"closing  : turns sum {hex_form::form_turn_sum(bad)} yet the walk ends ({bk}, {bm}) out"</span>);
+}</code></pre>
+<h2 id="a-heading-is-never-used-raw">A heading is never used raw</h2>
+<p>A running heading is <code>h0 + Σ turns</code>, and turns range over -5..6 — so it leaves <code>0..11</code> constantly. A four-sided cycle turning 3 each time reaches 12 on its last side.</p>
+<p><code>head_norm</code> exists because both ways of getting that wrong are SILENT in loft: a negative vector index reads from the END of the vector rather than answering null, and an index at or past the length answers null rather than wrapping. Each hands back a plausible wrong direction. Every table lookup in this package goes through <code>head_norm</code> first, and yours should too if you do heading arithmetic of your own.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_heading_is_never_used_raw</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_norm</span>(<span class="nm">12</span>) == <span class="nm">0</span>, <span class="st">"one full revolution is where you started"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_norm</span>(-<span class="nm">1</span>) == <span class="nm">11</span>, <span class="st">"and -1 is the heading before it, not an end-relative index"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">head_norm</span>(<span class="nm">25</span>) == <span class="nm">1</span>, <span class="st">"two revolutions and one step"</span>);</code></pre>
+<p><code>form_heading</code> does the arithmetic for you, already normalised.</p>
+<pre><code>  hexa = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>]);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_heading</span>(hexa, <span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"side 0 runs in the start heading"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">form_heading</span>(hexa, <span class="nm">3</span>) == <span class="nm">6</span>, <span class="st">"side 3 has taken three turns of 2 — due west"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"headings : head_norm(-1)={hex_form::head_norm(0 - 1)}, and side 3 of the hexagon runs {hex_form::form_heading(hexa, 3)}"</span>);
+}</code></pre>
+<h2 id="the-shapes-that-have-a-closed-count">The shapes that have a closed count</h2>
+<p>Three families have an exact cell count as a formula rather than a fill-and-count, which is what lets a caller size a buffer, or check a fill against arithmetic instead of against another run of the same code.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_shapes_that_have_a_closed_count</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">tri_cells</span>(<span class="nm">2</span>) == <span class="nm">6</span>, <span class="st">"a triangle of side 2: (n+1)(n+2)/2"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">rhombus_cells</span>(<span class="nm">2</span>, <span class="nm">3</span>) == <span class="nm">12</span>, <span class="st">"a rhombus: (a+1)(b+1)"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">hexagon_cells</span>(<span class="nm">2</span>) == <span class="nm">19</span>, <span class="st">"a hexagon of radius 2: 3n² + 3n + 1"</span>);</code></pre>
+<p>The hexagon formula is the same 19 <code>hex_field</code>'s radius-2 disk fills — the two halves of the family agree by arithmetic, not by having been run against each other.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">hexagon_cells</span>(<span class="nm">0</span>) == <span class="nm">1</span>, <span class="st">"radius 0 is one cell"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_form::<span class="fn-call">hexagon_cells</span>(<span class="nm">1</span>) == <span class="nm">7</span>, <span class="st">"radius 1 is a centre and its six neighbours"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"counts   : tri(2)={hex_form::tri_cells(2)} rhombus(2,3)={hex_form::rhombus_cells(2, 3)} hexagon(2)={hex_form::hexagon_cells(2)}"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> and <code>USAGE.md</code> — the worked guide, with every example pointed at a passing test, plus the canonical text and its five rules.</li>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXF-001</code> … <code>@HXF-007</code>, including the five ways a hand-written canonical text parses and means something else.</li>
+<li><code>tests/01-hex-form.loft</code> — the round trip this package exists to make exact.</li>
+<li><code>hex_grid</code> for the coordinates, <code>hex_field</code> for turning a form into cells and back out as an outline, and <code>hex_recover</code> for rebuilding a form from a cell set.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

@@ -39,6 +39,9 @@
 //   a PANIC, not a wrong answer: `fn_call_ref: d_nr=65535 out of range (fn_positions.len=…)` on
 //   the interpreter and the same read inside the generated Rust.  So no instrument is needed —
 //   a plain run of e1 alone falsifies it.
+//   HOLDS: assertions, leak, free-refusal, expectations are equal on both trees. Falsify
+//   prints only the channels that MOVE and requires HERE to be clean, so each of those is
+//   clean on both. The native side was not scored in this sweep.
 
 struct Efr { a: integer }
 

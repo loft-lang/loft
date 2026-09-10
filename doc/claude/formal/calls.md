@@ -300,6 +300,29 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   was. The two legitimate discards are the controls: a `for` body's tail (loft#725) and a
   void function's (`F-Drop`). Guard `tests/scripts/nested-block-in-value-position.loft`,
   both backends.
+
+  ⚠ *"The value flows out to whatever reads it"* is the half that took three more measurements,
+  because a block can yield a value the block itself has already destroyed, and because the
+  ARMS of a branch have to answer the same question one level in:
+
+  - A COLLECTION tail projected out of a local the block DEFINED (`{ b = BoxF { … }; b.items }`)
+    was handed out as a reference into a store the block frees on the way out.  The record half
+    of that had been cured in `block_result` since @PLN85; the collection half had not, and no
+    consumer could cure it — five of them read such a block by wrapping it from outside, and the
+    two that were correct were the two that sink their copy in.  Guard
+    `tests/scripts/1494-a-nested-block-yielding-a-locals-collection-copies-it.loft`, whose
+    `two_blocks` cell is the one that makes the use-after-free show in the VALUE channel rather
+    than only under `LOFT_POISON=1` (loft#1494).
+  - A branch arm that DIVERGES types `Void` because control left, not because the branch is a
+    statement, so the native emitter's statement-discard must not claim it.  Guard
+    `tests/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` (loft#1495).
+  - And the discard itself has to be TOTAL: a statement branch's arm must yield nothing in its
+    BODY and in its TYPE alike, because the interpreter balances its eval stack against the
+    type.  An arm keeping either half left the stack off by one in that half's direction and
+    corrupted every local live across the branch.  Guard
+    `tests/scripts/1496-a-statement-branch-discards-every-arm.loft` (loft#1496).  Which side of
+    `(F-Block)` a branch is on is decided by whether anything FOLLOWS it — the arm itself cannot
+    tell, and three arm-side discriminators were disproven before that one was used.
 - **Void tail discard (`F-Drop`)** — a function declared void whose body ends in a value runs
   the tail and returns nothing, for every tail type (boolean, integer, text, struct, vector,
   tuple, a narrow `u8`) and every tail shape (a call, a bare literal, an operator expression, a

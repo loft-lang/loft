@@ -35,6 +35,10 @@
 //   is measurable outside the file — `kind_of` answers 1, 0, 0 for three identical calls
 //   under the instrument — and is recorded in loft#1407 rather than asserted here, because
 //   an assertion on it would pass on a broken build too.
+//   HOLDS: unarmed, nothing moves. The measurement above needs `LOFT_POISON=1
+//   LOFT_STRICT_STORES=1` against a pristine worktree build, where both backends go exit 0 ->
+//   1 with `USE AFTER FREE (read) store #2`. A bulk row without those instruments is their
+//   absence, not the defect's.
 
 fn kind_of(obj: JsonValue, name: text) -> integer {
   v = obj.field(name);

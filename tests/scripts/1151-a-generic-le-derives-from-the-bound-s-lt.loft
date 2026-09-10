@@ -26,6 +26,9 @@
 // wrong about the type.  Every `Ordered` built-in is swept, at its extremes.
 //
 // @falsified-at: a49c59aa — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Le1151P { le_v: integer }
 fn OpLt(self: Le1151P, other: Le1151P) -> boolean { self.le_v < other.le_v }

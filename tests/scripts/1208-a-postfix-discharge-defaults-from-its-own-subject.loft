@@ -56,6 +56,9 @@
 //   reason — the three separating cells compile and pass on the parent, so a build that merely
 //   refused less would not satisfy them.  Each assertion was also mutated in turn on the fixed
 //   build and each fails.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 struct Ed1208 { k: integer, nm: text }
 struct Bd1208 { d: vector<Ed1208>? }

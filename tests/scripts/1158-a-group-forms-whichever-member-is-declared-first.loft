@@ -33,6 +33,9 @@
 // exit 1 -> 0, native 1 assertion failures -> 0.  The count is 1 because a failed assert stops
 // the run: on the control the first `hash declared before its vector` cell fires, and all five
 // keyed-first cells are broken there.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct G1 { g1_k: integer, g1_k2: integer, g1_nm: text }
 struct G2 { g2_k: integer, g2_k2: integer, g2_nm: text }

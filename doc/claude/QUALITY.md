@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 445 | 422 | **23** |
+| 451 | 427 | **24** |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 766 | 422 | 6 | **338** |
+| 768 | 423 | 6 | **339** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
@@ -2617,6 +2617,47 @@ for it to see through.  Measured rather than assumed — `&(fn() -> integer)?`,
 RETURN type, which this site never asks about.  The unspan site peels, which is why that
 column's `neither` did not move.
 
+**2026-09-09, the THIRD join (loft2's 4 + loft3's 7 new commits) carrying @PLN152 step 5 and
+loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.**  Taken from
+`scripts/ir_walker_audit.py unspan` on the joined tree, not from either side.
+
+loft#1494, loft#1495, loft#1496 and the nested-block buffer bind then move it to
+**`451 · 427 · 24`** — `void_dropped_statement_arms` and `tail_block_ops` both peel, so both land
+on the peeling side, and the OPAQUE column rises by loft#1495's site alone.  The `optional` row
+moves with them to **`768 · 422 · 6 · 340`**, and that one rise is `tail_block_ops` asking *does
+this block yield a value* as `matches!(bl.result, Type::Void | Type::Never)` — a test on its own
+scrutinee that does not peel `Optional`.  MEASURED rather than argued, because that is what this
+table is for: `@FR-L-Null` gives `τ?` the same storage as `τ`, a nullable collection return leaked
+×5 on the control exactly like its dense twin, and the `nullable` cell of
+`tests/scripts/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.loft` is the
+receipt.  The test stays as it is: a `Type::Optional(Void)` is not a thing the language can build,
+so peeling here would guard against nothing.  That one rise is the only time in this table's history
+that a fix has added a blind site rather than a peeling one — the only time in this table's history that a fix has added a blind site rather than
+a peeling one, so it is worth saying why it is not one.  `generation::emit::arm_diverges` asks
+whether a branch arm leaves through `return` / `break` / `continue`, and it asks it of
+`Value::tail()` — whose own first arm is `Value::Span(b) => b.1.tail()`, so the peel happens one
+call down and the audit's regex cannot see it.  Measured rather than argued: the `match`-arm
+cells of `tests/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` are the
+span-wrapped spelling, and they pass.  Writing a redundant `.unspan()` at the site to move the
+column would make the metric agree and the code worse — `tail` is the one home for *descend to
+where control leaves*, and a second peel beside it is exactly the restated predicate this
+document is otherwise about.
+
+@PLN152 step 5 is three of the new discriminators, all in `src/parser/fit.rs`, and all
+peeling — which is why the OPAQUE column falls rather than rises, and why the Optional row is
+untouched (these three ask about `Value` variants, not `Type` ones).  That they peel is not
+luck: `same_place` and `guard_slot` compare an IR node the parser has just built against one it
+built a statement earlier, and a `Span` sits over exactly the fault-prone nodes those two ask
+about — a bare match would have recognised the pair on the spellings that carry no position and
+missed it on the ones that do, working for a local and silently not for a field.
+
+⚠ **The two chains do not meet, and that is what a join is.**  This checkout's history above
+reads `440 · 417 · 23 → 445 · 422 · 23`; the incoming stream's reads `434 · 410 · 24 →
+437 · 413 · 24`.  Two lineages of one table, neither of them the joined tree's.  Both arrived
+at the SAME endpoint by different routes and the merge surfaced them as a CONFLICT between two
+answers — the shape that makes carrying one of them tempting.  The DELTA is what carries across
+a join; the endpoint is only ever what the instrument prints afterwards.
+
 **2026-09-09, the FOUR-way join (this checkout + `tuxedo-quality-2026-09` +
 `tuxedo-159-gate-efficiency` + `157-native-4x`): the unspan row `440 · 417 · 23` →
 `445 · 422 · 23` and the Optional row `765 · 420 · 6 · 339` → `766 · 422 · 6 · 338`.**
@@ -2661,6 +2702,17 @@ the Optional row does not move.**  A net +1 — `every_return_leaf_views_var` ar
 that fix: the leaf question has one home, and the widened test peels like the one it replaces.
 The Optional column is untouched because nothing in it discriminates on a `Type` variant; the
 new walker asks the RULES (`(B-View)` / `(B-Copy)`) about a `Value`, not a former about a type.
+**2026-09-09, @PLN152 step 5: the unspan row `434 · 410 · 24` → `437 · 413 · 24`.**  Three
+new `Value` discriminators, all in `src/parser/fit.rs`, and all peeling — the OPAQUE column
+does not move, and the Optional row does not move at all (these three ask about `Value`
+variants, not `Type` ones).
+That is not luck: `same_place` and `guard_slot` compare an IR node the parser has just built
+against one it built a statement earlier, and a `Span` sits over exactly the fault-prone
+nodes those two ask about, so a bare match would have failed to recognise the pair on the
+spellings that carry a position and recognised it on the ones that do not — the fused form
+would have worked for a local and silently not for a field.  Written peeling from the first
+line, because `Value::unspan`'s own doc block says so and this table is what makes that
+readable.
 
 **2026-09-09, loft#1476's per-arm release: the unspan row `432 · 408 · 24` → `434 · 410 · 24`,
 and the Optional row `755 · 410 · 6 · 339` → `756 · 411 · 6 · 339`.**  Two new `Value`
@@ -7469,6 +7521,28 @@ somebody read it into the family, and a mis-read costs the whole design.
 Sizing it is design work, not a walk; recorded here so the next reader counts the issues rather
 than picking one, and starts from the per-slot statement rather than rediscovering why per-local
 fails.
+
+⚠ **@PLN161 was that design, and it was DECLINED on 2026-09-10 — read this before opening a
+successor.**  It proposed the per-LOCAL form once more, as a third entry condition on
+`owner_witness_locals` reading `Own::Join`.  Three things retired it, and each is checkable:
+
+- **Its premise was gone.** It opened on *"four OPEN loft issues"*; all four closed ~6.5 hours
+  later in PR #1490, each `contract:settled`.  Nothing on the board needs the mechanism, and the
+  three store-lifetime issues that followed (loft#1491, loft#1493, loft#1494) are all
+  `fixed-pending-merge`.
+- **Its own probe falsified it.** The plan states *"the widening is INERT: zero `__own_` sites
+  emitted for the failing shape"* against loft#1486 — and then restated the invariant to survive
+  that reading rather than treating it as the stop condition it had itself written down.
+- **Its cure is the move this row says does not work.** *A sharper condition on the shared
+  predicate* is precisely what was tried three times and reverted; and the one shipped fix that
+  touched `Own::Join` (loft#1485) NARROWED away from the predicate reading it, because
+  substituting the whole thing broke five corpus files, four of them `--native` only.  Its
+  commit records the rule as *one question per site*.
+
+So the per-slot statement above still stands as the sizing to start from — but a successor is
+opened **from a defect that needs it**, not from this row.  A plan whose falsification targets
+have all been fixed can no longer fail on its own, which is what made this one un-runnable
+rather than merely wrong.
 
 #### B2 — open, and the owner's call
 

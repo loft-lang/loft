@@ -27,6 +27,9 @@
 // is the reference route this fix gives the comprehension.
 //
 // @falsified-at: 7b728cc0 — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 fn shows(v: vector<integer>) -> text { "{v}" }
 

@@ -41,6 +41,9 @@
 //   the reason loft#1439 states at length: a released record keeps its bytes until something
 //   writes over them.  That is also why this file must never be run without the instrument to
 //   decide whether it still holds.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct C46 { a: integer }
 

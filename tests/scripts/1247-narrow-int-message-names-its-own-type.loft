@@ -14,6 +14,9 @@
 // beside it were already right — a guard on `u32` alone would not have caught a later
 // edit that broke `u16`, and the arms are edited together.
 // @falsified-at: ddacc1b4 — interpret expectations matched 5/6 -> 6/6, native expectations matched 5/6 -> 6/6
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
+//   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
+//   The native side was not scored in this sweep.
 fn main() {
   // @EXPECT_ERROR: cannot implicitly narrow integer to u32
   a: u32 = 4294967295;

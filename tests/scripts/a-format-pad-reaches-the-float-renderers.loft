@@ -44,6 +44,9 @@
 // assert stops the run; on the control the first cell to fire is the zero pad on a float
 // (`    3.12` for `00003.12`).  Removing that one cell moves it to the fill, then to the
 // upper-case hex, then to the `#` marker — four independent cells, one channel.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 struct Pad { fx: float, n: integer }
 

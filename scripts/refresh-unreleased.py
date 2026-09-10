@@ -76,6 +76,25 @@ def extract_api(owner_repo: str, subpath: str) -> list[dict]:
             return []
 
 
+def has_guide(owner_repo: str, subpath: str) -> bool:
+    """Does this lib ship a `docs/*.loft` getting-started guide on `origin/main`?
+
+    Tier 1 of the four documentation tiers (@PLN149): one executed guide per library,
+    living in the library and run by its own CI.  Recorded here rather than read from the
+    registry index because the index carries no guide field — the guide travels inside the
+    tarball, so the only cheap authoritative source is the repo tree.
+
+    A directory that does not exist answers an empty listing, which is a real `false`; a
+    `gh` call that FAILS answers the same empty string, and the caller cannot tell those
+    apart from here.  That is why the snapshot records the flag only when the listing
+    succeeded, and why the reader treats a MISSING key as "not measured" rather than as
+    "no guide" — the whole point of the third state.
+    """
+    docsdir = f"{subpath}/docs" if subpath else "docs"
+    listing = gh([f"repos/{owner_repo}/contents/{docsdir}", "--jq", ".[].name"])
+    return any(n.endswith(".loft") for n in listing.splitlines())
+
+
 def main() -> int:
     argv = sys.argv[1:]
     # The sha keys the SOURCE, and the source is only half of what the snapshot depends on:
@@ -105,12 +124,27 @@ def main() -> int:
         if not sha:
             continue
         if not force and prior.get(name, {}).get("sha") == sha:
-            result[name] = prior[name]  # not stale — reuse (no fetch, no extract)
-            sys.stderr.write(f"  {name}: reuse ({sha[:7]})\n")
+            result[name] = dict(prior[name])  # not stale — reuse (no fetch, no extract)
+            # An entry written before `guide` existed carries no such key, and a sha match
+            # would keep it that way for ever — the second instance of the extractor-moved
+            # hazard the `--force` note above describes.  But the guide flag does NOT come
+            # from the extractor: it is one directory listing, independent of `loft api`.
+            # So backfill just that, cheaply, rather than making the reader run a full
+            # re-extract of 42 libraries to learn one boolean per library.
+            if "guide" not in result[name]:
+                result[name]["guide"] = has_guide(owner_repo, subpath)
+                sys.stderr.write(
+                    f"  {name}: reuse ({sha[:7]}, guide flag backfilled: "
+                    f"{'guide' if result[name]['guide'] else 'NO guide'})\n")
+            else:
+                sys.stderr.write(f"  {name}: reuse ({sha[:7]})\n")
             continue
         api = extract_api(owner_repo, subpath)
-        result[name] = {"sha": sha, "api": api}
-        sys.stderr.write(f"  {name}: fetched ({sha[:7]}, {len(api)} sigs)\n")
+        guide = has_guide(owner_repo, subpath)
+        result[name] = {"sha": sha, "api": api, "guide": guide}
+        sys.stderr.write(
+            f"  {name}: fetched ({sha[:7]}, {len(api)} sigs, "
+            f"{'guide' if guide else 'NO guide'})\n")
     OUT.write_text(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"refresh-unreleased: wrote {OUT} ({len(result)} libs)")
     return 0

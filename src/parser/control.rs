@@ -684,7 +684,14 @@ impl Parser {
                 }
             }
         }
+        // @PLN152 step 5 — a nested block runs its own statement loop, which owns
+        // `fit_armed`; without this the `if` BODY cleared the arming its own condition had
+        // just used and the store was never split.  The fit belongs to the pair of
+        // statements that produced it, so it is saved across every block this one contains
+        // and restored for the loop that is still in the middle of that pair.
+        let outer_fit = self.fit_armed.take();
         let cc_ret = self.parse_block_inner(context, val, result);
+        self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;
         }
@@ -743,6 +750,13 @@ impl Parser {
         let dz_base = self.divisor_nonzero.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
+        // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
+        // The fit-failure of a store lives across exactly one statement boundary: offered to
+        // the statement that follows, and gone after it.  Held here rather than on the
+        // parser because "the previous statement of THIS block" is a fact only this loop
+        // has, and a nested block must not inherit it.
+        let mut pending_fit: Option<crate::parser::fit::FitFusion> = None;
+        let mut fit_store_at = 0usize;
         loop {
             let line = self.lexer.pos().line;
             if line > self.line {
@@ -906,6 +920,11 @@ impl Parser {
             // it at each statement boundary; the within-statement `?? d` / `== null` tracking is
             // untouched (both operand and consumer parse inside this one `self.expression`).
             self.expr_not_null = false;
+            // `@FR-E-Uncomp-Seen` — arm the preceding store's fit status for THIS statement, and
+            // only when it opens with `if`: that is the whole of the adjacency rule, and the
+            // `take` is what makes it one statement wide rather than "until someone asks".
+            self.fit_armed = pending_fit.take().filter(|_| self.lexer.peek_token("if"));
+            self.fit_candidate = None;
             // loft#1382 — statement position, decided by the ONE reader that knows it.  A
             // statement beginning with `if` or `match` has its value discarded
             // (`@FR-F-Block`), so its arms need not agree with each other; a value-position
@@ -917,6 +936,31 @@ impl Parser {
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
             self.stmt_if_pending = saved_stmt_if;
+            // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
+            // split the store that is already in `l`: the checked cast binds the temp, and
+            // the store's own range guard now reads it.  Values are unchanged by
+            // construction — an out-of-range subject casts to null and `OpRangeDefault`
+            // answers the same default it answered for the raw value, and an in-range one
+            // passes straight through.
+            if let Some(fit) = self
+                .fit_armed
+                .take()
+                .and_then(|f| f.fit_var.map(|v| (f, v)))
+            {
+                let (cand, fit_var) = fit;
+                let mut composed = Value::Null;
+                if let Some(slot) = crate::parser::fit::guard_slot(&self.data, &mut l[fit_store_at])
+                    && let Value::Call(_, guard_args) = slot.unspan_mut()
+                {
+                    composed = std::mem::replace(&mut guard_args[0], Value::Var(fit_var));
+                }
+                debug_assert!(
+                    !matches!(composed, Value::Null),
+                    "@PLN152 armed a store whose range guard could not be found"
+                );
+                self.dn4_checked_cast(&mut composed, &Type::Integer(cand.spec), &crate::data::I64);
+                l.insert(fit_store_at, v_set(fit_var, composed));
+            }
             // …and CONFIRM it here, where the `;` is finally visible.  `@FR-F-Block` discards
             // a block's value *"only where the BLOCK itself is a statement — a `;`-terminated
             // one"*, and a leading `if` does not prove that: a function TAIL also begins its
@@ -1056,8 +1100,36 @@ impl Parser {
             } else {
                 l.push(n);
             }
+            // @PLN152 step 5 — offer this statement's narrow store to the next one, but only
+            // once the pushed node really carries the `OpRangeDefault` guard the fused form
+            // rewrites.  Asked of the node rather than assumed from the seam, so a shape this
+            // cannot split can never reach the point where a `!` has already been redirected
+            // to a temp nothing binds.  A candidate raised inside a nested block fails the
+            // same test, because the node pushed here is the enclosing construct.
+            pending_fit = self.fit_candidate.take().filter(|_| {
+                l.last()
+                    .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last))
+            });
+            fit_store_at = l.len().saturating_sub(1);
             if self.lexer.peek_token("}") {
                 break;
+            }
+            // loft#1496 — past that `break`, the statement just pushed is NOT this block's
+            // value: another statement follows it.  So a BRANCH here is a statement, nothing
+            // reads what its arms yield, and an arm that dropped its tail must stop claiming
+            // the dropped value's type.  Left claiming it, the interpreter's eval stack was
+            // one short of what the arm promised and every read after the branch was
+            // misaligned: `t = 0; if n > 0 { t += 1; } else { 5 }; return t` answered null
+            // for `n == 0`, and with two locals live across the branch, both of them.
+            //
+            // Decided HERE and not inside the arm, because the arm cannot tell.  Measured: the
+            // same `result == Void` and the same `Drop` reach the else arm of
+            // `if n > 0 { …; return b.items; } else { head(n) }`, whose value IS the
+            // function's, so voiding on either of those facts made that function return
+            // nothing at all.  What separates the two cases is only whether anything follows
+            // the branch, which is what this point in the loop knows and the arm does not.
+            if let Some(last) = l.last_mut() {
+                Self::void_dropped_statement_arms(last);
             }
             // Preserve Never for blocks that end with return/break/continue.
             if !matches!(t, Type::Never) {
@@ -1843,6 +1915,44 @@ impl Parser {
             let last = l.len() - 1;
             let w = self.materialize_view_value(td, &mut l[last]);
             return self.vars.tp(w).clone();
+        }
+        // loft#1494 — the COLLECTION half of the arm above, and the same rule: a block used
+        // as a VALUE whose tail reads a collection OUT OF a local defined inside it
+        // (`{ b = BoxF { … }; b.items }`) hands the consumer a reference into `b`'s store,
+        // which the block frees on the way out.  The consumer then copies from a released
+        // store — the right answer for as long as the bytes survive, `0xDEADBEEF` under
+        // `LOFT_POISON=1`.
+        //
+        // The arm above cannot serve it: a collection is not a `Reference`, and
+        // `OpCopyRecord` is not how a collection is copied.  Cure it the same way through the
+        // collection's own copy — bind the tail to a fresh local, which gives it a buffer of
+        // its own (`@FR-B-Copy`) — after which `b` is no longer what the block yields and
+        // takes the ordinary block-scope sweep.
+        //
+        // Both halves belong to the BLOCK rather than to a consumer.  Five consumers read
+        // such a block by wrapping it from OUTSIDE — a return delivery, a call argument, a
+        // struct-literal field, an operator, a field write — so a delivery sunk per consumer
+        // would have to be written five times and would still miss the sixth; the two that
+        // were already right (a plain bind, a `for`) are the ones that sink it.
+        //
+        // A tail reading an OUTER local is left alone, exactly as above: the block does not
+        // define it, so it outlives the block and the view is a borrow the consumer keeps.
+        if context != "return from block"
+            && crate::parser::vectors::is_collection(&tp)
+            && let Some(tail) = l.last()
+            && let Some((root, path)) = self.field_place(tail)
+            // A bare `Var` tail is the whole local, not a projection out of it: that is the
+            // ownership question `@FR-O-Move` answers, and copying it here would leave the
+            // local's own store to nobody.
+            && !path.is_empty()
+            && !self.vars.is_argument(root)
+            && Self::block_defines_var(&l[..l.len() - 1], root)
+        {
+            let last = l.len() - 1;
+            let w = self.materialize_collection_value(&mut l[last], &tp);
+            if w != u16::MAX {
+                return self.vars.tp(w).clone();
+            }
         }
         // #416 — set when the vector match/if tail below was materialised into the
         // return buffer; gates the type-keyed vector arm (which is reached only in
@@ -3428,6 +3538,24 @@ impl Parser {
         }
         let last = l.len() - 1;
 
+        // (0) loft#1491's sibling one construct over: the tail is a nested value BLOCK, so the
+        //     `Set(cv, Call(…))` this collapses sits in the BLOCK's operators rather than in
+        //     `l`.  `fn f(n) -> vector<u8> { { v = head(n); v } }` therefore declined at step
+        //     (1) — the tail is a `Block`, not a `Var` — and the callee filled its own
+        //     `__ref_N` while the buffer the caller handed in was adopted by nobody: one
+        //     leaked store per CALL, both backends, scaling with the call count.  The same
+        //     statements without the block have always collapsed (`v = n_head(n, v)`, one
+        //     store), which is the shape this restores.
+        //
+        //     Recursing needs no new rule to stay honest: step (1) below still requires the
+        //     inner tail to be `Var(cv)` with `cv` in `ls`, so a nested block yielding
+        //     anything else — or yielding a local that is not one of the buffers — declines
+        //     exactly as it does at this level.
+        if let Some(ops) = Self::tail_block_ops(&mut l[last]) {
+            self.nrvo_collapse_tail_set(ops, ls);
+            return;
+        }
+
         // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.
         let Some(cv) = Self::tail_var(&l[last]) else {
             return;
@@ -3773,6 +3901,23 @@ impl Parser {
     /// Walk past `Span` / `Return` wrappers to find a tail `Var(v)`.
     /// Used by `nrvo_collapse_tail_set` to recognise the two shapes the
     /// parser produces for "the body returns variable `v`".
+    /// The operator list of a value-yielding BLOCK tail, so a collapse aimed at a block's own
+    /// tail can be run on the list that actually holds it.
+    ///
+    /// `None` for every other tail shape, and for a `Void` / `Never` block — a block that
+    /// yields nothing has no tail value to deliver.
+    fn tail_block_ops(v: &mut Value) -> Option<&mut Vec<Value>> {
+        match v {
+            Value::Span(b) => Self::tail_block_ops(&mut b.1),
+            Value::Return(inner) => Self::tail_block_ops(inner),
+            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Never) => {
+                Some(&mut bl.operators)
+            }
+            Value::Insert(ops) => Some(ops),
+            _ => None,
+        }
+    }
+
     fn tail_var(v: &Value) -> Option<u16> {
         match v.unspan() {
             Value::Var(v) => Some(*v),
@@ -4353,7 +4498,14 @@ impl Parser {
         // same statement construct.
         let is_stmt = std::mem::replace(&mut self.stmt_if_pending, false);
         let outer_arms = std::mem::replace(&mut self.arms_of_statement_construct, is_stmt);
+        // `@FR-E-Uncomp-Seen` — open the fused-fit window.  This is the one site that knows
+        // STATEMENT position, which is what the adjacency rule is about: only an `if` that
+        // IS the next statement stands where the preceding store's fit status is still
+        // reachable.  `parse_if_expecting` closes it the moment the condition is complete,
+        // so a `!place` in the BODY reads the slot exactly as it always did.
+        self.fit_in_condition = is_stmt && self.fit_armed.is_some();
         let r = self.parse_if_expecting(code, &Type::Unknown(0));
+        self.fit_in_condition = false;
         self.arms_of_statement_construct = outer_arms;
         r
     }
@@ -4370,6 +4522,9 @@ impl Parser {
         self.in_control_head = true;
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
+        // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+        // the arms below, and an `else if` chain's own conditions, are past the pair.
+        self.fit_in_condition = false;
         self.convert_condition(&mut test, &tp);
         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
         // matching branch (then for `!= null`/truthy, else for `== null`).
@@ -12346,6 +12501,68 @@ impl Parser {
         l.iter().any(|op| scan(op, v))
     }
 
+    /// A branch in STATEMENT position yields nothing, so every arm of it discards — in the
+    /// BODY and in the TYPE alike, because the interpreter balances its eval stack against
+    /// both.
+    ///
+    /// An arm that already dropped its tail keeps only the wrong type; an arm that still ends
+    /// in its value keeps only the wrong body.  Both were measured, and each leaves the stack
+    /// off by one in its own direction: `else { 5 }` (dropped body, `integer` type) promised a
+    /// value it never pushed, and the value-carrying middle arm of an `else if` CHAIN pushed
+    /// one nothing pops.  So the arm is made to discard both ways, which is what a statement
+    /// means and what the `;` form has always done.
+    ///
+    /// A DIVERGING arm is left alone: `Never` is not a claim to yield, and control leaves
+    /// before the branch's end.
+    ///
+    /// Recurses through an `else if` chain, whose arms are nested `If` values rather than
+    /// blocks, so a value-carrying middle arm is reached too.
+    fn void_dropped_statement_arms(v: &mut Value) {
+        match v {
+            Value::Span(b) => Self::void_dropped_statement_arms(&mut b.1),
+            // Only the ARMS of a branch, and only reached THROUGH the branch.  A bare `Block`
+            // in statement position must never be touched: a keyed literal through a CAPTURE
+            // arrives as exactly that — a block whose ops build STRAIGHT INTO the destination
+            // (@PLN93 build-into-target, loft#1326) — so dropping its tail and voiding its type
+            // destroys the build and the collection reads as `0xDEADBEEF` under `LOFT_POISON=1`.
+            // The defect this cures is a BRANCH's arms disagreeing with themselves, and nothing
+            // wider.
+            Value::If(_, t, f) => {
+                Self::void_statement_arm(t);
+                Self::void_statement_arm(f);
+            }
+            _ => {}
+        }
+    }
+
+    /// One arm of a branch already known to be in STATEMENT position: make it discard in the
+    /// BODY and in the TYPE alike.
+    ///
+    /// Recurses through an `else if` chain, whose arms are nested `If` values rather than
+    /// blocks, so a value-carrying middle arm is reached too.
+    fn void_statement_arm(v: &mut Value) {
+        match v {
+            Value::Span(b) => Self::void_statement_arm(&mut b.1),
+            Value::If(_, t, f) => {
+                Self::void_statement_arm(t);
+                Self::void_statement_arm(f);
+            }
+            Value::Block(bl) => {
+                if matches!(bl.result, Type::Void | Type::Never) {
+                    return;
+                }
+                if let Some(tail) = bl.operators.last_mut()
+                    && !matches!(tail.unspan(), Value::Drop(_))
+                {
+                    let value = std::mem::replace(tail, Value::Null);
+                    *tail = Value::Drop(Box::new(value));
+                }
+                bl.result = Type::Void;
+            }
+            _ => {}
+        }
+    }
+
     fn block_defines_var(l: &[Value], v: u16) -> bool {
         l.iter().any(|op| Self::stmt_defines_var(op, v))
     }
@@ -14143,13 +14360,36 @@ impl Parser {
                 consumed.append(&mut cf);
                 a || b2
             }
-            Value::Block(bl) => bl
-                .operators
-                .last_mut()
-                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
-            Value::Insert(ops) => ops
-                .last_mut()
-                .is_some_and(|last| self.materialize_vector_arms_collect(elm, last, w, consumed)),
+            // loft#1491 — an arm that BINDS the buffer from a call before yielding it
+            // (`{ buf = head(n); buf }`) has rebound `w` to the call's OWN `__ref_N`, so
+            // the `Var(w)` tail below is no longer the buffer it names: the callee filled
+            // one store, the caller handed in another, and the one the caller never
+            // adopts is orphaned — one leaked store per call, on both backends.  The same
+            // arm written as a bare `{ head(n) }` is clean, which is what says the value
+            // is right and only the DELIVERY is wrong.
+            //
+            // `nrvo_collapse_tail_set` is the fix and already exists: it redirects a
+            // `Set(cv, Call(…))` whose callee takes a hidden return buffer to deliver
+            // into `cv` itself.  It was reached only at the FUNCTION tail, and this is the
+            // same shape one block down.  Asking it here needs no new rule — its own
+            // step (1) declines every block whose tail is not `Var(w)`, so passing `[w]`
+            // gates it to exactly the arm this is for.
+            Value::Block(bl) => {
+                let mut ops = std::mem::take(&mut bl.operators);
+                self.nrvo_collapse_tail_set(&mut ops, &[w]);
+                bl.operators = ops;
+                bl.operators.last_mut().is_some_and(|last| {
+                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+                })
+            }
+            Value::Insert(ops) => {
+                let mut taken = std::mem::take(ops);
+                self.nrvo_collapse_tail_set(&mut taken, &[w]);
+                *ops = taken;
+                ops.last_mut().is_some_and(|last| {
+                    self.materialize_vector_arms_collect(elm, last, w, consumed)
+                })
+            }
             // A local whose value is a VIEW OF `w` — `_vec_N: vector<T>["__vdb_1"]` where
             // `__vdb_1` IS the buffer — already holds its answer in the buffer, so it is
             // `w` one indirection down and the `*v != w` guard above does not see it.
@@ -14957,7 +15197,42 @@ impl Parser {
         // to show it — a bisect control that cannot fire.  `is_marked_vector_borrow` is the one
         // home for which bindings are the pre-pass's.
         let views_argument = self.var_views_an_argument(v) && !self.vars.is_marked_vector_borrow(v);
+        // loft#1493 — a candidate may BE the return buffer only if it has the return's own
+        // SHAPE.  `ls` is a BORROW list: it names the locals the tail's value is reached
+        // THROUGH, and for a projection arm (`b.items`) that is the CONTAINER — a record.
+        // Renaming it makes the caller's `vector<u8>` buffer BE the arm's `BoxF` local, so the
+        // arm builds the record into the buffer and the delivery then clears that same store
+        // and appends a field of what it just cleared: the caller reads an EMPTY collection,
+        // on both backends, with no diagnostic of any kind.
+        //
+        // `ls_can_be_record_buffer` is this same guard one former over (loft#877, where a
+        // vector was renamed onto a record buffer and `make` cleared the caller's record as a
+        // vector).  The `returns_own_field` rung above asks the same question of the TAIL
+        // SHAPE and so cannot see through a branch's arms — `return d.value` is caught,
+        // `match s { … => { d = …; d.value } }` is not.  The candidate's own TYPE answers it
+        // wherever the tail sits, which is why this rung is structural and not another walker.
+        // …and "the return's shape" means the RETURN'S OWN TYPE, not merely *a* vector: a
+        // `vector<BoxF>` local renamed onto a `vector<u8>` buffer is the same defect one
+        // element type over, which `w[0].items` reaches.  An UNKNOWN candidate is admitted
+        // because `is_equal` answers TRUE for it, so refusing on that would refuse a generic's
+        // still-unresolved local; deps and the `?` are peeled on both sides, since neither
+        // says anything about what the buffer must HOLD (`@FR-N-Shape`).
+        //
+        // ⚠ A LITERAL BACKING is exempt, and it is the case this rung was first written too
+        // wide for.  `[i, i + 1]` mints a `__vdb_N` typed `Reference(main_vector<integer>)` —
+        // a record type by every structural test, and the very store the vector lives in, so
+        // it IS the right candidate for a vector buffer.  Refusing it left
+        // `fn mk(i: integer) -> vector<integer>? { [i, i + 1] }` minting one store per call
+        // that nobody owned: ten calls, ten records, caught by `1200-a-nullable-record-local-\
+        // frees-what-it-displaces`.  `owns_literal_backing_store` is the one home for which
+        // names those are.
+        let is_literal_backing = crate::variables::owns_literal_backing_store(self.vars.name(v));
+        let wrong_shape_for_buffer = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
+            && !is_literal_backing
+            && !self.vars.tp(v).base().is_unknown()
+            && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
         let allow_rename = !(bound_already
+            || wrong_shape_for_buffer
             || reassigned
             || returns_own_field
             || bound_to_vector_join

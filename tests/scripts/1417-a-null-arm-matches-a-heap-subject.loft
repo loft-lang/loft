@@ -27,6 +27,9 @@
 //   does not compile the file at all (the arm loop breaks and the parse cascades), so no cell
 //   runs and the assertion column is 0 on both sides; the value assertions are what make a
 //   pass mean more than "it parsed".
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
+//   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
+//   those is clean on both. The native side was not scored in this sweep.
 
 enum Tok { Fn { x: integer }, Id { x: integer } }
 struct S { a: integer }

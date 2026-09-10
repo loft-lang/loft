@@ -630,6 +630,18 @@ proving only that the file is sensitive to the build. **Read the `asserts` colum
 verdict** — a guard should move the channel it is about.
 
 
+⚠ **Two falsify runs at once used to corrupt each other, and the symptoms read as findings.**
+The target directories are shared between runs on purpose — `head-target` holds the HERE build
+for both the bulk and single paths, and a control is cached per ref — but cargo does not
+serialise itself across processes, so two writers produced a partial or stale binary.  Measured
+2026-09-09: an overlapping sweep and single run reported `this tree does not build` on a tree
+`cargo check` builds fine, a backend INERT with its `here` column unclean (indistinguishable
+from a native regression against a green suite), and an `exit 127` — a missing binary — in a
+bulk row.  Re-run serially, all three guards reproduced their receipts exactly.  Every build now
+takes its target directory's lock, so a run arriving mid-build WAITS for the finished binary;
+runs against different refs still proceed in parallel.  If you meet one of those three symptoms
+on an older checkout, suspect a concurrent run before the tree.
+
 **`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
 (`scripts/falsify.sh`). It builds `REF` in a cached worktree, runs the guard THERE and
 HERE, and compares four channels apart — **exit code, assertion failures, leaked stores,
@@ -787,9 +799,11 @@ field it has no use for.
 The rule lives in `scripts/falsify-review.py --check` and nowhere else, so the review and the
 gate cannot disagree about what a receipt owes.  `doc_hygiene::every_guard_says_how_to_score_it
 _again` holds the line against `tests/falsified_docs.baseline`, a ratchet that only shrinks —
-331 of 382 receipts predate the standard, `HOLDS` missing from most of them, so the backlog is
-recorded honestly rather than fixed in one pass or pretended away.  A leak's `kt=` id shifts
-with the type table between builds, so a WITNESS names the store SHAPE, not the number.
+the debt began at 344 receipts and is now **zero**: every one of the 390 says which
+channel carries it, what instrument that needs, a concrete witness and what must NOT move.
+So the baseline is empty and the gate is a plain requirement rather than a ratchet — a new
+guard whose receipt does not say how to score it fails outright, and the cure is to write
+the fields, never to re-add a line to the baseline.
 
 ⚠ **Record the patch when you falsify, not when you need it.**  `falsify.sh <guard> <ref>`
 prints the durable receipt beside the ref one and writes the patch, because the derivation is

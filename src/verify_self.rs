@@ -162,9 +162,17 @@ fn summarise(names: &[String]) -> String {
     )
 }
 
-/// The bundle root for a running binary at `exe`: `<binary-dir>/..`, which is where
-/// `default/` sits — the same resolution loft uses to find its stdlib, so this checks
-/// the stdlib that would actually be LOADED, not one that merely sits nearby.
+/// The bundle root for a running binary at `exe`: `<binary-dir>/..`, which is where a
+/// release bundle's `default/` sits.
+///
+/// ⚠ This is the BUNDLE's layout and NOT necessarily the stdlib that LOADS.  The runtime
+/// prefers an installed `<prefix>/share/loft/` whenever that directory exists
+/// (`native_utils::project_root_for`), so on a box that was once source-installed and
+/// later `self-update`d, the bundle's own `default/` is verified while a different one is
+/// parsed.  `native_utils::project_root_for` answers the question the runtime asks, and
+/// [`local_checks`]'s `loaded_stdlib` argument is what carries that answer in — this doc used to claim they were the
+/// same resolution, which is how loft#1497 passed verification and segfaulted on
+/// `println("hello")`.
 #[must_use]
 pub fn bundle_root(exe: &Path) -> Option<PathBuf> {
     Some(exe.parent()?.parent()?.to_path_buf())
@@ -176,16 +184,88 @@ pub fn bundle_root(exe: &Path) -> Option<PathBuf> {
 /// bundle", not a failure.  Does NOT include the registry anchor: that needs a network
 /// or a cache, and these are the checks that work with neither.
 #[must_use]
-pub fn local_checks(root: &Path) -> Vec<Check> {
+pub fn local_checks(root: &Path, loaded_stdlib: Option<&Path>) -> Vec<Check> {
     let Ok(text) = std::fs::read_to_string(root.join(MANIFEST)) else {
         return vec![Check::Skipped(format!(
             "no {MANIFEST} beside the binary — not a release bundle"
         ))];
     };
-    vec![
+    let mut checks = vec![
         check_manifest(root, &text, "files"),
         check_no_extra_stdlib(root, &text),
-    ]
+    ];
+    // The stdlib that LOADS, which is not always the bundle's own (loft#1497).  Passed IN
+    // rather than resolved here: `native_utils::project_root_for` is the one home for how
+    // loft finds its stdlib, and a second copy of that rule inside the verifier is the very
+    // drift this check exists to catch.  `None` is a bundle with no running binary to ask
+    // about — a staged download being validated before it is installed.
+    if let Some(loaded) = loaded_stdlib {
+        checks.push(check_loaded_stdlib(root, &text, loaded));
+    }
+    checks
+}
+
+/// Is the stdlib that will LOAD the one the manifest describes?
+///
+/// The other checks establish that the BUNDLE is intact.  This one asks whether the bundle
+/// is what runs, which is a different question whenever two stdlib trees exist under one
+/// prefix: `self-update` maintains the bundle's, the runtime prefers `share/loft`'s, and
+/// nothing reconciled them.  Measured on loft#1497: `verify-self` reported "matches the
+/// release published in the signed registry index" on an installation whose
+/// `println("hello")` died with SIGSEGV in `OpFreeText`, because the loaded stdlib was a
+/// feature branch's from three days before the release.
+///
+/// A manifest at `root` is what makes this decidable: it says "this is a release bundle",
+/// so a loaded stdlib that is NOT that bundle's is unambiguously wrong.  Without one there
+/// is nothing to compare against and [`local_checks`] has already answered `Skipped`.
+fn check_loaded_stdlib(root: &Path, manifest_text: &str, loaded: &Path) -> Check {
+    let expected = root.join("default");
+    if loaded == expected {
+        return Check::Ok("loaded stdlib: the bundle's own default/".to_string());
+    }
+    let (entries, _) = parse_manifest(manifest_text);
+    let mut bad: Vec<String> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for (rel, want) in &entries {
+        let Some(name) = rel.strip_prefix("default/") else {
+            continue;
+        };
+        if manifest_path_escapes(rel) {
+            continue;
+        }
+        match std::fs::read(loaded.join(name)) {
+            Ok(bytes) => {
+                if crate::integrity::verify_sha256(&bytes, want).is_err() {
+                    bad.push(name.to_string());
+                }
+            }
+            Err(_) => missing.push(name.to_string()),
+        }
+    }
+    // Named even when the contents happen to agree: two stdlib trees under one prefix is a
+    // state `self-update` cannot keep consistent, so the next partial upgrade re-opens it.
+    let where_ = format!(
+        "loft loads {}, not {}",
+        loaded.display(),
+        expected.display()
+    );
+    if bad.is_empty() && missing.is_empty() {
+        return Check::Failed(format!(
+            "loaded stdlib: SHADOWED — {where_} (contents match this release, so it runs \
+             correctly today; remove the shadowing tree before the next upgrade splits them)"
+        ));
+    }
+    let mut parts = Vec::new();
+    if !bad.is_empty() {
+        parts.push(format!("{} differ: {}", bad.len(), summarise(&bad)));
+    }
+    if !missing.is_empty() {
+        parts.push(format!("{} absent: {}", missing.len(), summarise(&missing)));
+    }
+    Check::Failed(format!(
+        "loaded stdlib: NOT this release — {where_}; {}",
+        parts.join("; ")
+    ))
 }
 
 /// The one manifest a release bundle carries.
@@ -372,12 +452,67 @@ mod tests {
     #[test]
     fn a_tree_without_a_manifest_is_skipped_not_failed() {
         let d = scratch("dev");
-        let checks = local_checks(&d);
+        let checks = local_checks(&d, None);
         assert!(
             checks.iter().all(|c| matches!(c, Check::Skipped(_))),
             "{checks:?}"
         );
         assert!(!checks.iter().any(Check::failed));
+    }
+
+    /// loft#1497 — an INTACT bundle whose loaded stdlib is a different tree.
+    ///
+    /// The state a `self-update` over an older source install leaves: the bundle at
+    /// `<prefix>/` is exactly the release, and `<prefix>/share/loft/default/` is what the
+    /// runtime parses.  Every other check passes on it, which is why the released
+    /// `verify-self` reported "matches the release published in the signed registry index"
+    /// on a box whose `println("hello")` died with SIGSEGV in `OpFreeText`.
+    #[test]
+    fn a_shadowing_stdlib_tree_fails_even_though_the_bundle_is_intact() {
+        let d = bundle("shadowed");
+        // the tree the runtime would load, holding a DIFFERENT stdlib
+        write(&d, "share/loft/default/01_code.loft", "fn a() { 1 }\n");
+        let loaded = d.join("share/loft/default");
+
+        // the control first: pointed at the bundle's own default/, everything passes
+        let own = d.join("default");
+        let clean = local_checks(&d, Some(&own));
+        assert!(
+            !clean.iter().any(Check::failed),
+            "the bundle is intact and must verify when it is what loads: {clean:?}"
+        );
+
+        let checks = local_checks(&d, Some(&loaded));
+        let failed: Vec<&Check> = checks.iter().filter(|c| c.failed()).collect();
+        assert_eq!(
+            failed.len(),
+            1,
+            "exactly the loaded-stdlib check must fail, not the bundle ones: {checks:?}"
+        );
+        let Check::Failed(m) = failed[0] else {
+            unreachable!()
+        };
+        assert!(
+            m.contains("NOT this release") && m.contains("share/loft/default"),
+            "the message must name what loads and why it is wrong: {m}"
+        );
+    }
+
+    /// A shadow whose CONTENTS agree still fails: it runs correctly today and the next
+    /// partial upgrade splits the two trees, which is the state this check exists to end.
+    #[test]
+    fn a_shadow_that_matches_is_still_reported() {
+        let d = bundle("shadow-match");
+        write(&d, "share/loft/default/01_code.loft", "fn a() {}\n");
+        let checks = local_checks(&d, Some(&d.join("share/loft/default")));
+        let m = checks
+            .iter()
+            .find_map(|c| match c {
+                Check::Failed(m) if m.contains("loaded stdlib") => Some(m.clone()),
+                _ => None,
+            })
+            .expect("a matching shadow is still a shadow");
+        assert!(m.contains("SHADOWED"), "{m}");
     }
 
     /// Write a minimal bundle: one stdlib file, and the manifest that describes it.
@@ -402,12 +537,12 @@ mod tests {
         let d = bundle("added");
         // Control: intact first, so a failure below cannot be blamed on the fixture.
         assert!(
-            !local_checks(&d).iter().any(Check::failed),
+            !local_checks(&d, None).iter().any(Check::failed),
             "fixture must start clean"
         );
 
         write(&d, "default/99_evil.loft", "fn evil() {}\n");
-        let checks = local_checks(&d);
+        let checks = local_checks(&d, None);
         assert!(
             matches!(&checks[0], Check::Ok(_)),
             "every SHIPPED file still matches: {:?}",
@@ -424,7 +559,7 @@ mod tests {
     fn an_unrelated_file_in_default_is_not_flagged() {
         let d = bundle("unrelated");
         write(&d, "default/notes.txt", "scratch\n");
-        assert!(!local_checks(&d).iter().any(Check::failed));
+        assert!(!local_checks(&d, None).iter().any(Check::failed));
     }
 
     /// The anchor: the same intact bundle reads differently depending on what the
@@ -451,7 +586,8 @@ mod tests {
         assert!(check_anchor(&d, Some(&digest)).failed());
     }
 
-    /// The stdlib is checked where loft LOADS it from: `<binary-dir>/../default`.
+    /// The BUNDLE's stdlib is checked at `<binary-dir>/../default`; whether that is the one
+    /// loft LOADS is `check_loaded_stdlib`'s question, not this one's.
     #[test]
     fn bundle_root_is_the_parent_of_bin() {
         let root = bundle_root(Path::new("/opt/loft/bin/loft")).unwrap();

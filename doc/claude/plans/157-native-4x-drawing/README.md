@@ -7,6 +7,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+> **This is the one home for the scoreboard.**
+> [loft#1426](https://github.com/loft-lang/loft/issues/1426) is the *surfaced report* —
+> what crawler hit, and whether it is resolved for them — and it carries `status:planned`
+> pointing here.  Its table is the FILED baseline, frozen as evidence and not
+> maintained.  **Do not copy per-row numbers back into the issue**: they were in both places and
+> drifted twice in one day (one taken on a branch, one on a join), and a wrong attribution had to
+> be corrected in two places.  Report progress by editing this section; comment on the issue only
+> to tell the consumer something they need — a row crossing the bar, or the class closing.
+
 Open — P0–P4d, § V (Route R), § V-c (the hoist unblock), § V-d (append in
 place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
@@ -21,6 +30,47 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 `wide_line` 17× → 5.6×; `lock_curved` 11.9× → **5.7×**; `composite` 26× →
 **4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
 § V-q (2026-09-09, both under the bar).
+
+**Re-measured 2026-09-10 on the tree that JOINED this branch into
+`tuxedo-1481-addr-alignment`** (`compare.py --skip-interp --repeat 5`, quiet box, every row's hash
+agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash` **2.12×**,
+`hair` **1.76×**, `lock` **3.87×**, `composite` **2.65×**, `fill_circle` **3.69×**,
+`fill_star` **3.96×** — ten of the fourteen judged rows under the 4.0 bar.  Four remain:
+`smooth` **20.9×**, `fronds` **10.27×**, `lock_curved` **4.25×**, `wide_line` **5.23×**.
+The scoreboard above reads lower for some rows because it was taken on the branch; these are the
+JOINED tree's, and the delta is what carries across a join, never the endpoints.
+
+⚠ **`smooth` is no longer the allocation class this plan filed it under.**  § V-d fires on its hot
+line: `sp_out += [raster::pt(…)]` emits `n_pt(…, _elm_3)`, so the call builds into the pushed
+element and there is no per-sample temp record.  `LOFT_PROFILE` under `LOFT_NO_NATIVE_LIBS=1` puts
+**31 % of self time on `drawing.loft:460`** alone, and what is there is **8 loop-invariant record
+field reads per sample** — `sp_a`, `sp_b`, `sp_ta`, `sp_tb` are fixed across the whole inner loop
+and each coordinate expression reads all four at offsets 0 and 8, twelve `OpGetFloat`s through a
+`DbRef` in the function altogether, none lifted.  That is P4c's job, so **the next unit is why P4c
+declines there.**
+
+Two obvious leads are already DISPROVEN, by three cells built for it
+(`scratchpad/p4c/{withcall,nocall,nopt}.loft`, a loop reading two invariant `Pt` parameters):
+
+| cell | inner body | invariant reads left in the loop |
+|---|---|---:|
+| `withcall` | `out += [pt(t * a.ptx + b.ptx, …)]` — a record-returning CALL | 4 |
+| `nocall` | `out += [Pt { ptx: t * a.ptx + b.ptx, … }]` — a literal, no call | 4 |
+| `nopt` | `out += [t * a.ptx + b.ptx + …]` — builds `vector<float>`, writes no `Pt` at all | 4 |
+
+So it is **not** the call in the body (`nocall` declines identically), and **not** the body writing
+the same record type the reads come from (`nopt` writes no `Pt` and still declines).  P4c simply
+does not fire for this shape — invariant reads of a record PARAMETER in a loop that appends — and
+the next step is to INSTRUMENT the write set (`WriteSet::whole` / `evicts`, and whether the
+allocating push classifies at all) rather than guess a third time.  All three cells are one-liners
+to re-run and each is a ready A/B for a candidate cure.
+
+⚠ **And a switch in this family cannot A/B a LIBRARY's own code**, which is how that attribution
+nearly went wrong: the switches are read at GENERATION time and a `use`d library runs as the
+cdylib cached under its `native-auto/`, so `LOFT_NO_SCALAR_HOIST=1` on the consumer's run
+regenerates the program and leaves the library untouched — 394 ms vs 393 ms on a probe whose whole
+hot loop is inside `drawing`, which reads as "no effect" and is not one.  Rebuild the cdylib under
+the switch in a SCRATCH COPY of the package.  PERFORMANCE.md § Native vs Rust carries this.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a

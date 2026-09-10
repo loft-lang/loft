@@ -36,6 +36,10 @@
 //   `LOFT_POISON=1`) is the CI leg this file bites in.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   HOLDS: in PLAIN mode nothing moves — the allocator hands the stale buffer its own freed
+//   number back, so the reuse reads as correct and every channel is equal. The measurement
+//   above needs `LOFT_POISON=1 LOFT_STRICT_STORES=1`; a bulk row without them is the absence
+//   of the instruments, not of the defect.
 
 
 

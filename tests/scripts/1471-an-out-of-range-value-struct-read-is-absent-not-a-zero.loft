@@ -60,6 +60,9 @@
 //   nothing about which cell is wrong.  The sibling guard
 //   `1471-a-value-struct-is-nullable-through-its-tag` falsifies at that refusal on purpose,
 //   because there the defect WAS the refusal; here it is the answer, so the spelling had to go.
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both. The native side was not scored in this sweep.
 
 value struct P71 { x: integer, y: integer }
 value struct One71 { n: integer }
