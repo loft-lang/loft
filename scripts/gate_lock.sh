@@ -157,7 +157,28 @@ doctor() {
 
 # ---- selftest --------------------------------------------------------------------------
 #
-# Run by `make ci` beside the other script self-tests.  The load-bearing cells are 3 and 4:
+# Run by `make ci` beside the other script self-tests.
+#
+# Each cell is falsified by its OWN perturbation, not by its neighbour's.  That distinction
+# is the whole difference between a suite and a number: "breaking the ppid discriminator
+# fails cell 4" says nothing about the other nine, and a cell that only fails under a
+# sibling's perturbation is measuring the sibling.  Measured, one perturbation at a time:
+#
+#   P1  ppid discriminator always true                  -> c4
+#   P2  the orphan branch reports LIVE                   -> c4
+#   P3  the lock always reads FREE                       -> c2 c3 c4
+#   P4  the lock always reads HELD                       -> c1 c5
+#   P5  state consults the holder file AFTER the lock    -> c3 c4
+#   P6  the held-test truncates the lock file            -> c6
+#   P7  the holder file decides BEFORE the lock          -> c5
+#
+# Every cell falls to at least one, so none is vacuous.  P7 earned its place last: c5
+# ("a stale holder record with a FREE lock must read FREE") fell only to P4 until then,
+# which is the same perturbation as c1 — so it was not yet carrying its own weight.  A
+# file-led design that still respects the lock first slips past c5 (that is P5, which hits
+# c3 instead); only a file-FIRST one is caught, and that is the shape c5 exists for.
+#
+# The load-bearing pair is still 3 and 4:
 # a lock held with no holder record is the SAME observation for a live gate and for an
 # orphan, and they need opposite verdicts.  Getting it backwards tells an operator to kill
 # a running gate — measured against loft2's live gate while this was being written, which
@@ -166,11 +187,15 @@ selftest() {
     local L; L=$(mktemp -d)/gate.lock
     export LOFT_GATE_LOCK=$L LOFT_GATE_HOLDER=$L.holder
     local p=0 f=0
-    local LOG=""
+    local LOG="" CELL=0
     say(){ LOG="$LOG$1
 "; }
-    chk(){ if [[ "$3" == "$2"* ]]; then say "  ok   $1 -> $3"; p=$((p+1));
-           else say "  FAIL $1 -> got '$3' want '$2'*"; f=$((f+1)); fi; }
+    # Every verdict names its CELL, so a perturbation sweep can say WHICH cell it broke.
+    # Without that the labels repeat across cells ("state", "why", "doctor") and a sweep
+    # can only count failures, which cannot tell a cell that measures something from one
+    # that rides its neighbour's perturbation.
+    chk(){ if [[ "$3" == "$2"* ]]; then say "  ok   [c$CELL] $1 -> $3"; p=$((p+1));
+           else say "  FAIL [c$CELL] $1 -> got '$3' want '$2'*"; f=$((f+1)); fi; }
     clean(){ rm -f "$L" "$L.holder" "$L.ready" "$L.pid"; : >>"$L"; }
     # a normal child holder (has a real parent)
     hold(){ ( flock 8; echo $BASHPID >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" &
@@ -179,37 +204,37 @@ selftest() {
     orphan(){ ( ( flock 8; echo $BASHPID >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" & )
               while [ ! -f "$L.ready" ]; do sleep 0.05; done; OP=$(cat "$L.pid"); }
 
-    clean; say "cell 1: lock FREE"
+    clean; CELL=1; say "cell 1: lock FREE"
     chk state FREE "$("$0" state)"
 
-    say "cell 2: LIVE holder, holder file names its checkout"
+    CELL=2; say "cell 2: LIVE holder, holder file names its checkout"
     hold; printf '%s %s\n' "$HP" "/home/jurjens/workspace/loft2" > "$L.holder"
     chk state "HELD_LIVE $HP" "$("$0" state)"
     chk why "held by a LIVE gate" "$("$0" why)"
 
-    say "cell 3 (CONTROL — the false positive): LIVE holder, NO holder file -> still LIVE"
+    CELL=3; say "cell 3 (CONTROL — the false positive): LIVE holder, NO holder file -> still LIVE"
     rm -f "$L.holder"
     chk state "HELD_LIVE $HP" "$("$0" state)"
-    case "$("$0" doctor)" in *"ordinary queue"*) say "  ok   doctor calls it an ordinary queue"; p=$((p+1));;
-      *) say "  FAIL doctor mislabels a live gate"; f=$((f+1));; esac
+    case "$("$0" doctor)" in *"ordinary queue"*) say "  ok   [c$CELL] doctor calls it an ordinary queue"; p=$((p+1));;
+      *) say "  FAIL [c$CELL] doctor mislabels a live gate"; f=$((f+1));; esac
     kill "$HP" 2>/dev/null; sleep 0.3
 
-    say "cell 4: ORPHAN holder (ppid 1), no holder file -> ORPHAN  <-- loft#1504"
+    CELL=4; say "cell 4: ORPHAN holder (ppid 1), no holder file -> ORPHAN  <-- loft#1504"
     clean; orphan
     ppid=$(awk '{print $4}' /proc/$OP/stat 2>/dev/null)
     say "         (holder pid $OP has ppid $ppid)"
     chk state "HELD_ORPHAN $OP" "$("$0" state)"
-    case "$("$0" why)" in *"ORPHAN reparented to init"*) say "  ok   why names the orphan"; p=$((p+1));;
-      *) say "  FAIL why: $("$0" why)"; f=$((f+1));; esac
-    case "$("$0" doctor)" in *"NOT a running gate"*) say "  ok   doctor verdict actionable"; p=$((p+1));;
-      *) say "  FAIL doctor"; f=$((f+1));; esac
+    case "$("$0" why)" in *"ORPHAN reparented to init"*) say "  ok   [c$CELL] why names the orphan"; p=$((p+1));;
+      *) say "  FAIL [c$CELL] why: $("$0" why)"; f=$((f+1));; esac
+    case "$("$0" doctor)" in *"NOT a running gate"*) say "  ok   [c$CELL] doctor verdict actionable"; p=$((p+1));;
+      *) say "  FAIL [c$CELL] doctor"; f=$((f+1));; esac
     kill "$OP" 2>/dev/null; sleep 0.3
 
-    say "cell 5 (CONTROL): stale holder file, lock FREE -> FREE"
+    CELL=5; say "cell 5 (CONTROL): stale holder file, lock FREE -> FREE"
     clean; printf '%s %s\n' "99999999" "/x" > "$L.holder"
     chk state FREE "$("$0" state)"
 
-    say "cell 6: the held-test must not truncate the lock file"
+    CELL=6; say "cell 6: the held-test must not truncate the lock file"
     echo sentinel > "$L"; "$0" state >/dev/null; chk "intact" sentinel "$(cat "$L")"
     rm -f "$L" "$L.holder" "$L.ready" "$L.pid"
     if [ "$f" -eq 0 ]; then
