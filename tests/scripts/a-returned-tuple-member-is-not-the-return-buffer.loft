@@ -24,6 +24,10 @@
 //
 // @falsified-at: 12effb627 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-returned-tuple-member-is-not-the-return-buffer.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Re-derived against the COMMITTED fix, so the control
+//   it builds is the tree the guard was written for.
 // CHANNEL: the trace string on both backends, which carries BOTH faces — a released id that
 //   reads `0` is the zeroed record, and a missing id is the lost resource.  The store LEAK is a
 //   second, independent channel on the same cells (`c_unmentioned` alone leaked `kt=82 RS×1`);
