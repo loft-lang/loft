@@ -1,0 +1,379 @@
+diff --git b/src/data.rs a/src/data.rs
+index 5a90b4366..1086af28e 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -2545,39 +2545,6 @@ impl Type {
+         }
+     }
+ 
+-    /// This type carrying `src`'s deps MEMBER BY MEMBER — the tuple-aware
+-    /// [`Self::with_deps_of`].
+-    ///
+-    /// A tuple has no dep list of its own, so `with_deps_of` cannot reach one and the
+-    /// tuple-shaped way to say *"the declared type says the SHAPE, the value in hand says
+-    /// what it owns"* is to pair the members up.  Giving every member the UNION instead says
+-    /// something weaker and loses a fact: which work-ref backs which member.  That pairing is
+-    /// what every store-lifetime decision about a single member reads
+-    /// (`scopes::tuple_member_backing`), and the union cannot be taken apart again — a `text`
+-    /// member contributes a dep without being a heap leaf, so counting back to the member a
+-    /// dep belongs to is wrong in both directions.
+-    ///
+-    /// Falls back to `with_deps_of` wherever the two are not tuples of the same arity: there
+-    /// is no pairing to make, and the deps still reach the members through
+-    /// [`Self::with_deps`].
+-    #[must_use]
+-    pub fn with_member_deps_of(&self, src: &Type) -> Type {
+-        match self {
+-            Type::RefVar(tp) => Type::RefVar(Box::new(tp.with_member_deps_of(src))),
+-            Type::Optional(tp) => Type::optional(tp.with_member_deps_of(src)),
+-            Type::Tuple(mine) => match src.base() {
+-                Type::Tuple(theirs) if mine.len() == theirs.len() => Type::Tuple(
+-                    mine.iter()
+-                        .zip(theirs)
+-                        .map(|(m, t)| m.with_member_deps_of(t))
+-                        .collect(),
+-                ),
+-                _ => self.with_deps_of(src),
+-            },
+-            other => other.with_deps_of(src),
+-        }
+-    }
+-
+     /// This type widened to borrow whatever EITHER side borrows — the type-level
+     /// half of a branch join (loft#978).
+     ///
+@@ -5495,68 +5462,6 @@ pub fn is_dbref(tp: &Type) -> bool {
+     )
+ }
+ 
+-/// How many HEAP LEAVES a tuple type holds, counting THROUGH nested tuples.
+-///
+-/// The pre-order this counts in is the order a tuple's members are laid out and the order
+-/// its dep list runs in, so it is also the ordinal a leaf is addressed by
+-/// (`scopes::tuple_leaf_at`) and the index [`tuple_own_backings`] records against.  One home
+-/// for all three: a second spelling of this walk could only agree by accident, and the
+-/// ordinal it produces addresses a store.
+-#[must_use]
+-pub fn tuple_heap_leaves(tp: &Type) -> usize {
+-    match tp.base() {
+-        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
+-        other => usize::from(is_dbref(other)),
+-    }
+-}
+-
+-/// The single dep each of a tuple type's heap leaves carries of its OWN, in
+-/// [`tuple_heap_leaves`] pre-order — `None` when `tp` is not a tuple with heap leaves.
+-///
+-/// A tuple has no dep list of its own, so the deps of a freshly built tuple LITERAL sit in
+-/// its members, one per member that carries one: `(s, w)` spells
+-/// `(ref(S)["__ref_1"], text["w"])`, where `__ref_1` backs the record member and `w` is what
+-/// the text member borrows.  That is the pairing every store-lifetime decision about a member
+-/// needs, and it survives only until the variable is given the union
+-/// (`Vars::depend_on_all`), which writes the whole list into every member.
+-///
+-/// `u16::MAX` marks a leaf this cannot name — one carrying no dep, or already carrying more
+-/// than one — so the position of the leaves that CAN be named is still right.  A reader must
+-/// treat that entry as "no answer" rather than as a variable number, which is the same
+-/// convention a dep list itself uses for the share marker.
+-#[must_use]
+-pub fn tuple_own_backings(tp: &Type) -> Option<Vec<u16>> {
+-    if !matches!(tp.base(), Type::Tuple(_)) {
+-        return None;
+-    }
+-    let mut out = Vec::new();
+-    collect_own_backings(tp, &mut out);
+-    // A tuple type NO leaf of which names a backing says nothing about the pairing — the
+-    // declared type of `t: (S?, text) = …` before the value's deps are carried across is
+-    // exactly that, every member empty.  Answering `[MAX, MAX]` would make it an assignment
+-    // that DISAGREES with the real one, which is not what an empty annotation is.
+-    (out.iter().any(|d| *d != u16::MAX)).then_some(out)
+-}
+-
+-fn collect_own_backings(tp: &Type, out: &mut Vec<u16>) {
+-    match tp.base() {
+-        Type::Tuple(elems) => {
+-            for e in elems {
+-                collect_own_backings(e, out);
+-            }
+-        }
+-        other if is_dbref(other) => {
+-            let own = other.depend();
+-            out.push(if own.len() == 1 && own[0] != u16::MAX {
+-                own[0]
+-            } else {
+-                u16::MAX
+-            });
+-        }
+-        _ => {}
+-    }
+-}
+-
+ /// Does a value of this type REACH a store — directly, or through a tuple element?
+ ///
+ /// [`is_dbref`] answers the direct question and says `false` for a `Type::Tuple`, which is
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 01825c3a1..764b7d4ff 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -4373,12 +4373,11 @@ use a separate collection or add after the loop"
+             // owns — it was written before that value existed.  `Type::with_deps_of` states
+             // that rule for the shapes it reaches, and a TUPLE is not one of them: a tuple
+             // carries no dep list of its own (`deps_ref` answers `None`), so calling it here
+-            // would be a silent no-op.  `with_member_deps_of` is the tuple-aware form and
+-            // pairs the members up, which is what keeps *which work-ref backs which member*
+-            // readable afterwards (`scopes::tuple_member_backing`).  Handing every member the
+-            // UNION instead — the shape this site carried first — closed the nullable member
+-            // and left a `text` member releasing twice, because a union cannot be taken
+-            // apart again.
++            // would be a silent no-op.  The literal's deps are read and re-applied the
++            // tuple-aware way instead — `depend()` unions them over the members and
++            // `with_deps` gives every member the union, which is the shape a tuple's dep
++            // lists already have (`scopes::tuple_member_backing` reads them positionally on
++            // exactly that premise).
+             //
+             // Without this the backing is dropped for a member the annotation makes
+             // NULLABLE, and only for that member: a declared `(S, integer)` is `is_equal` to
+@@ -4387,10 +4386,11 @@ use a separate collection or add after the loop"
+             // the two types differ, which is what routes it here, which is what loses the
+             // backing.  A copy of the tuple then had no work-ref to hand its release to and
+             // released the member's resource TWICE (`formal/heap.md` D-heap-1).
+-            if s_type.depend().is_empty() {
++            let carried = s_type.depend();
++            if carried.is_empty() {
+                 f_type.clone()
+             } else {
+-                f_type.with_member_deps_of(&s_type)
++                f_type.with_deps(&crate::data::Deps::frame(carried))
+             }
+         } else {
+             s_type
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 5c23dc44a..0bce7962f 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2351,31 +2351,24 @@ pub(crate) fn drop_bearing_source(src: &Value, function: &Function) -> Option<u1
+ /// [`tuple_copy_source_path`] walks `Function::tuphold_origin` to the tuple the chain starts
+ /// from and the PATH to the leaf inside it.
+ ///
+-/// **Which dep.** Asked twice, because the pairing survives in two different states.
+-///
+-/// `Vars::tuple_backings` has it as the members themselves spelled it — one backing per heap
+-/// leaf, recorded before a tuple variable was given the union of its members' deps. That is
+-/// the answer wherever it exists, and it needs no reasoning about the list at all.
+-///
+-/// The dep LIST is the older read, for a tuple that already carried the union by the time its
+-/// variable was typed. The lists are UNIONED across the heap members and spread back into
+-/// every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints as
+-/// `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is in
+-/// MEMBER order and recurses into a nested tuple in that same order, so the backing of a leaf
+-/// is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the `WT`
+-/// above, not the `__ref_1` that `first()` answers. Member order, not the order the work-refs
+-/// were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the inner
+-/// literal's work-ref was created first, which is what says the index is positional and not a
+-/// happy accident of the numbering.
++/// **Which dep.** The dep lists are UNIONED across the tuple's heap members and spread back
++/// into every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints
++/// as `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is
++/// in MEMBER order and recurses into a nested tuple in that same order, so the backing of a
++/// leaf is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the
++/// `WT` above, not the `__ref_1` that `first()` answers. Member order, not the order the
++/// work-refs were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the
++/// inner literal's work-ref was created first, which is what says the index is positional
++/// and not a happy accident of the numbering.
+ ///
+ /// The count is what makes that positional read safe rather than a convention this function
+ /// hopes for: if the list is not exactly as long as the tuple's heap leaves, the order it
+ /// would be indexed by is not established, so this DECLINES instead of naming a work-ref it
+ /// guessed. Declining costs the hand-off (the pre-loft#1361 double release) and never
+-/// suppresses the release of a member that is still live. That is also why the count read
+-/// cannot be the ONLY one: a `text` or a value-enum member carries a dep without being a heap
+-/// leaf, so the list outruns the walk and every such tuple declined — which is the half
+-/// `tuple_backings` exists to answer.
++/// suppresses the release of a member that is still live. A `text` or a re-copied tuple is
++/// what reaches it — a text member carries a dep of its own without being a heap leaf, and a
++/// copy of a copy unions the source's deps in beside its own — and `formal/heap.md` D-heap-1
++/// keeps those shapes.
+ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
+     let (root, path) = tuple_copy_source_path(base, i, function);
+     // A PARAMETER's members are the CALLER's, and its deps are not frame variables of this
+@@ -2391,22 +2384,11 @@ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
+     if !crate::data::is_dbref(leaf.base()) {
+         return None;
+     }
+-    // The pairing as the members themselves spelled it, recorded before the union was
+-    // written over them (`Vars::tuple_backings`).  It is the same question the dep list is
+-    // read for below, answered without having to infer which entry belongs to this leaf.
+-    if let Some(dep) = function
+-        .tuple_backings
+-        .get(&root)
+-        .and_then(|b| b.get(ordinal).copied())
+-        && dep != u16::MAX
+-    {
+-        return Some(dep);
+-    }
+     let deps = match leaf.base() {
+         Type::Reference(_, deps) | Type::Enum(_, true, deps) => deps,
+         _ => return None,
+     };
+-    if deps.len() != crate::data::tuple_heap_leaves(root_tp) {
++    if deps.len() != tuple_heap_leaves(root_tp) {
+         return None;
+     }
+     let dep = *deps.get(ordinal)?;
+@@ -2471,7 +2453,7 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
+     let before: usize = elems
+         .iter()
+         .take(usize::from(*i))
+-        .map(crate::data::tuple_heap_leaves)
++        .map(tuple_heap_leaves)
+         .sum();
+     let elem = elems.get(usize::from(*i))?;
+     if rest.is_empty() {
+@@ -2481,6 +2463,15 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
+     Some((leaf, before + inner))
+ }
+ 
++/// How many HEAP leaves a tuple type holds, counting through nested tuples — the length its
++/// dep list must have for member order to index them.
++fn tuple_heap_leaves(tp: &Type) -> usize {
++    match tp.base() {
++        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
++        other => usize::from(crate::data::is_dbref(other)),
++    }
++}
++
+ /// Which DEFINITION each fn-ref variable in `code` was assigned, `u32::MAX` where the
+ /// assignments disagree or the target cannot be named.
+ ///
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 39fe58093..c79a346a2 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -319,37 +319,6 @@ pub struct Function {
+     /// function, the same reason `mv_field_origin` above does; regenerated by the hold site
+     /// on every pass, like `unique`.
+     pub tuphold_origin: HashMap<u16, (u16, Option<u16>)>,
+-    /// The backing work-ref of each HEAP LEAF of a tuple variable, in the same pre-order
+-    /// `scopes::tuple_leaf_at` walks — `u16::MAX` for a leaf whose backing this table cannot
+-    /// name.
+-    ///
+-    /// A tuple carries no dep list of its own (`Type::with_deps`), so a tuple variable's deps
+-    /// live in its MEMBERS, and giving the variable a dep spreads the whole union into every
+-    /// one of them.  Each member then reads as borrowing what its neighbours borrow, and the
+-    /// pairing a member's own dep carried — *this* work-ref backs *this* member — is gone.
+-    /// Recovering it by counting fails in both directions: a `text` or a value-enum member
+-    /// contributes a dep without being a heap leaf, and a text LITERAL member has a dep SLOT
+-    /// that stays empty, so neither the leaf count nor the dep-slot count is the number of
+-    /// deps the union holds.
+-    ///
+-    /// So the pairing is CARRIED rather than inferred, recorded by
+-    /// [`Self::depend_on_all`] — the one site that overwrites it — from the type as the
+-    /// members still spell it.  `scopes::tuple_member_backing` reads it.
+-    ///
+-    /// Lives on the variable table because a variable NUMBER is only unique within a
+-    /// function, the same reason `tuphold_origin` above does.
+-    pub tuple_backings: HashMap<u16, Vec<u16>>,
+-    /// The tuple variables [`Self::tuple_backings`] has already recorded THIS pass.
+-    ///
+-    /// The map above is a join over the assignments of one parse, and the two passes do not
+-    /// spell a tuple member the same way: on pass 1 a heap member still names the LOCAL it was
+-    /// built from, and only on pass 2 is it copied into a backing of its own
+-    /// (`Parser::tuple_member_owned_copy` is pass-2 only).  Joined across the passes, every
+-    /// entry would read as two assignments disagreeing.  So the first record of a pass
+-    /// REPLACES what the previous one left and the rest join onto it — the shape
+-    /// [`Self::pass2_rebuilt`] has for the same reason, kept separate because a shared set
+-    /// would make two unrelated decisions move together.  Reset per pass, in `copy`.
+-    tuple_backings_seen: std::collections::HashSet<u16>,
+     /// loft#1145 — a per-PASS ordinal for the loop now being parsed, and the body locals
+     /// each loop binds.
+     ///
+@@ -573,8 +542,6 @@ impl Function {
+             loop_binds: HashMap::new(),
+             mv_field_origin: HashMap::new(),
+             tuphold_origin: HashMap::new(),
+-            tuple_backings: HashMap::new(),
+-            tuple_backings_seen: std::collections::HashSet::new(),
+             loop_ord: 0,
+             loop_ord_of: HashMap::new(),
+             body_binds: HashMap::new(),
+@@ -748,9 +715,6 @@ impl Function {
+         // so pass 2 re-inserts what pass 1 put there.
+         self.tuphold_origin.clear();
+         self.tuphold_origin.clone_from(&other.tuphold_origin);
+-        // CARRIED for the same reason, and read by the same pass.
+-        self.tuple_backings.clear();
+-        self.tuple_backings.clone_from(&other.tuple_backings);
+         self.loop_ord = 0;
+         other.loop_ord = 0;
+         self.loop_ord_of.clear();
+@@ -829,8 +793,6 @@ impl Function {
+             // Carried for the same reason `append` carries it: the scope pass reads this map
+             // off the copy it works on, long after parsing.
+             tuphold_origin: other.tuphold_origin.clone(),
+-            tuple_backings: other.tuple_backings.clone(),
+-            tuple_backings_seen: std::collections::HashSet::new(),
+             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),
+             // but the maps it keys are CARRIED: they are how pass 2 hands each loop the
+             // binding pass 1 gave it.  Cleared here, pass 2's third loop found the second
+@@ -1603,15 +1565,6 @@ impl Function {
+     /// An EMPTY incoming list is a no-op rather than a clear, which is what the loop it
+     /// replaces did: "the types agree, adopt the deps" never meant "and drop what you had".
+     fn depend_all(&mut self, var_nr: u16, type_def: &Type) {
+-        // `type_def` is the only place the tuple's members still spell their OWN deps: what
+-        // goes on the variable is the UNION, written into every member (`Type::with_deps` —
+-        // a tuple has no dep list of its own), and the leaf/work-ref pairing does not survive
+-        // that.  Record it here, where both halves are in hand (`Self::tuple_backings`).
+-        if var_nr != u16::MAX
+-            && let Some(b) = crate::data::tuple_own_backings(type_def)
+-        {
+-            self.join_tuple_backings(var_nr, &b);
+-        }
+         self.depend_on_all(var_nr, &type_def.depend());
+     }
+ 
+@@ -1643,45 +1596,6 @@ impl Function {
+         }
+     }
+ 
+-    /// Join `b` into what [`Self::tuple_backings`] already holds for `var_nr`, keeping only
+-    /// the leaves every assignment agrees about.
+-    ///
+-    /// The table is keyed by the VARIABLE, and `scopes::drop_bearing_source` reads it with
+-    /// nothing but that key — it runs after parsing and does not know which assignment the
+-    /// copy in front of it belongs to.  So a variable assigned two different tuples has no
+-    /// single answer, and taking the latest one is not a smaller error than taking none: a
+-    /// copy of the FIRST tuple then hands off the SECOND tuple's backing, which suppresses a
+-    /// drop that has to happen and releases nothing in its place.  Measured — `t = (s, w);
+-    /// u = t; t = (s2, w2);` lost `s2`'s release entirely, where declining costs only the
+-    /// hand-off the whole table exists to recover.
+-    ///
+-    /// `u16::MAX` is that decline, marked per LEAF rather than for the whole variable, so a
+-    /// tuple whose other members are minted the same way both times keeps its answers.
+-    fn join_tuple_backings(&mut self, var_nr: u16, b: &[u16]) {
+-        if self.tuple_backings_seen.insert(var_nr) {
+-            // The first record of this pass replaces the previous pass's spelling.
+-            self.tuple_backings.insert(var_nr, b.to_vec());
+-            return;
+-        }
+-        let Some(cur) = self.tuple_backings.get_mut(&var_nr) else {
+-            self.tuple_backings.insert(var_nr, b.to_vec());
+-            return;
+-        };
+-        if cur.len() != b.len() {
+-            // A different SHAPE is a different tuple; no leaf of it is addressed by the
+-            // ordinals recorded here.
+-            for e in cur.iter_mut() {
+-                *e = u16::MAX;
+-            }
+-            return;
+-        }
+-        for (e, n) in cur.iter_mut().zip(b) {
+-            if *e != *n {
+-                *e = u16::MAX;
+-            }
+-        }
+-    }
+-
+     #[track_caller]
+     pub fn depend(&mut self, var_nr: u16, on: u16) {
+         if on != u16::MAX {
