@@ -410,17 +410,19 @@ reaching past its own subject — which is what an over-wide cell is for:
   the member's backing still drops beside the buffer.  The same question as the loop-variable
   shape (a copy whose SOURCE is a view, discussed in its own paragraph below), with the
   difference that a tuple member's backing is a nameable work-ref, so a cure exists here
-  where a vector element has none.  **This shape and the `??` one below are ONE question** —
-  see the carrier paragraph after this list;
+  where a vector element has none.  Measured 2026-09-10 — see the mechanism paragraph after
+  this list, which separates it from the `??` shape it was briefly conflated with;
 - a returned member guarded by `??` — `return t.0.0 ?? d`, and `return t.0 ?? d` at FLAT depth
   too, so the axis is the `??` and not the nesting: twice.  Measured on the pristine control and
   unchanged by either read-site fix below, so it is neither of them.  **Read off the IR
-  2026-09-10** — the mechanism is the carrier paragraph below, shared with the bound-projection
-  shape above.
+  2026-09-10** — the source is the coalesce `If`, which the resolver declines outright; the
+  mechanism paragraph below has it, and it is NOT the bound shape's.
 
-**Two of these shapes are one question: a CARRIER hides the member.**  Measured 2026-09-10 over
-an 11-cell matrix, byte-identical on both backends (`(O-NoDiverge)`), with a droppable `TdH`
-whose `OpDrop` appends to a trace file:
+**The `??` shape and the bound-projection shape share a SYMPTOM, not a root.**  Measured
+2026-09-10 over an 11-cell matrix, byte-identical on both backends (`(O-NoDiverge)`), with a
+droppable `TdH` whose `OpDrop` appends to a trace file.  Both leave the same trace — the source
+tuple released before the value is used, the returned copy released again after — and it was that
+shared signature that made them look like one defect:
 
 | cell | shape | trace | releases |
 |---|---|---|---|
@@ -442,22 +444,37 @@ either shape turns on: **x3 was the bound shape wearing a `??`**.  What both nee
 actually is — the whole SOURCE TUPLE drops (both `81` and `82`) before the alive marker, and the
 returned member then drops again in the caller.
 
-The root is `scopes::drop_bearing_source`.  It resolves a copy's source by IR SHAPE: a
-`TupleGet` goes to `tuple_member_backing`, but a `Value::Var` answers *that variable* and stops.
-A variable that merely CARRIES a member — the `??` temp (`__ncc_1`, which the table prints
-`skipfree deps=[t(3)]`, so it names the tuple VARIABLE and not the member's backing work-ref
-`__ref_p2_1`) or a user local bound from `t.0` — is not the drop-bearing source, so
-`copy_moves_drop_from` suppresses a variable that owns nothing while the backing still drops.
-Two carriers, one hole, and it is the shape-matching lesson again: a lowering must be recognised
-by a recorded fact, not by the node it happens to be spelled as.
+Both fail in `scopes::drop_bearing_source`, which resolves a copy's source by IR SHAPE — but they
+fail at DIFFERENT arms of it, and an env-gated probe inside that function is what separates them.
+The variable table alone is not enough to tell them apart — it prints `__ncc_1` as an ordinary row
+naming the tuple, which reads exactly like the bound shape's carrier — so the arm each source
+actually reaches has to be observed in the resolver, not inferred from the row.
 
-The fact already exists — `Function::tuphold_origin` maps a variable to its `(base, member)` and
-`tuple_copy_source_path` already walks it — but it is recorded only for the `_tuphold` and
-`tuple_tmp` work-refs (`parser/operators.rs`, `parser/vectors.rs`).  Neither carrier gets an
-entry, which is why the walk stops.  So the cure is to record the origin at the two binds that
-mint a carrier rather than to widen the matcher, and the prediction that falsifies it is sharp:
-q1, q2, x3 and x5 all fall to one release together, while x1, x2, x4, x6, x7 and the nine cells
-of the existing tuple guard do not move.
+**The bound shape is a carrier.**  `m = t.0; return m` arrives as `Value::Var(m)`, and that arm
+answers *that variable* and stops.  `m` is not the drop-bearing source — the table prints it
+`deps=[t(3)]`, naming the tuple VARIABLE, while the resource sits behind the member's backing
+work-ref `__ref_p2_1(6)` — so `copy_moves_drop_from` suppresses something that owns nothing and
+the backing drops beside the copy that took its resource.
+
+**The `??` shape is not a carrier at all.**  `return t.0 ?? d` arrives as the coalesce lowering
+`If(<null-check Var(__ncc_1)>, Var(__ncc_1), <default block>)`.  `drop_bearing_source` has arms
+for `Var`, `TupleGet`, `Block` and `Insert` only, so an `If` falls to `_ => None` and the hand-off
+is declined outright.  That is also why it cannot be a resolver tweak: the member is handed off on
+the PRESENT arm and not on the default one, so the answer is per-path — the conditional-ownership
+question `ownership_cfg.rs` already carries `__ncc_*` machinery for, not a lookup.
+
+Measured negative: recording a `tuphold_origin` entry at the `_ncc` mint AND resolving the `Var`
+arm through `tuphold_origin` moved **no cell** — as the `If` reading predicts, since that source
+never reaches the `Var` arm.  The change was reverted rather than shipped as a no-op.
+
+So the two want different cures.  The bound shape wants the carrier's origin recorded, and
+`Function::tuphold_origin` is the fact for it — `tuple_copy_source_path` already walks it — but it
+is recorded only for the `_tuphold` and `tuple_tmp` work-refs (`parser/operators.rs`,
+`parser/vectors.rs`), never for a user bind.  What makes that more than a one-liner is
+REASSIGNMENT: an origin recorded at `m = t.0` is stale after `m = <anything else>`, so the record
+needs invalidation, which is why this is plan-sized rather than a bind-site hook.  Its prediction
+is narrow and falsifiable: **x5 alone** falls to one release, while q1, q2 and x3 — all three
+`If`-sourced — do not move, and x1, x2, x4, x6, x7 and the existing guard's nine cells stay put.
 
 ✓ **A copy off a tuple PARAMETER's member — `fn f(p: (S, integer)) { u = p; }` — CLOSED
 2026-09-10** for every copy that DIES in the callee.  The rule was already implemented for the
