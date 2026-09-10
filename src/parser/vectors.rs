@@ -5643,7 +5643,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if kt == u16::MAX {
                 return None;
             }
-            let o = self.vars.work_refs(&owned_create, &mut self.lexer);
+            // The PASS-2-ONLY sequence, because this whole function is guarded by
+            // `!self.first_pass` and a mint that can fire only on pass 2 must not draw from
+            // the shared `__ref_N` names.  The shared mint deliberately re-finds a promoted
+            // RETURN BUFFER when the type matches — pass 2 re-claiming a name for the same
+            // ROLE is how the buffer is found again (`Vars::retypes_argument`) — and a
+            // member's backing is a different role, so sharing the sequence made the
+            // member's store and the buffer ONE variable in any function returning that
+            // record, where the materialised-view return re-mints the buffer before copying
+            // into it (loft#1509; loft#848 is the same collision at a block used as a
+            // value).  `work_refs_p2` is otherwise identical.
+            let o = self.vars.work_refs_p2(&owned_create, &mut self.lexer);
             if o == u16::MAX {
                 return None;
             }

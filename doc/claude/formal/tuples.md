@@ -252,6 +252,37 @@ it, not a standing fact.
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
 
+D-tup-13 OPENED AND CLOSED 2026-09-10 (loft#1509): `(T-Proj)` says `t.i` reads that element and
+`heap.md (H-Drop)` runs the hook once per resource, and a RETURNED member satisfied neither —
+it read as a ZEROED record, or its resource went missing and its store leaked.  A tuple
+member's own backing is minted by `Parser::tuple_member_owned_copy`, which asked the SHARED
+`__ref_N` sequence; that mint deliberately re-finds a promoted RETURN BUFFER when the type
+matches, because pass 2 re-minting the same name for the same ROLE is how the buffer is found
+again (`Vars::retypes_argument`).  A member's backing is a different role.  So in a function
+whose return type is that record, the member's store and the return buffer were ONE variable,
+and the materialised-view return re-mints the buffer before copying into it: the member's
+record was cleared just before it was read.  Returning the member that DREW the buffer handed
+the caller the cleared record; returning anything else lost that member's resource, because the
+literal's copy had already suppressed its source's own drop.
+
+The scope is the RETURN TYPE, not the tuple.  `fn r() -> S { s = S{…}; t = (s, 5); return S{…} }`
+— where nothing in the source connects the two — lost the member's resource and leaked its
+store, while the same body returning a DIFFERENT record type was always correct.  That pair is
+what the guard pins the axis with.
+
+The rule was already written for the site.  `Vars::work_refs_p2` exists because *"a mint site
+that can fire ONLY on pass 2 must not draw from the shared `__ref_N` sequence"* (loft#848, the
+same collision for a block used as a value), and `tuple_member_owned_copy` opens with
+`if self.first_pass { return None; }`.  Cure: that one mint draws from the pass-2 sequence.
+Guard `a-returned-tuple-member-is-not-the-return-buffer.loft`, nine cells, scoring the release
+trace with the leaked store as an independent second channel.
+
+⚠ Three shapes the same guard's neighbours reach are NOT this entry and stay in `heap.md`
+D-heap-1: a copy off a tuple PARAMETER's member, a bound projection returned
+(`x = t.0; return x`), and a nested member returned (`return t.0.0`).  Each releases twice for
+its own reason and none of them was the buffer collision — measured against a pristine control
+build, where all three read exactly as they do with this one fixed.
+
 D-tup-12 closed 2026-09-10: `(T-Proj)` spells a projection `.i` with a LITERAL index, and a
 tuple has no other member.  A record-backed tuple is carried as the SYNTHETIC STRUCT
 `__tuple<…>`, whose attributes are named `_0`, `_1`, …, and that home's projection site

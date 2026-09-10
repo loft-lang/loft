@@ -1,0 +1,25 @@
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 7e3fbf27b..413509bed 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -5643,19 +5643,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             if kt == u16::MAX {
+                 return None;
+             }
+-            // The PASS-2-ONLY sequence (loft#1509).  This whole function is guarded by
+-            // `!self.first_pass`, and `work_refs` deliberately re-finds a promoted RETURN
+-            // BUFFER when the type matches — `retypes_argument` allows it because pass 2
+-            // re-minting the same name for the same ROLE is how the buffer is found again.
+-            // A tuple member's backing is a different role, so in a function returning that
+-            // record the member's store and the return buffer became one variable, and the
+-            // materialised-view return re-mints the buffer before copying into it: the
+-            // member's record was cleared just before it was read.  Returning the member that
+-            // drew the buffer answered a zeroed record; returning another member lost the
+-            // cleared one's resource entirely, since the literal's copy had already
+-            // suppressed its source's drop.  Same rule as loft#848 for a block used as a
+-            // value, and `work_refs_p2` is otherwise identical.
+-            let o = self.vars.work_refs_p2(&owned_create, &mut self.lexer);
++            let o = self.vars.work_refs(&owned_create, &mut self.lexer);
+             if o == u16::MAX {
+                 return None;
+             }

@@ -358,7 +358,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: three shapes release a tuple member's resource TWICE; and
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE; and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -380,8 +380,9 @@ copied, one record wore both names and "released once" was true by accident.
 Most of the family holds: the whole-tuple bind, two droppable members, a member at index 1,
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
-(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  THREE
-shapes do not, both backends, silently — re-measured 2026-09-10:
+(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FIVE
+shapes do not, both backends, silently — re-measured 2026-09-10, the last two of them found
+by loft#1509's own guard reaching past its subject:
 
 - a copy off a tuple PARAMETER — `fn f(p: (S, integer)) { u = p; }`, where `(H-Drop)`'s
   closing clause says the CALLER owns and nothing in the callee should release: twice;
@@ -394,7 +395,17 @@ shapes do not, both backends, silently — re-measured 2026-09-10:
   k-th non-scalar leaf needs each such leaf to contribute exactly one — which a value ENUM
   member, carrying a dep list that is EMPTY, breaks in the other direction.  So widening the
   leaf predicate trades one family of declines for another and neither is a superset; what
-  the shape wants is a dep list that carries the pairing rather than a count that infers it.
+  the shape wants is a dep list that carries the pairing rather than a count that infers it;
+- a bound projection RETURNED — `x = t.0; return x`, where the materialised return copies the
+  view into the return buffer and `copy_moves_drop_from` suppresses `x`, which owns nothing:
+  the member's backing still drops beside the buffer.  The same question as the loop-variable
+  shape (a copy whose SOURCE is a view, discussed in its own paragraph below), with the
+  difference that a tuple member's backing is a nameable work-ref, so a cure exists here
+  where a vector element has none;
+- a nested member RETURNED — `return t.0.0`: twice.  The read materialises through a
+  `tuple_tmp` work-ref rather than a `_tuphold`, so `Function::tuphold_origin` has no entry
+  for it and the chain walk stops there, at a temp whose dep names the tuple LOCAL.  The cure
+  is the one the nested COPY already got, recorded at the second site.
 
 ✓ **A NESTED tuple — `t = ((s, 1), 2); u = t` — CLOSED 2026-09-10.**  `(L-Tuple)` makes a
 tuple a synthetic struct, so a tuple inside a tuple is a container inside a container and the
@@ -494,11 +505,13 @@ re-measured there 2026-09-10 on both backends.  The claim that none of them repr
 was true only for the hours before that commit merged, which is how a "branch-internal" note
 goes stale: it is a statement about two trees, and one of them moved.  Per the bug policy that keeps them here rather than in the tracker.
 
-**Closes when** the three shapes above read exactly one release on both backends and the
+**Closes when** the five shapes above read exactly one release on both backends and the
 guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The
 parameter shape wants the argument rule, not a member pairing.  The `text` neighbour wants the
-pairing carried rather than inferred from a count.  The loop-variable shape wants the design
-question above answered before a cure is chosen for it.
+pairing carried rather than inferred from a count.  The nested RETURN wants the second read
+site recorded the way the copy site now is.  The bound projection and the loop variable are one
+question — a copy whose source is a VIEW — and want the design call above answered before a
+cure is chosen for either.
 
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
