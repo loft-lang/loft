@@ -914,6 +914,37 @@ version still present in `versions` (a yank of an unlisted version
 would sign a marker pointing at nothing — the `web 0.2.2` shape above).
 The two forms combine for a publish that also yanks.
 
+**Correcting metadata — `--expect-meta`.**  The same gap, a third
+time, for the write that fixes a description, homepage or category.  It
+adds no version and touches no `yanked` array, so `--expect` refuses it
+as *"ABSENT from the diff"* while the correction itself reads as
+untouchable drift — and `--yes` is refused outright without a terminal.
+Every route was closed, which left bundling the fix into an unrelated
+publish as the only path, and that is precisely what the scope check
+exists to prevent:
+
+```bash
+scripts/registry-sign.sh --registry-dir <checkout> --expect-meta hex_grid \
+  --message 'hex_grid: the index described the wrong coordinate system'
+```
+
+It refuses unless exactly the named packages' metadata changed: no
+version added or removed anywhere, no `yanked` array touched **on the
+named package either** (metadata only means metadata — otherwise the
+flag becomes a way to smuggle a version past the check), no other
+package altered, and each named package must ACTUALLY have changed — a
+name that matches nothing is a claim about a diff that is not there.
+The run prints the old and new value of every changed field, because
+sections 2 and 3 of its output have no tarball and no release to show
+and would otherwise render as a signature over an empty diff.
+
+Measured: `hex_grid`'s index entry called a pointy-top **odd-r offset**
+package *"axial"* for twelve days after its manifest was corrected
+(loft-libs-world `8e9c93d`), because nothing had published that package
+since — and axial-versus-offset is the exact confusion its coordinates
+are most often got wrong on, silently, since both spellings are
+`(integer, integer)`.  All three forms combine.
+
 **What a yank does and does not change.**  Measured on `imaging` 0.1.0
 (loft#1448): a range or `*` skips it (`>=0.1` resolves 0.3.2, as it did
 before), an **exact** pin still resolves it — that is the retention

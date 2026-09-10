@@ -1,0 +1,9 @@
+# Written by `loft install`: this directory's dependency declaration.
+[package]
+name = "loft3"
+version = "0.1.0"
+
+[dependencies]
+hex_grid = "^0.1.1"
+hex_field = "^0.1.2"
+hex_form = "^0.1.4"
