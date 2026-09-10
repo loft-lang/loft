@@ -358,7 +358,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE; and
+OPEN: **3** — `D-heap-1`, below: four shapes release a tuple member's resource TWICE;
+`D-heap-3`, a struct field projected off a CALL result, where `(B-View)` requires the copy and
+`(H-Drop)` requires the source to stop dropping that one resource and no mechanism can say so
+(loft#1506); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -440,6 +443,64 @@ after which the existing `TupleGet` arm reaches them unchanged; the parameter sh
 argument rule instead, not a member pairing; and the loop-variable shape wants the design
 question above answered before a cure is chosen for it.
 
+
+### D-heap-3 — OPEN (2026-09-10): a struct field projected off a CALL result releases twice
+
+`(H-Drop)`'s responsibility clause and `(B-View)`'s materialisation clause together settle this
+one completely, and in opposite directions — which is why it is worth writing out rather than
+leaving as loft#1506's prose.
+
+`(B-View)` makes `mk_dense().h` a VIEW: a projection whose type is a STRUCT is a view, and a
+view whose base is disturbed materialises into a copy ("a plain view gets a **copy** and is told
+so"; the C86 escape rule the implementation cites at `parser/operators.rs`). The base here is a
+call TEMP whose store dies inside the statement, so **the copy is required by rule** — a cure
+that aliased into the temp and deferred its death instead would contradict `(B-View)`.
+
+`(H-Drop)` then says what must follow: *"RESPONSIBILITY moves with a copy … the copy owns, the
+source stops dropping."* The source is the temp's FIELD, so the source must stop dropping THAT
+resource — and only that one. Measured on both backends, identical:
+
+- `x = mk_dense().h.id` — one record, **2** releases;
+- `r = mk_dense().h` — same, **2**;
+- `x = mk_two().h.id` where `struct Two { h: CfH, g: CfH }` — `h` twice, `g` **once**;
+- `d = mk_dense(); x = d.h.id` — **1**, correct, and the reference answer a cure must land ON;
+- a `?` on the same receiver adds an independent **+1** (loft#1506's second strength).
+
+The multi-field cell is what constrains the fix: the cascade is doing NECESSARY work for `g` in
+the same call in which it duplicates `h`.
+
+**Three candidate cures are excluded by measurement, not by argument.**
+
+1. **`drop_transferred` on the temp** (`scopes::mark_lift_handoff`, reached when
+   `copy_hands_off` accepts the destination). Suppresses the WHOLE cascade, so `g` is never
+   released: a leak in place of a double release.
+2. **The `0x8000` move bit** on `OpCopyRecord`, which frees the source store inside the op. The
+   store is the whole parent record, so `g` dies unreleased. Worse than (1).
+3. **"Null the slot so the cascade finds nothing"** (the loft#1476 precedent). Does not reach:
+   the generated cascade guards each field on the PARENT's `rec` — `if (self + off).rec != 0` on
+   a DbRef derived from `self` — so the guard is the same expression for every field and zeroing
+   a field's bytes changes none of it.
+
+**What is missing is a code representation, not a decision.** `(H-Drop)` is per-RESOURCE, and the
+three mechanisms the implementation has are per-VARIABLE (`drop_transferred`, `free_transferred`)
+or destination-side (`copy_hands_off`). There is no way to say *"this FIELD of this record has
+been copied out, so the cascade must not release it"* — and the cascade is a generated
+whole-record function (`t_<LEN><Type>_OpDropAll`), so expressing it means either a cascade variant
+that takes a skip-offset, derived from `cascade_fields` in its existing one home, or an emitted
+per-field sequence at the site, which would restate that list.
+
+⚠ **And the escape axis is not decidable where the copy is made.** `parser/operators.rs`'s
+`inline ref copy` runs mid-expression, before it knows what consumes the result; the temp it
+would have to name does not exist yet, being created later by `scopes::scan_args`. That is
+loft#1496's shape — the answer lives at the point that has seen what FOLLOWS — and it is why a
+condition written at the copy site is expected to be *nearly* right, whose failure direction is
+not copying where `(B-View)` requires it: a stale read on both backends rather than a doubled
+hook.
+
+**Conformance when closed** must assert the COUNT in four cells with four different answers — the
+escaping projection unchanged at 2, the non-escaping one at 1, the bound form still 1, and the
+two-droppable-field record at one release EACH — because every wrong cure above passes a boundary
+that omits one of them, and a cure that overshoots to zero is a leak reading as a fix.
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
 
