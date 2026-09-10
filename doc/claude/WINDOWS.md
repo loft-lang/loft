@@ -339,15 +339,42 @@ branches for LNK1181 and "required to be available in rlib format" are removed;
   new guard passes under the pre-fix predicate; only its four `#[cfg(windows)]` cells carry
   the change, and the falsification happened on windows-probe rather than in the file.
 
-  **The fifth, `doc_hygiene::every_test_binary_matches_a_subject`, is load-dependent and
-  its cause is still unknown.**  It reported `scripts/test_subjects.sh failed: ` with stderr
-  EMPTY — a message naming nothing — while a probe of the identical command passed (exit 0,
-  zero unmatched binaries, bash 5.3.15 Cygwin), and neither the script nor the `tests/*.rs`
-  set changed since the daily's commit.  Two failures wore one exit code: the script
-  REFUSING prints the binary name on stdout, the shell failing to RUN prints nothing.  The
-  guard now retries only the empty-empty shape (a genuine finding has stdout, so the retry
-  cannot mask one) and its message carries the exit code and both streams, so the next
-  occurrence is evidence rather than a dead end.
+  **The fifth was `bash` not being bash.**  ⚠ On Windows a bare `bash` resolves to
+  `C:\Windows\System32\bash.exe` — the **WSL launcher** — not Git Bash.  With no
+  distribution installed it prints *"Windows Subsystem for Linux has no installed
+  distributions"* to **stdout**, in UTF-16, and exits 1.  So
+  `doc_hygiene::every_test_binary_matches_a_subject` was never load-dependent, which is what
+  I first concluded and wrote here: the probe passed only because a `run:` probe executes
+  INSIDE Git Bash, where `bash` resolves to Git Bash first, while the test process inherits a
+  different PATH order.  Resolve Git Bash explicitly from `%ProgramFiles%`.
+
+  Two things made the wrong conclusion cheap to reach and the right one cheap to get.  The
+  guard reported only stderr, which was EMPTY — so its message read `scripts/test_subjects.sh
+  failed: ` and named nothing; **the message was what stopped the diagnosis**, and printing
+  the exit code and BOTH streams produced the WSL banner on the next run.  And the other ~20
+  suites here spawn `sh`, which System32 does not provide, so this was the only site exposed
+  — `sh` is not the cure either, since `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]` and
+  `/bin/sh` on Linux is dash.
+
+  **A sixth, found by the same probe and NOT in the daily's five: a python default encoding.**
+  `every_guard_says_how_to_score_it_again` went red on seven receipts "not stating WITNESS".
+  `scripts/falsify-review.py` read them with `path.read_text(errors="replace")` — no
+  `encoding=` — and the runner reports `locale.getpreferredencoding(False)` as **cp1252**
+  with `utf8_mode: 0`, so `×72` in a receipt decoded as `Ã—72` and the WITNESS pattern `×\d`
+  never matched.  Exactly the seven receipts carrying `×`.  Cure: read with an explicit
+  `encoding="utf-8"`.
+
+  ⚠ **`LC_ALL=C` does not reproduce this on Linux** — Python's preferred encoding stays
+  UTF-8, so the local falsification came back clean and the hypothesis read as disproven.  It
+  took the runner printing `locale-read == utf8-read ? False` to establish it.  Any
+  `read_text` / `open` without an explicit encoding is a latent Windows-only defect here, and
+  it cannot be falsified from Linux.
+
+  ⚠ **And this one was reachable only because a derived baseline had been regenerated on
+  Linux.**  `tests/falsified_docs.baseline` is a ratchet that only shrinks; regenerating it on
+  a Linux tree took it to zero, which encoded a platform-dependent reading as truth and left
+  Windows with seven entries and no grandfather. A derived baseline is a statement about the
+  tree AND the host that measured it.
 
 - **A `[c]` shim published by rename imported a name nobody published
   (fixed 2026-08-04, probed via the windows-probe loop).**  A program using a
