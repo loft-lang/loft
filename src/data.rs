@@ -467,6 +467,30 @@ impl IntegerSpec {
         i64::from(self.max) - i64::from(self.min) + 1
     }
 
+    /// Can `width` bytes hold every value this range admits? — `@FR-L-Narrow`, read as the
+    /// question a DECLARED width has to answer.
+    ///
+    /// The narrow encodings store the OFFSET `value - min` ([`NarrowIntKind`]'s
+    /// `(val - min)` stores), so a range of `range()` distinct values needs
+    /// `range() <= 256^width` codes.  A declared `size(…)` narrower than that is a
+    /// CONTRADICTION rather than a tight fit: the type promises values its storage cannot
+    /// represent, and every one past the window is lost with nothing said — measured on
+    /// `integer limit(0, 100000) size(1)`, where `300` and `100000` both read back as the
+    /// range's own `min` on both backends (loft#1501).
+    ///
+    /// The companion of [`Self::range_to_width`], which answers the same relation the other
+    /// way round; it is a separate method because it cannot borrow that one's answer —
+    /// `range_to_width` maps to 1, 2 or 8 and has no 4, so asking it about a `size(4)` type
+    /// (`u32`, `i32`) would report a contradiction that is not there.  `nullable` reserves a
+    /// code exactly as it does there, so the two count the same codes.
+    #[must_use]
+    pub fn range_fits_width(&self, width: u8, nullable: bool) -> bool {
+        if width >= 8 {
+            return true;
+        }
+        self.range() + i64::from(nullable) <= 1i64 << (8 * u32::from(width))
+    }
+
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {

@@ -523,3 +523,43 @@ fn limit_with_a_negative_upper_bound() {
   b: integer limit(-200, -10) = -50;
   _ = b;
 }
+
+// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
+//   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
+//   FAIL/48 -> 54/48.
+// CHANNEL: expectations, both backends.  The fn-ref cell below reports a DIFFERENT error on
+//   the control rather than none — `Unknown field i32.nope` — so what moves is the match,
+//   not the count.  Not leak and not assert: this file is a parse-time verdict.
+// ARMED: no instrument.  An ordinary run reports it.
+// WITNESS: on 2e408acc8 a `.field` on a `fn(integer, integer) -> integer` names the receiver
+//   `i32`, its representation and a writable loft type — so the message reads as a true
+//   statement about a value the author never wrote.
+// HOLDS: the 47 expectations that predate this cell must not move, and they are the control
+//   for the fix being a RENDERING change: a struct, a vector, a `text` and an enum receiver
+//   all name themselves correctly on both trees, so a cure that merely renamed something
+//   would move them too.
+// @falsified-by: tests/falsified/102-expected-errors.patch — the same channels.  Score it
+//   with `scripts/falsify.sh tests/scripts/102-expected-errors.loft --patch
+//   tests/falsified/102-expected-errors.patch` once 2e408acc8 is out of reach.
+//
+// loft#1500 — a diagnostic names the receiver's TYPE, not the def it is REPRESENTED by.
+//
+// `Data::type_def_nr` answers the representation, which for a fn-ref is `i32` — a writable
+// loft type, so the message read as a true statement about a value the author never wrote,
+// and sent them looking for an integer.  The same binding's type-change diagnostic spelled
+// it in full three lines away, so the two disagreed about one value.  Rendering `t` with
+// `Type::source_name` is what `doc_hygiene::diagnostics_spell_types_as_the_author_wrote_them`
+// asks for everywhere else; these sites printed a DEF name, which that gate cannot see.
+//
+// The fn-ref is the cell because it is the receiver whose representation differs MOST from
+// its type.  A struct, a vector and a `text` receiver named themselves correctly before and
+// after — they are in this file's other cells and act as the controls.
+// @EXPECT_ERROR: Unknown field fn(integer, integer) -> integer.nope
+fn unknown_field_on_a_fn_ref_names_the_fn_type(a: integer, b: integer) -> integer {
+  fr: fn(integer, integer) -> integer = pe_add_for_fn_ref;
+  fr.nope
+}
+
+fn pe_add_for_fn_ref(a: integer, b: integer) -> integer {
+  a + b
+}

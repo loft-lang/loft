@@ -325,6 +325,40 @@ that gate, now applied across a network boundary.
 **OPEN: 1.**
 - **D-layout-1** — residual: the load-time schema gate is built and opt-in, and closes fully when a persistence consumer wires `check_beside` into its open path
 
+D-layout-7 closed 2026-09-10 (loft#1501): `(L-Narrow)` says a range-annotated integer stores in
+the SMALLEST width that HOLDS its range, and `(L-Narrow-Decode)` says the bytes carry
+`value - start`.  A DECLARED `size(…)` was checked against neither.  `limit(…)` and `size(…)`
+are one statement made twice — which values the type holds, and how many codes they get — and
+nothing compared them, so `integer limit(0, 100000) size(1)` promised 100001 values and gave
+them 256: `300` and `100000` both read back as the range's own `min`, in a struct field, a
+vector element, a vector literal and an element write, on both backends, with no diagnostic
+anywhere.  A local and a parameter kept 64 bits instead, so one declaration produced three
+behaviours across six store paths and never said which one a program had.
+
+The proximate silence was the LITERAL exemption: every variable store was refused correctly
+(*"cannot implicitly narrow integer to u8"*), and `int_value_fits` exempted a constant that
+fits the declared RANGE — which `300` does.  Fixing that alone would have left the type
+declarable and useless, so the cure is at the declaration, where both halves are in view and
+the contradiction is decidable: `IntegerSpec::range_fits_width` beside `range_to_width`, the
+companion it cannot borrow from (that one maps to 1, 2 or 8 and has no 4, so asking it about a
+`size(4)` type would report a contradiction that is not there).
+
+Two smaller faults in the same annotation closed with it.  A `size(n)` for `n` outside
+{1,2,4,8} was dropped in silence, so `size(3)` laid the type out as the 8-byte default while
+the declaration said three; and above `i32::MAX` the literal tokenises as `LexItem::Long`,
+which the `size` parser did not match, leaving it in the stream so the reader got *"Expect
+token )"* — a punctuation error about a width they wrote deliberately.  The same
+`has_integer`/`has_long` split closed in `formal/tuples.md` D-tup-12 the same day, in the
+projection sites.
+
+Every narrow alias the stdlib declares sits exactly AT its width — `u8` is `limit(0, 255)
+size(1)`, `u16` is `limit(0, 65535) size(2)`, `u32` is `limit(0, 4294967294) size(4)` — so the
+boundary is `<=` and not `<`, and the whole suite is the control for it: a check that refused a
+tight fit would take `default/01_code.loft` down with it.  `i32` is declared with no `limit(…)`
+at all and passes only because four bytes hold exactly the plain integer's range; a user type
+written the same way at a NARROWER width is loft#931's shape and is now refused by name.
+`contract: settled` — the rule already said the width must hold the range.
+
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [layout-history.md](layout-history.md).
 
@@ -339,6 +373,13 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Narrow`, the DECLARED width** — a `size(…)` that cannot hold the declaration's own
+  `limit(…)` is refused at the declaration, naming both halves and how many values each admits
+  (`102b-pass1-expected-errors.loft`).  Checked at the boundary in both directions: every width
+  the stdlib declares is a tight fit and must keep parsing, and `limit(0, 100000)` is refused at
+  `size(1)` and `size(2)` and accepted at `size(4)` and `size(8)`.  A plain `integer size(1)`,
+  which declares no range, is refused too; `integer size(4)` is not, because four bytes hold
+  exactly that range.  See D-layout-7 for what the silence cost.
 - **`L-Narrow-Enc`** — `tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, on
   both backends: a `u32` field, element, key and spatial axis at and past `i32::MAX`, plus the
   absence code, each read through the SCHEMA (record render, keyed lookup, ordering) and through
