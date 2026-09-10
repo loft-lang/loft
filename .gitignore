@@ -172,3 +172,12 @@ target-*/
 # three lines above output that looked correct because it came from
 # `~/.loft/registry/` regardless of the working directory.
 /loft.toml
+
+# A drop-hook guard has no mutable globals to count with, so it accumulates its trace in a
+# file beside itself (`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once
+# .loft` and friends).  The corpus runner's CWD decides where that lands, so it appears
+# under tests/scripts/ as often as at the root.  Nothing ignored them until one WAS
+# committed by a `git add -A` (loft#1505's guard) — the others had merely never coincided
+# with one.  Each guard recreates its own on the next run; never commit.
+loft_*_trace.tmp
+tests/scripts/loft_*_trace.tmp
