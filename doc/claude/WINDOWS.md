@@ -291,6 +291,64 @@ branches for LNK1181 and "required to be available in rlib format" are removed;
 
 ## Previously fixed Windows-only issues (for context)
 
+- **The daily's five Windows failures were two code defects, not five test-gating
+  decisions (fixed 2026-09-10, probed via the windows-probe loop).**  `main` had been red
+  on `Test (windows-latest)` with 5 of 4716 failing, each on both attempts.
+
+  **`pid_alive` answered `None` on Windows**, so the dead-only scratch sweep fell back to
+  the age rule and three tests asserting decidability failed.  Its doc said liveness was
+  "unknowable on a non-unix host", but the test's own cfg structure said otherwise: the
+  pid-1/EPERM cell is already `#[cfg(unix)]` while the other three assertions are left
+  general, so the unix-only part had been separated deliberately and the rest was a
+  cross-platform contract Windows never implemented.  It is implementable with no new
+  dependency — `unsafe extern "system"` on kernel32, as `src/android.rs` already declares
+  its imports.
+
+  ⚠ **`WaitForSingleObject` is the obvious spelling and it is INERT here.**  It compiled,
+  it typechecked against `x86_64-pc-windows-msvc`, and the probe reported WAIT_FAILED
+  (`0xffffffff`) for EVERY openable process, live or dead, because
+  `PROCESS_QUERY_LIMITED_INFORMATION` does not grant SYNCHRONIZE — so every openable pid
+  would have answered `None` and all three tests would still be red.  Use
+  `GetExitCodeProcess`, which needs no extra right.  What the runner reported:
+
+  | pid | `GetExitCodeProcess` | `SYNCHRONIZE`+`Wait` |
+  |---|---|---|
+  | own process, pid 4 (System), a live child | `259` (STILL_ACTIVE) | `0x102` WAIT_TIMEOUT |
+  | a child that exited with 7 | `7` — the handle still opens | `0x0` WAIT_OBJECT_0 |
+  | pid 0, `u32::MAX-1`, an unused 999999 | `OpenProcess`=NULL, err 87 | same |
+
+  Both discriminate; `GetExitCodeProcess` wins on least privilege.  Its STILL_ACTIVE
+  ambiguity (a process exiting WITH code 259 reads alive) is accepted because it errs
+  toward not reclaiming, and the sweep DELETES what it calls dead.  pid 0 needs no special
+  case as it does on unix, where 0 addresses a process GROUP: Windows reports it as no
+  process.
+
+  **`verify_self::manifest_path_escapes` asked `is_absolute()`, which is unix-shaped while
+  the rule is not.**  Its own doc states the hazard platform-neutrally — "`root.join
+  ("/etc/x")` REPLACES the root" — but on Windows `Path::new("/etc/x").is_absolute()` is
+  FALSE, because an absolute path there needs a drive prefix, while `join` still keeps only
+  the prefix: `<drive>:\bundle` joined with `/etc/x` is `<drive>:\etc\x`.  So the one home
+  of the bundle escape rule waved through the very escape it exists to refuse, on the one
+  host where the predicate disagreed with the rule — a real hole, not a test fixture.  Asked
+  as a COMPONENT walk now (`Prefix | RootDir | ParentDir`), which also catches the
+  drive-relative `C:x` and the UNC shapes.  Measured: identical to the old predicate on
+  ZERO of 22 shapes on unix, so the whole effect is on Windows.
+
+  ⚠ **A unix-passing guard for a Windows-only defect is VACUOUS and must say so.**  On unix
+  `is_absolute()` already answered `/etc/loft-evil` correctly, so every portable cell of the
+  new guard passes under the pre-fix predicate; only its four `#[cfg(windows)]` cells carry
+  the change, and the falsification happened on windows-probe rather than in the file.
+
+  **The fifth, `doc_hygiene::every_test_binary_matches_a_subject`, is load-dependent and
+  its cause is still unknown.**  It reported `scripts/test_subjects.sh failed: ` with stderr
+  EMPTY — a message naming nothing — while a probe of the identical command passed (exit 0,
+  zero unmatched binaries, bash 5.3.15 Cygwin), and neither the script nor the `tests/*.rs`
+  set changed since the daily's commit.  Two failures wore one exit code: the script
+  REFUSING prints the binary name on stdout, the shell failing to RUN prints nothing.  The
+  guard now retries only the empty-empty shape (a genuine finding has stdout, so the retry
+  cannot mask one) and its message carries the exit code and both streams, so the next
+  occurrence is evidence rather than a dead end.
+
 - **A `[c]` shim published by rename imported a name nobody published
   (fixed 2026-08-04, probed via the windows-probe loop).**  A program using a
   package with a `[c] shim` died with `STATUS_DLL_NOT_FOUND` (`0xC0000135`)
