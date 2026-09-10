@@ -25,6 +25,11 @@
 //
 // @falsified-at: 75896b136 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nested-tuple-member-returned-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Re-derived against the COMMITTED fix, so the control it
+//   builds is HEAD plus the reverse of both source hunks — the parser's record and the
+//   construction predicate's narrowing, which the guard needs BOTH of to fail.
 // CHANNEL: the trace string on both backends — this is not a backend divergence, both released
 //   twice.  NOT the leak channel: the second release is of a record that genuinely exists, so
 //   nothing leaks.  The over-reach direction DOES leak the resource (not the store), and only
