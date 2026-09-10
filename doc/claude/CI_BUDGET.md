@@ -216,8 +216,12 @@ holds it while the run continues (so the gate still serialises); and closing an 
 harmless, which is the `LOFT_GATE_PARALLEL` path. A SUBSHELL rather than a `9>&-` per command
 because the per-command form is an allow-list, and a step added later would silently drop out of
 it. Bounding the spawned children's own lifetime (a `LOFT_TIMEOUT` on each) is a separate
-hardening and deliberately NOT done as an allow-list: there are **37 `.spawn()` sites across 11
-test files**, so it wants a shared spawn helper, not 37 edits that drift apart.
+hardening and deliberately NOT done as an allow-list: there are **37 spawn sites of the loft
+binary across 11 test files** (`engine_host_kernel.rs` alone has 14), inside **59 `.spawn()` sites
+across 30 files** overall — so it wants a shared spawn helper, not dozens of edits that drift
+apart. Both counts are worth carrying: the smaller one is what a `LOFT_TIMEOUT` could bound, and
+the larger one is what can inherit a descriptor, since inheritance does not care which binary the
+child is.
 
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
