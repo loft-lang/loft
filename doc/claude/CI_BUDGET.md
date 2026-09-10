@@ -204,11 +204,20 @@ one-minute load average of **0.05** — nothing was compiling, in either tree.
 
 The tell is that the holder is not a gate: `fuser -v /tmp/loft-gate.lock` names a `loft`
 process, and `ls -l /proc/<pid>/fd/9` points at the lock file. Clear it by killing that pid
-specifically — never by pattern, which reaches the sibling checkout's live gate. Two cures, and
-they are independent: hold the lock with `flock -o` (`--close`), which closes the descriptor
-before running the command so no child can inherit it; and bound the spawned kernel child with
-`LOFT_TIMEOUT` so an orphan cannot outlive its gate without limit. **The load average is the
-cheap discriminator** — a real queue has a busy box behind it.
+specifically — never by pattern, which reaches the sibling checkout's live gate. **The load
+average is the cheap discriminator** — a real queue has a busy box behind it.
+
+**Fixed (loft#1504) by closing the descriptor in the CHILDREN, not by releasing the lock.** The
+whole chain after the lock now runs in a subshell ending `) 9>&-`: the parent shell keeps fd 9,
+so mutual exclusion is unchanged, and every process the gate spawns gets its copy closed.
+Measured four ways before it was applied — a child without the redirection holds the lock after
+its parent exits (the bug, reproduced standalone); with it the lock is free; the parent still
+holds it while the run continues (so the gate still serialises); and closing an unopened fd 9 is
+harmless, which is the `LOFT_GATE_PARALLEL` path. A SUBSHELL rather than a `9>&-` per command
+because the per-command form is an allow-list, and a step added later would silently drop out of
+it. Bounding the spawned children's own lifetime (a `LOFT_TIMEOUT` on each) is a separate
+hardening and deliberately NOT done as an allow-list: there are **37 `.spawn()` sites across 11
+test files**, so it wants a shared spawn helper, not 37 edits that drift apart.
 
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the

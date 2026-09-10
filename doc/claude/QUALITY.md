@@ -2564,13 +2564,16 @@ on any branch off it, for two units this walk did not add — verified by measur
 joined tree `424 · 339 · 2101`.  A derived baseline is the one file a cherry-pick must not carry,
 because it is a statement about the tree it was measured on.
 
-Nothing in `make ci` reads it — `optional-ratchet` is a standalone target, so no gate is red — and
-that is the reason to write this down rather than re-pin quietly: a ratchet that always fails gets
-ignored, and raising a bar that only ever shrinks is a decision, not a fix.  **OPEN for the owner:**
-peel the two sites, or re-measure the pin on `main` and say in the commit that the +2 arrived with
-#1502's code rather than with a walk.  They are not identifiable at the (file, function, kind)
-granularity the audit prints — main's opaque rows are a subset of this branch's — so it is a
-function whose CLASSIFICATION flipped, which the audit would have to name.
+Nothing in `make ci` reads it — `optional-ratchet` is a standalone target, so no gate is red.
+**Do not re-pin: the cure is already written.**  The two units are the two `bl.result` shape tests
+#1502's own code added in `src/parser/control.rs`, and `bea94bf7d` on `tuxedo-1502-pr-followups`
+peels them to `bl.result.base()` — the rule's own prescribed cure — so that branch measures
+`at baseline` (exit 0) while `main` measures `GREW 337 -> 339`.  The pin comes back to true when
+it lands, and raising the bar in the meantime would have frozen a defect the rule wanted fixed.
+Worth keeping as the worked example: they were NOT identifiable at the (file, function, kind)
+granularity the audit prints — `main`'s opaque rows are a SUBSET of this branch's — because a
+classification FLIPPED rather than a row appearing, and a set diff cannot see that.  Reach for the
+sibling branch's exit code before concluding a ratchet needs raising.
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
