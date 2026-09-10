@@ -2223,6 +2223,27 @@ impl State {
             // OpFreeRefIfDistinct — which also degrades to a no-op for the
             // S1 in-place shapes (the new value IS the old store).
             let rhs_reads_v = value.reads_var(v);
+            // @FR-O-Detach — does the value being assigned MAY-ALIAS `v`'s own store, so that
+            // re-initialising that store IN PLACE would wipe the record the copy reads from?
+            //
+            // `rhs_reads_v` alone cannot answer it.  A `??` (and an `if`-valued arm) HOISTS the
+            // read of `v` into a temporary in a PRIOR statement — which is the lowering
+            // `(O-Detach)` itself prescribes — so `c = keep(c ?? K { x: 9 })` arrives here as
+            // `Set(c, Call(keep, [__lift_1, …]))` and mentions `c` nowhere.  The hoist moved the
+            // READ; it did not move the VALUE, because `__lift_1` is bound to `c` and so names
+            // c's store (its dep list says `["__ref_p2_1", "c"]`).
+            //
+            // So the second disjunct is the CALLEE's own fact: a return whose dep names a
+            // visible parameter hands back a store the caller passed IN, and any argument may be
+            // the hoisted alias of `v`.  `returns_borrowed_view` is the canonical spelling of
+            // that (the sibling gate below reads it too, and @PLN85 D-own-1 made it the one
+            // home).  Conservative in the admissible direction: a FRESH destination is always
+            // correct and only costs an allocation, while an in-place one is correct only when
+            // the source is distinct — the asymmetry `(H-Drop)` names for a drop and
+            // `(O-Detach)` names for a detach.
+            let rhs_may_alias_v = rhs_reads_v
+                || crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
+                    .is_some_and(|fn_nr| stack.data.def(fn_nr).returns_borrowed_view());
             // loft#615 — an OWNED heap variable that is re-assigned must free the
             // store it is dropping, and `Vector` was missing from this list while
             // `Reference` / `Enum` had it.  A `??` materialises its subject into a
@@ -2336,7 +2357,12 @@ impl State {
             // in-place `OpDatabase` would write the copy into the viewed record.
             let witnessed = stack.function.owner_witness(v).is_some();
             let mut stash_old_for_post_free = false;
-            if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+            // `rhs_may_alias_v`, not `rhs_reads_v`: this stash is what pairs a DEFERRED,
+            // FRESH destination with a free of the store the local is leaving behind.  The two
+            // decisions have to move together — a fresh allocation that does not stash leaks the
+            // old store, which `303-ref-reassign-free.loft` measured the moment the freshness
+            // gate widened without this (2 stores at program exit).
+            if owned_ref && (rhs_may_alias_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(free_pos);
@@ -2523,7 +2549,7 @@ impl State {
                     // re-init stays here, before the copy sequence.
                     // A witnessed local whose value READS it keeps its slot until the
                     // call has run (@FR-O-Detach) and takes the fresh store afterwards.
-                    let alloc_after = stash_old_for_post_free || (witnessed && rhs_reads_v);
+                    let alloc_after = stash_old_for_post_free || witnessed || rhs_may_alias_v;
                     if !alloc_after {
                         let slot_offset = stack.var_pos(v);
                         stack.add_op("OpInitRef", self);
@@ -2630,9 +2656,22 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
-                    if witnessed && rhs_reads_v {
-                        // The call is done with the old store; a fresh one, never the
-                        // record the local may be VIEWING.
+                    if witnessed || rhs_may_alias_v {
+                        // The call is done with the old store; take a FRESH one.  Two reasons,
+                        // and the rule behind each is why this is not gated on `witnessed`
+                        // alone: a WITNESSED local may be holding a view, so an in-place
+                        // `OpDatabase` would write the copy into the viewed record
+                        // (@FR-O-Witness's own clause); and a value that may alias `v`'s store
+                        // would be WIPED by that same in-place re-init before the copy reads it
+                        // (@FR-O-Detach).
+                        //
+                        // Read `witnessed && rhs_reads_v`, it answered no for a nullable local
+                        // reassigned from a borrowed-view call — `c: K? = mk(); c = keep(c ?? K
+                        // { x: 9 })` — whose hoisted argument still named c's store: the
+                        // re-init wiped it and the copy read back the type's ZERO, on
+                        // `--interpret` only, where `--native`'s runtime same-store passthrough
+                        // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly.  That
+                        // is `(O-NoDiverge)` broken by a guard narrower than the rule it cites.
                         stack.add_op("OpInitRef", self);
                         self.code_add(stack.var_pos(v));
                     }

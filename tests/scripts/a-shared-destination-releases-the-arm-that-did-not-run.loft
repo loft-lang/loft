@@ -53,13 +53,15 @@
 // HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
 //   both backends.  TWO cells hold and both are there to hold: c_unconditional, because an
 //   unconditional hand-off must keep moving the release to the copy, and c_no_handoff, where
-//   nothing is handed off at all.  c_enum MOVES but not to correct — `V161` to `V161,e162`,
-//   one hook where three records exist — and that is the point of keeping it: a struct-ENUM
-//   local loses its hooks at an UNCONDITIONAL bind too, identically on `main`, so the branch
-//   is not what breaks it and this cure cannot reach it.  loft#1517 is that defect, and
-//   `formal/heap.md` D-heap-6 carries the measured diagnosis: a literal built through a
-//   work-ref is read as a VIEW, so a local whose every assignment OWNS is witnessed as a
-//   mixed one.  When it closes, this cell moves to `e163,V161,e161,e162`.
+//   nothing is handed off at all.  c_enum MOVED TWICE: this cure took it from `V161` to
+//   `V161,e162`, one hook short of the three records it holds, because a struct-ENUM local lost
+//   its hooks at an UNCONDITIONAL bind too — the branch was never what broke it, so no
+//   branch-shaped cure could reach it.  loft#1517 closed that half (`formal/heap.md` D-heap-6:
+//   a literal built through a work-ref read as a VIEW, so a local whose every assignment OWNS
+//   was witnessed as a mixed one), and the cell now reads `e163,V161,e161,e162` — three records,
+//   three hooks, the displaced literal included.  Kept as a CONTROL of this cure rather than
+//   retired: the hand-off it scores is the same one, so a regression in either mechanism lands
+//   on this line.
 //
 // The trace file is this guard's own — its own means THIS file, not this family.
 
@@ -175,7 +177,7 @@ fn main() {
   assert(got == "V151,152,151", "CONTROL a branch that hands nothing off: {got}");
 
   c_enum(true); got = drain();
-  assert(got == "V161,e161,e162", "CONTROL a struct-enum carries a separate defect: {got}");
+  assert(got == "e163,V161,e161,e162", "CONTROL a struct-enum, three records three hooks: {got}");
 
   if !delete(trace_path()) { println("trace cleanup failed"); }
   println("shared destination ok");
