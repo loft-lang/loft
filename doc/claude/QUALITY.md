@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 775 | 432 | 6 | **337** |
+| 778 | 435 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2104** shape tests, **1317** of them opaque
