@@ -2546,6 +2546,21 @@ and who does not.
 |---:|---:|---:|---:|
 | 778 | 434 | 6 | **338** |
 
+⚠ **The opaque column reads 338 against a pin of 337, and that gap is a DEFECT rather than a
+new baseline (2026-09-10).**  `parser/operators.rs::owned_record_subject` asks *is this subject
+a heap RECORD?* with a bare `matches!(lhs_type, Type::Reference | Type::Enum)`, which answers
+NO for `Optional(Reference)` — the very type a `?` or `??` is written on.  So the drift
+resolves DOWN, by peeling the scrutinee (`@FR-N-Shape`'s own prescription), and the pin does
+not move.  **A ratchet re-pinned UPWARD absorbs the regression it exists to catch**, which is
+why the pin here is left at 337/1317 while the row records what the tree measures TODAY.
+
+The attribution that established this is worth repeating rather than re-deriving: the audit is
+a script, so `git worktree add --detach <tmp> origin/main` and one run of it there gives the
+delta against the joined tree in a minute, with no build.  It read
+`main 775/431/6/338, tests 2106/1318` against `joined 778/434/6/338, tests 2110/1318` — every
+function and test this branch adds sees THROUGH the wrapper, and neither opaque count moved, so
+the gap arrived rather than being introduced here.
+
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2110** shape tests, **1318** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
