@@ -1,0 +1,180 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` closes with *a copy off a PARAMETER moves nothing: the caller owns*, so
+// `fn f(p: (S, integer)) { u = p; }` releases ONCE — in the caller, whatever the callee copies.
+// It released twice, both backends, silently.
+//
+// The rule was already implemented for the sibling spelling: a plain struct parameter
+// (`fn f(p: S) { u = p; }`) is answered by `scopes::copy_moves_drop_from`, whose
+// `is_argument(src)` arm suppresses the DESTINATION rather than the source — the callee's own
+// copy is what stops dropping, because the caller's record is the one that stays.  c_struct_param
+// is that sibling, here as the control that says this is one rule and not two.
+//
+// A tuple parameter reaches the same rule as a MEMBER read, and that is what fell through.  The
+// member's backing lives in the CALLER's dep space, so no variable of this frame names it and
+// `tuple_member_backing` declines rather than guess a local that happens to wear that number —
+// correctly, because guessing would suppress the release of whatever local it named.  But
+// declining is not the answer either: the rule does not need the caller's backing, since what
+// stops dropping is the callee's copy.  So the destination is suppressed off the member's TYPE
+// alone (`tuple_argument_member`), and the type test is the one `copy_moves_drop_from` already
+// uses (`copy_carries_drop`, extracted so the two cannot drift).
+//
+// @falsified-at: 424e4840d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the trace string on both backends — this is not a backend divergence, both released
+//   twice.  NOT the leak channel: the second release is of a record that genuinely exists, so
+//   nothing leaks and a run scored on leaks learns nothing here.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control `c_param` drains `a1,1,1` where the fix drains `a1,1`.  It is the
+//   first cell, so the run stops there; the others were measured by scoring the file with the
+//   assertions replaced by prints rather than assumed.  `c_two_members` reads
+//   `a1112,11,12,11,12`; `c_nested_param` reads `a21,21,21`; `c_copied_twice` reads
+//   `a3131,31,31,31` — THREE releases, one per record, which is what says the suppression is
+//   per copy and not per parameter; `c_in_a_loop` reads `i041,41,i141,41,41`; `c_literal_arg`
+//   reads `a51,51,51`; `c_called_twice` reads `a81,81,a81,81,81`; `c_passed_on` reads
+//   `i1,1,o,1`.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved.  The CONTROL cells hold on both
+//   trees: `c_struct_param` is the working sibling this mirrors, `c_read_only` copies nothing,
+//   `c_vector_param` is the other parameter spelling, `c_own_local` keeps the LOCAL-tuple answer
+//   (the cure must not swallow it — that one wants the member PAIRING, this one wants the
+//   argument rule), `c_no_hook` has nothing to suppress, and `c_two_indep` reads two releases,
+//   without which every cell here would pass on a harness that had stopped recording.
+//
+// Three neighbouring shapes are deliberately ABSENT, and they share a boundary this fix cannot
+// cross: the copy ESCAPES the callee, so the release that has to be suppressed is the CALLER's
+// and no analysis of the callee's frame can reach it.  A copy into a CONTAINER field
+// (`c = H { s: p.0 }`) needs the container's cascade to skip one field; the callee returning a
+// member of its copy, and a member of the parameter returned DIRECTLY (`return p.0`), both hand
+// the caller a second record of its own resource — and that last one releases a store already
+// RECYCLED, so its hook reads an id the program never set.  `formal/heap.md` D-heap-1 carries
+// them; asserting their present answer would pin a defect.
+//
+// The trace file is this guard's own — and its own means THIS file, not this family: several
+// corpus guards write one, and two concurrent runs of the SAME guard clobber each other's.
+
+fn trace_path() -> text { return "loft_paramember_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct PmH { id: integer }
+fn OpDrop(self: PmH) { note("{self.id}"); }
+struct PmS { h: PmH }
+struct PmPlain { n: integer }
+fn pm_mk(id: integer) -> PmS { return PmS { h: PmH { id: id } }; }
+
+// The defect: the callee copies a member of its tuple parameter, and both records released.
+fn f_param(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+fn c_param() { s = pm_mk(1); t = (s, 5); f_param(t); }
+// TWO droppable members: the suppression is per copy, so both must land.
+fn f_two(p: (PmS, PmS)) { u = p; note("a{u.0.h.id}{u.1.h.id}"); }
+fn c_two_members() { a = pm_mk(11); b = pm_mk(12); t = (a, b); f_two(t); }
+// A NESTED tuple parameter — the member is reached through a hold, whose chain still ends at an
+// argument.
+fn f_nested(p: ((PmS, integer), integer)) { u = p; note("a{u.0.0.h.id}"); }
+fn c_nested_param() { s = pm_mk(21); t = ((s, 1), 2); f_nested(t); }
+// The parameter copied TWICE in one callee: three records of one resource before the fix.
+fn f_twice(p: (PmS, integer)) { u = p; w = p; note("a{u.0.h.id}{w.0.h.id}"); }
+fn c_copied_twice() { s = pm_mk(31); t = (s, 5); f_twice(t); }
+// The copy inside a LOOP: the iteration count is invisible to the lint that reports a double
+// hand-off, so the suppression has to be right per copy rather than per statement.
+fn f_loop(p: (PmS, integer)) { for i in 0..2 { u = p; note("i{i}{u.0.h.id}"); } }
+fn c_in_a_loop() { s = pm_mk(41); t = (s, 5); f_loop(t); }
+// The caller passes a tuple LITERAL rather than a named local.
+fn f_lit(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+fn c_literal_arg() { s = pm_mk(51); f_lit((s, 5)); }
+// The callee called TWICE from one caller — one resource, one release.
+fn f_call(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+fn c_called_twice() { s = pm_mk(61); t = (s, 5); f_call(t); f_call(t); }
+// The parameter passed ON to another function that copies it: the chain of arguments does not
+// change who owns.
+fn f_inner(q: (PmS, integer)) { u = q; note("i{u.0.h.id}"); }
+fn f_outer(p: (PmS, integer)) { f_inner(p); note("o"); }
+fn c_passed_on() { s = pm_mk(71); t = (s, 5); f_outer(t); }
+// CONTROL — a plain STRUCT parameter: the sibling spelling of the same rule, always correct.
+fn f_plain(p: PmS) { u = p; note("a{u.h.id}"); }
+fn c_struct_param() { s = pm_mk(91); f_plain(s); }
+// CONTROL — the parameter member READ, not copied: nothing to hand off.
+fn f_read(p: (PmS, integer)) { note("a{p.0.h.id}"); }
+fn c_read_only() { s = pm_mk(101); t = (s, 5); f_read(t); }
+// CONTROL — a vector parameter copy, the other parameter spelling.
+fn f_vec(p: vector<PmS>) { u = p; note("a{len(u)}"); }
+fn c_vector_param() { v: vector<PmS> = [pm_mk(111)]; f_vec(v); }
+// CONTROL — the callee copies a member of its OWN local tuple.  That wants the member PAIRING
+// and this wants the argument rule, so the cure must not swallow it.
+fn f_own() { s = pm_mk(121); t = (s, 5); u = t; note("a{u.0.h.id}"); }
+fn c_own_local() { f_own(); }
+// CONTROL — a tuple parameter whose member type declares no hook: nothing to suppress, and a
+// cure that suppressed anyway would show up as a missing release somewhere else.
+fn f_nohook(p: (PmPlain, integer)) { u = p; note("n{u.0.n}"); }
+fn c_no_hook() { t = (PmPlain { n: 7 }, 5); f_nohook(t); }
+// CONTROL — two independent resources release TWICE, in reverse declaration order.  Without it
+// every cell above would pass on a harness that had simply stopped recording.
+fn c_two_indep() { x = pm_mk(191); y = pm_mk(192); note("a{x.h.id}{y.h.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_param(); got = drain();
+  assert(got == "a1,1", "a copy off a tuple parameter member releases once: {got}");
+
+  c_two_members(); got = drain();
+  assert(got == "a1112,11,12", "two droppable members, each once: {got}");
+
+  c_nested_param(); got = drain();
+  assert(got == "a21,21", "a nested tuple parameter releases once: {got}");
+
+  c_copied_twice(); got = drain();
+  assert(got == "a3131,31", "the parameter copied twice releases once: {got}");
+
+  c_in_a_loop(); got = drain();
+  assert(got == "i041,i141,41", "a copy in a loop releases once: {got}");
+
+  c_literal_arg(); got = drain();
+  assert(got == "a51,51", "a tuple LITERAL argument releases once: {got}");
+
+  c_called_twice(); got = drain();
+  assert(got == "a61,a61,61", "the callee called twice releases once: {got}");
+
+  c_passed_on(); got = drain();
+  assert(got == "i71,o,71", "the parameter passed on releases once: {got}");
+
+  c_struct_param(); got = drain();
+  assert(got == "a91,91", "CONTROL a plain struct parameter: {got}");
+
+  c_read_only(); got = drain();
+  assert(got == "a101,101", "CONTROL the member read, not copied: {got}");
+
+  c_vector_param(); got = drain();
+  assert(got == "a1,111", "CONTROL a vector parameter copy: {got}");
+
+  c_own_local(); got = drain();
+  assert(got == "a121,121", "CONTROL a member of the callee's OWN local tuple: {got}");
+
+  c_no_hook(); got = drain();
+  assert(got == "n7", "CONTROL a member type with no hook: {got}");
+
+  c_two_indep(); got = drain();
+  assert(got == "a191192,192,191", "CONTROL two resources release TWICE: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("tuple parameter member ok");
+}

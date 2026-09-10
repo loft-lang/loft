@@ -1,0 +1,89 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 0bce7962f..06af9bae8 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2049,32 +2049,14 @@ pub(crate) fn copy_moves_drop_from(
+     {
+         return None;
+     }
+-    if !copy_carries_drop(function, data, v, function.tp(src)) {
++    let d = function.tp(v).base().heap_def_nr()?;
++    let sd = function.tp(src).base().heap_def_nr()?;
++    if !data.copies_as(d, sd) || data.drop_cascade_nr(d) == u32::MAX {
+         return None;
+     }
+     Some(if function.is_argument(src) { v } else { src })
+ }
+ 
+-/// Does copying a value of type `src_tp` into `v` carry a DROP with it?
+-///
+-/// The TYPE half of [`copy_moves_drop_from`], shared with the tuple-member arm of
+-/// [`drop_handoff_node`], which reads its source's type off the tuple rather than off a
+-/// variable of its own — a tuple member has no variable in this frame when the tuple is a
+-/// PARAMETER. One home so the two cannot disagree about which copies move a release: the
+-/// destination must be a heap record, the source must copy AS that record (`copies_as` admits a
+-/// variant widening into its parent enum), and the record's type must actually have a cascade —
+-/// a type that `owns_droppable` says yes about with no cascade gets the answer of a type owning
+-/// nothing.
+-fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) -> bool {
+-    let Some(d) = function.tp(v).base().heap_def_nr() else {
+-        return false;
+-    };
+-    let Some(sd) = src_tp.base().heap_def_nr() else {
+-        return false;
+-    };
+-    data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
+-}
+-
+ /// @PLN139 stage C — the vars that HANDED OFF what they hold, so their scope end must not
+ /// drop it.  Two ways a value stops being its variable's to release, both an `OpCopyRecord`:
+ ///
+@@ -2128,19 +2110,6 @@ fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut Hash
+                     out.insert(moved);
+                     return;
+                 }
+-                // `(H-Drop)`'s closing clause: a copy off a PARAMETER moves nothing, the
+-                // CALLER owns.  The branch above cannot reach it — a tuple argument's member
+-                // has no backing variable in this frame, so `drop_bearing_source` declines
+-                // rather than guess one — and the rule wants the DESTINATION suppressed, which
+-                // is the same answer `copy_moves_drop_from` gives a plain struct parameter.
+-                if let Some(leaf) = tuple_argument_member(&args[0], function)
+-                    && let Value::Var(dst) = args[1].unspan()
+-                    && function.name(*dst).starts_with("__ref")
+-                    && copy_carries_drop(function, data, *dst, leaf)
+-                {
+-                    out.insert(*dst);
+-                    return;
+-                }
+                 let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
+                 if !moved
+                     && !copy_hands_off(&args[1], function, data)
+@@ -2395,28 +2364,6 @@ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
+     (dep != u16::MAX).then_some(dep)
+ }
+ 
+-/// The member's own TYPE when a copy reads it out of a tuple ARGUMENT — `None` for any other
+-/// source.
+-///
+-/// `heap.md (H-Drop)`'s closing clause is *a copy off a PARAMETER moves nothing: the caller
+-/// owns*, and for a plain struct parameter [`copy_moves_drop_from`] answers it by suppressing
+-/// the DESTINATION (`fn f(p: S) { u = p; }` releases once, in the caller). A tuple parameter
+-/// reaches the same rule as a member read, and the member's backing is in the CALLER's dep
+-/// space, so no variable of this frame names it — but the rule does not need one: what stops
+-/// dropping is the callee's own copy either way. The TYPE is what is still needed, to ask
+-/// whether copying that member carries a release at all.
+-fn tuple_argument_member<'a>(src: &Value, function: &'a Function) -> Option<&'a Type> {
+-    let Value::TupleGet(base, i) = src.unspan() else {
+-        return None;
+-    };
+-    let (root, path) = tuple_copy_source_path(*base, *i, function);
+-    if !function.is_argument(root) {
+-        return None;
+-    }
+-    let (leaf, _) = tuple_leaf_at(function.tp(root), &path)?;
+-    crate::data::is_dbref(leaf.base()).then_some(leaf)
+-}
+-
+ /// The tuple a copy's member source ultimately reads, and the path of member indices from it
+ /// down to the leaf being copied.
+ ///
