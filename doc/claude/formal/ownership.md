@@ -356,7 +356,7 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 1** — `D-own-39`, below.  Every earlier deviation this doc has carried is closed; the
+**OPEN: 0.**  `D-own-39` opened and CLOSED 2026-09-10, below.  Every earlier deviation this doc has carried is closed; the
 record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
 closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
 hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
@@ -377,7 +377,7 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
 
-### D-own-39 — OPEN (2026-09-10): a per-path hand-off to a SHARED destination
+### D-own-39 — OPENED AND CLOSED (2026-09-10): a per-path hand-off to a SHARED destination
 
 `(O-Complete)` makes the ownership fact per binding and PER PATH.  A whole-value copy written
 inside a branch arm moves a release on the runs that take that arm and on no others, and the
@@ -403,16 +403,32 @@ that ran, so stopping `x` would lose THAT release instead of restoring the other
 can be chosen statically, which is the whole of the deviation — `(O-Complete)`'s "per path"
 has no representation at a destination that is shared across the paths.
 
-Tracked as loft#1515.
+✓ **CLOSED by MATERIALISING the path fact** (loft#1515): `Scopes::handed_off` is one boolean
+per source, false at entry, set where the copy runs, read at the source's scope-end release and
+cleared when the SOURCE is reassigned.  Not a new mechanism — loft#1200's `local_owns` already
+materialises sole ownership for the free it guards, and this is the same answer for the drop.
+Guard `a-shared-destination-releases-the-arm-that-did-not-run.loft`, 14 cells, 12 moving.
 
-**Closes when** the source is released inside the arms that do NOT hand it out, so that the arm
-IS the path.  `scopes::free_record_in_omitting_arms` is that shape one level over (loft#1476,
-for a closure record), and the same step is what loft#1514's OTHER open shape needs — a returned
-value branch, where the delivering arm additionally needs a cascade that skips the member it
-handed out.  ⚠ The cell that decides whether the rewrite is honest is a LOOP around the branch:
-a back edge is a second path a single forward reading does not see.  And a record with TWO
-droppable fields is the cell that keeps a whole-cascade suppression from reading as a fix — on
-a one-field record it looks right and leaks the sibling.
+⚠ **Two cures were measured and rejected, and both fail in ways that reading them does not
+show.**  A DISTINCTNESS WITNESS (`if !OpEqRef(a, x) { … }`) rests on the two naming one record,
+and `binding.md (B-Copy)` makes the plain bind COPY — so it is true on every path and would run
+the cascade where the copy already owns the resource, this deviation with the sign flipped.
+And giving `drop_transferred` the per-path intersect-merge `owned_refs` has turns every lost
+hook here into a DOUBLED one, which `(H-Drop)`'s own clause rules out: a drop has no safe
+direction.  That merge is INERT on its own besides — measured byte-identical on 19 cells,
+because the seed's whole-body walk and the statement-level re-arm both arm the fact before
+`scan_if` descends into the arms.
+
+⚠ **What the fix does NOT reach, and the cell that says so.**  A struct-ENUM local loses its
+hooks at an UNCONDITIONAL bind (loft#1517) — `a: SE = A{…}; x: SE = A{…}; x = a` releases
+neither the displaced record nor the copy, with no branch in sight — so the guard's `c_enum`
+cell moves to ONE hook of three rather than three.  It is kept for exactly that: a fix here has
+a place to be scored, and the residual is visible rather than implied.
+
+The RETURNED value branch is the other shape of loft#1514's question and stays open as
+loft#1515: its delivering arm hands out a MEMBER, so it needs a cascade that skips one — a
+`(skip, depth)` path, since a member at offset 0 of a nested record shares its owner's address
+and an offset alone drops the whole subtree.
 
 The full register — every entry, open and closed, with its dates and issue numbers — is
 the companion [ownership-history.md](ownership-history.md).
