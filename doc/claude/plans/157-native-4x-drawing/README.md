@@ -38,8 +38,23 @@ element and there is no per-sample temp record.  `LOFT_PROFILE` under `LOFT_NO_N
 field reads per sample** — `sp_a`, `sp_b`, `sp_ta`, `sp_tb` are fixed across the whole inner loop
 and each coordinate expression reads all four at offsets 0 and 8, twelve `OpGetFloat`s through a
 `DbRef` in the function altogether, none lifted.  That is P4c's job, so **the next unit is why P4c
-declines there** — the inner body holds a CALL (`n_pt`) and an allocating push, either of which
-could be defeating its write-set test.
+declines there.**
+
+Two obvious leads are already DISPROVEN, by three cells built for it
+(`scratchpad/p4c/{withcall,nocall,nopt}.loft`, a loop reading two invariant `Pt` parameters):
+
+| cell | inner body | invariant reads left in the loop |
+|---|---|---:|
+| `withcall` | `out += [pt(t * a.ptx + b.ptx, …)]` — a record-returning CALL | 4 |
+| `nocall` | `out += [Pt { ptx: t * a.ptx + b.ptx, … }]` — a literal, no call | 4 |
+| `nopt` | `out += [t * a.ptx + b.ptx + …]` — builds `vector<float>`, writes no `Pt` at all | 4 |
+
+So it is **not** the call in the body (`nocall` declines identically), and **not** the body writing
+the same record type the reads come from (`nopt` writes no `Pt` and still declines).  P4c simply
+does not fire for this shape — invariant reads of a record PARAMETER in a loop that appends — and
+the next step is to INSTRUMENT the write set (`WriteSet::whole` / `evicts`, and whether the
+allocating push classifies at all) rather than guess a third time.  All three cells are one-liners
+to re-run and each is a ready A/B for a candidate cure.
 
 ⚠ **And a switch in this family cannot A/B a LIBRARY's own code**, which is how that attribution
 nearly went wrong: the switches are read at GENERATION time and a `use`d library runs as the
