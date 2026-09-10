@@ -403,6 +403,8 @@ that ran, so stopping `x` would lose THAT release instead of restoring the other
 can be chosen statically, which is the whole of the deviation — `(O-Complete)`'s "per path"
 has no representation at a destination that is shared across the paths.
 
+Tracked as loft#1515.
+
 **Closes when** the source is released inside the arms that do NOT hand it out, so that the arm
 IS the path.  `scopes::free_record_in_omitting_arms` is that shape one level over (loft#1476,
 for a closure record), and the same step is what loft#1514's OTHER open shape needs — a returned

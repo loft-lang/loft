@@ -28,7 +28,8 @@
 // that reason.  Where the arms assign one SHARED local (`if c { x = a } else { x = b }`) the
 // destination genuinely owns what it took on the path that ran, so stopping it would lose that
 // release instead; that shape wants the source released inside the omitting arms and is open
-// as loft#1514's residual.  Its cell is here as a CONTROL, recording what it does today.
+// as loft#1515 (`ownership.md` D-own-39).  Its cell is here as a CONTROL, recording what it
+// does today.
 //
 // @falsified-at: e5c65698e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  c_if is the first moving cell on
