@@ -218,7 +218,6 @@ mentioned: *"Variable 'c' cannot change type from &hash<Row,[\"id\"]> to vector<
 now lands in the caller's collection, on compiled and interpreted programs alike.  Two of the
 five kinds — `trie` and `spatial` — went further and stopped the compiler outright when passed
 with `&` at all, even for `c[key] = value`, which the other three accepted.
-=======
 **Reading from a collection that is empty-because-absent now tells you it can be absent — and
 `if c != null` finally counts as the check.**  A `vector<Thing>?` or a `hash<Thing[k]>?` holding
 `null` has no element to give, so `m[0]` reads as absent.  The compiler used to say so only when
@@ -323,7 +322,6 @@ whatever was stored there next — a wrong value, quietly, on both backends.  Th
 `pos`.  Given a struct that is neither, loft used to report *"Expect token }"* three times and
 stop.  It now says *"a slice pattern `[ … ]` matches a vector or a cursor; `Cur` is neither — its
 `pos` field is `integer?`, and a cursor's position must be an integer"*, once, and keeps parsing.
->>>>>>> f5cd8a37e (An element read is not more non-null than the collection it reads from (#1450 N-Domain leg, #1434))
 
 **A `match` arm now has to answer in the type its siblings answer in.**  Every arm was parsed
 without knowing what type the `match` as a whole was expected to produce, so an arm of another

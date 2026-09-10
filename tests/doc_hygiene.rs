@@ -143,6 +143,38 @@ fn every_guard_says_how_to_score_it_again() {
     );
 }
 
+/// No tracked file carries MERGE-CONFLICT debris.
+///
+/// `CHANGELOG.md` — the file a USER reads — shipped a bare `=======` and a
+/// `>>>>>>> f5cd8a37e (An element read is not more non-null …)` for weeks, and so did
+/// `CHANGELOG_TECHNICAL.md`.  They arrived through a squash merge (#1465) and reached `main`,
+/// where nothing looked: every gate here reads structure or numbers, and a conflict marker is
+/// ordinary text to all of them.  Both halves of the content were present, so no reader of the
+/// prose would notice a missing sentence — only the markers themselves said anything was wrong.
+///
+/// Keyed on `<<<<<<< ` and `>>>>>>> ` WITH the trailing space, never on a bare `=======`: a
+/// Setext-style Markdown heading underline is exactly that, and this file's own docs use them.
+/// The two chevron forms cannot occur in prose, which is what makes the check total without
+/// being a false-positive machine.
+#[test]
+fn no_tracked_file_carries_conflict_markers() {
+    let out = std::process::Command::new("git")
+        .args(["grep", "-n", "-I", "-E", "^(<<<<<<< |>>>>>>> )"])
+        .current_dir(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .output()
+        .expect("git grep runs");
+    // `git grep` exits 1 when it matches NOTHING, which is the healthy case here.
+    let hits = String::from_utf8_lossy(&out.stdout);
+    let hits: Vec<&str> = hits.lines().filter(|l| !l.is_empty()).collect();
+    assert!(
+        hits.is_empty(),
+        "{} line(s) of merge-conflict debris are committed — a resolution that kept both halves \
+         of the text and left the markers behind reads as ordinary prose to every other gate:\n{}",
+        hits.len(),
+        hits.join("\n")
+    );
+}
+
 #[test]
 fn every_new_guard_records_its_control() {
     let baseline_src = fs::read_to_string("tests/falsified.baseline")

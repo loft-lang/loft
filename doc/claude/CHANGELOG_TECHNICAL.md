@@ -727,7 +727,6 @@ compositions, plus the `(L-CapScalar)` and `(L-CapHeap)` controls), `1408b-…` 
 (the refusals, split because a firing `@EXPECT_ERROR` stops a file).  A forced-size integer
 capture has the same symptom from a different mechanism and is loft#1409.
 ### A `&` keyed collection is used exactly like its dense twin (2026-09-07, loft#1445)
-=======
 ### An element read cannot be more non-null than the collection it reads from (2026-09-07)
 
 **#1450** (its `(N-Domain)` leg) and the nullable-receiver-index half of **#1434** — a keyed or
@@ -768,7 +767,6 @@ their costs measured: the `(N-Prop)` field read through a nullable receiver (37 
 `(Col-Lookup)`'s own `τ?` for a missing key in a PRESENT collection (351).
 
 ### A frame's release of a captured store is by store identity, not by the capture's name (2026-09-07)
->>>>>>> f5cd8a37e (An element read is not more non-null than the collection it reads from (#1450 N-Domain leg, #1434))
 
 `(B-Ref-Uniform)` says a `&τ` variable is used EXACTLY like a `τ` variable, with no operation
 special-cased.  A keyed collection PARAMETER was an exception: `c += [rec]` on a
