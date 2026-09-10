@@ -9,6 +9,40 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `Claims::clear` resets the WIDTH, not just the bits (2026-09-10)
+
+`Claims` is indexed by record POSITION and only ever grows (`insert` resizes, nothing shrinks),
+so clearing it with `bits.fill(0)` kept the slot's all-time high-water width.  `Store::init` on a
+recycled slot therefore cost O(the widest that slot has ever been) rather than O(what it now
+holds).  With an allocation count linear in the input and a constant working set — `loft_planet`
+makes 3,099,248 stores at grid 63 and holds 57 — count O(n) x width O(n) is O(n^2), and it was
+the largest single line in that program's profile on three different machines (44.8% / 27.5% /
+22.5% of a grid-127 run).
+
+`Vec::clear` resets the length and keeps the capacity, so the next occupant re-grows into the
+same allocation without inheriting the previous one's size.  Observationally identical:
+`contains` and `remove` read a missing word and a zero word alike (`Vec::get` -> `None`), and
+`insert` re-grows on demand — the width after a clear again describes the highest position
+claimed, which is what the type's own doc block already promised.  Allocation counts are
+byte-identical before and after.
+
+Measured with one emitted Rust compiled against both runtimes: the direct probe's ramp
+(20,000 identical small allocations against a rising high-water) goes 8/6/9/45/86/168 ms -> flat
+4/2/2/2/2/2 ms; the planet workload 7.06 -> 5.95 s at grid 63, 53.60 -> 26.61 s at 127, 260.95 ->
+67.30 s at 191.  The cost exponent in tiles was RISING at 1.13 / 1.47 / 1.96 across 31->63->127->191
+and is now 1.05 / 1.08 / 1.15.  Guarded on the WIDTH (deterministic, transfers exactly) with a
+control that asserts the cheaper clear is the SAME clear.  loft#1507.
+
+### `get_elem_hoisted`'s cold half is outlined (2026-09-10)
+
+The function is generic and `#[inline]`, so rustc sees the whole body and declines on SIZE.  With
+the off-fast-path half folded in — a `get_vector` call plus a second read — it stayed out of line
+at all 1,302 call sites in one generated program, and every in-range element read paid a call for
+a fast path that is a compare and a load.  `#[inline(never)]` on the cold half is load-bearing,
+not a hint.  `get_elem_hoisted::<f32>` held 7.21% of self time and `::<i64>` 3.21%; both are
+absent afterwards, with no `_cold` row above the noise floor.  Semantics unchanged on every
+branch, negative indexing included — the cold half moved verbatim, and routing back through
+`get_vector` is what makes a negative index address from the end.  loft#1508.
 ### A statement branch discards every arm, in the body and in the type (2026-09-10)
 
 `(F-Block)` says a block in statement position discards its tail.  An arm of a statement `if`

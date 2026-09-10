@@ -14,6 +14,16 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A program that creates and frees many collections is much faster, and its cost now grows with
+its input instead of with the square of it.**  Reusing a freed store charged the new occupant for
+the LARGEST collection that slot had ever held, however small the new one is — so a program that
+churns collections against a small working set paid a cost that grew quadratically.  A planet
+generator that creates three million collections while holding 57 at a time now runs its medium
+size **twice as fast** and the next size up **nearly four times as fast**, and its cost curve,
+which had been bending upward at every size, is close to a straight line again.  Nothing about
+what your program computes changes — only what it costs.  Reading an element out of a vector in a
+hot loop also got a little cheaper, for a related reason: the rare out-of-range path was sitting
+in the same body as the common one and was keeping it from being inlined.
 **A block that hands back part of something it built keeps it alive.**  A `{ … }` used as a
 value can build a struct and hand back one of its collections:
 
