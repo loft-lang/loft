@@ -31,7 +31,13 @@
 // a drop is not the safe direction: an unrun hook leaves a resource open and a twice-run hook
 // closes what the author already closed (`(H-Drop)`'s own clause says so).
 //
-// @falsified-at: PENDING
+// @falsified-at: 0f939cd15 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_shared is the first moving cell on
+//   both backends (the run stops at its first failed assertion); the other eleven were measured
+//   on that same build by scoring the file with the assertions replaced by prints.
+// @falsified-by: tests/falsified/a-shared-destination-releases-the-arm-that-did-not-run.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
 // CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends.  NOT
 //   the leak channel: the stores are freed either way, so a run scored on leaks learns nothing.
 // ARMED: no instrument.  The guard writes each hook call to its own trace file.
