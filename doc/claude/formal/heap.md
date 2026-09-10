@@ -308,6 +308,18 @@ installed, which the frame does own.
              `t = s`, a copy into a struct field, an enum payload or a vector element, a
              branch arm's temp, a return buffer — the copy owns, the source stops
              dropping.  A copy off a PARAMETER moves nothing: the caller owns.
+             ⚠ **A DROP HAS NO SAFE DIRECTION, and a cure discussion that assumes one is
+             already wrong.**  For a FREE there is one: never free what might still be held,
+             because a leak costs memory and a double free corrupts.  A drop's two failures
+             are not ordered that way — a hook that does not run leaves the resource open,
+             and a hook that runs twice closes a handle the author already closed, which is
+             the author's own use-after-free.  So a change that converts one into the other
+             is not progress and must not be landed as an improvement (measured 2026-09-10 on
+             loft#1515's shared-destination shape: giving `drop_transferred` a per-path merge
+             turns every lost hook in that family into a doubled one).  The consequence for
+             the cures below is that "err toward the safe side while the real fix is designed"
+             is not available here: a drop's fix has to be RIGHT on every path, which is why
+             `(O-Complete)`'s per-path clause and this rule meet so often.
   (H-Drop-Not) the OLD value of an overwritten FIELD or ELEMENT (`o.s = other`,
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
              collection's records are NOT released by the language — the author releases
