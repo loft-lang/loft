@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 457 | 433 | **24** |
+| 460 | 436 | **24** |
 
 
 
@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 54 | **12** | 42 |
+| 55 | **12** | 43 |
 
 
 
@@ -2544,10 +2544,10 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 778 | 435 | 6 | **337** |
+| 779 | 436 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
-carries the defect is the TEST: the same run reports **2110** shape tests, **1317** of them opaque
+carries the defect is the TEST: the same run reports **2111** shape tests, **1317** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument

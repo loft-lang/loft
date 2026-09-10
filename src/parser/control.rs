@@ -15227,8 +15227,19 @@ impl Parser {
         // frees-what-it-displaces`.  `owns_literal_backing_store` is the one home for which
         // names those are.
         let is_literal_backing = crate::variables::owns_literal_backing_store(self.vars.name(v));
-        let wrong_shape_for_buffer = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
-            && !is_literal_backing
+        // loft#1515 shape 2 — the rule this rung cites carries no VECTOR qualifier, and the
+        // condition opened on one.  A RECORD return reaches it identically: `fn f(c) -> CfH
+        // { src = mk_two(); return if c { src.h } else { … } }` renamed the `Two` local onto
+        // the `CfH` buffer, so `is_argument(src)` became true and `(H-Drop)`'s parameter
+        // clause — *the caller owns* — declined its scope-end cascade on EVERY path.  Both
+        // its members' hooks were lost, silently, on both backends.  `returns_own_field`
+        // above is the same question asked of the TAIL, and a branch's arms are not the
+        // tail, which is why the record half needed the structural rung rather than a wider
+        // walker.
+        let wrong_shape_for_buffer = matches!(
+            ctx.ret.ret_promo_base(),
+            Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) && !is_literal_backing
             && !self.vars.tp(v).base().is_unknown()
             && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
         let allow_rename = !(bound_already

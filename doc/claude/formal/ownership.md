@@ -425,10 +425,36 @@ neither the displaced record nor the copy, with no branch in sight — so the gu
 cell moves to ONE hook of three rather than three.  It is kept for exactly that: a fix here has
 a place to be scored, and the residual is visible rather than implied.
 
-The RETURNED value branch is the other shape of loft#1514's question and stays open as
-loft#1515: its delivering arm hands out a MEMBER, so it needs a cascade that skips one — a
-`(skip, depth)` path, since a member at offset 0 of a nested record shares its owner's address
-and an offset alone drops the whole subtree.
+✓ **The RETURNED value branch CLOSED 2026-09-11** (loft#1515 shape 2), and it needed no runtime
+witness at all — where the shared-destination half had to materialise the path fact, here the
+ARM *is* the path.  `scopes::move_join_hooks_into_arms` reads what each arm hands out —
+a MEMBER of a local, that local WHOLE, or nothing — and gives each arm the hooks its own path
+owes: the arm handing `src.h` out gets the `(skip, depth)` cascade over everything else, the arm
+handing nothing out gets the whole record, the arm handing the record out gets nothing.  It is
+`free_record_in_omitting_arms`'s shape (loft#1476) one level over.
+
+**Only the HOOK moves; the `OpFreeRef` stays in the common sweep** — a store is freed once
+whichever arm ran, and splitting that would free it per path.  `(H-Drop)` and `(H-Free)` want
+the same placement here for opposite reasons.
+
+Two rungs were needed and the first is not landable alone.  `classify_ret_promotion`'s
+`wrong_shape_for_buffer` refuses a candidate that does not have the return's own SHAPE, and it
+opened on `Type::Vector` while the rule it cites carries no such qualifier — so a `Two` local
+was renamed onto a `CfH` buffer, `is_argument` became true, and `(H-Drop)`'s parameter clause
+declined the cascade on EVERY path.  Widening it alone trades the lost release for a double,
+which for a DROP is not a safer direction.
+
+The rewrite is IDEMPOTENT by a marker on the node (`materialized_view_return_armed`), because
+the scan runs in more than one phase over a body the previous phase installed: without it the
+second phase injects a second copy of every hook and the delivering arm releases twice —
+measured, not anticipated.
+
+Guard `1515-a-join-return-releases-each-arms-source-once.loft`, nine cells, both backends
+byte-identical and clean under `LOFT_POISON=1`.  Three are load-bearing: `nested_with_sibling`
+(the delivering arm skips `p.a` and must still release `p.b` AND `q` — the only cell an
+offset-only skip fails), `two_fields` (the delivering arm keeps the sibling member, which is
+what a whole-cascade suppression loses), and `loop_before_return` (the back edge).  `two_exits`
+is the control: two separate `return` statements are two sweeps and were always right.
 
 The full register — every entry, open and closed, with its dates and issue numbers — is
 the companion [ownership-history.md](ownership-history.md).
