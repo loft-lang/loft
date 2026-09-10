@@ -33,6 +33,32 @@ until the bar is met) and the label must NAME its plan, which is what separates 
 honest query rather than a condition only satisfiable by closing something — see
 [LABELS.md § Lifecycle](../../.github/LABELS.md).
 
+### `make work` — the board's PICK-UP list
+
+```sh
+make work                                   # the open issues that are somebody's next task
+make work ARGS=--count                      # just the number, for a goal or a prompt
+make work ARGS="--label bug"                # restrict to one label
+make work ARGS="--repo loft-lang/plans"     # another repo's board
+```
+
+"Work" is the open issues minus the two labels that both mean *no agent work remains
+right now*: `fixed-pending-merge` (the fix landed, only the merge is left) and
+`status:planned` (the fix path is a plan, measured there).  Everything else is a
+pick-up.  The point is that *"is there work?"* becomes a QUERY rather than a
+judgement — an answer the agent evaluating it cannot improve by closing or
+relabelling an issue, which are the two exits a board-shaped goal otherwise leaves
+open.
+
+⚠ **A failed query is exit 2, never an empty list.**  An unreachable tracker or a
+label that does not exist would otherwise print the same reassuring *"none"* as a
+genuinely clear board — and `gh issue list --label` on an unknown label SUCCEEDS with
+zero rows, which is the likelier half of that false clean since a label name is typed
+far more often than a repo name.  So the labels are validated before the query runs.
+Both controls are checked: `scripts/work-issues.sh --label no-such-label` exits 2, and
+`--repo loft-lang/plans` lists 34, which is what says the empty answer here means
+something.
+
 **An Issue is earned by being *surfaced*, not by being *planned*.**  A defect
 found in the wild — especially one that blocks, recurs, or another repo hits —
 becomes a GitHub Issue (commodity record, external discoverability, cross-repo

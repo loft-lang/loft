@@ -89,6 +89,12 @@ make profile ARGS="--interpret p.loft"   # which loft FN/LINE/PATH burns the tim
                                          #   over loft's own Rust.  `make profile-corpus` checks
                                          #   the instruments against known answers — PERFORMANCE.md
 make index ; ./scripts/idx tag:@P259     # rebuild + query the tracker index (prefer over grep -rn)
+make work                                # the open issues that are PICK-UP work: minus
+                                         #   `fixed-pending-merge` (fix landed, awaiting merge)
+                                         #   and `status:planned` (fix path is a PLAN, measured
+                                         #   there).  START HERE to find the next task, and use
+                                         #   `ARGS=--count` for the scalar.  A failed query is
+                                         #   exit 2, never an empty list — ISSUE_TRACKING.md
 make sweep-scratch                       # reclaim loft's temp scratch (dead-process native
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
