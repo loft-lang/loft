@@ -56,7 +56,10 @@
 //   nothing is handed off at all.  c_enum MOVES but not to correct — `V161` to `V161,e162`,
 //   one hook where three records exist — and that is the point of keeping it: a struct-ENUM
 //   local loses its hooks at an UNCONDITIONAL bind too, identically on `main`, so the branch
-//   is not what breaks it and this cure cannot reach it.
+//   is not what breaks it and this cure cannot reach it.  loft#1517 is that defect, and
+//   `formal/heap.md` D-heap-6 carries the measured diagnosis: a literal built through a
+//   work-ref is read as a VIEW, so a local whose every assignment OWNS is witnessed as a
+//   mixed one.  When it closes, this cell moves to `e163,V161,e161,e162`.
 //
 // The trace file is this guard's own — its own means THIS file, not this family.
 
