@@ -34,7 +34,13 @@
 // and without it the annotated spellings still released twice while every inferred one had
 // been closed.
 //
-// @falsified-at: PENDING
+// @falsified-at: 7d6192134 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_text is the first moving cell on
+//   both backends (the run stops at its first failed assertion); the other sixteen were
+//   measured on that same build by scoring the file with the assertions replaced by prints.
+// @falsified-by: tests/falsified/a-tuple-member-releases-once-beside-any-neighbour.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
 // CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends —
 //   this is not a divergence, both released twice.  NOT the leak channel: the second release is
 //   of a record that genuinely exists, so nothing leaks and a run scored on leaks learns

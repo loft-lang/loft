@@ -358,7 +358,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE; and
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+list has been re-cut as each was measured; the count is what is open TODAY); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -388,10 +389,12 @@ copied, one record wore both names and "released once" was true by accident.
 Most of the family holds: the whole-tuple bind, two droppable members, a member at index 1,
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
-(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FIVE
-shapes do not, both backends, silently — re-measured 2026-09-10.  The list has been re-cut
-three times as it was measured, and THREE of these five were found by a guard or a matrix
-reaching past its own subject — which is what an over-wide cell is for:
+(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`), and so are
+every dep-carrying NEIGHBOUR of a droppable member and every ANNOTATED spelling of the same
+tuple (`a-tuple-member-releases-once-beside-any-neighbour.loft`).  FIVE shapes do not, both
+backends, silently — re-measured 2026-09-10.  The list has been re-cut four times as it was
+measured, and FOUR of the shapes it has carried were found by a guard or a matrix reaching
+past its own subject — which is what an over-wide cell is for:
 
 - a copy off a parameter member that ESCAPES the callee — into a CONTAINER field
   (`fn f(p: (S, integer)) { c = H { s: p.0 }; }`), or through the return (`u = p; return u.0`,
@@ -404,15 +407,13 @@ reaching past its own subject — which is what an over-wide cell is for:
   (`4` where the resource was `131`) — so this shape has a use-after-free face and a cell for it
   must score the VALUE the hook sees and not only the count;
 - a copy off a LOOP VARIABLE over a `vector<(τ, τ)>` — `for e in v { u = e; }`: twice;
-- a tuple carrying a dep-carrying member that is NOT a heap leaf — a `text` — beside the
-  droppable: `t = (s, w); u = t`: twice.  The dep list counts the text's dep and the leaf walk
-  does not, so the two disagree and the pairing is left unread.  The list is still in member
-  order there (measured: `t` reads `deps=[__ref_2(6), w(2)]`, the record first, so it is
-  member order and not variable-number order), but establishing that the k-th dep backs the
-  k-th non-scalar leaf needs each such leaf to contribute exactly one — which a value ENUM
-  member, carrying a dep list that is EMPTY, breaks in the other direction.  So widening the
-  leaf predicate trades one family of declines for another and neither is a superset; what
-  the shape wants is a dep list that carries the pairing rather than a count that infers it;
+- a tuple variable ASSIGNED TWICE — `t = (s, w); u = t; t = (s2, w2); z = t;`: both twice.
+  What the resolver has is the VARIABLE, and each assignment brought its own backings, so
+  there is no single pairing to read; the carried table (below) joins them and DECLINES rather
+  than answer with the latest one, which is measured to lose `s2`'s release outright instead
+  of duplicating `s`'s.  The cure is per-ASSIGNMENT resolution — the copy's own position, which
+  `drop_bearing_source` does not see — and it is the same missing fact the bound-projection
+  shape needs, so the two are one plan and not two;
 - a bound projection RETURNED — `x = t.0; return x`, where the materialised return copies the
   view into the return buffer and `copy_moves_drop_from` suppresses `x`, which owns nothing:
   the member's backing still drops beside the buffer.  The same question as the loop-variable
@@ -483,6 +484,38 @@ REASSIGNMENT: an origin recorded at `m = t.0` is stale after `m = <anything else
 needs invalidation, which is why this is plan-sized rather than a bind-site hook.  Its prediction
 is narrow and falsifiable: **x5 alone** falls to one release, while q1, q2 and x3 — all three
 `If`-sourced — do not move, and x1, x2, x4, x6, x7 and the existing guard's nine cells stay put.
+
+✓ **A dep-carrying NEIGHBOUR that is not a heap leaf — `t = (s, w); u = t` — CLOSED
+2026-09-10.**  The pairing was INFERRED by counting — the k-th dep backs the k-th heap leaf —
+and counting is wrong in both directions, with neither predicate a superset of the other.  A
+`text` or a value-ENUM member bound from a variable contributes a dep without being a heap
+leaf, so the list is LONGER than the walk; a text LITERAL member has a dep SLOT that stays
+empty, so widening the walk to *"has a dep slot"* makes the list SHORTER than it.  (The
+earlier entry named the value enum as the other direction on the strength of its EMPTY dep
+list; measured, `(s, ve)` contributes `ve` and doubles like the text, and the cell that a
+widened predicate actually breaks is the text literal.  Both directions are real; which
+member kind sits on which side was not.)
+
+So the pairing is CARRIED.  `Vars::tuple_backings` records each heap leaf's own backing at
+`Vars::depend_all` — the one site that writes the union over the members — and
+`scopes::tuple_member_backing` reads it there first.  The count read stays beneath it: it is
+still the only answer for a tuple that already carried the union by the time its variable was
+typed, measured live in three corpus guards, where the table declines.  ⚠ Recorded as the
+JOIN over the variable's assignments, per PASS: pass 1 spells a heap member with the LOCAL it
+was built from and only pass 2 copies it into a backing of its own, so a join across the
+passes reads every entry as two assignments disagreeing and the fix vanishes — measured, on a
+build that was otherwise complete.
+
+⚠ **And the same question had a SECOND site, which this guard's over-wide cell found and the
+report did not name.**  Writing the tuple's type out routes the binding through the conversion
+that adopts an ANNOTATION over the literal's own type, and that site carried the literal's deps
+across as the union for the same reason the variable does — a tuple has no dep list of its own,
+so `Type::with_deps_of` cannot reach one and was a silent no-op.  `Type::with_member_deps_of`
+is the tuple-aware form; it pairs the members up.  Without it every ANNOTATED spelling still
+released twice while every inferred one had been closed — including the nullable member that
+site was fixed for once already, as soon as a `text` stood beside it.  Guard
+`a-tuple-member-releases-once-beside-any-neighbour.loft`, 24 cells scoring the release COUNT:
+17 move and 7 hold.
 
 ✓ **A copy off a tuple PARAMETER's member — `fn f(p: (S, integer)) { u = p; }` — CLOSED
 2026-09-10** for every copy that DIES in the callee.  The rule was already implemented for the
@@ -661,10 +694,11 @@ goes stale: it is a statement about two trees, and one of them moved.  Per the b
 **Closes when** the five shapes above read exactly one release on both backends and the
 guard's `@falsified-at` line covers them, scoring the COUNT rather than its absence.  The
 ESCAPING copies want a caller-side fact — a signature that says the return shares the
-parameter's resource, or a cascade that skips one field.  The `text` neighbour wants the
-pairing carried rather than inferred from a count.  The `??`-guarded return wants its own read
-off the IR first.  The bound projection and the loop variable are one question — a copy whose
-source is a VIEW — and want the design call above answered before a cure is chosen for either.
+parameter's resource, or a cascade that skips one field.  The `??`-guarded return wants the
+per-path answer `ownership_cfg.rs` already carries the machinery for.  The bound projection,
+the loop variable and the REASSIGNED variable are one question — the resolver is given a
+variable where the answer belongs to an ASSIGNMENT — and want the design call above answered
+before a cure is chosen for any of them.
 
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
