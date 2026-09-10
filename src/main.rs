@@ -1647,14 +1647,67 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
         );
         return 1;
     }
+    // Will the stdlib this bundle writes be the one loft READS?  `self-update` writes the
+    // release layout (`bin/` beside `default/`) while `project_root_for` prefers
+    // `<prefix>/share/loft/` whenever that directory exists — which is what `make install`
+    // creates.  On a prefix holding both, the update lands a stdlib nothing loads and the
+    // OLDER tree keeps winning, silently: loft#1497, a 2026.9.0 binary reading a 2026.8.0
+    // stdlib, `verify-self` passing throughout and `println("hello")` dying with SIGSEGV in
+    // `OpFreeText`.  Reported from two machines, and a third that was built from source —
+    // binary and stdlib installed together — ran it fine, which is the control that says the
+    // split is by install METHOD and not by release.
+    //
+    // Refused BEFORE anything moves rather than rolled back after, because the answer is
+    // knowable without touching the disk, and because the cure is the user's choice between
+    // two layouts rather than something this can repair: a release bundle carries no
+    // `libloft.rlib`, and `--native` links that from `share/loft/`, so writing the stdlib
+    // into the source tree would swap one mismatch for a subtler one.
+    let loaded = stdlib_default_dir();
+    let bundles_own = root.join("default");
+    let shadowed = loaded != bundles_own;
+    if shadowed && !force {
+        let share = loaded.parent().unwrap_or(&loaded);
+        eprintln!("\nloft self-update: this installation would not run what this installs.\n");
+        eprintln!("  loft loads its stdlib from   {}", loaded.display());
+        eprintln!("  this bundle writes           {}\n", bundles_own.display());
+        eprintln!(
+            "So the binary would be replaced and the stdlib would not, leaving a new loft\n\
+             reading an old standard library — which crashes rather than reporting a version\n\
+             skew (loft#1497).  Nothing was changed.\n"
+        );
+        eprintln!(
+            "{} is what a source install (`make install`) creates, and a release\n\
+             bundle cannot update it: the bundle carries no `libloft.rlib`, which `--native`\n\
+             links from there.  So pick a layout:\n",
+            share.display()
+        );
+        eprintln!(
+            "  switch to the release layout   remove {}, then run this again",
+            share.display()
+        );
+        eprintln!("  stay on the source install     re-run `make install` from a checkout");
+        eprintln!("  install anyway                 --force (updates the binary, NOT the stdlib)");
+        return 1;
+    }
     if dry_run {
         println!("\n--dry-run: nothing was changed.");
         return 0;
     }
-    match loft::self_update::apply_bundle(&root, staged, force) {
+    match loft::self_update::apply_bundle(&root, staged, Some(loaded.as_path()), force) {
         Ok(files) => {
             println!("\n  ok      replaced {} file(s)", files.len());
-            if force {
+            if force && shadowed {
+                // The manifest wording below is about a bundle that fails its own checks,
+                // which is a different reason to force and would misdescribe this one.  What
+                // matters here is the state the user is now in: they asked for it, and they
+                // still have to be told what it is.
+                println!(
+                    "\nInstalled with --force over a SHADOWED stdlib.  The binary is new and\n\
+                     {} is unchanged, so loft still reads the old\n\
+                     standard library — the loft#1497 state.  `loft verify-self` now reports it.",
+                    loaded.display()
+                );
+            } else if force {
                 println!("\nInstalled with --force, past a manifest this bundle does not match.");
             } else if a.verified_release.is_some() {
                 println!(
@@ -1884,10 +1937,8 @@ fn verify_self_cmd() -> i32 {
     // whenever it exists, so a prefix holding both a self-updated bundle and an older source
     // install verified one stdlib and parsed the other — loft#1497, which passed
     // verification and then segfaulted in `OpFreeText` on `println("hello")`.
-    let loaded = exe
-        .parent()
-        .map(|d| std::path::PathBuf::from(native_utils::project_root_for(d)).join("default"));
-    let mut checks = local_checks(&root, loaded.as_deref());
+    let loaded = stdlib_default_dir();
+    let mut checks = local_checks(&root, Some(loaded.as_path()));
     // Only consult the registry for something that IS a bundle; a source checkout has
     // no manifest to anchor, and a network round-trip to say so would be noise.
     if !checks.iter().all(|c| matches!(c, Check::Skipped(_))) {

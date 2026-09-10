@@ -1035,6 +1035,28 @@ Two corrections it carries that this document used to get wrong:
   made ended in *the installation does not verify*; 2026.8.0 shipped that way and
   the by-hand item did not catch it.
 
+**There are TWO install LAYOUTS, and `self-update` can only maintain one of them
+(loft#1497, 2026-09-10).**  A release bundle is `<prefix>/bin/loft` beside
+`<prefix>/default/`; a source install (`make install`) is `<prefix>/bin/loft` with
+`<prefix>/share/loft/{default,libloft.rlib,deps}`.  The runtime's resolver
+(`native_utils::project_root_for`) prefers `<prefix>/share/loft/` **whenever that
+directory exists**, so running `self-update` over a prefix that was once source-installed
+wrote a `default/` nothing loads and left the OLDER tree winning — a 2026.9.0 binary
+reading a 2026.8.0 standard library, reported from two machines, with `verify-self`
+passing throughout and `println("hello")` dying with SIGSEGV in `OpFreeText`.  A third
+machine built from source, binary and stdlib installed together, ran the same program
+fine: the control that says the split is by install METHOD, not by release.
+
+`self-update` now REFUSES that before writing anything, naming both trees and the two
+layouts to choose between (`--force` installs anyway and says what state it leaves).  It
+refuses rather than relocating the write because **a release bundle carries no
+`libloft.rlib`** — `make-release.sh` stages `bin/`, `default/`, `examples/` and the docs —
+and `--native` links that rlib from `share/loft/`, so writing the stdlib into the source
+tree would swap one mismatch for a subtler one.  The resolution is asked of
+`stdlib_default_dir()`, the same one home `loft run`, `loft fmt`, the LSP and now
+`verify-self` use, so the writer and the loader cannot drift; `verify-self` had its own
+spelling of that rule until this landed, which is the shape loft#1499 was about.
+
 The per-item landing procedures in the release's plans are separate and still
 apply (e.g. NDB.0 in [`plans/34-native-debug/`](plans/34-native-debug)).
 
