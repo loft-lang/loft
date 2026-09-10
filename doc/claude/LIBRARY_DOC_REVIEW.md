@@ -150,6 +150,41 @@ before trusting the worklist. Author a worked example for **one or two per pass*
 or a citation to a real consumer call site). The ratchet only goes up; there is
 no sweep, and a function whose use is self-evident is left alone.
 
+### 3a. Write a guide for a library that owes one
+
+**This step is where @PLN149's tail lives now that the plan is closed.**  The four
+documentation tiers, the guide contract and the rendering all shipped; what remains is
+CONTENT, one library at a time — and it never finishes, because a package published next
+month owes a guide too.  A plan that cannot reach a done state is a standing practice
+wearing a plan's clothes, so it lives here instead.
+
+Step 1's aid reports the queue rather than a document listing it:
+
+```
+  -- guides (Tier 1: docs/*.loft, run by the library's own CI on both backends) --
+    16 have one · 25 owe one · 0 not measured
+```
+
+⚠ **Three states, and the third is the one that matters.**  The `guide` flag is recorded
+by `scripts/refresh-unreleased.py`, whose cache reuses any entry whose sha has not moved —
+so an entry written before the field existed carries no flag.  Counted as *no guide* it
+invents a worklist; counted as *has one* it hides real gaps.  Neither is a measurement, so
+"not measured" is its own count and names the refresh.  The flag backfills on the next
+ordinary run (it is one directory listing, independent of the API extractor), so the third
+state should be 0 in practice; a non-zero one means the snapshot has not been refreshed.
+
+Write **one per pass**, and pick by who is reached: a library other packages depend on is
+one more readers arrive at, and the aid's dependants column ranks that.  The contract is
+[LIBRARY_AUTHORING.md § 2c](LIBRARY_AUTHORING.md) — five parts, `main` calls every section,
+green on both backends with identical output.  Two rules that are easy to skip and are what
+make a guide worth trusting:
+
+- **Measure every asserted number before writing it.**  A guide is a running program, so a
+  recalled value is a red run at best and a confidently wrong page at worst.
+- **Falsify it.**  Invert one load-bearing assertion, confirm the file goes red, restore.
+  A section whose asserts cannot fail reads as verified and is not — which is exactly the
+  defect that made `main` calling every section a rule.
+
 ### 4. Spot-check example quality (freshness)
 
 For a **rotating handful** of already-cited functions (the inventory from step

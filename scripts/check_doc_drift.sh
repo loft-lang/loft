@@ -1512,6 +1512,53 @@ $((n_undoc - n_undoc_ty)) fn, $n_undoc_ty type) · $n_api_tree in-tree pub fns"
   [ $n_blindpath -gt 0 ] && yellow "  $n_blindpath library(ies) not checked out under \
 $LIBRARIES_SIBLINGS/ — their verdict is unknown, not absent"
 
+  # -- TIER 1 COVERAGE: which published libraries owe a getting-started guide --
+  #
+  # This is @PLN149 step 7 as a standing reading rather than a plan queue.  The design and
+  # the machinery landed; what is left is CONTENT, one library at a time, forever — a new
+  # package published next month owes a guide too, so there is no state in which this is
+  # "done" and nothing to close.  That is the shape of a review aid, not of a plan phase.
+  #
+  # THREE states, not two.  `guide` is recorded by `refresh-unreleased.py` when it fetches
+  # a library, and the snapshot's content-addressed cache REUSES an entry whose sha has not
+  # moved — so an entry written before the field existed carries no flag at all.  Read as
+  # false, that prints a confident worklist naming libraries that may already have a guide;
+  # read as true, it hides the ones that do not.  Neither is measurement, so an absent key
+  # is reported as its own count and named as a refresh, not as a verdict.
+  if [ $have_pub -eq 1 ]; then
+    local n_guide=0 n_noguide=0 n_unknown=0 owes; owes=$(mktemp)
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      # `loft` is in the registry but is not a library: it is the toolchain itself, whose
+      # guide is the whole documentation site.  Naming it here rather than deriving it from
+      # the homepage, because "the repo root rather than a sub-path" would also exclude a
+      # genuine one-package repo, and a wrong exclusion is silent where a wrong INCLUSION
+      # is merely noisy.
+      [ "$k" = "loft" ] && continue
+      case "$(jq -r --arg k "$k" '.[$k] | if has("guide") then (.guide|tostring) else "absent" end' "$unrel" 2>/dev/null)" in
+        true)   n_guide=$((n_guide + 1)) ;;
+        false)  n_noguide=$((n_noguide + 1)); echo "$k" >> "$owes" ;;
+        *)      n_unknown=$((n_unknown + 1)) ;;
+      esac
+    done < <(jq -r 'keys[]' "$unrel" 2>/dev/null)
+    say ""
+    say "  -- guides (Tier 1: docs/*.loft, run by the library's own CI on both backends) --"
+    if [ $((n_guide + n_noguide + n_unknown)) -eq 0 ]; then
+      yellow "    no snapshot entries to read — run: scripts/refresh-unreleased.py"
+    else
+      say "    $n_guide have one · $n_noguide owe one · $n_unknown not measured"
+      if [ $n_noguide -gt 0 ]; then
+        while IFS= read -r k; do yellow "      $(printf '%-22s' "$k") no docs/*.loft on origin/main"; done < "$owes"
+        say "    The contract is LIBRARY_AUTHORING.md § 2c; writing the file is the whole of"
+        say "    what it takes to reach doc/lib-<name>-guide.html."
+      fi
+      [ $n_unknown -gt 0 ] && yellow "    ⚠ $n_unknown library(ies) predate the guide flag — \
+scripts/refresh-unreleased.py --force to record it (they are NOT counted as owing one)"
+      [ $n_noguide -eq 0 ] && [ $n_unknown -eq 0 ] && green "    (every published library ships a guide)"
+    fi
+    rm -f "$owes"
+  fi
+
   say ""
   say "  -- to re-read (its source moved since its watermark) --"
   local n_moved=0 n_blind=0 commits sigs repo_dir
