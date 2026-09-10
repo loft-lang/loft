@@ -3625,10 +3625,22 @@ impl Stores {
     /// pointer, report the writing op (pc/line via `crash_report`) + whether the SOURCE
     /// already had the bad pointer (`src_oob` distinguishes propagated-from-source vs
     /// introduced-here). `ctx` names the path. No-op unless `to.store_nr` is watched.
+    #[inline]
     pub fn watch_oob_text(&self, to: &DbRef, tp: u16, src: Option<&DbRef>, ctx: &str) {
+        // The guard is the whole of the hot path: the facility is off unless
+        // `LOFT_WATCH_STORE` names this store, and the call sites are record copies.
+        // Keeping the report out of this body is what lets the guard inline into them
+        // (loft#1508 is the same shape on the element read).
         if crate::keys::watch_store() != Some(to.store_nr) {
             return;
         }
+        self.watch_oob_text_report(to, tp, src, ctx);
+    }
+
+    /// The reporting half of [`Self::watch_oob_text`], reached only for the store
+    /// `LOFT_WATCH_STORE` names.
+    #[inline(never)]
+    fn watch_oob_text_report(&self, to: &DbRef, tp: u16, src: Option<&DbRef>, ctx: &str) {
         let Some((bad_pos, bad_cur)) = self.first_oob_text(to, tp) else {
             return;
         };
