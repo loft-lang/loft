@@ -1,0 +1,189 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` runs a type's hook once per resource and moves that responsibility with a
+// copy; `ownership.md (O-Complete)` makes the ownership fact per binding and PER PATH.  The two
+// meet at a value `if`/`match` whose arms yield droppable LOCALS: `t = if c { a } else { b }`
+// creates two resources and ran ONE hook, on both backends, with no diagnostic and no leak
+// warning — the store is freed, only the author's release is skipped.  A file left open, a lock
+// unreleased, and nothing said so.
+//
+// The arms are lifted into one temp each, and the temp is what carries the release.  That half
+// is already per path: each temp is null until its own arm assigns it, and its release is
+// null-guarded.  The hand-off recorded against the SOURCE is not — one statement wrote down as
+// many hand-offs as it has arms and performed one — so the arm that did not run left its source
+// with nothing to release it.  c_three is the cell that shows the scale: with three arms the
+// path that takes the fresh one loses BOTH locals.
+//
+// The cure is the direction, not a witness.  A per-path hand-off keeps the release with the
+// SOURCE, which is live on every path, and stops the DESTINATION — which is exactly the temp
+// that is null on the paths that did not take it, so nothing has to be tested at run time.
+// `scopes::handoff_target` is the one home for that direction, because two sites decide it
+// about the same copy: the arm lift records it from the construction, and the statement scan
+// meets the same `__lift_N = a` again later — by which time it is scanning INSIDE the arm, so
+// the branch that makes the copy conditional is no longer in view.  That is why the fact is
+// CARRIED (`Scopes::arm_lift_temps`) rather than read back off the IR.
+//
+// ⚠ The rule is scoped to a per-ARM destination and c_shared is not this file's subject for
+// that reason.  Where the arms assign one SHARED local (`if c { x = a } else { x = b }`) the
+// destination genuinely owns what it took on the path that ran, so stopping it would lose that
+// release instead; that shape wants the source released inside the omitting arms and is open
+// as loft#1514's residual.  Its cell is here as a CONTROL, recording what it does today.
+//
+// @falsified-at: PENDING
+// CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends — this
+//   is not a divergence, both ran one hook for two resources.  NOT the leak channel: the store
+//   is freed either way, so a run scored on leaks learns nothing here.  What is lost is the
+//   author's release, which only an assertion on the hook's own trace can see.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control c_if drains `V11,11` where the fix drains `V11,12,11` — two
+//   resources and one hook.  It is the first cell, so the run stops there; the rest were
+//   measured by scoring the file with the assertions replaced by prints rather than assumed.
+//   TWELVE of the 19 cells move.  The ones worth reading: c_three on the M path reads
+//   `V33,33` against `V33,32,31,33`, so the fresh arm loses BOTH locals and a fix that
+//   recovered one hand-off would still fail it; c_loop reads `V40,40,V41,41` against
+//   `V40,50,40,V41,51,41`, one lost release per ITERATION; and c_two_fields reads
+//   `V61,62,61` against `V61,72,71,62,61` — the not-taken arm's record loses both of its
+//   fields, which is what a whole-cascade cure would have hidden on a one-field record.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
+//   both backends.  SEVEN cells hold and each is here to hold: c_mixed on the path that takes
+//   the copying arm, c_one_local (both arms name the same local, so one hand-off serves every
+//   path), c_in_arms and c_index (no lift at all), c_plain_bind (an UNCONDITIONAL hand-off,
+//   which must keep moving the release to the copy) and c_both_fresh (each arm's temp owns
+//   what it built).  c_shared holds too, and holding is the point: it reads `173,V171,171` on
+//   both trees, which is loft#1514's residual left visible rather than implied.
+//
+// The trace file is this guard's own — its own means THIS file, not this family: several corpus
+// guards write one, and two concurrent runs of the SAME guard clobber each other's.
+
+fn trace_path() -> text { return "loft_armdrop_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct ArH { id: integer }
+fn OpDrop(self: ArH) { note("{self.id}"); }
+fn ar(id: integer) -> ArH { return ArH { id: id }; }
+struct ArPair { p: ArH, q: ArH }
+fn ar2(n: integer) -> ArPair { return ArPair { p: ar(n), q: ar(n + 1) }; }
+enum ArPick { L, R, M }
+
+// The defect: two resources, one hook.  The arm that did not run leaves its source unreleased.
+fn c_if(c: boolean) { a = ar(11); b = ar(12); t = if c { a } else { b }; note("V{t.id}"); }
+// The MATCH spelling of the same statement — it lowers to the same `If`, and a fix keyed on the
+// source spelling rather than on the lowering would move only one of them.
+fn c_match(c: boolean) { a = ar(21); b = ar(22); t = match c { true => a, false => b }; note("V{t.id}"); }
+// THREE arms, one of them a fresh value.  On the path that takes the fresh arm BOTH locals are
+// lost, so this cell tells a fix that recovers one hand-off from one that recovers every arm's.
+fn c_three(p: ArPick) { a = ar(31); b = ar(32); t = match p { L => a, R => b, M => ar(33) }; note("V{t.id}"); }
+// A LOOP around the branch: a back edge is a second path a single forward reading does not see,
+// and the loss is per ITERATION rather than per function.
+fn c_loop(c: boolean) { for i in 0..2 { a = ar(40 + i); b = ar(50 + i); t = if c { a } else { b }; note("V{t.id}"); } }
+// Records with TWO droppable fields.  The not-taken arm loses BOTH, so a cure that suppresses a
+// whole cascade reads as a fix on a one-field record and leaks the sibling.
+fn c_two_fields(c: boolean) { a = ar2(61); b = ar2(71); t = if c { a } else { b }; note("V{t.p.id}"); }
+// One arm copies a local and the other builds a FRESH value: the fresh arm's temp owns what it
+// built and must keep its own release, while the local still owes one.
+fn c_mixed(c: boolean) { a = ar(81); t = if c { a } else { ar(82) }; note("V{t.id}"); }
+// A branch NESTED inside an arm — the lift is one level deeper and the rule has to reach it.
+fn c_nested(c: boolean) { a = ar(91); b = ar(92); d = ar(93); t = if c { if a.id > 0 { a } else { d } } else { b }; note("V{t.id}"); }
+// Both locals READ after the branch: the values must be intact, so the release is restored
+// without moving when it happens.
+fn c_read_after(c: boolean) { a = ar(101); b = ar(102); t = if c { a } else { b }; note("V{t.id}{a.id}{b.id}"); }
+// A source REASSIGNED after the branch (`@FR-O-Latest`): the displaced record releases at the
+// reassignment and the new one still owes its own.
+fn c_rebound(c: boolean) { a = ar(111); b = ar(112); t = if c { a } else { b }; a = ar(113); note("V{t.id}{a.id}"); }
+
+// CONTROL — both arms name the SAME local, so there is one hand-off and every path performs it.
+fn c_one_local(c: boolean) { a = ar(121); t = if c { a } else { a }; note("V{t.id}"); }
+// CONTROL — the work happens INSIDE the arms, so nothing is lifted out and both always released.
+fn c_in_arms(c: boolean) { a = ar(131); b = ar(132); if c { note("V{a.id}"); } else { note("V{b.id}"); } }
+// CONTROL — an INDEX is selected rather than the value; the locals are never handed off.
+fn c_index(c: boolean) { a = ar(141); b = ar(142); i = if c { 0 } else { 1 }; v = [a, b]; note("V{v[i].id}"); }
+// CONTROL — a plain UNCONDITIONAL bind.  `(H-Drop)` moves the release to the copy and one hook
+// is the whole point; a rule that read every hand-off as per path would break this.
+fn c_plain_bind() { h = ar(151); h2 = h; note("V{h2.id}"); }
+// CONTROL — both arms build FRESH values, so each temp owns its own record and there is no
+// source whose release could have moved.
+fn c_both_fresh(c: boolean) { t = if c { ar(161) } else { ar(162) }; note("V{t.id}"); }
+// CONTROL — the arms assign one SHARED local.  Not this file's subject: the destination owns
+// what it took on the path that ran, so the per-arm rule does not apply and `b` (or `a`) is
+// still unreleased.  Recorded so the residual is visible rather than implied.
+fn c_shared(c: boolean) { a = ar(171); b = ar(172); x = ar(173); if c { x = a; } else { x = b; } note("V{x.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_if(true); got = drain();
+  assert(got == "V11,12,11", "a value if releases both arms' sources (true): {got}");
+  c_if(false); got = drain();
+  assert(got == "V12,12,11", "a value if releases both arms' sources (false): {got}");
+
+  c_match(true); got = drain();
+  assert(got == "V21,22,21", "the match spelling releases both: {got}");
+
+  c_three(L); got = drain();
+  assert(got == "V31,32,31", "three arms, the L path: {got}");
+  c_three(R); got = drain();
+  assert(got == "V32,32,31", "three arms, the R path: {got}");
+  c_three(M); got = drain();
+  assert(got == "V33,32,31,33", "three arms, the FRESH path releases both locals: {got}");
+
+  c_loop(true); got = drain();
+  assert(got == "V40,50,40,V41,51,41", "a loop releases both per ITERATION: {got}");
+
+  c_two_fields(true); got = drain();
+  assert(got == "V61,72,71,62,61", "two droppable fields, the not-taken arm keeps both: {got}");
+
+  c_mixed(true); got = drain();
+  assert(got == "V81,81", "a copying arm and a fresh arm (copying taken): {got}");
+  c_mixed(false); got = drain();
+  assert(got == "V82,81,82", "a copying arm and a fresh arm (fresh taken): {got}");
+
+  c_nested(true); got = drain();
+  assert(got == "V91,93,92,91", "a branch nested inside an arm: {got}");
+
+  c_read_after(true); got = drain();
+  assert(got == "V101101102,102,101", "both locals read after the branch: {got}");
+
+  c_rebound(true); got = drain();
+  assert(got == "111,V111113,112,113", "a source reassigned after the branch: {got}");
+
+  c_one_local(true); got = drain();
+  assert(got == "V121,121", "CONTROL both arms name one local: {got}");
+
+  c_in_arms(true); got = drain();
+  assert(got == "V131,132,131", "CONTROL the work happens inside the arms: {got}");
+
+  c_index(true); got = drain();
+  assert(got == "V141,141,142", "CONTROL an index is selected, not the value: {got}");
+
+  c_plain_bind(); got = drain();
+  assert(got == "V151,151", "CONTROL an unconditional bind moves the release: {got}");
+
+  c_both_fresh(true); got = drain();
+  assert(got == "V161,161", "CONTROL both arms build fresh values: {got}");
+
+  c_shared(true); got = drain();
+  assert(got == "173,V171,171", "CONTROL a shared destination is loft#1514's residual: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("branch arm drop ok");
+}
