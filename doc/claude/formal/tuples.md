@@ -276,6 +276,15 @@ still standing on this one.  Consuming the name is not enough on the LEFT of an 
 from `__tuple<integer,text>` to integer"*), so the errored member carries `fields.rs`'s
 `Value::Drop` marker, which the assignment path already reads.
 
+Two smaller faults on the same rule came out of the same pass and are closed with it.  The
+index was read with `has_integer`, which matches only `LexItem::Integer`; the lexer switches
+to `LexItem::Long` above `i32::MAX`, so `t.2147483647` reported out-of-range and
+`t.2147483648` reported *"requires a numeric index"* about a literal that plainly is one —
+one value apart, deciding which refusal on a width the author never chose.  And `.i` on a
+receiver that is NOT a tuple reported *"Expect a field name"*, the token rather than the
+situation; it now names the receiver's type and the cure for its kind, which is where
+`(T-Paren)`'s warning about `(e)` finally reaches a reader.
+
 Closed by giving the two questions ONE home each — `tuple_member_not_a_literal` and
 `tuple_index_out_of_range` in `parser/operators.rs`, cited from all three sites.  Three copies
 of one refusal is what let a fourth spelling of it be a token GUARD instead: the guard reads
@@ -357,13 +366,22 @@ the companion [tuples-history.md](tuples-history.md).
   ICE (`tests/scripts/102-expected-errors.loft`). A bare `text` element and a struct element
   are ADMITTED — the record-backed form, measured 2026-09-10 on both backends and guarded by
   `tests/scripts/reference-tuple-heap-elements-link.loft`.
+- **Not a tuple (`T-Paren`)** — `.i` on a receiver that is not a tuple names the receiver's
+  type and the cure for its KIND: `v.0` on a vector says to index it (`[0]`), `s.0` on a
+  struct says to name the field, and a scalar gets the rule itself — `(e)` is grouping, not a
+  1-tuple.  That last is the case `T-Paren` exists for: `x = (5); x.0` reads a tuple element
+  off an `integer`, and the reader used to be told only *"Expect a field name"*, about the
+  token rather than the situation.  A trailing comma is refused separately and by name
+  (*"Tuple literals require at least 2 elements"*), so `(5,)` is not a 1-tuple either.
 - **Static index (`T-Proj`)** — `t.5` on a 2-tuple is a compile error, not a runtime null.
   Asked of all THREE homes a tuple has (2026-09-10, both backends): the stack `Type::Tuple`,
   the record-backed `__tuple<…>` a `vector<(τ, τ)>` loop variable and a heap-carrying return
   carry, and a `&(…)` reference tuple.  Each reports the same two refusals — an out-of-range
   literal index, and a member that is not a literal at all — and each reports exactly ONE
   error, because the refusal now consumes the offending member instead of leaving it for the
-  statement parser (`102b-pass1-expected-errors.loft`).  The positive half, that `.0`/`.1`
+  statement parser (`102b-pass1-expected-errors.loft`).  The index is read as a LONG, so an
+  index above `i32::MAX` reports out-of-range like every smaller one: the lexer changes token
+  kind there, and which of the two refusals a program earned used to turn on that width.  The positive half, that `.0`/`.1`
   read the same element from every home and still WRITE through a loop variable, is
   `822-vector-tuple-spellings.loft`.  The home is what made this worth asking three times:
   see D-tup-12.

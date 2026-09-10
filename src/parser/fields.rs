@@ -110,7 +110,43 @@ impl Parser {
             .record_resolutions
             .then(|| self.lexer.peek_pos().clone());
         let Some(field) = self.lexer.has_identifier() else {
-            diagnostic!(self.lexer, Level::Error, "Expect a field name");
+            // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
+            // here with one means the receiver is not a tuple — a fact only this site knows,
+            // and *"Expect a field name"* reports the token instead of it.  loft#1461 already
+            // replaced that wording where the receiver WAS a tuple; this is the other half.
+            //
+            // The likely causes are two, and the type tells them apart.  On a collection the
+            // author wants `v[0]`.  Otherwise it is `@FR-T-Paren`: `(e)` is grouping, not a
+            // 1-tuple, so `x = (5); x.0` reads a tuple element off an `integer` — the trap
+            // the rule exists to warn about, met with no help at all until now.
+            //
+            // The index is CONSUMED before reporting, for the reason `@FR-T-Proj`'s own
+            // refusal consumes it: a member left in the stream reaches the statement parser
+            // and earns a second `Expect token ;` behind the error that is true.
+            if let Some(idx) = self.lexer.has_long() {
+                let ty = t.source_name(&self.data);
+                // The cure is per receiver KIND, because the three ways an author gets here
+                // want three different edits and a single generic line helps only one of them.
+                let cure = match t.peel_link() {
+                    Type::Vector(_, _) => format!("index it instead: `[{idx}]`"),
+                    Type::Reference(_, _) => "name the field instead".to_string(),
+                    _ => "`(e)` is grouping, not a 1-tuple — a tuple needs 2 or more elements"
+                        .to_string(),
+                };
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`.{idx}` reads a TUPLE element, and `{ty}` is not a tuple — {cure}"
+                );
+                // Consuming the index leaves `s.0 = 9` reading as `s = 9`, which earns a
+                // second error — *"cannot change type from `text` to integer"* — about an
+                // assignment the author did not write.  `Value::Drop` is what the unknown-
+                // receiver path above marks such a place with, and the assignment path
+                // reads it.
+                *code = Value::Drop(Box::new(code.clone()));
+            } else {
+                diagnostic!(self.lexer, Level::Error, "Expect a field name");
+            }
             return t;
         };
         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as

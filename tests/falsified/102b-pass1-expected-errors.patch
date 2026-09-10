@@ -1,5 +1,54 @@
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index d56e72beb..f21fc7431 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -110,43 +110,7 @@ impl Parser {
+             .record_resolutions
+             .then(|| self.lexer.peek_pos().clone());
+         let Some(field) = self.lexer.has_identifier() else {
+-            // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
+-            // here with one means the receiver is not a tuple — a fact only this site knows,
+-            // and *"Expect a field name"* reports the token instead of it.  loft#1461 already
+-            // replaced that wording where the receiver WAS a tuple; this is the other half.
+-            //
+-            // The likely causes are two, and the type tells them apart.  On a collection the
+-            // author wants `v[0]`.  Otherwise it is `@FR-T-Paren`: `(e)` is grouping, not a
+-            // 1-tuple, so `x = (5); x.0` reads a tuple element off an `integer` — the trap
+-            // the rule exists to warn about, met with no help at all until now.
+-            //
+-            // The index is CONSUMED before reporting, for the reason `@FR-T-Proj`'s own
+-            // refusal consumes it: a member left in the stream reaches the statement parser
+-            // and earns a second `Expect token ;` behind the error that is true.
+-            if let Some(idx) = self.lexer.has_long() {
+-                let ty = t.source_name(&self.data);
+-                // The cure is per receiver KIND, because the three ways an author gets here
+-                // want three different edits and a single generic line helps only one of them.
+-                let cure = match t.peel_link() {
+-                    Type::Vector(_, _) => format!("index it instead: `[{idx}]`"),
+-                    Type::Reference(_, _) => "name the field instead".to_string(),
+-                    _ => "`(e)` is grouping, not a 1-tuple — a tuple needs 2 or more elements"
+-                        .to_string(),
+-                };
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`.{idx}` reads a TUPLE element, and `{ty}` is not a tuple — {cure}"
+-                );
+-                // Consuming the index leaves `s.0 = 9` reading as `s = 9`, which earns a
+-                // second error — *"cannot change type from `text` to integer"* — about an
+-                // assignment the author did not write.  `Value::Drop` is what the unknown-
+-                // receiver path above marks such a place with, and the assignment path
+-                // reads it.
+-                *code = Value::Drop(Box::new(code.clone()));
+-            } else {
+-                diagnostic!(self.lexer, Level::Error, "Expect a field name");
+-            }
++            diagnostic!(self.lexer, Level::Error, "Expect a field name");
+             return t;
+         };
+         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
 diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 151d9b31d..3c6ebcf66 100644
+index 60f8e1a49..3c6ebcf66 100644
 --- b/src/parser/operators.rs
 +++ a/src/parser/operators.rs
 @@ -1560,16 +1560,17 @@ impl Parser {
@@ -13,7 +62,8 @@ index 151d9b31d..3c6ebcf66 100644
 -                // `__tuple<…>` below; all three must answer it alike.
                  if let Type::Tuple(ref elems) = *t.base() {
                      let elems = elems.clone();
-                     if let Some(idx) = self.lexer.has_integer() {
+-                    if let Some(idx) = self.lexer.has_long() {
++                    if let Some(idx) = self.lexer.has_integer() {
                          let idx = idx as usize;
 -                        if self.tuple_index_out_of_range(idx, elems.len()) {
 +                        if idx >= elems.len() {
@@ -50,9 +100,12 @@ index 151d9b31d..3c6ebcf66 100644
                      // P189b: vector-of-tuple loop var / index result —
                      // the loop variable is typed as `Reference(__tuple<…>)`
                      // pointing at inline tuple bytes inside the vector
-@@ -1652,7 +1659,13 @@ impl Parser {
+@@ -1650,9 +1657,15 @@ impl Parser {
+                         .iter()
+                         .map(|a| a.typedef.clone())
                          .collect();
-                     if let Some(idx) = self.lexer.has_integer() {
+-                    if let Some(idx) = self.lexer.has_long() {
++                    if let Some(idx) = self.lexer.has_integer() {
                          let idx = idx as usize;
 -                        if self.tuple_index_out_of_range(idx, elems.len()) {
 +                        if idx >= elems.len() {
@@ -80,20 +133,28 @@ index 151d9b31d..3c6ebcf66 100644
 -                        // was refused, and `t.name` reported *"Unknown field
 -                        // `__tuple<integer,text>`.name"* — a type the author cannot write,
 -                        // about a member kind a tuple does not have (loft#1498's class:
--                        // `Data::def_is_authored`).  The two sibling projection sites (the
--                        // stack tuple above, `parse_ref_tuple_elem` below) already answer
--                        // this question exactly this way; this one asked it as a GUARD on
--                        // the next token instead, so its non-literal case had no answer.
+-                        // `Data::def_is_authored`).  The two sibling sites — the stack
+-                        // tuple and `parse_ref_tuple_elem` — already answer this question
+-                        // exactly this way; this one asked it as a GUARD on the next token
+-                        // instead, so its non-literal case had no answer at all.
 -                        self.tuple_member_not_a_literal(code);
                      }
                  } else {
                      t = self.field(code, t);
-@@ -1960,56 +1957,16 @@ impl Parser {
+@@ -1960,64 +1957,16 @@ impl Parser {
          data.def(d).name().starts_with("__tuple<").then_some(d)
      }
  
 -    /// `@FR-T-Proj`: a tuple's member is a LITERAL index and nothing else — report a member
 -    /// that is not one, and CONSUME it.
+-    ///
+-    /// The three sites read the index with [`Lexer::has_long`] rather than `has_integer`,
+-    /// because the lexer splits a numeric literal at `i32::MAX`: above it the token is
+-    /// `LexItem::Long`, which `has_integer` does not match.  So `t.2147483648` reached THIS
+-    /// refusal — *"requires a numeric index"* about a literal that plainly is one — while
+-    /// `t.2147483647` reported the out-of-range error it shares a fault with.  An index that
+-    /// large is out of range for every tuple; which of the two answers it gets should not
+-    /// turn on the width the lexer picked.
 -    ///
 -    /// The one home for that question, which the three projection sites (stack tuple,
 -    /// record-backed `__tuple<…>`, `&(…)` reference tuple) each used to answer for
@@ -139,7 +200,8 @@ index 151d9b31d..3c6ebcf66 100644
 -    /// the third of the three sites that answer it (see the stack-tuple site in
 -    /// [`Parser::operators`] for the other two).
      fn parse_ref_tuple_elem(&mut self, t: &mut Type, code: &mut Value, elems: &[Type]) {
-         if let Some(idx) = self.lexer.has_integer() {
+-        if let Some(idx) = self.lexer.has_long() {
++        if let Some(idx) = self.lexer.has_integer() {
              let idx = idx as usize;
 -            if self.tuple_index_out_of_range(idx, elems.len()) {
 +            if idx >= elems.len() {
@@ -152,7 +214,7 @@ index 151d9b31d..3c6ebcf66 100644
                  *t = Type::Unknown(0);
              } else {
                  *t = elems[idx].clone();
-@@ -2018,7 +1975,11 @@ impl Parser {
+@@ -2026,7 +1975,11 @@ impl Parser {
                  }
              }
          } else {

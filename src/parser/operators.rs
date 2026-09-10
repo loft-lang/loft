@@ -1567,7 +1567,7 @@ impl Parser {
                 // `__tuple<…>` below; all three must answer it alike.
                 if let Type::Tuple(ref elems) = *t.base() {
                     let elems = elems.clone();
-                    if let Some(idx) = self.lexer.has_integer() {
+                    if let Some(idx) = self.lexer.has_long() {
                         let idx = idx as usize;
                         if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
@@ -1650,7 +1650,7 @@ impl Parser {
                         .iter()
                         .map(|a| a.typedef.clone())
                         .collect();
-                    if let Some(idx) = self.lexer.has_integer() {
+                    if let Some(idx) = self.lexer.has_long() {
                         let idx = idx as usize;
                         if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
@@ -1963,6 +1963,14 @@ impl Parser {
     /// `@FR-T-Proj`: a tuple's member is a LITERAL index and nothing else — report a member
     /// that is not one, and CONSUME it.
     ///
+    /// The three sites read the index with [`Lexer::has_long`] rather than `has_integer`,
+    /// because the lexer splits a numeric literal at `i32::MAX`: above it the token is
+    /// `LexItem::Long`, which `has_integer` does not match.  So `t.2147483648` reached THIS
+    /// refusal — *"requires a numeric index"* about a literal that plainly is one — while
+    /// `t.2147483647` reported the out-of-range error it shares a fault with.  An index that
+    /// large is out of range for every tuple; which of the two answers it gets should not
+    /// turn on the width the lexer picked.
+    ///
     /// The one home for that question, which the three projection sites (stack tuple,
     /// record-backed `__tuple<…>`, `&(…)` reference tuple) each used to answer for
     /// themselves.  Consuming the offending name is the half that was missing everywhere: a
@@ -2007,7 +2015,7 @@ impl Parser {
     /// the third of the three sites that answer it (see the stack-tuple site in
     /// [`Parser::operators`] for the other two).
     fn parse_ref_tuple_elem(&mut self, t: &mut Type, code: &mut Value, elems: &[Type]) {
-        if let Some(idx) = self.lexer.has_integer() {
+        if let Some(idx) = self.lexer.has_long() {
             let idx = idx as usize;
             if self.tuple_index_out_of_range(idx, elems.len()) {
                 *t = Type::Unknown(0);

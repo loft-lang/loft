@@ -13,6 +13,13 @@
 // Everything here is reported during pass 1 — the lexer's own errors, and the definition
 // checks that run before any body is re-parsed.
 
+// A plain struct, declared HERE rather than beside the cell that uses it: a file this
+// full of errors does not finish resolving definitions that come after them, and an
+// unresolved receiver takes @P376's cascade-suppression path, which reports nothing.
+struct TupleFieldBoxB {
+  a: integer,
+}
+
 // ── L11 digit-separator placement (lexer) ──────────────────────
 
 // @EXPECT_ERROR: Misplaced '_' in number literal
@@ -171,22 +178,24 @@ fn test_text_slice_end_with_text_is_refused() {
 // loop variable — are in `822-vector-tuple-spellings.loft` and the controls that guard
 // this walk's fix.
 //
-// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/22 -> 15/22
+// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/26 -> 20/26
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
-//   FAIL/22 -> 15/22.
-// CHANNEL: expectations, on both backends — four of the six cells below report NO error on
-//   the control, so the file's exit goes 1 -> 0 with them.  Not leak and not assert: this
-//   whole file is a parse-time verdict.
+//   FAIL/26 -> 20/26.
+// CHANNEL: expectations, on both backends — seven of the ten cells this walk adds report NO
+//   error on the control, so the file's exit goes 1 -> 0 with them.  Not leak and not
+//   assert: this whole file is a parse-time verdict.
 // ARMED: no instrument.  A pass-1 diagnostic is reported by the ordinary run.
 // WITNESS: on 2e408acc8 `t._0` on a `vector<(integer, text)>` loop variable ANSWERS `11`
-//   instead of refusing, `t._0 = 99` leaves `v[0].0` reading `99`, and `t.name` reports
-//   `Unknown field __tuple<integer,text>.name` — the synthetic struct's own attribute
-//   names, reachable as a second spelling of `.0`.
+//   instead of refusing, `t._0 = 99` leaves `v[0].0` reading `99`, `t.name` reports
+//   `Unknown field __tuple<integer,text>.name` — the synthetic struct's own attribute names,
+//   reachable as a second spelling of `.0` — `t.2147483648` reports `requires a numeric
+//   index` about a literal that is one, and `.0` on a non-tuple reports `Expect a field
+//   name`, about the token rather than the receiver.
 // HOLDS: the two stack-tuple cells pass on BOTH trees, unchanged — `t.5` is already
 //   `Tuple index 5 out of range` there and `t.name` already `requires a numeric index`.
 //   They are what says the fix made the three homes AGREE rather than moving all three,
 //   and a patch that merely broke projection everywhere would move them too.  The 17
-//   expectations that predate this block must not move either.
+//   expectations that predate this walk must not move either.
 // @falsified-by: tests/falsified/102b-pass1-expected-errors.patch — the same channels.  Score
 //   it with `scripts/falsify.sh tests/scripts/102b-pass1-expected-errors.loft --patch
 //   tests/falsified/102b-pass1-expected-errors.patch`, which reintroduces the fault on top of
@@ -230,5 +239,48 @@ fn pe_tuple_record_synthetic_attr_read(v: vector<(integer, text)>) -> integer {
 // @EXPECT_ERROR: Tuple element access requires a numeric index
 fn pe_tuple_record_synthetic_attr_write(v: vector<(integer, text)>) -> integer {
   for t in v { t._0 = 99; }
+  0
+}
+
+// An index ABOVE `i32::MAX` is out of range for every tuple, and must say so.  The lexer
+// splits a numeric literal there — above it the token is `LexItem::Long` — and the three
+// projection sites read the index with `has_integer`, which does not match that kind.  So
+// `t.2147483647` reported the out-of-range error and `t.2147483648` reported *"requires a
+// numeric index"* about a literal that plainly is one: which of two refusals a program got
+// turned on the width the lexer picked, one value apart.
+// @EXPECT_ERROR: Tuple index 2147483648 out of range — tuple has 2 elements
+fn pe_tuple_index_above_i32_max() -> integer {
+  t = (1, 2);
+  t.2147483648
+}
+
+// ── `@FR-T-Paren` — `.i` on something that is NOT a tuple ────────────────────────
+//
+// `.<digits>` is the tuple spelling and nothing else, so a receiver that is not a tuple is
+// a fact the field reader alone knows — and it reported *"Expect a field name"*, about the
+// token rather than the situation.  loft#1461 replaced that wording where the receiver WAS
+// a tuple; these are the other half, and the cure differs by receiver kind because the
+// three ways an author arrives here want three different edits.
+//
+// The scalar cell is the one the rule exists for: `(T-Paren)` says a lone `(e)` is grouping
+// and the minimum tuple width is 2, so `x = (5); x.0` reads a tuple element off an
+// `integer` — and until now the language said nothing about why.
+
+// @EXPECT_ERROR: `(e)` is grouping, not a 1-tuple
+fn pe_tuple_index_on_a_scalar() -> integer {
+  x = (5);
+  y = x.0;
+  0
+}
+
+// @EXPECT_ERROR: index it instead: `[0]`
+fn pe_tuple_index_on_a_vector(v: vector<integer>) -> integer {
+  y = v.0;
+  0
+}
+
+// @EXPECT_ERROR: name the field instead
+fn pe_tuple_index_on_a_struct(s: TupleFieldBoxB) -> integer {
+  y = s.0;
   0
 }
