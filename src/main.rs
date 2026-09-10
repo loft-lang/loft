@@ -11583,8 +11583,21 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             std::process::exit(1);
         });
         // Clean up temp binary (not the cached copy).
+        //
+        // ⚠ And its DEBUG-SYMBOL companion.  The MSVC linker writes `<binary>.pdb` beside the
+        // executable, so removing only the binary leaves the .pdb behind — and the sweep
+        // cannot reclaim it either, because `runtime_scratch_pid` requires everything after
+        // `loft_native_bin_` to be all digits and `1644.pdb` is not, so the name falls to the
+        // age rule and survives the hour.  Invisible on unix, which emits no such file:
+        // `pdb` appeared NOWHERE in `src/` before this.  Measured on the Windows daily —
+        // `native_scratch_hygiene` failed with `a run that ends normally leaves no artefact
+        // of its own, found ["loft_native_bin_1644.pdb"]`.
+        //
+        // Written as "remove the companion whatever it is called" rather than `#[cfg(windows)]`
+        // so a toolchain that emits one on another host is covered by the same line.
         if binary != cached_binary {
             let _ = std::fs::remove_file(&binary);
+            let _ = std::fs::remove_file(binary.with_extension("pdb"));
         }
         if !run_status.success() {
             native_utils::explain_windows_startup_failure(run_status, &binary, &p.data);

@@ -357,7 +357,15 @@ fn scratch_owner_pid(name: &str) -> Option<u32> {
 /// space.
 fn runtime_scratch_pid(name: &str) -> Option<u32> {
     let digits = if let Some(rest) = name.strip_prefix("loft_native_bin_") {
-        rest
+        // ⚠ The MSVC linker writes `<binary>.pdb` beside the executable, so the binary shape
+        // has a companion whose name is `loft_native_bin_<pid>.pdb`.  Without stripping that
+        // suffix the digit test below fails on `1644.pdb`, the name is claimed by nothing, and
+        // it falls to the age rule — surviving the hour that the binary it belongs to does not.
+        // Measured on the Windows daily (`native_scratch_hygiene`).  Stripping only this ONE
+        // known suffix, and only on the `bin_` shape, keeps the looser
+        // `scratch_owner_pid` hazard out: a script STEM ending in digits must still not read
+        // as a pid, which is why this does not simply split on '.'.
+        rest.strip_suffix(".pdb").unwrap_or(rest)
     } else {
         name.strip_prefix("loft_native_")?.strip_suffix(".rs")?
     };
@@ -657,6 +665,26 @@ mod reclaim_tests {
             Some(true),
             "pid 1 exists whether or not we may signal it"
         );
+    }
+
+    /// The debug-symbol companion is the runtime's own file and has to be claimable, or it
+    /// outlives the binary it belongs to.  `pdb` appeared nowhere in `src/` before this, so
+    /// the omission was total rather than partial — and unix emits no such file, which is why
+    /// only the Windows daily could see it.
+    #[test]
+    fn the_binarys_debug_symbol_companion_is_claimed_like_the_binary() {
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644"), Some(1644));
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644.pdb"), Some(1644));
+        // The looser hazard stays out: a script STEM ending in digits is NOT a pid, whatever
+        // extension it carries, or a worker's compile sweeps a sibling's live source away.
+        assert_eq!(
+            runtime_scratch_pid("loft_native_discard_slot_per_type_795.rs"),
+            None
+        );
+        assert_eq!(runtime_scratch_pid("loft_native_bin_notapid"), None);
+        assert_eq!(runtime_scratch_pid("loft_native_bin_notapid.pdb"), None);
+        // And only THAT suffix — an unknown one must not be silently accepted.
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644.exe"), None);
     }
 
     #[test]
