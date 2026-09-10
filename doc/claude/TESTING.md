@@ -3324,6 +3324,23 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**⚠ A probe on ONE of two arms that reports nothing is not a negative result — it is an
+unarmed instrument, and it reads exactly like a disproof.**  Measured twice, independently, on
+loft#1505 (2026-09-10).  `pre_eval.rs::rewrite_code` substitutes an inner pre-eval into its
+parent's text through one of two arms — `s.replace` when the entry carries `replace_all`,
+`s.replacen` otherwise.  Two agents each instrumented the `replacen` arm, each got ZERO
+misses, and each concluded from that silence that the text match was not the mechanism.  It
+was: the entry took the `replace` arm, where the key missed by 1935 bytes against 2059.
+Instrumenting both arms produced the answer in one run.
+
+The general shape, because it is not about that file: an instrument that covers a SUBSET of the
+paths a question can take answers *"not on the paths I watched"*, and nothing in its output says
+which those were.  A silent probe is therefore evidence only once you have shown it can SPEAK —
+so arm it on a case you know is positive before believing a negative, exactly as a guard has to
+be falsified before its green means anything.  The same failure is recorded for a platform in
+WINDOWS.md (`LC_ALL=C` does not move Python's preferred encoding on Linux, so a local
+falsification of a cp1252 hypothesis came back clean and was written down as disproven).
+
 **Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
 and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each
 unmatched one (`unmatched_expect` over the whole list, loft#929's own fix), so a file CAN hold
