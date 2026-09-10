@@ -157,11 +157,18 @@ target-*/
 # Gate verdict written by scripts/ci-run.sh — local run state, never committed.
 .ci-verdict
 
-# A root `loft.toml` makes the loft REPO ITSELF a loft package, which silently changes two
-# repo-wide behaviours: diagnostic REACH is scoped to the nearest `loft.toml` above the entry
-# (so `source_is_owned` flips and lint tests see different diagnostics), and `use` resolution
-# gains a declared-dependency set.  `loft install` writes one into whatever directory it is
-# run from, so a single `loft install` in a checkout root is enough — and it was, once: four
-# tests failed across `lsp_diagnostics` and `n3_use_native` with nothing in the diff that
-# looked related.  Nothing in this repo needs one.
+# ⚠ A ROOT `loft.toml` MAKES THIS REPO A LOFT PACKAGE, and that changes two
+# repo-wide behaviours at once — neither of them anywhere near the file:
+#   * diagnostic REACH is scoped to the nearest `loft.toml` ABOVE the entry, so
+#     `source_is_owned` flips and the lint tests see a different diagnostic set;
+#   * `use` resolution gains a declared-dependency set.
+# Measured 2026-09-10: one stray file failed 4 tests across two unrelated
+# binaries — `lsp_diagnostics` (2) and `n3_use_native` (2) — and removing it
+# alone made all 19 pass.  Nothing in the diff that carried it looked related to
+# either binary, which is exactly why this is ignored rather than remembered.
+# `loft.lock` and `.loft/` (its siblings) were already ignored; this one was not.
+# One `loft install` run in a checkout root is enough to recreate it — and the
+# run that did it printed `cd: …: Not a directory` from a `mktemp` with no `-d`,
+# three lines above output that looked correct because it came from
+# `~/.loft/registry/` regardless of the working directory.
 /loft.toml
