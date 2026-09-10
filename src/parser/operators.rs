@@ -561,10 +561,19 @@ impl Parser {
         {
             return None;
         }
-        let buf = args.iter().find_map(|a| match a.unspan() {
-            Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
-            _ => None,
-        })?;
+        // The callee's own hidden return buffer where it has one; otherwise a fresh
+        // work-ref of this frame.  A callee that can answer NULL is not NRVO-promoted and
+        // carries no buffer at all (`fn pick(n) -> Cell?`), so asking only for the buffer
+        // left exactly those calls owner-less — the shape loft#1506's record view-model
+        // then leaked, because a borrowing result no longer adopted them.  Either way the
+        // store ends up in a variable `get_free_vars` releases at scope exit.
+        let buf = args
+            .iter()
+            .find_map(|a| match a.unspan() {
+                Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
@@ -3185,9 +3194,16 @@ impl Parser {
         // struct-valued constant PRESCRIBES the call spelling, so the leaking form is the
         // one it tells you to write.  [`Self::materialise_owned_call`] has the model; the
         // same join shape written as an `if` or a `match` is loft#1019.
+        // loft#1506 — the RECORD view-model below makes the join's result a borrow too,
+        // so the default arm needs its own owner for the same reason.  Decided here
+        // rather than at the branch that applies it: `rhs` is folded into the `if` before
+        // that point, and a default left owner-less on the absent path leaks its store.
+        let record_view = self.owned_record_subject(lhs_type, code)
+            && Self::frame_view_of(&result_type, 0).is_some();
         if !self.first_pass
-            && matches!(result_type.base(), Type::Reference(_, _))
-            && !result_type.depend().is_empty()
+            && (record_view
+                || (matches!(result_type.base(), Type::Reference(_, _))
+                    && !result_type.depend().is_empty()))
             && let Some(owned) = self.materialise_owned_call(&rhs, &result_type)
         {
             rhs = owned;
@@ -3255,12 +3271,7 @@ impl Parser {
             // `r = mk(i) ?? d` was clean only while `r` freed on the mint arm a store it
             // merely borrowed on the other.  A projection subject (`o.inner ?? d`) stays the
             // view it is (`@FR-B-View`), and a bare variable is never hoisted at all.
-            let owned_record = matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
-                && match code.unspan() {
-                    Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
-                    Value::CallRef(_, _) => true,
-                    _ => false,
-                };
+            let owned_record = self.owned_record_subject(lhs_type, code);
             if matches!(
                 lhs_type,
                 Type::Text(_) | Type::Sorted(_, _, _) | Type::Hash(_, _, _) | Type::Index(_, _, _)
@@ -3324,9 +3335,59 @@ impl Parser {
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;
             }
+            // loft#1506 / `formal/heap.md` D-heap-3 — the same view-model for an OWNED
+            // RECORD subject, and for the same reason.  The join's value is `if __ncc_N
+            // { __ncc_N } else { <default> }`: both arms are vars THIS FRAME owns and
+            // frees, so a result typed as a bare owner hands a second owner to whoever
+            // consumes it — a lift, or the binding of `r = mk() ?? d`.  Two owners of one
+            // store release its resources twice and the later one reads a freed record
+            // (`LOFT_POISON` shows the pattern arriving in the author's `OpDrop`).
+            // Naming the present arm's owner makes the consumer a BORROW, which is what
+            // the value is.
+            if owned_record && let Some(view) = Self::frame_view_of(&result_type, tmp) {
+                *code = v_block(vec![set_tmp, if_expr], view.clone(), "ncc");
+                *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
+                return;
+            }
             *code = v_block(vec![set_tmp, if_expr], result_type.clone(), "ncc");
         }
         *ctp = Self::wrap_if_fallback_nullable(result_type, fallback_nullable);
+    }
+
+    /// Does this `??` subject deliver a RECORD store the frame must own?
+    ///
+    /// A plain bind of a record-returning CALL leaves the local OWNING — a fresh mint is
+    /// adopted, a borrowed or `Join` return is deep-copied by codegen, and a fn-ref
+    /// call's is the store minted for that call — so the `__ncc_N` temp that holds it
+    /// owns a store on every arm (`@FR-O-Complete`: the fact per binding, per path).  A
+    /// projection subject (`o.inner ?? d`) stays the view it is (`@FR-B-View`), and a
+    /// bare variable is never hoisted at all.
+    fn owned_record_subject(&self, lhs_type: &Type, code: &Value) -> bool {
+        matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
+            && match code.unspan() {
+                Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
+                Value::CallRef(_, _) => true,
+                _ => false,
+            }
+    }
+
+    /// The same record type, re-typed as a VIEW of frame variable `tmp`.
+    ///
+    /// `Optional` is peeled and re-wrapped so a `-> S?` join keeps its nullability: the
+    /// dep belongs on the reference, and a `Type::Optional` carries none of its own.
+    /// Returns `None` for anything that is not a record — the caller keeps the bare
+    /// owner there.
+    fn frame_view_of(tp: &Type, tmp: u16) -> Option<Type> {
+        match tp {
+            Type::Reference(d, _) => Some(Type::Reference(*d, crate::data::Deps::frame(vec![tmp]))),
+            Type::Enum(d, true, _) => {
+                Some(Type::Enum(*d, true, crate::data::Deps::frame(vec![tmp])))
+            }
+            Type::Optional(inner) => {
+                Self::frame_view_of(inner, tmp).map(|v| Type::Optional(Box::new(v)))
+            }
+            _ => None,
+        }
     }
 
     /// @PLN102 gate-2 `?? null` — re-mark a coalesce RESULT nullable when its fallback can be null

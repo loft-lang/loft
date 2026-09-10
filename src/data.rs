@@ -8448,11 +8448,14 @@ impl Data {
         self.drop_hook_nr(type_def)
     }
 
-    /// The skip-capable variant of the cascade — `t_<LEN><Type>_OpDropAllExcept(self, skip)`
-    /// releases everything the type owns EXCEPT the inline field at byte offset `skip`.
+    /// The skip-capable variant of the cascade —
+    /// `t_<LEN><Type>_OpDropAllExcept(self, skip, depth)` releases everything the type owns
+    /// EXCEPT the member the PATH `(skip, depth)` names: `skip` byte offsets from this
+    /// record, `depth` levels below it.  Both, because a member at offset 0 of a nested
+    /// record shares its owner's address.
     ///
-    /// `(H-Drop)`'s responsibility clause, field-grained: a copy OUT of one field makes the
-    /// copy that field's owner, so the source record's death must release every OTHER member
+    /// `(H-Drop)`'s responsibility clause, field-grained: a copy OUT of one member makes the
+    /// copy that member's owner, so the source record's death must release every OTHER member
     /// and leave that one to the copy (D-heap-3, loft#1506). `u32::MAX` when the type has no
     /// such variant — the caller falls back to the full cascade, which is the pre-transfer
     /// double release rather than anything unsound.

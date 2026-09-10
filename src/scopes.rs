@@ -238,7 +238,7 @@ struct Scopes<'s> {
     /// sound only because a lift is minted fresh per statement and dropped at that
     /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
     /// scope-end drop releases whatever record it holds LAST.
-    lift_field_skip: HashMap<u16, u16>,
+    lift_field_skip: HashMap<u16, (u16, u16)>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -7099,7 +7099,13 @@ impl Scopes<'_> {
     /// clause.  One home for the rule, because
     /// both emission sites (the buffer-adoption leg and the ordinary one) must agree:
     /// a drop that runs on a released store is a use-after-free either way.
-    fn scope_end_drop(&self, function: &Function, v: u16, data: &Data) -> Option<Value> {
+    fn scope_end_drop(
+        &self,
+        function: &Function,
+        v: u16,
+        data: &Data,
+        path_skip: Option<(u16, u16)>,
+    ) -> Option<Value> {
         if self.drop_transferred.contains(&v) {
             return None;
         }
@@ -7107,7 +7113,11 @@ impl Scopes<'_> {
         // belongs to the copy: run the skip-capable cascade over everything else.  A type
         // without the variant (enum payloads, or a stale parse tail) falls back to the full
         // cascade — the pre-transfer double release, never a leak or a faulting free.
-        if let Some(&off) = self.lift_field_skip.get(&v)
+        //
+        // `path_skip` is the same transfer read off a RETURN's own copy rather than off a
+        // lift: keyed to the site, because a local with several exits still releases the
+        // member on every path that does not hand it out.
+        if let Some(&(off, depth)) = path_skip.as_ref().or(self.lift_field_skip.get(&v))
             && let Type::Reference(d, _) | Type::Enum(d, true, _) = function.tp(v).base()
         {
             let nr = data.drop_cascade_except_nr(*d);
@@ -7117,7 +7127,11 @@ impl Scopes<'_> {
                     Box::new(live),
                     Box::new(Value::Call(
                         nr,
-                        vec![Value::Var(v), Value::Int(i32::from(off))],
+                        vec![
+                            Value::Var(v),
+                            Value::Int(i32::from(off)),
+                            Value::Int(i32::from(depth)),
+                        ],
                     )),
                     Box::new(Value::Null),
                 ));
@@ -7228,7 +7242,7 @@ impl Scopes<'_> {
                     self.loops[self.loops.len() - *lv as usize - 1],
                     &Type::Void,
                     u16::MAX,
-                    &HashSet::new(),
+                    &Delivered::default(),
                 );
                 if ls.is_empty() {
                     Value::Break(*lv)
@@ -7244,7 +7258,7 @@ impl Scopes<'_> {
                     self.loops[self.loops.len() - *lv as usize - 1],
                     &Type::Void,
                     u16::MAX,
-                    &HashSet::new(),
+                    &Delivered::default(),
                 );
                 if ls.is_empty() {
                     Value::Continue(*lv)
@@ -9951,7 +9965,24 @@ impl Scopes<'_> {
         } else {
             HashSet::new()
         };
-        let mut ls = self.get_free_vars(function, data, to_scope, tp, ret_var, &return_sources);
+        // D-heap-3 (loft#1506) — the member this RETURN hands to its own copy.
+        let path_skip = if is_return {
+            return_copy_out(expr, function, data)
+                .map_or_else(HashMap::new, |(v, skip)| HashMap::from([(v, skip)]))
+        } else {
+            HashMap::new()
+        };
+        let mut ls = self.get_free_vars(
+            function,
+            data,
+            to_scope,
+            tp,
+            ret_var,
+            &Delivered {
+                sources: return_sources,
+                field_skip: path_skip,
+            },
+        );
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
         // BE the returned store: a named local adopts the arm's fresh Object
         // (`v: E = Pass{..}; if c { v = Fail{..} }; v` — two candidate stores,
@@ -10626,8 +10657,12 @@ impl Scopes<'_> {
         to_scope: u16,
         tp: &Type,
         ret_var: u16,
-        return_sources: &HashSet<u16>,
+        delivered: &Delivered,
     ) -> Vec<Value> {
+        let Delivered {
+            sources: return_sources,
+            field_skip: path_skip,
+        } = delivered;
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
@@ -11040,7 +11075,7 @@ impl Scopes<'_> {
                         // the caller's own store.  A `Join` is owned on one arm and a borrow
                         // on the other and they are the SAME call, so nothing static separates
                         // them; the store number does.
-                        if let Some(hook) = self.scope_end_drop(function, v, data) {
+                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -11138,7 +11173,7 @@ impl Scopes<'_> {
                         // The FREE is skipped in the adoption case; the DROP is not.
                         // The store surviving into the next iteration is a reuse
                         // optimisation, and the value it held is over either way.
-                        if let Some(hook) = self.scope_end_drop(function, v, data) {
+                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
                             ls.push(hook);
                         }
                         // Several buffers — one per arm of the value branch `v` was bound
@@ -11165,7 +11200,7 @@ impl Scopes<'_> {
                         }
                     } else if let Some(w) = borrow_witness {
                         // Free ONLY when the local no longer names what its dep names.
-                        if let Some(hook) = self.scope_end_drop(function, v, data) {
+                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -11182,7 +11217,7 @@ impl Scopes<'_> {
                         // the value's life — unless `v` is a buffer whose witness already
                         // ran it.
                         if !is_buffer
-                            && let Some(hook) = self.scope_end_drop(function, v, data)
+                            && let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied())
                         {
                             ls.push(hook);
                         }
@@ -11748,10 +11783,10 @@ impl Scopes<'_> {
                         // release, never a leak).
                         match self.lift_field_skip.entry(*src) {
                             std::collections::hash_map::Entry::Vacant(e) => {
-                                e.insert(off);
+                                e.insert((off, 0));
                             }
                             std::collections::hash_map::Entry::Occupied(e) => {
-                                if *e.get() != off {
+                                if e.get().0 != off {
                                     e.remove();
                                 }
                             }
@@ -15691,6 +15726,100 @@ fn last_non_free_result<'a>(ops: &'a [Value], data: &Data) -> Option<&'a Value> 
 /// Answers false for a return with no join in it — one path cannot orphan the value it
 /// is itself delivering — and false when every arm's terminal is a source, which is the
 /// shape a record literal aliasing locals has.
+/// What a scope exit HANDS OUT, and so must not release — the two path-local facts
+/// [`Scopes::get_free_vars`] needs about the value leaving with it.
+///
+/// Both are per RETURN SITE rather than per function: a `break`, a `continue` and an
+/// ordinary block exit deliver nothing and pass the empty set.
+#[derive(Default)]
+struct Delivered {
+    /// The arm buffers this return delivers, whose scope-exit free the caller owns.
+    sources: HashSet<u16>,
+    /// The member a return's own materialising copy took over, as the local it came from
+    /// and the `(offset, depth)` path to it — see [`return_copy_out`].
+    field_skip: HashMap<u16, (u16, u16)>,
+}
+
+/// D-heap-3 (loft#1506) — the `(local, byte offset)` a RETURN copies out of a record it
+/// owns, so that local's scope-end cascade can leave that member to the copy.
+///
+/// `materialize_return_into` publishes an owned copy of a projection (`return d.h`) because
+/// `@FR-F-Ret` wants a fresh value, and `@FR-H-Drop`'s responsibility clause then moves the
+/// release with it: *the copy owns, the source stops dropping*.  Nothing carried that fact,
+/// so the source's own cascade released the member a second time.
+///
+/// The pairing is per RETURN SITE and never per variable.  A function with several exits
+/// still releases the member on every path that does NOT hand it out, so a skip keyed on
+/// the local would leak it there — which is why only the return's own TAIL is read.  A
+/// materialised copy sitting inside an `if` arm belongs to one path while this sweep runs
+/// for all of them, and is declined for the same reason.
+///
+/// A NESTED projection (`return d.m.h`) is carried rather than declined: a struct member is
+/// laid out inside its owner's record, so the offsets ADD and the pair reaching the cascade
+/// is the member's offset from `d`.  `fill_drop_cascade` subtracts each field's own offset
+/// on the way down, which is what makes one number reach any depth.
+///
+/// Declined: a PARAMETER source — `@FR-H-Drop`: *"a copy off a PARAMETER moves nothing: the
+/// caller owns"*, so there is no release here to suppress (`D-heap-1` owns that shape).  A
+/// decline keeps the full cascade — the pre-transfer double release, never a leak.
+fn return_copy_out(expr: &Value, function: &Function, data: &Data) -> Option<(u16, (u16, u16))> {
+    let tail = match expr.unspan() {
+        Value::Return(inner) => return return_copy_out(inner, function, data),
+        Value::Insert(ops) => return return_copy_out(ops.last()?, function, data),
+        other => other,
+    };
+    let Value::Block(bl) = tail else {
+        return None;
+    };
+    if bl.name != "materialized_view_return" {
+        return None;
+    }
+    let copy_nr = data.def_nr("OpCopyRecord");
+    let get_field_nr = data.def_nr("OpGetField");
+    bl.operators.iter().find_map(|op| {
+        let Value::Call(d, args) = op.unspan() else {
+            return None;
+        };
+        if *d != copy_nr {
+            return None;
+        }
+        let (src, skip) = projection_root(args.first()?, get_field_nr)?;
+        if function.is_argument(src) {
+            return None;
+        }
+        Some((src, skip))
+    })
+}
+
+/// The `(variable, (byte offset, depth))` an `OpGetField` chain reads — the PATH from a
+/// variable's record to the member it names.
+///
+/// Struct members are laid out INSIDE the record that owns them (`formal/layout.md`), so a
+/// chain of field reads is one address and its offsets add up; the depth is how many links
+/// the chain has below the first.  Both are needed because a member at offset 0 shares its
+/// owner's address, so an offset alone cannot say WHICH of them the chain named.  Returns
+/// `None` for a base that is not a plain variable — an element read, a call temporary or a
+/// keyed lookup names a place this frame's scope-end release does not reach.
+fn projection_root(expr: &Value, get_field_nr: u32) -> Option<(u16, (u16, u16))> {
+    let Value::Call(gf, gargs) = expr.unspan() else {
+        return None;
+    };
+    if *gf != get_field_nr {
+        return None;
+    }
+    let Value::Int(off) = gargs.get(1)?.unspan() else {
+        return None;
+    };
+    let off = u16::try_from(*off).ok()?;
+    match gargs.first()?.unspan() {
+        Value::Var(src) => Some((*src, (off, 0))),
+        base => {
+            let (src, (outer, depth)) = projection_root(base, get_field_nr)?;
+            Some((src, (outer.checked_add(off)?, depth.checked_add(1)?)))
+        }
+    }
+}
+
 fn return_has_non_source_arm(expr: &Value, sources: &[u16]) -> bool {
     fn walk(e: &Value, sources: &[u16], in_join: bool) -> bool {
         match e.unspan() {

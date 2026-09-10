@@ -5546,7 +5546,10 @@ impl Parser {
                 .clone();
             let _ = self
                 .data
-                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp);
+                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp.clone());
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "depth", int_tp);
             except_made.push((d_nr, c_nr));
         }
         for (t, c_nr) in except_made {
@@ -5870,10 +5873,13 @@ impl Parser {
                 .def(self.data.def_nr("integer"))
                 .returned()
                 .clone();
-            let v = vars.add_variable("skip", &int_tp, &mut self.lexer);
-            vars.become_argument(v);
-            vars.defined(v);
-            v
+            let mut arg = |name: &str| {
+                let v = vars.add_variable(name, &int_tp, &mut self.lexer);
+                vars.become_argument(v);
+                vars.defined(v);
+                v
+            };
+            (arg("skip"), arg("depth"))
         });
         // Build the body with the cascade's OWN table current, so anything `get_val` mints
         // for a field read lands in the function that will hold the code.
@@ -5911,14 +5917,38 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            let release = Value::If(
-                Box::new(live),
-                Box::new(Value::Call(target, vec![field])),
-                Box::new(Value::Null),
-            );
-            // The Except variant leaves the field at offset `skip` to its new owner.
-            let release = if let Some(sv) = skip_var {
-                let not_taken = self.cl("OpNeInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+            // In the Except variant the copied-out member is named by a PATH, not by a
+            // number: `skip` is its byte offset from the ROOT record and `depth` how many
+            // levels below this one it sits.  A nested struct is laid out INSIDE its
+            // owner's record, so the offsets ADD — the member is reached by handing this
+            // field's own Except cascade `skip - off` and `depth - 1`, and a `skip` that
+            // is NOT under this field lands outside the member's own offsets at every
+            // level below, so it matches nothing there.  A member type without the
+            // variant keeps the full cascade — the pre-transfer double release, never a
+            // leak.
+            let inner = match skip_var {
+                Some((sv, dv)) if self.data.drop_cascade_except_nr(fd) != u32::MAX => {
+                    let rel = self.cl("OpMinInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+                    let deeper = self.cl("OpMinInt", &[Value::Var(dv), Value::Int(1)]);
+                    Value::Call(
+                        self.data.drop_cascade_except_nr(fd),
+                        vec![field, rel, deeper],
+                    )
+                }
+                _ => Value::Call(target, vec![field]),
+            };
+            let release = Value::If(Box::new(live), Box::new(inner), Box::new(Value::Null));
+            // The Except variant leaves the member to its new owner where this field IS it:
+            // the offset matches AND the member sits at THIS level.  Both halves are needed
+            // because a member at offset 0 of a nested record shares its owner's address —
+            // `d.p` and `d.p.a` are the same byte — so an offset test alone skips the whole
+            // subtree and loses every sibling under it.  `(skip ^ off) | depth` is zero
+            // exactly when both hold: `depth` is positive above the level that owns the
+            // skip and negative below it, so no other level can claim the match.
+            let release = if let Some((sv, dv)) = skip_var {
+                let same = self.cl("OpEorInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+                let both = self.cl("OpLorInt", &[same, Value::Var(dv)]);
+                let not_taken = self.cl("OpNeInt", &[both, Value::Int(0)]);
                 v_if(not_taken, release, Value::Null)
             } else {
                 release
