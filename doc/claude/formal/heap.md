@@ -370,7 +370,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+OPEN: **3** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
 list has been re-cut as each was measured; the count is what is open TODAY); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
@@ -384,7 +384,13 @@ MEMORY-only residual those left behind — a binding and its materialising work-
 store twice, in the order their declarations happened to fall, which is `D-heap-5`
 (loft#1513).  Its count read **3** while D-heap-3's own heading already said OPENED AND
 CLOSED — this line and the entry below it are two readers of one fact, and a three-handed
-close updated only the entry.  D-heap-1's list has
+close updated only the entry.  `D-heap-6` (a literal built through a work-ref reads as a VIEW,
+so a local with two OWNING assignments is witnessed as a mixed one and its records are released
+by nobody) OPENED 2026-09-11 and is the third open row — it is D-heap-4's neighbour rather than
+a re-open of it: that entry made the construction hand-off conditional on an ownership fact,
+and this one rides the fact being decided wrong.  It stays open because the fabricated mix is
+MASKING a defect in the `__lbo_` nullable-displace path, so both cures that correct the arming
+population regress a value; the entry carries both measured non-cures.  D-heap-1's list has
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
@@ -1051,6 +1057,120 @@ FIELD — once into a `let _pre_N` binding nothing references — so the hook ru
 times where `--interpret` runs it once.  Filed rather than fixed here: the cure is in the
 native generator's pre-eval substitution, which matches by generated TEXT across two passes.
 The cell reads with `==` so it scores the cascade and not loft#1505.
+
+### D-heap-6 — OPEN (2026-09-11): a literal built through a work-ref reads as a VIEW, so a local whose every assignment OWNS is witnessed as a mixed one (loft#1517)
+
+`(H-Drop)` releases a record through its hook when its owner dies, and the reassignment clause
+names a displaced record explicitly.  A heap-record local built from a LITERAL and then
+reassigned runs NO hook — neither for the record it displaces nor, where the literal is its
+LAST assignment, for the one it still holds at scope exit.  Both backends, no diagnostic, no
+leak warning.  The plain-struct twin runs both, which is what makes the defect read as a
+struct-ENUM spelling question.
+
+It is not a spelling question: it is the WORK-REF.  A struct-enum literal builds into a
+`__ref_p2_N` and hands the local the work-ref as the block's tail; so does a NULLABLE STRUCT
+literal, which `@FR-N-Shape` makes the synthetic struct-enum `__nullable<S>` — a cell with no
+user enum in it.  A plain struct builds IN PLACE, has no work-ref, and is correct throughout.
+Measured across a 19-cell matrix: the displaced record's hook is lost across variants, through
+a payload CASCADE, under a nullable wrapper, with a minting CALL as the second assignment, and
+once per loop for the literal's own record; a local whose LAST assignment is a literal loses
+that record's hook at scope exit as well, which is the same root's second face (a work-ref's
+scope-end free is bare).  The filed table says BOTH hooks are lost; on a tree carrying
+loft#1510 only the DISPLACED one is, which two hands measured independently.
+
+**The literal build is NECESSARY and not sufficient.**  The local also needs an assignment
+`witness_set_kind` calls a MINT — a whole-value copy of another LOCAL, or a call.  A second
+assignment that is a PROJECTION is classified `Other` like the literal, the intersection stays
+empty, no witness is minted and the local is correct (`x: H? = H { id: 94 }; x = mk().inner`
+releases both records on both backends).
+
+**The mix `(O-Witness)` is about does not exist.**  Its premise is *"one assignment hands the
+local a store of its own and another hands it a VIEW"*, and for `x: SE = A { k: 3 }; x = a`
+both assignments OWN.  Two predicates fabricate the mix between them, each answering its own
+question correctly:
+
+- `witness_set_kind` answers `Other` for a construction into a work-ref, and its comment says
+  why — while the work-ref still names the store it is not SOLELY the local's.  That is the
+  right answer to *"may the witness POINT here?"*
+- `is_view_of_storage` then answers `true` for any `Block`, reading that `Other` as the VIEW
+  half.  That is the wrong answer to *"does some other BINDING own what this names?"* — the
+  work-ref is the compiler's own temp for this literal, and that predicate's own comment
+  already says a store nobody names is not a view.
+
+With the mix fabricated, three mechanisms decline in turn and the record is left with no
+releaser: `displaced_drop` declines on `@FR-O-Override` (a witnessed local releases through its
+witness only); the witness is pointed only at the assignment the classifier calls a mint, so
+the literal's record is never its subject; and because a witnessed local is not
+`proxy_says_owned`, `scan_set`'s hand-off disarm takes its view-typed arm, leaving the work-ref
+holding the store.
+
+This is **D-heap-4's neighbour and not D-heap-4**.  That entry closed the cases where the mix
+is REAL, and its cure made the construction hand-off conditional on `proxy_says_owned` — the
+predicate this defect then rides, because a local that should never have been witnessed answers
+it the way a genuine view does.  A mechanism made conditional on an ownership fact inherits
+every defect in how that fact is decided.
+
+#### Why it is still open: the arming population is load-bearing for a SECOND mechanism
+
+Both available cures were built and measured, and **both regress**, for one reason that is the
+real finding here: the fabricated mix is currently MASKING a defect in the other release
+mechanism for nullable locals, so removing it exposes that one.  Probes (`--interpret`, and the
+arming read off `introspect`):
+
+| probe | shape | arming on `main` | value |
+|---|---|---|---|
+| `q1517` | `x: SE = A{3}; x = a` | `__own_x` | right, hooks LOST |
+| `q1085b` | `c: KeepOnly? = KeepOnly{7}; loop { c = keep_k(c ?? …) }` | `__own_c` | 7, right |
+| `qview` | `x: H = H{47}; x = bx.inner` | none | right |
+
+- **Cure A — `is_view_of_storage` answers `false` for a work-ref construction.**  Fixes every
+  cell of the matrix on both backends and leaves `qview` alone.  It REGRESSES `q1085b` to `0`
+  where `7` is right: that local's `viewed` membership came ONLY from the fabricated reading,
+  so the correction disarms its witness — measured off `introspect`: `__own_c` on `main`, none
+  after.  `1085b-a-nullable-local-frees-what-it-displaces.loft` loses two cells.
+  `nullable_locals_that_displace` excludes a never-free local, so one release mechanism serves
+  each local and `c` falls from the witness to the `__lbo_` flag; which of the two is WRONG is
+  not measured here and is the open question — either that path mis-frees a local the witness
+  was covering, or such a local must stay witnessed and the arming predicate has to say so for
+  a reason that is true.  Attributing it to `__lbo_` is the inference this entry deliberately
+  does not make.
+- **Cure B — separate the two questions** (a fourth `WitnessSet::MintIntoWorkRef`: owning for
+  the intersection test, not-pointable for the maintenance site).  The decomposition is right
+  and the variant is the honest shape, but it ARMS witnesses that `main` does not: `q1085b`
+  still breaks (both of its assignments then read as mints, so `viewed` is empty) and `qview`
+  gains one, moving its displaced hook from the rebind to scope exit — the right COUNT at the
+  wrong time, which `(H-Drop)`'s reassignment clause does not allow.
+
+⚠ **So `q1085b` passes on `main` through a witness armed for a reason that is false.**  The
+false reason and the right answer are load-bearing together, which is what makes this entry
+bigger than its own predicate: correcting the arming population is a VALUE regression until the
+question above is settled, and it has to be settled first.  Not filed as an issue — it does not
+reproduce on `main`, where the mask holds, so it belongs here rather than in the tracker.  Note
+that the `__lbo_` mechanism has no `LOFT_NO_*` switch of its own (recorded in `scopes.rs` beside
+the arming loop), so there is no one-command A/B for it the way `LOFT_NO_OWNER_WITNESS=1` is one
+for the witness; giving it one is the cheapest first step for whoever takes this.
+
+⚠ **And the reading that nearly shipped cure A was a control firing on both trees.**  `q1085b`'s
+two cells fail under `LOFT_NO_OWNER_WITNESS=1` on `main` as well — they are that guard's own
+positive control for the witness doing something — so "it fails identically with the switch on
+and off" carries NO information about the edit, while reading exactly like a shared cause.  The
+comparison that answers is *changed tree, switch ON* against *`main`, switch ON*.  One level
+below it, the first run of that guard as a plain script reported no failures at all, because the
+file has no `main` and `fn test_*` only runs under `--tests`: a corpus guard run the wrong way
+passes having tested nothing.
+
+The guard is IN the corpus, as
+`tests/scripts/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft`
+— 20 cells, one `fn test_*` each so they report individually.  Eight pass on every tree and are
+the boundary a cure must not move (the in-place struct twin; a literal then a genuine VIEW, by a
+bound base and by a call's field; a genuinely MIXED local; the two arm-literal cells).  The
+twelve broken ones are `@EXPECT_FAIL`, and the annotation pins the trace each reads TODAY while
+its assertion states what it reads once this closes — two-sided, so a partial fix or a new
+regression moves a line instead of passing as "still broken", and a real cure turns twelve FAILs
+into twelve unexpected PASSes.  `test_mixed` doubles as the witness control with a release-COUNT
+channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), which is what to
+bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
+time out cannot say which tree moved.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
