@@ -1,8 +1,8 @@
 diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index dbaefc020..7df784ef5 100644
+index 38844eff2..7df784ef5 100644
 --- b/src/parser/definitions.rs
 +++ a/src/parser/definitions.rs
-@@ -5606,53 +5606,13 @@ impl Parser {
+@@ -5606,55 +5606,13 @@ impl Parser {
          self.data.def_used(c_nr);
      }
  
@@ -17,8 +17,10 @@ index dbaefc020..7df784ef5 100644
 -    ///
 -    /// `None` for a member that is not an inline sub-record: a collection field is
 -    /// [`Self::cascade_vectors`], a scalar owns nothing, and a `&τ` field is a LINK — the
--    /// source frees the store (`binding.md (B-Ref-Alias)`), so releasing through it here
--    /// would release what another owner still holds.
+-    /// source frees the store (`@FR-B-Ref-Alias`), so releasing through it here would release
+-    /// what another owner still holds.
+-    ///
+-    /// `@FR-H-Drop` — a container's death releases what it holds, through the cascade.
 -    fn cascade_field_target(&self, tp: &Type) -> Option<(u32, Type)> {
 -        match tp {
 -            // `τ?` is a nullability bit over the same runtime shape (`@FR-N-Shape`), so the
@@ -34,7 +36,7 @@ index dbaefc020..7df784ef5 100644
 -            // `Enum(__nullable<S>, true)` — so absence is a variant with nothing to release
 -            // rather than a case this has to test for.
 -            Type::Enum(ed, true, _) => Some((*ed, tp.clone())),
--            // `layout.md (L-Tuple)` makes a tuple a synthetic struct stored inline, so it is
+-            // `@FR-L-Tuple` makes a tuple a synthetic struct stored inline, so it is
 -            // released exactly as a nested struct field is: through `__tuple<…>`'s own cascade,
 -            // reached by a reference to the record at the field's offset. The lookup is the
 -            // read-only one — a shape that was never registered has no cascade to call either.
@@ -61,7 +63,7 @@ index dbaefc020..7df784ef5 100644
      fn cascade_fields(&self, d_nr: u32) -> Vec<(u16, Type, u32)> {
          let kt = self.data.def(d_nr).known_type();
          let mut out = Vec::new();
-@@ -5661,9 +5621,10 @@ impl Parser {
+@@ -5663,9 +5621,10 @@ impl Parser {
              if a.hidden {
                  continue;
              }
@@ -73,7 +75,7 @@ index dbaefc020..7df784ef5 100644
              if fd == d_nr || !self.data.owns_droppable(fd) {
                  continue; // a self-field cannot exist inline; skip defensively
              }
-@@ -5672,7 +5633,7 @@ impl Parser {
+@@ -5674,7 +5633,7 @@ impl Parser {
              if off == u16::MAX {
                  continue; // not laid out in this record — nothing to reach
              }
