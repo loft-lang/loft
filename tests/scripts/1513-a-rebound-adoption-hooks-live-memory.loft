@@ -1,0 +1,143 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A binding that ADOPTS a construction's store at a rebind hooks LIVE memory (loft#1513).
+//
+// When a construction delivers its record through a work-ref and the binding adopts it
+// (`drop_handoff_node`'s Set arm), the work-ref's drop is suppressed — but it kept NAMING
+// the store, and its scope-end bare `OpFreeRef` still claimed it.  Whenever the binding is
+// declared BEFORE the work-ref (a rebind: `r = CfH{…}; r = mk().h`), scope-end order runs
+// that bare free first and the binding's own hook then reads freed memory — counts right,
+// values right on a lucky allocator, the poison pattern under `LOFT_POISON=1`.  The cure
+// writes the sentinel into the work-ref at the adoption (`Scopes` Set arm, loft#1513), so
+// the binding is the store's ONE claimant; `is_null_sentinel_detach` is what keeps that
+// sentinel write from being read as a displacement that must free.
+//
+// The same one-claimant rule closes the tuple-literal spelling: a member built by an inline
+// construction (`u = (S{…}, 9)`) is a mint exactly like a call member (loft#1511), so the
+// element free now runs the cascade and disarms the member's work-ref — before, the element
+// was freed BARE and the work-ref's cascade hooked the freed store.
+//
+// The count cells here pass even on the broken build — the VALUE the hook reads is the
+// defect — so this guard's own channel is the hook-value trace under LOFT_POISON, armed by
+// tests/store_lifetime_1512_1513.rs; the plain run pins the counts and sequences.
+//
+// @falsified-at: 8b29ce89 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1513-a-rebound-adoption-hooks-live-memory.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — UNDER LOFT_POISON=1, which is how both
+//     receipt runs were taken: on the control the scope-end hook notes the poison pattern
+//     ('4,-2401053088876216593') and the sequence assertions fail.
+//   ARMED: LOFT_POISON=1 — a PLAIN run passes on the control too (counts and values are
+//     right off stale bytes), so the plain corpus run pins only the sequences and the
+//     poison runs in tests/store_lifetime_1512_1513.rs are this guard's own channel.
+//   HOLDS: the plain-run exit, every count, leak, panic, refusals and expectations are
+//     equal on both trees — the defect is WHICH bytes the hook reads, nothing a count sees.
+fn trace_path() -> text { return "loft_1513_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct CfH { id: integer }
+fn OpDrop(self: CfH) { note("{self.id}"); }
+struct CfS { h: CfH }
+struct Two { h: CfH, g: CfH }
+fn mk_dense() -> CfS { return CfS { h: CfH { id: 9 } }; }
+fn mk_two() -> Two { return Two { h: CfH { id: 1 }, g: CfH { id: 2 } }; }
+
+// The filed shape: the displaced literal hooks at the rebind, the adopted copy at scope
+// end — and the scope-end hook must read the record's own bytes, not a freed store's.
+fn own_then_copy() -> integer {
+  r = CfH { id: 4 };
+  a = r.id;
+  r = mk_dense().h;
+  return a * 10 + r.id;
+}
+
+// A loop rebind: pass 2 displaces pass 1's copy, scope end releases the last one.
+fn loop_rebind() -> integer {
+  r = CfH { id: 4 };
+  for i in 0..2 { r = mk_dense().h; }
+  return r.id;
+}
+
+// The adoption inside ONE arm: taken, the sentinel disarm rides inside the arm; not taken,
+// the work-ref never delivered and nothing changes.
+fn cond_rebind(c: boolean) -> integer {
+  r = CfH { id: 4 };
+  if c { r = mk_dense().h; }
+  return r.id;
+}
+
+// The load-bearing neighbour: `g` is still the lift's to release (the Except cascade),
+// `h`'s copy is the binding's, the displaced literal hooks at the rebind.
+fn two_field_rebind() -> integer {
+  r = CfH { id: 4 };
+  r = mk_two().h;
+  return r.id;
+}
+
+// The opposite order, unchanged: the copy is displaced at the rebind, the literal is the
+// binding's at scope end.
+fn copy_then_own() -> integer {
+  r = mk_dense().h;
+  a = r.id;
+  r = CfH { id: 4 };
+  return a * 10 + r.id;
+}
+
+// The tuple-literal spelling of the same one-claimant rule: the member's record hooks
+// through the ELEMENT free (live), and the construction's work-ref is disarmed.
+fn tuple_literal_member() -> integer {
+  u = (CfS { h: CfH { id: 21 } }, 9);
+  return u.0.h.id;
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  v = own_then_copy(); got = drain();
+  assert(v == 49, "own-then-copy reads both records: got {v}");
+  assert(got == "4,9", "the displaced literal, then the adopted copy on LIVE memory: got '{got}'");
+
+  v = loop_rebind(); got = drain();
+  assert(v == 9, "the loop rebind reads the last copy: got {v}");
+  assert(got == "4,9,9", "each pass displaces the previous record, scope end the last: got '{got}'");
+
+  v = cond_rebind(true); got = drain();
+  assert(v == 9, "the taken arm adopts: got {v}");
+  assert(got == "4,9", "taken: displaced literal, then the copy on live memory: got '{got}'");
+
+  v = cond_rebind(false); got = drain();
+  assert(v == 4, "the untaken arm keeps the literal: got {v}");
+  assert(got == "4", "not taken: the literal alone, at scope end: got '{got}'");
+
+  v = two_field_rebind(); got = drain();
+  assert(v == 1, "the copied field reads: got {v}");
+  assert(got == "2,4,1", "g via the lift's cascade, the displaced literal, then h's copy live: got '{got}'");
+
+  v = copy_then_own(); got = drain();
+  assert(v == 94, "copy-then-own reads both records: got {v}");
+  assert(got == "9,4", "the displaced copy at the rebind, the literal at scope end: got '{got}'");
+
+  v = tuple_literal_member(); got = drain();
+  assert(v == 21, "the tuple literal member reads: got {v}");
+  assert(got == "21", "the literal member hooks once, through the element free, live: got '{got}'");
+
+  println("1513 rebound adoption hooks live memory OK");
+}

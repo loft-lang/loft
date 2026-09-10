@@ -357,7 +357,15 @@ fn scratch_owner_pid(name: &str) -> Option<u32> {
 /// space.
 fn runtime_scratch_pid(name: &str) -> Option<u32> {
     let digits = if let Some(rest) = name.strip_prefix("loft_native_bin_") {
-        rest
+        // ⚠ The MSVC linker writes `<binary>.pdb` beside the executable, so the binary shape
+        // has a companion whose name is `loft_native_bin_<pid>.pdb`.  Without stripping that
+        // suffix the digit test below fails on `1644.pdb`, the name is claimed by nothing, and
+        // it falls to the age rule — surviving the hour that the binary it belongs to does not.
+        // Measured on the Windows daily (`native_scratch_hygiene`).  Stripping only this ONE
+        // known suffix, and only on the `bin_` shape, keeps the looser
+        // `scratch_owner_pid` hazard out: a script STEM ending in digits must still not read
+        // as a pid, which is why this does not simply split on '.'.
+        rest.strip_suffix(".pdb").unwrap_or(rest)
     } else {
         name.strip_prefix("loft_native_")?.strip_suffix(".rs")?
     };
@@ -397,7 +405,80 @@ fn pid_alive(pid: u32) -> Option<bool> {
         }
         Some(std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH))
     }
-    #[cfg(not(unix))]
+    // Windows has no `kill(pid, 0)`, but a process HANDLE answers the same question.
+    //
+    // The safety DIRECTION matters more here than completeness: the dead-only sweep
+    // DELETES what this calls dead, and a sweep destroying the `.rs` a live compile had
+    // just emitted is the exact failure the pid check exists to prevent (see the module
+    // doc above).  So anything unrecognised answers `None` — unknowable, fall back to the
+    // age rule — and never `Some(false)`.  Being slow to reclaim costs disk; being wrong
+    // costs the build.
+    // Windows has no `kill(pid, 0)`, but a process HANDLE answers the same question.
+    //
+    // The safety DIRECTION matters more here than precision: the dead-only sweep DELETES
+    // what this calls dead, and a sweep destroying the `.rs` a live compile had just
+    // emitted is the exact failure the pid check exists to prevent (see the module doc
+    // above).  So anything unrecognised answers `None` — unknowable, fall back to the age
+    // rule — never `Some(false)`.  Being slow to reclaim costs disk; being wrong costs the
+    // build.
+    //
+    // Measured on windows-latest (windows-probe.yml, 2026-09-10) rather than assumed, and
+    // the measurement overturned the first attempt.  `WaitForSingleObject` is the obvious
+    // spelling and it returned WAIT_FAILED (0xffffffff) for EVERY openable process, live or
+    // dead, because `PROCESS_QUERY_LIMITED_INFORMATION` does not grant SYNCHRONIZE — an arm
+    // that compiled, looked right, and answered `None` for everything.  `GetExitCodeProcess`
+    // needs no extra right.  What the runner reported:
+    //
+    //     own process / pid 4 (System) / a live child   exit_code = 259 (STILL_ACTIVE)
+    //     a child that exited with 7                    exit_code = 7   (handle still opens)
+    //     pid 0, u32::MAX-1, an unused 999999           OpenProcess = NULL, err 87
+    //
+    // So pid 0 needs no special case here the way it does on unix, where 0 addresses a
+    // process GROUP: Windows simply reports it as no process.  The STILL_ACTIVE ambiguity is
+    // real and deliberately accepted — a process that exits WITH code 259 reads as alive —
+    // because it errs toward not reclaiming, and loft's own exit codes are single digits.
+    #[cfg(windows)]
+    {
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const ERROR_ACCESS_DENIED: u32 = 5;
+        const ERROR_INVALID_PARAMETER: u32 = 87;
+        const STILL_ACTIVE: u32 = 259;
+        unsafe extern "system" {
+            fn OpenProcess(desired: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+            fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+            fn GetExitCodeProcess(handle: *mut core::ffi::c_void, code: *mut u32) -> i32;
+            fn GetLastError() -> u32;
+        }
+        // SAFETY: `OpenProcess` takes three integers by value and returns a handle or null,
+        // touching no memory this process owns.  Every path that obtains a handle closes it
+        // exactly once.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // SAFETY: reads the calling thread's last-error value; no arguments, no memory.
+            return match unsafe { GetLastError() } {
+                // The process exists and simply is not ours to open — the EPERM arm.
+                ERROR_ACCESS_DENIED => Some(true),
+                // No process carries this id.
+                ERROR_INVALID_PARAMETER => Some(false),
+                _ => None,
+            };
+        }
+        let mut code: u32 = 0;
+        // SAFETY: `handle` is a live process handle from the call above and `code` is a
+        // valid, initialised u32 this frame owns for the duration of the call.
+        let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
+        // Read before the close, which would clobber the thread's last error.
+        // SAFETY: as above — no arguments, no memory.
+        let err = unsafe { GetLastError() };
+        // SAFETY: closing a handle this function opened, exactly once.
+        unsafe { CloseHandle(handle) };
+        if ok == 0 {
+            let _ = err;
+            return None;
+        }
+        return Some(code == STILL_ACTIVE);
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         None
@@ -584,6 +665,26 @@ mod reclaim_tests {
             Some(true),
             "pid 1 exists whether or not we may signal it"
         );
+    }
+
+    /// The debug-symbol companion is the runtime's own file and has to be claimable, or it
+    /// outlives the binary it belongs to.  `pdb` appeared nowhere in `src/` before this, so
+    /// the omission was total rather than partial — and unix emits no such file, which is why
+    /// only the Windows daily could see it.
+    #[test]
+    fn the_binarys_debug_symbol_companion_is_claimed_like_the_binary() {
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644"), Some(1644));
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644.pdb"), Some(1644));
+        // The looser hazard stays out: a script STEM ending in digits is NOT a pid, whatever
+        // extension it carries, or a worker's compile sweeps a sibling's live source away.
+        assert_eq!(
+            runtime_scratch_pid("loft_native_discard_slot_per_type_795.rs"),
+            None
+        );
+        assert_eq!(runtime_scratch_pid("loft_native_bin_notapid"), None);
+        assert_eq!(runtime_scratch_pid("loft_native_bin_notapid.pdb"), None);
+        // And only THAT suffix — an unknown one must not be silently accepted.
+        assert_eq!(runtime_scratch_pid("loft_native_bin_1644.exe"), None);
     }
 
     #[test]

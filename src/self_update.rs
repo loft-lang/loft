@@ -337,7 +337,12 @@ fn walk_files(staged: &Path) -> Result<Vec<String>, String> {
 /// # Errors
 /// Returns `Err` (with the installation restored) when the staged bundle does not
 /// verify, lists an unsafe path, or a file cannot be replaced.
-pub fn apply_bundle(root: &Path, staged: &Path, force: bool) -> Result<Vec<String>, String> {
+pub fn apply_bundle(
+    root: &Path,
+    staged: &Path,
+    loaded_stdlib: Option<&Path>,
+    force: bool,
+) -> Result<Vec<String>, String> {
     // 1. The staged bundle should vouch for itself before anything moves — but this is
     //    the user's machine, so `force` is always available.  The strictness that
     //    matters is on the PUBLISHING side: we never ship a release that cannot be
@@ -408,8 +413,16 @@ pub fn apply_bundle(root: &Path, staged: &Path, force: bool) -> Result<Vec<Strin
     }
 
     // 4. And the result must verify — when there is something to verify it against.
+    //
+    // `loaded_stdlib` is what makes this ask the question loft#1497 needed: the other checks
+    // establish that the files LANDED, and this one asks whether they are the ones loft will
+    // read.  It is passed IN rather than resolved here because the resolver
+    // (`native_utils::project_root_for`) lives in the binary crate, and a second copy of that
+    // rule beside the writer is the drift the check exists to catch — the same reason
+    // `verify_self::local_checks` takes it as an argument.  `None` keeps a caller that has no
+    // running installation to ask about (a staged bundle under test) on the bundle-only checks.
     if result.is_ok() && described && !force {
-        for check in crate::verify_self::local_checks(root, None) {
+        for check in crate::verify_self::local_checks(root, loaded_stdlib) {
             if let crate::verify_self::Check::Failed(m) = check {
                 result = Err(format!("updated installation failed verification: {m}"));
                 break;
@@ -702,7 +715,8 @@ mod tests {
             &staged,
             &[("bin/loft", "NEW BINARY"), ("default/a.loft", "new\n")],
         );
-        let placed = apply_bundle(&root, &staged, false).expect("a verified bundle must apply");
+        let placed =
+            apply_bundle(&root, &staged, None, false).expect("a verified bundle must apply");
         assert!(placed.iter().any(|f| f == "bin/loft"), "{placed:?}");
         assert_eq!(
             std::fs::read_to_string(root.join("bin/loft")).unwrap(),
@@ -732,7 +746,7 @@ mod tests {
         std::fs::create_dir_all(root.join("share")).unwrap();
         std::fs::write(root.join("share/unrelated.conf"), "keep me").unwrap();
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
-        apply_bundle(&root, &staged, false).expect("apply");
+        apply_bundle(&root, &staged, None, false).expect("apply");
         assert_eq!(
             std::fs::read_to_string(root.join("bin/othertool")).unwrap(),
             "NOT OURS",
@@ -753,8 +767,8 @@ mod tests {
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
         // Corrupt the staged bundle after its manifest was written.
         std::fs::write(staged.join("default/a.loft"), "tampered\n").unwrap();
-        let err =
-            apply_bundle(&root, &staged, false).expect_err("a corrupt bundle must be refused");
+        let err = apply_bundle(&root, &staged, None, false)
+            .expect_err("a corrupt bundle must be refused");
         assert!(
             err.contains("staged bundle failed its own manifest"),
             "{err}"
@@ -777,7 +791,8 @@ mod tests {
         // bundle reports it missing, so this is refused up front — and the
         // installation is untouched either way, which is what must hold.
         std::fs::remove_file(staged.join("default/a.loft")).unwrap();
-        let err = apply_bundle(&root, &staged, false).expect_err("a missing file must be refused");
+        let err =
+            apply_bundle(&root, &staged, None, false).expect_err("a missing file must be refused");
         assert!(err.contains("missing"), "{err}");
         assert_eq!(
             std::fs::read_to_string(root.join("bin/loft")).unwrap(),
@@ -798,8 +813,8 @@ mod tests {
         let mut sums = std::fs::read_to_string(staged.join("SHA256SUMS")).unwrap();
         sums.push_str("00  ../../etc/passwd\n");
         std::fs::write(staged.join("SHA256SUMS"), sums).unwrap();
-        let err =
-            apply_bundle(&root, &staged, false).expect_err("an escaping path must be refused");
+        let err = apply_bundle(&root, &staged, None, false)
+            .expect_err("an escaping path must be refused");
         assert!(
             err.contains("unsafe path") || err.contains("escapes"),
             "{err}"
@@ -820,7 +835,7 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, body).unwrap();
         }
-        let placed = apply_bundle(&root, &staged, false)
+        let placed = apply_bundle(&root, &staged, None, false)
             .expect("a manifest-less bundle must install, not be refused");
         assert_eq!(placed.len(), 2, "{placed:?}");
         assert_eq!(
@@ -843,7 +858,7 @@ mod tests {
         let p = staged.join("bin/loft");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "MINE").unwrap();
-        apply_bundle(&root, &staged, false).expect("apply");
+        apply_bundle(&root, &staged, None, false).expect("apply");
         assert_eq!(
             std::fs::read_to_string(root.join("bin/othertool")).unwrap(),
             "NOT OURS"
@@ -859,10 +874,10 @@ mod tests {
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
         std::fs::write(staged.join("default/a.loft"), "tampered\n").unwrap();
         assert!(
-            apply_bundle(&root, &staged, false).is_err(),
+            apply_bundle(&root, &staged, None, false).is_err(),
             "the default must refuse a bundle that contradicts itself"
         );
-        apply_bundle(&root, &staged, true).expect("--force must honour the user's decision");
+        apply_bundle(&root, &staged, None, true).expect("--force must honour the user's decision");
         assert_eq!(
             std::fs::read_to_string(root.join("default/a.loft")).unwrap(),
             "tampered\n"
@@ -1042,8 +1057,8 @@ mod tests {
         let mut sums = std::fs::read_to_string(staged.join("SHA256SUMS")).unwrap();
         sums.push_str("00  /etc/loft-evil\n");
         std::fs::write(staged.join("SHA256SUMS"), sums).unwrap();
-        let err =
-            apply_bundle(&root, &staged, false).expect_err("an absolute path must be refused");
+        let err = apply_bundle(&root, &staged, None, false)
+            .expect_err("an absolute path must be refused");
         assert!(
             err.contains("unsafe path") || err.contains("escapes"),
             "{err}"

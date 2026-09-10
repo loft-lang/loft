@@ -98,9 +98,27 @@ pub fn parse_manifest(text: &str) -> (Vec<(String, String)>, Option<String>) {
 /// disclose its existence in the report.  `..` anywhere is rejected even inside a
 /// legal name (`a..b`): a false refusal of a peculiar filename is recoverable, a path
 /// that escapes is not.
+///
+/// Asked as a COMPONENT walk rather than `is_absolute()`, because that predicate is
+/// unix-shaped and the rule above is not.  On Windows `Path::new("/etc/x").is_absolute()`
+/// is FALSE — an absolute path there needs a drive prefix — while `join` still replaces
+/// everything after the prefix, so `<drive>:\bundle`.join(`/etc/x`) is `<drive>:\etc\x`:
+/// the very escape this function exists to refuse, waved through on the one host where
+/// the predicate disagreed with the rule.  `self_update::tests::
+/// a_bundle_listing_an_absolute_path_is_refused` had been red on the Windows daily for
+/// exactly that reason — the code was wrong, not the test.  The walk also catches the two
+/// shapes no `is_absolute()` spelling would: the drive-RELATIVE `C:x`, which replaces the
+/// prefix, and a UNC root.
 #[must_use]
 pub fn manifest_path_escapes(rel: &str) -> bool {
-    rel.contains("..") || Path::new(rel).is_absolute()
+    use std::path::Component;
+    rel.contains("..")
+        || Path::new(rel).components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
 }
 
 /// Verify every `<digest>  <path>` entry of `manifest_text` against files under `root`.
@@ -364,6 +382,40 @@ pub fn check_anchor(root: &Path, published: Option<&str>) -> Check {
 
 #[cfg(test)]
 mod tests {
+    /// The escape rule is asked of a manifest whose author may be hostile, so the shapes
+    /// that REPLACE the root are the cells that matter — and which strings do that is
+    /// platform-dependent, which is why `is_absolute()` was the wrong question.
+    ///
+    /// ⚠ On unix this test is a REGRESSION guard and nothing more: `is_absolute()` already
+    /// answered `/etc/loft-evil` correctly here, so every cell below passes under the
+    /// pre-fix predicate too.  The fix is observable only on Windows, and it was falsified
+    /// there through `windows-probe.yml` rather than by this file.  Read the four
+    /// `#[cfg(windows)]` cells as the ones carrying the change.
+    #[test]
+    fn the_escape_rule_refuses_every_shape_that_replaces_the_root() {
+        // Ordinary relative paths are what a real manifest contains.
+        assert!(!manifest_path_escapes("bin/loft"));
+        assert!(!manifest_path_escapes("share/loft/default/01_code.loft"));
+        // `..` anywhere, deliberately including inside a legal name.
+        assert!(manifest_path_escapes("../etc/x"));
+        assert!(manifest_path_escapes("bin/../../x"));
+        assert!(manifest_path_escapes("a..b"));
+        // A leading slash replaces the root on BOTH hosts — on unix because it is
+        // absolute, on Windows because `join` keeps only the prefix.  This is the cell
+        // that was red on the Windows daily.
+        assert!(manifest_path_escapes("/etc/loft-evil"));
+        // Windows-only spellings: Rust parses a drive prefix only on Windows, so on unix
+        // these are ordinary file names and asserting the refusal there would be vacuous.
+        #[cfg(windows)]
+        {
+            assert!(manifest_path_escapes(r"C:\loft-evil"));
+            // Drive-RELATIVE: no root, but `join` still replaces the prefix.
+            assert!(manifest_path_escapes("C:loft-evil"));
+            assert!(manifest_path_escapes(r"\loft-evil"));
+            assert!(manifest_path_escapes(r"\\server\share\x"));
+        }
+    }
+
     use super::*;
 
     fn write(dir: &Path, rel: &str, body: &str) {

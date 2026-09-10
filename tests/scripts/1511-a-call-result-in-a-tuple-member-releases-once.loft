@@ -1,0 +1,176 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A call result placed directly in a tuple literal member releases its resource ONCE, hook
+// included (loft#1511).
+//
+// `heap.md (H-Drop)` runs the hook once per resource at the death of the record that owns
+// it.  A tuple has no dep list of its own, so the element free (`scopes::
+// tuple_owned_elem_frees`) concluded ownership from the member type's empty dep list and
+// released the record with a bare `OpFreeRef`: the store was freed and the hook never ran —
+// on both backends, silently, and only for a TUPLE member (a struct field, a vector element
+// and a plain local all release once).
+//
+// The scan now records which elements of a tuple-literal RHS were minted by their own call
+// (`Scopes::tuple_call_mint`, path-sensitive like `owned_refs`), and the element free runs
+// the type's cascade first, then disarms the call's hidden buffer — whose own scope-end
+// drop+free otherwise claims the same record on callees that deliver into it, and whose
+// re-mint per loop pass is what keeps a loop at one hook per record.
+//
+// Held FIXED, and therefore NOT measured here: a tuple literal in ARGUMENT position
+// (`show((mk(1), 9))`), which binds no variable and leaks the record entirely — loft#1512,
+// found while closing this one.
+//
+// @falsified-at: 49736d01 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1511-a-call-result-in-a-tuple-member-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — on the control the first call-member
+//     cell reads an empty hook trace where this guard demands the record's id.
+//   ARMED: nothing; a plain run scores it.
+//   HOLDS: leak (the store was freed on both trees; the loss was the hook, which no leak
+//     channel sees), panic, refusals.
+
+fn trace_path() -> text { return "loft_1511_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("{self.id}"); }
+struct S { h: H }
+struct Box { s: S }
+fn mk(id: integer) -> S { return S { h: H { id: id } }; }
+fn mkq(absent: boolean) -> S? { if absent { return null; } return S { h: H { id: 12 } }; }
+fn g() -> (S, integer) { return (mk(5), 9); }
+
+// The filed shape: the member is a call result, placed directly in the literal.
+fn call_member() -> integer { u = (mk(1), 9); return u.0.h.id; }
+
+// The same at index 1 — the index is not the axis.
+fn call_member_at_one() -> integer { u = (9, mk(61)); return u.1.h.id; }
+
+// Two call members are two records, two buffers, two hooks.
+fn two_call_members() -> integer {
+  u = (mk(71), mk(72));
+  return u.0.h.id * 100 + u.1.h.id;
+}
+
+// A reassignment displaces the first record — hooked at the transition free — and the
+// second releases at scope exit.
+fn reassigned() -> integer {
+  u = (mk(81), 9);
+  u = (mk(82), 9);
+  return u.0.h.id;
+}
+
+// Per iteration: the element free at the loop body's exit hooks each pass's record, and its
+// buffer sentinel is what makes the next pass mint instead of rebuilding the freed slot.
+fn in_a_loop() -> integer {
+  t = 0;
+  for i in 0..2 {
+    u = (mk(100 + i), 9);
+    t = t + u.0.h.id;
+  }
+  return t;
+}
+
+// A NULLABLE call member has no hidden buffer at all (the mint is the callee's own): the
+// element free still owes the hook when a record is there, and nothing when null.
+fn nullable_member_present() -> integer {
+  u = (mkq(false), 9);
+  s = u.0;
+  if s == null { return -1; }
+  return s.h.id;
+}
+fn nullable_member_absent() -> integer {
+  u = (mkq(true), 9);
+  s = u.0;
+  if s == null { return u.1; }
+  return -1;
+}
+
+// The whole-tuple copy is a second record (loft#1361): each hooks once.
+fn copied() -> integer {
+  u = (mk(31), 9);
+  w = u;
+  return u.0.h.id + w.0.h.id;
+}
+
+// The fixed neighbours, pinned: via a local, an inline struct literal, a struct field, a
+// vector element, and the tuple RETURN path — one hook each, unchanged.
+fn via_local() -> integer { s = mk(11); u = (s, 9); return u.0.h.id; }
+fn literal_member() -> integer { u = (S { h: H { id: 21 } }, 9); return u.0.h.id; }
+fn struct_field() -> integer { b = Box { s: mk(41) }; return b.s.h.id; }
+fn vector_element() -> integer { v: vector<S> = [mk(51)]; return v[0].h.id; }
+fn returned_tuple() -> integer { u = g(); return u.0.h.id; }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  v = call_member(); got = drain();
+  assert(v == 1, "the call member reads its record: got {v}");
+  assert(got == "1", "a call member releases once, hook included: got '{got}'");
+
+  v = call_member_at_one(); got = drain();
+  assert(v == 61, "index 1 reads its record: got {v}");
+  assert(got == "61", "index 1 releases once: got '{got}'");
+
+  v = two_call_members(); got = drain();
+  assert(v == 7172, "both call members read: got {v}");
+  assert(got == "72,71", "two call members hook once each: got '{got}'");
+
+  v = reassigned(); got = drain();
+  assert(v == 82, "the reassigned tuple reads the second record: got {v}");
+  assert(got == "81,82", "the displaced record hooks at the transition: got '{got}'");
+
+  v = in_a_loop(); got = drain();
+  assert(v == 201, "the loop reads each pass's record: got {v}");
+  assert(got == "100,101", "each pass's record hooks once: got '{got}'");
+
+  v = nullable_member_present(); got = drain();
+  assert(v == 12, "the nullable member reads its record: got {v}");
+  assert(got == "12", "a bufferless mint hooks once: got '{got}'");
+
+  v = nullable_member_absent(); got = drain();
+  assert(v == 9, "the absent member is null and the scalar still reads: got {v}");
+  assert(got == "", "a null member hooks never: got '{got}'");
+
+  v = copied(); got = drain();
+  assert(v == 62, "both names read the member: got {v}");
+  assert(got == "31,31", "the copy is a second record and each hooks once: got '{got}'");
+
+  v = via_local(); got = drain();
+  assert(v == 11, "via a local reads: got {v}");
+  assert(got == "11", "the via-a-local control is unchanged at one hook: got '{got}'");
+
+  v = literal_member(); got = drain();
+  assert(v == 21, "the literal member reads: got {v}");
+  assert(got == "21", "the literal-member control is unchanged: got '{got}'");
+
+  v = struct_field(); got = drain();
+  assert(v == 41, "the struct field reads: got {v}");
+  assert(got == "41", "the struct-field control is unchanged: got '{got}'");
+
+  v = vector_element(); got = drain();
+  assert(v == 51, "the vector element reads: got {v}");
+  assert(got == "51", "the vector-element control is unchanged: got '{got}'");
+
+  v = returned_tuple(); got = drain();
+  assert(v == 5, "the returned tuple reads: got {v}");
+  assert(got == "5", "the return path is unchanged at one hook: got '{got}'");
+}

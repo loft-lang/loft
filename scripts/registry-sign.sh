@@ -28,6 +28,11 @@
 #     --expect P@V        sign ONLY this — repeatable.  The diff must introduce
 #                         exactly the named versions, remove nothing, and leave
 #                         every other package untouched, or the run REFUSES.
+#                         It matches a CHANGED version as well as a new one, so
+#                         this is also the form for correcting a field INSIDE an
+#                         already-published version (`deps`, `api`) — but that
+#                         version's BYTES (url/sha256/size) may not move: published
+#                         releases are immutable and the run refuses it.
 #                         This is the agent-safe confirmation: it replaces the
 #                         typed 'yes' with a check, and it is stricter than the
 #                         prompt it replaces (a 'yes' verifies nothing).
@@ -43,7 +48,8 @@
 #                         that — repeatable.  The diff must change nothing but
 #                         their description / homepage / categories, add or remove
 #                         NO version anywhere, change no `yanked` array, and leave
-#                         every other package alone.  Same bargain as
+#                         every other package alone.  PACKAGE-level only: a field
+#                         inside a version is `--expect <pkg>@<ver>` instead.  Same bargain as
 #                         --expect-yank and for the same reason: a metadata fix
 #                         adds no version, so plain --expect can never describe
 #                         one — it refuses for "asked for but ABSENT from the
@@ -403,6 +409,36 @@ for name in sorted(cp):
 if not changes:
     print("  (no added or changed versions vs the diff base)")
 
+# ---- a PUBLISHED version's bytes are immutable -------------------------------------
+#
+# `url`, `sha256` and `size` are WHICH BYTES a version is, and a consumer's lock names
+# the version, not the bytes — so moving them re-points something already installed.
+# REGISTRY_SUBMIT.md ("Published releases are immutable") is the rule; what was missing
+# is that nothing here could SEE the difference.  `--expect P@V` matches a CHANGED
+# version exactly as it matches a new one, so a `deps` correction and a tarball swap
+# produced the identical scope line — "nothing else added, removed or altered" — and the
+# download check confirms only that the NEW sha matches the NEW url, never that either
+# still matches what consumers already resolved.  Measured on hex_terrain 0.1.0.
+IDENTITY = ("url", "sha256", "size")
+
+def brief(x):
+    """One line — an `api` surface is thousands of characters and drowns the review."""
+    r = repr(x)
+    return r if len(r) <= 110 else r[:107] + "..."
+
+def version_delta(name, ver, meta_new):
+    """Fields that moved on an already-published version, and the identity subset."""
+    old = (pp.get(name, {}).get("versions") or {}).get(ver) or {}
+    moved = [k for k in sorted(set(old) | set(meta_new)) if old.get(k) != meta_new.get(k)]
+    return old, moved, [k for k in IDENTITY if old.get(k) != meta_new.get(k)]
+
+repointed = []
+for _n, _v, _m, _new in changes:
+    if _new:
+        continue
+    if version_delta(_n, _v, _m)[2]:
+        repointed.append(f"{_n}@{_v} ({', '.join(version_delta(_n, _v, _m)[2])})")
+
 # ---- --expect: bind the signature to the versions the maintainer NAMED --------
 #
 # The typed 'yes' this replaces asserts that a human looked; it checks nothing.
@@ -494,12 +530,19 @@ if expect or expect_yank or expect_meta:
     if drift:
         problems.append(("other packages' metadata changed (description / homepage / "
                          "categories / yanked)", drift))
+    if repointed:
+        problems.append(("a PUBLISHED version's bytes moved (url / sha256 / size) — "
+                         "published releases are IMMUTABLE, so publish a NEW version "
+                         "instead; a lock names the version, not the bytes", repointed))
     if meta_absent:
         problems.append(("--expect-meta names a package whose metadata did NOT change",
                          meta_absent))
     if meta_overreach:
         problems.append(("--expect-meta package also changed versions or yanked "
-                         "(metadata only means metadata)", meta_overreach))
+                         "(metadata only means metadata) — for a field INSIDE a version "
+                         "(deps, api) name the version itself: --expect <pkg>@<ver>, "
+                         "which matches a CHANGED version as well as a new one",
+                         meta_overreach))
     print("----  scope  ----")
     if problems:
         print("!!  --expect MISMATCH — NOT signing.")
@@ -535,6 +578,18 @@ for name, ver, meta, is_new in changes:
     print(f"        url      : {url}")
     print(f"        sha256   : {sha}")
     print(f"        size     : {size} bytes")
+    # A CHANGED version is a different ACT from a new one, and the block above renders
+    # both identically — it prints the post-state, so the one fact a reviewer needs
+    # (what MOVED, and that this version was already out) was the one thing missing.
+    if not is_new:
+        old, moved, ident = version_delta(name, ver, meta)
+        print(f"        WAS PUBLISHED — fields moved: {', '.join(moved) or '(none)'}")
+        for k in moved:
+            print(f"          {k}: was {brief(old.get(k))}")
+            print(f"          {' ' * len(k)}  now {brief(meta.get(k))}")
+        if ident:
+            print(f"        !! its BYTES moved ({', '.join(ident)}) — published releases")
+            print("           are immutable; publish a NEW version instead.")
     biny = meta.get("binaries") or {}
     if biny:
         print(f"        binaries : {', '.join(sorted(biny))}")

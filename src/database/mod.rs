@@ -1913,10 +1913,31 @@ impl Stores {
                 val,
             );
         } else {
-            let elem = self.vec_get_or_raise_runtime(db, size, index);
-            if elem.rec != 0 {
-                T::set_in(self.store_mut(&elem), elem.rec, elem.pos + fld, val);
-            }
+            self.vec_set_hoisted_cold::<T>(db, size, index, fld, val);
+        }
+    }
+
+    /// The off-fast-path half of [`Self::vec_set_hoisted_or_raise_runtime`]: an out-of-range or
+    /// negative index, which routes back through the runtime so a negative one still addresses
+    /// from the end and an out-of-range one still raises.
+    ///
+    /// `#[inline(never)]` is load-bearing rather than a hint, for the reason loft#1508 records on
+    /// the READ side of the same pair.  The caller is generic and `#[inline]`, so rustc sees the
+    /// whole body and decides on SIZE — and with this half folded in, the body carried another
+    /// call and lost that decision, leaving every in-range element WRITE paying a call for a
+    /// fast path that is a bounds test and a store.
+    #[inline(never)]
+    fn vec_set_hoisted_cold<T: crate::vector::HoistScalar>(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        fld: u32,
+        val: T,
+    ) {
+        let elem = self.vec_get_or_raise_runtime(db, size, index);
+        if elem.rec != 0 {
+            T::set_in(self.store_mut(&elem), elem.rec, elem.pos + fld, val);
         }
     }
 

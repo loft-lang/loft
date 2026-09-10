@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A sub-expression lifted into a `let _pre_N = …;` binding is emitted ONCE.
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource, and `types.md (N-Chain)` makes
+// a per-link `?` an `(N-Default)`: `c.f?` on an absent field yields a real EMPTY record of the
+// type, whose death runs the hook once.  An explicit `CfS {}` costs exactly one hook on both
+// backends, which is what pins "one" as the LANGUAGE's answer rather than the interpreter's —
+// that cell is here for that reason and must not be removed.
+//
+// `--native` ran it two or three times.  The native generator lifts a sub-expression into a
+// `let _pre_N = …` binding and then substitutes the binding into the enclosing code; during
+// COLLECTION that substitution matched the generated Rust TEXT, and text cannot carry identity
+// across two generations whose `_pre_N` counters differ.  Measured on the repro: node
+// `0x…9e70` was lifted TWICE — as `_pre_26` while `_pre_25`'s own text was generated, and again
+// as `_pre_27` while the parent `_pre_24` regenerated the same subtree — so the parent's
+// `s.replace(<1935-byte key>, "_pre_25")` found nothing, `_pre_25` stayed bound and
+// unreferenced, and the expression was emitted a second time at the use site.  The displaced
+// mint's hook ran, and the survivor's ran at scope end.
+//
+// The cure is the mechanism the EMIT walk already used and collection did not:
+// `Output::active_pre_eval` substitutes by node ADDRESS ("intrinsic identity — no counter, no
+// regenerated-text match"), so `rewrite_code` now installs the already-collected map while it
+// generates each pre-eval's own text.  One walk, one mechanism; the counter is untouched.
+//
+// ⚠ **A dead `let _pre_N = <a read>;` costs nothing, which is why this was invisible.**  Reads
+// are free to emit twice, and `_pre_N` starts with an underscore so rustc's unused-binding lint
+// says nothing either.  It only becomes observable when the lifted expression ALLOCATES,
+// WRITES or DROPS — so the cells below are the shapes where the lift carries a resource, and a
+// guard over VALUES alone would pass on the defect untouched.
+//
+// @falsified-at: 9f327f240 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret
+//   INERT, which is expected and is the finding: only one backend was ever wrong.
+// @falsified-by: tests/falsified/1505-a-lifted-pre-eval-is-emitted-once.patch
+//   — the same channel, so the patch reintroduces THIS defect and not another of the commit's.
+//   CHANNEL: VALUE, on `--native` only, and specifically the COUNT of `OpDrop` calls — the
+//     value every cell computes is correct on both trees, which is why no other channel moves.
+//   ARMED: nothing.  A plain `--native` run fails the assertion; `LOFT_NATIVE_LEAK_CHECK=1`
+//     is silent because the displaced record IS released — twice is not a leak.
+//   WITNESS: `field_projected()` traces `0,0` where `0` is right — two hooks for one record —
+//     and `field_in_format()` traces `0,0,0`.  The reference cell `CfS {}` traces `0` on both
+//     trees, which is what makes "one" the language's answer rather than the interpreter's.
+//   HOLDS: exit, asserts, leak, panic, refusals and expectations are equal on both trees for
+//     `--interpret`; the leak channel is `none` on both natives.  A fix that stopped lifting
+//     altogether would move `field_bound` or `twice_in_one_statement`, and neither moves.
+
+fn trace_path() -> text { return "loft_1505_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct CfH { id: integer }
+fn OpDrop(self: CfH) { note("{self.id}"); }
+struct CfS { h: CfH }
+struct FNull { f: CfS? }
+struct VNull { v: vector<CfS?> }
+
+// The reference cell: an explicit empty record is one resource and one hook, on both
+// backends.  `(N-Default)` says `c.f?` yields exactly this, so every cell below owes the
+// same count as this one.
+fn reference_literal() -> integer { s = CfS {}; return s.h.id; }
+
+// The defect: an absent nullable FIELD discharged with `?` and then PROJECTED.  Two hooks.
+fn field_projected() -> integer { c = FNull { f: null }; return c.f?.h.id; }
+
+// The same through a format string, where the lift nests one deeper.  Three hooks.
+fn field_in_format() -> text { c = FNull { f: null }; return "{c.f?.h.id}"; }
+
+// Bound first, not projected — the documented workaround, and clean before the fix, so it is
+// the cell that says the cure did not simply switch the lifting off.
+fn field_bound() -> integer { c = FNull { f: null }; d = c.f?; return d.h.id; }
+
+// A bare local, and a vector element: `(N-Default)` on a receiver that is not a struct FIELD.
+fn bare_local() -> integer { g: CfS? = null; return g?.h.id; }
+fn vector_element() -> integer { w = VNull { v: [] }; w.v += [null]; return w.v[0]?.h.id; }
+
+// Two discharges in one statement are two records, so two hooks — a cell that pins the count
+// to the number of RESOURCES rather than to "one", which a fix that deduplicated too eagerly
+// would break.
+fn twice_in_one_statement() -> integer {
+  c = FNull { f: null };
+  return c.f?.h.id + c.f?.h.id;
+}
+
+// Inside a loop: three iterations, three records.
+fn in_a_loop() -> integer {
+  c = FNull { f: null };
+  t = 0;
+  // `i` is added so the loop variable is READ — an unused one is a gating `never-read`
+  // warning, and a guard must be clean on both backends.  The sum is 0+1+2 with three
+  // records released, which is what the cell is for.
+  for i in 0..3 { t += c.f?.h.id + i; }
+  return t;
+}
+
+// As a call argument, where the lift happens for the ARGUMENT rather than the statement.
+fn take(n: integer) -> integer { return n; }
+fn as_call_argument() -> integer { c = FNull { f: null }; return take(c.f?.h.id); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  r = reference_literal(); ref_hooks = drain();
+  assert(r == 0, "the reference literal's value: got {r}");
+  assert(ref_hooks == "0", "the reference cell must cost ONE hook: got '{ref_hooks}'");
+
+  v = field_projected(); got = drain();
+  assert(v == 0, "an absent field's projection is the type's zero: got {v}");
+  assert(got == "0", "an absent field projected must release ONCE: got '{got}'");
+
+  t = field_in_format(); got = drain();
+  assert(t == "0", "the same through a format string: got '{t}'");
+  assert(got == "0", "in a format string it must still release ONCE: got '{got}'");
+
+  b = field_bound(); got = drain();
+  assert(b == 0, "bound then read: got {b}");
+  assert(got == "0", "the bound spelling releases ONCE: got '{got}'");
+
+  g = bare_local(); got = drain();
+  assert(g == 0, "a bare local: got {g}");
+  assert(got == "0", "a bare local releases ONCE: got '{got}'");
+
+  e = vector_element(); got = drain();
+  assert(e == 0, "a vector element: got {e}");
+  assert(got == "0", "a vector element releases ONCE: got '{got}'");
+
+  w = twice_in_one_statement(); got = drain();
+  assert(w == 0, "two discharges sum: got {w}");
+  assert(got == "0,0", "TWO records in one statement release TWICE: got '{got}'");
+
+  l = in_a_loop(); got = drain();
+  assert(l == 3, "three iterations sum 0+1+2: got {l}");
+  assert(got == "0,0,0", "three iterations release three times: got '{got}'");
+
+  a = as_call_argument(); got = drain();
+  assert(a == 0, "as a call argument: got {a}");
+  assert(got == "0", "as a call argument it releases ONCE: got '{got}'");
+
+  println("1505 OK field={field_projected()} bound={field_bound()}");
+}

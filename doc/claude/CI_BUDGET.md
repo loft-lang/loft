@@ -191,6 +191,83 @@ KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more 
 journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
 process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
+**A gate that reports `QUEUED behind another gate` may be queued behind NOTHING (2026-09-10).**
+`make ci` serialises with `exec 9>/tmp/loft-gate.lock` followed by `flock 9`, and fd 9 is
+INHERITED by every process the gate spawns — including the long-lived `loft` server children some
+tests start (`tests/engine_host_kernel.rs`'s `run_s3_scenario` spawns one per scenario). When such
+a child outlives its gate — its `Guard` drop never runs, which is exactly what the paragraph above
+describes happening to harness-child gates — it is reparented to init and keeps holding the lock.
+Every later gate on the box then blocks in `flock 9` indefinitely and reports only *"QUEUED behind
+another gate on this box"*, naming a gate that no longer exists. Measured: an orphan from an
+08:48 run held the lock while both checkouts' gates sat queued for 48 and 20 minutes with a
+one-minute load average of **0.05** — nothing was compiling, in either tree.
+
+The tell is that the holder is not a gate: `fuser -v /tmp/loft-gate.lock` names a `loft`
+process, and `ls -l /proc/<pid>/fd/9` points at the lock file. Clear it by killing that pid
+specifically — never by pattern, which reaches the sibling checkout's live gate. **The load
+average is the cheap discriminator** — a real queue has a busy box behind it.
+
+**Fixed (loft#1504) by closing the descriptor in the CHILDREN, not by releasing the lock.** The
+whole chain after the lock now runs in a subshell ending `) 9>&-`: the parent shell keeps fd 9,
+so mutual exclusion is unchanged, and every process the gate spawns gets its copy closed.
+Measured four ways before it was applied — a child without the redirection holds the lock after
+its parent exits (the bug, reproduced standalone); with it the lock is free; the parent still
+holds it while the run continues (so the gate still serialises); and closing an unopened fd 9 is
+harmless, which is the `LOFT_GATE_PARALLEL` path. A SUBSHELL rather than a `9>&-` per command
+because the per-command form is an allow-list, and a step added later would silently drop out of
+it. Bounding the spawned children's own lifetime (a `LOFT_TIMEOUT` on each) is a separate
+hardening and deliberately NOT done as an allow-list: there are **37 spawn sites of the loft
+binary across 11 test files** (`engine_host_kernel.rs` alone has 14), inside **59 `.spawn()` sites
+across 30 files** overall — so it wants a shared spawn helper, not dozens of edits that drift
+apart. Both counts are worth carrying: the smaller one is what a `LOFT_TIMEOUT` could bound, and
+the larger one is what can inherit a descriptor, since inheritance does not care which binary the
+child is.
+
+**And the reporting was the other half — the 90 minutes went to a MESSAGE, not to the lock.**
+Closing the descriptor stops this cause; it does nothing for the next one, because the waiter
+could not tell a real queue from a stuck lock and said the reassuring thing either way. Three
+defects stacked in six lines: `flock 9` waited unbounded, the *"QUEUED behind another gate"*
+line asserted a fact nothing verified, and it printed ONCE and then went silent — so a static
+line read as normal while both boxes idled. Meanwhile every reader of `.ci-running` already
+gated on `kill -0` (seven sites: `ci-run.sh`, `box-claim.sh`, `Makefile` ×3). The LOCK was the
+one place that never asked, and it is the one that hung.
+
+So the question has ONE home, `scripts/gate_lock.sh` — `state` · `why` · `doctor` · `selftest`
+— consulted by the Makefile's waiter, by `ci-run.sh status`, and by `ci-run.sh doctor` alike,
+because a second decoder of it is what produced the defect. It answers `FREE`,
+`HELD_LIVE <pid> <cwd>` or `HELD_ORPHAN <pid> <cwd>`:
+
+* the waiter re-reports every 60 s (`flock -w 60` in a loop) with the holder and the load. It
+  deliberately does NOT time out and fail — a slow box must not become a failed gate; what it
+  may not do is be silent.
+* `ci-run.sh status` splits the two answers that need OPPOSITE responses. **QUEUED** (a live
+  gate in another checkout holds it) keeps `wait` waiting, and now says so truthfully instead
+  of reporting `RUNNING` while nothing compiles. **BLOCKED** (nothing running accounts for the
+  lock) exits 3, so `wait` stops instead of hanging as before.
+* `ci-run.sh doctor` is the front door for *"why is my gate not running"*: fd holders with
+  their ppid and cwd, orphans flagged, the load, each checkout's claim, and a verdict.
+  Enumerating that by hand is what this cost twice in one session.
+
+⚠ **The holder record never decides.** `gate_lock.sh claim` writes `<pid> <cwd>` after
+acquiring, but the state is derived from the KERNEL — a holder is accounted for when its
+`ppid != 1` (an orphan is reparented to init) or a live `.ci-running` names it. The record only
+supplies a human label. That distinction was measured the hard way while building this: the
+first version read a MISSING record as "orphan", and loft2's gate — mid-`cargo-nextest`, no
+record because it ran the older Makefile — was confidently reported as an orphan whose pid
+should be killed. A verdict that tells an operator to kill a live gate is worse than the
+silence it replaces, so the live-holder-without-a-record case is a permanent cell in the
+selftest (`make ci` runs it beside the other script self-tests; cells 3 and 4 are the two
+observations that look identical and need opposite verdicts).
+
+⚠ **`make -n ci` RUNS the gate — it is not a dry run.** The whole `ci` recipe is ONE
+backslash-continued line, and it contains `$(MAKE)`; make executes a recipe line mentioning
+`$(MAKE)` even under `-n`, so the entire chain runs. Measured 2026-09-10: `make -n ci` as a
+"does the recipe parse" check took the box lock, wrote the holder record and started
+compiling — while an unrelated gate's `result.txt` was still the current one, so the run
+appended into a file whose header names a DIFFERENT run, which is this document's own
+stale-verdict hazard arriving by a new route. To check the recipe's shape, read it, or run
+`make --dry-run` on a target that does not recurse.
+
 **The verdict line names the failing TEST and how many, not the first `error[` in the file.**
 `ci-run.sh` used to take `grep -m1 "^error|FAIL \["`, and a cargo error always comes BEFORE the
 test run, so a gate whose only failure was `doc_hygiene::quality_optional_table_matches_the_audit`
@@ -575,6 +652,7 @@ does not belong on a PR, however cheap it is.**
 | **daily 05:00** | `browser-threads` — the threaded-wasm browser leg | `schedule` |
 | **daily 05:45** | `lib-main-health` — published libs against their own `main` | `schedule` |
 | **Mondays 06:00** | `repro-build` — reproducible-build check (weekly, not nightly) | `schedule` |
+| **per PR + push to main** (`daily-build.yml`) | the four RELEASE bundles — `x86_64-pc-windows-msvc`, both Apple targets, `x86_64-unknown-linux-musl` — each through `scripts/make-release.sh`, smoke-tested by running a program out of the unzipped bundle, uploaded as a 30-day artifact.  Called the **daily build** because that is the term users know; the cadence is per PR, which at one or two PRs a day comes to the same thing.  **Advisory, never a required check** — a bundle leg must never block a merge the gate itself passed.  `concurrency: cancel-in-progress`, so a re-push replaces its predecessor rather than queueing.  Exists because release bundles are attached to `v*` tags ONLY, so between monthly releases the only way to run current loft was to compile it — which needs a machine that survives `codegen-units=1` on this crate, and a contributor whose laptop does not is what prompted it | `pull_request`, `push: main`, `workflow_dispatch` (one triple or all) |
 | **library repos** | one `library-ci` per repo, all callers of `library-ci-reusable.yml`, and **`ci / <package>` is a REQUIRED check on every repo's `main`** (41 contexts, one per package; `strict` off, so a PR need not be rebased onto a moved `main`, and `enforce_admins` off, so the owner's direct pushes to `main` still land — the way every library fix reaches it today): the per-package test matrix, plus a repo-level **`unreleased work`** job — a branch ahead of the default branch with no PR, a PR nobody has touched, or a `loft.toml` version the registry has never seen, each red after 14 days without activity (`scripts/unreleased-work.py`, `stale-days` to tune) | `push: main`, `pull_request` |
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `registry-validation`, `revalidate-libs`, `browser-threads`, `repro-build`) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included. `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |

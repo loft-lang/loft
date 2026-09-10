@@ -504,3 +504,72 @@ fn test() {{ bag = Fbag1335 {{ m: [Fk1335 {{ k: 3, v: 41 }}], vs: [5, 6] }}; pic
         );
     }
 }
+
+/// A projection off a tuple LITERAL must borrow every source the literal does.
+///
+/// `formal/ownership.md` (O-Oracle) types a projection `Borrowed(base)`, and a tuple's base
+/// borrow is the union of its elements' (`Type::depend`).  So `(a.s, b.s).0` borrows both
+/// parameters, and the element's own source must be among them.  The parser carried that union
+/// one dep at a time through `Type::depending`, which REPLACES the list rather than extending
+/// it, so only the LAST parent survived: every index but the last named a source the value does
+/// not point into, and the last was right only by accident.
+///
+/// Reachable only WITHOUT an intervening bind — binding the tuple to a variable collapses its
+/// elements onto that one variable, and a call result arrives with an empty list, which is why
+/// no value ever came out wrong and the whole corpus (1384 files, 5161 reaches of the two
+/// projection sites) never produced a parent list longer than one.  What was observably wrong is
+/// the SIGNATURE: a caller reading `pick_first`'s return learned it borrows `b` while it points
+/// into `a`, and (O-Deps) makes every free/copy/move decision a read of exactly that fact.
+///
+/// The two plain-field cells are the controls: they share the projection path but have a single
+/// source each, so they pin the attribute numbering and prove the union does not widen an
+/// ordinary field read.
+#[test]
+fn a_tuple_literal_projection_borrows_every_source_its_base_does() {
+    for (label, body, want_both) in [
+        ("projection .0 (non-last index)", "(a.s, b.s).0", true),
+        ("projection .1 (last index)", "(a.s, b.s).1", true),
+        ("plain field off a (control)", "a.s", false),
+        ("plain field off b (control)", "b.s", false),
+    ] {
+        let script = format!(
+            "struct Ftpd5 {{ s: text }}
+fn pick(a: Ftpd5, b: Ftpd5) -> text {{
+    assert(len(a.s) + len(b.s) > 0);
+    return {body};
+}}
+fn test() {{
+    p = Ftpd5 {{ s: \"PPPP\" }};
+    q = Ftpd5 {{ s: \"QQ\" }};
+    assert(len(pick(p, q)) > 0);
+}}"
+        );
+        let (_state, data) = build(&script);
+        let pick = data.def_nr("n_pick");
+        let attrs = data.def(pick).attributes();
+        let idx = |n: &str| {
+            attrs
+                .iter()
+                .position(|a| a.name == n)
+                .unwrap_or_else(|| panic!("`{n}` is a parameter of pick")) as u16
+        };
+        let (a_attr, b_attr) = (idx("a"), idx("b"));
+        let mut deps = data.def(pick).returned().depend();
+        deps.sort_unstable();
+
+        let want = if want_both {
+            vec![a_attr, b_attr]
+        } else if body.starts_with("a.") {
+            vec![a_attr]
+        } else {
+            vec![b_attr]
+        };
+        assert_eq!(
+            deps, want,
+            "{label}: pick's return must record every parameter its result borrows — for a tuple \
+             literal that is the whole base (attributes {a_attr} `a` and {b_attr} `b`); got \
+             {deps:?}.  A list holding only the LAST parent is the replace-instead-of-extend \
+             defect, and it names a source the returned text does not point into"
+        );
+    }
+}

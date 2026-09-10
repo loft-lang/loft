@@ -4369,7 +4369,29 @@ use a separate collection or add after the loop"
             && !f_type.is_equal(&s_type)
             && self.convert(code, &s_type, f_type)
         {
-            f_type.clone()
+            // The declared type says the SHAPE, and it cannot say what the value in hand
+            // owns — it was written before that value existed.  `Type::with_deps_of` states
+            // that rule for the shapes it reaches, and a TUPLE is not one of them: a tuple
+            // carries no dep list of its own (`deps_ref` answers `None`), so calling it here
+            // would be a silent no-op.  The literal's deps are read and re-applied the
+            // tuple-aware way instead — `depend()` unions them over the members and
+            // `with_deps` gives every member the union, which is the shape a tuple's dep
+            // lists already have (`scopes::tuple_member_backing` reads them positionally on
+            // exactly that premise).
+            //
+            // Without this the backing is dropped for a member the annotation makes
+            // NULLABLE, and only for that member: a declared `(S, integer)` is `is_equal` to
+            // the literal's own type — `is_equal` collapses deps — so it never reaches this
+            // branch and keeps its dep by not being converted at all.  The `?` is what makes
+            // the two types differ, which is what routes it here, which is what loses the
+            // backing.  A copy of the tuple then had no work-ref to hand its release to and
+            // released the member's resource TWICE (`formal/heap.md` D-heap-1).
+            let carried = s_type.depend();
+            if carried.is_empty() {
+                f_type.clone()
+            } else {
+                f_type.with_deps(&crate::data::Deps::frame(carried))
+            }
         } else {
             s_type
         };

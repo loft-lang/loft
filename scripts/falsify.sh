@@ -198,11 +198,33 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
 # So a run arriving mid-build WAITS for the finished binary instead of racing it.  The lock is
 # per target directory and held only across the one cargo invocation, so runs against different
 # refs still proceed in parallel and nothing nests.
+# `flock(1)` is a Linux tool; macOS ships without it.  The lock exists to serialise
+# CONCURRENT sweeps writing one shared target dir — on a box without the tool a run
+# proceeds unlocked rather than not at all, and the concurrency hazard it leaves open is
+# the one the comment above describes: do not run two sweeps at once there.
+have_flock() { command -v flock >/dev/null 2>&1; }
+
+# `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
+# back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
+# reach is not killed) but the alternative was every row scoring `exit 127`, command not
+# found, on both trees.  The wrapper keeps the Linux call shape: `bound -k 5 <secs> cmd…`.
+if command -v timeout >/dev/null 2>&1; then
+  bound() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+  bound() { gtimeout "$@"; }
+else
+  bound() { shift 3; "$@"; }
+fi
+
 build() { # <dir> <target-dir> -> path to binary
   mkdir -p "$(dirname "$2")"
-  ( flock 9 || exit 1
-    cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
-  ) 9>"$2.lock" || return 1
+  if have_flock; then
+    ( flock 9 || exit 1
+      cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
+    ) 9>"$2.lock" || return 1
+  else
+    ( cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
+  fi
   echo "$2/debug/loft"
 }
 
@@ -282,7 +304,7 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
   # record has since taken, which `LOFT_POISON=1` turns into a garbage read and plain mode
   # hides behind the allocator's reuse order — is scored on the channel that sees it, and
   # the guard's `@falsified-at` line says which one was armed.
-  out=$(cd "$tree" && timeout -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
+  out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
         "$bin" "$@" "$file" 2>&1); rc=$?
@@ -323,9 +345,14 @@ if [ -n "$BULK" ]; then
     fi
     # Same lock as `build`: $SHARED is one target dir for every control in the sweep, so two
     # sweeps at once would write it together.
-    if ! ( flock 9 || exit 1
-           cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
-         ) 9>"$SHARED.lock"; then
+    if have_flock; then
+      ( flock 9 || exit 1
+        cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
+      ) 9>"$SHARED.lock"; bulk_built=$?
+    else
+      ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
+    fi
+    if [ "$bulk_built" -ne 0 ]; then
       awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-build\t\n", $1, r}' "$BULK"
       git worktree remove --force "$wt" >/dev/null 2>&1
       continue
@@ -447,6 +474,25 @@ for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   elif [ "$clean_here" != "ok" ]; then
     verdict="THIS TREE IS NOT CLEAN"
     notclean=1
+    # An unclean `here` is not one thing, and the columns already tell three of them apart.
+    # Measured 2026-09-10, because two sessions in a row guessed at the same symptom:
+    #
+    #   exit 124                  a TIMEOUT.  Both bounds land here — loft's own watchdog
+    #                             (`LOFT_TIMEOUT`) and the outer `timeout` in `signature`.
+    #   exit 0, "running          NO RUST TOOLCHAIN.  `--native` does not fail when it cannot
+    #   interpreted instead"      compile: it says so and falls back, so a missing rustc
+    #                             cannot produce a non-zero exit at all.
+    #   asserts > 0               the guard's OWN assertions, which is the ordinary case.
+    #
+    # So `exit 1` with ZERO assertions is none of those three.  The cause measured for it is
+    # a second run of the SAME guard in flight in this checkout — a falsify started beside a
+    # suite, most often.  SEVEN corpus guards write a trace file into the script's directory
+    # to record their own hook calls (`grep -l trace_path tests/scripts/*.loft`), and two
+    # concurrent runs clobber each other's: 4 of 8 concurrent runs of one such guard failed,
+    # with interleaved traces in the messages.  The
+    # guards' own note ("the trace file is this guard's own") is about a SIBLING guard and
+    # does not cover a second copy of the same one.
+
   else
     verdict="falsified"
     falsified_any=1
@@ -475,6 +521,16 @@ echo
 if [ $notclean -eq 1 ]; then
   echo "NOT falsified.  This tree does not pass the guard, so nothing here says whether the"
   echo "guard can CATCH anything — fix the tree first, then re-run."
+  echo
+  echo "  An unclean 'here' is not one thing.  Read the columns before concluding a regression:"
+  echo "    exit 124 ............ a TIMEOUT (loft's watchdog and the outer bound both land here)"
+  echo "    exit 0 + 'running interpreted instead' .. no Rust toolchain; --native FELL BACK,"
+  echo "                          it does not fail, so a missing rustc cannot exit non-zero"
+  echo "    asserts > 0 ......... the guard's own assertions — the ordinary case"
+  echo "    exit 1, asserts 0 ... none of those.  Measured cause: a second run of the SAME"
+  echo "                          guard in flight here (a falsify started beside a suite).  Seven"
+  echo "                          corpus guards write a trace file into the script's directory,"
+  echo "                          and two concurrent runs clobber each other's."
   exit 1
 elif [ $falsified_any -eq 1 ]; then
   # An inert backend beside a moved one is expected for a backend-divergence guard, so say so

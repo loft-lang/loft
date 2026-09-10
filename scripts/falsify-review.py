@@ -78,7 +78,7 @@ FIELD = {
 
 def receipt_of(path):
     """The receipt block: the @falsified-at line and the // lines under it."""
-    lines = path.read_text(errors="replace").split("\n")
+    lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
     i = next((k for k, l in enumerate(lines) if "@falsified-at:" in l), None)
     if i is None:
         return None

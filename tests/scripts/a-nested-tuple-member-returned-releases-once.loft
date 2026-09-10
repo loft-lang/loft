@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` runs the hook once per resource and `tuples.md (T-Proj)` says `t.i` reads
+// that element, so `t = ((s, 1), 2); return t.0.0` releases ONCE at whatever depth the member
+// sits — `layout.md (L-Tuple)` makes a tuple a synthetic struct, so depth is not a semantic
+// axis.  It released twice, both backends, silently.
+//
+// The hand-off is recognised by resolving a copy's tuple-MEMBER source to the work-ref backing
+// it, and a nested READ materialises through a temp of its own — `tuple_tmp`, not the
+// `_tuphold` the nested COPY uses — so `Function::tuphold_origin` had no entry for it and the
+// walk back to the tuple carrying the pairing stopped at a temp whose dep names the tuple
+// LOCAL.  One question, two read sites: the second now records its projection the way the
+// first does.  At depth three the projection arrives WRAPPED in the lowered block of the level
+// below it, which is why the record is taken through `scopes::tuple_projection_of` — matching the
+// bare `TupleGet` alone left `c_depth3` releasing twice while the two shallower cells passed.
+//
+// c_read_not_returned is the cell that pins the CONSTRUCTION predicate, and it is here because
+// the first version of this fix broke it.  `scopes::construction_work_ref` asks *does this
+// block hand its target a record it built*, and it asked by resolving the tail to a work-ref —
+// which a member read now answers.  So `u = t.0.0` looked like a construction, the member's
+// backing was marked handed-off, and the binding it was handed to is a VIEW that drops nothing:
+// the resource was released by NOBODY.  The predicate reads the tail by NAME now, and
+// c_construction is its other half — the shape it exists for, which must keep working.
+//
+// @falsified-at: 75896b136 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nested-tuple-member-returned-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Re-derived against the COMMITTED fix, so the control it
+//   builds is HEAD plus the reverse of both source hunks — the parser's record and the
+//   construction predicate's narrowing, which the guard needs BOTH of to fail.
+// CHANNEL: the trace string on both backends — this is not a backend divergence, both released
+//   twice.  NOT the leak channel: the second release is of a record that genuinely exists, so
+//   nothing leaks.  The over-reach direction DOES leak the resource (not the store), and only
+//   an assertion on the hook's own trace sees either.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control `c_inner_returned` drains `1,v1,1` where the fix drains `v1,1` — the
+//   member's backing released beside the return buffer.  It is the first cell, so the run stops
+//   there; the others were measured by scoring the file with the assertions replaced by prints
+//   rather than assumed.  `c_depth3` reads `11,v11,11`, `c_second_inner` reads `21,22,v22,22`,
+//   `c_both_in_one` reads `31,32,v32,32`, and `c_nullable_inner` reads `61,v61,61`.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved.  The CONTROL cells hold on
+//   both trees: `c_flat_returned` (loft#1509's shape, already closed), `c_scalar_field` (no
+//   record return path), `c_read_not_returned`, `c_construction`, `c_field_read` and
+//   `c_element_read` — and `c_two_indep` reads two releases, without which every cell here
+//   would pass on a harness that had stopped recording.
+//
+// Two neighbouring shapes are deliberately ABSENT because they still release twice and
+// `formal/heap.md` D-heap-1 carries them: a `??` on the returned member (`return t.0.0 ?? d`,
+// and `return t.0 ?? d` at FLAT depth too, so the axis is the `??` and not the nesting), and a
+// copy off a tuple PARAMETER's member.  Asserting their present answer would pin a defect.
+//
+// The trace file is this guard's own — and its own means THIS file, not this family: several
+// corpus guards write one, and two concurrent runs of the SAME guard clobber each other's.
+
+fn trace_path() -> text { return "loft_nestret_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct NrH { id: integer }
+fn OpDrop(self: NrH) { note("{self.id}"); }
+struct NrS { h: NrH }
+struct NrBox { s: NrS }
+fn nr_mk(id: integer) -> NrS { return NrS { h: NrH { id: id } }; }
+
+// The defect: the droppable sits in the INNER tuple and the member is RETURNED, so the read
+// materialises through a temp the walk had no entry for.
+fn r_inner() -> NrS { s = nr_mk(1); t = ((s, 1), 2); return t.0.0; }
+fn c_inner_returned() { v = r_inner(); note("v{v.h.id}"); }
+// Depth three: the projection arrives wrapped in the lowered block of the level below it, which
+// a bare `TupleGet` match does not see.
+fn r_depth3() -> NrS { s = nr_mk(11); t = (((s, 1), 2), 3); return t.0.0.0; }
+fn c_depth3() { v = r_depth3(); note("v{v.h.id}"); }
+// The SECOND inner tuple's member — the cell a `first()`-shaped read gets wrong.
+fn r_second_inner() -> NrS { a = nr_mk(21); b = nr_mk(22); t = ((a, 1), (b, 2)); return t.1.0; }
+fn c_second_inner() { v = r_second_inner(); note("v{v.h.id}"); }
+// Two droppables in ONE inner tuple, member 1 returned.
+fn r_both_in_one() -> NrS { a = nr_mk(31); b = nr_mk(32); t = ((a, b), 2); return t.0.1; }
+fn c_both_in_one() { v = r_both_in_one(); note("v{v.h.id}"); }
+// The inner member written NULLABLE and returned as `NrS?`: `@FR-N-Shape` makes a `τ?` a
+// nullability bit over the same runtime shape, so the depth answer must not depend on it.
+fn r_nullable_inner() -> NrS? { s = nr_mk(61); t: ((NrS?, integer), integer) = ((s, 1), 2); return t.0.0; }
+fn c_nullable_inner() { v = r_nullable_inner(); note("v{v?.h.id}"); }
+// CONTROL — the nested member READ into a local and not returned.  A view drops nothing, so a
+// hand-off marked here releases the resource by nobody.  This is the over-reach cell.
+fn c_read_not_returned() { s = nr_mk(71); t = ((s, 1), 2); u = t.0.0; note("v{u.h.id}"); }
+// CONTROL — a CONSTRUCTION block bound to a local, which is the shape the predicate the cell
+// above narrows exists FOR: the block hands over a record it built, and the source must stop.
+fn c_construction() { u = NrS { h: NrH { id: 81 } }; note("v{u.h.id}"); }
+// CONTROL — a struct FIELD read into a local: the sibling view, at one release throughout.
+fn c_field_read() { s = nr_mk(91); b = NrBox { s: s }; u = b.s; note("v{u.h.id}"); }
+// CONTROL — a vector ELEMENT read into a local, the other sibling view.
+fn c_element_read() { s = nr_mk(101); v: vector<NrS> = [s]; u = v[0]; note("v{u.h.id}"); }
+// CONTROL — the FLAT member returned: loft#1509's shape, closed, and it must stay closed.
+fn r_flat() -> NrS { s = nr_mk(111); t = (s, 5); return t.0; }
+fn c_flat_returned() { v = r_flat(); note("v{v.h.id}"); }
+// CONTROL — the nested member's scalar FIELD returned: no record return path at all.
+fn r_scalar() -> integer { s = nr_mk(121); t = ((s, 1), 2); return t.0.0.h.id; }
+fn c_scalar_field() { n = r_scalar(); note("v{n}"); }
+// CONTROL — two independent resources release TWICE, in reverse declaration order.  Without it
+// every cell above would pass on a harness that had simply stopped recording.
+fn c_two_indep() { x = nr_mk(191); y = nr_mk(192); note("v{x.h.id}{y.h.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_inner_returned(); got = drain();
+  assert(got == "v1,1", "the nested inner member returned releases once: {got}");
+
+  c_depth3(); got = drain();
+  assert(got == "v11,11", "a member three levels down releases once: {got}");
+
+  c_second_inner(); got = drain();
+  assert(got == "21,v22,22", "the second inner tuple's member returned: {got}");
+
+  c_both_in_one(); got = drain();
+  assert(got == "31,v32,32", "two in one inner tuple, member 1 returned: {got}");
+
+  c_nullable_inner(); got = drain();
+  assert(got == "v61,61", "a NULLABLE inner member returned releases once: {got}");
+
+  c_read_not_returned(); got = drain();
+  assert(got == "v71,71", "CONTROL the nested member read, not returned: {got}");
+
+  c_construction(); got = drain();
+  assert(got == "v81,81", "CONTROL a construction block bound to a local: {got}");
+
+  c_field_read(); got = drain();
+  assert(got == "v91,91", "CONTROL a struct field read into a local: {got}");
+
+  c_element_read(); got = drain();
+  assert(got == "v101,101", "CONTROL a vector element read into a local: {got}");
+
+  c_flat_returned(); got = drain();
+  assert(got == "v111,111", "CONTROL the flat member returned: {got}");
+
+  c_scalar_field(); got = drain();
+  assert(got == "121,v121", "CONTROL the nested member's scalar field: {got}");
+
+  c_two_indep(); got = drain();
+  assert(got == "v191192,192,191", "CONTROL two resources release TWICE: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("nested tuple member returned ok");
+}

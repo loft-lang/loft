@@ -806,7 +806,9 @@ fn run_native_jobs(
 /// library's artefact is stale. It is worth it only for the files the emit path
 /// cannot build at all.
 ///
-/// Returns `Ok(false)` when `rustc` is absent, matching `compile_native_job`.
+/// Returns `Ok(false)` when `rustc` is absent, matching `compile_native_job` — and the CALLER
+/// must treat that as a failure, as `run_native_jobs` does, or the value matches while the
+/// consequence does not.
 fn run_via_loft_binary(entry: &Path) -> std::io::Result<bool> {
     if std::process::Command::new("rustc")
         .arg("--version")
@@ -844,7 +846,9 @@ fn run_via_loft_binary(entry: &Path) -> std::io::Result<bool> {
 /// backend (`--native` mode), skipping files listed in `NATIVE_SKIP`.
 ///
 /// Runs concurrently with interpreter-based wrap tests (no WRAP_LOCK).
-/// Skips silently if `rustc` is not in PATH.
+/// FAILS if `rustc` is not in PATH: a file that could not be built lands in `compile_fail`,
+/// and a suite that reported a pass for tests it never compiled would be worse than a red
+/// one.  A cache HIT is not that case — it runs the binary it already has.
 #[test]
 fn native_dir() -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -915,8 +919,15 @@ fn native_features() -> std::io::Result<()> {
     let emitted = run_native_jobs(jobs, rlib_info);
     let mut failed: Vec<String> = Vec::new();
     for entry in &delegated {
-        if run_via_loft_binary(entry).is_err() {
-            failed.push(entry.display().to_string());
+        // `Ok(false)` — no rustc, so the example was never built — counts as a FAILURE, the
+        // same as it does on the emit half, where it lands in `compile_fail`.  Testing only
+        // `.is_err()` let the two halves read one return value two ways: a missing toolchain
+        // failed the emitted examples and was ignored for the delegated ones, so this half
+        // reported a pass having run nothing.  These are the examples that IMPORT a library,
+        // which is the case least covered elsewhere and the one worth failing loudly for.
+        match run_via_loft_binary(entry) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => failed.push(entry.display().to_string()),
         }
     }
     if !failed.is_empty() {
@@ -930,7 +941,9 @@ fn native_features() -> std::io::Result<()> {
 /// backend (`--native` mode), skipping files listed in `SCRIPTS_NATIVE_SKIP`.
 ///
 /// Runs concurrently with interpreter-based wrap tests (no WRAP_LOCK).
-/// Skips silently if `rustc` is not in PATH.
+/// FAILS if `rustc` is not in PATH: a file that could not be built lands in `compile_fail`,
+/// and a suite that reported a pass for tests it never compiled would be worse than a red
+/// one.  A cache HIT is not that case — it runs the binary it already has.
 // @speed 6.1
 #[test]
 fn native_scripts() -> std::io::Result<()> {

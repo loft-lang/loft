@@ -46,6 +46,52 @@ mistakes are caught at compile time.
 
 ## Getting started
 
+### Download a binary — no toolchain, no compiler
+
+Every download is a **self-contained bundle**: the `loft` binary, the standard library it
+loads at runtime, the examples, the reference PDF, and a `SHA256SUMS` of every file. Unzip
+it and run it; nothing else is required.
+
+| | what it is | where |
+|---|---|---|
+| **Stable** | the monthly release, through the full release checklist | [Releases](https://github.com/loft-lang/loft/releases) — pick the `.zip` for your platform |
+| **Daily build** | the newest code, built for every pull request and every push to `main` | the [Daily build](https://github.com/loft-lang/loft/actions/workflows/daily-build.yml) workflow → open the newest green run → **Artifacts** |
+
+Four platforms are built each time: `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`,
+`aarch64-apple-darwin` (Apple Silicon), and `x86_64-unknown-linux-musl` (static, runs on
+any Linux).
+
+The fastest way to the daily build is the [`gh` CLI](https://cli.github.com), which skips
+the web UI entirely — replace the target with your own:
+
+```sh
+# the newest daily build of your platform, from any branch or PR
+gh run download -R loft-lang/loft -n loft-daily-x86_64-pc-windows-msvc
+
+# or pin it to main, ignoring pull requests
+id=$(gh run list -R loft-lang/loft --workflow daily-build.yml --branch main \
+       --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run download -R loft-lang/loft "$id" -n loft-daily-x86_64-unknown-linux-musl
+
+unzip loft-*.zip && cd loft-*/                        # then run it in place:
+bin/loft --interpret examples/hello.loft              # bin\loft.exe on Windows
+```
+
+⚠ **Use `--interpret` if you have no Rust toolchain.** loft's default mode is `--native`,
+which compiles your program through `rustc` for speed — so it needs a toolchain that a
+downloaded bundle deliberately does not carry. `--interpret` is the standalone runtime and
+needs nothing but the bundle. Keep `bin/` and `default/` together whichever you use: the
+binary loads the standard library from `<binary-dir>/../default`.
+
+Two things worth knowing about daily builds. **GitHub requires you to be signed in to
+download a workflow artifact** — they are not anonymous links, which is the one way they
+differ from the Releases page. And each bundle carries a `DAILY-BUILD-INFO.txt` naming the
+commit, the PR and the build time, because *"which code is this?"* is the question a daily
+build gets asked most. They are kept for 30 days, and they have **not** been through the
+release checklist — for anything you depend on, use a release.
+
+### Or build it yourself
+
 ```sh
 # one-line install (requires a Rust toolchain)
 cargo install --git https://github.com/loft-lang/loft --bin loft
@@ -59,8 +105,12 @@ cargo build --release          # binary at target/release/loft
 
 `make install-user` installs to `~/.local/bin` and `~/.local/share/loft` without root, and
 tells you if `~/.local/bin` is not yet on your `PATH`. `make install` (system-wide
-`/usr/local`) elevates only when the prefix is not writable. Pre-built binaries are on the
-[Releases](https://github.com/loft-lang/loft/releases) page.
+`/usr/local`) elevates only when the prefix is not writable.
+
+⚠ Building loft optimised hands one `rustc` a large crate (`codegen-units=1`), which can
+exhaust memory on a small machine. If a build is killed, use `CARGO_BUILD_JOBS=1` — each
+concurrent `rustc` holds its own peak — or take a daily build above and skip compiling
+altogether.
 
 Then:
 

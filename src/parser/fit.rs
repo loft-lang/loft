@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! @F4 — Ranged/width integer types (u8/i8/u16/i16/i32/u32), their FIT half; @F38 is the
+//! arithmetic-safety side of the same story.
+//!
 //! @PLN152 step 5 (`@FR-E-Uncomp-Seen`) — let `!` read a fit-failure the value cannot hold.
 //!
 //! `u8`, `i8`, `u16`, `i16`, `u32` and every `integer limit(lo, hi)` fill their own range,

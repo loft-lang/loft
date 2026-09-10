@@ -561,10 +561,19 @@ impl Parser {
         {
             return None;
         }
-        let buf = args.iter().find_map(|a| match a.unspan() {
-            Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
-            _ => None,
-        })?;
+        // The callee's own hidden return buffer where it has one; otherwise a fresh
+        // work-ref of this frame.  A callee that can answer NULL is not NRVO-promoted and
+        // carries no buffer at all (`fn pick(n) -> Cell?`), so asking only for the buffer
+        // left exactly those calls owner-less — the shape loft#1506's record view-model
+        // then leaked, because a borrowing result no longer adopted them.  Either way the
+        // store ends up in a variable `get_free_vars` releases at scope exit.
+        let buf = args
+            .iter()
+            .find_map(|a| match a.unspan() {
+                Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
@@ -1579,8 +1588,16 @@ impl Parser {
                             // a `Str` whose ptr points into a freed host.
                             let parent_deps = t.depend();
                             t = elems[idx].clone();
-                            for on in parent_deps {
-                                t = t.depending(on);
+                            // `@FR-O-Oracle`: a projection is Borrowed(BASE), so the element
+                            // carries what the whole base borrows — ALL of it.  A tuple's base
+                            // deps are the union of its elements' (`Type::depend`), so a literal
+                            // built from two hosts (`(h0.s, h1.s).0`) has two, and carrying them
+                            // one at a time through `depending` REPLACES rather than accumulates:
+                            // only the LAST survived, so every index but the last named the wrong
+                            // host.  Reachable only without an intervening bind — a bound tuple
+                            // collapses to a single dep on its own variable.
+                            if !parent_deps.is_empty() {
+                                t = t.with_deps(&crate::data::Deps::frame(parent_deps));
                             }
                             // T1.4: emit TupleGet IR for codegen.
                             // Plan-07 phase 1: unspan() so wraps on `.`
@@ -1613,6 +1630,17 @@ impl Parser {
                                     self.change_var_type(w, &tmp_tp);
                                 }
                                 let orig = code.clone();
+                                // Which member this temp is a view OF — the same fact a
+                                // `_tuphold` records, and for the same reason: a copy reading
+                                // a heap leaf through the temp has no way back to the tuple
+                                // whose type pairs that leaf with the work-ref backing it
+                                // (`scopes::tuple_member_backing`), because the temp's own dep
+                                // list names the tuple it was projected from and nothing else.
+                                // Only a member read answers — a call result or a block names
+                                // no tuple to walk back to.
+                                if let Some((pb, pi)) = crate::scopes::tuple_projection_of(&orig) {
+                                    self.vars.tuphold_origin.insert(w, (pb, Some(pi)));
+                                }
                                 *code = Value::TupleGet(w, idx as u16);
                                 // Prepend Set(w, orig) in a block.
                                 *code = crate::data::v_block(
@@ -1689,11 +1717,16 @@ impl Parser {
                             *code =
                                 self.get_val(&elem_tp, false, elem_offset, code.clone(), u32::MAX);
                             t = elem_tp;
-                            for on in parent_deps {
-                                t = t.depending(on);
-                            }
+                            // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
+                            // base is a VARIABLE that variable IS the base, so it alone is the
+                            // borrow — which is why the parent deps were dead here (717 of 741
+                            // corpus reaches take this arm and the old loop's result was
+                            // overwritten by it).  Only a base with no variable of its own falls
+                            // back to the union.
                             if let Some(nr) = base_var {
                                 t = t.depending(nr);
+                            } else if !parent_deps.is_empty() {
+                                t = t.with_deps(&crate::data::Deps::frame(parent_deps));
                             }
                         }
                     } else {
@@ -1720,11 +1753,26 @@ impl Parser {
                 // it in a work-ref so scopes.rs emits OpFreeRef at end-of-scope.
                 // Without this, the store allocated by the callee leaks and the LIFO
                 // invariant in database::free() is violated.
+                //
+                // D-heap-3 (loft#1506) — a projection that ENDS the chain wraps too, when
+                // what it projects owns a droppable: `r = mk().h` otherwise binds an ALIAS
+                // of the lifted temp, and both names carry owner hooks — one record, its
+                // release run twice (and its store freed twice).  Materialising through the
+                // same work-ref makes every consumption site see the shape the chained case
+                // already produces, and the copy-out hand-off in `scopes.rs` moves the
+                // field's release to the copy (`@FR-H-Drop`).  A type with nothing to
+                // release keeps the alias lowering — the count cannot differ there, and the
+                // copy would be pure cost.
                 if !self.first_pass
                     && !matches!(code, Value::Var(_))
-                    && (self.lexer.peek_token(".") || self.lexer.peek_token("["))
                     && let Type::Reference(d_nr, dep) = &t
                     && dep.is_empty()
+                    && (self.lexer.peek_token(".")
+                        || self.lexer.peek_token("[")
+                        || (self.data.owns_droppable(*d_nr)
+                            && matches!(code.unspan(), Value::Call(pd, _)
+                                if matches!(self.data.def(*pd).name(),
+                                    "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"))))
                 {
                     let d_nr = *d_nr;
                     let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
@@ -1752,6 +1800,18 @@ impl Parser {
                         if matches!(self.data.def(*pd).name(),
                             "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"));
                     let kt = self.data.def(d_nr).known_type();
+                    // A TERMINAL wrap (no further chaining — the D-heap-3 arm of the
+                    // condition above) delivers the copy the way a struct LITERAL's block
+                    // does: typed WITHOUT deps, so the consuming site ADOPTS the record as
+                    // its owner and the existing construction hand-off + buffer pairing
+                    // release it exactly once.  A mid-chain wrap keeps the frame dep — the
+                    // rest of the chain reads through `w`, which must stay the owner.
+                    let terminal = !(self.lexer.peek_token(".") || self.lexer.peek_token("["));
+                    let block_deps = if terminal {
+                        crate::data::Deps::none()
+                    } else {
+                        crate::data::Deps::frame1(w)
+                    };
                     if is_projection && kt != u16::MAX {
                         let copy_d = self.data.def_nr("OpCopyRecord");
                         *code = v_block(
@@ -1764,7 +1824,7 @@ impl Parser {
                                 ),
                                 Value::Var(w),
                             ],
-                            Type::Reference(d_nr, crate::data::Deps::frame1(w)),
+                            Type::Reference(d_nr, block_deps.clone()),
                             "inline ref copy",
                         );
                         // @PLN130 — parser-emitted materialisation of a projection into a
@@ -1782,7 +1842,14 @@ impl Parser {
                             "inline ref",
                         );
                     }
-                    t = Type::Reference(d_nr, crate::data::Deps::frame1(w));
+                    t = Type::Reference(
+                        d_nr,
+                        if is_projection && kt != u16::MAX {
+                            block_deps
+                        } else {
+                            crate::data::Deps::frame1(w)
+                        },
+                    );
                 }
             } else if self.lexer.has_token("[") {
                 wrap_chain = true;
@@ -3127,9 +3194,16 @@ impl Parser {
         // struct-valued constant PRESCRIBES the call spelling, so the leaking form is the
         // one it tells you to write.  [`Self::materialise_owned_call`] has the model; the
         // same join shape written as an `if` or a `match` is loft#1019.
+        // loft#1506 — the RECORD view-model below makes the join's result a borrow too,
+        // so the default arm needs its own owner for the same reason.  Decided here
+        // rather than at the branch that applies it: `rhs` is folded into the `if` before
+        // that point, and a default left owner-less on the absent path leaks its store.
+        let record_view = self.owned_record_subject(lhs_type, code)
+            && Self::frame_view_of(&result_type, 0).is_some();
         if !self.first_pass
-            && matches!(result_type.base(), Type::Reference(_, _))
-            && !result_type.depend().is_empty()
+            && (record_view
+                || (matches!(result_type.base(), Type::Reference(_, _))
+                    && !result_type.depend().is_empty()))
             && let Some(owned) = self.materialise_owned_call(&rhs, &result_type)
         {
             rhs = owned;
@@ -3197,12 +3271,7 @@ impl Parser {
             // `r = mk(i) ?? d` was clean only while `r` freed on the mint arm a store it
             // merely borrowed on the other.  A projection subject (`o.inner ?? d`) stays the
             // view it is (`@FR-B-View`), and a bare variable is never hoisted at all.
-            let owned_record = matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
-                && match code.unspan() {
-                    Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
-                    Value::CallRef(_, _) => true,
-                    _ => false,
-                };
+            let owned_record = self.owned_record_subject(lhs_type, code);
             if matches!(
                 lhs_type,
                 Type::Text(_) | Type::Sorted(_, _, _) | Type::Hash(_, _, _) | Type::Index(_, _, _)
@@ -3266,9 +3335,59 @@ impl Parser {
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;
             }
+            // loft#1506 / `formal/heap.md` D-heap-3 — the same view-model for an OWNED
+            // RECORD subject, and for the same reason.  The join's value is `if __ncc_N
+            // { __ncc_N } else { <default> }`: both arms are vars THIS FRAME owns and
+            // frees, so a result typed as a bare owner hands a second owner to whoever
+            // consumes it — a lift, or the binding of `r = mk() ?? d`.  Two owners of one
+            // store release its resources twice and the later one reads a freed record
+            // (`LOFT_POISON` shows the pattern arriving in the author's `OpDrop`).
+            // Naming the present arm's owner makes the consumer a BORROW, which is what
+            // the value is.
+            if owned_record && let Some(view) = Self::frame_view_of(&result_type, tmp) {
+                *code = v_block(vec![set_tmp, if_expr], view.clone(), "ncc");
+                *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
+                return;
+            }
             *code = v_block(vec![set_tmp, if_expr], result_type.clone(), "ncc");
         }
         *ctp = Self::wrap_if_fallback_nullable(result_type, fallback_nullable);
+    }
+
+    /// Does this `??` subject deliver a RECORD store the frame must own?
+    ///
+    /// A plain bind of a record-returning CALL leaves the local OWNING — a fresh mint is
+    /// adopted, a borrowed or `Join` return is deep-copied by codegen, and a fn-ref
+    /// call's is the store minted for that call — so the `__ncc_N` temp that holds it
+    /// owns a store on every arm (`@FR-O-Complete`: the fact per binding, per path).  A
+    /// projection subject (`o.inner ?? d`) stays the view it is (`@FR-B-View`), and a
+    /// bare variable is never hoisted at all.
+    fn owned_record_subject(&self, lhs_type: &Type, code: &Value) -> bool {
+        matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
+            && match code.unspan() {
+                Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
+                Value::CallRef(_, _) => true,
+                _ => false,
+            }
+    }
+
+    /// The same record type, re-typed as a VIEW of frame variable `tmp`.
+    ///
+    /// `Optional` is peeled and re-wrapped so a `-> S?` join keeps its nullability: the
+    /// dep belongs on the reference, and a `Type::Optional` carries none of its own.
+    /// Returns `None` for anything that is not a record — the caller keeps the bare
+    /// owner there.
+    fn frame_view_of(tp: &Type, tmp: u16) -> Option<Type> {
+        match tp {
+            Type::Reference(d, _) => Some(Type::Reference(*d, crate::data::Deps::frame(vec![tmp]))),
+            Type::Enum(d, true, _) => {
+                Some(Type::Enum(*d, true, crate::data::Deps::frame(vec![tmp])))
+            }
+            Type::Optional(inner) => {
+                Self::frame_view_of(inner, tmp).map(|v| Type::Optional(Box::new(v)))
+            }
+            _ => None,
+        }
     }
 
     /// @PLN102 gate-2 `?? null` — re-mark a coalesce RESULT nullable when its fallback can be null

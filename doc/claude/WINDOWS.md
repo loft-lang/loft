@@ -291,6 +291,91 @@ branches for LNK1181 and "required to be available in rlib format" are removed;
 
 ## Previously fixed Windows-only issues (for context)
 
+- **The daily's five Windows failures were two code defects, not five test-gating
+  decisions (fixed 2026-09-10, probed via the windows-probe loop).**  `main` had been red
+  on `Test (windows-latest)` with 5 of 4716 failing, each on both attempts.
+
+  **`pid_alive` answered `None` on Windows**, so the dead-only scratch sweep fell back to
+  the age rule and three tests asserting decidability failed.  Its doc said liveness was
+  "unknowable on a non-unix host", but the test's own cfg structure said otherwise: the
+  pid-1/EPERM cell is already `#[cfg(unix)]` while the other three assertions are left
+  general, so the unix-only part had been separated deliberately and the rest was a
+  cross-platform contract Windows never implemented.  It is implementable with no new
+  dependency — `unsafe extern "system"` on kernel32, as `src/android.rs` already declares
+  its imports.
+
+  ⚠ **`WaitForSingleObject` is the obvious spelling and it is INERT here.**  It compiled,
+  it typechecked against `x86_64-pc-windows-msvc`, and the probe reported WAIT_FAILED
+  (`0xffffffff`) for EVERY openable process, live or dead, because
+  `PROCESS_QUERY_LIMITED_INFORMATION` does not grant SYNCHRONIZE — so every openable pid
+  would have answered `None` and all three tests would still be red.  Use
+  `GetExitCodeProcess`, which needs no extra right.  What the runner reported:
+
+  | pid | `GetExitCodeProcess` | `SYNCHRONIZE`+`Wait` |
+  |---|---|---|
+  | own process, pid 4 (System), a live child | `259` (STILL_ACTIVE) | `0x102` WAIT_TIMEOUT |
+  | a child that exited with 7 | `7` — the handle still opens | `0x0` WAIT_OBJECT_0 |
+  | pid 0, `u32::MAX-1`, an unused 999999 | `OpenProcess`=NULL, err 87 | same |
+
+  Both discriminate; `GetExitCodeProcess` wins on least privilege.  Its STILL_ACTIVE
+  ambiguity (a process exiting WITH code 259 reads alive) is accepted because it errs
+  toward not reclaiming, and the sweep DELETES what it calls dead.  pid 0 needs no special
+  case as it does on unix, where 0 addresses a process GROUP: Windows reports it as no
+  process.
+
+  **`verify_self::manifest_path_escapes` asked `is_absolute()`, which is unix-shaped while
+  the rule is not.**  Its own doc states the hazard platform-neutrally — "`root.join
+  ("/etc/x")` REPLACES the root" — but on Windows `Path::new("/etc/x").is_absolute()` is
+  FALSE, because an absolute path there needs a drive prefix, while `join` still keeps only
+  the prefix: `<drive>:\bundle` joined with `/etc/x` is `<drive>:\etc\x`.  So the one home
+  of the bundle escape rule waved through the very escape it exists to refuse, on the one
+  host where the predicate disagreed with the rule — a real hole, not a test fixture.  Asked
+  as a COMPONENT walk now (`Prefix | RootDir | ParentDir`), which also catches the
+  drive-relative `C:x` and the UNC shapes.  Measured: identical to the old predicate on
+  ZERO of 22 shapes on unix, so the whole effect is on Windows.
+
+  ⚠ **A unix-passing guard for a Windows-only defect is VACUOUS and must say so.**  On unix
+  `is_absolute()` already answered `/etc/loft-evil` correctly, so every portable cell of the
+  new guard passes under the pre-fix predicate; only its four `#[cfg(windows)]` cells carry
+  the change, and the falsification happened on windows-probe rather than in the file.
+
+  **The fifth was `bash` not being bash.**  ⚠ On Windows a bare `bash` resolves to
+  `C:\Windows\System32\bash.exe` — the **WSL launcher** — not Git Bash.  With no
+  distribution installed it prints *"Windows Subsystem for Linux has no installed
+  distributions"* to **stdout**, in UTF-16, and exits 1.  So
+  `doc_hygiene::every_test_binary_matches_a_subject` was never load-dependent, which is what
+  I first concluded and wrote here: the probe passed only because a `run:` probe executes
+  INSIDE Git Bash, where `bash` resolves to Git Bash first, while the test process inherits a
+  different PATH order.  Resolve Git Bash explicitly from `%ProgramFiles%`.
+
+  Two things made the wrong conclusion cheap to reach and the right one cheap to get.  The
+  guard reported only stderr, which was EMPTY — so its message read `scripts/test_subjects.sh
+  failed: ` and named nothing; **the message was what stopped the diagnosis**, and printing
+  the exit code and BOTH streams produced the WSL banner on the next run.  And the other ~20
+  suites here spawn `sh`, which System32 does not provide, so this was the only site exposed
+  — `sh` is not the cure either, since `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]` and
+  `/bin/sh` on Linux is dash.
+
+  **A sixth, found by the same probe and NOT in the daily's five: a python default encoding.**
+  `every_guard_says_how_to_score_it_again` went red on seven receipts "not stating WITNESS".
+  `scripts/falsify-review.py` read them with `path.read_text(errors="replace")` — no
+  `encoding=` — and the runner reports `locale.getpreferredencoding(False)` as **cp1252**
+  with `utf8_mode: 0`, so `×72` in a receipt decoded as `Ã—72` and the WITNESS pattern `×\d`
+  never matched.  Exactly the seven receipts carrying `×`.  Cure: read with an explicit
+  `encoding="utf-8"`.
+
+  ⚠ **`LC_ALL=C` does not reproduce this on Linux** — Python's preferred encoding stays
+  UTF-8, so the local falsification came back clean and the hypothesis read as disproven.  It
+  took the runner printing `locale-read == utf8-read ? False` to establish it.  Any
+  `read_text` / `open` without an explicit encoding is a latent Windows-only defect here, and
+  it cannot be falsified from Linux.
+
+  ⚠ **And this one was reachable only because a derived baseline had been regenerated on
+  Linux.**  `tests/falsified_docs.baseline` is a ratchet that only shrinks; regenerating it on
+  a Linux tree took it to zero, which encoded a platform-dependent reading as truth and left
+  Windows with seven entries and no grandfather. A derived baseline is a statement about the
+  tree AND the host that measured it.
+
 - **A `[c]` shim published by rename imported a name nobody published
   (fixed 2026-08-04, probed via the windows-probe loop).**  A program using a
   package with a `[c] shim` died with `STATUS_DLL_NOT_FOUND` (`0xC0000135`)

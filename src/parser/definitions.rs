@@ -929,14 +929,23 @@ impl Parser {
         }
         if self.lexer.has_keyword("size") {
             self.lexer.token("(");
-            if let Some(n) = self.lexer.has_integer() {
-                // Only 1/2/4/8 are meaningful for integer subtypes.  Larger
-                // values (e.g. size(12) on the built-in `reference` alias)
-                // are accepted silently — forced_size is only consulted for
-                // integer types, so non-integer annotations are harmless.
-                if matches!(n, 1 | 2 | 4 | 8) && self.first_pass && d_nr != u32::MAX {
-                    self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
-                }
+            // Read as a LONG.  The lexer switches token kind at `i32::MAX`, so matching only
+            // `LexItem::Integer` left `size(9999999999)` unconsumed and the reader got
+            // `Expect token )` — a punctuation error about a width they wrote deliberately.
+            let width = self.lexer.has_long();
+            if self.first_pass && d_nr != u32::MAX {
+                self.check_declared_size(d_nr, width);
+            }
+            // Only 1/2/4/8 are storage widths.  A non-integer type keeps the old silence —
+            // `size(12)` on the built-in `reference` alias is deliberate, and `forced_size`
+            // is only consulted for integer types — which is what `check_declared_size`
+            // decides before this runs.
+            if let Some(n) = width
+                && matches!(n, 1 | 2 | 4 | 8)
+                && self.first_pass
+                && d_nr != u32::MAX
+            {
+                self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
             }
             self.lexer.token(")");
         }
@@ -3451,6 +3460,76 @@ impl Parser {
         self.lexer.closing_angle();
     }
 
+    /// Does a declared `size(…)` agree with the range the same declaration promises?
+    ///
+    /// `@FR-L-Narrow` says a range-annotated integer stores in the SMALLEST width that HOLDS
+    /// its range, and `@FR-L-Narrow-Decode` says the bytes carry `value - start`.  A
+    /// `size(…)` that cannot hold the range satisfies neither: it is not the smallest such
+    /// width because there is no such width below it, and the offset it would store does
+    /// not fit.  The rule already decided this; what was missing is a site that asks.
+    ///
+    /// `limit(…)` says which values the type HOLDS and `size(…)` says how many bytes it gets,
+    /// and nothing checked them against each other. A narrow integer stores the offset
+    /// `value - min`, so `integer limit(0, 100000) size(1)` promises 100001 values and gives
+    /// them 256 codes: `300` and `100000` both read back as `0`, in a struct field, a vector
+    /// element, a vector literal and an element write, on both backends, with no diagnostic
+    /// anywhere (loft#1501). The declaration is where that is decidable, and it is the only
+    /// place the two halves are both in view.
+    ///
+    /// Only INTEGER types are judged. `size(12)` on the built-in `reference` alias is
+    /// deliberate and `forced_size` is never consulted for it, so a non-integer annotation
+    /// keeps the silence it had.
+    fn check_declared_size(&mut self, d_nr: u32, width: Option<u64>) {
+        // Through `base()` (`@FR-N-Shape`): the question is which FORMER this is, and a bare
+        // `Type::Integer` match answers "no" for every `?` spelling of one.  No declaration
+        // reaches here as an `Optional` today — `type T = integer? limit(0, 255) size(1)` does
+        // not parse — so this is the shape the rule asks for rather than a case observed; the
+        // reserved sentinel travels with it so the code COUNT stays right if it ever does.
+        let declared = self.data.attr_type(d_nr, usize::MAX);
+        let nullable = matches!(declared, Type::Optional(_));
+        let Type::Integer(spec) = declared.base().clone() else {
+            return;
+        };
+        let Some(width) = width.filter(|n| matches!(n, 1 | 2 | 4 | 8)) else {
+            // Anything else is not a storage width. It used to be dropped in silence, so
+            // `size(3)` laid the type out as the 8-byte default while the declaration said
+            // three — one more way for a declaration to describe something the layout does
+            // not do.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a narrow integer is 1, 2, 4 or 8 bytes wide — `size(…)` names one of those"
+            );
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        if spec.range_fits_width(width as u8, nullable) {
+            return;
+        }
+        let codes = 1i64 << (8 * width);
+        if spec.is_signed32_template() {
+            // No `limit(…)` at all, so the range is the whole `integer` and no narrow width
+            // can hold it. This is loft#931's shape for a type the stdlib does not declare:
+            // `i32` is the one alias that fits, because 4 bytes hold exactly its range.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`size({width})` holds {codes} values and a plain `integer` has more — say \
+                 which values this type holds with `limit(lo, hi)`, or drop the `size(…)`"
+            );
+        } else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`size({width})` holds {codes} values and `limit({}, {})` needs {} — widen \
+                 the size or narrow the limit",
+                spec.min,
+                spec.max,
+                spec.range()
+            );
+        }
+    }
+
     // <field_limit> ::= 'limit' '(' [ '-' ] <min-integer> ',' [ '-' ] <max-integer> ')'
     ///
     /// loft#1037 — a bound the spec cannot CARRY is refused here, not truncated.
@@ -5354,6 +5433,13 @@ impl Parser {
         format!("t_{}{}_OpDropAll", n.len(), n)
     }
 
+    /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
+    /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
+    pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
+        let n = data.def(type_def).name();
+        format!("t_{}{}_OpDropAllExcept", n.len(), n)
+    }
+
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function
     /// that releases what it owns, so a container's death releases its members.
     ///
@@ -5423,8 +5509,51 @@ impl Parser {
             if self.data.def_type(t) == DefType::Enum {
                 self.fill_enum_drop_cascade(t, c_nr);
             } else {
-                self.fill_drop_cascade(t, c_nr);
+                self.fill_drop_cascade(t, c_nr, false);
             }
+        }
+        // D-heap-3 (loft#1506) — the skip-capable variant, for the mirror of
+        // `copy_hands_off`: a copy OUT of a record's field makes the copy that field's
+        // owner (`@FR-H-Drop`'s responsibility clause), so the record's own death must
+        // release everything EXCEPT that field. Only a STRUCT with releasable fields gets
+        // one: the copy-out sites project with `OpGetField`, which never reaches an enum
+        // payload or a collection element. Checked apart from `targets` above so a type
+        // whose full cascade predates this pass still gains its variant.
+        let mut except_made: Vec<(u32, u32)> = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            if self.data.def_type(d_nr) != DefType::Struct
+                || self.data.def(d_nr).known_type() == u16::MAX
+                || self.cascade_fields(d_nr).is_empty()
+                || self
+                    .data
+                    .def_nr(&Self::drop_cascade_except_name(&self.data, d_nr))
+                    != u32::MAX
+            {
+                continue;
+            }
+            let name = Self::drop_cascade_except_name(&self.data, d_nr);
+            let pos = self.data.def(d_nr).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.set_returned(c_nr, Type::Void);
+            let self_tp = self.cascade_self_type(d_nr);
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "self", self_tp);
+            let int_tp = self
+                .data
+                .def(self.data.def_nr("integer"))
+                .returned()
+                .clone();
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp.clone());
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "depth", int_tp);
+            except_made.push((d_nr, c_nr));
+        }
+        for (t, c_nr) in except_made {
+            self.fill_drop_cascade(t, c_nr, true);
         }
     }
 
@@ -5527,13 +5656,55 @@ impl Parser {
         self.data.def_used(c_nr);
     }
 
-    /// The DIRECT struct fields a stage-B cascade releases: `(byte offset, field type, field
+    /// The definition an inline FIELD releases through, and the type to READ the field as.
+    ///
+    /// One home for the question [`Self::cascade_fields`] asks, because a field's declared
+    /// type and the record its cascade must run on are not always the same spelling. Keeping
+    /// it here is what makes the walk agree with [`Data::type_owns_droppable`]: that predicate
+    /// decides *whether* a type owns a droppable and this decides *how to reach it*, so a
+    /// member kind the predicate follows and this one does not is a type that answers "yes, I
+    /// own a resource" and then releases nothing.
+    ///
+    /// `None` for a member that is not an inline sub-record: a collection field is
+    /// [`Self::cascade_vectors`], a scalar owns nothing, and a `&τ` field is a LINK — the
+    /// source frees the store (`@FR-B-Ref-Alias`), so releasing through it here would release
+    /// what another owner still holds.
+    ///
+    /// `@FR-H-Drop` — a container's death releases what it holds, through the cascade.
+    fn cascade_field_target(&self, tp: &Type) -> Option<(u32, Type)> {
+        match tp {
+            // `τ?` is a nullability bit over the same runtime shape (`@FR-N-Shape`), so the
+            // wrapper is peeled here rather than at the call site: this answers for the type
+            // it is handed, whichever spelling that is.
+            Type::Optional(inner) => self.cascade_field_target(inner),
+            // A dense inline sub-record, whose offset is the whole of what releasing it needs.
+            Type::Reference(fd, _) => Some((*fd, tp.clone())),
+            // A struct-enum releases through whichever variant it currently holds, so the read
+            // keeps the ENUM spelling: `fill_enum_drop_cascade`'s body tests the discriminator
+            // before it reaches a payload. This is also how a nullable struct field arrives —
+            // `typedef::synth_nullable_struct_fields` rewrites `f: S?` to
+            // `Enum(__nullable<S>, true)` — so absence is a variant with nothing to release
+            // rather than a case this has to test for.
+            Type::Enum(ed, true, _) => Some((*ed, tp.clone())),
+            // `@FR-L-Tuple` makes a tuple a synthetic struct stored inline, so it is
+            // released exactly as a nested struct field is: through `__tuple<…>`'s own cascade,
+            // reached by a reference to the record at the field's offset. The lookup is the
+            // read-only one — a shape that was never registered has no cascade to call either.
+            Type::Tuple(_) => {
+                let td = self.data.type_def_nr(tp);
+                (td != u32::MAX).then(|| (td, Type::Reference(td, crate::data::Deps::none())))
+            }
+            _ => None,
+        }
+    }
+
+    /// The DIRECT struct fields a stage-B cascade releases: `(byte offset, read type, field
     /// definition)` for each field whose own type owns a droppable, in declaration order.
     ///
-    /// Only `Reference` fields — a dense inline sub-record, whose offset is the whole of what
-    /// releasing it needs. An enum-payload or collection field is left for stages D/E and is
-    /// therefore NOT reported here, so `synth_drop_cascades` never declares a cascade it
-    /// cannot fully fill.
+    /// The inline sub-record kinds are [`Self::cascade_field_target`]'s; a collection field is
+    /// stage E ([`Self::cascade_vectors`]). Between them they cover every member
+    /// [`Data::type_owns_droppable`] follows, so `synth_drop_cascades` never declares a cascade
+    /// it cannot fully fill — and never skips one it owed.
     fn cascade_fields(&self, d_nr: u32) -> Vec<(u16, Type, u32)> {
         let kt = self.data.def(d_nr).known_type();
         let mut out = Vec::new();
@@ -5542,10 +5713,9 @@ impl Parser {
             if a.hidden {
                 continue;
             }
-            let Type::Reference(fd, _) = a.typedef.base() else {
+            let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {
                 continue;
             };
-            let fd = *fd;
             if fd == d_nr || !self.data.owns_droppable(fd) {
                 continue; // a self-field cannot exist inline; skip defensively
             }
@@ -5554,7 +5724,7 @@ impl Parser {
             if off == u16::MAX {
                 continue; // not laid out in this record — nothing to reach
             }
-            out.push((off, a.typedef.base().clone(), fd));
+            out.push((off, read_tp, fd));
         }
         out
     }
@@ -5680,14 +5850,37 @@ impl Parser {
     }
 
     /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
-    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
-        let name = Self::drop_cascade_name(&self.data, t);
+    ///
+    /// `with_skip` builds the `…Except` variant instead: a second `skip` parameter carries a
+    /// field's byte offset, and each FIELD release is additionally guarded by `skip != off` —
+    /// the member whose responsibility a copy-out took. The type's own hook and its
+    /// collection fields are unconditional in both forms: a copy-out never takes those over.
+    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {
+        let name = if with_skip {
+            Self::drop_cascade_except_name(&self.data, t)
+        } else {
+            Self::drop_cascade_name(&self.data, t)
+        };
         let file = self.data.def(t).position().file.clone();
         let mut vars = Function::new(&name, &file);
         let self_tp = Type::Reference(t, crate::data::Deps::none());
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
+        let skip_var = with_skip.then(|| {
+            let int_tp = self
+                .data
+                .def(self.data.def_nr("integer"))
+                .returned()
+                .clone();
+            let mut arg = |name: &str| {
+                let v = vars.add_variable(name, &int_tp, &mut self.lexer);
+                vars.become_argument(v);
+                vars.defined(v);
+                v
+            };
+            (arg("skip"), arg("depth"))
+        });
         // Build the body with the cascade's OWN table current, so anything `get_val` mints
         // for a field read lands in the function that will hold the code.
         let outer_vars = std::mem::replace(&mut self.vars, vars);
@@ -5724,11 +5917,43 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            ops.push(Value::If(
-                Box::new(live),
-                Box::new(Value::Call(target, vec![field])),
-                Box::new(Value::Null),
-            ));
+            // In the Except variant the copied-out member is named by a PATH, not by a
+            // number: `skip` is its byte offset from the ROOT record and `depth` how many
+            // levels below this one it sits.  A nested struct is laid out INSIDE its
+            // owner's record, so the offsets ADD — the member is reached by handing this
+            // field's own Except cascade `skip - off` and `depth - 1`, and a `skip` that
+            // is NOT under this field lands outside the member's own offsets at every
+            // level below, so it matches nothing there.  A member type without the
+            // variant keeps the full cascade — the pre-transfer double release, never a
+            // leak.
+            let inner = match skip_var {
+                Some((sv, dv)) if self.data.drop_cascade_except_nr(fd) != u32::MAX => {
+                    let rel = self.cl("OpMinInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+                    let deeper = self.cl("OpMinInt", &[Value::Var(dv), Value::Int(1)]);
+                    Value::Call(
+                        self.data.drop_cascade_except_nr(fd),
+                        vec![field, rel, deeper],
+                    )
+                }
+                _ => Value::Call(target, vec![field]),
+            };
+            let release = Value::If(Box::new(live), Box::new(inner), Box::new(Value::Null));
+            // The Except variant leaves the member to its new owner where this field IS it:
+            // the offset matches AND the member sits at THIS level.  Both halves are needed
+            // because a member at offset 0 of a nested record shares its owner's address —
+            // `d.p` and `d.p.a` are the same byte — so an offset test alone skips the whole
+            // subtree and loses every sibling under it.  `(skip ^ off) | depth` is zero
+            // exactly when both hold: `depth` is positive above the level that owns the
+            // skip and negative below it, so no other level can claim the match.
+            let release = if let Some((sv, dv)) = skip_var {
+                let same = self.cl("OpEorInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+                let both = self.cl("OpLorInt", &[same, Value::Var(dv)]);
+                let not_taken = self.cl("OpNeInt", &[both, Value::Int(0)]);
+                v_if(not_taken, release, Value::Null)
+            } else {
+                release
+            };
+            ops.push(release);
         }
 
         let body = v_block(ops, Type::Void, "drop_cascade");

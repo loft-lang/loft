@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 451 | 427 | **24** |
+| 457 | 433 | **24** |
 
 
 
@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 51 | **12** | 39 |
+| 54 | **12** | 42 |
 
 
 
@@ -2544,16 +2544,36 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 768 | 423 | 6 | **339** |
+| 775 | 431 | 6 | **338** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
-carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
+carries the defect is the TEST: the same run reports **2104** shape tests, **1317** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
 for a count over an allowlist.  The rule the walk is converging on is `@FR-N-Shape`
 ([formal/types.md](formal/types.md)).  That baseline is a DERIVED row exactly as these four
 are — re-measure it on the joined tree rather than carrying either branch's number.
+
+⚠ **And the pin is CARRYING one branch's number right now (2026-09-10) — the instruction above
+is what it violates.**  `index/optional_ratchet.json` reads `337 · 1317`, which is exactly what
+this branch's tree measured before it was rebased; the pin was cherry-picked into `main` (#1502)
+while that PR's own code measures `339 · 1319`.  So `make optional-ratchet` fails on `main`, and
+on any branch off it, for two units this walk did not add — verified by measuring all three trees:
+`f2b01b02f` (the pre-rebase branch) `424 · 337 · 2097`, `origin/main` `423 · 339 · 2099`, the
+joined tree `424 · 339 · 2101`.  A derived baseline is the one file a cherry-pick must not carry,
+because it is a statement about the tree it was measured on.
+
+Nothing in `make ci` reads it — `optional-ratchet` is a standalone target, so no gate is red.
+**Do not re-pin: the cure is already written.**  The two units are the two `bl.result` shape tests
+#1502's own code added in `src/parser/control.rs`, and `bea94bf7d` on `tuxedo-1502-pr-followups`
+peels them to `bl.result.base()` — the rule's own prescribed cure — so that branch measures
+`at baseline` (exit 0) while `main` measures `GREW 337 -> 339`.  The pin comes back to true when
+it lands, and raising the bar in the meantime would have frozen a defect the rule wanted fixed.
+Worth keeping as the worked example: they were NOT identifiable at the (file, function, kind)
+granularity the audit prints — `main`'s opaque rows are a SUBSET of this branch's — because a
+classification FLIPPED rather than a row appearing, and a set diff cannot see that.  Reach for the
+sibling branch's exit code before concluding a ratchet needs raising.
 
 ⚠ **These four are the JOINED tree's, measured ONCE after the join and taken from the run —
 neither branch's numbers survived it, as at every join so far.**  This checkout read
@@ -2642,6 +2662,28 @@ span-wrapped spelling, and they pass.  Writing a redundant `.unspan()` at the si
 column would make the metric agree and the code worse — `tail` is the one home for *descend to
 where control leaves*, and a second peel beside it is exactly the restated predicate this
 document is otherwise about.
+
+**2026-09-10, loft#1511's mint classifier moves it to `454 · 430 · 24`.**  One new
+discriminator, `scopes::tuple_call_mints`, and it peels: it reads a tuple-literal RHS and its
+call members to record which elements were minted by their own call, so the element free can
+run the type's cascade before releasing a record the member type's empty dep list could not
+mark as a frame-owned droppable.
+
+**2026-09-10, D-heap-1's nested read sites move it to `453 · 429 · 24`.**  Two new
+discriminators, `scopes::block_tail_var` and `scopes::tuple_projection_of`, and both PEEL.
+They exist because two questions had been sharing one spelling: *which slot does this copy
+SOURCE name* and *does this block hand over a record it BUILT*.  Reading the second through the
+first made a projection look like a construction, and the resource was then released by nobody.
+The Optional row does not move — both ask about `Value` variants, not `Type` ones.
+
+⚠ **The second of them was written in `data.rs` first, and the audit read `452` — a +1 for two
+functions.**  `audit_unspan` SKIPS `data.rs` (with the IR serialisers, on the ground that they
+walk a node by kind rather than pattern-matching a shape they expect), so a shape-discriminating
+helper placed there is invisible to the instrument that asks who reads a `Value` shape without
+peeling `Span`.  It moved to `scopes.rs`, beside its sibling and its consumer.  Worth recording
+as a property of the instrument rather than of the fix: this table cannot see the one file whose
+name says it is the keystone's home, so a helper that belongs under it must not be put there for
+convenience.
 
 @PLN152 step 5 is three of the new discriminators, all in `src/parser/fit.rs`, and all
 peeling — which is why the OPAQUE column falls rather than rises, and why the Optional row is

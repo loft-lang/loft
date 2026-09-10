@@ -467,6 +467,30 @@ impl IntegerSpec {
         i64::from(self.max) - i64::from(self.min) + 1
     }
 
+    /// Can `width` bytes hold every value this range admits? — `@FR-L-Narrow`, read as the
+    /// question a DECLARED width has to answer.
+    ///
+    /// The narrow encodings store the OFFSET `value - min` ([`NarrowIntKind`]'s
+    /// `(val - min)` stores), so a range of `range()` distinct values needs
+    /// `range() <= 256^width` codes.  A declared `size(…)` narrower than that is a
+    /// CONTRADICTION rather than a tight fit: the type promises values its storage cannot
+    /// represent, and every one past the window is lost with nothing said — measured on
+    /// `integer limit(0, 100000) size(1)`, where `300` and `100000` both read back as the
+    /// range's own `min` on both backends (loft#1501).
+    ///
+    /// The companion of [`Self::range_to_width`], which answers the same relation the other
+    /// way round; it is a separate method because it cannot borrow that one's answer —
+    /// `range_to_width` maps to 1, 2 or 8 and has no 4, so asking it about a `size(4)` type
+    /// (`u32`, `i32`) would report a contradiction that is not there.  `nullable` reserves a
+    /// code exactly as it does there, so the two count the same codes.
+    #[must_use]
+    pub fn range_fits_width(&self, width: u8, nullable: bool) -> bool {
+        if width >= 8 {
+            return true;
+        }
+        self.range() + i64::from(nullable) <= 1i64 << (8 * u32::from(width))
+    }
+
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {
@@ -3740,7 +3764,16 @@ pub fn is_null_sentinel_detach(
     data: &Data,
     function: &crate::variables::Function,
 ) -> bool {
-    crate::variables::owns_literal_backing_store(function.name(var))
+    // A `__ref_`/`__rref_` work-ref assigned the bare sentinel is the scope scan's DISARM:
+    // the scan writes it only after the store the work-ref named is already released
+    // (the owned→view transition free, a tuple element free) or ADOPTED by the binding the
+    // construction delivered to (loft#1513) — so the write displaces nothing the work-ref
+    // still owns.  The displacement free fired here regardless, and on the adoption shape it
+    // freed the store the binding had just taken: the scope-end hook then read freed memory.
+    let name = function.name(var);
+    (crate::variables::owns_literal_backing_store(name)
+        || name.starts_with("__ref_")
+        || name.starts_with("__rref_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }
@@ -7882,6 +7915,53 @@ impl Data {
     ///
     /// Idempotent: returns the existing def_nr on subsequent calls
     /// for the same tuple shape.
+    /// The spelling a tuple MEMBER is stored under — `@FR-L-Tuple`, loft#1503.
+    ///
+    /// A `Type::Reference` carries a dep list, and four sites read a NON-EMPTY one as
+    /// *"this attribute holds a 12-byte `DbRef` sharing the source record"* rather than the
+    /// record inline. That marker belongs to @PLAN22's closure-record attributes, whose own
+    /// comment says user code always has empty deps — which stopped being true when a tuple
+    /// member could be inferred from a local, since the inferred member type carries a dep on
+    /// that local while the ANNOTATED spelling of the same tuple carries none.
+    ///
+    /// [`Self::tuple_def`] names the synthetic def from `Type::name`, which omits deps, so
+    /// both spellings resolve to ONE def — while its attributes were registered from whichever
+    /// spelling arrived first, giving one name two layouts (`__tuple<S,integer>` at 16 bytes
+    /// with the member inline, or at 20 with a `DbRef`). Reads through the other spelling then
+    /// answered `null`, a `DbRef`'s words as an integer, or an ICE.
+    ///
+    /// Canonicalising here is what keeps the two derivations in step: the NAME already drops
+    /// deps, so the LAYOUT must drop them too. A tuple member is an ordinary struct field
+    /// (`(L-Tuple)`: a tuple is a synthetic struct; `(T-Ref-El)`: a member is read at its own
+    /// offset the way a field is), and an ordinary struct field of struct type stores the
+    /// record inline — so inline is the model both spellings converge on.
+    ///
+    /// The dep is a LIFETIME fact and is untouched on the variable's own type; only the
+    /// storage spelling is normalised.
+    /// ⚠ A `u16::MAX` in the list is not a lifetime dep at all — it is the pointer/share
+    /// MARKER, which is how an explicitly written `reference<T>` spells itself, and `(L-Ref)`
+    /// keeps that a 4-byte record pointer rather than inline bytes. Stripping it would inline
+    /// the target: `struct Node { p: (integer, reference<Node>) }` became a type of infinite
+    /// size and loft#1498's cycle report refused it, which is that guard's own control
+    /// (`parse_errors::a_reference_self_tuple_member_is_not_a_cycle`). So the normalisation
+    /// applies to an INFERRED dep list only, and a marked list is left exactly as written.
+    pub fn tuple_member_stored(t: &Type) -> Type {
+        match t {
+            Type::Reference(d, deps) if !deps.is_empty() && !deps.contains(&u16::MAX) => {
+                Type::Reference(*d, Deps::none())
+            }
+            Type::Optional(inner) => {
+                let base = Self::tuple_member_stored(inner);
+                if &base == inner.as_ref() {
+                    t.clone()
+                } else {
+                    Type::Optional(Box::new(base))
+                }
+            }
+            _ => t.clone(),
+        }
+    }
+
     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {
         // Refuse while any member is still an unresolved forward reference.  BOTH things
         // this builds are derived from the members' spellings, and neither survives the
@@ -7926,6 +8006,10 @@ impl Data {
         let mut indices: Vec<u16> = Vec::with_capacity(types.len());
         let mut sizes_aligns: Vec<(u16, u8)> = Vec::with_capacity(types.len());
         for (i, t) in types.iter().enumerate() {
+            // loft#1503 — the NAME above is built from `Type::name`, which omits a
+            // `Reference`'s deps, so the LAYOUT must omit them too or one name carries two
+            // layouts.  `tuple_member_stored` is that one spelling.
+            let t = &Self::tuple_member_stored(t);
             let aname = format!("_{i}");
             let attr_idx = self.add_attribute(lexer, d, &aname, t.clone());
             // @PLN114 — a tuple element is nullable only if its TYPE says so, exactly
@@ -8371,6 +8455,31 @@ impl Data {
             return nr;
         }
         self.drop_hook_nr(type_def)
+    }
+
+    /// The skip-capable variant of the cascade —
+    /// `t_<LEN><Type>_OpDropAllExcept(self, skip, depth)` releases everything the type owns
+    /// EXCEPT the member the PATH `(skip, depth)` names: `skip` byte offsets from this
+    /// record, `depth` levels below it.  Both, because a member at offset 0 of a nested
+    /// record shares its owner's address.
+    ///
+    /// `(H-Drop)`'s responsibility clause, field-grained: a copy OUT of one member makes the
+    /// copy that member's owner, so the source record's death must release every OTHER member
+    /// and leave that one to the copy (D-heap-3, loft#1506). `u32::MAX` when the type has no
+    /// such variant — the caller falls back to the full cascade, which is the pre-transfer
+    /// double release rather than anything unsound.
+    #[must_use]
+    pub fn drop_cascade_except_nr(&self, type_def: u32) -> u32 {
+        if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
+            return u32::MAX;
+        }
+        let def = self.def(type_def);
+        let key = format!("t_{}{}_OpDropAllExcept", def.name.len(), def.name);
+        let nr = self.source_nr(def.source, &key);
+        if nr != u32::MAX {
+            return nr;
+        }
+        self.def_nr(&key)
     }
 
     /// Does this type have a SYNTHESIZED drop cascade (as opposed to only its own hook)?

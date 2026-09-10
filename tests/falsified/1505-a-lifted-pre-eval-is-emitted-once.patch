@@ -1,0 +1,37 @@
+diff --git b/src/generation/pre_eval.rs a/src/generation/pre_eval.rs
+index 76366f824..af712e9b5 100644
+--- b/src/generation/pre_eval.rs
++++ a/src/generation/pre_eval.rs
+@@ -848,32 +848,7 @@ impl Output<'_> {
+         // output_block will restore to this value before output_code_with_subst
+         // so the block inner pre-eval names (_pre_N) match in both passes.
+         let counter_before_gen = self.counter;
+-        // Generate this pre-eval's own text with the ALREADY-COLLECTED bindings installed as
+-        // the identity map, so an inner hoisted node emits its `_pre_N` name instead of being
+-        // regenerated inline.  This is the mechanism the emit walk already uses
+-        // (`Output::active_pre_eval`, whose own comment says "keyed on the node's address
+-        // (intrinsic identity) — no counter, no regenerated-text match"); collection was the
+-        // one walk still matching TEXT, and text cannot carry identity across two generations
+-        // whose counters differ.
+-        //
+-        // loft#1505 is what that cost: the same node was lifted twice — once inside this
+-        // pre-eval's own text as `_pre_26`, once again while the PARENT regenerated the same
+-        // subtree as `_pre_27` — so the parent's `s.replace(<1935-byte key>, "_pre_25")` found
+-        // nothing, the binding stayed dead, and the expression was emitted a second time at
+-        // the use site.  A dead `let _pre_N = <a read>;` costs nothing, which is why this was
+-        // invisible until the lifted expression ALLOCATED and DROPPED: `OpDrop` then ran on the
+-        // displaced copy as well as the survivor, twice on `--native` against once on
+-        // `--interpret`.
+-        //
+-        // The node being generated is removed from the map: it is a key in `result` by the time
+-        // an enclosing call reaches here, and substituting it would emit `let _pre_N = _pre_N;`.
+-        let saved_ident = std::mem::replace(&mut self.active_pre_eval, {
+-            let mut m = result.name_map();
+-            m.remove(&node_id(arg));
+-            m
+-        });
+         let raw_code = self.generate_expr_buf(arg)?;
+-        self.active_pre_eval = saved_ident;
+         let substituted = if inner_pre_evals.is_empty() {
+             raw_code
+         } else {

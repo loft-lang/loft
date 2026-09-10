@@ -143,6 +143,38 @@ fn every_guard_says_how_to_score_it_again() {
     );
 }
 
+/// No tracked file carries MERGE-CONFLICT debris.
+///
+/// `CHANGELOG.md` — the file a USER reads — shipped a bare `=======` and a
+/// `>>>>>>> f5cd8a37e (An element read is not more non-null …)` for weeks, and so did
+/// `CHANGELOG_TECHNICAL.md`.  They arrived through a squash merge (#1465) and reached `main`,
+/// where nothing looked: every gate here reads structure or numbers, and a conflict marker is
+/// ordinary text to all of them.  Both halves of the content were present, so no reader of the
+/// prose would notice a missing sentence — only the markers themselves said anything was wrong.
+///
+/// Keyed on `<<<<<<< ` and `>>>>>>> ` WITH the trailing space, never on a bare `=======`: a
+/// Setext-style Markdown heading underline is exactly that, and this file's own docs use them.
+/// The two chevron forms cannot occur in prose, which is what makes the check total without
+/// being a false-positive machine.
+#[test]
+fn no_tracked_file_carries_conflict_markers() {
+    let out = std::process::Command::new("git")
+        .args(["grep", "-n", "-I", "-E", "^(<<<<<<< |>>>>>>> )"])
+        .current_dir(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .output()
+        .expect("git grep runs");
+    // `git grep` exits 1 when it matches NOTHING, which is the healthy case here.
+    let hits = String::from_utf8_lossy(&out.stdout);
+    let hits: Vec<&str> = hits.lines().filter(|l| !l.is_empty()).collect();
+    assert!(
+        hits.is_empty(),
+        "{} line(s) of merge-conflict debris are committed — a resolution that kept both halves \
+         of the text and left the markers behind reads as ordinary prose to every other gate:\n{}",
+        hits.len(),
+        hits.join("\n")
+    );
+}
+
 #[test]
 fn every_new_guard_records_its_control() {
     let baseline_src = fs::read_to_string("tests/falsified.baseline")
@@ -2820,23 +2852,83 @@ fn every_ignore_reason_says_how_it_runs() {
 /// that report — which the message prints verbatim.
 #[test]
 fn every_test_binary_matches_a_subject() {
-    let out = std::process::Command::new("bash")
-        .args([
-            "-c",
-            "source scripts/test_subjects.sh && unmatched_binaries",
-        ])
-        .output()
-        .expect("bash + scripts/test_subjects.sh");
+    // Two different failures wear one exit code here, and only one of them is this guard's
+    // subject.  The script REFUSING (a binary no subject reaches) prints the name on stdout;
+    // the shell failing to RUN prints nothing at all.  The Windows daily hit the second and
+    // reported it as the first, twice — nextest's own retry saw the same thing — and a
+    // windows-probe run of the identical command passed with exit 0 and zero unmatched
+    // binaries (bash 5.3.15, Cygwin), so the cause is load on the runner rather than
+    // anything in the map.  So: a non-zero exit with BOTH streams empty is retried once,
+    // and either way the message names what actually happened.  The retry cannot mask a
+    // genuine finding, because a genuine finding has stdout.
+    // ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to
+    // `C:\Windows\System32\bash.exe`, the WSL launcher, which with no distribution
+    // installed prints "Windows Subsystem for Linux has no installed distributions" to
+    // STDOUT (UTF-16) and exits 1.  That is the whole story behind this test failing twice
+    // on the Windows daily while a windows-probe run of the identical command passed: the
+    // probe ran INSIDE Git Bash, where `bash` resolves to Git Bash first, and the test
+    // process inherits a different PATH order.  The 20-odd other suites here spawn `sh`,
+    // which System32 does not provide, so this was the only site exposed.  `sh` is not the
+    // cure though — `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on
+    // Linux is dash.
+    let bash = || -> std::ffi::OsString {
+        #[cfg(windows)]
+        {
+            let mut roots: Vec<std::path::PathBuf> = Vec::new();
+            for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+                if let Some(v) = std::env::var_os(var) {
+                    roots.push(std::path::PathBuf::from(v));
+                }
+            }
+            roots.push(std::path::PathBuf::from(r"C:\Program Files"));
+            for r in roots {
+                let c = r.join("Git").join("bin").join("bash.exe");
+                if c.is_file() {
+                    return c.into_os_string();
+                }
+            }
+        }
+        std::ffi::OsString::from("bash")
+    };
+    let run = || {
+        std::process::Command::new(bash())
+            .args([
+                "-c",
+                "source scripts/test_subjects.sh && unmatched_binaries",
+            ])
+            .output()
+            .expect("bash + scripts/test_subjects.sh")
+    };
+    let mut out = run();
+    let mut retried = false;
+    if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        out = run();
+        retried = true;
+    }
     let stdout = String::from_utf8_lossy(&out.stdout);
     let unmatched: Vec<&str> = stdout
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
+    // Everything the next failure needs, because the first version reported only stderr —
+    // and the Windows daily failed it twice with stderr EMPTY, which made the message say
+    // literally "scripts/test_subjects.sh failed: " and left the cause undiagnosable.  A
+    // windows-probe run of the identical command passed (exit 0, no unmatched binaries),
+    // so the cause is load-dependent rather than a property of the script; naming the exit
+    // code and what the run did produce is what turns the next occurrence into evidence.
     assert!(
         out.status.success(),
-        "scripts/test_subjects.sh failed: {}",
-        String::from_utf8_lossy(&out.stderr)
+        "scripts/test_subjects.sh failed: exit {:?}\n  stderr ({} bytes): {}\n  stdout ({} bytes): {}\n  \
+         (an empty stderr with a non-zero exit is the shell dying rather than the script \
+         refusing — on Windows this ran green in isolation under windows-probe; \
+         retried_once={retried})",
+        out.status.code(),
+        out.stderr.len(),
+        String::from_utf8_lossy(&out.stderr),
+        out.stdout.len(),
+        stdout.lines().take(5).collect::<Vec<_>>().join(" | ")
     );
     assert!(
         unmatched.is_empty(),

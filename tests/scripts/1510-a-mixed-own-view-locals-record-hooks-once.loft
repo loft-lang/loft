@@ -1,0 +1,211 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A mixed own/view local's owned record runs its OpDrop hook exactly once (loft#1510,
+// `formal/heap.md` D-heap-4).
+//
+// `heap.md (H-Drop)` runs the hook at the record's death; `(O-Latest)` says a static deps
+// list cannot carry per-assignment ownership, so a local that OWNS after one assignment and
+// VIEWS after another releases its owned stores by IDENTITY.  Every such release freed the
+// STORE and never ran the hook — in all three spellings, both backends, silently:
+//
+// - the owner witness (`@FR-O-Witness`) released with a bare `OpFreeRef` — its one home,
+//   `scopes::release_witness`, now runs the type's cascade first;
+// - the owned→view transition free (loft#1202's arm) freed a literal-minted store bare —
+//   it now runs the cascade and disarms the backing work-ref (`Scopes::construction_backing`),
+//   whose own scope-end drop covers the paths where no transition fires;
+// - the construction hand-off gave the work-ref's drop to the BINDING on the premise "only
+//   the binding owns it" — false for a view-typed binding, which never drops, so the
+//   transfer is now made only to a binding that will run it (`drop_handoff_node`);
+// - and the IN-PLACE literal rebuild (`parse_object`'s in-place arm) reaches the scan as a
+//   bare `OpDatabase` with no `Set`, so the witness kept naming the store being cleared:
+//   the scan now runs the hook through the witness before the clear and re-points it after.
+//
+// The counts are asserted as exact hook SEQUENCES because two of the mechanisms can claim
+// one record (the work-ref's scope end and the binding's rebind): a cure that hooks both is
+// the double release coming back, and a count-only cell would still catch it, but the ids
+// say WHICH record doubled.  The fixed neighbours (uniform owner, uniform view, and the
+// rebound cells of tests/scripts/1506-a-call-result-projection-releases-once.loft) pin the
+// boundary.
+//
+// @falsified-at: 49736d01 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1510-a-mixed-own-view-locals-record-hooks-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — on the control the first mixed cell
+//     already reads fewer hooks than records (the owned record's hook is silently lost),
+//     and each fixed cell here demands the full sequence.
+//   ARMED: nothing; a plain run scores it.
+//   HOLDS: leak — the store was freed on both trees (that is the defect: a hook loss is
+//     invisible to the leak checker), panic, refusals.
+
+fn trace_path() -> text { return "loft_1510_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct CfH { id: integer }
+fn OpDrop(self: CfH) { note("{self.id}"); }
+struct CfS { h: CfH }
+fn mk_dense() -> CfS { return CfS { h: CfH { id: 9 } }; }
+fn mk_h() -> CfH { return CfH { id: 4 }; }
+
+// The filed shape: a minting call, then a view.  The witness releases the minted record at
+// the rebind — hook first — and the container's cascade releases its own field at scope end.
+fn call_then_view() -> integer {
+  d = mk_dense();
+  r = mk_h();
+  r = d.h;
+  return r.id;
+}
+
+// The same mix ending as the OWNER: the witness holds the minted store to scope exit and
+// releases it there, hook first.
+fn view_then_call() -> integer {
+  d = mk_dense();
+  r = d.h;
+  r = mk_h();
+  return r.id;
+}
+
+// The literal spelling: the owned→view transition free releases the literal's record at the
+// rebind — hook first — and disarms the backing work-ref so its scope end cannot double it.
+fn literal_then_view() -> integer {
+  d = mk_dense();
+  r = CfH { id: 14 };
+  r = d.h;
+  return r.id;
+}
+
+// Per iteration: the transition free hooks and frees each pass's literal record, and the
+// sentinel it writes is what makes the next pass MINT instead of rebuilding the freed slot.
+fn literal_then_view_in_a_loop() -> integer {
+  d = mk_dense();
+  t = 0;
+  for i in 0..2 {
+    r = CfH { id: 20 + i };
+    r = d.h;
+    t = t + r.id;
+  }
+  return t;
+}
+
+// The reverse loop: iteration 2's view rebind displaces iteration 1's literal (hooked at the
+// transition), and the LAST literal survives to scope exit, where the work-ref — whose drop
+// was NOT handed to the view-typed binding — releases it, hook first.
+fn view_then_literal_in_a_loop() -> integer {
+  d = mk_dense();
+  r = d.h;
+  t = 0;
+  for i in 0..2 {
+    r = d.h;
+    r = CfH { id: 30 + i };
+    t = t + r.id;
+  }
+  return t;
+}
+
+// View then own, straight line: nothing displaces the literal's record, so the work-ref's
+// scope-end cascade is the one mechanism that releases it.
+fn view_then_literal() -> integer {
+  d = mk_dense();
+  r = d.h;
+  r = CfH { id: 44 };
+  return r.id;
+}
+
+// A CONDITIONAL construction: the backing map drops the pairing at the join, and the
+// work-ref's scope-end drop covers whichever record the run built — never a spurious hook
+// on the path that built nothing.
+fn conditional_literal(cond: boolean) -> integer {
+  d = mk_dense();
+  r = d.h;
+  if cond {
+    r = CfH { id: 55 };
+  }
+  return r.id;
+}
+
+// Three assignments, three mechanisms in one frame: the witness releases the minted record
+// at the in-place rebuild, the rebuilt literal is displaced at the view rebind, and the
+// container's field hooks through its own cascade.
+fn call_then_literal_then_view() -> integer {
+  d = mk_dense();
+  r = mk_h();
+  r = CfH { id: 65 };
+  r = d.h;
+  return r.id;
+}
+
+// The fixed neighbours: uniform ownership keeps its one-hook release unchanged.
+fn uniform_owner() -> integer {
+  r = mk_h();
+  return r.id;
+}
+fn uniform_view() -> integer {
+  d = mk_dense();
+  r = d.h;
+  return r.id;
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  v = call_then_view(); got = drain();
+  assert(v == 9, "call-then-view reads the view: got {v}");
+  assert(got == "4,9", "call-then-view hooks the minted record at the rebind: got '{got}'");
+
+  v = view_then_call(); got = drain();
+  assert(v == 4, "view-then-call reads the mint: got {v}");
+  assert(got == "4,9", "view-then-call hooks the minted record at scope exit: got '{got}'");
+
+  v = literal_then_view(); got = drain();
+  assert(v == 9, "literal-then-view reads the view: got {v}");
+  assert(got == "14,9", "literal-then-view hooks the literal at the rebind: got '{got}'");
+
+  v = literal_then_view_in_a_loop(); got = drain();
+  assert(v == 18, "the loop reads the view both passes: got {v}");
+  assert(got == "20,21,9", "each pass's literal hooks once: got '{got}'");
+
+  v = view_then_literal_in_a_loop(); got = drain();
+  assert(v == 61, "the reverse loop reads each literal: got {v}");
+  assert(got == "30,9,31", "the displaced literal hooks at the rebind, the last at scope exit: got '{got}'");
+
+  v = view_then_literal(); got = drain();
+  assert(v == 44, "view-then-literal reads the literal: got {v}");
+  assert(got == "9,44", "the work-ref's scope end hooks the un-displaced literal: got '{got}'");
+
+  v = conditional_literal(true); got = drain();
+  assert(v == 55, "the taken arm reads the literal: got {v}");
+  assert(got == "9,55", "a conditionally built record hooks once: got '{got}'");
+
+  v = conditional_literal(false); got = drain();
+  assert(v == 9, "the skipped arm reads the view: got {v}");
+  assert(got == "9", "a record never built hooks never: got '{got}'");
+
+  v = call_then_literal_then_view(); got = drain();
+  assert(v == 9, "three assignments end on the view: got {v}");
+  assert(got == "4,65,9", "each of the three records hooks exactly once: got '{got}'");
+
+  v = uniform_owner(); got = drain();
+  assert(v == 4, "the uniform owner reads its mint: got {v}");
+  assert(got == "4", "the uniform owner is unchanged: got '{got}'");
+
+  v = uniform_view(); got = drain();
+  assert(v == 9, "the uniform view reads the field: got {v}");
+  assert(got == "9", "the uniform view is unchanged: got '{got}'");
+}

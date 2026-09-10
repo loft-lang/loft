@@ -1549,6 +1549,17 @@ pub fn owner_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OWNER_WITNESS"))
 }
 
+/// D-heap-3 (loft#1506) — the field-grained copy-out hand-off: a projection copied out of a
+/// lifted call result moves that field's release to the copy, and the lift's scope-end drop
+/// runs the `…OpDropAllExcept` cascade.  `LOFT_NO_FIELD_HANDOFF=1` keeps the full cascade —
+/// the pre-transfer double release — and is the first bisect step for a wrong drop count or
+/// a missing hook around a `f().field` shape.
+#[must_use]
+pub fn field_handoff_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FIELD_HANDOFF"))
+}
+
 /// #497 — the reassignment-path adopt-vs-copy fix: a Reference local
 /// REASSIGNED from a `!return_adopts_fresh_store()` call deep-copies
 /// (parity with the first-Set path) instead of adopting a possibly
