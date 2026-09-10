@@ -94,10 +94,11 @@ fn c_tupn() { s = CfS { h: cf_mk(9) }; c = FTupN { f: ((s, 1), 2) }; note("alive
 // An ABSENT nullable field releases nothing — the variant that holds no payload holds no
 // resource, and a walk that ran the hook against the tag bytes would show up here.  Read
 // with `==` rather than through `?.`, which the present cell above avoids for the same
-// reason: `?.` on an absent nullable answers its type ZERO instead of null and mints a
-// record whose scope end runs the hook, so a cell reading that way would score against that
-// defect instead of against the cascade — and it reproduces on a bare LOCAL, where no field
-// walk is involved at all.
+// reason.  `?.` answering the type ZERO is `types.md (N-Chain)`, a shipped decision the
+// compiler already names with `advice[redundant-coalesce]`; what is NOT is loft#1505, where
+// `--native` mints that empty record twice for a projected field and runs the hook two or
+// three times.  A cell reading that way would score against loft#1505 instead of against the
+// cascade.
 fn c_none() { c = FNull { f: null }; note("absent{c.f == null}"); }
 // A unit VARIANT holds no payload either, and its arm is the one `cascade_variants` omits.
 fn c_unit() { c = FEnum { f: CfWNone }; note("unit{c.f is CfWH}"); }

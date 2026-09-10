@@ -474,10 +474,16 @@ does not run, so a guard scoring only for a DOUBLE release reads every broken ce
 
 ⚠ **The over-reach cell is what found the neighbours.**  "An absent nullable field releases
 nothing" was written to prove the fix had not started dropping tag bytes; it failed, and the
-cause was not the cascade — reading an absent nullable through `?.` answers its type's ZERO
-instead of null and mints a record whose scope end runs the hook.  Both reproduce on a bare
-LOCAL (`g: S? = null; g?.h`), where no field walk exists to blame.  Those are their own
-defects, tracked apart from this entry, and the cell reads with `==` so it scores the cascade.
+cause was not the cascade.  Reading an absent nullable through `?.` answers its type's ZERO
+and mints a record whose scope end runs the hook — and the ZERO half is not a defect at all:
+`types.md (N-Chain)` says a per-link `?` is `(N-Default)`, *"replace THIS structure with an
+empty one"*, and the compiler already names the trailing `??` as `advice[redundant-coalesce]`.
+The rules settled that one before any of it was worth measuring.  What IS a defect is
+loft#1505: `--native` emits that `(N-Default)` construction TWICE for a projected nullable
+FIELD — once into a `let _pre_N` binding nothing references — so the hook runs two or three
+times where `--interpret` runs it once.  Filed rather than fixed here: the cure is in the
+native generator's pre-eval substitution, which matches by generated TEXT across two passes.
+The cell reads with `==` so it scores the cascade and not loft#1505.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
