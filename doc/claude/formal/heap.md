@@ -472,6 +472,20 @@ over the field kinds plus an absent nullable, a unit variant and a two-resource 
 measured identical on both backends.  It scores the release COUNT: the fault is a hook that
 does not run, so a guard scoring only for a DOUBLE release reads every broken cell as a pass.
 
+⚠ **The missing cascade was also a CRASH, and that is the part worth carrying forward.**  A
+declared-but-undeclarable cascade does not merely skip a release: `scopes::copy_moves_drop_from`
+declines a hand-off whenever `data.drop_cascade_nr(d)` is `u32::MAX`, so a type `owns_droppable`
+says yes about and no cascade exists for gets the ownership answer for a type that owns
+NOTHING.  `o.inner.f?.h.id` over a holder with a nullable record field then freed a reference
+nobody owned, which `--interpret` refused as BUG #306 (*"a stack-record ref was treated as an
+owned heap store"*) with a `rec=65535` panic behind it — reproducing back to the shipped
+2026.8.0 and not on `--native`, which is why it read as an interpreter fault rather than as a
+missing cascade.  So the two decoders disagreeing was not a quiet omission: every downstream
+site that keys on the cascade's EXISTENCE inherited the disagreement, and this is the one that
+crashed.  Guarded apart in
+`a-nested-read-through-an-absent-nullable-field-does-not-free-the-stack-store.loft`, because it
+moves the panic channel where the release guard moves assertions and a receipt names one.
+
 ⚠ **The over-reach cell is what found the neighbours.**  "An absent nullable field releases
 nothing" was written to prove the fix had not started dropping tag bytes; it failed, and the
 cause was not the cascade.  Reading an absent nullable through `?.` answers its type's ZERO

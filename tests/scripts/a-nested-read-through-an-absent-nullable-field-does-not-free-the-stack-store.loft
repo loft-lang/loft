@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A type that OWNS a droppable but has no synthesized cascade makes the ownership pass answer
+// wrongly, and the answer it gives is a free of the STACK store.
+//
+// `scopes::copy_moves_drop_from` decides whether a copy takes over the source's release, and
+// it declines whenever `data.drop_cascade_nr(d)` is `u32::MAX` — reasonably, since there is
+// nothing to hand off to.  But `Data::owns_droppable` and `Parser::cascade_fields` used to
+// disagree about which member kinds carry a droppable, so a holder of a nullable record field
+// answered "I own one" and got no cascade DECLARED.  The hand-off was then declined for a type
+// that really did own something, a reference nobody owned was freed, and the interpreter
+// refused it as BUG #306 — *"a stack-record ref was treated as an owned heap store"* — before
+// the next read of that reference panicked with `rec=65535`.
+//
+// `--native` never panicked on the same program, which is what made this read as an
+// interpreter fault rather than as a missing cascade.  Its sibling guard
+// `a-drop-cascade-reaches-every-field-kind-it-owns.loft` covers the release COUNT; this one
+// covers the crash, because they move different channels and a receipt can only name one.
+//
+// ⚠ This guard deliberately does NOT count the hook.  `c.f?` is `(N-Default)` — "replace this
+// structure with an empty one" — and `--native` mints that record twice for a projected
+// nullable field, so the count is 1 on the interpreter and 2 natively.  That split is
+// loft#1505 and is not this guard's question; scoring it here would make this file fail for a
+// defect it does not guard.  What it asserts is that the read ANSWERS and the run reaches its
+// end on both backends.
+//
+// @falsified-at: d7527ced7 — interpret exit 101 -> 0, interpret panicked -> clean,
+//   interpret 1 stack-store free refusal (BUG #306) -> 0; native INERT, which is expected
+//   here and not a weak result: the fault never reached `--native` on either tree, so only
+//   one side can move.
+// @falsified-by: tests/falsified/a-nested-read-through-an-absent-nullable-field-does-not-free-the-stack-store.patch —
+//   interpret exit 101 -> 0, interpret panicked -> clean, interpret 1 stack-store free
+//   refusal (BUG #306) -> 0; native INERT.
+// CHANNEL: panic, and the exit code with it — `--interpret` on the control halts after
+//   printing the value, with BUG #306 naming the refused free and a `Store access out of
+//   bounds` panic behind it.  NOT the assertion channel: the value is already correct on the
+//   control, so a guard that only compared `x` would pass over the crash.
+// ARMED: no instrument.  The refused free is reported by an ordinary `--interpret` run.
+//   `LOFT_STRICT_STORES=1` names which free released it and is worth setting by hand, but the
+//   guard does not need it to fail.
+// WITNESS: on the control, `--interpret` reaches the last assertion, prints
+//   `nested nullable read ok`, and then halts at the scope end with
+//   `BUG (#306): refused to free the stack store (#0) (rec=0, pos=1, op=OpFreeRef)` and a
+//   `Store access out of bounds: rec=65535 fld=0 width=4 type=65535` behind it — exit 101.
+//   The same shape with no `OpDrop` declared anywhere does NOT halt on the control, which is
+//   what says the fault is the missing cascade and not the nested read; that is the CONTROL
+//   cell at the end of `main`.
+// HOLDS: `--native` is unmoved — it answers 0 on both trees and never panicked on either.
+//   The leak channel is unmoved too.  The no-hook control cell below passes on both trees.
+
+struct NsH { id: integer }
+fn OpDrop(self: NsH) { }
+struct NsS { h: NsH }
+struct NsHold { f: NsS? }
+struct NsOuter { inner: NsHold }
+
+// No `OpDrop` on this leg at all — the same nested shape over a type that owns nothing.  It
+// passes on both trees, which is what pins the droppable as the axis rather than the nesting.
+struct PlainH { id: integer }
+struct PlainS { h: PlainH }
+struct PlainHold { f: PlainS? }
+struct PlainOuter { inner: PlainHold }
+
+fn main() {
+  // The defect: a nested read through an ABSENT nullable field, where the holder owns a
+  // droppable.  `(N-Chain)` makes each `?` an `(N-Default)`, so the read answers the field
+  // type's zero — the value is right on both trees and it is the RUN that used to end here.
+  o = NsOuter { inner: NsHold { f: null } };
+  x = o.inner.f?.h.id;
+  assert(x == 0, "a nested read through an absent nullable field answers its type zero: {x}");
+
+  // The same read one level shallower, which never crashed — so a fix that only repaired the
+  // deep shape would still leave this cell to say the shallow one kept working.
+  c = NsHold { f: null };
+  y = c.f?.h.id;
+  assert(y == 0, "the same read one level shallower answers its type zero: {y}");
+
+  // A PRESENT field, so the record really is reached: the read must answer the stored value,
+  // not the `(N-Default)` zero, and the run must still reach the end.
+  s = NsS { h: NsH { id: 41 } };
+  p = NsOuter { inner: NsHold { f: s } };
+  z = p.inner.f?.h.id;
+  assert(z == 41, "a nested read through a PRESENT nullable field answers the stored value: {z}");
+
+  // CONTROL — the identical shape over a type that owns NO droppable.  Without it the three
+  // cells above could pass on a build that had simply stopped nesting the read.
+  q = PlainOuter { inner: PlainHold { f: null } };
+  w = q.inner.f?.h.id;
+  assert(w == 0, "CONTROL the same read over a type owning no droppable: {w}");
+
+  println("nested nullable read ok");
+}
