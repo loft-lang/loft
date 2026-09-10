@@ -173,7 +173,7 @@ pub fn hoistable_vectors(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
 ) -> Vec<(PathKey, Value)> {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, false) {
+    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, false, false) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -191,7 +191,9 @@ fn body_blocks_hoist(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
     allow_push: bool,
+    allow_mint: bool,
 ) -> bool {
+    let mut fresh: HashSet<u16> = HashSet::new();
     body.operators.iter().any(|op| {
         blocks_header_hoist(
             op,
@@ -201,6 +203,8 @@ fn body_blocks_hoist(
             allow_in_place,
             Some(data.def(def_nr).variables()),
             allow_push,
+            allow_mint,
+            &mut fresh,
         )
     })
 }
@@ -368,8 +372,9 @@ pub fn hoistable(
     scalars: bool,
     inputs: Option<&mut InputCache>,
     allow_push: bool,
+    allow_mint: bool,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, allow_push) {
+    if body_blocks_hoist(body, data, def_nr, cache, allow_in_place, allow_push, allow_mint) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
@@ -446,8 +451,8 @@ pub fn hoistable(
     // parameter cannot alias a local's store, but it can alias a buffer the caller offered).
     // A push that fails the rule declines the WHOLE loop, as a growth always did — a push
     // left to its template would move a record a kept header still describes.
+    let mut pushes: Vec<(PathKey, Value)> = Vec::new();
     if allow_push {
-        let mut pushes: Vec<(PathKey, Value)> = Vec::new();
         for op in &body.operators {
             op.any_node(&mut |n| {
                 if let Value::Call(d, args) = n
@@ -460,40 +465,65 @@ pub fn hoistable(
                 false
             });
         }
-        if !pushes.is_empty() {
-            if pushes.iter().any(|(p, _)| rebound.contains(&p.0)) {
+    }
+    // @PLN157 § V-s (`@FR-R-Mint`) — the paths the body MINTS a record element into.  A
+    // mint is a mover like a push and joins the same (`@FR-R-Alias`) decision, but it
+    // earns no push header: its ops keep their templates, which resolve per element, so
+    // the path only has to LEAVE the read list.  The gate admitted every mint in the body
+    // as one over a plain bare-variable vector, so this collection cannot disagree with it.
+    let mut mints: Vec<PathKey> = Vec::new();
+    if allow_mint {
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
+                    && !mints.contains(&path)
+                {
+                    mints.push(path);
+                }
+                false
+            });
+        }
+    }
+    if !pushes.is_empty() || !mints.is_empty() {
+        let mover = |q: &PathKey| pushes.iter().any(|(p, _)| p == q) || mints.contains(q);
+        if pushes.iter().map(|(p, _)| p).chain(mints.iter()).any(|p| rebound.contains(&p.0)) {
+            return LoopHoist::default();
+        }
+        let retbuf = retbuf_var(data, def_nr);
+        let others = out.vectors.iter().any(|(q, _)| !mover(q));
+        if pushes.len() + mints.len() > 1 || others {
+            if !pushes
+                .iter()
+                .map(|(p, _)| p)
+                .chain(mints.iter())
+                .all(|p| owned_local(vars, p.0) || Some(p.0) == retbuf)
+            {
                 return LoopHoist::default();
             }
-            let retbuf = retbuf_var(data, def_nr);
-            let others = out
-                .vectors
+            let any_retbuf = pushes
                 .iter()
-                .any(|(q, _)| !pushes.iter().any(|(p, _)| p == q));
-            if pushes.len() > 1 || others {
-                if !pushes
-                    .iter()
-                    .all(|(p, _)| owned_local(vars, p.0) || Some(p.0) == retbuf)
-                {
-                    return LoopHoist::default();
-                }
-                let any_retbuf = pushes.iter().any(|(p, _)| Some(p.0) == retbuf);
-                out.vectors.retain(|(q, _)| {
-                    pushes.iter().any(|(p, _)| p == q)
-                        || owned_local(vars, q.0)
-                        || (vars.is_argument(q.0) && !any_retbuf)
-                });
-            }
-            out.vectors
-                .retain(|(q, _)| !pushes.iter().any(|(p, _)| p == q));
-            out.pushes = pushes;
+                .map(|(p, _)| p)
+                .chain(mints.iter())
+                .any(|p| Some(p.0) == retbuf);
+            out.vectors.retain(|(q, _)| {
+                mover(q) || owned_local(vars, q.0) || (vars.is_argument(q.0) && !any_retbuf)
+            });
         }
+        out.vectors.retain(|(q, _)| !mover(q));
+        out.pushes = pushes;
     }
     if found.is_empty() {
         return out;
     }
     let mut written = WriteSet::default();
+    // The fresh-element set (`@FR-R-Mint`) persists across the body's statements: the mint
+    // binds its element variable in one statement and the field writes follow in the next.
+    let mut fresh: HashSet<u16> = HashSet::new();
     for op in &body.operators {
-        let Some(w) = body_writes(op, data, stores, vars, cache, writes, &mut HashSet::new())
+        let Some(w) = body_writes(op, data, stores, vars, cache, writes, &mut HashSet::new(), &mut fresh)
         else {
             return out;
         };
@@ -645,7 +675,21 @@ fn element_target(
 /// store-free op contributes nothing.  Anything else — a native writer the gate would have
 /// blocked, a `CallRef`, a `Parallel`, a `Yield` — answers `None`, as does a setter whose
 /// offset is not a constant.
+///
+/// `fresh` carries the element variables the body has MINTED so far (@PLN157 § V-s,
+/// `@FR-R-Mint`): a `Set(v, OpNewRecord(P, …))` over an admissible mint path inserts `v`,
+/// any other assignment to `v` and the group's own `OpFinishRecord` remove it, and a
+/// setter whose target is a fresh variable contributes NOTHING — a record minted inside
+/// the body cannot be named by a variable whose getter the prelude already ran, so no
+/// hoisted scalar can go stale through it.  The walk is preorder, which is execution
+/// order for the straight-line `_elm_N = OpNewRecord; sets; OpFinishRecord` group the
+/// parser emits (the only producer of `OpNewRecord`); a group any FUTURE lowering splits
+/// across branches merely fails to register, which costs the exemption, never soundness —
+/// except a mint and a write of the SAME variable split across two arms, which the
+/// parser's per-group `_elm_N` temps (fresh variable per group, assigned nowhere else)
+/// keep unconstructible.
 /// Enforces `@FR-R-Scalar`: the write set of a body that passed the gate.
+#[allow(clippy::too_many_arguments)]
 fn body_writes(
     node: &Value,
     data: &Data,
@@ -654,10 +698,23 @@ fn body_writes(
     cache: &mut HashMap<u32, bool>,
     writes: &mut WriteCache,
     active: &mut HashSet<u32>,
+    fresh: &mut HashSet<u16>,
 ) -> Option<WriteSet> {
     let mut set = WriteSet::default();
     let mut ok = true;
     node.any_node(&mut |n| match n {
+        Value::Set(v, inner) => {
+            if matches!(inner.unspan(), Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && mint_path(data, "OpNewRecord", args, vars).is_some())
+            {
+                fresh.insert(*v);
+            } else {
+                fresh.remove(v);
+            }
+            false
+        }
         Value::Call(d, args) => {
             if (*d as usize) >= data.definitions.len() {
                 ok = false;
@@ -671,6 +728,13 @@ fn body_writes(
                     ok = false;
                     return true;
                 };
+                // A write into a freshly minted element reaches no record a hoisted
+                // scalar can name (`@FR-R-Mint`).
+                if let Some(Value::Var(u)) = args.first().map(Value::unspan)
+                    && fresh.contains(u)
+                {
+                    return false;
+                }
                 match args
                     .first()
                     .map_or(Target::Unknown, |t| setter_target(t, data, stores, vars))
@@ -690,6 +754,23 @@ fn body_writes(
                 // @PLN157 § V-q — a push (or the reservation before one) grows a vector and
                 // rewrites its handle slot, which no scalar getter reads; the container
                 // record itself does not move.
+            } else if mint_path(data, name, args, vars).is_some() {
+                // @PLN157 § V-s (`@FR-R-Mint`) — the mint's growth moves the pushed
+                // vector's record without changing any value, and its element defaults land
+                // in the fresh record only.  The close of the group ends the variable's
+                // fresh window.
+                if name == "OpFinishRecord"
+                    && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
+                {
+                    fresh.remove(e);
+                }
+            } else if name == "OpCopyRecord"
+                && args.len() == 3
+                && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
+            {
+                // § V-d's delivery tail into a fresh mint variable (`@FR-R-Mint`): the copy
+                // writes the fresh element, and its source-free releases the builder's own
+                // this-iteration buffer — neither is a record a hoisted scalar can name.
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),
@@ -754,6 +835,7 @@ fn callee_writes(
                 cache,
                 writes,
                 active,
+                &mut HashSet::new(),
             )
         } else if retbuf_only_writer(d_nr, data, cache, active) {
             def.hidden_return_buffer_attr()
@@ -853,6 +935,7 @@ fn callee_inputs_inner(
     let params = u16::try_from(def.attributes().len()).ok()?;
     let rebound = rebound_vars(body);
     let mut written = WriteSet::default();
+    let mut fresh_elems: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         written.extend(&body_writes(
             op,
@@ -862,6 +945,7 @@ fn callee_inputs_inner(
             cache,
             writes,
             &mut HashSet::new(),
+            &mut fresh_elems,
         )?);
     }
     // A parameter (never rebound) as a candidate root: its plain record type, or — for a
@@ -1000,6 +1084,8 @@ pub fn view_def_header(
             allow_in_place,
             Some(vars),
             false,
+            false,
+            &mut HashSet::new(),
         )
     }) {
         return None;
@@ -1250,6 +1336,39 @@ pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedP
     })
 }
 
+/// Recognise one op of the record MINT group — `OpNewRecord(P, tp, fld)` /
+/// `OpFinishRecord(P, elm, tp, fld)` appending one element to a PLAIN vector named by a
+/// bare variable (@PLN157 § V-s, `@FR-R-Mint`) — the ONE definition of the admissible
+/// mint, asked by the gate, the collector and the write-set walk.
+///
+/// The container must TYPE as `Type::Vector` (the V-m lesson: ask the type, not the op
+/// shape) — on a keyed collection (`sorted`, `index`, `hash`, …) the same op names are a
+/// KEYED INSERT, a mover of OTHER records, and stay blocking.  `peel_link` and not
+/// `base()`: a nullable vector's append is not this unit's shape, so `τ?` stays out.  A
+/// FIELD path (`h.pts += […]`) also answers `None` — this unit admits the bare-variable
+/// root the raster loops use; widening to field paths is a measured decision for later.
+#[must_use]
+pub fn mint_path(
+    data: &Data,
+    op: &str,
+    args: &[Value],
+    vars: &crate::variables::Function,
+) -> Option<PathKey> {
+    let arity = match op {
+        "OpNewRecord" => 3,
+        "OpFinishRecord" => 4,
+        _ => return None,
+    };
+    if args.len() != arity {
+        return None;
+    }
+    let path = vector_path(data, &args[0])?;
+    if !path.1.is_empty() || path.0 >= vars.count() {
+        return None;
+    }
+    matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
+}
+
 const FUSABLE_SETTERS: [(&str, &str); 3] = [
     ("OpSetInt", "i64"),
     ("OpSetSingle", "f32"),
@@ -1349,7 +1468,7 @@ fn writes_store(
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
 ) -> bool {
-    blocks_header_hoist(node, data, cache, active, false, vars, false)
+    blocks_header_hoist(node, data, cache, active, false, vars, false, false, &mut HashSet::new())
 }
 
 /// @PLN157 § V-c — the frees whose operand is a RECORD variable of the enclosing body.
@@ -1386,8 +1505,26 @@ fn blocks_header_hoist(
     allow_in_place: bool,
     vars: Option<&crate::variables::Function>,
     allow_push: bool,
+    allow_mint: bool,
+    fresh: &mut HashSet<u16>,
 ) -> bool {
     node.any_node(&mut |n| match n {
+        // @PLN157 § V-s (`@FR-R-Mint`) — track the element variables the body has minted
+        // so far, in the same preorder the write-set walk uses (see `body_writes` for why
+        // that order is the execution order of the group).
+        Value::Set(v, inner) => {
+            if allow_mint
+                && matches!(inner.unspan(), Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpNewRecord"
+                        && vars.is_some_and(|vs| mint_path(data, "OpNewRecord", args, vs).is_some()))
+            {
+                fresh.insert(*v);
+            } else {
+                fresh.remove(v);
+            }
+            false
+        }
         Value::Call(d, args) => {
             let known = (*d as usize) < data.definitions.len();
             let in_place_setter =
@@ -1403,7 +1540,29 @@ fn blocks_header_hoist(
                 && allow_push
                 && (fused_push(data, data.def(*d).name(), args).is_some()
                     || pre_alloc_path(data, data.def(*d).name(), args).is_some());
-            if in_place_setter || record_free || fusable_push {
+            // @PLN157 § V-s (`@FR-R-Mint`) — a record MINT into a plain vector is a mover
+            // like a push: it grows that one vector and initialises a record no variable
+            // bound before the loop can name; `hoistable` decides the aliasing.  The
+            // element's field writes and the builder call still walk below this node.
+            // § V-d's delivery tail — `OpCopyRecord(result, elm, tp)` when the builder
+            // could not build in place — writes the fresh element and frees the builder's
+            // own this-iteration buffer, neither of which a prelude holder can name; it is
+            // admitted only while its DESTINATION is a fresh mint variable.
+            let record_mint = known
+                && allow_mint
+                && vars.is_some_and(|v| mint_path(data, data.def(*d).name(), args, v).is_some());
+            let fresh_delivery = known
+                && allow_mint
+                && data.def(*d).name() == "OpCopyRecord"
+                && args.len() == 3
+                && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e));
+            if record_mint
+                && data.def(*d).name() == "OpFinishRecord"
+                && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
+            {
+                fresh.remove(e);
+            }
+            if in_place_setter || record_free || fusable_push || record_mint || fresh_delivery {
                 false
             } else if call_writes_store(*d, data, cache, active) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted

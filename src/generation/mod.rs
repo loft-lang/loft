@@ -641,6 +641,12 @@ pub struct Output<'a> {
     /// @PLN157 § V-q (`@FR-R-Push`); the bisect step for a wrong element or length out of a
     /// loop that appends.  `LOFT_HOIST_VERIFY=1` is the falsifier.
     pub push_hoist_disabled: bool,
+    /// `LOFT_NO_MINT_HOIST=1` — a loop that APPENDS a record element (the
+    /// `OpNewRecord`/`OpFinishRecord` mint group) hoists nothing, as before @PLN157 § V-s
+    /// (`@FR-R-Mint`): the bisect step for a wrong scalar read out of a loop that appends
+    /// records.  `LOFT_HOIST_VERIFY=1` is the falsifier (each hoisted scalar is re-read
+    /// and compared).
+    pub mint_hoist_disabled: bool,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -1562,6 +1568,7 @@ impl<'a> Output<'a> {
             input_cache: HashMap::new(),
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
+            mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1847,6 +1854,7 @@ impl Output<'_> {
                 !self.scalar_hoist_disabled,
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
                 !self.push_hoist_disabled,
+                !self.mint_hoist_disabled,
             )
         };
         let hoist::LoopHoist {

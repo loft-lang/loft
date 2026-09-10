@@ -1,0 +1,194 @@
+// @PLN157 § V-s cells — a loop that APPENDS a record element (the mint group:
+// OpPreAllocVector · OpNewRecord · in-place sets or a retbuf callee · OpFinishRecord)
+// still hoists its invariant record scalars.  The mint is a MOVER admitted like a push
+// (R-Alias); a write into the freshly minted element evicts no hoisted scalar, because a
+// record minted inside the body cannot be named by a variable the prelude read.
+// The interpreter (no hoist) is the oracle; native must answer the same under
+// LOFT_HOIST_VERIFY=1.  Expected values are hand-computed in V-s-mint-hoist-cells.expected;
+// the emission per cell (which scalars hoist) is pinned by tests/mint_hoist.rs.
+struct Pt { ptx: float, pty: float }
+struct KRec { k: integer }
+struct R1 { nr: integer }
+struct Asc { m: index<R1[nr]> }
+struct Cfg { on: boolean, k: integer, f: float }
+struct H { pts: vector<Pt> }
+
+fn pt(x: float, y: float) -> Pt { Pt { ptx: x, pty: y } }
+fn sum_ptx(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.ptx) ?? 0.0; } s }
+fn sum_pty(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.pty) ?? 0.0; } s }
+
+// c1 — the LITERAL append (the `nocall` probe): the element is a struct literal, the out
+// vector is the hidden return buffer.  a.ptx, a.pty, b.ptx, b.pty all hoist.
+fn seg1(a: Pt, b: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    t = ((i as float) / (n as float)) ?? 0.0;
+    out += [Pt { ptx: (t * a.ptx + b.ptx) ?? 0.0, pty: (t * a.pty + b.pty) ?? 0.0 }];
+  }
+  out
+}
+fn c1() { r = seg1(Pt { ptx: 3.0, pty: 5.0 }, Pt { ptx: 7.0, pty: 11.0 }, 4); println("c1 {len(r)} {r[0]?.ptx} {r[3]?.pty} {sum_ptx(r)}"); }
+
+// c2 — the CALL append (the `withcall` probe, smooth's shape): the element is built by a
+// return-buffer callee, § V-d delivers it into the minted element.  Same four hoists.
+fn seg2(a: Pt, b: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    t = ((i as float) / (n as float)) ?? 0.0;
+    out += [pt((t * a.ptx + b.ptx) ?? 0.0, (t * a.pty + b.pty) ?? 0.0)];
+  }
+  out
+}
+fn c2() { r = seg2(Pt { ptx: 3.0, pty: 5.0 }, Pt { ptx: 7.0, pty: 11.0 }, 4); println("c2 {len(r)} {r[0]?.ptx} {r[3]?.pty} {sum_ptx(r)}"); }
+
+// c3 — the out vector is an OWNED LOCAL (never returned), not the return buffer.
+fn mint3(a: Pt, b: Pt) -> float {
+  v: vector<Pt> = [];
+  for i in 0..3 { v += [Pt { ptx: (a.ptx * (i as float)) ?? 0.0, pty: (b.pty + (i as float)) ?? 0.0 }]; }
+  (sum_ptx(v) + sum_pty(v) * 100.0) ?? 0.0
+}
+fn c3() { println("c3 {mint3(Pt { ptx: 2.0, pty: 4.0 }, Pt { ptx: 6.0, pty: 8.0 })}"); }
+
+// c4 — GROWTH: 100 elements cross the initial capacity several times; the hoisted scalars
+// (values copied before the loop) are untouched by the moves.
+fn mint4(a: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n { out += [Pt { ptx: (a.ptx + (i as float)) ?? 0.0, pty: 0.0 }]; }
+  out
+}
+fn c4() { r = mint4(Pt { ptx: 1.5, pty: 0.0 }, 100); println("c4 {len(r)} {r[99]?.ptx} {sum_ptx(r)}"); }
+
+// c5 — TWO movers in one loop: a record mint into one owned vector and a fused scalar
+// push into another.  Both roots are exclusive, so both are admitted and the scalars hoist.
+fn mint5(a: Pt, b: Pt) -> float {
+  v: vector<Pt> = [];
+  w: vector<float> = [];
+  for i in 0..3 {
+    v += [Pt { ptx: (a.ptx * (i as float)) ?? 0.0, pty: 0.0 }];
+    w += [(b.pty + (i as float)) ?? 0.0];
+  }
+  s = 0.0; for x in w { s = (s + x) ?? 0.0; }
+  (sum_ptx(v) + s * 100.0) ?? 0.0
+}
+fn c5() { println("c5 {mint5(Pt { ptx: 2.0, pty: 0.0 }, Pt { ptx: 0.0, pty: 7.0 })}"); }
+
+// c6 — mixed invariant KINDS (boolean, integer, float) read from a record parameter.
+fn mint6(cfg: Cfg, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..n {
+    x = if cfg.on { cfg.f } else { 0.0 };
+    out += [Pt { ptx: x, pty: (cfg.k as float) ?? 0.0 }];
+  }
+  out
+}
+fn c6() { r = mint6(Cfg { on: true, k: 3, f: 1.25 }, 2); println("c6 {len(r)} {sum_ptx(r)} {sum_pty(r)}"); }
+
+// c7 — a KEYED container: `sorted` re-orders on insert (OpFinishRecord IS the keyed
+// insert, a mover of OTHER records), so the mint is NOT admitted and the loop hoists
+// nothing.  The values are what the templates compute.
+fn mint7(base: KRec) -> sorted<KRec[k]> {
+  s: sorted<KRec[k]> = [];
+  for i in 0..3 { s += [KRec { k: base.k * (3 - i) }]; }
+  s
+}
+fn c7() { s = mint7(KRec { k: 2 }); first = 0; last = 0; n = 0; for r in s { if n == 0 { first = r.k; } last = r.k; n += 1; } println("c7 {len(s)} {first} {last}"); }
+
+// c8 — an `index` of ONE-FIELD records (the V-m regression twin): the general path, keyed,
+// not admitted; the walk still finds every record.
+fn mint8(base: KRec) -> integer {
+  a = Asc { m: [] };
+  for i in 0..3 { a.m += [R1 { nr: base.k + i }]; }
+  len(a.m)
+}
+fn c8() { println("c8 {mint8(KRec { k: 5 })}"); }
+
+// c9 — the loop WRITES the invariant field through the parameter itself: (Pt, 0) is in the
+// write set, so a.ptx is evicted and each iteration reads the updated value.
+fn mint9(a: Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..3 {
+    out += [Pt { ptx: a.ptx, pty: 0.0 }];
+    a.ptx = (a.ptx + 1.0) ?? 0.0;
+  }
+  out
+}
+fn c9() { a = Pt { ptx: 1.0, pty: 0.0 }; r = mint9(a); println("c9 {len(r)} {sum_ptx(r)} {a.ptx}"); }
+
+// c10 — the write arrives through a `&`-bound ALIAS instead: evicted by TYPE, not by name.
+fn mint10(a: Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  al = &a;
+  for _ in 0..3 {
+    out += [Pt { ptx: a.ptx, pty: 0.0 }];
+    al.ptx = (al.ptx + 1.0) ?? 0.0;
+  }
+  out
+}
+fn c10() { a = Pt { ptx: 10.0, pty: 0.0 }; r = mint10(a); println("c10 {len(r)} {sum_ptx(r)} {a.ptx}"); }
+
+// c11 — the pushed vector is REBOUND inside the loop: the whole loop declines, values right.
+fn mint11(a: Pt) -> vector<Pt> {
+  v: vector<Pt> = [];
+  for i in 0..2 {
+    v = [Pt { ptx: (a.ptx + (i as float)) ?? 0.0, pty: 0.0 }];
+    v += [Pt { ptx: 100.0, pty: 0.0 }];
+  }
+  v
+}
+fn c11() { r = mint11(Pt { ptx: 2.5, pty: 0.0 }); println("c11 {len(r)} {r[0]?.ptx} {r[1]?.ptx}"); }
+
+// c12 — the loop READS the pushed vector (a running total off its own tail): the values
+// stay right, and the loop hoists NOTHING — not because of the mint, but because the
+// `v[i]?` discharge materialises a default record through `OpDatabase`, an allocation off
+// the allow-list (a widening to weigh when a judged row shows it).  Pinned so the day that
+// allocation is admitted, this row's change is deliberate.
+fn mint12(a: Pt, n: integer) -> vector<Pt> {
+  v: vector<Pt> = [];
+  for _ in 0..n {
+    prev = if len(v) > 0 { v[len(v) - 1]?.ptx } else { 0.0 };
+    v += [Pt { ptx: (prev + a.ptx) ?? 0.0, pty: 0.0 }];
+  }
+  v
+}
+fn c12() { r = mint12(Pt { ptx: 2.0, pty: 0.0 }, 3); println("c12 {len(r)} {r[2]?.ptx}"); }
+
+// c13 — the invariant record is a LOCAL of the SAME type as the minted element: without
+// the fresh-element exemption the mint's own field writes (Pt, 0) and (Pt, 8) would evict
+// l.ptx and l.pty; with it they hoist.  The values agree either way — the emission pin in
+// tests/mint_hoist.rs is what discriminates.
+fn mint13() -> float {
+  l = Pt { ptx: 4.0, pty: 6.0 };
+  v: vector<Pt> = [];
+  for i in 0..3 { v += [Pt { ptx: (l.ptx * (i as float)) ?? 0.0, pty: l.pty }]; }
+  (sum_ptx(v) + sum_pty(v) * 100.0) ?? 0.0
+}
+fn c13() { println("c13 {mint13()}"); }
+
+// c14 — the mint lands in a vector reached by a FIELD PATH (`h.pts`): outside this unit's
+// admission (a bare-variable root only), the loop declines, values right.
+fn mint14(a: Pt) -> H {
+  h = H { pts: [] };
+  for _ in 0..3 { h.pts += [Pt { ptx: a.ptx, pty: 0.0 }]; }
+  h
+}
+fn c14() { h = mint14(Pt { ptx: 3.0, pty: 0.0 }); println("c14 {len(h.pts)} {sum_ptx(h.pts)}"); }
+
+// c16 — NESTED: the outer loop mints, the inner loop writes the tail element in place
+// (no read-back — a `v[i]?` read's discharge allocates a default record, c12's decline).
+// The element write is (Pt, 8), so a.pty is evicted BY TYPE (an element of v could be `a`
+// only by aliasing the rules already refuse to assume away); a.ptx hoists at the outer
+// prelude.
+fn mint16(a: Pt) -> vector<Pt> {
+  v: vector<Pt> = [];
+  for _ in 0..2 {
+    v += [Pt { ptx: a.ptx, pty: 0.0 }];
+    for i in 0..2 { v[len(v) - 1].pty = (a.pty * ((i + 1) as float)) ?? 0.0; }
+  }
+  v
+}
+fn c16() { r = mint16(Pt { ptx: 1.0, pty: 5.0 }); println("c16 {len(r)} {sum_ptx(r)} {sum_pty(r)}"); }
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10();
+  c11(); c12(); c13(); c14(); c16();
+}
