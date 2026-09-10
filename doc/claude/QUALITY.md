@@ -7484,6 +7484,28 @@ Sizing it is design work, not a walk; recorded here so the next reader counts th
 than picking one, and starts from the per-slot statement rather than rediscovering why per-local
 fails.
 
+⚠ **@PLN161 was that design, and it was DECLINED on 2026-09-10 — read this before opening a
+successor.**  It proposed the per-LOCAL form once more, as a third entry condition on
+`owner_witness_locals` reading `Own::Join`.  Three things retired it, and each is checkable:
+
+- **Its premise was gone.** It opened on *"four OPEN loft issues"*; all four closed ~6.5 hours
+  later in PR #1490, each `contract:settled`.  Nothing on the board needs the mechanism, and the
+  three store-lifetime issues that followed (loft#1491, loft#1493, loft#1494) are all
+  `fixed-pending-merge`.
+- **Its own probe falsified it.** The plan states *"the widening is INERT: zero `__own_` sites
+  emitted for the failing shape"* against loft#1486 — and then restated the invariant to survive
+  that reading rather than treating it as the stop condition it had itself written down.
+- **Its cure is the move this row says does not work.** *A sharper condition on the shared
+  predicate* is precisely what was tried three times and reverted; and the one shipped fix that
+  touched `Own::Join` (loft#1485) NARROWED away from the predicate reading it, because
+  substituting the whole thing broke five corpus files, four of them `--native` only.  Its
+  commit records the rule as *one question per site*.
+
+So the per-slot statement above still stands as the sizing to start from — but a successor is
+opened **from a defect that needs it**, not from this row.  A plan whose falsification targets
+have all been fixed can no longer fail on its own, which is what made this one un-runnable
+rather than merely wrong.
+
 #### B2 — open, and the owner's call
 
 | decision | evidence | why it is not mine to take |
