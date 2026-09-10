@@ -582,9 +582,22 @@ callee that delivers into it, and the sentinel is also what makes a loop mint pe
 instead of rebuilding the freed slot.  Guard
 `tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft`, 13 cells, hook
 sequences plus the five sibling-container controls and the return path unchanged.
-⚠ One shape stays open, filed apart: the same literal in ARGUMENT position
-(`show((mk(1), 9))`, loft#1512) binds no variable, so no element-free site exists — the record leaks
-whole, hook included, on both backends.
+The same literal in ARGUMENT position (`show((mk(1), 9))`, loft#1512) binds no variable, so
+no element-free site exists and the record leaked WHOLE — no hook, no free, both backends.
+**CLOSED 2026-09-10**, one step earlier than the element free: `scan_args` lifts each
+call-minted member of a tuple-literal argument into a `__lift_N` (the same lift a bare call
+argument gets, same `inline_struct_return` gate), which reduces the tuple to the
+local-member spelling that always released once — no value→type derivation needed, because
+the lift's type is the CALLEE's return type.  Guard
+`tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft`; its leak channel is
+armed by `tests/store_lifetime_1512_1513.rs`.
+⚠ And the entry's own guard carried a second finding in its CONTROL: `literal_member`
+(`u = (S { h: H { id: 21 } }, 9)`) asserted the count and passed while the hook read STALE
+bytes — the element free was BARE and the record's hook ran through the construction
+work-ref's scope-end cascade, after the free.  A literal member is the same mint as a call
+member (the record delivered through `__ref_p2_N`), so `tuple_call_mints` now records it via
+`construction_work_ref` and the element free runs the cascade live, then disarms the
+work-ref.  The poison face of that cell is armed with the D-heap-5 guard's harness below.
 
 ⚠ **A fifth shape was here and did not belong to this entry.**  `h = Holder { t: (s, 5) };
 u = h.t` released the resource NEVER — the OPPOSITE fault, which is why it is worth stating
@@ -651,7 +664,7 @@ off the IR first.  The bound projection and the loop variable are one question �
 source is a VIEW — and want the design call above answered before a cure is chosen for either.
 
 
-### D-heap-3 — OPEN (2026-09-10): a struct field projected off a CALL result releases twice
+### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 
 `(H-Drop)`'s responsibility clause and `(B-View)`'s materialisation clause together settle this
 one completely, and in opposite directions — which is why it is worth writing out rather than
@@ -806,9 +819,9 @@ a member beside the nested record leaving both of ITS members, and the whole nes
 taking its own with it. Guard:
 `tests/scripts/1506b-a-join-and-a-returned-projection-release-once.loft`.
 
-**One residual keeps the entry OPEN, and it is memory-only — the trap this entry already
-names.** The dense family's terminal materialisation gives a binding and its work-ref ONE
-store with TWO frees, and which runs first is decided by DECLARATION ORDER:
+**The last residual CLOSED as D-heap-5 (loft#1513), below** — the invariant cure this entry
+predicted. The dense family's terminal materialisation gave a binding and its work-ref ONE
+store with TWO frees, and which ran first was decided by DECLARATION ORDER:
 
 ```
 r = mk_dense().h;                       // r declared after __ref_N — r drops, then __ref_N
@@ -816,17 +829,14 @@ r = CfH { id: 4 }; a = r.id; r = mk_dense().h;   // r declared BEFORE — __ref_
                                                  //   r's hook reads the freed record
 ```
 
-Value and count are green in both (`H4 H9`, the ids the program set); under `LOFT_POISON=1`
-the second reads `H-2401053088876216593`. It is the `1506` guard's own `own_then_copy` cell,
-red under poison and green plain — *"a cure here cannot be scored on release counts alone"*,
-now measured against the cure itself. BRANCH-INTERNAL: on `main` that bind still aliases and
-never materialises, so it cannot reproduce there and stays here rather than in the tracker.
-Two cures are visible and neither is small: disarm the work-ref's free where a local adopted
-it (`construction_backing` already holds the pairing, but that map is read by D-heap-4's
-transition free and `construction_work_ref` matches every struct literal, so the blast radius
-is every `r = S { … }`), or order an adopted work-ref's release AFTER its adopter, which
-fixes the hook and leaves `(H-FreeTwice)` standing. The second is the symptom; the first is
-the invariant.
+Value and count were green in both (`H4 H9`, the ids the program set); under `LOFT_POISON=1`
+the second read `H-2401053088876216593`. It is the `1506` guard's own `own_then_copy` cell —
+*"a cure here cannot be scored on release counts alone"*, now measured against the cure. The
+first of the two cures named here was the right one — disarm the adopted work-ref's free — and
+the blast radius this paragraph flagged (`construction_work_ref` matches every struct literal,
+so a naive disarm reaches every `r = S { … }`) is exactly what D-heap-5 gates on: the disarm
+fires only where the binding's type carries a HOOK, leaving the hookless `value struct`
+comprehension's in-place reuse untouched. See D-heap-5 for the mechanism and its guard.
 
 ### D-heap-4 — OPENED AND CLOSED (2026-09-10): a mixed own/view local's owned record is freed without its hook (loft#1510)
 
@@ -888,6 +898,52 @@ the D-heap-3 guard's rebound cells pin the fixed neighbours.  A residual stated 
 closing: a heap PARAMETER rebuilt in place keeps its hook-less overwrite (the in-place arm's
 argument path frees through `OpFreeRefIfDistinct` against the entry witness and hooks
 nothing) — out of this entry's mixed-LOCAL scope, noted for the walk that owns parameters.
+
+### D-heap-5 — OPENED AND CLOSED (2026-09-10): the adopted construction store had TWO claimants, and the rebind order let the wrong one go first (loft#1513)
+
+`(H-Drop)` runs the hook at the record's death — which requires the hook to run BEFORE any
+free of that store.  When a construction delivers through a work-ref and the binding adopts
+the store (`drop_handoff_node`'s Set arm: the drop is transferred because "only the binding
+owns it"), the work-ref kept NAMING it, and its scope-end bare `OpFreeRef` was a second
+claimant.  For a FRESH binding the emission order happened to run the binding's hook+free
+first, so the bare free no-opped on an already-freed store and nothing showed; for a REBIND
+(`r = CfH{…}; r = mk_dense().h` — the loft#1506 guard's own `own_then_copy` cell) the
+binding is declared before the work-ref, scope-end runs in reverse declaration order, and
+the bare free went FIRST: the hook then read freed memory.  Counts and values right off
+stale bytes in a plain run, the poison pattern under `LOFT_POISON=1`, both backends, in
+every adopting spelling (the rebind, a loop rebind, a conditional rebind's taken arm, the
+two-droppable-field record).
+
+**Closed at the adoption, not at the ordering**: the moment the binding takes the store, the
+Set arm writes the SENTINEL into the work-ref (`handoff_disarm`), riding the SAME predicate
+as the drop hand-off (`construction_work_ref` + `proxy_says_owned`) so the two mechanisms
+cannot drift — exactly one claimant, whatever order scope-end walks.  A path that skips the
+Set leaves the work-ref holding its record, and its own scope-end release still covers it.
+Gated on the binding's type carrying a HOOK (`drop_hook`), because that is what the disarm
+protects: for a hookless type the double claim is a benign no-op free, while the sentinel
+DEFEATS the work-ref's in-place reuse — a comprehension's `OpFreeRefIfDistinct` reads
+"distinct" against a sentinel and frees, so it minted per PASS instead of rebuilding one
+store, and `value_struct_alloc`'s O(1) promise measured it at N cycles before the gate.
+What made the sentinel write possible is the second half: `is_null_sentinel_detach` now
+answers true for a `__ref_`/`__rref_` work-ref assigned the bare sentinel — the scan writes
+that ONLY as a disarm, after the store is freed (loft#1202, loft#1511's buffer) or adopted
+(here) — because the displacement pre-`Set` free read the disarm itself as a displacement
+and freed the store the binding had just taken (measured: the first fix attempt poisoned
+even the fresh-binding control through exactly that free).  One home, shared by both
+backends through `owns_displaced_store`.
+
+This is the residual D-heap-3 kept its entry OPEN for, and it is BRANCH-INTERNAL: the
+two-claimant situation exists only because the dense family's terminal materialisation
+(this branch's D-heap-3 close, not yet on `main`) makes the rebind materialise where `main`
+still aliases — so the poison face reproduces on this branch and not there.  loft#1513 was
+filed anyway and is closed here; the fix is correct regardless of provenance.
+
+Guard `tests/scripts/1513-a-rebound-adoption-hooks-live-memory.loft` — the rebind matrix
+plus the copy-then-own and untaken-arm controls, and the tuple-literal-member cell (the
+loft#1511 entry's second finding, same one-claimant rule).  ⚠ Its own channel is
+`LOFT_POISON=1`: a plain run passes on the broken build, so
+`tests/store_lifetime_1512_1513.rs` arms the poison runs per test on both backends — and
+poison-arms the neighbouring 1506 and 1511 guards, which the corpus only runs plain.
 
 ### D-heap-2 — OPENED AND CLOSED (2026-09-10): a cascade released only the members it could reach through ONE field kind
 

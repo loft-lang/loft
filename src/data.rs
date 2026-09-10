@@ -3764,7 +3764,16 @@ pub fn is_null_sentinel_detach(
     data: &Data,
     function: &crate::variables::Function,
 ) -> bool {
-    crate::variables::owns_literal_backing_store(function.name(var))
+    // A `__ref_`/`__rref_` work-ref assigned the bare sentinel is the scope scan's DISARM:
+    // the scan writes it only after the store the work-ref named is already released
+    // (the owned→view transition free, a tuple element free) or ADOPTED by the binding the
+    // construction delivered to (loft#1513) — so the write displaces nothing the work-ref
+    // still owns.  The displacement free fired here regardless, and on the adoption shape it
+    // freed the store the binding had just taken: the scope-end hook then read freed memory.
+    let name = function.name(var);
+    (crate::variables::owns_literal_backing_store(name)
+        || name.starts_with("__ref_")
+        || name.starts_with("__rref_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }

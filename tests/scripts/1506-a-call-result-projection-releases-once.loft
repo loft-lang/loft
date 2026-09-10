@@ -17,22 +17,20 @@
 // load-bearing cell here and must not be simplified away.
 //
 // ⚠ A release-count boundary alone cannot score this family: the adopt-base attempt (D-heap-3
-// exclusion 3) passed every count cell while reading freed memory.  The memory channel for
-// this guard is `LOFT_POISON=1` over tests/scripts/889-collection-through-a-call-s-field.loft
-// — kept there, referenced here.
+// exclusion 3) passed every count cell while reading freed memory.  The memory channels are
+// `LOFT_POISON=1` over tests/scripts/889-collection-through-a-call-s-field.loft (kept there)
+// and, since loft#1513 (whose poison face was this guard's own `own_then_copy` cell), the
+// poison runs of THIS guard in tests/store_lifetime_1512_1513.rs.
 //
 // The `?` receiver and the returned projection — D-heap-3's other two shapes, which used to
 // be listed here as open — closed 2026-09-10; their cells live in
 // tests/scripts/1506b-a-join-and-a-returned-projection-release-once.loft.  The mixed own/view
 // local closed as D-heap-4 (loft#1510), in tests/scripts/1510-a-mixed-own-view-locals-record
-// -hooks-once.loft.
-//
-// ⚠ `own_then_copy` is GREEN here and RED under `LOFT_POISON=1`, and that is a live residual
-// rather than a harness quirk: the binding and the materialising work-ref name one store and
-// both free it, so whichever the DECLARATION order releases first decides whether the hook
-// reads a live record.  `copy_then_own` beside it has the opposite order and is clean, which
-// is what makes the pair worth keeping adjacent.  Counts and values are right in both — the
-// warning at the top of this header, measured against the cure.  D-heap-3 stays OPEN for it.
+// -hooks-once.loft.  The `own_then_copy` cell's poison face — the binding and the
+// materialising work-ref named one store and the declaration order decided whether the hook
+// read a live record — closed as D-heap-5 (loft#1513): the adoption now disarms the work-ref,
+// so the binding is the store's ONE claimant.  `copy_then_own` beside it is the opposite
+// order and was the always-clean control; keep the pair adjacent.
 //
 // @falsified-at: 636bd457 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1506-a-call-result-projection-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

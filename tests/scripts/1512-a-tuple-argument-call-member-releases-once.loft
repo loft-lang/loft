@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A tuple literal in ARGUMENT position releases a call-minted member once (loft#1512).
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource.  The BOUND spelling
+// (`u = (mk(1), 9)`) releases through `Scopes::tuple_call_mint` + the element free at the
+// binding's `Set` (loft#1511) — but an argument tuple binds no variable, so that machinery
+// has no site to attach to, and the record leaked WHOLE: no hook, no free, on both backends
+// (the callee adopts a fresh store, so the caller's hidden buffer stays null and its guarded
+// scope-end release no-ops).
+//
+// The cure lifts each call-minted member into a `__lift_N` in `scan_args` — the same lift a
+// bare call argument gets — which reduces the tuple to the local-member spelling that always
+// released once.  The controls below pin that reduction's neighbours: a local member and a
+// through-the-buffer callee were never broken, and must stay at exactly one hook.
+//
+// @falsified-at: 8b29ce89 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1512-a-tuple-argument-call-member-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — on the control the filed cell drains
+//     an EMPTY trace (no hook ran at all) and the guard demands "1".
+//   ARMED: nothing; a plain run scores it.  The LEAK channel — the filed defect is a
+//     whole-record leak — is armed apart, by tests/store_lifetime_1512_1513.rs
+//     (`tuple_argument_stays_leak_free`), because a `main`-ful trace guard's exit warning
+//     cannot distinguish which cell retained.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees; the controls
+//     (a local member, a through-the-buffer callee) read one hook on both.
+fn trace_path() -> text { return "loft_1512_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("{self.id}"); }
+struct S { h: H }
+
+// The filed callee shape: returns the literal directly, so the return ADOPTS a fresh store
+// and the caller's hidden buffer stays null.
+fn mk(id: integer) -> S { return S { h: H { id: id } }; }
+// The through-the-buffer control: a named local return delivers via the caller's work-ref,
+// whose scope-end cascade always covered it.
+fn mk_named(id: integer) -> S { s = S { h: H { id: id } }; return s; }
+fn mkq(absent: boolean) -> S? { if absent { return null; } return S { h: H { id: 5 } }; }
+
+fn read(p: (S, integer)) -> integer { return p.0.h.id; }
+fn read_deep(p: ((S, integer), integer)) -> integer { return p.0.0.h.id; }
+fn read2(p: (S, S)) -> integer { return p.0.h.id * 100 + p.1.h.id; }
+fn read_at1(p: (integer, S)) -> integer { return p.1.h.id; }
+fn readq(p: (S?, integer)) -> integer {
+  s = p.0;
+  if s == null { return -1; }
+  return s.h.id;
+}
+
+// The filed shape: the tuple literal is an argument, its member a call result.
+fn argument() -> integer { return read((mk(1), 9)); }
+
+// Two call members are two records, two hooks.
+fn two_members() -> integer { return read2((mk(71), mk(72))); }
+
+// The same at index 1 — the index is not the axis.
+fn at_one() -> integer { return read_at1((9, mk(61))); }
+
+// The same mint one level down: the lift recurses into a nested literal.
+fn nested() -> integer { return read_deep(((mk(31), 2), 3)); }
+
+// The control the cure reduces to: a LOCAL member always released once.
+fn via_local() -> integer { s = mk(11); return read((s, 9)); }
+
+// Per iteration: the lift is homed in the loop body's scope, so each pass releases its own.
+fn in_a_loop() -> integer {
+  t = 0;
+  for i in 0..2 { t = t + read((mk(100 + i), 9)); }
+  return t;
+}
+
+// The through-the-buffer control, unchanged: the work-ref's scope end covers it.
+fn named_return() -> integer { return read((mk_named(7), 9)); }
+
+// A NULLABLE call member adopts a fresh store with no buffer at all: a record hooks once,
+// an absent value hooks nothing.
+fn nullable_present() -> integer { return readq((mkq(false), 9)); }
+fn nullable_absent() -> integer { return readq((mkq(true), 9)); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  v = argument(); got = drain();
+  assert(v == 1, "the argument tuple reads its member: got {v}");
+  assert(got == "1", "a call member in an argument tuple releases ONCE: got '{got}'");
+
+  v = two_members(); got = drain();
+  assert(v == 7172, "two call members read: got {v}");
+  assert(got == "71,72" || got == "72,71", "two records release once EACH: got '{got}'");
+
+  v = at_one(); got = drain();
+  assert(v == 61, "index 1 reads its record: got {v}");
+  assert(got == "61", "the index-1 member releases once: got '{got}'");
+
+  v = nested(); got = drain();
+  assert(v == 31, "the nested member reads: got {v}");
+  assert(got == "31", "a nested literal's call member releases once: got '{got}'");
+
+  v = via_local(); got = drain();
+  assert(v == 11, "the local member reads: got {v}");
+  assert(got == "11", "the local-member control is unchanged at one hook: got '{got}'");
+
+  v = in_a_loop(); got = drain();
+  assert(v == 201, "two iterations sum 100 + 101: got {v}");
+  assert(got == "100,101", "one release per iteration's record: got '{got}'");
+
+  v = named_return(); got = drain();
+  assert(v == 7, "the buffer-delivered member reads: got {v}");
+  assert(got == "7", "the through-the-buffer control is unchanged: got '{got}'");
+
+  v = nullable_present(); got = drain();
+  assert(v == 5, "the present nullable member reads: got {v}");
+  assert(got == "5", "a present nullable member releases once: got '{got}'");
+
+  v = nullable_absent(); got = drain();
+  assert(v == -1, "the absent nullable member is null: got {v}");
+  assert(got == "", "an absent nullable member releases nothing: got '{got}'");
+
+  println("1512 tuple-argument call member OK");
+}

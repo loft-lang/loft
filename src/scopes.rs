@@ -2716,6 +2716,16 @@ fn tuple_call_mints(
     };
     let mut out = HashMap::new();
     for (idx, m) in members.iter().enumerate() {
+        // A member built by an inline CONSTRUCTION (`u = (S { … }, 9)`) is the literal
+        // spelling of the same mint: the record is delivered through the construction's
+        // work-ref, which both the element and the work-ref then name.  The element free
+        // owes the hook exactly as for a call mint, and the work-ref is the buffer to
+        // disarm — without it the work-ref's own scope-end cascade ran the hook on the
+        // store the element free had already released (freed-then-hooked, poison-visible).
+        if let Some(w) = construction_work_ref(m, function) {
+            out.insert(idx as u16, Some(w));
+            continue;
+        }
         let Value::Call(fn_nr, args) = m.unspan() else {
             continue;
         };
@@ -7934,9 +7944,35 @@ impl Scopes<'_> {
         // vetoed for it, see `drop_handoff_node`).  The owned→view transition free reads
         // this to run the cascade and disarm the work-ref; any other assignment retires the
         // pairing (@FR-O-Latest — the fact belongs to the latest assignment).
+        //
+        // loft#1513 — where the hand-off IS taken (the binding owns, so its scope-end
+        // drop+free covers the record — the same predicate as `drop_handoff_node`'s Set arm,
+        // negated, so the two cannot drift), the work-ref must also stop NAMING the store:
+        // its scope-end `OpFreeRef` still claimed it, and whenever the binding is declared
+        // BEFORE the work-ref (a rebind, `r = CfH{…}; r = mk().h`) that bare free ran before
+        // the binding's hook, which then read freed memory.  The sentinel makes the binding
+        // the store's ONE claimant on this path; a path that skips this Set leaves the
+        // work-ref holding its record, and its own scope-end free still covers that.
+        //
+        // Only where the binding's type carries a HOOK (`drop_hook`): the disarm exists to
+        // keep that hook off freed memory, and for a hookless type the double claim is a
+        // benign no-op free — while the sentinel is not free there: it defeats the work-ref's
+        // in-place reuse (`OpFreeRefIfDistinct` reads "distinct" against a sentinel and
+        // frees, so a comprehension minted per PASS instead of rebuilding one store —
+        // `value_struct_alloc`'s O(1) promise measured it at N cycles).
+        let mut handoff_disarm: Option<Value> = None;
         match construction_work_ref(value, function) {
             Some(w) if w != v && !function.proxy_says_owned(v) => {
                 self.construction_backing.insert(v, w);
+            }
+            Some(w) if w != v => {
+                if drop_hook(function, v, data).is_some() {
+                    handoff_disarm = Some(v_set(
+                        w,
+                        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                    ));
+                }
+                self.construction_backing.remove(&v);
             }
             _ => {
                 self.construction_backing.remove(&v);
@@ -8889,6 +8925,7 @@ impl Scopes<'_> {
             && witness_update.is_none()
             && witness_ops.is_empty()
             && displaced.is_none()
+            && handoff_disarm.is_none()
         {
             Value::Set(v, Box::new(set_value))
         } else {
@@ -8903,6 +8940,10 @@ impl Scopes<'_> {
             all.append(&mut prefix);
             all.append(&mut ls);
             all.push(Value::Set(v, Box::new(set_value)));
+            // loft#1513 — the moment the binding has adopted the construction's store, the
+            // work-ref that delivered it stops naming it, so its scope-end free cannot race
+            // the binding's hook.
+            all.extend(handoff_disarm);
             all.extend(witness_update);
             all.append(&mut witness_ops);
             all.extend(post);
@@ -11560,6 +11601,57 @@ impl Scopes<'_> {
         }
     }
 
+    /// loft#1512 — give every call-minted member of a tuple-literal ARGUMENT an owner, at
+    /// any nesting depth: each member `inline_struct_return` can type is moved into a
+    /// `__lift_N` (declared in `preamble`, so it lives at the statement's scope and its
+    /// scope-end cascade releases the record once), and the member slot reads the temp.
+    /// Returns whether anything was lifted, so an untouched tuple keeps its original
+    /// (span-carrying) value.  Members the lift cannot type — a local, a projection, a
+    /// scalar — are left as they were: those either own nothing or are owned elsewhere,
+    /// and lifting them would move a view into an owner.
+    #[allow(clippy::too_many_arguments)]
+    fn lift_tuple_call_members(
+        &mut self,
+        members: &mut [Value],
+        arg_idx: usize,
+        transfer_copy: bool,
+        moved_arg: Option<usize>,
+        preamble: &mut Vec<Value>,
+        function: &mut Function,
+        data: &Data,
+        outer_call: u32,
+    ) -> bool {
+        let mut lifted = false;
+        for m in members.iter_mut() {
+            if let Some(tp) = self.inline_struct_return(m, data, outer_call, function) {
+                let tmp = self.new_lift_var(function, &tp);
+                self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+                let call = std::mem::replace(m, Value::Var(tmp));
+                preamble.push(v_set(tmp, call));
+                lifted = true;
+            } else if matches!(m.unspan(), Value::Tuple(_)) {
+                let mut inner = match m.unspan() {
+                    Value::Tuple(inner) => inner.clone(),
+                    _ => unreachable!("matched Value::Tuple above"),
+                };
+                if self.lift_tuple_call_members(
+                    &mut inner,
+                    arg_idx,
+                    transfer_copy,
+                    moved_arg,
+                    preamble,
+                    function,
+                    data,
+                    outer_call,
+                ) {
+                    *m = Value::Tuple(inner);
+                    lifted = true;
+                }
+            }
+        }
+        lifted
+    }
+
     /// Scan a list of call arguments.
     ///
     /// If any scanned arg comes back as `Insert([Set(w, Null), body])` where `w` is an
@@ -11882,6 +11974,37 @@ impl Scopes<'_> {
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
                 preamble.push(v_set(tmp, scanned));
                 ls.push(Value::Var(tmp));
+            } else if matches!(scanned.unspan(), Value::Tuple(_)) {
+                // loft#1512 — a tuple-literal ARGUMENT binds no variable, so a member record
+                // minted by the member's own call has no element-free site: the bound
+                // spelling's release machinery (`Scopes::tuple_call_mint`) is keyed on a
+                // `Set` this shape never makes, and the record leaked whole, hook included.
+                // Lift each such member into a `__lift_N` exactly as the bare call argument
+                // above is lifted — the temp owns the store and its scope-end cascade
+                // releases it once — reducing the tuple to the local-member spelling that
+                // already releases once.  Recursive, because a nested literal
+                // (`deep(((mk(1), 2), 3))`) carries the same unowned mint one level down.
+                // A member no lift can type (a local, a projection, a literal) is passed
+                // as it was.
+                let mut new_members = match scanned.unspan() {
+                    Value::Tuple(members) => members.clone(),
+                    _ => unreachable!("matched Value::Tuple above"),
+                };
+                let lifted = self.lift_tuple_call_members(
+                    &mut new_members,
+                    arg_idx,
+                    transfer_copy,
+                    moved_arg,
+                    &mut preamble,
+                    function,
+                    data,
+                    outer_call,
+                );
+                if lifted {
+                    ls.push(Value::Tuple(new_members));
+                } else {
+                    ls.push(scanned);
+                }
             } else if let Some((w, absorb)) =
                 self.inline_built_borrow_source(&scanned, outer_call, data)
             {
