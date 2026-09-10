@@ -250,6 +250,13 @@ struct Scopes<'s> {
     /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
     /// scope-end drop releases whatever record it holds LAST.
     lift_field_skip: HashMap<u16, (u16, u16)>,
+    /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
+    ///
+    /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
+    /// the statement scan meets `__lift_1 = a` again it is scanning INSIDE the arm, so the
+    /// branch that makes the copy conditional is no longer in view. Recorded where the temps
+    /// are made and read by [`handoff_target`], so both deciders answer from the same fact.
+    arm_lift_temps: HashSet<u16>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -2113,6 +2120,39 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
     data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
 }
 
+/// Which side of a whole-value copy stops dropping — `None` where the copy moves nothing.
+///
+/// The ONE home for the DIRECTION, because two sites decide it about the same copy and a
+/// second spelling could only agree by accident: the arm lift records it from the
+/// construction, and the collector's `Set` arm meets the very same `__lift_N = a` again once
+/// it exists.
+///
+/// `per_path` is what they have to agree about. `heap.md (H-Drop)` moves the release with a
+/// copy, and `ownership.md (O-Complete)` makes that fact per binding and PER PATH — so a copy
+/// that happens on some runs only cannot move the release on all of them. A value `if`/`match`
+/// lifts each arm's value into a temp of its own, and each temp is null until its own arm
+/// assigns it: one statement records as many hand-offs as it has arms and performs one.
+/// Recorded against the SOURCE, the arm that did not run left its source with nothing to
+/// release it and the resource was never released at all — silently, on both backends, and
+/// once per iteration inside a loop (loft#1514).
+///
+/// So a per-path hand-off keeps the release with the source, which is live on every path, and
+/// stops the DESTINATION instead. That is the same trade this makes for a copy off a
+/// parameter and for the same reason — the side that outlives the other keeps the
+/// responsibility — and it needs no runtime witness, because the temp whose release it
+/// removes is exactly the one that is null on the paths that did not take it.
+fn handoff_target(
+    function: &Function,
+    data: &Data,
+    dst: u16,
+    src: u16,
+    buffer_dst: bool,
+    per_path: bool,
+) -> Option<u16> {
+    let moved = copy_moves_drop_from(function, data, dst, src, buffer_dst)?;
+    Some(if per_path { dst } else { moved })
+}
+
 /// @PLN139 stage C — the vars that HANDED OFF what they hold, so their scope end must not
 /// drop it.  Two ways a value stops being its variable's to release, both an `OpCopyRecord`:
 ///
@@ -2136,7 +2176,9 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
 /// carry a scope-exit drop.
 fn collect_drop_transferred(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
     let mut out: HashSet<u16> = HashSet::new();
-    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out));
+    // No arm lift has been built yet at construction time, so nothing here is per path.
+    let per_path = HashSet::new();
+    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out, &per_path));
     out
 }
 
@@ -2144,7 +2186,13 @@ fn collect_drop_transferred(code: &Value, function: &Function, data: &Data) -> H
 /// which the scan re-applies statement by statement so a variable handed off AFTER a
 /// reassignment retired it is armed again in scan order (the fact belongs to the
 /// assignment, `@FR-O-Latest`).
-fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut HashSet<u16>) {
+fn drop_handoff_node(
+    n: &Value,
+    function: &Function,
+    data: &Data,
+    out: &mut HashSet<u16>,
+    per_path: &HashSet<u16>,
+) {
     let copy_d = data.def_nr("OpCopyRecord");
     if copy_d == u32::MAX {
         return;
@@ -2214,11 +2262,13 @@ fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut Hash
                 {
                     out.insert(w);
                 }
-                // A plain WHOLE-VALUE copy between two locals — `t = s`, `h2 = h` — moves the
-                // drop to the copy; see [`copy_moves_drop_from`], which the branch-arm lift
-                // reads for its `__lift_N = a` too.
+                // A plain WHOLE-VALUE copy between two locals — `t = s`, `h2 = h` — moves
+                // the drop to the copy.  [`handoff_target`] decides WHICH side stops, because
+                // this arm also meets the branch-arm lift's own `__lift_N = a` once that
+                // exists, and there the answer runs the other way.
                 if let Value::Var(src) = rhs.unspan()
-                    && let Some(moved) = copy_moves_drop_from(function, data, *v, *src, false)
+                    && let Some(moved) =
+                        handoff_target(function, data, *v, *src, false, per_path.contains(v))
                 {
                     out.insert(moved);
                 }
@@ -2941,6 +2991,7 @@ fn run_scan_phase(
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
+        arm_lift_temps: HashSet::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
     };
@@ -9308,8 +9359,14 @@ impl Scopes<'_> {
             // Re-arm the hand-offs this statement makes, in scan order, so a variable
             // whose earlier hand-off a reassignment retired is handed off again here.
             {
-                let transferred = &mut self.drop_transferred;
-                v.walk(&mut |n| drop_handoff_node(n, function, data, transferred));
+                let Self {
+                    drop_transferred,
+                    arm_lift_temps,
+                    ..
+                } = self;
+                v.walk(&mut |n| {
+                    drop_handoff_node(n, function, data, drop_transferred, arm_lift_temps);
+                });
             }
             let rebuilt = self.in_place_rebuild(v, function, data);
             let sv = self.scan(v, function, data);
@@ -12655,11 +12712,14 @@ impl Scopes<'_> {
             &mut viewed,
             &mut materialised,
         );
-        // Each `__lift_N = a` is a whole-value copy the collector never saw (the lift is built
-        // after it ran), so the drop moves here by the same rule: the arm's variable stops
-        // dropping, the temp — and through the join, the binding — owns the resource.
+        // Each `__lift_N = a` is a whole-value copy the collector never saw when it first ran
+        // (the lift is built after it), so the drop moves here by the same rule — and PER PATH
+        // by construction, since these temps are one per arm.  [`handoff_target`] is the one
+        // home for that direction; recording the temps is what lets the collector reach the
+        // same answer when it meets these copies later, from inside the arm.
         for &(src, tmp) in &copied {
-            if let Some(moved) = copy_moves_drop_from(function, data, tmp, src, true) {
+            self.arm_lift_temps.insert(tmp);
+            if let Some(moved) = handoff_target(function, data, tmp, src, true, true) {
                 self.drop_transferred.insert(moved);
             }
         }
