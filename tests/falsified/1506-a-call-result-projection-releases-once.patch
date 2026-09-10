@@ -1,0 +1,377 @@
+diff --git b/src/data.rs a/src/data.rs
+index 2481dc10..1086af28 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -8448,28 +8448,6 @@ impl Data {
+         self.drop_hook_nr(type_def)
+     }
+ 
+-    /// The skip-capable variant of the cascade — `t_<LEN><Type>_OpDropAllExcept(self, skip)`
+-    /// releases everything the type owns EXCEPT the inline field at byte offset `skip`.
+-    ///
+-    /// `(H-Drop)`'s responsibility clause, field-grained: a copy OUT of one field makes the
+-    /// copy that field's owner, so the source record's death must release every OTHER member
+-    /// and leave that one to the copy (D-heap-3, loft#1506). `u32::MAX` when the type has no
+-    /// such variant — the caller falls back to the full cascade, which is the pre-transfer
+-    /// double release rather than anything unsound.
+-    #[must_use]
+-    pub fn drop_cascade_except_nr(&self, type_def: u32) -> u32 {
+-        if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
+-            return u32::MAX;
+-        }
+-        let def = self.def(type_def);
+-        let key = format!("t_{}{}_OpDropAllExcept", def.name.len(), def.name);
+-        let nr = self.source_nr(def.source, &key);
+-        if nr != u32::MAX {
+-            return nr;
+-        }
+-        self.def_nr(&key)
+-    }
+-
+     /// Does this type have a SYNTHESIZED drop cascade (as opposed to only its own hook)?
+     ///
+     /// The question stage C asks before treating a copy into a container as a MOVE: a source
+diff --git b/src/keys.rs a/src/keys.rs
+index 2982b91f..8788f9fd 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1549,17 +1549,6 @@ pub fn owner_witness_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_OWNER_WITNESS"))
+ }
+ 
+-/// D-heap-3 (loft#1506) — the field-grained copy-out hand-off: a projection copied out of a
+-/// lifted call result moves that field's release to the copy, and the lift's scope-end drop
+-/// runs the `…OpDropAllExcept` cascade.  `LOFT_NO_FIELD_HANDOFF=1` keeps the full cascade —
+-/// the pre-transfer double release — and is the first bisect step for a wrong drop count or
+-/// a missing hook around a `f().field` shape.
+-#[must_use]
+-pub fn field_handoff_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_FIELD_HANDOFF"))
+-}
+-
+ /// #497 — the reassignment-path adopt-vs-copy fix: a Reference local
+ /// REASSIGNED from a `!return_adopts_fresh_store()` call deep-copies
+ /// (parity with the first-Set path) instead of adopting a possibly
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index b8ca8cfb..38844eff 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -5433,13 +5433,6 @@ impl Parser {
+         format!("t_{}{}_OpDropAll", n.len(), n)
+     }
+ 
+-    /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
+-    /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
+-    pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
+-        let n = data.def(type_def).name();
+-        format!("t_{}{}_OpDropAllExcept", n.len(), n)
+-    }
+-
+     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function
+     /// that releases what it owns, so a container's death releases its members.
+     ///
+@@ -5509,48 +5502,8 @@ impl Parser {
+             if self.data.def_type(t) == DefType::Enum {
+                 self.fill_enum_drop_cascade(t, c_nr);
+             } else {
+-                self.fill_drop_cascade(t, c_nr, false);
+-            }
+-        }
+-        // D-heap-3 (loft#1506) — the skip-capable variant, for the mirror of
+-        // `copy_hands_off`: a copy OUT of a record's field makes the copy that field's
+-        // owner (`@FR-H-Drop`'s responsibility clause), so the record's own death must
+-        // release everything EXCEPT that field. Only a STRUCT with releasable fields gets
+-        // one: the copy-out sites project with `OpGetField`, which never reaches an enum
+-        // payload or a collection element. Checked apart from `targets` above so a type
+-        // whose full cascade predates this pass still gains its variant.
+-        let mut except_made: Vec<(u32, u32)> = Vec::new();
+-        for d_nr in 0..self.data.definitions() {
+-            if self.data.def_type(d_nr) != DefType::Struct
+-                || self.data.def(d_nr).known_type() == u16::MAX
+-                || self.cascade_fields(d_nr).is_empty()
+-                || self
+-                    .data
+-                    .def_nr(&Self::drop_cascade_except_name(&self.data, d_nr))
+-                    != u32::MAX
+-            {
+-                continue;
++                self.fill_drop_cascade(t, c_nr);
+             }
+-            let name = Self::drop_cascade_except_name(&self.data, d_nr);
+-            let pos = self.data.def(d_nr).position().clone();
+-            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+-            self.data.set_returned(c_nr, Type::Void);
+-            let self_tp = self.cascade_self_type(d_nr);
+-            let _ = self
+-                .data
+-                .add_attribute(&mut self.lexer, c_nr, "self", self_tp);
+-            let int_tp = self
+-                .data
+-                .def(self.data.def_nr("integer"))
+-                .returned()
+-                .clone();
+-            let _ = self
+-                .data
+-                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp);
+-            except_made.push((d_nr, c_nr));
+-        }
+-        for (t, c_nr) in except_made {
+-            self.fill_drop_cascade(t, c_nr, true);
+         }
+     }
+ 
+@@ -5847,34 +5800,14 @@ impl Parser {
+     }
+ 
+     /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
+-    ///
+-    /// `with_skip` builds the `…Except` variant instead: a second `skip` parameter carries a
+-    /// field's byte offset, and each FIELD release is additionally guarded by `skip != off` —
+-    /// the member whose responsibility a copy-out took. The type's own hook and its
+-    /// collection fields are unconditional in both forms: a copy-out never takes those over.
+-    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {
+-        let name = if with_skip {
+-            Self::drop_cascade_except_name(&self.data, t)
+-        } else {
+-            Self::drop_cascade_name(&self.data, t)
+-        };
++    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
++        let name = Self::drop_cascade_name(&self.data, t);
+         let file = self.data.def(t).position().file.clone();
+         let mut vars = Function::new(&name, &file);
+         let self_tp = Type::Reference(t, crate::data::Deps::none());
+         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
+         vars.become_argument(self_var);
+         vars.defined(self_var);
+-        let skip_var = with_skip.then(|| {
+-            let int_tp = self
+-                .data
+-                .def(self.data.def_nr("integer"))
+-                .returned()
+-                .clone();
+-            let v = vars.add_variable("skip", &int_tp, &mut self.lexer);
+-            vars.become_argument(v);
+-            vars.defined(v);
+-            v
+-        });
+         // Build the body with the cascade's OWN table current, so anything `get_val` mints
+         // for a field read lands in the function that will hold the code.
+         let outer_vars = std::mem::replace(&mut self.vars, vars);
+@@ -5911,19 +5844,11 @@ impl Parser {
+             // and a drop is not, so a field on a record that was never written must not run
+             // the author's release against a record that does not exist.
+             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
+-            let release = Value::If(
++            ops.push(Value::If(
+                 Box::new(live),
+                 Box::new(Value::Call(target, vec![field])),
+                 Box::new(Value::Null),
+-            );
+-            // The Except variant leaves the field at offset `skip` to its new owner.
+-            let release = if let Some(sv) = skip_var {
+-                let not_taken = self.cl("OpNeInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
+-                v_if(not_taken, release, Value::Null)
+-            } else {
+-                release
+-            };
+-            ops.push(release);
++            ));
+         }
+ 
+         let body = v_block(ops, Type::Void, "drop_cascade");
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index c4db1440..60f8e1a4 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1720,26 +1720,11 @@ impl Parser {
+                 // it in a work-ref so scopes.rs emits OpFreeRef at end-of-scope.
+                 // Without this, the store allocated by the callee leaks and the LIFO
+                 // invariant in database::free() is violated.
+-                //
+-                // D-heap-3 (loft#1506) — a projection that ENDS the chain wraps too, when
+-                // what it projects owns a droppable: `r = mk().h` otherwise binds an ALIAS
+-                // of the lifted temp, and both names carry owner hooks — one record, its
+-                // release run twice (and its store freed twice).  Materialising through the
+-                // same work-ref makes every consumption site see the shape the chained case
+-                // already produces, and the copy-out hand-off in `scopes.rs` moves the
+-                // field's release to the copy (`@FR-H-Drop`).  A type with nothing to
+-                // release keeps the alias lowering — the count cannot differ there, and the
+-                // copy would be pure cost.
+                 if !self.first_pass
+                     && !matches!(code, Value::Var(_))
++                    && (self.lexer.peek_token(".") || self.lexer.peek_token("["))
+                     && let Type::Reference(d_nr, dep) = &t
+                     && dep.is_empty()
+-                    && (self.lexer.peek_token(".")
+-                        || self.lexer.peek_token("[")
+-                        || (self.data.owns_droppable(*d_nr)
+-                            && matches!(code.unspan(), Value::Call(pd, _)
+-                                if matches!(self.data.def(*pd).name(),
+-                                    "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"))))
+                 {
+                     let d_nr = *d_nr;
+                     let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
+@@ -1767,18 +1752,6 @@ impl Parser {
+                         if matches!(self.data.def(*pd).name(),
+                             "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"));
+                     let kt = self.data.def(d_nr).known_type();
+-                    // A TERMINAL wrap (no further chaining — the D-heap-3 arm of the
+-                    // condition above) delivers the copy the way a struct LITERAL's block
+-                    // does: typed WITHOUT deps, so the consuming site ADOPTS the record as
+-                    // its owner and the existing construction hand-off + buffer pairing
+-                    // release it exactly once.  A mid-chain wrap keeps the frame dep — the
+-                    // rest of the chain reads through `w`, which must stay the owner.
+-                    let terminal = !(self.lexer.peek_token(".") || self.lexer.peek_token("["));
+-                    let block_deps = if terminal {
+-                        crate::data::Deps::none()
+-                    } else {
+-                        crate::data::Deps::frame1(w)
+-                    };
+                     if is_projection && kt != u16::MAX {
+                         let copy_d = self.data.def_nr("OpCopyRecord");
+                         *code = v_block(
+@@ -1791,7 +1764,7 @@ impl Parser {
+                                 ),
+                                 Value::Var(w),
+                             ],
+-                            Type::Reference(d_nr, block_deps.clone()),
++                            Type::Reference(d_nr, crate::data::Deps::frame1(w)),
+                             "inline ref copy",
+                         );
+                         // @PLN130 — parser-emitted materialisation of a projection into a
+@@ -1809,14 +1782,7 @@ impl Parser {
+                             "inline ref",
+                         );
+                     }
+-                    t = Type::Reference(
+-                        d_nr,
+-                        if is_projection && kt != u16::MAX {
+-                            block_deps
+-                        } else {
+-                            crate::data::Deps::frame1(w)
+-                        },
+-                    );
++                    t = Type::Reference(d_nr, crate::data::Deps::frame1(w));
+                 }
+             } else if self.lexer.has_token("[") {
+                 wrap_chain = true;
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 0f57b2f7..767ea773 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -212,15 +212,6 @@ struct Scopes<'s> {
+     /// loft#849 / @PLN139 — vars that no longer OWN what they hold, so their scope end must
+     /// not drop it.  See [`collect_drop_transferred`].
+     drop_transferred: HashSet<u16>,
+-    /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
+-    /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
+-    /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
+-    /// the copied-out field is left to the copy (`@FR-H-Drop`'s responsibility clause, the
+-    /// mirror of [`copy_hands_off`]'s whole-value hand-off).  Keyed per VARIABLE, which is
+-    /// sound only because a lift is minted fresh per statement and dropped at that
+-    /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
+-    /// scope-end drop releases whatever record it holds LAST.
+-    lift_field_skip: HashMap<u16, u16>,
+     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
+     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
+     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
+@@ -2643,7 +2634,6 @@ fn run_scan_phase(
+         views_to_materialise,
+         fnref_target: collect_fnref_targets(orig_code, orig_vars),
+         drop_transferred: collect_drop_transferred(orig_code, orig_vars, data),
+-        lift_field_skip: HashMap::new(),
+         free_transferred: HashSet::new(),
+         fn_defs: None,
+     };
+@@ -6837,26 +6827,6 @@ impl Scopes<'_> {
+         if self.drop_transferred.contains(&v) {
+             return None;
+         }
+-        // D-heap-3 (loft#1506) — one field of this lift was copied out, so its release
+-        // belongs to the copy: run the skip-capable cascade over everything else.  A type
+-        // without the variant (enum payloads, or a stale parse tail) falls back to the full
+-        // cascade — the pre-transfer double release, never a leak or a faulting free.
+-        if let Some(&off) = self.lift_field_skip.get(&v)
+-            && let Type::Reference(d, _) | Type::Enum(d, true, _) = function.tp(v).base()
+-        {
+-            let nr = data.drop_cascade_except_nr(*d);
+-            if nr != u32::MAX {
+-                let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+-                return Some(Value::If(
+-                    Box::new(live),
+-                    Box::new(Value::Call(
+-                        nr,
+-                        vec![Value::Var(v), Value::Int(i32::from(off))],
+-                    )),
+-                    Box::new(Value::Null),
+-                ));
+-            }
+-        }
+         drop_hook(function, v, data)
+     }
+ 
+@@ -11172,8 +11142,7 @@ impl Scopes<'_> {
+         // copy took: before the lift the IR still names the CALL, and after it nothing
+         // records the pairing.  The copy's source is arg 0.
+         let moved_arg = moved_source_arg(outer_call, args, data);
+-        let copy_record_nr = data.def_nr("OpCopyRecord");
+-        let transfer_copy = outer_call == copy_record_nr && {
++        let transfer_copy = outer_call == data.def_nr("OpCopyRecord") && {
+             let moved =
+                 matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0);
+             moved
+@@ -11342,53 +11311,6 @@ impl Scopes<'_> {
+                         self.mark_lift_handoff(v, arg_idx, transfer_copy, moved_arg);
+                     }
+                     let final_val = it.next().unwrap();
+-                    // D-heap-3 (loft#1506) — a materialising copy OUT of a lifted call
+-                    // result's field: `OpCopyRecord(OpGetField(__lift_N, off), __ref_M)`.
+-                    // The copy owns that field's resource from here on (`@FR-H-Drop`:
+-                    // "RESPONSIBILITY moves with a copy"), so record the pairing; the lift's
+-                    // scope-end release runs the `…Except` cascade over everything else.
+-                    // Only a `__lift_` source qualifies — see [`Self::lift_field_skip`] —
+-                    // and only the parser-materialise destination (`Var(__ref_M)`): every
+-                    // other `OpCopyRecord` destination shape (a container field, a displaced
+-                    // buffer, a `0x8000` move) has its own hand-off with its own rules.
+-                    // Matching the `OpGetField` spelling ONLY is a semantic boundary, not an
+-                    // omitted arm: this pattern recognises the copy the parser's inline-ref
+-                    // wrap builds, and that wrap projects with the op family alone — a
+-                    // `TupleGet` never reaches an `OpCopyRecord` argument from it (a tuple
+-                    // element off a call takes the tuple-member path, measured at one
+-                    // release).  A shape that does not match keeps the full cascade: the
+-                    // pre-transfer double release, never a leak.
+-                    if crate::keys::field_handoff_enabled()
+-                        && outer_call == copy_record_nr
+-                        && arg_idx == 0
+-                        && !transfer_copy
+-                        && moved_arg.is_none()
+-                        && let Value::Call(gf, gargs) = final_val.unspan()
+-                        && data.def(*gf).name() == "OpGetField"
+-                        && let Some(Value::Var(src)) = gargs.first().map(Value::unspan)
+-                        && function.name(*src).starts_with("__lift_")
+-                        && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
+-                        && let Ok(off) = u16::try_from(*off)
+-                        && let Some(Value::Var(dw)) = args.get(1).map(Value::unspan)
+-                        && {
+-                            let dw = *self.var_mapping.get(dw).unwrap_or(dw);
+-                            function.name(dw).starts_with("__ref_")
+-                        }
+-                    {
+-                        // A second field copied out of the same lift cannot be expressed as
+-                        // one skip; drop the entry so the full cascade runs (today's double
+-                        // release, never a leak).
+-                        match self.lift_field_skip.entry(*src) {
+-                            std::collections::hash_map::Entry::Vacant(e) => {
+-                                e.insert(off);
+-                            }
+-                            std::collections::hash_map::Entry::Occupied(e) => {
+-                                if *e.get() != off {
+-                                    e.remove();
+-                                }
+-                            }
+-                        }
+-                    }
+                     // the remaining Call may also be struct-returning
+                     // (e.g. normalize3(__lift_1) inside add_dir).  Lift it too.
+                     if let Some(tp) =

@@ -30,7 +30,14 @@
 // witness releases the store by identity but never runs the drop.  All are D-heap-3's
 // remaining shapes; asserting their current wrong counts would freeze them.
 //
-// @falsified-at: pending
+// @falsified-at: 636bd457 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1506-a-call-result-projection-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — the count cells fail on the control
+//     (the chained projection reads two hooks where the guard demands one) and pass here.
+//   ARMED: nothing; a plain run scores it.  The leak channel is `none` on both trees —
+//     a doubled release is not a leak, which is why the count is asserted directly.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees; the memory
+//     channel for this family lives in the 889 poison cells, referenced above.
 fn trace_path() -> text { return "loft_1506_trace.tmp"; }
 
 fn note(s: text) {

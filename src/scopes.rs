@@ -11514,6 +11514,13 @@ impl Scopes<'_> {
                     // and only the parser-materialise destination (`Var(__ref_M)`): every
                     // other `OpCopyRecord` destination shape (a container field, a displaced
                     // buffer, a `0x8000` move) has its own hand-off with its own rules.
+                    // Matching the `OpGetField` spelling ONLY is a semantic boundary, not an
+                    // omitted arm: this pattern recognises the copy the parser's inline-ref
+                    // wrap builds, and that wrap projects with the op family alone — a
+                    // `TupleGet` never reaches an `OpCopyRecord` argument from it (a tuple
+                    // element off a call takes the tuple-member path, measured at one
+                    // release).  A shape that does not match keeps the full cascade: the
+                    // pre-transfer double release, never a leak.
                     if crate::keys::field_handoff_enabled()
                         && outer_call == copy_record_nr
                         && arg_idx == 0

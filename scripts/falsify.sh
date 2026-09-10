@@ -198,11 +198,33 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
 # So a run arriving mid-build WAITS for the finished binary instead of racing it.  The lock is
 # per target directory and held only across the one cargo invocation, so runs against different
 # refs still proceed in parallel and nothing nests.
+# `flock(1)` is a Linux tool; macOS ships without it.  The lock exists to serialise
+# CONCURRENT sweeps writing one shared target dir — on a box without the tool a run
+# proceeds unlocked rather than not at all, and the concurrency hazard it leaves open is
+# the one the comment above describes: do not run two sweeps at once there.
+have_flock() { command -v flock >/dev/null 2>&1; }
+
+# `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
+# back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
+# reach is not killed) but the alternative was every row scoring `exit 127`, command not
+# found, on both trees.  The wrapper keeps the Linux call shape: `bound -k 5 <secs> cmd…`.
+if command -v timeout >/dev/null 2>&1; then
+  bound() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+  bound() { gtimeout "$@"; }
+else
+  bound() { shift 3; "$@"; }
+fi
+
 build() { # <dir> <target-dir> -> path to binary
   mkdir -p "$(dirname "$2")"
-  ( flock 9 || exit 1
-    cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
-  ) 9>"$2.lock" || return 1
+  if have_flock; then
+    ( flock 9 || exit 1
+      cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
+    ) 9>"$2.lock" || return 1
+  else
+    ( cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
+  fi
   echo "$2/debug/loft"
 }
 
@@ -282,7 +304,7 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
   # record has since taken, which `LOFT_POISON=1` turns into a garbage read and plain mode
   # hides behind the allocator's reuse order — is scored on the channel that sees it, and
   # the guard's `@falsified-at` line says which one was armed.
-  out=$(cd "$tree" && timeout -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
+  out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
         "$bin" "$@" "$file" 2>&1); rc=$?
@@ -323,9 +345,14 @@ if [ -n "$BULK" ]; then
     fi
     # Same lock as `build`: $SHARED is one target dir for every control in the sweep, so two
     # sweeps at once would write it together.
-    if ! ( flock 9 || exit 1
-           cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
-         ) 9>"$SHARED.lock"; then
+    if have_flock; then
+      ( flock 9 || exit 1
+        cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
+      ) 9>"$SHARED.lock"; bulk_built=$?
+    else
+      ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
+    fi
+    if [ "$bulk_built" -ne 0 ]; then
       awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-build\t\n", $1, r}' "$BULK"
       git worktree remove --force "$wt" >/dev/null 2>&1
       continue
