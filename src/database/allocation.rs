@@ -3639,6 +3639,7 @@ impl Stores {
 
     /// The reporting half of [`Self::watch_oob_text`], reached only for the store
     /// `LOFT_WATCH_STORE` names.
+    /// Enforces `@FR-R-Cold`: the report is outlined so the watch test inlines.
     #[inline(never)]
     fn watch_oob_text_report(&self, to: &DbRef, tp: u16, src: Option<&DbRef>, ctx: &str) {
         let Some((bad_pos, bad_cur)) = self.first_oob_text(to, tp) else {

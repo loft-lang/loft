@@ -2699,6 +2699,7 @@ impl State {
     /// Named where the check is made rather than where the tag was set, because the answer
     /// a reader needs is *which read got a value nobody wrote* — the write that did not
     /// happen has no site.
+    /// Enforces `@FR-R-Cold`: the hook is outlined so its armed-test inlines.
     #[cold]
     #[inline(never)]
     fn verify_slot<T: 'static>(&self, what: &str, at: u32) {
@@ -2768,6 +2769,7 @@ impl State {
     /// It runs at the END of the operator, which is also the first moment the containers that
     /// legitimately track the move have finished updating themselves — scanning earlier would
     /// report the vector's own header on its way to being rewritten.
+    /// Enforces `@FR-R-Cold`: the hook is outlined so its armed-test inlines.
     #[cold]
     #[inline(never)]
     fn mark_stale_handles(&mut self) {

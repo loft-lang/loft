@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Which runtime helpers does EMITTED code still call out of line?
 
+The rule this instrument checks is `@FR-R-Cold` (doc/claude/formal/rewrites.md).
+
 The emitted program and the loft runtime are two crates and there is no LTO, so a
 runtime helper reaches the emitted code inlined only when it is marked `#[inline]`;
 every other helper is a real call through the GOT — and on a hot path that call, plus
