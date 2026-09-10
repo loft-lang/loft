@@ -447,6 +447,25 @@ for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   elif [ "$clean_here" != "ok" ]; then
     verdict="THIS TREE IS NOT CLEAN"
     notclean=1
+    # An unclean `here` is not one thing, and the columns already tell three of them apart.
+    # Measured 2026-09-10, because two sessions in a row guessed at the same symptom:
+    #
+    #   exit 124                  a TIMEOUT.  Both bounds land here — loft's own watchdog
+    #                             (`LOFT_TIMEOUT`) and the outer `timeout` in `signature`.
+    #   exit 0, "running          NO RUST TOOLCHAIN.  `--native` does not fail when it cannot
+    #   interpreted instead"      compile: it says so and falls back, so a missing rustc
+    #                             cannot produce a non-zero exit at all.
+    #   asserts > 0               the guard's OWN assertions, which is the ordinary case.
+    #
+    # So `exit 1` with ZERO assertions is none of those three.  The cause measured for it is
+    # a second run of the SAME guard in flight in this checkout — a falsify started beside a
+    # suite, most often.  SEVEN corpus guards write a trace file into the script's directory
+    # to record their own hook calls (`grep -l trace_path tests/scripts/*.loft`), and two
+    # concurrent runs clobber each other's: 4 of 8 concurrent runs of one such guard failed,
+    # with interleaved traces in the messages.  The
+    # guards' own note ("the trace file is this guard's own") is about a SIBLING guard and
+    # does not cover a second copy of the same one.
+
   else
     verdict="falsified"
     falsified_any=1
@@ -475,6 +494,16 @@ echo
 if [ $notclean -eq 1 ]; then
   echo "NOT falsified.  This tree does not pass the guard, so nothing here says whether the"
   echo "guard can CATCH anything — fix the tree first, then re-run."
+  echo
+  echo "  An unclean 'here' is not one thing.  Read the columns before concluding a regression:"
+  echo "    exit 124 ............ a TIMEOUT (loft's watchdog and the outer bound both land here)"
+  echo "    exit 0 + 'running interpreted instead' .. no Rust toolchain; --native FELL BACK,"
+  echo "                          it does not fail, so a missing rustc cannot exit non-zero"
+  echo "    asserts > 0 ......... the guard's own assertions — the ordinary case"
+  echo "    exit 1, asserts 0 ... none of those.  Measured cause: a second run of the SAME"
+  echo "                          guard in flight here (a falsify started beside a suite).  Seven"
+  echo "                          corpus guards write a trace file into the script's directory,"
+  echo "                          and two concurrent runs clobber each other's."
   exit 1
 elif [ $falsified_any -eq 1 ]; then
   # An inert backend beside a moved one is expected for a backend-divergence guard, so say so

@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` runs the hook once per resource and moves the responsibility with a copy
+// (`binding.md (B-Copy)`), so `t = ((s, 1), 2); u = t` releases ONCE.  `layout.md (L-Tuple)`
+// makes a tuple a synthetic struct, so a tuple INSIDE a tuple is a container inside a
+// container and the depth is not a semantic axis — a release is one per resource at every
+// depth.
+//
+// The hand-off is recognised by resolving the copy's tuple-MEMBER source to the work-ref
+// backing it, and the tuple's TYPE is where that pairing lives: the dep lists are unioned
+// across the tuple's heap members and spread back into each of them, in MEMBER order.  Two
+// things had to be read to find a nested leaf in that list and neither was:
+//
+//   * the count and the index were taken over ONE LEVEL's members while the list runs over
+//     every heap leaf THROUGH the nesting, so a tuple with an inner tuple either declined
+//     (a level count of 1 against a list of 2) or indexed the list at the wrong place;
+//   * a nested copy reads each leaf through a HOLD (`_tuphold_N`) whose own dep list names
+//     the base variable and nothing else, so the tuple whose type carries the pairing is one
+//     or more holds further out and the source named none of them.
+//
+// Either way the copy had no work-ref to hand the release to and the resource was released
+// TWICE, both backends, silently.
+//
+// c_outer_and_inner is the cell that says the index is positional over member order and not
+// the order the work-refs were minted in: `(a, (b, 2))` parses the inner literal FIRST, so
+// the inner member's work-ref has the LOWER number while the dep list names the outer
+// member's first.  A read that sorted, or that trusted the numbering, passes every other
+// cell here and fails this one.  c_both_in_one is its twin for the per-leaf half — with one
+// droppable the k-th dep is right by accident, and with two in the same inner tuple, naming
+// the wrong one releases one resource twice and the other never.
+//
+// @falsified-at: bff57af66 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nested-tuple-copy-releases-each-member-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Re-derived against the COMMITTED fix, so the control
+//   it names is the tree the guard was written for and not whatever the working copy held.
+// CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends —
+//   this is not a backend divergence, both released twice.  NOT the leak channel: the second
+//   release is of a record that genuinely exists, so nothing leaks and a run scored on leaks
+//   learns nothing here.  What is lost is that the resource behind those records is ONE, which
+//   only an assertion on the hook's own trace can see.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control `c_inner` drains `a1,1,1` where the fix drains `a1,1`.  It is the
+//   first cell, so the run stops there; the others were measured by scoring the file with the
+//   assertions replaced by prints rather than assumed.  `c_two_inner` reads `a1112,11,12,11,12`
+//   against `a1112,11,12`; `c_both_in_one` reads `a2122,21,22,21,22`; `c_depth3` reads
+//   `a41,41,41`; `c_nullable_inner` reads `afalse,81,81`; `c_vector_member` reads
+//   `a1312,131,131`; `c_chain` reads `a141,141,141,141` — three releases, one per name the
+//   value wore.  `c_outer_and_inner` reads `a3132,32,31,31,32`: BOTH members released twice,
+//   including the outer one, which is why `formal/heap.md` D-heap-1's earlier scope ("not
+//   nesting as such but a droppable reached THROUGH an inner tuple") did not survive being
+//   measured with a droppable on each side.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
+//   both backends.  The cells the fix must NOT touch stay put: `c_outer_only`, `c_flat` and
+//   `c_flat_two` pass on the control (the level count and the leaf count agree where there is
+//   no nesting), `c_no_copy` releases once with nothing copied out of it, `c_struct_field`
+//   holds the D-heap-2 neighbour at one, and the `c_two_indep` CONTROL reads two releases on
+//   both.
+//
+// Two neighbouring shapes are deliberately ABSENT because they still release twice and
+// `formal/heap.md` D-heap-1 carries them: a tuple with a dep-carrying `text` member beside the
+// droppable (`t = ((s, 1), w)`), where the list counts the text's dep and the leaf walk does
+// not, so the counts disagree and the pairing is unread; and a copy off a tuple PARAMETER,
+// where the deps are the CALLER's and the argument rule is the one that applies.  Asserting
+// their present answer would pin a defect into the suite.
+//
+// The trace file is this guard's own — and its own means THIS file, not this family: several
+// corpus guards write one, and two concurrent runs of the SAME guard clobber each other's
+// (see `scripts/falsify.sh`, which says so on its unclean path).
+
+fn trace_path() -> text { return "loft_nesttuple_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct NtH { id: integer }
+fn OpDrop(self: NtH) { note("{self.id}"); }
+struct NtS { h: NtH }
+fn nt_mk(id: integer) -> NtS { return NtS { h: NtH { id: id } }; }
+struct NtHolder { t: (NtS, integer) }
+
+// The defect: the droppable sits in the INNER tuple, so the copy reads it through a hold and
+// the outer tuple's own level has one heap member against a dep list of one leaf.
+fn c_inner() { s = nt_mk(1); t = ((s, 1), 2); u = t; note("a{u.0.0.h.id}"); }
+// One droppable per inner tuple — two holds, two leaves, and the second leaf is the cell a
+// `first()`-shaped read gets wrong.
+fn c_two_inner() { a = nt_mk(11); b = nt_mk(12); t = ((a, 1), (b, 2)); u = t; note("a{u.0.0.h.id}{u.1.0.h.id}"); }
+// TWO droppables in ONE inner tuple — the per-leaf pairing read through a single hold.
+fn c_both_in_one() { a = nt_mk(21); b = nt_mk(22); t = ((a, b), 2); u = t; note("a{u.0.0.h.id}{u.0.1.h.id}"); }
+// A droppable in the OUTER position beside one in the inner tuple.  The outer member's copy
+// reads no hold at all, and the dep list still names it FIRST although the inner literal's
+// work-ref was minted first — member order, not mint order.
+fn c_outer_and_inner() { a = nt_mk(31); b = nt_mk(32); t = (a, (b, 2)); u = t; note("a{u.0.h.id}{u.1.0.h.id}"); }
+// Depth three: a chain of two holds, which is what says the walk is a chain and not one step.
+fn c_depth3() { a = nt_mk(41); t = (((a, 1), 2), 3); u = t; note("a{u.0.0.0.h.id}"); }
+// The inner member written NULLABLE.  `@FR-N-Shape` makes a `τ?` a nullability bit over the
+// same runtime shape, so the nesting answer must not depend on it.
+fn c_nullable_inner() { s = nt_mk(81); t: ((NtS?, integer), integer) = ((s, 1), 2); u = t; note("a{u.0.0 == null}"); }
+// A VECTOR leaf beside the nested droppable: a vector is a heap leaf and carries a dep of its
+// own, so it must be COUNTED, and the record's index sits after it.
+fn c_vector_member() { s = nt_mk(131); v: vector<integer> = [1, 2]; t = ((s, 1), v); u = t; note("a{u.0.0.h.id}{len(u.1)}"); }
+// A chain of copies through the nested shape — one resource however many names it wears.
+fn c_chain() { s = nt_mk(141); t = ((s, 1), 2); u = t; w = u; note("a{w.0.0.h.id}"); }
+// CONTROL — a nested tuple whose droppable sits in the OUTER position with nothing droppable
+// beside it.  Always correct: one heap leaf, a list of one.
+fn c_outer_only() { a = nt_mk(51); t = (a, (1, 2)); u = t; note("a{u.0.h.id}"); }
+// CONTROL — the FLAT case.  The leaf walk must agree with the level read where there is no
+// nesting, or this fix moves an answer that was already right.
+fn c_flat() { s = nt_mk(61); t = (s, 5); u = t; note("a{u.0.h.id}"); }
+// CONTROL — flat, a scalar between two droppables: a scalar contributes no leaf and no dep.
+fn c_flat_two() { a = nt_mk(71); b = nt_mk(72); t = (a, 7, b); u = t; note("a{u.0.h.id}{u.2.h.id}"); }
+// CONTROL — the nested literal ALONE, nothing copied out of it.  A fix that handed off a
+// backing it had guessed suppresses a release that nothing else performs, and shows up here.
+fn c_no_copy() { s = nt_mk(91); t = ((s, 1), 2); note("a{t.0.0.h.id}"); }
+// CONTROL — D-heap-2's neighbour: a struct FIELD holding a tuple releases through the cascade.
+fn c_struct_field() { s = nt_mk(151); h = NtHolder { t: (s, 5) }; note("a{h.t.0.h.id}"); }
+// CONTROL — two independent resources release TWICE, in reverse declaration order.  Without it
+// every cell above would pass on a harness that had simply stopped recording.
+fn c_two_indep() { x = nt_mk(101); y = nt_mk(102); note("a{x.h.id}{y.h.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_inner(); got = drain();
+  assert(got == "a1,1", "a droppable in the INNER tuple releases once: {got}");
+
+  c_two_inner(); got = drain();
+  assert(got == "a1112,11,12", "one droppable per inner tuple, each once: {got}");
+
+  c_both_in_one(); got = drain();
+  assert(got == "a2122,21,22", "two droppables in one inner tuple, each once: {got}");
+
+  c_outer_and_inner(); got = drain();
+  assert(got == "a3132,31,32", "an outer droppable beside an inner one, each once: {got}");
+
+  c_depth3(); got = drain();
+  assert(got == "a41,41", "a droppable three levels down releases once: {got}");
+
+  c_nullable_inner(); got = drain();
+  assert(got == "afalse,81", "a NULLABLE inner member releases once: {got}");
+
+  c_vector_member(); got = drain();
+  assert(got == "a1312,131", "a vector leaf beside the nested droppable: {got}");
+
+  c_chain(); got = drain();
+  assert(got == "a141,141", "a chain of copies releases once: {got}");
+
+  c_outer_only(); got = drain();
+  assert(got == "a51,51", "CONTROL an outer droppable, nothing droppable beside it: {got}");
+
+  c_flat(); got = drain();
+  assert(got == "a61,61", "CONTROL the flat tuple: {got}");
+
+  c_flat_two(); got = drain();
+  assert(got == "a7172,71,72", "CONTROL flat, a scalar between two droppables: {got}");
+
+  c_no_copy(); got = drain();
+  assert(got == "a91,91", "CONTROL the nested literal alone releases once: {got}");
+
+  c_struct_field(); got = drain();
+  assert(got == "a151,151", "CONTROL a struct field holding a tuple: {got}");
+
+  c_two_indep(); got = drain();
+  assert(got == "a101102,102,101", "CONTROL two resources release TWICE: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("nested tuple copy ok");
+}

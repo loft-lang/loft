@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` runs the hook once per resource and moves the responsibility with a copy
+// (`binding.md (B-Copy)`), so `t = (s, 5); u = t` releases ONCE.  Writing the member's type as
+// NULLABLE must not change that — `@FR-N-Shape` says a `τ?` is a nullability bit over the same
+// runtime shape, and a release is a shape question.
+//
+// The hand-off is recognised by resolving the copy's tuple-MEMBER source to the work-ref
+// backing it, and the tuple's TYPE is where that pairing lives.  A declared type says the
+// SHAPE and cannot say what the value in hand owns, because it was written before that value
+// existed — so the site that adopts an annotation over a literal's own type has to carry the
+// literal's deps across.  It did not, and only for a member the annotation makes nullable: a
+// declared `(S, integer)` is `is_equal` to the literal's type (`is_equal` collapses deps) and
+// is never converted at all, so it keeps its backing by not taking that path.  The `?` is what
+// makes the two types differ, which is what routes the binding through the conversion, which is
+// what dropped the backing — after which the copy had no work-ref to hand the release to and
+// the resource was released TWICE, both backends, silently.
+//
+// c_dense and c_inferred are the cells that pin the axis on the `?` rather than on the
+// annotation: both are declared-or-not tuples of the same shape and both were always correct.
+// Without them a reader would take "a declared tuple loses its backing" from this file, which
+// is the scope `formal/heap.md` D-heap-1 carried before it was measured.
+//
+// @falsified-at: 7e61fc15c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-tuple-member-declared-nullable-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
+// CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends —
+//   this is not a backend divergence, both released twice.  NOT the leak channel: the second
+//   release is of a record that genuinely exists, so nothing leaks and a run scored on leaks
+//   learns nothing here.  What is lost is that the resource behind those two records is ONE,
+//   which only an assertion on the hook's own trace can see.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts
+//   the string, so an ordinary run on either backend reports it.
+// WITNESS: on the control `c_null` drains `alivefalse,1,1` where the fix drains
+//   `alivefalse,1` — the resource behind one droppable released twice.  It is the first cell,
+//   so the run stops there; the others were measured by scoring the file with the assertions
+//   replaced by prints, rather than assumed: `c_at_one` reads `alivefalse,4,4` against
+//   `alivefalse,4`, and `c_two_null` reads `alivefalsefalse,51,52,51,52` against
+//   `alivefalsefalse,51,52`.  That last one is worth reading closely — BOTH members release
+//   twice, not one twice and the other once, which says the backing was LOST for the whole
+//   tuple rather than paired to the wrong work-ref.  A dep list that named the wrong member
+//   would have produced the asymmetric trace instead.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
+//   both backends.  The cells the fix must NOT touch stay put: `c_dense` and `c_inferred`
+//   pass on the control (they never take the conversion path), `c_absent` releases nothing on
+//   either, and the `c_two` CONTROL reads two releases on both.
+//
+// The trace file is this guard's own — and its own means THIS file, not this family: seven
+// corpus guards write one, and two concurrent runs of the SAME guard clobber each other's
+// (see `scripts/falsify.sh`, which now says so on its unclean path).
+
+fn trace_path() -> text { return "loft_nullmember_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct NmH { id: integer }
+fn OpDrop(self: NmH) { note("{self.id}"); }
+fn nm_mk(id: integer) -> NmH { return NmH { id: id }; }
+struct NmS { h: NmH }
+
+// The defect: the member's type is written NULLABLE, so the declared and inferred types
+// differ and the binding is converted — which is where the backing was lost.
+fn c_null() { s = NmS { h: nm_mk(1) }; t: (NmS?, integer) = (s, 5); u = t; note("alive{u.0 == null}"); }
+// CONTROL — the same tuple declared NON-nullable.  Always correct, and the reason is the
+// point: `is_equal` collapses deps, so this type never differs from the literal's and never
+// takes the conversion path at all.
+fn c_dense() { s = NmS { h: nm_mk(2) }; t: (NmS, integer) = (s, 5); u = t; note("alive{u.0.h.id}"); }
+// CONTROL — no annotation at all.  The literal's own type is used verbatim.
+fn c_inferred() { s = NmS { h: nm_mk(3) }; t = (s, 5); u = t; note("alive{u.0.h.id}"); }
+// A nullable member at index 1, with a scalar before it: the backing is read POSITIONALLY over
+// the heap members, so a scalar ahead of it must contribute nothing.
+fn c_at_one() { s = NmS { h: nm_mk(4) }; t: (integer, NmS?) = (7, s); u = t; note("alive{u.1 == null}"); }
+// TWO nullable droppable members — the cell that tells a per-member pairing from `first()`.
+// With one member the k-th dep is right by accident; with two, naming the wrong work-ref
+// releases one resource twice and the other once.
+fn c_two_null() { a = NmS { h: nm_mk(51) }; b = NmS { h: nm_mk(52) }; t: (NmS?, NmS?) = (a, b); u = t; note("alive{u.0 == null}{u.1 == null}"); }
+// A nullable member that really IS absent releases nothing — there is no resource to release,
+// and a fix that handed off a backing it had guessed would show up here.
+fn c_absent() { t: (NmS?, integer) = (null, 5); u = t; note("absent{u.0 == null}"); }
+// CONTROL — two independent resources release TWICE, in reverse declaration order.  Without it
+// every cell above would pass on a harness that had simply stopped recording.
+fn c_two() { x = NmS { h: nm_mk(91) }; y = NmS { h: nm_mk(92) }; note("alive{x.h.id}{y.h.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_null(); got = drain();
+  assert(got == "alivefalse,1", "a NULLABLE member releases once: {got}");
+
+  c_dense(); got = drain();
+  assert(got == "alive2,2", "CONTROL the same tuple declared non-nullable: {got}");
+
+  c_inferred(); got = drain();
+  assert(got == "alive3,3", "CONTROL no annotation at all: {got}");
+
+  c_at_one(); got = drain();
+  assert(got == "alivefalse,4", "a nullable member at index 1, a scalar before it: {got}");
+
+  c_two_null(); got = drain();
+  assert(got == "alivefalsefalse,51,52", "two nullable droppable members, each once: {got}");
+
+  c_absent(); got = drain();
+  assert(got == "absenttrue", "an absent nullable member releases nothing: {got}");
+
+  c_two(); got = drain();
+  assert(got == "alive9192,92,91", "CONTROL two resources release TWICE: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("nullable tuple member ok");
+}
