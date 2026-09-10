@@ -434,12 +434,37 @@ corrected on top of it.
   (`["__ref_p2_1", "c"]`).  A predicate written from the source spelling matches nothing here and
   looks inert.
 
-**CLOSED** by asking the CALLEE's fact instead: a return whose dep names a visible parameter
-(`Def::returns_borrowed_view`, the canonical `@PLN85 D-own-1` spelling a sibling gate in the same
-function already reads) hands back a store the caller passed in, and any argument may be the
-hoisted alias.  Conservative in the admissible direction — a fresh destination is always correct
-and costs an allocation; an in-place one is correct only when the source is distinct.  One home,
-beside `rhs_reads_v`, read by both the freshness gate and the defer decision so they cannot drift.
+**CLOSED** by the ORACLE's borrow BASE: a `Borrowed`/`Join` whose base may hold `v`'s store —
+`base == v`, or `base`'s dep list names `v`.  The `??` hoist temp carries exactly that dep
+(`__lift_1` reads `["c", "__ref_p2_1"]`), because the hoist moved the READ and not the VALUE.
+
+⚠ **Two other facts were tried first and BOTH are wrong, in OPPOSITE directions, and all 70
+targeted tests across eight guards were green on each.**  Recorded so neither is retried:
+
+- **`value.reads_var(v)` widened into the gate.**  Answers NO for the defect (hoisted) and YES
+  for `s = grow(s)`, which NEEDS the in-place destination — one store leaked per loop pass,
+  `303-ref-reassign-free.loft`, `R3×4` and `N3×4`.
+- **`Def::returns_borrowed_view`** (the return's dep names a visible param).  True for a callee
+  that MINTS its record and merely carries a dep through a `text` field —
+  `fn grow(x: N3) -> N3 { N3 { name: x.name + "x", v: x.v + 1 } }` reads as borrowing and hands
+  back a fresh store — so it leaks the same population.  A return type's dep list is not an
+  ALIASING fact.
+
+And the middle is narrow rather than the edges merely being wrong: the first cut over-reached into
+the WIPE (`1184-a-view-assigned-back-onto-its-own-source`, `len 0` where 8 is right, six cells,
+plus a `??` default arm's mint released twice), the narrowing over-reached back into the LEAK, and
+the oracle-alone form does not separate them either — **1184's failing cells and the defect share
+the signature `reads=false, Borrowed`**.  What separates them is only the base: the defect's base
+carries a dep naming `v`; 1184's bases (`w`, `d`, `target`) have empty dep lists and are genuine
+views of ANOTHER binding, which is why that population needs the in-place destination — it is
+assigning a view back onto its own source.
+
+⚠ **All of it was found by an env-gated probe inside the gate, after two wrong answers reasoned
+from predicates that were in scope.**  `(O-Detach)`'s three candidate facts are indistinguishable
+by reading; they separate on one line of `eprintln!`.  And ⚠ **a plain run shows none of it**:
+`--interpret`, `--native` and `--tests` on `303` are all clean, because only `wrap`'s in-process
+SUITE run arms the leak gate (`--tests` skips it).  Two of us checked 303 the natural way and
+concluded it was fixed.
 
 Guard `tests/scripts/a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.loft`, 11
 cells.  Its sharp control is `test_the_callee_returns_the_other_parameter`: the callee's return
