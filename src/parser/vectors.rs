@@ -5693,6 +5693,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 return None;
             }
             self.vars.defined(h);
+            // Which member this hold is a view OF — the one fact its own type cannot carry.
+            // The dep above names the base variable and nothing else, so a copy reading a
+            // leaf through this hold has no way back to the tuple whose type pairs that leaf
+            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap.md D-heap-1`).
+            let member = match &src {
+                Value::TupleGet(_, i) => Some(*i),
+                _ => None,
+            };
+            self.vars.tuphold_origin.insert(h, (base, member));
             let mut members: Vec<Value> = Vec::with_capacity(elems.len());
             let mut types = elems.clone();
             for (i, t) in elems.iter().enumerate() {

@@ -2265,48 +2265,115 @@ pub(crate) fn drop_bearing_source(src: &Value, function: &Function) -> Option<u1
     }
 }
 
-/// The work-ref backing member `i` of the tuple in `base`, or `None` when that member is not
-/// a heap record — a scalar member is stored inline and has no slot of its own to release.
+/// The work-ref backing the tuple member a copy reads, or `None` when that member is not a
+/// heap record — a scalar member is stored inline and has no slot of its own to release.
 ///
-/// The tuple's TYPE is where the pairing lives, and reading it takes one step of care: the
-/// dep lists are UNIONED across the tuple's heap members, so every heap element carries the
-/// same list and `(WS, integer, WT)` prints as
-/// `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is in
-/// member order and a scalar member contributes nothing, so the backing of member `i` is the
-/// dep at the number of HEAP members before it — `__ref_2` for the `WT` above, not the
-/// `__ref_1` that `first()` answers.
+/// The tuple's TYPE is where the pairing lives, and reading it takes two steps of care.
+///
+/// **Which tuple.** A nested tuple's copy reads each heap leaf through a HOLD, so the `base`
+/// a copy names is not always the tuple whose type carries the pairing: `u = t` over
+/// `t = ((s, 1), 2)` copies from `_tuphold_1.0` where `_tuphold_1 = t.0`. A hold's own type
+/// cannot answer this — its dep list names the base variable and nothing else — so
+/// [`tuple_copy_source_path`] walks `Function::tuphold_origin` to the tuple the chain starts
+/// from and the PATH to the leaf inside it.
+///
+/// **Which dep.** The dep lists are UNIONED across the tuple's heap members and spread back
+/// into every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints
+/// as `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is
+/// in MEMBER order and recurses into a nested tuple in that same order, so the backing of a
+/// leaf is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the
+/// `WT` above, not the `__ref_1` that `first()` answers. Member order, not the order the
+/// work-refs were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the
+/// inner literal's work-ref was created first, which is what says the index is positional
+/// and not a happy accident of the numbering.
 ///
 /// The count is what makes that positional read safe rather than a convention this function
-/// hopes for: if the list is not exactly as long as the tuple's heap members, the order it
+/// hopes for: if the list is not exactly as long as the tuple's heap leaves, the order it
 /// would be indexed by is not established, so this DECLINES instead of naming a work-ref it
 /// guessed. Declining costs the hand-off (the pre-loft#1361 double release) and never
-/// suppresses the release of a member that is still live.
+/// suppresses the release of a member that is still live. A `text` or a re-copied tuple is
+/// what reaches it — a text member carries a dep of its own without being a heap leaf, and a
+/// copy of a copy unions the source's deps in beside its own — and `formal/heap.md` D-heap-1
+/// keeps those shapes.
 fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
+    let (root, path) = tuple_copy_source_path(base, i, function);
     // A PARAMETER's members are the CALLER's, and its deps are not frame variables of this
     // function at all — reading one as a local's number would suppress the release of
     // whatever local happens to wear that number.  The parameter rule is the one that
     // applies here anyway: a copy off an argument leaves the caller as the owner
     // (`copy_moves_drop_from`), which is a decision about the argument, not its member.
-    if function.is_argument(base) {
+    if function.is_argument(root) {
         return None;
     }
-    let Type::Tuple(elems) = function.tp(base).base() else {
-        return None;
-    };
-    let elem = elems.get(i as usize)?;
-    if !crate::data::is_dbref(elem.base()) {
+    let root_tp = function.tp(root);
+    let (leaf, ordinal) = tuple_leaf_at(root_tp, &path)?;
+    if !crate::data::is_dbref(leaf.base()) {
         return None;
     }
-    let deps = match elem.base() {
+    let deps = match leaf.base() {
         Type::Reference(_, deps) | Type::Enum(_, true, deps) => deps,
         _ => return None,
     };
-    let heap = |e: &Type| crate::data::is_dbref(e.base());
-    if deps.len() != elems.iter().filter(|e| heap(e)).count() {
+    if deps.len() != tuple_heap_leaves(root_tp) {
         return None;
     }
-    let dep = *deps.get(elems.iter().take(i as usize).filter(|e| heap(e)).count())?;
+    let dep = *deps.get(ordinal)?;
     (dep != u16::MAX).then_some(dep)
+}
+
+/// The tuple a copy's member source ultimately reads, and the path of member indices from it
+/// down to the leaf being copied.
+///
+/// One `_tuphold_N` per level of nesting, each projected from the level above, so the chain
+/// is as deep as the tuple. It cannot loop: a hold is minted after the tuple it projects, so
+/// its variable number is the larger of the two, and the walk requires that — a table saying
+/// otherwise would be a cycle, and stopping there answers with the tuple reached so far,
+/// whose own dep list is then checked like any other.
+fn tuple_copy_source_path(base: u16, i: u16, function: &Function) -> (u16, Vec<u16>) {
+    let mut path = vec![i];
+    let mut cur = base;
+    while let Some(&(parent, member)) = function.tuphold_origin.get(&cur) {
+        if parent >= cur {
+            break;
+        }
+        // A hold projected from a whole VARIABLE rather than a member is the same tuple one
+        // name further out, so it adds no step to the path.
+        if let Some(m) = member {
+            path.push(m);
+        }
+        cur = parent;
+    }
+    path.reverse();
+    (cur, path)
+}
+
+/// The member `path` names inside tuple type `tp`, with its ordinal among the tuple's heap
+/// leaves in pre-order — `None` when the path does not reach a member.
+fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
+    let Type::Tuple(elems) = tp.base() else {
+        return None;
+    };
+    let (i, rest) = path.split_first()?;
+    let before: usize = elems
+        .iter()
+        .take(usize::from(*i))
+        .map(tuple_heap_leaves)
+        .sum();
+    let elem = elems.get(usize::from(*i))?;
+    if rest.is_empty() {
+        return Some((elem, before));
+    }
+    let (leaf, inner) = tuple_leaf_at(elem, rest)?;
+    Some((leaf, before + inner))
+}
+
+/// How many HEAP leaves a tuple type holds, counting through nested tuples — the length its
+/// dep list must have for member order to index them.
+fn tuple_heap_leaves(tp: &Type) -> usize {
+    match tp.base() {
+        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
+        other => usize::from(crate::data::is_dbref(other)),
+    }
 }
 
 /// Which DEFINITION each fn-ref variable in `code` was assigned, `u32::MAX` where the

@@ -1,0 +1,222 @@
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 413509bed..6bcddd08b 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -5693,15 +5693,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 return None;
+             }
+             self.vars.defined(h);
+-            // Which member this hold is a view OF — the one fact its own type cannot carry.
+-            // The dep above names the base variable and nothing else, so a copy reading a
+-            // leaf through this hold has no way back to the tuple whose type pairs that leaf
+-            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap.md D-heap-1`).
+-            let member = match &src {
+-                Value::TupleGet(_, i) => Some(*i),
+-                _ => None,
+-            };
+-            self.vars.tuphold_origin.insert(h, (base, member));
+             let mut members: Vec<Value> = Vec::with_capacity(elems.len());
+             let mut types = elems.clone();
+             for (i, t) in elems.iter().enumerate() {
+diff --git b/src/scopes.rs a/src/scopes.rs
+index f7d314b18..767ea7732 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2265,117 +2265,50 @@ pub(crate) fn drop_bearing_source(src: &Value, function: &Function) -> Option<u1
+     }
+ }
+ 
+-/// The work-ref backing the tuple member a copy reads, or `None` when that member is not a
+-/// heap record — a scalar member is stored inline and has no slot of its own to release.
+-///
+-/// The tuple's TYPE is where the pairing lives, and reading it takes two steps of care.
+-///
+-/// **Which tuple.** A nested tuple's copy reads each heap leaf through a HOLD, so the `base`
+-/// a copy names is not always the tuple whose type carries the pairing: `u = t` over
+-/// `t = ((s, 1), 2)` copies from `_tuphold_1.0` where `_tuphold_1 = t.0`. A hold's own type
+-/// cannot answer this — its dep list names the base variable and nothing else — so
+-/// [`tuple_copy_source_path`] walks `Function::tuphold_origin` to the tuple the chain starts
+-/// from and the PATH to the leaf inside it.
+-///
+-/// **Which dep.** The dep lists are UNIONED across the tuple's heap members and spread back
+-/// into every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints
+-/// as `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is
+-/// in MEMBER order and recurses into a nested tuple in that same order, so the backing of a
+-/// leaf is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the
+-/// `WT` above, not the `__ref_1` that `first()` answers. Member order, not the order the
+-/// work-refs were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the
+-/// inner literal's work-ref was created first, which is what says the index is positional
+-/// and not a happy accident of the numbering.
++/// The work-ref backing member `i` of the tuple in `base`, or `None` when that member is not
++/// a heap record — a scalar member is stored inline and has no slot of its own to release.
++///
++/// The tuple's TYPE is where the pairing lives, and reading it takes one step of care: the
++/// dep lists are UNIONED across the tuple's heap members, so every heap element carries the
++/// same list and `(WS, integer, WT)` prints as
++/// `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is in
++/// member order and a scalar member contributes nothing, so the backing of member `i` is the
++/// dep at the number of HEAP members before it — `__ref_2` for the `WT` above, not the
++/// `__ref_1` that `first()` answers.
+ ///
+ /// The count is what makes that positional read safe rather than a convention this function
+-/// hopes for: if the list is not exactly as long as the tuple's heap leaves, the order it
++/// hopes for: if the list is not exactly as long as the tuple's heap members, the order it
+ /// would be indexed by is not established, so this DECLINES instead of naming a work-ref it
+ /// guessed. Declining costs the hand-off (the pre-loft#1361 double release) and never
+-/// suppresses the release of a member that is still live. A `text` or a re-copied tuple is
+-/// what reaches it — a text member carries a dep of its own without being a heap leaf, and a
+-/// copy of a copy unions the source's deps in beside its own — and `formal/heap.md` D-heap-1
+-/// keeps those shapes.
++/// suppresses the release of a member that is still live.
+ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
+-    let (root, path) = tuple_copy_source_path(base, i, function);
+     // A PARAMETER's members are the CALLER's, and its deps are not frame variables of this
+     // function at all — reading one as a local's number would suppress the release of
+     // whatever local happens to wear that number.  The parameter rule is the one that
+     // applies here anyway: a copy off an argument leaves the caller as the owner
+     // (`copy_moves_drop_from`), which is a decision about the argument, not its member.
+-    if function.is_argument(root) {
++    if function.is_argument(base) {
+         return None;
+     }
+-    let root_tp = function.tp(root);
+-    let (leaf, ordinal) = tuple_leaf_at(root_tp, &path)?;
+-    if !crate::data::is_dbref(leaf.base()) {
++    let Type::Tuple(elems) = function.tp(base).base() else {
++        return None;
++    };
++    let elem = elems.get(i as usize)?;
++    if !crate::data::is_dbref(elem.base()) {
+         return None;
+     }
+-    let deps = match leaf.base() {
++    let deps = match elem.base() {
+         Type::Reference(_, deps) | Type::Enum(_, true, deps) => deps,
+         _ => return None,
+     };
+-    if deps.len() != tuple_heap_leaves(root_tp) {
++    let heap = |e: &Type| crate::data::is_dbref(e.base());
++    if deps.len() != elems.iter().filter(|e| heap(e)).count() {
+         return None;
+     }
+-    let dep = *deps.get(ordinal)?;
++    let dep = *deps.get(elems.iter().take(i as usize).filter(|e| heap(e)).count())?;
+     (dep != u16::MAX).then_some(dep)
+ }
+ 
+-/// The tuple a copy's member source ultimately reads, and the path of member indices from it
+-/// down to the leaf being copied.
+-///
+-/// One `_tuphold_N` per level of nesting, each projected from the level above, so the chain
+-/// is as deep as the tuple. It cannot loop: a hold is minted after the tuple it projects, so
+-/// its variable number is the larger of the two, and the walk requires that — a table saying
+-/// otherwise would be a cycle, and stopping there answers with the tuple reached so far,
+-/// whose own dep list is then checked like any other.
+-fn tuple_copy_source_path(base: u16, i: u16, function: &Function) -> (u16, Vec<u16>) {
+-    let mut path = vec![i];
+-    let mut cur = base;
+-    while let Some(&(parent, member)) = function.tuphold_origin.get(&cur) {
+-        if parent >= cur {
+-            break;
+-        }
+-        // A hold projected from a whole VARIABLE rather than a member is the same tuple one
+-        // name further out, so it adds no step to the path.
+-        if let Some(m) = member {
+-            path.push(m);
+-        }
+-        cur = parent;
+-    }
+-    path.reverse();
+-    (cur, path)
+-}
+-
+-/// The member `path` names inside tuple type `tp`, with its ordinal among the tuple's heap
+-/// leaves in pre-order — `None` when the path does not reach a member.
+-fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
+-    let Type::Tuple(elems) = tp.base() else {
+-        return None;
+-    };
+-    let (i, rest) = path.split_first()?;
+-    let before: usize = elems
+-        .iter()
+-        .take(usize::from(*i))
+-        .map(tuple_heap_leaves)
+-        .sum();
+-    let elem = elems.get(usize::from(*i))?;
+-    if rest.is_empty() {
+-        return Some((elem, before));
+-    }
+-    let (leaf, inner) = tuple_leaf_at(elem, rest)?;
+-    Some((leaf, before + inner))
+-}
+-
+-/// How many HEAP leaves a tuple type holds, counting through nested tuples — the length its
+-/// dep list must have for member order to index them.
+-fn tuple_heap_leaves(tp: &Type) -> usize {
+-    match tp.base() {
+-        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
+-        other => usize::from(crate::data::is_dbref(other)),
+-    }
+-}
+-
+ /// Which DEFINITION each fn-ref variable in `code` was assigned, `u32::MAX` where the
+ /// assignments disagree or the target cannot be named.
+ ///
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index c79a346a2..a187af6a1 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -304,21 +304,6 @@ pub struct Function {
+     /// `i490_enum_field_return_inline` leak case then read a store the substitution had
+     /// redirected.  Regenerated by the binding sites on every pass, like `unique`.
+     pub mv_field_origin: HashMap<u16, (Value, Type)>,
+-    /// The tuple member each `_tuphold_N` in this function was projected from — its base
+-    /// variable, and the member index when the projection named one.
+-    ///
+-    /// A nested tuple's whole-value copy reads each heap leaf through such a HOLD
+-    /// ([`crate::parser::Parser::tuple_member_owned_copy`]), so the copy's source names the
+-    /// hold and the tuple whose type carries the leaf/work-ref pairing is one or more holds
+-    /// further up: `u = t` over `t = ((s, 1), 2)` copies from `_tuphold_1.0` where
+-    /// `_tuphold_1 = t.0`.  A hold's own type cannot say which member it is — its dep list
+-    /// names the base variable and nothing else — so `scopes::tuple_member_backing` reads
+-    /// the path from here.
+-    ///
+-    /// Lives on the variable table because a variable NUMBER is only unique within a
+-    /// function, the same reason `mv_field_origin` above does; regenerated by the hold site
+-    /// on every pass, like `unique`.
+-    pub tuphold_origin: HashMap<u16, (u16, Option<u16>)>,
+     /// loft#1145 — a per-PASS ordinal for the loop now being parsed, and the body locals
+     /// each loop binds.
+     ///
+@@ -541,7 +526,6 @@ impl Function {
+             unique: HashMap::new(),
+             loop_binds: HashMap::new(),
+             mv_field_origin: HashMap::new(),
+-            tuphold_origin: HashMap::new(),
+             loop_ord: 0,
+             loop_ord_of: HashMap::new(),
+             body_binds: HashMap::new(),
+@@ -708,13 +692,6 @@ impl Function {
+         other.loop_binds.clear();
+         self.mv_field_origin.clear();
+         other.mv_field_origin.clear();
+-        // CARRIED, not cleared, unlike the per-pass counters above: the reader is
+-        // `scopes::tuple_member_backing`, which runs AFTER parsing, so an entry that did not
+-        // survive the hand-back to the definition would be an empty table by the time it is
+-        // asked.  Idempotent to carry — a hold gets the same variable number on both passes,
+-        // so pass 2 re-inserts what pass 1 put there.
+-        self.tuphold_origin.clear();
+-        self.tuphold_origin.clone_from(&other.tuphold_origin);
+         self.loop_ord = 0;
+         other.loop_ord = 0;
+         self.loop_ord_of.clear();
+@@ -790,9 +767,6 @@ impl Function {
+             unique: HashMap::new(),
+             loop_binds: HashMap::new(),
+             mv_field_origin: HashMap::new(),
+-            // Carried for the same reason `append` carries it: the scope pass reads this map
+-            // off the copy it works on, long after parsing.
+-            tuphold_origin: other.tuphold_origin.clone(),
+             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),
+             // but the maps it keys are CARRIED: they are how pass 2 hands each loop the
+             // binding pass 1 gave it.  Cleared here, pass 2's third loop found the second
