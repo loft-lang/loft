@@ -216,10 +216,12 @@ holds it while the run continues (so the gate still serialises); and closing an 
 harmless, which is the `LOFT_GATE_PARALLEL` path. A SUBSHELL rather than a `9>&-` per command
 because the per-command form is an allow-list, and a step added later would silently drop out of
 it. Bounding the spawned children's own lifetime (a `LOFT_TIMEOUT` on each) is a separate
-hardening and deliberately NOT done as an allow-list: there are **59 `.spawn()` sites across 30
-test files** (`engine_host_kernel.rs` alone has 14), so it wants a shared spawn helper, not
-59 edits that drift apart.  The count was re-measured here rather than carried: the first
-reading of it was 37 across 11.
+hardening and deliberately NOT done as an allow-list: there are **37 spawn sites of the loft
+binary across 11 test files** (`engine_host_kernel.rs` alone has 14), inside **59 `.spawn()` sites
+across 30 files** overall — so it wants a shared spawn helper, not dozens of edits that drift
+apart. Both counts are worth carrying: the smaller one is what a `LOFT_TIMEOUT` could bound, and
+the larger one is what can inherit a descriptor, since inheritance does not care which binary the
+child is.
 
 **And the reporting was the other half — the 90 minutes went to a MESSAGE, not to the lock.**
 Closing the descriptor stops this cause; it does nothing for the next one, because the waiter

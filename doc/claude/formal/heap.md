@@ -358,9 +358,14 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1** — `D-heap-1`, below: three shapes release a tuple member's resource TWICE.
+OPEN: **2** — `D-heap-1`, below: five shapes get a tuple member's resource release
+WRONG (four release it twice, one never releases it at all); and `D-heap-LIFO`, stated with
+`(H-FreeLIFO)` above, where the rule names a fault the implementation deliberately stopped
+requiring.  The count read **1** while `D-heap-LIFO` was already written and marked OPEN in
+the rules section — an `OPEN: n` is a claim to re-measure, and a deviation placed beside its
+rule rather than under this heading is the way it goes stale.
 
-### D-heap-1 — OPEN (2026-09-05): a copy of a tuple releases a droppable member twice
+### D-heap-1 — OPEN (2026-09-05): a tuple member's resource is released twice, or not at all
 
 `(H-Drop)` runs the hook once per resource and moves the responsibility with a copy.  A
 tuple is a container like any other (`layout.md (L-Tuple)`), so `t = (s, 5); u = t` must
@@ -371,31 +376,49 @@ copied, one record wore both names and "released once" was true by accident.
 Most of the family holds: the whole-tuple bind, two droppable members, a member at index 1,
 a chain of copies, a struct-enum member, a return buffer, a destructure after the copy and
 the literal itself are each measured at one release on both backends
-(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  Three
-shapes still release twice, both backends, silently:
+(`tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft`).  FIVE
+shapes do not, both backends, silently — re-measured 2026-09-10, where the entry had named
+three:
 
-- a NESTED tuple — `t = ((s, 1), 2); u = t`;
-- a member declared NULLABLE — `t: (S?, integer) = (s, 5); u = t`;
+- a nested tuple whose droppable sits in the INNER tuple — `t = ((s, 1), 2); u = t`: twice;
+- a member declared NULLABLE — `t: (S?, integer) = (s, 5); u = t`: twice;
 - a copy off a tuple PARAMETER — `fn f(p: (S, integer)) { u = p; }`, where `(H-Drop)`'s
-  closing clause says the CALLER owns and nothing in the callee should release.
+  closing clause says the CALLER owns and nothing in the callee should release: twice;
+- a copy off a tuple in a STRUCT FIELD — `h = Holder { t: (s, 5) }; u = h.t`: **never**.  The
+  hook does not run at all, so the resource leaks;
+- a copy off a LOOP VARIABLE over a `vector<(τ, τ)>` — `for e in v { u = e; }`: twice.
+
+The struct-field cell is the one worth naming separately, because it is the OPPOSITE fault and
+an entry that says "releases twice" cannot cover it: a guard scoring only for a double release
+reads that cell as a pass.  A closing test must assert the release COUNT, not its absence.
+
+**Two of the three shapes were scoped wider than they measure**, and the controls say so:
+a declared but NOT nullable `t: (S, integer) = (s, 5); u = t` releases ONCE (correct), so the
+axis is the `?` and not the author's annotation; and a nested tuple whose droppable sits in the
+OUTER position — `t = (s, (1, 2)); u = t` — is also correct, so it is not nesting as such but a
+droppable reached THROUGH an inner tuple.
 
 **One cause, read off the IR.**  The hand-off is recognised by resolving a copy's tuple-MEMBER
 source to the work-ref backing it, and the tuple's TYPE is where that pairing lives.  The
 first two shapes have no pairing to read: a nested tuple's element is a `Type::Tuple` whose
-backing sits on the INNER type, and a declared `(S?, integer)` reaches the binding with the
-author's annotation and no backing dep at all (`(ref(S)?, integer)` where the inferred form
-is `(ref(S)["__ref_1"]?, integer)`).  The third is not this frame's to read: a parameter's
+backing sits on the INNER type, and a declared `(S?, integer)` reaches the binding as
+`(ref(S)?, integer)` where the inferred form is `(ref(S)["__ref_1"]?, integer)`.  Note it is
+the `?` that loses the dep and not the annotation — a declared `(S, integer)` keeps its
+backing and releases once, which is the control above.  The third is not this frame's to read: a parameter's
 deps are the CALLER's, in another dep space.  So `scopes::tuple_member_backing` DECLINES all
 three rather than naming a work-ref it guessed — declining costs the hand-off and leaves the
 pre-loft#1361 double release, where guessing would suppress the release of whatever local
 wore that number.
 
-**Branch-internal, so no issue.**  None of the three reproduces on `main`, where the member
-is aliased rather than copied and the count is one; they exist only where loft#1361's copy
-has landed.  Per the bug policy that keeps them here rather than in the tracker.
+**No longer branch-internal.**  This entry landed in the SAME commit as loft#1361 (`2808e1833`,
+2026-09-06), so `main` has carried the copy — and therefore all five shapes — since that merge;
+re-measured there 2026-09-10 on both backends.  The claim that none of them reproduces on `main`
+was true only for the hours before that commit merged, which is how a "branch-internal" note
+goes stale: it is a statement about two trees, and one of them moved.  Per the bug policy that keeps them here rather than in the tracker.
 
-**Closes when** the three shapes above read one release on both backends and the guard's
-`@falsified-at` line covers them.  The cure is to give the tuple's element type its backing
+**Closes when** the five shapes above read exactly one release on both backends and the guard's
+`@falsified-at` line covers them — scoring the COUNT, so the struct-field cell cannot pass by
+releasing nothing.  The cure is to give the tuple's element type its backing
 dep in the two places that lose it — the declared-type path in the binding conversion, and
 the nested tuple's outer element — after which the existing `TupleGet` arm reaches them
 unchanged; the parameter shape wants the argument rule instead, not a member pairing.

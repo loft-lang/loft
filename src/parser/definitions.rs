@@ -929,14 +929,23 @@ impl Parser {
         }
         if self.lexer.has_keyword("size") {
             self.lexer.token("(");
-            if let Some(n) = self.lexer.has_integer() {
-                // Only 1/2/4/8 are meaningful for integer subtypes.  Larger
-                // values (e.g. size(12) on the built-in `reference` alias)
-                // are accepted silently — forced_size is only consulted for
-                // integer types, so non-integer annotations are harmless.
-                if matches!(n, 1 | 2 | 4 | 8) && self.first_pass && d_nr != u32::MAX {
-                    self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
-                }
+            // Read as a LONG.  The lexer switches token kind at `i32::MAX`, so matching only
+            // `LexItem::Integer` left `size(9999999999)` unconsumed and the reader got
+            // `Expect token )` — a punctuation error about a width they wrote deliberately.
+            let width = self.lexer.has_long();
+            if self.first_pass && d_nr != u32::MAX {
+                self.check_declared_size(d_nr, width);
+            }
+            // Only 1/2/4/8 are storage widths.  A non-integer type keeps the old silence —
+            // `size(12)` on the built-in `reference` alias is deliberate, and `forced_size`
+            // is only consulted for integer types — which is what `check_declared_size`
+            // decides before this runs.
+            if let Some(n) = width
+                && matches!(n, 1 | 2 | 4 | 8)
+                && self.first_pass
+                && d_nr != u32::MAX
+            {
+                self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
             }
             self.lexer.token(")");
         }
@@ -3449,6 +3458,76 @@ impl Parser {
         }
         self.lexer.token("]");
         self.lexer.closing_angle();
+    }
+
+    /// Does a declared `size(…)` agree with the range the same declaration promises?
+    ///
+    /// `@FR-L-Narrow` says a range-annotated integer stores in the SMALLEST width that HOLDS
+    /// its range, and `@FR-L-Narrow-Decode` says the bytes carry `value - start`.  A
+    /// `size(…)` that cannot hold the range satisfies neither: it is not the smallest such
+    /// width because there is no such width below it, and the offset it would store does
+    /// not fit.  The rule already decided this; what was missing is a site that asks.
+    ///
+    /// `limit(…)` says which values the type HOLDS and `size(…)` says how many bytes it gets,
+    /// and nothing checked them against each other. A narrow integer stores the offset
+    /// `value - min`, so `integer limit(0, 100000) size(1)` promises 100001 values and gives
+    /// them 256 codes: `300` and `100000` both read back as `0`, in a struct field, a vector
+    /// element, a vector literal and an element write, on both backends, with no diagnostic
+    /// anywhere (loft#1501). The declaration is where that is decidable, and it is the only
+    /// place the two halves are both in view.
+    ///
+    /// Only INTEGER types are judged. `size(12)` on the built-in `reference` alias is
+    /// deliberate and `forced_size` is never consulted for it, so a non-integer annotation
+    /// keeps the silence it had.
+    fn check_declared_size(&mut self, d_nr: u32, width: Option<u64>) {
+        // Through `base()` (`@FR-N-Shape`): the question is which FORMER this is, and a bare
+        // `Type::Integer` match answers "no" for every `?` spelling of one.  No declaration
+        // reaches here as an `Optional` today — `type T = integer? limit(0, 255) size(1)` does
+        // not parse — so this is the shape the rule asks for rather than a case observed; the
+        // reserved sentinel travels with it so the code COUNT stays right if it ever does.
+        let declared = self.data.attr_type(d_nr, usize::MAX);
+        let nullable = matches!(declared, Type::Optional(_));
+        let Type::Integer(spec) = declared.base().clone() else {
+            return;
+        };
+        let Some(width) = width.filter(|n| matches!(n, 1 | 2 | 4 | 8)) else {
+            // Anything else is not a storage width. It used to be dropped in silence, so
+            // `size(3)` laid the type out as the 8-byte default while the declaration said
+            // three — one more way for a declaration to describe something the layout does
+            // not do.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a narrow integer is 1, 2, 4 or 8 bytes wide — `size(…)` names one of those"
+            );
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        if spec.range_fits_width(width as u8, nullable) {
+            return;
+        }
+        let codes = 1i64 << (8 * width);
+        if spec.is_signed32_template() {
+            // No `limit(…)` at all, so the range is the whole `integer` and no narrow width
+            // can hold it. This is loft#931's shape for a type the stdlib does not declare:
+            // `i32` is the one alias that fits, because 4 bytes hold exactly its range.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`size({width})` holds {codes} values and a plain `integer` has more — say \
+                 which values this type holds with `limit(lo, hi)`, or drop the `size(…)`"
+            );
+        } else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`size({width})` holds {codes} values and `limit({}, {})` needs {} — widen \
+                 the size or narrow the limit",
+                spec.min,
+                spec.max,
+                spec.range()
+            );
+        }
     }
 
     // <field_limit> ::= 'limit' '(' [ '-' ] <min-integer> ',' [ '-' ] <max-integer> ')'

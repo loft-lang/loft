@@ -178,19 +178,20 @@ fn test_text_slice_end_with_text_is_refused() {
 // loop variable — are in `822-vector-tuple-spellings.loft` and the controls that guard
 // this walk's fix.
 //
-// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/26 -> 20/26
+// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/30 -> 20/30
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
-//   FAIL/26 -> 20/26.
-// CHANNEL: expectations, on both backends — seven of the ten cells this walk adds report NO
-//   error on the control, so the file's exit goes 1 -> 0 with them.  Not leak and not
-//   assert: this whole file is a parse-time verdict.
+//   FAIL/30 -> 20/30.
+// CHANNEL: expectations, on both backends — eleven of the fourteen cells this walk adds
+//   report NO error on the control, so the file's exit goes 1 -> 0 with them.  Not leak and
+//   not assert: this whole file is a parse-time verdict.
 // ARMED: no instrument.  A pass-1 diagnostic is reported by the ordinary run.
 // WITNESS: on 2e408acc8 `t._0` on a `vector<(integer, text)>` loop variable ANSWERS `11`
 //   instead of refusing, `t._0 = 99` leaves `v[0].0` reading `99`, `t.name` reports
 //   `Unknown field __tuple<integer,text>.name` — the synthetic struct's own attribute names,
 //   reachable as a second spelling of `.0` — `t.2147483648` reports `requires a numeric
-//   index` about a literal that is one, and `.0` on a non-tuple reports `Expect a field
-//   name`, about the token rather than the receiver.
+//   index` about a literal that is one, `.0` on a non-tuple reports `Expect a field name`
+//   about the token rather than the receiver, and `integer limit(0, 100000) size(1)` DECLARES
+//   without complaint, after which `300` reads back `0` from every heap position.
 // HOLDS: the two stack-tuple cells pass on BOTH trees, unchanged — `t.5` is already
 //   `Tuple index 5 out of range` there and `t.name` already `requires a numeric index`.
 //   They are what says the fix made the three homes AGREE rather than moving all three,
@@ -284,3 +285,40 @@ fn pe_tuple_index_on_a_struct(s: TupleFieldBoxB) -> integer {
   y = s.0;
   0
 }
+
+// ── loft#1501 — `size(…)` and `limit(…)` must describe the same type ──────────────
+//
+// `limit` says which values the type HOLDS; `size` says how many bytes it gets. A narrow
+// integer stores the OFFSET `value - min`, so the two are one statement made twice and
+// nothing checked them against each other. `integer limit(0, 100000) size(1)` promised
+// 100001 values and gave them 256 codes: `300` and `100000` both read back as the range's
+// own `min`, in a struct field, a vector element, a vector literal and an element write,
+// on both backends, with no diagnostic anywhere. A local and a parameter kept 64 bits
+// instead — six store paths, three behaviours, silent.
+//
+// The declaration is where it is decidable and the only place both halves are in view.
+// The positive controls are the stdlib's own narrow aliases, which every test in this
+// repo already loads: `u8` (`limit(0, 255) size(1)`) and `u32`
+// (`limit(0, 4294967294) size(4)`) sit exactly at their widths and must keep parsing —
+// a check that refused a tight fit would take `default/01_code.loft` down with it, so
+// the whole suite is the control for the boundary being `<=` and not `<`.
+
+// @EXPECT_ERROR: `size(1)` holds 256 values and `limit(0, 100000)` needs 100001
+type PeNarrowerThanItsLimit = integer limit(0, 100000) size(1);
+
+// No `limit(…)` at all, so the range is the whole `integer` and no narrow width holds it.
+// This is loft#931's shape for a type the stdlib does not declare — `i32` is the one alias
+// that survives, because 4 bytes hold exactly its range.
+// @EXPECT_ERROR: holds 256 values and a plain `integer` has more
+type PeNarrowWithNoLimit = integer size(1);
+
+// Not a storage width. It was dropped in silence, so the type laid out as the 8-byte
+// default while the declaration said three.
+// @EXPECT_ERROR: a narrow integer is 1, 2, 4 or 8 bytes wide
+type PeSizeThatIsNotAWidth = integer limit(10, 255) size(3);
+
+// Above `i32::MAX` the literal tokenises as `LexItem::Long`, which the `size` parser did
+// not match — so it was left in the stream and the reader got `Expect token )`, a
+// punctuation error about a width they wrote deliberately.
+// @EXPECT_ERROR: a narrow integer is 1, 2, 4 or 8 bytes wide
+type PeSizeAboveI32Max = integer limit(10, 255) size(9999999999);

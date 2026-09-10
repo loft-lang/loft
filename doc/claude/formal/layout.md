@@ -325,6 +325,80 @@ that gate, now applied across a network boundary.
 **OPEN: 1.**
 - **D-layout-1** — residual: the load-time schema gate is built and opt-in, and closes fully when a persistence consumer wires `check_beside` into its open path
 
+D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
+views to compute the SAME offsets and says their agreement *"is part of the rule, not an
+implementation detail"*.  They did not agree when one tuple type was written BOTH ways in a
+program.  `Data::tuple_def` names the synthetic def from `Type::name`, which omits a
+`Reference`'s deps, but registered its ATTRIBUTES from the caller's spelling, which carries
+them — so `v: vector<(S, integer)>` laid the struct member out INLINE
+(`__tuple<S,integer>[16/1]`, `S` a child record, tail at 8) while `v = [(s, 5)]` laid it out as
+a 12-byte `DbRef` (`[20/1]`, tail at 12).  One name, two layouts, and whichever spelling the
+parser met FIRST fixed it.
+
+Each spelling alone is coherent — the inferred one writes `OpSetDbRef` and reads `OpGetDbRef`,
+the declared one writes `OpCopyRecord` and reads `OpGetField` — which is why the corpus never
+caught it and why only a MIXED program is wrong.  A signature was enough, so it reached
+consumers: a library `fn f(v: vector<(S, integer)>)` minted the inline layout in pass 1 and
+every caller's own inferred read of that vector answered `null`, while the callee's reads were
+right.  The other two faces were a `DbRef`'s words read as an integer (`(1 << 32) | n`) and,
+with a collection-carrying member, an ICE (*"DbRef store_nr 21 is out of range"*).
+
+**The rules chose the model, and an ordinary struct settled it.**  `struct Holder { s: PS, n:
+integer }` is `[16/8]` with `PS` a child record and the integer at offset 8, written with
+`OpCopyRecord` and read with `OpGetField` — byte for byte the ANNOTATED tuple spelling.  So
+`(L-Tuple)`'s "a tuple is a synthetic `__tuple<…>` struct" and `(T-Ref-El)`'s "read at the
+element's own offset, the same `(ref, offset)` pair an ordinary struct FIELD uses" both name
+INLINE, and the `DbRef` spelling was the deviation.  Its origin is @PLAN22 phase 02b, whose
+`typedef.rs` arm reads a non-empty dep list as *"this attribute holds a 12-byte DbRef"* under a
+comment saying the marker is for closure-record attributes and *"today's user code path always
+has empty deps"* — true until a tuple member could be inferred from a local.
+
+Cured at the one place both derivations meet: `Data::tuple_member_stored` normalises a member's
+storage spelling, and `tuple_def` registers attributes through it, so the NAME and the LAYOUT
+are derived from the same spelling.  The two member READ sites take it too, because they are
+handed the caller's type rather than the def's.  Nothing else moved: the four sites that read
+deps to pick an encoding are unchanged, and they now see a canonical attribute.  The file's own
+header had already reasoned about exactly this for `Type::Unknown` — *"BOTH things this builds
+are derived from the members' spellings"* — and deps were the second instance of that class.
+
+Guard: `a-tuple-type-written-both-ways-has-one-layout.loft`, both orders of both spellings over
+four member kinds and both member positions, each cell reading the tail as well as member 0
+because the two models put the tail at 8 and at 12.
+
+D-layout-7 closed 2026-09-10 (loft#1501): `(L-Narrow)` says a range-annotated integer stores in
+the SMALLEST width that HOLDS its range, and `(L-Narrow-Decode)` says the bytes carry
+`value - start`.  A DECLARED `size(…)` was checked against neither.  `limit(…)` and `size(…)`
+are one statement made twice — which values the type holds, and how many codes they get — and
+nothing compared them, so `integer limit(0, 100000) size(1)` promised 100001 values and gave
+them 256: `300` and `100000` both read back as the range's own `min`, in a struct field, a
+vector element, a vector literal and an element write, on both backends, with no diagnostic
+anywhere.  A local and a parameter kept 64 bits instead, so one declaration produced three
+behaviours across six store paths and never said which one a program had.
+
+The proximate silence was the LITERAL exemption: every variable store was refused correctly
+(*"cannot implicitly narrow integer to u8"*), and `int_value_fits` exempted a constant that
+fits the declared RANGE — which `300` does.  Fixing that alone would have left the type
+declarable and useless, so the cure is at the declaration, where both halves are in view and
+the contradiction is decidable: `IntegerSpec::range_fits_width` beside `range_to_width`, the
+companion it cannot borrow from (that one maps to 1, 2 or 8 and has no 4, so asking it about a
+`size(4)` type would report a contradiction that is not there).
+
+Two smaller faults in the same annotation closed with it.  A `size(n)` for `n` outside
+{1,2,4,8} was dropped in silence, so `size(3)` laid the type out as the 8-byte default while
+the declaration said three; and above `i32::MAX` the literal tokenises as `LexItem::Long`,
+which the `size` parser did not match, leaving it in the stream so the reader got *"Expect
+token )"* — a punctuation error about a width they wrote deliberately.  The same
+`has_integer`/`has_long` split closed in `formal/tuples.md` D-tup-12 the same day, in the
+projection sites.
+
+Every narrow alias the stdlib declares sits exactly AT its width — `u8` is `limit(0, 255)
+size(1)`, `u16` is `limit(0, 65535) size(2)`, `u32` is `limit(0, 4294967294) size(4)` — so the
+boundary is `<=` and not `<`, and the whole suite is the control for it: a check that refused a
+tight fit would take `default/01_code.loft` down with it.  `i32` is declared with no `limit(…)`
+at all and passes only because four bytes hold exactly the plain integer's range; a user type
+written the same way at a NARROWER width is loft#931's shape and is now refused by name.
+`contract: settled` — the rule already said the width must hold the range.
+
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [layout-history.md](layout-history.md).
 
@@ -339,6 +413,21 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Tuple`, the two views AGREEING under either spelling** — a tuple type written both with a
+  type annotation and left inferred, in one program, resolves to one def with ONE layout, and a
+  read through either spelling answers the same value
+  (`a-tuple-type-written-both-ways-has-one-layout.loft`, both orders × four member kinds ×
+  both member positions, each cell reading the tail as well as member 0 because the two models
+  it used to pick between put the tail at 8 and at 12).  The golden layout test above pins the
+  offsets a given spelling produces; this is the other half — that the SPELLING does not
+  choose them.  See D-layout-8.
+- **`L-Narrow`, the DECLARED width** — a `size(…)` that cannot hold the declaration's own
+  `limit(…)` is refused at the declaration, naming both halves and how many values each admits
+  (`102b-pass1-expected-errors.loft`).  Checked at the boundary in both directions: every width
+  the stdlib declares is a tight fit and must keep parsing, and `limit(0, 100000)` is refused at
+  `size(1)` and `size(2)` and accepted at `size(4)` and `size(8)`.  A plain `integer size(1)`,
+  which declares no range, is refused too; `integer size(4)` is not, because four bytes hold
+  exactly that range.  See D-layout-7 for what the silence cost.
 - **`L-Narrow-Enc`** — `tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, on
   both backends: a `u32` field, element, key and spatial axis at and past `i32::MAX`, plus the
   absence code, each read through the SCHEMA (record render, keyed lookup, ordering) and through

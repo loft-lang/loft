@@ -51,7 +51,6 @@
 1028-generic-null-typed-per-monomorph.loft
 1029-inline-argument-borrow-source.loft
 102-escape-sequences.loft
-102-expected-errors.loft
 1030-compound-range-both-spellings.loft
 1032-generic-iterator-return.loft
 1033-generic-par-worker.loft

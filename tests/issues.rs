@@ -9539,7 +9539,7 @@ fn inc08_sum_of_is_free_function_only() {
 }"
     )
     .expr("run()")
-    .error("Unknown field vector.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
+    .error("Unknown field vector<integer>.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
 }
 
 /// `text.starts_with(s)` is declared with `self: text` — method syntax

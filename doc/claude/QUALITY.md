@@ -2544,10 +2544,10 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 768 | 425 | 6 | **337** |
+| 770 | 427 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
-carries the defect is the TEST: the same run reports **2271** shape tests, **1508** of them opaque
+carries the defect is the TEST: the same run reports **2102** shape tests, **1317** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
@@ -2644,7 +2644,7 @@ loft#1493: the unspan row is `448 · 425 · 23`; the Optional row does not move.
 loft#1494, loft#1495, loft#1496 and the nested-block buffer bind then move it to
 **`451 · 427 · 24`** — `void_dropped_statement_arms` and `tail_block_ops` both peel, so both land
 on the peeling side, and the OPAQUE column rises by loft#1495's site alone.  The `optional` row ends at
-**`768 · 425 · 6 · 337`**, back at the `@FR-N-Shape` ratchet's baseline.
+**`770 · 427 · 6 · 337`**, back at the `@FR-N-Shape` ratchet's baseline.
 
 ⚠ **It did not get there by argument.**  Two of these sites — `control::tail_block_ops` and
 `control::void_statement_arm` — asked *does this block yield a value* as

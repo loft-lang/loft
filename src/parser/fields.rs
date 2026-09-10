@@ -209,6 +209,13 @@ impl Parser {
         {
             self.read_through_tag(code, &mut t);
         }
+        // ⚠ `dnr` is the receiver's DEF, and the two are not the same thing to a reader:
+        // `type_def_nr` answers the def a type is REPRESENTED by, so a fn-ref's is `i32` and a
+        // record-backed tuple's is `__tuple<…>`.  Naming it in a diagnostic reports a type the
+        // author cannot write — *"Unknown field `i32`.nope"* about a
+        // `fn(integer, integer) -> integer` whose type-change diagnostic three lines away
+        // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
+        // `t` for anything a person reads.
         let dnr = self.data.type_def_nr(&t);
         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
             return Type::Boolean;
@@ -515,7 +522,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unknown field {}.{field} — did you mean the free function `{field}(…)` ? ({declared_by}; see LOFT.md § Methods and function calls)",
-                            self.data.def(dnr).name()
+                            t.source_name(&self.data)
                         );
                     } else if let Some(s) = self.suggest_field_name(dnr, &field) {
                         diagnostic!(
@@ -523,7 +530,7 @@ impl Parser {
                             Level::Error,
                             code = "unknown-field",
                             "Unknown field {}.{field} — did you mean '{s}'?",
-                            self.data.def(dnr).name()
+                            t.source_name(&self.data)
                         );
                         self.lexer.suggest_last(&s);
                         // This site reports at the lexer CURSOR, which sits one past the
@@ -551,7 +558,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "Unknown field {}.{field}",
-                            self.data.def(dnr).name()
+                            t.source_name(&self.data)
                         );
                     }
                 }
@@ -2220,6 +2227,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 tuple_elems.push(tagged);
                 continue;
             }
+            // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
+            // read op, because that is what set the layout.
+            let et = &crate::data::Data::tuple_member_stored(et);
             tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
         }
         v_block(

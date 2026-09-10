@@ -307,3 +307,200 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
         "verify-self did not confirm the whole manifest (wanted `{confirm}`)\n--- stdout\n{stdout}\n--- stderr\n{stderr}"
     );
 }
+
+/// loft#1497 — an update that would not be the thing that RUNS is refused before anything
+/// moves.
+///
+/// `self-update` writes the release layout (`bin/` beside `default/`) while the runtime's
+/// resolver prefers `<prefix>/share/loft/` whenever that directory exists — which is exactly
+/// what `make install` creates.  On a prefix holding both, the update landed a stdlib nothing
+/// loads and the OLDER tree kept winning, silently: a 2026.9.0 binary reading a 2026.8.0
+/// standard library, `verify-self` passing throughout, and `println("hello")` dying with
+/// SIGSEGV in `OpFreeText`.  Reported from two machines; a third, built from source so binary
+/// and stdlib were installed together, ran it fine — the control that says the split is by
+/// install METHOD and not by release.
+///
+/// The refusal is BEFORE the write, not a rollback after it: the answer is knowable without
+/// touching the disk, and the cure is the user's choice between two layouts rather than
+/// something `self-update` can repair — a release bundle carries no `libloft.rlib`, and
+/// `--native` links that from `share/loft/`, so writing the stdlib there would swap one
+/// mismatch for a subtler one.
+/// Falsified: with the pre-flight neutered (`if false && shadowed && !force`) this test
+/// fails and the other six still pass, so it discriminates the fix and not the harness.
+#[test]
+fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
+    let base = scratch("shadowed");
+    let install = base.join("install");
+    let staged = base.join("staged");
+
+    let running = install.join("bin").join(exe_name());
+    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    write(&install.join("default").join("a.loft"), b"old\n");
+    // The shadow: what a previous `make install` left.  Its mere EXISTENCE re-points the
+    // resolver, so the contents need not differ for the update to miss.
+    write(
+        &install
+            .join("share")
+            .join("loft")
+            .join("default")
+            .join("a.loft"),
+        b"shadow\n",
+    );
+    write_manifest(&install);
+
+    write(&staged.join("bin").join(exe_name()), b"WOULD-REPLACE\n");
+    write(&staged.join("default").join("a.loft"), b"new\n");
+    write_manifest(&staged);
+    let before = std::fs::read(&running).unwrap();
+
+    let out = std::process::Command::new(&running)
+        .args(["self-update", "--from"])
+        .arg(&staged)
+        .output()
+        .expect("run the installed loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "a shadowed installation must refuse\nstdout: {}\nstderr: {err}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        err.contains("would not run what this installs"),
+        "the refusal must say WHY, naming both trees: {err}"
+    );
+    assert!(
+        err.contains("share") && err.contains("loft#1497"),
+        "the refusal must name the shadowing tree and the issue: {err}"
+    );
+    // Nothing moved — the whole point of refusing before the write.
+    assert_eq!(
+        std::fs::read(&running).unwrap(),
+        before,
+        "a refused update must not replace the binary"
+    );
+    assert_eq!(
+        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        b"old\n",
+        "a refused update must not replace the stdlib either"
+    );
+    assert_eq!(
+        std::fs::read(
+            install
+                .join("share")
+                .join("loft")
+                .join("default")
+                .join("a.loft")
+        )
+        .unwrap(),
+        b"shadow\n",
+        "and must not touch the tree it declined to update"
+    );
+}
+
+/// The CONTROL for the refusal above: without the shadowing tree the SAME bundle installs.
+///
+/// Without this, a `self-update` that had simply stopped working would pass the refusal test.
+#[test]
+fn the_same_update_installs_when_no_tree_shadows_it() {
+    let base = scratch("unshadowed");
+    let install = base.join("install");
+    let staged = base.join("staged");
+
+    let running = install.join("bin").join(exe_name());
+    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    write(&install.join("default").join("a.loft"), b"old\n");
+    write_manifest(&install);
+
+    const NEW_BINARY: &[u8] = b"WOULD-REPLACE\n";
+    write(&staged.join("bin").join(exe_name()), NEW_BINARY);
+    write(&staged.join("default").join("a.loft"), b"new\n");
+    write_manifest(&staged);
+
+    let out = std::process::Command::new(&running)
+        .args(["self-update", "--from"])
+        .arg(&staged)
+        .output()
+        .expect("run the installed loft");
+    assert!(
+        out.status.success(),
+        "an unshadowed installation must still update\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read(&running).unwrap(), NEW_BINARY);
+    assert_eq!(
+        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        b"new\n"
+    );
+}
+
+/// `--force` is the escape hatch, and it must still say what state it leaves behind.
+///
+/// The pre-existing forced-install line reads *"past a manifest this bundle does not match"*,
+/// which is a different reason to force and would misdescribe this one.  What the user needs
+/// after forcing here is the state they are now in — a new binary over an unchanged stdlib,
+/// which is the crash they asked for.
+/// Falsified against its OWN perturbation, which is a different one: neutering the pre-flight
+/// leaves this test passing (forcing skips it either way), and neutering the `force && shadowed`
+/// arm is what fails it.  Worth stating, because a guard that only fails on its sibling's
+/// perturbation is measuring the sibling.
+#[test]
+fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
+    let base = scratch("forced");
+    let install = base.join("install");
+    let staged = base.join("staged");
+
+    let running = install.join("bin").join(exe_name());
+    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    write(&install.join("default").join("a.loft"), b"old\n");
+    write(
+        &install
+            .join("share")
+            .join("loft")
+            .join("default")
+            .join("a.loft"),
+        b"shadow\n",
+    );
+    write_manifest(&install);
+
+    const NEW_BINARY: &[u8] = b"WOULD-REPLACE\n";
+    write(&staged.join("bin").join(exe_name()), NEW_BINARY);
+    write(&staged.join("default").join("a.loft"), b"new\n");
+    write_manifest(&staged);
+
+    let out = std::process::Command::new(&running)
+        .args(["self-update", "--force", "--from"])
+        .arg(&staged)
+        .output()
+        .expect("run the installed loft");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "--force must proceed\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&running).unwrap(),
+        NEW_BINARY,
+        "--force must actually install"
+    );
+    assert!(
+        said.contains("SHADOWED"),
+        "a forced install over a shadow must name what it left: {said}"
+    );
+    assert_eq!(
+        std::fs::read(
+            install
+                .join("share")
+                .join("loft")
+                .join("default")
+                .join("a.loft")
+        )
+        .unwrap(),
+        b"shadow\n",
+        "and the shadowing tree is still the one that loads"
+    );
+}
