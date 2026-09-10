@@ -21,13 +21,18 @@
 // this guard is `LOFT_POISON=1` over tests/scripts/889-collection-through-a-call-s-field.loft
 // — kept there, referenced here.
 //
-// Still OPEN, deliberately not asserted here: a `?` on the receiver still adds one release
-// (the `__ncc_N` join aliases the call temp and both names carry owner hooks — with a
-// poison-visible read-after-free in the join's scope-end cascade); and `d = mk(); return d.h`
-// still releases twice (the return-copy's transfer is per-PATH, not per-variable).  Both are
-// D-heap-3's remaining shapes; asserting their current wrong counts would freeze them.  The
-// mixed own/view local that used to be listed here closed as D-heap-4 (loft#1510) — its
-// cells live in tests/scripts/1510-a-mixed-own-view-locals-record-hooks-once.loft.
+// The `?` receiver and the returned projection — D-heap-3's other two shapes, which used to
+// be listed here as open — closed 2026-09-10; their cells live in
+// tests/scripts/1506b-a-join-and-a-returned-projection-release-once.loft.  The mixed own/view
+// local closed as D-heap-4 (loft#1510), in tests/scripts/1510-a-mixed-own-view-locals-record
+// -hooks-once.loft.
+//
+// ⚠ `own_then_copy` is GREEN here and RED under `LOFT_POISON=1`, and that is a live residual
+// rather than a harness quirk: the binding and the materialising work-ref name one store and
+// both free it, so whichever the DECLARATION order releases first decides whether the hook
+// reads a live record.  `copy_then_own` beside it has the opposite order and is clean, which
+// is what makes the pair worth keeping adjacent.  Counts and values are right in both — the
+// warning at the top of this header, measured against the cure.  D-heap-3 stays OPEN for it.
 //
 // @falsified-at: 636bd457 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1506-a-call-result-projection-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

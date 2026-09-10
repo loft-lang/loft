@@ -360,8 +360,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 OPEN: **3** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE;
 `D-heap-3`, a struct field projected off a CALL result, where the copy-out hand-off now
-carries the dense family and two shapes remain: the `?` join's alias and the return-of-view
-copy (loft#1506); and
+carries the dense family, the `?`/`??` join and the returned projection, and one MEMORY-only
+residual remains — a binding and its materialising work-ref free one store twice, in the
+order their declarations happen to fall (loft#1506); and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -745,19 +746,87 @@ the rebind and the literal at scope end, the bound-base reference and the borrow
 control unmoved at 1, and `LOFT_POISON=1` over the 889 guard clean.
 `tests/scripts/1506-a-call-result-projection-releases-once.loft` is the conformance guard.
 
-**Two shapes remain, and the entry stays OPEN for them:**
+**Both remaining shapes CLOSED (2026-09-10)**, each at the level the rules put it.
 
-1. **The `?` strength (+1).** The `__ncc_N` join ALIASES the call temp — the join block's
-   value is `if ncc { ncc } else { default }`, both arms vars the frame owns — yet the lift
-   bound to it is typed as a fresh owner, so the record is dropped AND freed inside the
-   statement and the `ncc` var's own scope-end cascade runs again on the freed store. Under
-   `LOFT_POISON=1` that second hook reads the poison pattern into the author's `OpDrop` —
-   a use-after-free, both backends, not just a doubled count. The type-level fact is what is
-   missing: a join of frame-owned vars is a VIEW, and the block's type should say so.
-2. **The return-of-view copy** (`d = mk(); return d.h` — 2 releases). The copy into the
-   return buffer needs the same responsibility transfer, but per RETURN SITE: the source is a
-   USER local with possibly many exits, so the per-variable pairing above must not reach it —
-   a skip keyed on the var would leak the field on every path that does not return it.
+1. **The `?`/`??` join.** The reading above was right and the axis it named was too narrow.
+   The join's value is `if __ncc_N { __ncc_N } else { <default> }`, both arms vars THIS FRAME
+   owns and frees, and the block was typed as a bare OWNER — so whatever consumed it adopted
+   the store a SECOND time. That is not a projection question at all: `r = mk_present() ??
+   mk_other()` and `r = mk_present()?` each released twice with no `.field` anywhere, and
+   each was a use-after-free (`LOFT_POISON=1` delivered the poison pattern into the author's
+   `OpDrop`). The projection cells only stacked one more owner on top of it. The cure is the
+   type-level fact: `build_null_coalesce_default` gives an OWNED RECORD subject the same
+   dep-backed VIEW its OWNED VECTOR arm has had since @PLN102 — `Type::Reference(d,
+   Deps::frame([__ncc_N]))` — so the consumer BORROWS what the frame still owns.
+
+   A borrowing result then means the DEFAULT arm needs an owner of its own, which is
+   loft#1013's question one gate wider. `materialise_owned_call` answered it only for a
+   callee with a hidden return buffer, and a callee that can answer NULL is not
+   NRVO-promoted and carries none (`fn pick(n) -> Cell?`) — so a chained `??` leaked one
+   record where the borrowing result no longer adopted it. It now mints a `__ref_p2_N`
+   work-ref where there is no buffer, which is the general form of the same cure and the
+   `join-arm-owner` block's one home either way.
+
+2. **The return-of-view copy.** `materialize_return_into` publishes an owned copy because
+   `@FR-F-Ret` wants a fresh value, and `(H-Drop)` then moves the member's release with it.
+   The transfer is read at the RETURN SITE and never keyed on the variable, exactly as this
+   entry predicted: `two_exits` releases the member on the path that does NOT hand it out,
+   and a var-keyed skip would have leaked it there. A copy off a PARAMETER is declined —
+   `(H-Drop)`'s own clause, *"a copy off a PARAMETER moves nothing: the caller owns"* — so
+   `return p.h` is unmoved at two releases, which is D-heap-1's shape and not this one.
+   A source that is a VIEW LOCAL (`e = d.h; return e`) is carried too: `Scopes::view_backing`
+   holds the path from the bind that established it to the return that hands it out, retired
+   from BOTH ends (@FR-O-Latest — writing the view replaces what it names, and rebuilding the
+   BASE leaves every view of it naming a record that no longer holds what the path said).
+
+   ⚠ **A JOIN tail is declined and that is not an oversight.** The sweep at a return runs for
+   every path through that ONE return, so a materialised copy sitting in an `if` arm belongs
+   to one path: taking its skip would lose the member's release on the arm that did not copy —
+   the same defect one shape over. Two separate `return` statements are two sweeps and work;
+   `return if c { d.h } else { L }` does not, and closing it wants loft#1476's shape (put the
+   SOURCE's release inside the arms) rather than a wider reader. It is live today as the
+   opposite fault — the hook is LOST, not doubled (loft#1514, whose root is
+   `wrong_shape_for_buffer` opening on `Type::Vector` while the rule it cites carries no such
+   qualifier).
+
+**The skip-capable cascade names the member by its PATH, not by a number.** `(skip, depth)`:
+byte offset from the record, and how many levels below it. Both, because a member at offset 0
+of a nested record shares its owner's address — `d.p` and `d.p.a` are the SAME byte — so an
+offset alone skipped the whole subtree and LOST every sibling under it (measured: `return
+d.p.a` dropped `p.b` entirely, a lost release where the defect was a double one). With the
+depth, one pair reaches any depth with no new machinery: each level hands its member `skip -
+off` and `depth - 1`, and a skip that is not under a field lands outside that field's own
+offsets at every level below it, so it can match nothing there.
+
+Measured on both backends, identical, and clean under `LOFT_POISON=1`: the bare `?`, the
+`??` present and default arms, a chained `??`, the chained / absent / bound / argument /
+loop / two-droppable-field / depth-three `?` projections, the returned projection, the
+view-bound return, the rebound view, a member two levels down releasing `q` AND `p.b` inside,
+a member beside the nested record leaving both of ITS members, and the whole nested member
+taking its own with it. Guard:
+`tests/scripts/1506b-a-join-and-a-returned-projection-release-once.loft`.
+
+**One residual keeps the entry OPEN, and it is memory-only — the trap this entry already
+names.** The dense family's terminal materialisation gives a binding and its work-ref ONE
+store with TWO frees, and which runs first is decided by DECLARATION ORDER:
+
+```
+r = mk_dense().h;                       // r declared after __ref_N — r drops, then __ref_N
+r = CfH { id: 4 }; a = r.id; r = mk_dense().h;   // r declared BEFORE — __ref_N frees, then
+                                                 //   r's hook reads the freed record
+```
+
+Value and count are green in both (`H4 H9`, the ids the program set); under `LOFT_POISON=1`
+the second reads `H-2401053088876216593`. It is the `1506` guard's own `own_then_copy` cell,
+red under poison and green plain — *"a cure here cannot be scored on release counts alone"*,
+now measured against the cure itself. BRANCH-INTERNAL: on `main` that bind still aliases and
+never materialises, so it cannot reproduce there and stays here rather than in the tracker.
+Two cures are visible and neither is small: disarm the work-ref's free where a local adopted
+it (`construction_backing` already holds the pairing, but that map is read by D-heap-4's
+transition free and `construction_work_ref` matches every struct literal, so the blast radius
+is every `r = S { … }`), or order an adopted work-ref's release AFTER its adopter, which
+fixes the hook and leaves `(H-FreeTwice)` standing. The second is the symptom; the first is
+the invariant.
 
 ### D-heap-4 — OPENED AND CLOSED (2026-09-10): a mixed own/view local's owned record is freed without its hook (loft#1510)
 

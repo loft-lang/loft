@@ -1,0 +1,247 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// D-heap-3's last two shapes: a `?`/`??` JOIN and a RETURNED projection each release the
+// record they hand away exactly ONCE (loft#1506).
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource and moves the responsibility
+// with a copy.  Both shapes gave one record TWO owners:
+//
+//   * the JOIN's value is `if __ncc_N { __ncc_N } else { <default> }` — both arms vars the
+//     frame owns and frees — while the block was typed as a bare owner, so the consumer
+//     adopted the store a second time.  The axis is NOT projection: `r = mk() ?? d` and
+//     `r = mk()?` doubled with no `.field` anywhere, and the second release read the FREED
+//     store (`LOFT_POISON=1` delivered the poison pattern into the author's `OpDrop`).
+//   * `d = mk(); return d.h` publishes an owned copy (`@FR-F-Ret`) and the source's cascade
+//     released the member again.  The transfer is read at the RETURN SITE — `two_exits`
+//     below is the cell that says why it cannot be keyed on the variable.
+//
+// The nested cells are load-bearing for the skip-capable cascade's PATH argument.  A member
+// at offset 0 of a nested record shares its owner's address, so `d.p` and `d.p.a` are the
+// same byte: an offset alone skipped the whole subtree, and `nested_member` lost `p.b`
+// entirely.  Keep all three of `nested_member` / `outer_member` / `whole_member` — each
+// pins a different answer, and the first two are what an offset-only skip cannot tell apart.
+//
+// `param_member` is the CONTROL that this did not widen: a copy off a PARAMETER moves
+// nothing (`(H-Drop)`: the caller owns), so it releases twice and that is D-heap-1's shape,
+// not this one.  Asserting it here pins the boundary rather than freezing the defect.
+//
+// @falsified-at: 6921f56ae — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1506b-a-join-and-a-returned-projection-release-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — the count cells fail on the control
+//     (the join reads two hooks where the guard demands one) and pass here.
+//   ARMED: nothing; a plain run scores it.  The leak channel is `none` on both trees.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees.
+fn trace_path() -> text { return "loft_1506b_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct JH { id: integer }
+fn OpDrop(self: JH) { note("{self.id}"); }
+struct JS { h: JH }
+struct JTwo { h: JH, g: JH }
+struct JMid { h: JH }
+struct JOuter { m: JMid }
+struct JPair { a: JH, b: JH }
+struct JBox { p: JPair, q: JH }
+
+fn mk_present() -> JS? { return JS { h: JH { id: 9 } }; }
+fn mk_absent() -> JS? { return null; }
+fn mk_other() -> JS { return JS { h: JH { id: 7 } }; }
+fn mk_two() -> JTwo? { return JTwo { h: JH { id: 1 }, g: JH { id: 2 } }; }
+fn mk_outer() -> JOuter? { return JOuter { m: JMid { h: JH { id: 5 } } }; }
+fn mk_dense() -> JS { return JS { h: JH { id: 9 } }; }
+fn mk_two_dense() -> JTwo { return JTwo { h: JH { id: 1 }, g: JH { id: 2 } }; }
+fn mk_box() -> JBox {
+  return JBox { p: JPair { a: JH { id: 11 }, b: JH { id: 12 } }, q: JH { id: 13 } };
+}
+
+// --- the JOIN, with no projection anywhere: the axis the projection cells hid ---
+
+// `?` alone.  One record, one hook — this used to be two, the second on a freed store.
+fn bare_discharge() -> integer { r = mk_present()?; return r.h.id; }
+
+// `??` taking its PRESENT arm: the frame owns `__ncc_N`, so the binding must borrow it.
+fn coalesce_present() -> integer { r = mk_present() ?? mk_other(); return r.h.id; }
+
+// `??` taking its DEFAULT arm.  The default is a CALL with no hidden return buffer of its
+// own (a `-> JS?` callee is not NRVO-promoted), so a borrowing result leaves it owned by
+// nobody unless the join mints one: this cell is where that leak shows.
+fn coalesce_default() -> integer { r = mk_absent() ?? mk_other(); return r.h.id; }
+
+// A chained `??` — the outer default is itself a join, which is where the missing owner
+// first surfaced.
+fn chained_default() -> integer { r = mk_absent() ?? mk_absent() ?? mk_other(); return r.h.id; }
+
+// --- the JOIN through a projection: `?` used to add one release on top of the dense fault ---
+
+fn chained_through() -> integer { return mk_present()?.h.id; }
+fn absent_through() -> integer { return mk_absent()?.h.id; }
+fn bound_through() -> integer { r = mk_present()?.h; return r.id; }
+
+// The load-bearing multi-field cell: `h` goes to the copy, `g` is still the record's.
+fn two_fields_through() -> integer { return mk_two()?.h.id; }
+
+// Depth, and a borrow: neither may add a release.
+fn depth_through() -> integer { return mk_outer()?.m.h.id; }
+fn take(c: JH) -> integer { return c.id; }
+fn as_argument() -> integer { return take(mk_present()?.h); }
+
+// Per iteration, not per site: two turns are two records.
+fn in_a_loop() -> integer {
+  t = 0;
+  for i in 0..2 { t = t + mk_present()?.h.id + i; }
+  return t;
+}
+
+// --- the RETURNED projection ---
+
+// The shape itself: the copy the return publishes owns the member from here on.
+fn returned_member() -> JH { d = mk_dense(); return d.h; }
+
+// Why the transfer cannot be keyed on the VARIABLE.  `c` picks which exit runs, and the
+// path that does NOT hand the member out must still release it.
+fn two_exits(c: boolean) -> JH { d = mk_two_dense(); if c { return d.h; } return d.g; }
+
+// The sibling member is not the copy's: `g` stays the record's to release.
+fn returned_of_two() -> JH { d = mk_two_dense(); return d.h; }
+
+// A member two levels down.  `q` and `p.b` are still the record's; only `p.a` moves.
+fn nested_member() -> JH { d = mk_box(); return d.p.a; }
+
+// The same record, a member OUTSIDE the nested one: `p.a` and `p.b` both stay.
+fn outer_member() -> JH { d = mk_box(); return d.q; }
+
+// The whole nested record moves, so everything under it goes with it and only `q` stays.
+fn whole_member() -> JPair { d = mk_box(); return d.p; }
+
+// The same member reached through a VIEW local.  `(B-View)` makes `e = d.h` a view and the
+// return publishes the same copy of the same member, so the transfer is the same one — the
+// path just has to be carried from the bind to the return.
+fn view_bound() -> JH { d = mk_dense(); e = d.h; return e; }
+
+// The view is REBOUND before the return: `(O-Latest)` says the fact belongs to the latest
+// assignment, so `g` is what leaves and `h` is still the record's.
+fn view_rebound() -> JH { d = mk_two_dense(); e = d.h; e = d.g; return e; }
+
+// The CONTROL.  A copy off a PARAMETER moves nothing — the caller owns — so the caller
+// ends holding two records of one resource.  That is D-heap-1, deliberately unmoved here.
+// Both spellings, because the view one reaches this through a different reader.
+fn param_member(p: JS) -> JH { return p.h; }
+fn param_view_member(p: JS) -> JH { e = p.h; return e; }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  b = bare_discharge(); got = drain();
+  assert(b == 9, "the discharge reads the field: got {b}");
+  assert(got == "9", "a bare `?` releases ONCE: got '{got}'");
+
+  cp = coalesce_present(); got = drain();
+  assert(cp == 9, "the present arm reads the field: got {cp}");
+  assert(got == "9", "a `??` present arm releases ONCE: got '{got}'");
+
+  cd = coalesce_default(); got = drain();
+  assert(cd == 7, "the default arm reads the field: got {cd}");
+  assert(got == "7", "a `??` default arm releases ONCE: got '{got}'");
+
+  ch = chained_default(); got = drain();
+  assert(ch == 7, "the chained default reads the field: got {ch}");
+  assert(got == "7", "a chained `??` releases ONCE: got '{got}'");
+
+  ct = chained_through(); got = drain();
+  assert(ct == 9, "the `?` projection reads the field: got {ct}");
+  assert(got == "9", "a `?` projection releases ONCE: got '{got}'");
+
+  at = absent_through(); got = drain();
+  assert(at == 0, "the absent chain reads the default's field: got {at}");
+  assert(got == "0", "the absent arm's own record releases ONCE: got '{got}'");
+
+  bt = bound_through(); got = drain();
+  assert(bt == 9, "the bound `?` projection reads the field: got {bt}");
+  assert(got == "9", "a bound `?` projection releases ONCE: got '{got}'");
+
+  tf = two_fields_through(); got = drain();
+  assert(tf == 1, "the two-field record reads h: got {tf}");
+  assert(got == "1,2" || got == "2,1", "h once AND g once through a `?`: got '{got}'");
+
+  dt = depth_through(); got = drain();
+  assert(dt == 5, "the deeper `?` chain reads the leaf: got {dt}");
+  assert(got == "5", "a deeper `?` chain releases ONCE: got '{got}'");
+
+  ar = as_argument(); got = drain();
+  assert(ar == 9, "the argument borrow reads the field: got {ar}");
+  assert(got == "9", "an argument projection through `?` is ONE hook: got '{got}'");
+
+  lp = in_a_loop(); got = drain();
+  assert(lp == 19, "two iterations sum 9+0 + 9+1: got {lp}");
+  assert(got == "9,9", "one release per iteration's record: got '{got}'");
+
+  rm = returned_member(); got = drain();
+  assert(rm.id == 9, "the returned member reads: got {rm.id}");
+  assert(got == "", "the source keeps nothing back at the return: got '{got}'");
+  rm = JH { id: 0 }; got = drain();
+  assert(got == "9", "the returned member releases ONCE, at its new owner: got '{got}'");
+
+  ta = two_exits(true); got = drain();
+  assert(ta.id == 1, "the true exit returns h: got {ta.id}");
+  assert(got == "2", "the exit that hands h out still releases g: got '{got}'");
+  tb = two_exits(false); got = drain();
+  assert(tb.id == 2, "the false exit returns g: got {tb.id}");
+  assert(got == "1", "the exit that hands g out still releases h: got '{got}'");
+
+  ro = returned_of_two(); got = drain();
+  assert(ro.id == 1, "the returned member of two reads: got {ro.id}");
+  assert(got == "2", "the sibling member is released by the record: got '{got}'");
+
+  nm = nested_member(); got = drain();
+  assert(nm.id == 11, "the nested member reads: got {nm.id}");
+  assert(got == "13,12" || got == "12,13",
+    "a member two levels down leaves `q` AND `p.b` to the record: got '{got}'");
+
+  om = outer_member(); got = drain();
+  assert(om.id == 13, "the outer member reads: got {om.id}");
+  assert(got == "12,11" || got == "11,12",
+    "a member beside the nested record leaves BOTH of its members: got '{got}'");
+
+  wm = whole_member(); got = drain();
+  assert(wm.a.id == 11, "the whole nested record reads: got {wm.a.id}");
+  assert(got == "13", "the whole member takes its own with it: got '{got}'");
+
+  vb = view_bound(); got = drain();
+  assert(vb.id == 9, "the view-bound member reads: got {vb.id}");
+  assert(got == "", "the source keeps nothing back behind a view: got '{got}'");
+  vb = JH { id: 0 }; got = drain();
+  assert(got == "9", "a view-bound member releases ONCE, at its new owner: got '{got}'");
+
+  vr = view_rebound(); got = drain();
+  assert(vr.id == 2, "the rebound view reads the LATEST member: got {vr.id}");
+  assert(got == "1", "the member the view no longer names is still the record's: got '{got}'");
+
+  d = mk_dense();
+  pm = param_member(d); got = drain();
+  assert(pm.id == 9, "the parameter member reads: got {pm.id}");
+  assert(got == "", "nothing is released at the callee's return: got '{got}'");
+  pv = param_view_member(d); got = drain();
+  assert(pv.id == 9, "the parameter member through a view reads: got {pv.id}");
+  assert(got == "", "nothing is released behind a parameter view either: got '{got}'");
+
+  println("1506b OK");
+}
