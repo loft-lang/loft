@@ -2833,10 +2833,22 @@ fn every_test_binary_matches_a_subject() {
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
+    // Everything the next failure needs, because the first version reported only stderr —
+    // and the Windows daily failed it twice with stderr EMPTY, which made the message say
+    // literally "scripts/test_subjects.sh failed: " and left the cause undiagnosable.  A
+    // windows-probe run of the identical command passed (exit 0, no unmatched binaries),
+    // so the cause is load-dependent rather than a property of the script; naming the exit
+    // code and what the run did produce is what turns the next occurrence into evidence.
     assert!(
         out.status.success(),
-        "scripts/test_subjects.sh failed: {}",
-        String::from_utf8_lossy(&out.stderr)
+        "scripts/test_subjects.sh failed: exit {:?}\n  stderr ({} bytes): {}\n  stdout ({} bytes): {}\n  \
+         (an empty stderr with a non-zero exit is the shell dying rather than the script \
+         refusing — on Windows this ran green in isolation under windows-probe)",
+        out.status.code(),
+        out.stderr.len(),
+        String::from_utf8_lossy(&out.stderr),
+        out.stdout.len(),
+        stdout.lines().take(5).collect::<Vec<_>>().join(" | ")
     );
     assert!(
         unmatched.is_empty(),

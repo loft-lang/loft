@@ -405,28 +405,45 @@ fn pid_alive(pid: u32) -> Option<bool> {
     // doc above).  So anything unrecognised answers `None` — unknowable, fall back to the
     // age rule — and never `Some(false)`.  Being slow to reclaim costs disk; being wrong
     // costs the build.
+    // Windows has no `kill(pid, 0)`, but a process HANDLE answers the same question.
+    //
+    // The safety DIRECTION matters more here than precision: the dead-only sweep DELETES
+    // what this calls dead, and a sweep destroying the `.rs` a live compile had just
+    // emitted is the exact failure the pid check exists to prevent (see the module doc
+    // above).  So anything unrecognised answers `None` — unknowable, fall back to the age
+    // rule — never `Some(false)`.  Being slow to reclaim costs disk; being wrong costs the
+    // build.
+    //
+    // Measured on windows-latest (windows-probe.yml, 2026-09-10) rather than assumed, and
+    // the measurement overturned the first attempt.  `WaitForSingleObject` is the obvious
+    // spelling and it returned WAIT_FAILED (0xffffffff) for EVERY openable process, live or
+    // dead, because `PROCESS_QUERY_LIMITED_INFORMATION` does not grant SYNCHRONIZE — an arm
+    // that compiled, looked right, and answered `None` for everything.  `GetExitCodeProcess`
+    // needs no extra right.  What the runner reported:
+    //
+    //     own process / pid 4 (System) / a live child   exit_code = 259 (STILL_ACTIVE)
+    //     a child that exited with 7                    exit_code = 7   (handle still opens)
+    //     pid 0, u32::MAX-1, an unused 999999           OpenProcess = NULL, err 87
+    //
+    // So pid 0 needs no special case here the way it does on unix, where 0 addresses a
+    // process GROUP: Windows simply reports it as no process.  The STILL_ACTIVE ambiguity is
+    // real and deliberately accepted — a process that exits WITH code 259 reads as alive —
+    // because it errs toward not reclaiming, and loft's own exit codes are single digits.
     #[cfg(windows)]
     {
         const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
         const ERROR_ACCESS_DENIED: u32 = 5;
         const ERROR_INVALID_PARAMETER: u32 = 87;
-        const WAIT_OBJECT_0: u32 = 0;
-        const WAIT_TIMEOUT: u32 = 0x0000_0102;
+        const STILL_ACTIVE: u32 = 259;
         unsafe extern "system" {
             fn OpenProcess(desired: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
             fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
-            fn WaitForSingleObject(handle: *mut core::ffi::c_void, ms: u32) -> u32;
+            fn GetExitCodeProcess(handle: *mut core::ffi::c_void, code: *mut u32) -> i32;
             fn GetLastError() -> u32;
         }
-        // 0 is the System Idle Process and no handle opens it.  The unix arm answers DEAD
-        // because 0 addresses a process GROUP there; a `0` embedded in a scratch filename
-        // has to mean the same thing on both hosts, so it is answered the same way.
-        if pid == 0 {
-            return Some(false);
-        }
-        // SAFETY: `OpenProcess` takes three integers by value and returns a handle or
-        // null, touching no memory this process owns.  Every path that obtains a handle
-        // closes it exactly once.
+        // SAFETY: `OpenProcess` takes three integers by value and returns a handle or null,
+        // touching no memory this process owns.  Every path that obtains a handle closes it
+        // exactly once.
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if handle.is_null() {
             // SAFETY: reads the calling thread's last-error value; no arguments, no memory.
@@ -438,17 +455,20 @@ fn pid_alive(pid: u32) -> Option<bool> {
                 _ => None,
             };
         }
-        // SAFETY: `handle` is a live process handle from the call above; a zero timeout
-        // polls without blocking, and the handle is closed immediately after.
-        let waited = unsafe { WaitForSingleObject(handle, 0) };
+        let mut code: u32 = 0;
+        // SAFETY: `handle` is a live process handle from the call above and `code` is a
+        // valid, initialised u32 this frame owns for the duration of the call.
+        let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
+        // Read before the close, which would clobber the thread's last error.
+        // SAFETY: as above — no arguments, no memory.
+        let err = unsafe { GetLastError() };
         // SAFETY: closing a handle this function opened, exactly once.
         unsafe { CloseHandle(handle) };
-        match waited {
-            // A process object becomes signalled exactly when the process exits.
-            WAIT_TIMEOUT => Some(true),
-            WAIT_OBJECT_0 => Some(false),
-            _ => None,
+        if ok == 0 {
+            let _ = err;
+            return None;
         }
+        return Some(code == STILL_ACTIVE);
     }
     #[cfg(not(any(unix, windows)))]
     {
