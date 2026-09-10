@@ -2829,8 +2829,37 @@ fn every_test_binary_matches_a_subject() {
     // anything in the map.  So: a non-zero exit with BOTH streams empty is retried once,
     // and either way the message names what actually happened.  The retry cannot mask a
     // genuine finding, because a genuine finding has stdout.
+    // ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to
+    // `C:\Windows\System32\bash.exe`, the WSL launcher, which with no distribution
+    // installed prints "Windows Subsystem for Linux has no installed distributions" to
+    // STDOUT (UTF-16) and exits 1.  That is the whole story behind this test failing twice
+    // on the Windows daily while a windows-probe run of the identical command passed: the
+    // probe ran INSIDE Git Bash, where `bash` resolves to Git Bash first, and the test
+    // process inherits a different PATH order.  The 20-odd other suites here spawn `sh`,
+    // which System32 does not provide, so this was the only site exposed.  `sh` is not the
+    // cure though — `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on
+    // Linux is dash.
+    let bash = || -> std::ffi::OsString {
+        #[cfg(windows)]
+        {
+            let mut roots: Vec<std::path::PathBuf> = Vec::new();
+            for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+                if let Some(v) = std::env::var_os(var) {
+                    roots.push(std::path::PathBuf::from(v));
+                }
+            }
+            roots.push(std::path::PathBuf::from(r"C:\Program Files"));
+            for r in roots {
+                let c = r.join("Git").join("bin").join("bash.exe");
+                if c.is_file() {
+                    return c.into_os_string();
+                }
+            }
+        }
+        std::ffi::OsString::from("bash")
+    };
     let run = || {
-        std::process::Command::new("bash")
+        std::process::Command::new(bash())
             .args([
                 "-c",
                 "source scripts/test_subjects.sh && unmatched_binaries",

@@ -1,0 +1,165 @@
+# The DAILY BUILD — a downloadable loft for people who cannot or should not build it.
+#
+# Named "daily" because that is the term users know; the real cadence is PER PR plus every
+# push to `main`, which in practice is one or two a day (CLAUDE.md § Branch policy sets that
+# cadence).  Calling it "per-PR build" would be more literal and less understood.
+#
+# Why it exists: the release bundles are attached to `v*` tags only, so between monthly
+# releases there was nothing to download and the only way to run this month's loft was to
+# compile it — which needs a machine that can survive `-C codegen-units=1` on a crate this
+# size.  A laptop that runs out of memory there is exactly the case this serves.
+#
+# It builds the SAME artefact as a release, through the same script, deliberately:
+# `scripts/make-release.sh` emits a self-contained bundle (bin/loft + default/ + examples +
+# reference PDF + BUILD-INFO + SHA256SUMS).  A separate artefact shape would need its own
+# install instructions and its own verification story, and would drift from the release one.
+#
+# NOT a required check, and it must not become one: it is a convenience, and a red bundle
+# leg should never block a merge that the gate itself passed.
+name: Daily build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Which targets: all, or one triple (e.g. x86_64-pc-windows-msvc)'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+# One bundle set per ref.  A rapid re-push should replace its predecessor rather than
+# queue behind it — this job is never the thing anyone is waiting on.
+concurrency:
+  group: daily-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            # macos-15 is Apple Silicon, so this leg CROSS-builds — the bundle it
+            # produces cannot run on the runner that made it.  Same note as release.yml.
+            os: macos-15
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # A dispatch naming one triple builds only that leg; `all` (the default, and what a
+      # PR or a push always does) builds every leg.
+      - name: Should this leg run?
+        id: want
+        shell: bash
+        run: |
+          want='${{ github.event.inputs.targets }}'
+          if [ -z "$want" ] || [ "$want" = all ] || [ "$want" = '${{ matrix.target }}' ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "skipped: dispatch asked for '$want'"
+          fi
+
+      - name: Install Rust stable
+        if: steps.want.outputs.run == 'yes'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Mirrors release.yml: make-release.sh needs `zip`; Linux also needs musl-tools for
+      # the static target; macOS ships zip; Windows takes it from chocolatey.
+      - name: Install packaging tools (Linux)
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools zip unzip
+
+      - name: Install packaging tools (Windows)
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'
+        run: choco install zip unzip -y
+
+      - name: Cache cargo
+        if: steps.want.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: daily-${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build the self-contained bundle
+        if: steps.want.outputs.run == 'yes'
+        shell: bash
+        run: scripts/make-release.sh ${{ matrix.target }}
+
+      # Which COMMIT a bundle came from is the question a daily build gets asked most, and
+      # the zip's own BUILD-INFO records version + target + rustc but not the sha.  Stamped
+      # beside it rather than into it, so the bundle stays byte-identical to a release one.
+      - name: Stamp the source it came from
+        if: steps.want.outputs.run == 'yes'
+        shell: bash
+        run: |
+          {
+            echo "commit:  ${{ github.sha }}"
+            echo "ref:     ${{ github.ref }}"
+            echo "event:   ${{ github.event_name }}"
+            echo "pr:      ${{ github.event.pull_request.number || '-' }}"
+            echo "built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "target:  ${{ matrix.target }}"
+            echo
+            echo "This is a DAILY BUILD, not a release: it is whatever the source said at"
+            echo "that commit, and it has not been through the release checklist."
+          } > dist/DAILY-BUILD-INFO.txt
+          ls -la dist/
+
+      # A bundle that cannot run is worse than no bundle, so each leg that CAN execute its
+      # own artefact does.  The two cross legs (x86_64 macOS on Apple Silicon) cannot, and
+      # say so rather than skipping silently.
+      - name: Smoke-test the bundle
+        if: steps.want.outputs.run == 'yes'
+        shell: bash
+        run: |
+          set -e
+          zip=$(ls dist/*.zip | head -1)
+          case "${{ matrix.target }}" in
+            x86_64-apple-darwin)
+              echo "cross leg (Apple Silicon runner builds x86_64): not executing $zip"
+              exit 0 ;;
+          esac
+          rm -rf _smoke && mkdir _smoke && unzip -q "$zip" -d _smoke
+          root=$(ls -d _smoke/*/ | head -1)
+          exe="${root}bin/loft"
+          case "${{ matrix.target }}" in *windows*) exe="${root}bin/loft.exe";; esac
+          chmod +x "$exe" 2>/dev/null || true
+          echo 'fn main() { println("daily build ok"); }' > _smoke/hello.loft
+          out=$("$exe" --interpret _smoke/hello.loft)
+          echo "$out"
+          [ "$out" = "daily build ok" ] || { echo "the bundle did not run its own program"; exit 1; }
+
+      - name: Upload the bundle
+        if: steps.want.outputs.run == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loft-daily-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/DAILY-BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 30
