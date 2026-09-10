@@ -252,6 +252,39 @@ it, not a standing fact.
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
 
+D-tup-12 closed 2026-09-10: `(T-Proj)` spells a projection `.i` with a LITERAL index, and a
+tuple has no other member.  A record-backed tuple is carried as the SYNTHETIC STRUCT
+`__tuple<…>`, whose attributes are named `_0`, `_1`, …, and that home's projection site
+claimed the member only when the next token was ALREADY an integer — a guard on the token
+rather than an answer about it.  So a named member fell past it to the ordinary struct-field
+reader, and `_0` was a second, undocumented spelling of `.0` that both READ and WROTE: `t._0`
+answered `11` and `t._0 = 99` reached the vector's bytes, on both backends, while the same
+source over a plain local was refused by name.  Which spelling a program could use was decided
+by a REPRESENTATION choice with nothing in the source to show it — the stack local, the vector
+element by a constant or variable index, the struct field, the `&(…)` parameter, the function
+parameter and an all-integer return all refused; the `vector<(τ, τ)>` loop variable, the nested
+loop variable and a heap-carrying return admitted.
+
+Two further defects came out of the same fallthrough.  A named member reported *"Unknown field
+`__tuple<integer,text>`.name"* — loft#1498's class exactly, a diagnostic naming a def the
+author cannot write, about a member kind a tuple does not have; `Data::def_is_authored` is the
+predicate that exists for it and this path never reached one.  And the refusal at all THREE
+homes left the offending member in the token stream, so every one of them dragged a second
+`Expect token ;` behind it — the cascade loft#868 removed from the unknown-receiver path,
+still standing on this one.  Consuming the name is not enough on the LEFT of an assignment
+(`t._0 = 9` then reads as `t = 9`, and the reader is told their tuple *"cannot change type
+from `__tuple<integer,text>` to integer"*), so the errored member carries `fields.rs`'s
+`Value::Drop` marker, which the assignment path already reads.
+
+Closed by giving the two questions ONE home each — `tuple_member_not_a_literal` and
+`tuple_index_out_of_range` in `parser/operators.rs`, cited from all three sites.  Three copies
+of one refusal is what let a fourth spelling of it be a token GUARD instead: the guard reads
+as an answer until you ask what happens when it does not hold.  Guards: the six cells in
+`102b-pass1-expected-errors.loft` (falsified against `2e408acc8` on both backends; the two
+stack-tuple cells are the control that says the three homes were made to AGREE rather than all
+moved).  `contract: settled` — the rule already said the member is a literal index; nothing
+about the language changed, only which spellings reach it.
+
 D-tup-11 closed 2026-09-08 (loft#1423): `(T-Absent)` says a tuple is absent when EVERY member
 is null, and the null question has ONE home shared by `t == null` and `t ?? d`.  Neither held.
 `coalesce_not_null` carried its own convention — *"a tuple is null when its FIRST FIELD is its
@@ -325,6 +358,15 @@ the companion [tuples-history.md](tuples-history.md).
   are ADMITTED — the record-backed form, measured 2026-09-10 on both backends and guarded by
   `tests/scripts/reference-tuple-heap-elements-link.loft`.
 - **Static index (`T-Proj`)** — `t.5` on a 2-tuple is a compile error, not a runtime null.
+  Asked of all THREE homes a tuple has (2026-09-10, both backends): the stack `Type::Tuple`,
+  the record-backed `__tuple<…>` a `vector<(τ, τ)>` loop variable and a heap-carrying return
+  carry, and a `&(…)` reference tuple.  Each reports the same two refusals — an out-of-range
+  literal index, and a member that is not a literal at all — and each reports exactly ONE
+  error, because the refusal now consumes the offending member instead of leaving it for the
+  statement parser (`102b-pass1-expected-errors.loft`).  The positive half, that `.0`/`.1`
+  read the same element from every home and still WRITE through a loop variable, is
+  `822-vector-tuple-spellings.loft`.  The home is what made this worth asking three times:
+  see D-tup-12.
 - **Heap element is COPIED (`T-Cons`)** — `t = (h, 9); h[2] = …` leaves `t.0` at its old length
   for EVERY heap element type, not just the vector the paragraph above names: `hash`, `hash<τ>?`,
   `sorted`, `index`, `trie`, `spatial`, and a DEEP case with a nested `vector<text>` inside the

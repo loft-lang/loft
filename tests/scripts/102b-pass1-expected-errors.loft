@@ -147,3 +147,88 @@ fn test_text_slice_end_with_text_is_refused() {
   k = "x";
   assert(s[1..k] == "e", "unreached");
 }
+
+// ── `@FR-T-Proj` — a tuple's member is a LITERAL index, wherever the tuple lives ──
+//
+// The rule spells a projection `t.i` with a COMPILE-TIME index and calls an out-of-range
+// one a STATIC error.  Neither half had a guard, and a tuple has THREE homes that each
+// answered for themselves: the stack `Type::Tuple`, the record-backed `__tuple<…>` a
+// vector loop variable and a heap-carrying return carry, and a `&(…)` reference tuple.
+//
+// The two record-backed cells are the ones that disagreed.  That home is a SYNTHETIC
+// STRUCT whose attributes are named `_0`, `_1`, …, and its projection site only claimed
+// the member when the next token was already an integer — so a named member fell through
+// to the ordinary struct-field reader and `_0` became a second, undocumented spelling of
+// `.0` that both READ and WROTE.  `t._0 = 99` mutated a loop variable's element, while
+// the same source over a plain local was refused; and `t.name` reported *"Unknown field
+// `__tuple<integer,text>`.name"*, naming a type the author cannot write, about a member
+// kind a tuple does not have.  Which spelling worked was decided by a REPRESENTATION
+// choice invisible in the source.
+//
+// So the cells are the same two refusals asked of each home, and they are here rather
+// than beside a positive because a projection refusal is a pass-1 diagnostic.  The
+// positive halves — that `.0` and `.1` still read every home, and still WRITE through a
+// loop variable — are in `822-vector-tuple-spellings.loft` and the controls that guard
+// this walk's fix.
+//
+// @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/22 -> 15/22
+//   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
+//   FAIL/22 -> 15/22.
+// CHANNEL: expectations, on both backends — four of the six cells below report NO error on
+//   the control, so the file's exit goes 1 -> 0 with them.  Not leak and not assert: this
+//   whole file is a parse-time verdict.
+// ARMED: no instrument.  A pass-1 diagnostic is reported by the ordinary run.
+// WITNESS: on 2e408acc8 `t._0` on a `vector<(integer, text)>` loop variable ANSWERS `11`
+//   instead of refusing, `t._0 = 99` leaves `v[0].0` reading `99`, and `t.name` reports
+//   `Unknown field __tuple<integer,text>.name` — the synthetic struct's own attribute
+//   names, reachable as a second spelling of `.0`.
+// HOLDS: the two stack-tuple cells pass on BOTH trees, unchanged — `t.5` is already
+//   `Tuple index 5 out of range` there and `t.name` already `requires a numeric index`.
+//   They are what says the fix made the three homes AGREE rather than moving all three,
+//   and a patch that merely broke projection everywhere would move them too.  The 17
+//   expectations that predate this block must not move either.
+// @falsified-by: tests/falsified/102b-pass1-expected-errors.patch — the same channels.  Score
+//   it with `scripts/falsify.sh tests/scripts/102b-pass1-expected-errors.loft --patch
+//   tests/falsified/102b-pass1-expected-errors.patch`, which reintroduces the fault on top of
+//   HEAD once 2e408acc8 has scrolled out of reach.
+
+// @EXPECT_ERROR: Tuple index 5 out of range — tuple has 2 elements
+fn pe_tuple_stack_index_out_of_range() -> integer {
+  t = (1, 2);
+  t.5
+}
+
+// @EXPECT_ERROR: Tuple element access requires a numeric index
+fn pe_tuple_stack_named_member() -> integer {
+  t = (1, 2);
+  x = t.name;
+  0
+}
+
+// @EXPECT_ERROR: Tuple index 5 out of range — tuple has 2 elements
+fn pe_tuple_record_index_out_of_range(v: vector<(integer, text)>) -> integer {
+  for t in v { x = t.5; }
+  0
+}
+
+// @EXPECT_ERROR: Tuple element access requires a numeric index
+fn pe_tuple_record_named_member(v: vector<(integer, text)>) -> integer {
+  for t in v { x = t.name; }
+  0
+}
+
+// The synthetic struct's OWN attribute name.  Reading it answered the element's value.
+// @EXPECT_ERROR: Tuple element access requires a numeric index
+fn pe_tuple_record_synthetic_attr_read(v: vector<(integer, text)>) -> integer {
+  for t in v { x = t._0; }
+  0
+}
+
+// And writing it reached the vector's bytes — the cell that makes this more than a
+// spelling.  It is held apart from the read because the two take different paths out of
+// the projection site, and only the WRITE also had to stop collapsing into `t = 99`.
+// @EXPECT_ERROR: Tuple element access requires a numeric index
+fn pe_tuple_record_synthetic_attr_write(v: vector<(integer, text)>) -> integer {
+  for t in v { t._0 = 99; }
+  0
+}

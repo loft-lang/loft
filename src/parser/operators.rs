@@ -1560,17 +1560,16 @@ impl Parser {
                 // `Optional(Tuple)` the rule says cannot exist, so the members are bare inside
                 // it.  That is the rest of D-tup-10 and it is plan-sized (the flip removes the
                 // `Optional` that `?` and `??` syntactically trigger on).
+                // `@FR-T-Proj`: `t.i` reads the i-th element, `i` is a COMPILE-TIME literal,
+                // and an out-of-range `i` is a STATIC error.  One of THREE sites answering
+                // this for the three homes a tuple has — the stack tuple here, a `&(…)`
+                // reference tuple in `parse_ref_tuple_elem`, and the record-backed
+                // `__tuple<…>` below; all three must answer it alike.
                 if let Type::Tuple(ref elems) = *t.base() {
                     let elems = elems.clone();
                     if let Some(idx) = self.lexer.has_integer() {
                         let idx = idx as usize;
-                        if idx >= elems.len() {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Tuple index {idx} out of range — tuple has {} elements",
-                                elems.len()
-                            );
+                        if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
                         } else {
                             // P197: propagate parent tuple's deps into the
@@ -1627,11 +1626,7 @@ impl Parser {
                             }
                         }
                     } else {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Tuple element access requires a numeric index (e.g. .0, .1)"
-                        );
+                        self.tuple_member_not_a_literal(code);
                     }
                 } else if let Type::RefVar(ref inner) = t
                     && let Type::Tuple(ref elems) = **inner
@@ -1639,9 +1634,7 @@ impl Parser {
                     // T1.5: element access through a reference-tuple parameter — pair.0, pair.1.
                     let elems = elems.clone();
                     self.parse_ref_tuple_elem(&mut t, code, &elems);
-                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, &t)
-                    && matches!(self.lexer.peek().has, crate::lexer::LexItem::Integer(_, _))
-                {
+                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, &t) {
                     // P189b: vector-of-tuple loop var / index result —
                     // the loop variable is typed as `Reference(__tuple<…>)`
                     // pointing at inline tuple bytes inside the vector
@@ -1659,13 +1652,7 @@ impl Parser {
                         .collect();
                     if let Some(idx) = self.lexer.has_integer() {
                         let idx = idx as usize;
-                        if idx >= elems.len() {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Tuple index {idx} out of range — tuple has {} elements",
-                                elems.len()
-                            );
+                        if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
                         } else {
                             // Stored-tuple field offset goes through the
@@ -1709,6 +1696,22 @@ impl Parser {
                                 t = t.depending(nr);
                             }
                         }
+                    } else {
+                        // `@FR-T-Proj` spells a projection `.i` with a LITERAL index, and
+                        // that is the only member a tuple has.  A record-backed tuple is
+                        // carried as the synthetic struct `__tuple<…>`, whose attributes are
+                        // named `_0`, `_1`, … — so without this arm a named member fell to
+                        // the struct-field reader, and the two spellings answered a tuple
+                        // differently depending on where it LIVED.  `t._0` read and WROTE a
+                        // loop variable's element while the same source over a plain local
+                        // was refused, and `t.name` reported *"Unknown field
+                        // `__tuple<integer,text>`.name"* — a type the author cannot write,
+                        // about a member kind a tuple does not have (loft#1498's class:
+                        // `Data::def_is_authored`).  The two sibling sites — the stack
+                        // tuple and `parse_ref_tuple_elem` — already answer this question
+                        // exactly this way; this one asked it as a GUARD on the next token
+                        // instead, so its non-literal case had no answer at all.
+                        self.tuple_member_not_a_literal(code);
                     }
                 } else {
                     t = self.field(code, t);
@@ -1957,16 +1960,56 @@ impl Parser {
         data.def(d).name().starts_with("__tuple<").then_some(d)
     }
 
+    /// `@FR-T-Proj`: a tuple's member is a LITERAL index and nothing else — report a member
+    /// that is not one, and CONSUME it.
+    ///
+    /// The one home for that question, which the three projection sites (stack tuple,
+    /// record-backed `__tuple<…>`, `&(…)` reference tuple) each used to answer for
+    /// themselves.  Consuming the offending name is the half that was missing everywhere: a
+    /// member left in the stream reaches the statement parser, which reports `Expect token ;`
+    /// about a statement whose real fault has already been named — the cascade loft#868
+    /// removed from the unknown-receiver path, still standing here.
+    fn tuple_member_not_a_literal(&mut self, code: &mut Value) {
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "Tuple element access requires a numeric index (e.g. .0, .1)"
+        );
+        if self.lexer.has_identifier().is_some() {
+            // Consuming the name is not enough on the LEFT of an assignment: `t._0 = 9`
+            // then reads as `t = 9`, and the reader is told their tuple *"cannot change
+            // type from `__tuple<integer,text>` to integer"* — a second error, about a type
+            // they cannot write, in place of the one that is true.  `Value::Drop` is the
+            // marker `fields.rs` already uses to keep an errored member access from
+            // collapsing into a plain `Value::Var`, and the assignment path reads it.
+            *code = Value::Drop(Box::new(code.clone()));
+        }
+    }
+
+    /// `@FR-T-Proj`: an out-of-range index is a STATIC error, never a runtime null — the
+    /// second half of the same question, and the same three sites ask it.
+    ///
+    /// Reports and answers `true` when `idx` names no element, leaving the caller to pick
+    /// its own recovery type.
+    fn tuple_index_out_of_range(&mut self, idx: usize, arity: usize) -> bool {
+        if idx >= arity {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Tuple index {idx} out of range — tuple has {arity} elements"
+            );
+            return true;
+        }
+        false
+    }
+
+    /// Read one element of a `&(…)` reference tuple — `@FR-T-Proj` for the reference home,
+    /// the third of the three sites that answer it (see the stack-tuple site in
+    /// [`Parser::operators`] for the other two).
     fn parse_ref_tuple_elem(&mut self, t: &mut Type, code: &mut Value, elems: &[Type]) {
         if let Some(idx) = self.lexer.has_integer() {
             let idx = idx as usize;
-            if idx >= elems.len() {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Tuple index {idx} out of range — tuple has {} elements",
-                    elems.len()
-                );
+            if self.tuple_index_out_of_range(idx, elems.len()) {
                 *t = Type::Unknown(0);
             } else {
                 *t = elems[idx].clone();
@@ -1975,11 +2018,7 @@ impl Parser {
                 }
             }
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Tuple element access requires a numeric index (e.g. .0, .1)"
-            );
+            self.tuple_member_not_a_literal(code);
         }
     }
 

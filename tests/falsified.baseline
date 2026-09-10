@@ -50,7 +50,6 @@
 1026-generic-discharged-null-return.loft
 1028-generic-null-typed-per-monomorph.loft
 1029-inline-argument-borrow-source.loft
-102b-pass1-expected-errors.loft
 102-escape-sequences.loft
 102-expected-errors.loft
 1030-compound-range-both-spellings.loft
