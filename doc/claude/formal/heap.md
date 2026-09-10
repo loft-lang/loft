@@ -410,11 +410,54 @@ reaching past its own subject — which is what an over-wide cell is for:
   the member's backing still drops beside the buffer.  The same question as the loop-variable
   shape (a copy whose SOURCE is a view, discussed in its own paragraph below), with the
   difference that a tuple member's backing is a nameable work-ref, so a cure exists here
-  where a vector element has none;
+  where a vector element has none.  **This shape and the `??` one below are ONE question** —
+  see the carrier paragraph after this list;
 - a returned member guarded by `??` — `return t.0.0 ?? d`, and `return t.0 ?? d` at FLAT depth
   too, so the axis is the `??` and not the nesting: twice.  Measured on the pristine control and
-  unchanged by either read-site fix below, so it is neither of them; what the `??` does to the
-  return path has not been read off the IR yet.
+  unchanged by either read-site fix below, so it is neither of them.  **Read off the IR
+  2026-09-10** — the mechanism is the carrier paragraph below, shared with the bound-projection
+  shape above.
+
+**Two of these shapes are one question: a CARRIER hides the member.**  Measured 2026-09-10 over
+an 11-cell matrix, byte-identical on both backends (`(O-NoDiverge)`), with a droppable `TdH`
+whose `OpDrop` appends to a trace file:
+
+| cell | shape | trace | releases |
+|---|---|---|---|
+| b1 | `return t.0` | `alive11,11` | once ✓ |
+| q1 | `return t.0 ?? d` | `21,alive21,21` | **twice** |
+| q2 | `return t.0.0 ?? d` | `22,alive22,22` | **twice** |
+| x5 | `m = t.0; return m` | `35,alive35,35` | **twice** |
+| x3 | `m = t.0; return m ?? d` | `33,alive33,33` | **twice** |
+| x6 | `m = t.0 ?? d`, NO return | `alive36,36` | once ✓ |
+| x7 | `m = t.0`, NO return | `alive37,37` | once ✓ |
+| x1 | `return s ?? d` (a local, no tuple) | `alive31,31` | once ✓ |
+| x2 | `return bx.s ?? d` (a field, no tuple) | `alive32,32` | once ✓ |
+| x4 | `return t.0` with a `??` ELSEWHERE | `alive340,34` | once ✓ |
+| x8 | two members, `return t.0 ?? d` | `81,82,alive81,81` | **whole tuple early** |
+
+x5 doubles with NO `??`, and x1/x2 keep a plain `??` at one release, so the `??` is not the axis
+either shape turns on: **x3 was the bound shape wearing a `??`**.  What both need is a RETURN
+(x6/x7 hold at one) and a tuple MEMBER (x1/x2 hold at one).  x8 says what the early release
+actually is — the whole SOURCE TUPLE drops (both `81` and `82`) before the alive marker, and the
+returned member then drops again in the caller.
+
+The root is `scopes::drop_bearing_source`.  It resolves a copy's source by IR SHAPE: a
+`TupleGet` goes to `tuple_member_backing`, but a `Value::Var` answers *that variable* and stops.
+A variable that merely CARRIES a member — the `??` temp (`__ncc_1`, which the table prints
+`skipfree deps=[t(3)]`, so it names the tuple VARIABLE and not the member's backing work-ref
+`__ref_p2_1`) or a user local bound from `t.0` — is not the drop-bearing source, so
+`copy_moves_drop_from` suppresses a variable that owns nothing while the backing still drops.
+Two carriers, one hole, and it is the shape-matching lesson again: a lowering must be recognised
+by a recorded fact, not by the node it happens to be spelled as.
+
+The fact already exists — `Function::tuphold_origin` maps a variable to its `(base, member)` and
+`tuple_copy_source_path` already walks it — but it is recorded only for the `_tuphold` and
+`tuple_tmp` work-refs (`parser/operators.rs`, `parser/vectors.rs`).  Neither carrier gets an
+entry, which is why the walk stops.  So the cure is to record the origin at the two binds that
+mint a carrier rather than to widen the matcher, and the prediction that falsifies it is sharp:
+q1, q2, x3 and x5 all fall to one release together, while x1, x2, x4, x6, x7 and the nine cells
+of the existing tuple guard do not move.
 
 ✓ **A copy off a tuple PARAMETER's member — `fn f(p: (S, integer)) { u = p; }` — CLOSED
 2026-09-10** for every copy that DIES in the callee.  The rule was already implemented for the
