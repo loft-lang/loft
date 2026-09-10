@@ -1509,6 +1509,22 @@ SINK their copy into the block — so a per-consumer cure would have had to be w
 and would still have missed the sixth. That is what makes the BLOCK, not any consumer, the
 chokepoint.
 
+**A walker on a statement list matches more than the construct you meant.** When rewriting the
+ARMS of a construct, keep the arm's node kind out of the same `match` as the construct's — called
+on a statement list, the walker will also match that node kind standing ALONE and rewrite
+something that was never an arm. Measured on loft#1496: the arm-voiding walk matched
+`Span | If | Block`, meaning `Block` as the arm reached through the `If`, and also fired on a bare
+`{ … }` in statement position. A keyed literal reached through a CAPTURE arrives as exactly that —
+a block whose ops build STRAIGHT INTO its destination (@PLN93 build-into-target, loft#1326) — so
+dropping its tail and voiding its type destroyed the build and the collection read `0xDEADBEEF`.
+The cure is to split the walk: one function recognises only the construct and hands each arm to a
+second, which is the only one that rewrites, so the arm's node kind is reachable only THROUGH the
+construct. ⚠ **A green `make ci` and a clean `find_problems --changed` both passed over it; the
+`LOFT_POISON=1` sweep found it in 90 seconds** — that sweep is not optional after touching shared
+parser or codegen machinery (TESTING.md § the nightly sweeps). And bisect such a regression by
+disabling each candidate fix in place (`if false && …`, an incremental rebuild, one failing file)
+rather than by building historical commits: three ~15s cycles named it.
+
 **A "statement or value?" question is not decidable where the construct is built.** Three
 arm-side discriminators for *is this branch a statement* were each disproven by building the
 counter-example (loft#1496): the arm's expected `result` being `Void`, the arm's tail being a
