@@ -358,17 +358,20 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE;
-`D-heap-3`, a struct field projected off a CALL result, where the copy-out hand-off now
-carries the dense family, the `?`/`??` join and the returned projection, and one MEMORY-only
-residual remains — a binding and its materialising work-ref free one store twice, in the
-order their declarations happen to fall (loft#1506); and
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE; and
 `D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
 implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
 and a deviation placed beside its rule rather than under this heading is the way it goes
 stale.  `D-heap-2` (a cascade that reached three of the member kinds it owned) opened and
-CLOSED 2026-09-10, below; it is why D-heap-1's own list never counted it.  That list has
+CLOSED 2026-09-10, below; it is why D-heap-1's own list never counted it.  `D-heap-3` (a
+struct field projected off a CALL result) closed the same day, in three parts and by three
+hands: the dense family, then the `?`/`??` join and the returned projection, then the
+MEMORY-only residual those left behind — a binding and its materialising work-ref freeing one
+store twice, in the order their declarations happened to fall, which is `D-heap-5`
+(loft#1513).  Its count read **3** while D-heap-3's own heading already said OPENED AND
+CLOSED — this line and the entry below it are two readers of one fact, and a three-handed
+close updated only the entry.  D-heap-1's list has
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
