@@ -2544,10 +2544,10 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 775 | 431 | 6 | **338** |
+| 778 | 434 | 6 | **338** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
-carries the defect is the TEST: the same run reports **2104** shape tests, **1317** of them opaque
+carries the defect is the TEST: the same run reports **2110** shape tests, **1318** of them opaque
 on their OWN scrutinee, and the function row moves three to five per batch.  So this row records
 progress, and the thing that GATES is `make optional-ratchet` — both counts pinned in
 `index/optional_ratchet.json`, failing when either grows, on the `asan_leak_ratchet.sh` argument
