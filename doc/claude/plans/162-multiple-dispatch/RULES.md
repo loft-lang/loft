@@ -67,6 +67,17 @@ and a variant-typed definition already coexists with the enum-typed one as a sep
 > that admits it; a bound is more specific than a strictly weaker bound.  Two abstractions of
 > DIFFERENT kinds are INCOMPARABLE — and a call to which both apply is `Disp-Ambiguous`.**
 
+**The primary abstraction is the ENUM** (owner, 2026-09-11).  Bounds are supported — the edge
+below already works — but enum ⊃ variant is the way this language is meant to be written, and
+that choice buys two things generics cannot.  The lattice is a **two-level chain per
+parameter** (a variant has exactly one enum) rather than an open partial order, and it is
+**closed and single-owner**, so the cross-library ambiguity that motivates orphan rules in
+other languages largely does not arise: an enum is declared in one place, and a library adding
+a variant edits that declaration.
+
+⚠ Closedness is not a restriction accepted reluctantly — **it is what makes the check
+possible**.  See the `dispatch-pairs-uncovered` note under `Disp-Exhaustive`.
+
 Measured 2026-09-11: the concrete-beats-bound edge **already works** —
 `fn kind(self: Sq)` beside `fn kind<T: Shape>(x: T)` selects `"square"` for an `Sq` and
 `"some shape"` for a `Tri`.  So a bounded generic is the OPEN abstract position this rule
@@ -86,6 +97,48 @@ abstract position.  Either interfaces gain existential/parameter use — a langu
 beyond this plan — or the open profile dispatches over enums too, which is closed by
 construction.  **This is a question for the owner and it is the one the verification opened
 rather than closed.**
+
+**Disp-Ambiguous** *(amended — the tie-break rule, and the escape hatch that already exists).*
+
+Two clauses, and neither is new policy — the second is loft#788's, extended from NAME
+collisions to SPECIFICITY collisions.
+
+> **No tie is broken by generic-ness.**  A definition that is strictly more specific wins,
+> whatever kind of abstraction it uses.  Where neither dominates, the call is ambiguous and
+> the compiler does NOT reach for *"but one is generic"* to choose.
+
+> **A BARE call that is ambiguous is refused.  A QUALIFIED call is not** — `lib::hit(a, b)`
+> has already said which package it means, so its candidate set is that package's and it
+> resolves within it.
+
+The second clause needs no new syntax and no new mechanism: `lib::f(…)` is an existing
+callable form, and `find_fn`'s `source` parameter already carries exactly this distinction —
+`source == u16::MAX` *is* what makes a call bare (`parser/mod.rs:5932`).  loft#788 already
+refuses a bare ambiguous call and already permits the qualified one, with the reason stated in
+its own comment: *"two packages deliberately exporting one name and calling it qualified is a
+shape that works today — refusing it would break a program for a collision it has already
+resolved."*
+
+⚠ **The first clause must not catch the concrete-vs-bound CHAIN**, which compiles today:
+`fn kind(self: Sq)` beside `fn kind<T: Shape>(x: T)` selects `"square"` for an `Sq` and
+`"some shape"` for a `Tri`.  One is strictly more specific, so it is not a tie and nothing
+refuses it.  Refusing it would NARROW current behaviour — the one direction the principle
+above forbids.
+
+**The diagnostic offers both cures, and which one applies depends on what the reader owns:**
+
+```
+error: `hit` is ambiguous for (Fireball, IceWall)
+  --> two definitions apply and neither is more specific:
+      fn hit(f: Fireball, d: Damageable)   src/fire.loft:12
+      fn hit(p: Projectile, w: IceWall)    lib/combat.loft:40
+  = if you own one: give it its own name — these definitions are sparse, so the
+    name is where the distinction belongs
+  = if you own neither: qualify the call — `combat::hit(a, b)`
+```
+
+The rename cure is first because it is the right one in the common case; the Julia reflex
+(*"add a more specific definition"*) is usually wrong here and is deliberately not offered.
 
 **Disp-Fallback** *(amended).*  The design says *a definition whose parameters are all
 untyped*.  Untyped parameters do not exist and are not being added (README § Decision), so:
@@ -110,6 +163,16 @@ This is `match` exhaustiveness one level up, and it is the rule that makes the t
 a **checked obligation** rather than a convention: forget the total case and the program is
 refused, where an untyped fallback would have made every call trivially covered and turned the
 same mistake into a silent no-op.
+
+⚠ **With CLOSED enums the compiler can do strictly better than this rule requires, and should
+— as ADVICE.**  Every reachable variant combination is enumerable at build, so it can report
+*which pairs fall through to the fallback*: `7 of your 64 (Entity, Entity) pairs reach the
+default — here they are`.  For a game that is the question actually being asked — *what have I
+not handled?* — and it is decidable only because the enum is closed.
+
+It must stay advice and never an error, or it is the N² table the feature exists to escape:
+the enum-typed fallback legitimately covers every remaining pair, so a program with a fallback
+is complete by the rule.  Proposed code: `dispatch-pairs-uncovered`.
 
 ⚠ It is also the rule that Julia's construct **structurally cannot have** — with no static
 types there is nothing to check coverage against, which is why `MethodError` is a runtime

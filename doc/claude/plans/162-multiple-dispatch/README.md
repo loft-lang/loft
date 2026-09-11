@@ -164,6 +164,30 @@ case where an argument's type is genuinely unknowable at the call site *and* the
 the value — that is `Any`, and it deserves its own proposal weighed against the ownership and
 artifact-size commitments, not a side door through dispatch.
 
+## Decisions taken (owner, 2026-09-11)
+
+All four follow one principle — *refusal is the only reversible direction* — stated in
+[RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).
+
+1. **No untyped parameters.**  The fallback is the most general TYPE.  (§ Decision below.)
+2. **Cross-kind specificity is incomparable, not ranked** — and **no tie is broken by
+   generic-ness**.  A strictly-more-specific definition still wins whatever kind it is, so the
+   concrete-vs-bound chain that compiles today is untouched; only genuine ties refuse.
+3. **A BARE ambiguous call is refused; a QUALIFIED one resolves.**  `lib::hit(a, b)` has said
+   which package it means.  This is not new policy — loft#788 already refuses bare ambiguous
+   imports and already permits the qualified form, and `find_fn`'s `source` parameter already
+   carries the distinction (`source == u16::MAX` *is* bare).  Dispatch extends it from name
+   collisions to specificity collisions; **no new syntax.**
+4. **The ENUM is the primary abstraction**, bounds secondary.  Enum ⊃ variant is a two-level
+   chain per parameter, closed, and single-owner — so the orphan/cross-library problem that
+   motivates coherence rules elsewhere largely does not arise.  The generics ranking is
+   **deferred, not declined**.
+
+The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
+it is what lets the compiler enumerate every reachable variant pair and report **which reach
+the fallback** — `dispatch-pairs-uncovered`, advice-level, and only possible because the enum
+is closed.
+
 ## Sub-arcs
 
 `Verify` names the comparison that would go RED if the phase were done wrong.  The phases are
