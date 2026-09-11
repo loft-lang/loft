@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Which `#[inline]` functions did rustc DECLINE to inline?
 
+The rule this instrument checks is `@FR-R-Cold` (doc/claude/formal/rewrites.md).
+
 A generic `#[inline]` function is visible to the consumer's crate, so rustc decides on
 SIZE.  When a hot fast path shares a body with a cold half — an error report, a growth
 ladder, an out-of-range fallback — the whole body is what gets measured, the decision is

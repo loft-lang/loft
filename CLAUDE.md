@@ -723,6 +723,10 @@ step for a wrong value read through a record parameter inside a callee a hoistin
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
 serves from it — and is the bisect step for a wrong element or length out of an appending loop.
+**`LOFT_NO_MINT_HOIST=1`** (@PLN157 § V-s) makes a loop that appends a RECORD element
+(`v += [Pt{…}]`, `v += [pt(…)]`) hoist nothing — with it on, the mint group is admitted as a
+mover and the loop's invariant record scalars are read once before it — and is the bisect step
+for a wrong scalar read out of a record-appending loop.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live

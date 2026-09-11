@@ -1,0 +1,178 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RETURN whose value is a branch releases each arm's source exactly ONCE (loft#1515 shape 2).
+//
+// `materialize_return_into` publishes one copy of the join — `return if c { src.h } else { L }`
+// — and the sources feeding those arms were released once AFTER it, for every path alike.  One
+// sweep cannot be right for a join: on the arm that hands `src.h` out, `src` owes its OTHER
+// members and must leave that one to the copy; on the arm that does not, it owes the whole
+// record.  `(O-Complete)` makes the ownership fact per binding and PER PATH, and here the ARM
+// IS the path — so the hooks move into the arms and no runtime witness is needed.  Only the
+// HOOK moves: the store's `OpFreeRef` stays in the common sweep, because a store is freed once
+// whichever arm ran.
+//
+// Before this, the promotion ladder made it worse than a doubled count: `classify_ret_promotion`
+// renamed the user's LOCAL onto the return buffer although its type is not the return's, so
+// `is_argument(src)` became true and `(H-Drop)`'s parameter clause — *the caller owns* —
+// declined the cascade on EVERY path.  `wrong_shape_for_buffer` is the rung that refuses that
+// rename and it opened on `Type::Vector` while the rule it cites carries no such qualifier.
+//
+// THREE cells are load-bearing and must not be simplified away:
+//   * `nested_with_sibling` — the delivering arm skips `p.a` and must still release `p.b` AND
+//     `q`.  A member at offset 0 of a nested record shares its owner's address, so an
+//     offset-only skip drops the whole subtree and this is the only cell that sees it.
+//   * `two_fields` — the delivering arm must keep the SIBLING member.  A whole-cascade
+//     suppression reads as a fix on a one-field record and leaks the sibling.
+//   * `loop_before_return` — a back edge is a second path a forward reading does not see.
+// And `two_exits` is the CONTROL: two separate `return` statements are two sweeps and were
+// always correct, so it must be unmoved.
+//
+// @falsified-at: 63a21d03b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1515-a-join-return-releases-each-arms-source-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — the count cells fail on the control and
+//     pass here.
+//   ARMED: nothing.  A plain run scores it, on either backend, with no env var: the trace file
+//     IS the channel, because a lost hook moves no count a leak gate or a poison sweep can see.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees — a lost hook is not
+//     a leaked store, which is why the count is asserted directly rather than through a gate.
+fn trace_path() -> text { return "loft_1515_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct JH { id: integer }
+fn OpDrop(self: JH) { note("{self.id}"); }
+struct JS { h: JH }
+struct JTwo { h: JH, g: JH }
+struct JMid { h: JH }
+struct JOuter { m: JMid }
+struct JPair { a: JH, b: JH }
+struct JBox { p: JPair, q: JH }
+
+fn mk_dense() -> JS { return JS { h: JH { id: 9 } }; }
+fn mk_two() -> JTwo { return JTwo { h: JH { id: 1 }, g: JH { id: 2 } }; }
+fn mk_outer() -> JOuter { return JOuter { m: JMid { h: JH { id: 5 } } }; }
+fn mk_box() -> JBox {
+  return JBox { p: JPair { a: JH { id: 11 }, b: JH { id: 12 } }, q: JH { id: 13 } };
+}
+fn mk_at(i: integer) -> JS { return JS { h: JH { id: 20 + i } }; }
+
+// The filed shape: one projection arm, one literal arm.
+fn one_arm(c: boolean) -> JH { src = mk_dense(); return if c { src.h } else { JH { id: 3 } }; }
+
+// The delivering arm hands out `h` and must still release `g`.
+fn two_fields(c: boolean) -> JH { src = mk_two(); return if c { src.h } else { JH { id: 3 } }; }
+
+// Both arms project the SAME local, different members: the skip is per arm, not per local.
+fn both_arms(c: boolean) -> JH { src = mk_two(); return if c { src.h } else { src.g }; }
+
+// The arms project DIFFERENT locals: each answers for its own, and the one an arm does not
+// name owes its whole record on that path.
+fn two_locals(c: boolean) -> JH { p = mk_dense(); q = mk_two(); return if c { p.h } else { q.h }; }
+
+// A member two levels down out of one arm.
+fn nested(c: boolean) -> JH { src = mk_outer(); return if c { src.m.h } else { JH { id: 3 } }; }
+
+// LOAD-BEARING: `p.a` leaves, `p.b` and `q` stay.  An offset-only skip drops all of `p`.
+fn nested_with_sibling(c: boolean) -> JH {
+  d = mk_box();
+  return if c { d.p.a } else { JH { id: 3 } };
+}
+
+// A loop INSIDE the function reassigns the source before the join — the back edge.
+fn loop_before_return(n: integer, c: boolean) -> JH {
+  src = mk_dense();
+  for i in 0..n { src = mk_at(i); }
+  return if c { src.h } else { JH { id: 3 } };
+}
+
+// CONTROL: two separate returns are two sweeps and were always correct.
+fn two_exits(c: boolean) -> JH { src = mk_two(); if c { return src.h; } return src.g; }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  // Each call binds its own local.  Reusing one would REBIND it, and a rebind releases the
+  // record it displaces (`@FR-H-Drop`) — a real hook that belongs to the previous cell, read
+  // as this cell's answer.  Measured: it cost this guard one false expectation before the
+  // locals were split.
+  a1 = one_arm(true); got = drain();
+  assert(a1.id == 9, "the delivering arm reads the member: got {a1.id}");
+  assert(got == "", "the arm that hands `h` out releases nothing else: got '{got}'");
+  a2 = one_arm(false); got = drain();
+  assert(a2.id == 3, "the literal arm reads its own record: got {a2.id}");
+  assert(got == "9", "the arm that hands nothing out releases the record: got '{got}'");
+
+  t1 = two_fields(true); got = drain();
+  assert(t1.id == 1, "the two-field delivering arm reads h: got {t1.id}");
+  assert(got == "2", "the delivering arm keeps the SIBLING member: got '{got}'");
+  t2 = two_fields(false); got = drain();
+  assert(t2.id == 3, "the two-field literal arm reads its own: got {t2.id}");
+  assert(got == "2,1" || got == "1,2", "the omitting arm releases BOTH members: got '{got}'");
+
+  m1 = both_arms(true); got = drain();
+  assert(m1.id == 1, "the h arm reads h: got {m1.id}");
+  assert(got == "2", "the h arm leaves g to the record: got '{got}'");
+  m2 = both_arms(false); got = drain();
+  assert(m2.id == 2, "the g arm reads g: got {m2.id}");
+  assert(got == "1", "the g arm leaves h to the record: got '{got}'");
+
+  l1 = two_locals(true); got = drain();
+  assert(l1.id == 9, "the p arm reads p's member: got {l1.id}");
+  assert(got == "2,1" || got == "1,2", "the local no arm named owes its whole record: got '{got}'");
+  l2 = two_locals(false); got = drain();
+  assert(l2.id == 1, "the q arm reads q's member: got {l2.id}");
+  assert(got == "9,2" || got == "2,9", "q keeps its sibling and p owes its record: got '{got}'");
+
+  n1 = nested(true); got = drain();
+  assert(n1.id == 5, "the nested delivering arm reads the leaf: got {n1.id}");
+  assert(got == "", "a member two levels down leaves nothing behind here: got '{got}'");
+  n2 = nested(false); got = drain();
+  assert(n2.id == 3, "the nested literal arm reads its own: got {n2.id}");
+  assert(got == "5", "the omitting arm releases the nested member: got '{got}'");
+
+  s1 = nested_with_sibling(true); got = drain();
+  assert(s1.id == 11, "the nested-with-sibling arm reads p.a: got {s1.id}");
+  assert(got == "13,12" || got == "12,13",
+    "skipping `p.a` still releases `p.b` AND `q`: got '{got}'");
+  s2 = nested_with_sibling(false); got = drain();
+  assert(s2.id == 3, "the omitting arm reads its own record: got {s2.id}");
+  assert(got == "13,12,11" || got == "11,12,13" || got == "13,11,12",
+    "the omitting arm releases the whole record: got '{got}'");
+
+  p1 = loop_before_return(2, true); got = drain();
+  assert(p1.id == 21, "the loop leaves the LAST record: got {p1.id}");
+  assert(got == "9,20", "each displaced record releases, the handed-out one does not: got '{got}'");
+  p2 = loop_before_return(2, false); got = drain();
+  assert(p2.id == 3, "the omitting arm after a loop reads its own: got {p2.id}");
+  assert(got == "9,20,21", "the omitting arm also releases the surviving record: got '{got}'");
+
+  e1 = two_exits(true); got = drain();
+  assert(e1.id == 1, "CONTROL two exits, true: got {e1.id}");
+  assert(got == "2", "CONTROL two separate returns are two sweeps: got '{got}'");
+  e2 = two_exits(false); got = drain();
+  assert(e2.id == 2, "CONTROL two exits, false: got {e2.id}");
+  assert(got == "1", "CONTROL the other exit releases the other member: got '{got}'");
+
+  // Every escaping copy is still alive here; each releases exactly once at scope end, which is
+  // the other half of "once per resource" and is what a leak gate cannot see.
+  println("1515 join-return ok reads={a1.id},{t1.id},{m2.id},{l1.id},{n1.id},{s1.id},{p1.id},{e1.id}");
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+}

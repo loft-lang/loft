@@ -621,6 +621,7 @@ impl Store {
     /// never taken on an ordinary run, and inlining the body there pushed the hot path's
     /// code apart for nothing — measured at +10 % instructions on a field-write loop before
     /// this attribute, and under 1 % after.
+    /// Enforces `@FR-R-Cold`: the hook is outlined so its armed-test inlines.
     #[cold]
     #[inline(never)]
     pub fn shadow_write(&mut self, at: usize, len: usize, kind: u16) {
@@ -2977,6 +2978,7 @@ impl Store {
 
     /// The message for [`Self::offset_in_bounds`], kept out of line so the guard
     /// itself stays a compare and a not-taken branch.
+    /// Enforces `@FR-R-Cold`: the raise is outlined so the bounds test inlines.
     #[cold]
     #[inline(never)]
     fn raise_out_of_bounds(&self, rec: u32, fld: u32, width: usize) -> ! {

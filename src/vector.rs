@@ -795,6 +795,7 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
 /// The off-fast-path half of [`get_elem_hoisted`]: an out-of-range or negative index, which
 /// routes back through [`get_vector`] so a negative one still addresses from the end.
 ///
+/// Enforces `@FR-R-Cold` (formal/rewrites.md).
 /// `#[inline(never)]` is load-bearing rather than a hint (loft#1508).  Its caller is generic
 /// and `#[inline]`, so rustc sees the whole body and decides on SIZE — and with this half
 /// folded in, the body carried a second call and a second read and lost that decision.  The

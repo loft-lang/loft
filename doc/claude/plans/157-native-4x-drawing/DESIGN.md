@@ -2069,6 +2069,71 @@ carries the holder and not the path, so it is checked for liveness only.  Both a
 the state-builder refactor (next) and a path-carrying comment on those emissions would
 sharpen it.
 
+## V-s — a record-appending loop hoists its invariant scalars (2026-09-10)
+
+**The shape** (the § P4c hand-off's open question, and `smooth`'s hot line):
+`sp_out += [raster::pt(…)]` reads eight loop-invariant record fields per sample —
+`sp_a`/`sp_b`/`sp_ta`/`sp_tb` at offsets 0 and 8 — 31 % of the row's self time under
+`LOFT_NO_NATIVE_LIBS=1`, none lifted.  The three probe cells (`withcall`, `nocall`,
+`nopt`) had already disproven "the call in the body" and "the body writes the same
+record type"; re-run on the joined tree, `nopt` (a fused SCALAR push, § V-m + § V-q)
+hoists and both record-append cells still hoist nothing, and a no-write variant of the
+same loop hoists all four — so the blocker is the record-append group itself.
+
+**Why P4c declined.**  A record append keeps the four-op form the fused push replaced
+only for scalars: `OpPreAllocVector · e = OpNewRecord(P) · writes into e ·
+OpFinishRecord(P, e)` — for a builder call, § V-d's `n_pt(…, e)` plus the
+`OpDistinctStore/OpCopyRecord` delivery tail.  `OpNewRecord`, `OpFinishRecord` and
+`OpCopyRecord` are native ops off every allow-list, so `blocks_header_hoist` reads each
+as an unclassifiable writer and the ONE gate declines the whole loop — headers, push
+headers and scalars alike.  Past the gate the same three ops make `body_writes` answer
+`None`, and the literal element's `OpSetFloat(e, 0, …)` writes `(Pt, 0)` — the TYPE-keyed
+eviction would evict every same-type invariant even where `e` is freshly minted.
+
+**Invariant (`@FR-R-Mint`, formal/rewrites.md).**  *A record minted inside the body
+cannot be named by a variable whose getter the prelude already ran.*  So the mint group
+over a pure bare-variable path that TYPES as a plain vector is a MOVER like a push —
+admitted beside other holders under `(R-Alias)`, its path leaving the header-candidate
+list, earning no holder of its own (its templates resolve per element) — and a write
+whose target is the FRESH element variable contributes nothing to `(R-Scalar)`'s write
+set.  Both admissions ask the TYPE, never the op shape (§ V-m's lesson): the same op
+names over a `sorted`/`index` are a keyed insert, a mover of OTHER records, and stay
+blocking.  The fresh window is tracked in the write-set walk's own preorder — marked at
+`Set(e, OpNewRecord)`, cleared by any other assignment to `e` and by the group's
+`OpFinishRecord` — which is execution order for the straight-line group the parser
+emits, the only producer of these ops.  § V-d's `OpCopyRecord(result, e, tp)` delivery
+(the builder could not build in place) writes the fresh element and its `0x8000`
+source-free releases the builder's own this-iteration buffer; neither is a record a
+prelude holder can name, so it is admitted exactly while its DESTINATION is fresh.
+`OpDistinctStore` was already on the read-only list.
+
+**Cells before the code** (`bytecode-comparisons/V-s-mint-hoist-cells.loft`, fifteen,
+hand-computed, both backends green before the change): c1 the literal append (retbuf
+out) · c2 the builder-call append (smooth's shape) · c3 an owned local out · c4 growth
+across 100 elements · c5 a mint and a fused push, two movers · c6 boolean/integer/float
+kinds · c7 a `sorted` container (keyed — declines) · c8 an `index` of one-field records
+(the V-m regression twin) · c9 the loop writes the field through the parameter
+(evicts) · c10 the write through a `&` alias (evicts by type) · c11 the vector rebound
+(declines) · c12 the tail read's `v[i]?` discharge (declines: the default-record
+`OpDatabase` is an allocation off the allow-list — a widening to weigh when a judged row
+shows it) · c13 a same-type invariant LOCAL beside the mint (the fresh-exemption
+discriminator) · c14 a field-path mint (`h.pts += […]` — outside this unit's
+bare-variable admission) · c16 nested, the outer minting.  The emission prediction was
+written before the code and matched on the first complete run (the two revisions on the
+way were both the `v[i]?`-discharge allocation, a different class the cells now pin as
+declining).  `tests/mint_hoist.rs` pins the per-cell emission and the switch;
+`tests/scripts/157-mint-hoist.loft` carries the value cells.  **Falsified**: the
+fresh-element test made to answer `true` for every var-targeted set turns c9 and c10 red
+on native (c9 `3 6 4` → `3 3 2` — the stale hoisted read even feeds the increment; c10
+`3 33 13` → `3 30 11`) and `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.
+Emission audit clean over the corpus (27 holders, 32 uses, 0 violations).
+Switch `LOFT_NO_MINT_HOIST` (generation time; values identical, zero hoists).
+
+**Scope left on the table, deliberately**: a field-path mint root (c14), the
+`v[i]?`-discharge default record (c12), and a PUSH-header tier for the minted vector
+itself (its element writes still resolve per element through the templates) — each a
+measured decision for when a judged row shows it.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

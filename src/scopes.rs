@@ -250,6 +250,34 @@ struct Scopes<'s> {
     /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
     /// scope-end drop releases whatever record it holds LAST.
     lift_field_skip: HashMap<u16, (u16, u16)>,
+    /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
+    ///
+    /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
+    /// the statement scan meets `__lift_1 = a` again it is scanning INSIDE the arm, so the
+    /// branch that makes the copy conditional is no longer in view. Recorded where the temps
+    /// are made and read by [`handoff_target`], so both deciders answer from the same fact.
+    arm_lift_temps: HashSet<u16>,
+    /// loft#1515 — a SOURCE whose release is handed off inside a branch ARM to a destination
+    /// that is not per-arm, mapped to the boolean recording whether that hand-off actually
+    /// RAN.
+    ///
+    /// `(H-Drop)` moves a release with a copy and `(O-Complete)` makes that fact per path.
+    /// Where the arms lift into a temp of their own the fact needs no value — the temp is null
+    /// on the paths that did not take it, so stopping the temp is enough ([`Self::
+    /// arm_lift_temps`]). Where the arms assign one SHARED local it does: on the path that ran
+    /// the destination owns what it took and must keep its release, on the path that did not
+    /// the source still owes one, and no static answer covers both. So the path fact is
+    /// MATERIALISED, exactly as loft#1200's [`Self::local_owns`] materialises sole ownership
+    /// for the free it guards.
+    ///
+    /// Read at the source's scope-end release, set at the hand-off, and cleared when the
+    /// SOURCE is reassigned — `@FR-O-Latest`: what it holds from there on is its own again.
+    handed_off: HashMap<u16, u16>,
+    /// The `(destination, source)` pairs [`Self::handed_off`] was minted for — the copies
+    /// whose hand-off is per path. Keyed by the PAIR because one source may be handed to
+    /// different destinations on different arms, and a bare source would then set the flag at
+    /// a copy that is not the one it stands for.
+    per_path_pairs: HashSet<(u16, u16)>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -2113,6 +2141,68 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
     data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
 }
 
+/// The `(destination, source)` pairs of whole-value copies written inside a branch ARM.
+///
+/// A copy that only some runs perform cannot move a release on all of them
+/// (`ownership.md (O-Complete)`), and this is how those copies are found: structurally, off
+/// the pre-scan IR, before any arm lift exists — so every pair here is one an author wrote,
+/// `if c { x = a; } else { x = b; }`, rather than one the branch lowering produced.
+///
+/// Only a bare `Var` right-hand side qualifies: anything else is a value with no source
+/// variable whose release could have moved.
+fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
+    let mut out: HashSet<(u16, u16)> = HashSet::new();
+    fn arm(a: &Value, out: &mut HashSet<(u16, u16)>) {
+        a.walk(&mut |m| {
+            if let Value::Set(v, rhs) = m.unspan()
+                && let Value::Var(src) = rhs.unspan()
+            {
+                out.insert((*v, *src));
+            }
+        });
+    }
+    code.walk(&mut |n| {
+        if let Value::If(_, t, e) = n.unspan() {
+            arm(t, &mut out);
+            arm(e, &mut out);
+        }
+    });
+    out
+}
+
+/// Which side of a whole-value copy stops dropping — `None` where the copy moves nothing.
+///
+/// The ONE home for the DIRECTION, because two sites decide it about the same copy and a
+/// second spelling could only agree by accident: the arm lift records it from the
+/// construction, and the collector's `Set` arm meets the very same `__lift_N = a` again once
+/// it exists.
+///
+/// `per_path` is what they have to agree about. `heap.md (H-Drop)` moves the release with a
+/// copy, and `ownership.md (O-Complete)` makes that fact per binding and PER PATH — so a copy
+/// that happens on some runs only cannot move the release on all of them. A value `if`/`match`
+/// lifts each arm's value into a temp of its own, and each temp is null until its own arm
+/// assigns it: one statement records as many hand-offs as it has arms and performs one.
+/// Recorded against the SOURCE, the arm that did not run left its source with nothing to
+/// release it and the resource was never released at all — silently, on both backends, and
+/// once per iteration inside a loop (loft#1514).
+///
+/// So a per-path hand-off keeps the release with the source, which is live on every path, and
+/// stops the DESTINATION instead. That is the same trade this makes for a copy off a
+/// parameter and for the same reason — the side that outlives the other keeps the
+/// responsibility — and it needs no runtime witness, because the temp whose release it
+/// removes is exactly the one that is null on the paths that did not take it.
+fn handoff_target(
+    function: &Function,
+    data: &Data,
+    dst: u16,
+    src: u16,
+    buffer_dst: bool,
+    per_path: bool,
+) -> Option<u16> {
+    let moved = copy_moves_drop_from(function, data, dst, src, buffer_dst)?;
+    Some(if per_path { dst } else { moved })
+}
+
 /// @PLN139 stage C — the vars that HANDED OFF what they hold, so their scope end must not
 /// drop it.  Two ways a value stops being its variable's to release, both an `OpCopyRecord`:
 ///
@@ -2136,7 +2226,9 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
 /// carry a scope-exit drop.
 fn collect_drop_transferred(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
     let mut out: HashSet<u16> = HashSet::new();
-    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out));
+    // No arm lift has been built yet at construction time, so nothing here is per path.
+    let per_path = HashSet::new();
+    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out, &per_path));
     out
 }
 
@@ -2144,7 +2236,13 @@ fn collect_drop_transferred(code: &Value, function: &Function, data: &Data) -> H
 /// which the scan re-applies statement by statement so a variable handed off AFTER a
 /// reassignment retired it is armed again in scan order (the fact belongs to the
 /// assignment, `@FR-O-Latest`).
-fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut HashSet<u16>) {
+fn drop_handoff_node(
+    n: &Value,
+    function: &Function,
+    data: &Data,
+    out: &mut HashSet<u16>,
+    per_path: &HashSet<u16>,
+) {
     let copy_d = data.def_nr("OpCopyRecord");
     if copy_d == u32::MAX {
         return;
@@ -2214,11 +2312,13 @@ fn drop_handoff_node(n: &Value, function: &Function, data: &Data, out: &mut Hash
                 {
                     out.insert(w);
                 }
-                // A plain WHOLE-VALUE copy between two locals — `t = s`, `h2 = h` — moves the
-                // drop to the copy; see [`copy_moves_drop_from`], which the branch-arm lift
-                // reads for its `__lift_N = a` too.
+                // A plain WHOLE-VALUE copy between two locals — `t = s`, `h2 = h` — moves
+                // the drop to the copy.  [`handoff_target`] decides WHICH side stops, because
+                // this arm also meets the branch-arm lift's own `__lift_N = a` once that
+                // exists, and there the answer runs the other way.
                 if let Value::Var(src) = rhs.unspan()
-                    && let Some(moved) = copy_moves_drop_from(function, data, *v, *src, false)
+                    && let Some(moved) =
+                        handoff_target(function, data, *v, *src, false, per_path.contains(v))
                 {
                     out.insert(moved);
                 }
@@ -2402,24 +2502,31 @@ pub(crate) fn drop_bearing_source(src: &Value, function: &Function) -> Option<u1
 /// [`tuple_copy_source_path`] walks `Function::tuphold_origin` to the tuple the chain starts
 /// from and the PATH to the leaf inside it.
 ///
-/// **Which dep.** The dep lists are UNIONED across the tuple's heap members and spread back
-/// into every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints
-/// as `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is
-/// in MEMBER order and recurses into a nested tuple in that same order, so the backing of a
-/// leaf is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the
-/// `WT` above, not the `__ref_1` that `first()` answers. Member order, not the order the
-/// work-refs were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the
-/// inner literal's work-ref was created first, which is what says the index is positional
-/// and not a happy accident of the numbering.
+/// **Which dep.** Asked twice, because the pairing survives in two different states.
+///
+/// `Vars::tuple_backings` has it as the members themselves spelled it — one backing per heap
+/// leaf, recorded before a tuple variable was given the union of its members' deps. That is
+/// the answer wherever it exists, and it needs no reasoning about the list at all.
+///
+/// The dep LIST is the older read, for a tuple that already carried the union by the time its
+/// variable was typed. The lists are UNIONED across the heap members and spread back into
+/// every one of them, so each leaf carries the same list and `(WS, integer, WT)` prints as
+/// `(ref(WS)["__ref_1", "__ref_2"], integer, ref(WT)["__ref_1", "__ref_2"])`. The list is in
+/// MEMBER order and recurses into a nested tuple in that same order, so the backing of a leaf
+/// is the dep at the number of heap leaves before it in pre-order — `__ref_2` for the `WT`
+/// above, not the `__ref_1` that `first()` answers. Member order, not the order the work-refs
+/// were minted in: `(a, (b, 2))` lists the OUTER member's dep first although the inner
+/// literal's work-ref was created first, which is what says the index is positional and not a
+/// happy accident of the numbering.
 ///
 /// The count is what makes that positional read safe rather than a convention this function
 /// hopes for: if the list is not exactly as long as the tuple's heap leaves, the order it
 /// would be indexed by is not established, so this DECLINES instead of naming a work-ref it
 /// guessed. Declining costs the hand-off (the pre-loft#1361 double release) and never
-/// suppresses the release of a member that is still live. A `text` or a re-copied tuple is
-/// what reaches it — a text member carries a dep of its own without being a heap leaf, and a
-/// copy of a copy unions the source's deps in beside its own — and `formal/heap.md` D-heap-1
-/// keeps those shapes.
+/// suppresses the release of a member that is still live. That is also why the count read
+/// cannot be the ONLY one: a `text` or a value-enum member carries a dep without being a heap
+/// leaf, so the list outruns the walk and every such tuple declined — which is the half
+/// `tuple_backings` exists to answer.
 fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
     let (root, path) = tuple_copy_source_path(base, i, function);
     // A PARAMETER's members are the CALLER's, and its deps are not frame variables of this
@@ -2435,11 +2542,22 @@ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
     if !crate::data::is_dbref(leaf.base()) {
         return None;
     }
+    // The pairing as the members themselves spelled it, recorded before the union was
+    // written over them (`Vars::tuple_backings`).  It is the same question the dep list is
+    // read for below, answered without having to infer which entry belongs to this leaf.
+    if let Some(dep) = function
+        .tuple_backings
+        .get(&root)
+        .and_then(|b| b.get(ordinal).copied())
+        && dep != u16::MAX
+    {
+        return Some(dep);
+    }
     let deps = match leaf.base() {
         Type::Reference(_, deps) | Type::Enum(_, true, deps) => deps,
         _ => return None,
     };
-    if deps.len() != tuple_heap_leaves(root_tp) {
+    if deps.len() != crate::data::tuple_heap_leaves(root_tp) {
         return None;
     }
     let dep = *deps.get(ordinal)?;
@@ -2504,7 +2622,7 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
     let before: usize = elems
         .iter()
         .take(usize::from(*i))
-        .map(tuple_heap_leaves)
+        .map(crate::data::tuple_heap_leaves)
         .sum();
     let elem = elems.get(usize::from(*i))?;
     if rest.is_empty() {
@@ -2512,15 +2630,6 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
     }
     let (leaf, inner) = tuple_leaf_at(elem, rest)?;
     Some((leaf, before + inner))
-}
-
-/// How many HEAP leaves a tuple type holds, counting through nested tuples — the length its
-/// dep list must have for member order to index them.
-fn tuple_heap_leaves(tp: &Type) -> usize {
-    match tp.base() {
-        Type::Tuple(elems) => elems.iter().map(tuple_heap_leaves).sum(),
-        other => usize::from(crate::data::is_dbref(other)),
-    }
 }
 
 /// Which DEFINITION each fn-ref variable in `code` was assigned, `u32::MAX` where the
@@ -2932,6 +3041,9 @@ fn run_scan_phase(
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
+        arm_lift_temps: HashSet::new(),
+        handed_off: HashMap::new(),
+        per_path_pairs: HashSet::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
     };
@@ -3002,6 +3114,28 @@ fn run_scan_phase(
     // of code that verifies if a free is needed", rather than to @PLN160's.  Note also that
     // `__own_` has `LOFT_NO_OWNER_WITNESS=1` and this one has no `LOFT_NO_*` switch at all, so
     // the one of the three whose necessity cannot be shown is the one with no bisect step.
+    // loft#1515 — the per-path hand-offs an author wrote, and one boolean per SOURCE to
+    // record whether the copy that would have taken its release actually ran.  Minted here
+    // rather than during the scan for the reason `local_owns` is: the flag has to exist
+    // before the body is walked, so its `false` initialiser can be placed at the top.
+    // Only where the release would move to the DESTINATION, which is what leaves the source
+    // without one.  `copy_moves_drop_from` answers a copy off a PARAMETER the other way round
+    // — it stops the destination, because the caller owns — and there is nothing per-path
+    // about that: the caller's release is not on either of these arms.
+    scopes.per_path_pairs = per_path_handoffs(orig_code)
+        .into_iter()
+        .filter(|&(dst, src)| copy_moves_drop_from(&function, data, dst, src, false) == Some(src))
+        .collect();
+    let mut handed_sources: Vec<u16> = scopes.per_path_pairs.iter().map(|&(_, src)| src).collect();
+    handed_sources.sort_unstable();
+    handed_sources.dedup();
+    for src in handed_sources {
+        let name = format!("__hoff_{}", function.name(src));
+        let flag = function.add_temp_var(&name, &Type::Boolean);
+        scopes.var_scope.insert(flag, 0);
+        scopes.var_order.push(flag);
+        scopes.handed_off.insert(src, flag);
+    }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
         let name = format!("__lbo_{}", function.name(v));
@@ -3043,6 +3177,18 @@ fn run_scan_phase(
         && let Value::Block(bl) = &mut code
     {
         let mut flags: Vec<u16> = scopes.local_owns.values().copied().collect();
+        flags.sort_unstable();
+        for flag in flags.into_iter().rev() {
+            bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
+        }
+    }
+    // loft#1515 — and every hand-off flag, for the same reason: before the branch runs no
+    // copy has taken the source's release, so an uninitialised slot would read as garbage and
+    // suppress a release that is owed.
+    if !scopes.handed_off.is_empty()
+        && let Value::Block(bl) = &mut code
+    {
+        let mut flags: Vec<u16> = scopes.handed_off.values().copied().collect();
         flags.sort_unstable();
         for flag in flags.into_iter().rev() {
             bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
@@ -7128,9 +7274,24 @@ impl Scopes<'_> {
         data: &Data,
         path_skip: Option<(u16, u16)>,
     ) -> Option<Value> {
-        if self.drop_transferred.contains(&v) {
+        // loft#1515 — a source whose hand-off is PER PATH keeps its release and guards it on
+        // whether the copy ran, rather than being stopped statically for every path.  The
+        // static answer is the defect: one arm's copy suppressed the source on the arm that
+        // did not copy, and the resource was never released at all.
+        //
+        // Two things the guard deliberately does NOT do.  It does not choose WHICH members
+        // the release covers — the skip below still decides that, because a member handed
+        // out on this path is handed out whether or not the whole record's release runs.  And
+        // it bypasses `drop_transferred` rather than reading it: the hand-off recorded `v`
+        // there, and replacing that static suppression with the runtime one is the fix.
+        let handed = self.handed_off.get(&v).copied();
+        if handed.is_none() && self.drop_transferred.contains(&v) {
             return None;
         }
+        let guard = |d: Option<Value>| match handed {
+            Some(flag) => d.map(|d| v_if(Value::Var(flag), Value::Null, d)),
+            None => d,
+        };
         // D-heap-3 (loft#1506) — one field of this lift was copied out, so its release
         // belongs to the copy: run the skip-capable cascade over everything else.  A type
         // without the variant (enum payloads, or a stale parse tail) falls back to the full
@@ -7145,7 +7306,7 @@ impl Scopes<'_> {
             let nr = data.drop_cascade_except_nr(*d);
             if nr != u32::MAX {
                 let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
-                return Some(Value::If(
+                return guard(Some(Value::If(
                     Box::new(live),
                     Box::new(Value::Call(
                         nr,
@@ -7156,10 +7317,32 @@ impl Scopes<'_> {
                         ],
                     )),
                     Box::new(Value::Null),
-                ));
+                )));
             }
         }
-        drop_hook(function, v, data)
+        guard(drop_hook(function, v, data))
+    }
+
+    /// The scope-end hook for `v` at THIS exit, or `None` where the exit has already placed it.
+    ///
+    /// One home for the two ways a hook can already be accounted for at a sweep: the per-arm
+    /// rewrite of loft#1515 shape 2 put it inside the arms of a join, where the arm is the
+    /// path; and the ordinary case, where [`Self::scope_end_drop`] answers with whatever skip
+    /// this exit's own copy earned. Kept together because every one of the four release legs
+    /// in [`Self::get_free_vars`] must ask the same question — a leg that asked only the
+    /// second would run a hook the arms already ran.
+    fn scope_end_hook(
+        &self,
+        function: &Function,
+        v: u16,
+        data: &Data,
+        path_skip: &HashMap<u16, (u16, u16)>,
+        arm_dropped: &HashSet<u16>,
+    ) -> Option<Value> {
+        if arm_dropped.contains(&v) {
+            return None;
+        }
+        self.scope_end_drop(function, v, data, path_skip.get(&v).copied())
     }
 
     /// Record what the `__lift_N` temp `tmp` — holding argument `arg_idx` of the call
@@ -8830,6 +9013,26 @@ impl Scopes<'_> {
                 None => v_set(flag, Value::Boolean(sole)),
             });
         }
+        // loft#1515 — this copy is one of the per-path hand-offs, so record that it RAN.  The
+        // source's scope-end release reads the flag: on this path the destination owns what it
+        // took, on the other the source still owes its own.
+        if let Value::Var(src) = value.unspan()
+            && self.per_path_pairs.contains(&(v, *src))
+            && let Some(&flag) = self.handed_off.get(src)
+        {
+            witness_update = Some(match witness_update {
+                Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(true))]),
+                None => v_set(flag, Value::Boolean(true)),
+            });
+        }
+        // `@FR-O-Latest` — assigning the SOURCE itself retires the hand-off: what it holds
+        // from here on is its own to release, whichever arm ran before.
+        if let Some(&flag) = self.handed_off.get(&v) {
+            witness_update = Some(match witness_update {
+                Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(false))]),
+                None => v_set(flag, Value::Boolean(false)),
+            });
+        }
         // loft#1336 / @FR-O-Witness — keep the OWNER WITNESS naming exactly the store the
         // local minted and still holds.  Three shapes, read off the value being assigned:
         //
@@ -9299,8 +9502,14 @@ impl Scopes<'_> {
             // Re-arm the hand-offs this statement makes, in scan order, so a variable
             // whose earlier hand-off a reassignment retired is handed off again here.
             {
-                let transferred = &mut self.drop_transferred;
-                v.walk(&mut |n| drop_handoff_node(n, function, data, transferred));
+                let Self {
+                    drop_transferred,
+                    arm_lift_temps,
+                    ..
+                } = self;
+                v.walk(&mut |n| {
+                    drop_handoff_node(n, function, data, drop_transferred, arm_lift_temps);
+                });
             }
             let rebuilt = self.in_place_rebuild(v, function, data);
             let sv = self.scan(v, function, data);
@@ -9713,6 +9922,24 @@ impl Scopes<'_> {
                 expr
             }
         };
+        // loft#1515 shape 2 — a join-return's sources are released once for every path alike,
+        // and that single sweep cannot be right for a join: the arm that hands `src.h` out
+        // owes `src`'s OTHER members, the arm that does not owes the whole record.  Move the
+        // HOOKS into the arms, where the arm IS the path, and leave the frees where they are.
+        let arm_rewritten;
+        let mut arm_dropped: HashSet<u16> = HashSet::new();
+        let expr = if is_return {
+            let mut copy = expr.clone();
+            arm_dropped = move_join_hooks_into_arms(&mut copy, function, data);
+            if arm_dropped.is_empty() {
+                expr
+            } else {
+                arm_rewritten = copy;
+                &arm_rewritten
+            }
+        } else {
+            expr
+        };
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
@@ -10056,6 +10283,7 @@ impl Scopes<'_> {
             &Delivered {
                 sources: return_sources,
                 field_skip: path_skip,
+                arm_dropped,
             },
         );
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
@@ -10737,6 +10965,7 @@ impl Scopes<'_> {
         let Delivered {
             sources: return_sources,
             field_skip: path_skip,
+            arm_dropped,
         } = delivered;
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
@@ -11150,7 +11379,7 @@ impl Scopes<'_> {
                         // the caller's own store.  A `Join` is owned on one arm and a borrow
                         // on the other and they are the SAME call, so nothing static separates
                         // them; the store number does.
-                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
+                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -11248,7 +11477,7 @@ impl Scopes<'_> {
                         // The FREE is skipped in the adoption case; the DROP is not.
                         // The store surviving into the next iteration is a reuse
                         // optimisation, and the value it held is over either way.
-                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
+                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
                             ls.push(hook);
                         }
                         // Several buffers — one per arm of the value branch `v` was bound
@@ -11275,7 +11504,7 @@ impl Scopes<'_> {
                         }
                     } else if let Some(w) = borrow_witness {
                         // Free ONLY when the local no longer names what its dep names.
-                        if let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied()) {
+                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -11292,7 +11521,7 @@ impl Scopes<'_> {
                         // the value's life — unless `v` is a buffer whose witness already
                         // ran it.
                         if !is_buffer
-                            && let Some(hook) = self.scope_end_drop(function, v, data, path_skip.get(&v).copied())
+                            && let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped)
                         {
                             ls.push(hook);
                         }
@@ -12646,11 +12875,14 @@ impl Scopes<'_> {
             &mut viewed,
             &mut materialised,
         );
-        // Each `__lift_N = a` is a whole-value copy the collector never saw (the lift is built
-        // after it ran), so the drop moves here by the same rule: the arm's variable stops
-        // dropping, the temp — and through the join, the binding — owns the resource.
+        // Each `__lift_N = a` is a whole-value copy the collector never saw when it first ran
+        // (the lift is built after it), so the drop moves here by the same rule — and PER PATH
+        // by construction, since these temps are one per arm.  [`handoff_target`] is the one
+        // home for that direction; recording the temps is what lets the collector reach the
+        // same answer when it meets these copies later, from inside the arm.
         for &(src, tmp) in &copied {
-            if let Some(moved) = copy_moves_drop_from(function, data, tmp, src, true) {
+            self.arm_lift_temps.insert(tmp);
+            if let Some(moved) = handoff_target(function, data, tmp, src, true, true) {
                 self.drop_transferred.insert(moved);
             }
         }
@@ -14515,7 +14747,7 @@ fn owner_witness_locals(
                 WitnessSet::Other => {
                     // A view of another variable's storage.  A null or a store nobody names
                     // is not a VIEW and does not make the ownership mixed on its own.
-                    if is_view_of_storage(val, data) {
+                    if is_view_of_storage(val, function, data) {
                         viewed.insert(*t);
                     }
                 }
@@ -14579,7 +14811,23 @@ fn owner_witness_locals(
 
 /// Does this value bind a VIEW of storage some other binding owns — a projection, a
 /// call answering a borrow, a join?  The `viewed` half of [`owner_witness_locals`].
-fn is_view_of_storage(value: &Value, data: &Data) -> bool {
+///
+/// A CONSTRUCTION into its own work-ref is NOT one, and answering `true` for it fabricated the
+/// VIEW half of a mix that does not exist (loft#1517, `formal/heap.md` D-heap-6).  The work-ref
+/// is the compiler's own temp for this very literal, so no other BINDING owns what it names, and
+/// the local adopts the store outright ([`Scopes::scan_set`]'s hand-off disarm) — which is also
+/// `@FR-O-Owner`'s single owner, and it only holds once the local is NOT witnessed.
+///
+/// [`witness_set_kind`] answers `Other` for such a value on purpose: while the work-ref still
+/// names the store it is not SOLELY the local's, which is the right answer to *"may the witness
+/// POINT here?"*.  Reading that one `Other` as a view is what made `x: SE = A { k: 3 }; x = a`
+/// — two OWNING assignments by `(B-Copy)` — carry a witness, after which
+/// `Scopes::displaced_drop` declined on `@FR-O-Override` and neither record's `OpDrop` ran.
+/// Two sites, two different questions, one answer: this is the `viewed` half only.
+fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
+    if construction_work_ref(value, function).is_some() {
+        return false;
+    }
     match value.unspan() {
         Value::Null => false,
         Value::Call(nr, args) if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel" => {
@@ -14596,7 +14844,7 @@ fn is_view_of_storage(value: &Value, data: &Data) -> bool {
         // of `x = o.opt` under `@FR-L-Null-Which`) answers as its present arm does.
         Value::If(_, _, _) => {
             let seen = crate::use_analysis::through_null_arm(data, value);
-            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, data)
+            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, function, data)
         }
         _ => false,
     }
@@ -15895,6 +16143,276 @@ struct Delivered {
     /// The member a return's own materialising copy took over, as the local it came from
     /// and the `(offset, depth)` path to it — see [`return_copy_out`].
     field_skip: HashMap<u16, (u16, u16)>,
+    /// loft#1515 shape 2 — locals whose HOOK this return already placed inside the arms of
+    /// its join, so the common sweep must not run it again. Their FREE is untouched: a store
+    /// is freed once whichever arm ran. See [`move_join_hooks_into_arms`].
+    arm_dropped: HashSet<u16>,
+}
+
+/// loft#1515 shape 2 — move a join-return's source hooks INTO its arms, so the arm is the path.
+///
+/// `materialize_return_into` publishes one copy of a join (`return if c { src.h } else { L }`),
+/// and the sources feeding those arms are released once, after it, for every path alike. That
+/// single sweep cannot be right: on the arm that hands `src.h` out, `src` must release its
+/// OTHER members and leave that one to the copy; on the arm that does not, it must release the
+/// whole record. `(O-Complete)` makes the ownership fact per path, and here the ARM *is* the
+/// path — so no runtime witness is needed, which is loft#1476's shape one level over.
+///
+/// Only the HOOK moves. The store's `OpFreeRef` stays in the common sweep, because a store is
+/// freed once whichever arm ran, and splitting that would free it per path.
+///
+/// Returns the locals whose hook this rewrote, for the sweep to skip. An empty answer leaves
+/// everything exactly as it was.
+fn move_join_hooks_into_arms(expr: &mut Value, function: &Function, data: &Data) -> HashSet<u16> {
+    let mut done = HashSet::new();
+    let copy_nr = data.def_nr("OpCopyRecord");
+    let get_field_nr = data.def_nr("OpGetField");
+    let Some((join, armed)) = materialised_join_mut(expr, copy_nr) else {
+        return done;
+    };
+    let mut arms = Vec::new();
+    let is_join = join_arm_hand_offs(join, function, get_field_nr, &mut arms);
+    if !is_join {
+        return done; // not a join: `return_copy_out` owns the single-arm case
+    }
+    // The sources any arm speaks for. A local that no arm mentions keeps the common sweep.
+    let mut sources: Vec<u16> = Vec::new();
+    for a in &arms {
+        let v = match a {
+            ArmHandOff::Member(v, _) | ArmHandOff::Whole(v) => *v,
+            ArmHandOff::Nothing => continue,
+        };
+        if !sources.contains(&v) {
+            sources.push(v);
+        }
+    }
+    sources.retain(|&v| drop_hook(function, v, data).is_some());
+    if sources.is_empty() {
+        return done;
+    }
+    if !armed {
+        inject_per_arm(join, function, data, get_field_nr, &sources);
+    }
+    done.extend(sources);
+    done
+}
+
+/// Walk the join's arms in the same order [`join_arm_hand_offs`] read them, giving each the
+/// hooks its own path owes.
+fn inject_per_arm(
+    value: &mut Value,
+    function: &Function,
+    data: &Data,
+    get_field_nr: u32,
+    sources: &[u16],
+) {
+    if let Value::If(_, t, f) = value.unspan_mut() {
+        inject_per_arm(t, function, data, get_field_nr, sources);
+        inject_per_arm(f, function, data, get_field_nr, sources);
+        return;
+    }
+    let mine = arm_hand_off(value, function, get_field_nr);
+    let mut ops = Vec::new();
+    for &v in sources {
+        let skip = match mine {
+            // This arm hands the whole record out: its release moved entire, so this arm owes
+            // nothing for it (`@FR-H-Drop`: the copy owns, the source stops dropping).
+            ArmHandOff::Whole(w) if w == v => continue,
+            // This arm hands ONE member out: everything else is still the record's.
+            ArmHandOff::Member(m, path) if m == v => Some(path),
+            // This arm hands out nothing of `v`, so `v` owes its whole record here.
+            _ => None,
+        };
+        if let Some(hook) = cascade_for(v, skip, function, data) {
+            ops.push(hook);
+        }
+    }
+    inject_before_arm_value(value, &ops);
+}
+
+/// The name a `materialized_view_return` block takes once its join's hooks have been moved
+/// into the arms.
+///
+/// The scan runs in more than one phase over a body the previous phase installed, so the
+/// rewrite has to be IDEMPOTENT — without a marker the second phase injects a second copy of
+/// every hook and the delivering arm releases twice. The name is the marker because it
+/// travels with the node, unlike a set keyed on a variable number that a re-derived `Scopes`
+/// starts empty.
+const ARMED_VIEW_RETURN: &str = "materialized_view_return_armed";
+
+/// The join feeding a `materialized_view_return`'s copy, if the return has that shape.
+///
+/// Answers for the ARMED name too, so a later phase can still learn which locals the arms
+/// speak for without rewriting anything again.
+fn materialised_join_mut(expr: &mut Value, copy_nr: u32) -> Option<(&mut Value, bool)> {
+    fn tail(v: &mut Value) -> &mut Value {
+        match v {
+            Value::Span(_) | Value::Return(_) => {}
+            Value::Insert(ops) if !ops.is_empty() => {}
+            _ => return v,
+        }
+        match v {
+            Value::Span(b) => tail(&mut b.1),
+            Value::Return(inner) => tail(inner),
+            Value::Insert(ops) => {
+                let i = ops.len() - 1;
+                tail(&mut ops[i])
+            }
+            other => other,
+        }
+    }
+    let Value::Block(bl) = tail(expr) else {
+        return None;
+    };
+    if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
+        return None;
+    }
+    let armed = bl.name == ARMED_VIEW_RETURN;
+    bl.name = ARMED_VIEW_RETURN;
+    bl.operators
+        .iter_mut()
+        .find_map(|op| match op {
+            Value::Call(d, args) if *d == copy_nr && !args.is_empty() => Some(&mut args[0]),
+            _ => None,
+        })
+        .map(|j| (j, armed))
+}
+
+/// The type's cascade for `v`, optionally leaving the member at `skip` to its new owner.
+///
+/// The raw shape [`Scopes::scope_end_drop`] wraps: no `drop_transferred`, no `handed_off`, no
+/// per-variable suppression — the per-arm rewrite of loft#1515 has already decided that this
+/// arm is the path, so the only remaining question is WHICH members the release covers.
+fn cascade_for(
+    v: u16,
+    skip: Option<(u16, u16)>,
+    function: &Function,
+    data: &Data,
+) -> Option<Value> {
+    let Some((off, depth)) = skip else {
+        return drop_hook(function, v, data);
+    };
+    let (Type::Reference(d, _) | Type::Enum(d, true, _)) = function.tp(v).base() else {
+        return drop_hook(function, v, data);
+    };
+    let nr = data.drop_cascade_except_nr(*d);
+    if nr == u32::MAX {
+        // No skip-capable variant: the full cascade is the pre-transfer double release, and
+        // for a DROP that is not a safe direction either — but it is the behaviour this rung
+        // replaces rather than a new one, and it is what every other decline here falls back
+        // to. Recorded in D-heap-3 rather than hidden.
+        return drop_hook(function, v, data);
+    }
+    let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+    Some(Value::If(
+        Box::new(live),
+        Box::new(Value::Call(
+            nr,
+            vec![
+                Value::Var(v),
+                Value::Int(i32::from(off)),
+                Value::Int(i32::from(depth)),
+            ],
+        )),
+        Box::new(Value::Null),
+    ))
+}
+
+/// Put `ops` into one arm, as STATEMENTS before the value it yields.
+///
+/// The same placement rule [`free_record_in_omitting_arms`] states: a block takes a release as
+/// a preceding statement, never as a wrapper around its value, because a wrapper puts an
+/// `Insert` in value position and `--native` then emits the release itself as the block's
+/// result.
+fn inject_before_arm_value(arm: &mut Value, ops: &[Value]) {
+    if ops.is_empty() {
+        return;
+    }
+    match arm {
+        Value::Span(b) => inject_before_arm_value(&mut b.1, ops),
+        Value::Block(bl) if !bl.operators.is_empty() => {
+            let idx = bl.operators.len() - 1;
+            for (n, op) in ops.iter().enumerate() {
+                bl.operators.insert(idx + n, op.clone());
+            }
+        }
+        Value::Insert(list) if !list.is_empty() => {
+            let idx = list.len() - 1;
+            for (n, op) in ops.iter().enumerate() {
+                list.insert(idx + n, op.clone());
+            }
+        }
+        leaf => {
+            let held = std::mem::replace(leaf, Value::Null);
+            let mut list = ops.to_vec();
+            list.push(held);
+            *leaf = Value::Insert(list);
+        }
+    }
+}
+
+/// What ONE arm of a join-return hands out — loft#1515 shape 2.
+///
+/// The value an arm yields is copied into the return buffer, and `@FR-H-Drop` moves the
+/// release with that copy. Which release moves is a fact about the ARM, so it is read per arm
+/// and never unioned: an arm handing out `src.h` leaves `src`'s OTHER members to `src`, and a
+/// sibling arm handing out nothing leaves `src` the whole record.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ArmHandOff {
+    /// The arm yields a MEMBER of this local, at this `(offset, depth)` path.
+    Member(u16, (u16, u16)),
+    /// The arm yields this whole frame-owned record, so its release moves entire.
+    Whole(u16),
+    /// The arm yields something no local owns — a literal built elsewhere, a call result.
+    Nothing,
+}
+
+/// Read [`ArmHandOff`] off one arm's value.
+///
+/// A block or insert is judged by its TAIL, which is the value the arm yields; the ops before
+/// it built it. `Nothing` is the safe answer and the fallback, because it leaves every source
+/// releasing exactly what it releases today.
+fn arm_hand_off(arm: &Value, function: &Function, get_field_nr: u32) -> ArmHandOff {
+    match arm.unspan() {
+        Value::Block(bl) => bl.operators.last().map_or(ArmHandOff::Nothing, |t| {
+            arm_hand_off(t, function, get_field_nr)
+        }),
+        Value::Insert(ops) => ops.last().map_or(ArmHandOff::Nothing, |t| {
+            arm_hand_off(t, function, get_field_nr)
+        }),
+        Value::Var(v) if !function.is_argument(*v) => ArmHandOff::Whole(*v),
+        Value::Call(gf, _) if *gf == get_field_nr => match projection_root(arm, get_field_nr) {
+            Some((src, path)) if !function.is_argument(src) => ArmHandOff::Member(src, path),
+            _ => ArmHandOff::Nothing,
+        },
+        _ => ArmHandOff::Nothing,
+    }
+}
+
+/// Every arm of a join, in order, with what each hands out.
+///
+/// Returns `None` when the value is not a join — the single-arm case is
+/// [`return_copy_out`]'s and needs no per-arm rewrite.
+fn join_arm_hand_offs(
+    value: &Value,
+    function: &Function,
+    get_field_nr: u32,
+    out: &mut Vec<ArmHandOff>,
+) -> bool {
+    match value.unspan() {
+        Value::If(_, t, f) => {
+            join_arm_hand_offs(t, function, get_field_nr, out);
+            join_arm_hand_offs(f, function, get_field_nr, out);
+            // TRUE because THIS node is the join, whatever its arms turned out to be — a
+            // nested `if` answers for its own level and a leaf answers `false`, so returning
+            // the children's answer made every two-leaf join read as "not a join".
+            true
+        }
+        other => {
+            out.push(arm_hand_off(other, function, get_field_nr));
+            false
+        }
+    }
 }
 
 /// D-heap-3 (loft#1506) — the `(local, path)` a RETURN copies out of a record it owns, so

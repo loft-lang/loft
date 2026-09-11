@@ -1,0 +1,184 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` moves a release with a copy and `ownership.md (O-Complete)` makes that
+// fact per binding and PER PATH.  Where the arms of a branch assign one SHARED local —
+// `if c { x = a; } else { x = b; }` — one statement records two hand-offs and performs one,
+// so the arm that did not run left its source with nothing to release it: three resources,
+// two hooks, on both backends, with no diagnostic and no leak warning.  With THREE arms the
+// path that takes the third loses two, and inside a loop the loss is once per iteration.
+//
+// This is the second half of loft#1514's question and it takes the OPPOSITE cure.  Where the
+// arms lift into a temp of their own the release simply stays with the source and the per-arm
+// temp is stopped — the temp is null on the paths that did not take it, so nothing has to be
+// tested at run time (`a-branch-arm-releases-the-source-the-other-arm-took.loft`).  A SHARED
+// destination has no such side: on the path that ran, `x` owns what it took and must keep its
+// release; on the path that did not, `a` still owes one.  Neither side can be chosen
+// statically, which is `(O-Complete)`'s "per path" having no representation at all rather than
+// no answer for this case.
+//
+// So the path fact is MATERIALISED — `Scopes::handed_off`, one boolean per source, false at
+// entry, set where the copy runs, read at the source's scope-end release, and cleared when the
+// SOURCE is reassigned (`@FR-O-Latest`).  That is the shape loft#1200's `local_owns` already
+// uses for the free it guards, which is the argument that it is this model's idiom rather than
+// a new mechanism.
+//
+// ⚠ Two cures were measured and rejected before this one, both recorded so they are not
+// retried.  A DISTINCTNESS WITNESS (`if !OpEqRef(a, x) { … }`) cannot work: the plain bind
+// COPIES (`binding.md (B-Copy)`), so `a` and `x` never name one record and the guard is true
+// on every path — the same fault with the sign flipped.  And giving `drop_transferred` the
+// per-path merge `owned_refs` has converts every lost hook here into a DOUBLED one, which for
+// a drop is not the safe direction: an unrun hook leaves a resource open and a twice-run hook
+// closes what the author already closed (`(H-Drop)`'s own clause says so).
+//
+// @falsified-at: 0f939cd15 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  c_shared is the first moving cell on
+//   both backends (the run stops at its first failed assertion); the other eleven were measured
+//   on that same build by scoring the file with the assertions replaced by prints.
+// @falsified-by: tests/falsified/a-shared-destination-releases-the-arm-that-did-not-run.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.
+// CHANNEL: the assertion count, and the exit code with it, IDENTICALLY on both backends.  NOT
+//   the leak channel: the stores are freed either way, so a run scored on leaks learns nothing.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file.
+// WITNESS: on the control c_shared drains `13,V11,11` where the fix drains `13,V11,11,12` —
+//   three resources, two hooks.  It is the first cell, so the run stops there; the rest were
+//   measured by scoring the file with the assertions replaced by prints rather than assumed.
+//   TWELVE of the 14 cells move.  The ones worth reading: c_three on the M path reads
+//   `24,V23,23` against `24,V23,23,22,21`, so the third arm loses BOTH other locals and a fix
+//   recovering one hand-off would still fail it; c_loop reads `50,V30,30,51,V31,31`, one lost
+//   release per ITERATION; and c_two_fields reads `82,81,V61,62,61` against
+//   `82,81,V61,62,61,72,71` — the other arm's record loses both of its fields, which a
+//   whole-cascade cure would have hidden on a one-field record.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
+//   both backends.  TWO cells hold and both are there to hold: c_unconditional, because an
+//   unconditional hand-off must keep moving the release to the copy, and c_no_handoff, where
+//   nothing is handed off at all.  c_enum MOVED TWICE: this cure took it from `V161` to
+//   `V161,e162`, one hook short of the three records it holds, because a struct-ENUM local lost
+//   its hooks at an UNCONDITIONAL bind too — the branch was never what broke it, so no
+//   branch-shaped cure could reach it.  loft#1517 closed that half (`formal/heap.md` D-heap-6:
+//   a literal built through a work-ref read as a VIEW, so a local whose every assignment OWNS
+//   was witnessed as a mixed one), and the cell now reads `e163,V161,e161,e162` — three records,
+//   three hooks, the displaced literal included.  Kept as a CONTROL of this cure rather than
+//   retired: the hand-off it scores is the same one, so a regression in either mechanism lands
+//   on this line.
+//
+// The trace file is this guard's own — its own means THIS file, not this family.
+
+fn trace_path() -> text { return "loft_shareddest_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct ShH { id: integer }
+fn OpDrop(self: ShH) { note("{self.id}"); }
+fn sh(id: integer) -> ShH { return ShH { id: id }; }
+struct ShPair { p: ShH, q: ShH }
+fn sh2(n: integer) -> ShPair { return ShPair { p: sh(n), q: sh(n + 1) }; }
+enum ShPick { L, R, M }
+enum ShE { A { k: integer }, B { k: integer } }
+fn OpDrop(self: ShE) { note("e{self.k}"); }
+
+// The defect: three resources, two hooks.  The arm that did not run leaves its source unreleased.
+fn c_shared(c: boolean) { a = sh(11); b = sh(12); x = sh(13); if c { x = a; } else { x = b; } note("V{x.id}"); }
+// THREE arms sharing one destination: the path that takes the third loses TWO.
+fn c_three(p: ShPick) { a = sh(21); b = sh(22); d = sh(23); x = sh(24); match p { L => { x = a; }, R => { x = b; }, M => { x = d; } } note("V{x.id}"); }
+// A LOOP around the branch — a back edge is a second path a forward reading does not see, and
+// the loss is once per ITERATION rather than once per function.
+fn c_loop(c: boolean) { for i in 0..2 { a = sh(30 + i); b = sh(40 + i); x = sh(50 + i); if c { x = a; } else { x = b; } note("V{x.id}"); } }
+// Sources with TWO droppable fields: the arm that did not run loses BOTH, so a cure that
+// suppresses a whole cascade reads as a fix on a one-field record and leaks the sibling.
+fn c_two_fields(c: boolean) { a = sh2(61); b = sh2(71); x = sh2(81); if c { x = a; } else { x = b; } note("V{x.p.id}"); }
+// The destination holds NOTHING before the branch, so no record is displaced and the only
+// question is the hand-off itself.
+fn c_null_dest(c: boolean) { a = sh(91); b = sh(92); x: ShH? = null; if c { x = a; } else { x = b; } note("V{x.id ?? 0}"); }
+// The arms assign DIFFERENT destinations: each source is answered by its own flag, so a single
+// "the destination" would be the wrong shape.
+fn c_two_dests(c: boolean) { a = sh(101); b = sh(102); x = sh(103); y = sh(104); if c { x = a; } else { y = b; } note("V{x.id}{y.id}"); }
+// The DESTINATION is reassigned after the branch: what it took is displaced and released
+// there, so the source must still not release it again.
+fn c_rebound_dest(c: boolean) { a = sh(111); b = sh(112); x = sh(113); if c { x = a; } else { x = b; } note("m{x.id}"); x = sh(114); note("V{x.id}"); }
+// The SOURCE is reassigned after the branch — `@FR-O-Latest`: what it holds from there on is
+// its own, whichever arm ran, so the hand-off has to be retired.
+fn c_rebound_src(c: boolean) { a = sh(121); b = sh(122); x = sh(123); if c { x = a; } else { x = b; } a = sh(124); note("V{x.id}{a.id}"); }
+// Both locals READ after the branch: the values must be intact, so the release is restored
+// without moving WHEN it happens.
+fn c_read_after(c: boolean) { a = sh(131); b = sh(132); x = sh(133); if c { x = a; } else { x = b; } note("V{x.id}{a.id}{b.id}"); }
+
+// CONTROL — an UNCONDITIONAL hand-off.  `(H-Drop)` moves the release to the copy and one hook
+// is the whole point; a rule that read every hand-off as per path would break this.
+fn c_unconditional() { a = sh(141); x = sh(142); note("m{x.id}"); x = a; note("V{x.id}"); }
+// CONTROL — a branch that hands nothing off.  Both sources keep their own release.
+fn c_no_handoff(c: boolean) { a = sh(151); b = sh(152); if c { note("V{a.id}"); } else { note("V{b.id}"); } }
+// CONTROL — a SEPARATE defect this cure does not reach, recorded rather than implied: a
+// struct-ENUM local loses its hooks at an UNCONDITIONAL bind too (`a: ShE = A{…}; x = a`
+// releases neither), identically on `main`, so the branch is not what breaks it.  The value
+// here is what that costs the shared-destination shape, not what this fix does to it: THREE
+// records and TWO hooks, where the same body over a struct reads three.  The flag restores
+// `b`'s release and loft#1510 restored the copy's, so this cell moves — it is a control for
+// what is LEFT, not for something unmoved.  What is left is the DISPLACED record: `x` held
+// `A{163}` before the branch and its hook still does not run.
+fn c_enum(c: boolean) { a: ShE = A { k: 161 }; b: ShE = B { k: 162 }; x: ShE = A { k: 163 }; if c { x = a; } else { x = b; } note("V{x.k}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_shared(true); got = drain();
+  assert(got == "13,V11,11,12", "a shared destination releases both sources (true): {got}");
+  c_shared(false); got = drain();
+  assert(got == "13,V12,12,11", "a shared destination releases both sources (false): {got}");
+
+  c_three(L); got = drain();
+  assert(got == "24,V21,21,23,22", "three arms, the L path: {got}");
+  c_three(M); got = drain();
+  assert(got == "24,V23,23,22,21", "three arms, the third arm releases the other two: {got}");
+
+  c_loop(true); got = drain();
+  assert(got == "50,V30,30,40,51,V31,31,41", "a loop releases both per ITERATION: {got}");
+
+  c_two_fields(true); got = drain();
+  assert(got == "82,81,V61,62,61,72,71", "two droppable fields, the other arm keeps both: {got}");
+
+  c_null_dest(true); got = drain();
+  assert(got == "V91,91,92", "a destination holding nothing before the branch: {got}");
+
+  c_two_dests(true); got = drain();
+  assert(got == "103,V101104,104,101,102", "the arms assign different destinations: {got}");
+
+  c_rebound_dest(true); got = drain();
+  assert(got == "113,m111,111,V114,114,112", "the destination is reassigned after the branch: {got}");
+
+  c_rebound_src(true); got = drain();
+  assert(got == "123,V121124,121,122,124", "the source is reassigned after the branch: {got}");
+
+  c_read_after(true); got = drain();
+  assert(got == "133,V131131132,131,132", "both locals read after the branch: {got}");
+
+  c_unconditional(); got = drain();
+  assert(got == "m142,142,V141,141", "CONTROL an unconditional hand-off moves the release: {got}");
+
+  c_no_handoff(true); got = drain();
+  assert(got == "V151,152,151", "CONTROL a branch that hands nothing off: {got}");
+
+  c_enum(true); got = drain();
+  assert(got == "e163,V161,e161,e162", "CONTROL a struct-enum, three records three hooks: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("shared destination ok");
+}

@@ -1921,6 +1921,7 @@ impl Stores {
     /// negative index, which routes back through the runtime so a negative one still addresses
     /// from the end and an out-of-range one still raises.
     ///
+    /// Enforces `@FR-R-Cold` (formal/rewrites.md).
     /// `#[inline(never)]` is load-bearing rather than a hint, for the reason loft#1508 records on
     /// the READ side of the same pair.  The caller is generic and `#[inline]`, so rustc sees the
     /// whole body and decides on SIZE — and with this half folded in, the body carried another

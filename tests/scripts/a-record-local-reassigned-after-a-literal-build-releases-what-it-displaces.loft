@@ -1,0 +1,277 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` releases a record through its hook when its OWNER dies, and a
+// REASSIGNMENT of the owner is that death for the record it displaces.  So a heap-record local
+// built from a LITERAL and then reassigned runs the hook for the record it gives up — whatever
+// the literal was spelled as.
+//
+// It did not, for every literal that builds through a WORK-REF: a struct-enum literal, and a
+// nullable struct literal, which `@FR-N-Shape` makes the synthetic struct-enum `__nullable<S>`.
+// The plain-struct twin builds IN PLACE and was correct throughout, which is what made the
+// defect read as a struct-enum spelling question (loft#1517) rather than as the work-ref.
+//
+// `(O-Witness)` carries a local's ownership in a runtime slot where its assignments MIX — one
+// hands it a store of its own, another a VIEW — because no static reading is right for both.
+// Its premise is FALSE for these locals: a literal and a whole-value copy both OWN.  Two
+// predicates together fabricated the mix.  `witness_set_kind` answers `Other` for a
+// construction into a work-ref, because while the work-ref still names the store it is not
+// SOLELY the local's; `is_view_of_storage` then answered `true` for any `Block`, reading that
+// `Other` as the view half.  The local was witnessed, `Scopes::displaced_drop` declined on
+// `@FR-O-Override`, and — since a witnessed local is not `proxy_says_owned` — the hand-off
+// disarm never fired either, so the work-ref kept the store and freed it with no hook at all.
+//
+// Two faces, one root.  The displaced record loses its hook (c_enum, c_variant, c_cascade,
+// c_nullable_struct, c_nullable_enum, c_from_call, c_loop), and a local whose LAST assignment
+// is a literal loses its own record's hook at scope exit as well (c_literal_last, c_chain) —
+// that record is the work-ref's, and a work-ref's scope-end free is bare.
+//
+// The cure is to answer the question `is_view_of_storage` asks: a construction into the
+// compiler's own work-ref is not a view of storage some other BINDING owns.  One home —
+// `construction_work_ref`, which `scan_set` already reads for the disarm — so the two sites
+// cannot drift about which shapes count as one.
+//
+// Held FIXED, and therefore NOT measured here: the witness's own subject, a local that
+// genuinely mixes in a LOOP, which is
+// `1336-a-local-with-mixed-ownership-releases-through-its-owner-witness.loft` — that guard is
+// the positive control for this one, and it HANGS under `LOFT_NO_OWNER_WITNESS=1`, so "the
+// witness is still armed for a real mix" is a fact the corpus checks rather than a claim here.
+// c_mixed and c_view_after_literal are this file's own boundary on that side.
+
+// @falsified-at: 83b8870ce — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  BOTH backends move, which is the signature of
+//   this defect as distinct from the `(O-Detach)` one it depended on: that was a DIVERGENCE and
+//   falsifies on the interpreter alone.
+// @falsified-by: tests/falsified/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.patch
+//   — same four figures.  The patch form is the one that does not decay: re-score with
+//   `scripts/falsify.sh <this file> --patch tests/falsified/<same name>.patch`.
+// ⚠ WHICH COLUMNS MEAN ANYTHING HERE, because `none` and "could not fire" are the same four
+//   characters.  EXIT and ASSERTIONS carry this guard, on both backends, and all four moved.  LEAK
+//   is armed but unmoved — armed because this file has a `main`, which is what makes
+//   `check_store_leaks` run at a clean exit (`scripts/falsify.sh` lines 30-38: the column is read
+//   off that stderr line, `--tests` does not leak-check at all, so a `main`-less guard reports
+//   `leak none` on BOTH trees whatever it leaks and is recorded INERT).  Unmoved because nothing
+//   here leaks on either tree: the records the defect loses the HOOK for are still freed, by the
+//   work-ref's own bare scope-end free — which is exactly why a reader scoring this family on
+//   leaks learns nothing.  EXPECT reads `-` on both and cannot do otherwise: `expect_channel`
+//   counts only `@EXPECT_ERROR` / `@EXPECT_FAIL`, never the `@EXPECT_WARNING` this file declares
+//   (same script, lines 40-47), so the warnings are scored BY HAND — 5 on both trees, unchanged by
+//   the fix, which is correct since they are inherent to the cells and not to the defect.
+// CHANNEL: the assertion text, IDENTICALLY on both backends — `(O-NoDiverge)`, measured, not
+//   assumed.  NOT the leak channel: every record involved is freed, by the work-ref's own bare
+//   scope-end free if by nothing else.  What is lost is the HOOK, so a run scored on leaks
+//   learns nothing here.
+// ARMED: no instrument.  Each cell writes its hook calls to the shared trace file and asserts
+//   the string, so an ordinary run on either backend reports it.
+// HOLDS: eight cells passed on every tree back to the filing and each is there to hold —
+//   test_struct (the in-place twin, which has no work-ref), test_view_after_literal and
+//   test_null_then_call_field (a literal then a genuine VIEW, by a bound base and by a call's
+//   field: the population a cure must NOT move, and the cell that says the literal build is
+//   necessary and not sufficient), test_mixed (a genuinely mixed local), test_no_rebind,
+//   test_plain, and the two test_arm_literal cells.
+// WITNESS: test_mixed doubles as the control for the witness still being armed, with a release
+//   COUNT channel rather than the loft#1336 guard's hang: it reads `m55,55,V56,56` here and
+//   `m55,55,V56,56,56` under `LOFT_NO_OWNER_WITNESS=1`.  Prefer it when bisecting this family —
+//   a control that can only time out cannot tell you which tree moved.
+
+// Each cell is its own `fn test_*`, so the corpus runs and REPORTS them one by one.  Twelve of
+// them landed here as expected-failures, each pinning the trace it read while the defect was
+// open beside the assertion for the trace it reads now — two-sided on purpose, so a partial fix
+// moved a line instead of passing as "still broken", and the real cure turned twelve FAILs into
+// twelve UNEXPECTED PASSES, which is how the file said it was time to retire them.
+//
+// ⚠ Those annotations are gone, and the prose describing them may not spell the token either:
+// the parser reads any comment containing it as an annotation, and one above the first `fn`
+// binds at FILE level (`tests/common/mod.rs::expect_fail_fns`).  A sentence in this header
+// mentioning it by name would therefore excuse the whole guard, silently — which is why this
+// paragraph describes the mechanism without naming it.
+//
+// The trace is shared and that is safe: both runners call test functions in sequence, and each
+// cell resets before running and drains after.
+//
+// ⚠ The cell body stays in its OWN function and the drain happens in the caller.  Every one of
+// these cells scores records released at the frame's END, and a body inlined into the `test_`
+// function has not reached that point when the assertion runs: inlined, all twenty read one or
+// two hooks short and the file looked uniformly broken.
+//
+// The trace file is this guard's own — its own means THIS file, not this family: several
+// corpus guards write one, and two concurrent runs of the SAME guard clobber each other's.
+
+// Two diagnostics are inherent to the cells rather than accidental, so they are declared
+// rather than written around: a cell whose LAST assignment is a literal exists to score that
+// record's release, so the value is deliberately never read (`never-read`), and a cell that
+// reassigns to score the DISPLACED record deliberately overwrites before reading
+// (`dead-assignment`).  Writing a read in to silence them would change what is measured.
+// @EXPECT_WARNING: dead-assignment
+// @EXPECT_WARNING: never-read
+
+fn trace_path() -> text { return "loft_displaced_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn reset() { empty: vector<u8> = []; if !write_bytes(trace_path(), empty) { println("trace init failed"); } }
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct DH { id: integer }
+fn OpDrop(self: DH) { note("{self.id}"); }
+enum DE { A { k: integer }, B { k: integer } }
+fn OpDrop(self: DE) { note("e{self.k}"); }
+enum FE { F { h: DH }, G { n: integer } }
+struct DBox { inner: DH }
+fn de_mk(k: integer) -> DE { return A { k: k }; }
+fn mk_box() -> DBox { return DBox { inner: DH { id: 9 } }; }
+
+// CONTROL — two independent resources, no reassignment in sight.  Without it every cell above
+// would pass on a harness that had simply stopped recording.  Its order is the scope-exit one,
+// `(H-FreeLIFO)` — reverse declaration — which is the only thing hand-computing got wrong
+// across all fifteen cells, in this cell and in c_two_locals, and in neither case the COUNT.
+fn c_plain() { x = DH { id: 191 }; y = DH { id: 192 }; note("alive{x.id}{y.id}"); }
+
+// THE FILED SHAPE — an enum local built from a literal, then given another local's value.
+// Three records, three hooks: the displaced literal, the copy, and `a`'s own release moved to
+// the copy by `(B-Copy)`.
+fn c_enum() { a: DE = A { k: 11 }; x: DE = A { k: 13 }; note("m{x.k}"); x = a; note("V{x.k}"); }
+
+// CONTROL — the plain-struct twin.  It builds IN PLACE, so it has no work-ref and no mix to
+// misread, and it was correct throughout.  Without it the cell above reads as a drop-hook
+// question rather than as a work-ref one.
+fn c_struct() { a = DH { id: 21 }; x = DH { id: 23 }; note("m{x.id}"); x = a; note("V{x.id}"); }
+
+// ACROSS VARIANTS — the displaced record carries a different tag than the one landing on it,
+// so the snapshot's cascade has to read the tag it actually holds.
+fn c_variant() { b: DE = B { k: 31 }; x: DE = A { k: 33 }; note("m{x.k}"); x = b; note("V{x.k}"); }
+
+// A droppable FIELD in the payload rather than a hook on the enum itself: the release is a
+// CASCADE, and it is a separate decoder from the hook (`heap.md` D-heap-2 is the entry for it).
+fn c_cascade() { a: FE = F { h: DH { id: 61 } }; x: FE = F { h: DH { id: 63 } }; note("m"); x = a; note("V"); }
+
+// A NULLABLE STRUCT local — `@FR-N-Shape` makes `DH?` the synthetic struct-enum
+// `__nullable<DH>`, so it takes the work-ref route that the dense `DH` does not.  This is the
+// cell that says the subject is the work-ref and not the spelling `enum`: the filed repro could
+// be read as being about user-declared enums, and this one has no user enum in it.
+fn c_nullable_struct() { a: DH? = DH { id: 91 }; x: DH? = DH { id: 93 }; note("m{a.id}"); x = a; note("V{x.id}"); }
+
+// A NULLABLE ENUM — the wrapper over a type that already builds through a work-ref, so two
+// levels of it.
+fn c_nullable_enum() { a: DE? = A { k: 81 }; x: DE? = A { k: 83 }; note("m{a.k}"); x = a; note("V{x.k}"); }
+
+// A MINTING CALL as the second assignment.  The displaced record is the same; what changes is
+// the predicate that classifies what lands on it, so this says the loss is on the displaced
+// side and not a property of the copy.
+fn c_from_call() { x: DE = A { k: 103 }; note("m{x.k}"); x = de_mk(101); note("V{x.k}"); }
+
+// THE SECOND FACE — the LAST assignment is a literal, so the record the local still holds at
+// scope exit is the work-ref's.  A work-ref's scope-end free is bare, so this hook was lost
+// with no reassignment after it to blame.
+fn c_literal_last() { a: DE = A { k: 71 }; x: DE = a; note("m{x.k}"); x = A { k: 72 }; note("V{x.k}"); }
+
+// BOTH FACES IN ONE FRAME — three assignments, so three records and three hooks, and the middle
+// one is displaced by a literal rather than by a copy.
+fn c_chain() { a: DE = A { k: 51 }; x: DE = A { k: 53 }; note("m{x.k}"); x = a; note("n{x.k}"); x = A { k: 52 }; note("V{x.k}"); }
+
+// The rebind in a LOOP, which is where `(O-Witness)` earns its slot.  The per-pass records were
+// always released; the literal's was not, so this cell tells a missing release at ONE site from
+// a missing release per iteration.
+fn c_loop() { a: DE = A { k: 121 }; x: DE = A { k: 123 }; for i in 0..3 { x = a; } note("V{x.k}"); }
+
+// TWO locals of the same type reassigned in one frame — the bookkeeping is per local, and a
+// table keyed by anything coarser would answer one of these with the other's record.
+fn c_two_locals() { a: DE = A { k: 41 }; b: DE = B { k: 42 }; x: DE = A { k: 43 }; y: DE = A { k: 44 }; note("m{x.k}{y.k}"); x = a; y = b; note("V{x.k}{y.k}"); }
+
+// CONTROL — no reassignment at all.  One record, one hook, and it was always correct.
+fn c_no_rebind() { x: DE = A { k: 111 }; note("V{x.k}"); }
+
+// THE REASSIGNMENT IN AN IF ARM, scored on BOTH paths.  `scripts/matrix_axes.py` named this
+// axis as unreached by the cells above, and it is not a free one: the hand-off bookkeeping is
+// explicitly scope-sensitive — an UNCONDITIONAL reassignment retires the hand-off of what it
+// displaces, one inside an arm does not, because it is not certain to run.  So the path that
+// SKIPS the arm must still release both records itself.
+fn c_arm(c: boolean) { a: DE = A { k: 31 }; x: DE = A { k: 33 }; if c { x = a; } note("V{x.k}"); }
+
+// A LITERAL in the arm rather than a copy — the displacing value is itself work-ref-built, so
+// both sides of the assignment are the shape this defect turns on.
+fn c_arm_literal(c: boolean) { x: DE = A { k: 35 }; if c { x = A { k: 36 }; } note("V{x.k}"); }
+
+// CONTROL — a literal, then a genuine VIEW.  This is the owned->view transition free
+// (loft#1510), which runs the hook itself, and it was always correct.  It is the over-wide cell
+// on the cure's own side: making a construction "not a view" must not touch the case where the
+// SECOND assignment really is one.
+fn c_view_after_literal() { bx = DBox { inner: DH { id: 45 } }; x: DH = DH { id: 47 }; note("m{x.id}"); x = bx.inner; note("V{x.id}"); }
+
+// CONTROL — a NULLABLE local built from a literal whose second assignment is a PROJECTION off
+// a CALL result.  It reaches the cure's predicate with the same answer as c_nullable_struct —
+// the first assignment is the same work-ref construction — and it was correct before the cure,
+// so it is what says the cure did not widen past the half that actually breaks: the literal
+// build is NECESSARY and not sufficient, and what completes it is the second assignment being a
+// whole-value bind from another LOCAL.  If this cell moves, the cure reached too far.
+fn c_null_then_call_field() { x: DH? = DH { id: 94 }; note("m{x.id}"); x = mk_box().inner; note("V{x.id}"); }
+
+// CONTROL — a local that genuinely MIXES: a copy-bind (a mint) and then a view.  `(O-Witness)`
+// is about exactly this local, and the cure must leave it alone.
+fn c_mixed() { a = DH { id: 55 }; bx = DBox { inner: DH { id: 56 } }; cur: DH? = a; note("m{cur.id}"); cur = bx.inner; note("V{cur.id}"); }
+
+fn test_plain() { reset(); c_plain(); got = drain(); assert(got == "alive191192,192,191", "CONTROL the harness records at all: {got}"); }
+fn test_enum() { reset(); c_enum(); got = drain(); assert(got == "m13,e13,V11,e11", "THE FILED SHAPE — the displaced literal releases: {got}"); }
+fn test_struct() { reset(); c_struct(); got = drain(); assert(got == "m23,23,V21,21", "CONTROL the in-place struct twin: {got}"); }
+fn test_variant() { reset(); c_variant(); got = drain(); assert(got == "m33,e33,V31,e31", "across variants, the displaced tag's own cascade: {got}"); }
+fn test_cascade() { reset(); c_cascade(); got = drain(); assert(got == "m,63,V,61", "a droppable FIELD releases through the cascade: {got}"); }
+fn test_nullable_struct() { reset(); c_nullable_struct(); got = drain(); assert(got == "m91,93,V91,91", "a NULLABLE STRUCT is the same work-ref route: {got}"); }
+fn test_nullable_enum() { reset(); c_nullable_enum(); got = drain(); assert(got == "m81,e83,V81,e81", "a nullable enum, two levels of wrapper: {got}"); }
+fn test_from_call() { reset(); c_from_call(); got = drain(); assert(got == "m103,e103,V101,e101", "a minting call displaces the literal: {got}"); }
+fn test_literal_last() { reset(); c_literal_last(); got = drain(); assert(got == "m71,e71,V72,e72", "SECOND FACE — a trailing literal's own record: {got}"); }
+fn test_chain() { reset(); c_chain(); got = drain(); assert(got == "m53,e53,n51,e51,V52,e52", "three assignments, three hooks: {got}"); }
+fn test_loop() { reset(); c_loop(); got = drain(); assert(got == "e123,e121,e121,V121,e121", "the loop loses the literal's record only: {got}"); }
+fn test_two_locals() { reset(); c_two_locals(); got = drain(); assert(got == "m4344,e43,e44,V4142,e42,e41", "two locals, each its own record: {got}"); }
+fn test_no_rebind() { reset(); c_no_rebind(); got = drain(); assert(got == "V111,e111", "CONTROL no reassignment: {got}"); }
+fn test_arm_true() { reset(); c_arm(true); got = drain(); assert(got == "e33,V31,e31", "the arm RUNS: the displaced record and the copy: {got}"); }
+fn test_arm_false() { reset(); c_arm(false); got = drain(); assert(got == "V33,e33,e31", "the arm is SKIPPED: both records are still this frame's: {got}"); }
+fn test_arm_literal_true() { reset(); c_arm_literal(true); got = drain(); assert(got == "e35,V36,e36", "a literal in the arm displaces a literal: {got}"); }
+fn test_arm_literal_false() { reset(); c_arm_literal(false); got = drain(); assert(got == "V35,e35", "the literal arm is SKIPPED: one record, one hook: {got}"); }
+fn test_view_after_literal() { reset(); c_view_after_literal(); got = drain(); assert(got == "m47,47,V45,45", "CONTROL a literal then a genuine VIEW: {got}"); }
+fn test_null_then_call_field() { reset(); c_null_then_call_field(); got = drain(); assert(got == "m94,94,V9,9", "CONTROL a nullable literal then a call's field: {got}"); }
+fn test_mixed() { reset(); c_mixed(); got = drain(); assert(got == "m55,55,V56,56", "CONTROL a genuinely MIXED local keeps its witness: {got}"); }
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_plain();
+  test_enum();
+  test_struct();
+  test_variant();
+  test_cascade();
+  test_nullable_struct();
+  test_nullable_enum();
+  test_from_call();
+  test_literal_last();
+  test_chain();
+  test_loop();
+  test_two_locals();
+  test_no_rebind();
+  test_arm_true();
+  test_arm_false();
+  test_arm_literal_true();
+  test_arm_literal_false();
+  test_view_after_literal();
+  test_null_then_call_field();
+  test_mixed();
+}

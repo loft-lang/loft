@@ -40,30 +40,19 @@ agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash
 The scoreboard above reads lower for some rows because it was taken on the branch; these are the
 JOINED tree's, and the delta is what carries across a join, never the endpoints.
 
-⚠ **`smooth` is no longer the allocation class this plan filed it under.**  § V-d fires on its hot
-line: `sp_out += [raster::pt(…)]` emits `n_pt(…, _elm_3)`, so the call builds into the pushed
-element and there is no per-sample temp record.  `LOFT_PROFILE` under `LOFT_NO_NATIVE_LIBS=1` puts
-**31 % of self time on `drawing.loft:460`** alone, and what is there is **8 loop-invariant record
-field reads per sample** — `sp_a`, `sp_b`, `sp_ta`, `sp_tb` are fixed across the whole inner loop
-and each coordinate expression reads all four at offsets 0 and 8, twelve `OpGetFloat`s through a
-`DbRef` in the function altogether, none lifted.  That is P4c's job, so **the next unit is why P4c
-declines there.**
-
-Two obvious leads are already DISPROVEN, by three cells built for it
-(`scratchpad/p4c/{withcall,nocall,nopt}.loft`, a loop reading two invariant `Pt` parameters):
-
-| cell | inner body | invariant reads left in the loop |
-|---|---|---:|
-| `withcall` | `out += [pt(t * a.ptx + b.ptx, …)]` — a record-returning CALL | 4 |
-| `nocall` | `out += [Pt { ptx: t * a.ptx + b.ptx, … }]` — a literal, no call | 4 |
-| `nopt` | `out += [t * a.ptx + b.ptx + …]` — builds `vector<float>`, writes no `Pt` at all | 4 |
-
-So it is **not** the call in the body (`nocall` declines identically), and **not** the body writing
-the same record type the reads come from (`nopt` writes no `Pt` and still declines).  P4c simply
-does not fire for this shape — invariant reads of a record PARAMETER in a loop that appends — and
-the next step is to INSTRUMENT the write set (`WriteSet::whole` / `evicts`, and whether the
-allocating push classifies at all) rather than guess a third time.  All three cells are one-liners
-to re-run and each is a ready A/B for a candidate cure.
+**That question is CLOSED — § V-s shipped 2026-09-10** (DESIGN.md § V-s): the blocker was the
+record-append MINT group itself (`OpNewRecord`/`OpFinishRecord`, plus § V-d's `OpCopyRecord`
+delivery), unclassified writers that declined the whole loop; the three probe cells re-run on
+the joined tree had narrowed it (the fused-scalar `nopt` hoists since § V-q, both record-append
+cells still declined, and a no-write variant of the same loop hoists all four reads).  The mint
+is now admitted as a mover under `(R-Alias)` and a write into the FRESH element evicts nothing
+(`@FR-R-Mint`, formal/rewrites.md).  Measured honestly (interleaved ABAB on the two scratch
+clones, best of 3, hashes agree): **`smooth` −8 %** (3 700 → 3 420 ns/op); `fronds` and
+`lock_curved` within lane noise — their appends were already § V-q scalar pushes, or the cost
+sits elsewhere.  `smooth`'s row sits at ~7.5–7.9× today: most of the drop from the 20.9×
+above came from the cold-half-outlining commits that joined `main` after that measurement,
+and what remains is NOT the invariant reads any more — profile the row again before
+choosing its next unit.
 
 ⚠ **And a switch in this family cannot A/B a LIBRARY's own code**, which is how that attribution
 nearly went wrong: the switches are read at GENERATION time and a `use`d library runs as the
@@ -354,6 +343,7 @@ unless said otherwise.
 | **V-p** — a callee's INVARIANT INPUTS cross the call: a callee admitted under `@FR-R-Callee` gets a TWIN (`<fn>__inv`) taking its record parameter's invariant scalars and vector headers as extra parameters (`hoist::callee_inputs`, transitively through pass-through callees), and a loop that hoisted them for the argument variable calls the twin (`Output::twin_call_inputs`); `LOFT_NO_CALLEE_INPUTS` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-p](DESIGN.md) | a c1–c17 cell moves; `tests/callee_inputs.rs` no longer sees a twin or a twin call; a consumer hash disagrees | **Shipped 2026-09-09** — `composite` 4.41× → 2.34× (under the bar), `render_lock` / `render_marks` −8 %; the two candidate designs measured equal by hand before the code, so the cheaper machinery was built |
 | **V-q** — a loop that PUSHES to a vector path keeps a PUSH header: (R-Header)'s triple plus the capacity, the push writes through it and refreshes it at a growth step, every read of the path serves from it (`hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `Stores::push_hoisted`, the ownership rule in `hoist::hoistable`); `LOFT_NO_PUSH_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-q](DESIGN.md) | a c1–c18 cell moves; `tests/push_hoist.rs` no longer sees a push header; a consumer hash disagrees | **Shipped 2026-09-09** — `lock_curved` 5.64× → 3.84×, `lock` 4.39× → 3.51× (both under the bar); ceiling measured by hand first at −33 % |
 | **V-r** — the EMISSION AUDIT: `scripts/emission_audit.py` validates a `--native-emit` output against the hoist-state rules (`R-State` one holder per path per frame, `R-Refresh` no mover on a held path, `R-Inputs` a twin handed only live holders); `tests/emission_audit.rs` runs it over every hoist corpus and the in-repo bench | [DESIGN.md § V-r](DESIGN.md) | a corpus audits with a violation; a corpus resolves no holder; the doubled emission is not refused | **Shipped 2026-09-09** — flags the § V-p × § V-q double holder at emission when the collector order is re-introduced; every corpus clean |
+| **V-s** — a record-appending loop hoists its invariant scalars: the mint group (`OpPreAllocVector · OpNewRecord · sets or a retbuf callee · OpFinishRecord`, § V-d's `OpCopyRecord` delivery included) admitted as a mover under `(R-Alias)`, writes into the FRESH element evicting nothing (`@FR-R-Mint`); a keyed container's same-named ops stay blocking (admission asks the TYPE) | [DESIGN.md § V-s](DESIGN.md) | a c9/c10 cell answers the stale value (the falsified sabotage); `tests/mint_hoist.rs` no longer sees the hoists; a consumer hash disagrees | **Shipped 2026-09-10** — fifteen cells exact on both backends, emission pinned; `smooth` −8 % (interleaved ABAB best-of-3), `fronds`/`lock_curved` within noise; switch `LOFT_NO_MINT_HOIST` |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

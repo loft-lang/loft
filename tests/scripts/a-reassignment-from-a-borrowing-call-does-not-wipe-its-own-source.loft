@@ -1,0 +1,186 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `ownership.md (O-Detach)` — DETACH AFTER THE READS.  A binding's detach, *"the free, sentinel
+// or RE-ALLOCATION that stops it naming its current store"*, is sequenced after every read of
+// that binding by the value being assigned to it.  So `c = keep(c ?? K { x: 9 })`, where
+// `fn keep(s: K) -> K { s }` hands back the store it was given, must still read 7.
+//
+// It answered the type's ZERO on `--interpret` and 7 on `--native` — `(O-NoDiverge)` broken, a
+// wrong value with no diagnostic, on `main`.  The interpreter deferred the re-allocation past
+// the call, which `(O-Detach)` requires, and then performed it IN PLACE on the local's own
+// store: `OpDatabase(c)` cleared the record, and the `OpCopyRefOrNull` after it copied from the
+// call's result, which was that same store.  `--native` has the runtime same-store passthrough
+// for exactly this (`generation/dispatch.rs`'s `PASSTHROUGH`, whose comment cites this rule),
+// added when the two backends were wrong the OTHER way round (loft#1017b).
+//
+// The condition that forces a FRESH destination was gated on the local being WITNESSED, and
+// `(O-Detach)` carries no such qualifier — a guard narrower than the rule it cites.  Worse, the
+// syntactic half of it could not see the case at all: a `??` HOISTS the read of `c` into a
+// temporary in a PRIOR statement, which is the lowering the rule itself prescribes, so the
+// assignment arrives mentioning `c` nowhere.  The hoist moved the READ, not the VALUE — the temp
+// is bound to `c` and names c's store.  The second disjunct is therefore the CALLEE's fact, its
+// return dep naming a visible parameter (`Def::returns_borrowed_view`).
+//
+// Why this guard is separate from the loft#1517 one it unblocked: that defect's misclassification
+// WITNESSED these locals, and a witnessed local takes the fresh-store path — so loft#1517 was
+// MASKING this, and correcting the arming population without fixing this first turned a lost
+// OpDrop hook into a wrong value.  The two are one arc and two mechanisms.
+//
+// Two diagnostics are inherent to the cells and declared rather than written around: the
+// other-parameter control needs a parameter it does not read (`never-read`), and the
+// argument-does-not-read-the-local control overwrites before reading, which is the whole point
+// of it (`dead-assignment`).
+// @EXPECT_WARNING: never-read
+// @EXPECT_WARNING: dead-assignment
+//
+// @falsified-at: 83b8870ce — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
+//   INERT (expected for a backend-divergence guard — only one side can move).
+// @falsified-by: tests/falsified/a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.patch
+//   — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT for the same reason.
+//   The patch form is the one that does not decay: re-score with
+//   `scripts/falsify.sh <this file> --patch tests/falsified/<same name>.patch`.
+// ⚠ WHICH COLUMNS MEAN ANYTHING HERE, because `none` and "could not fire" are the same four
+//   characters.  The EXIT and ASSERTION columns carry this guard and they moved.  NATIVE is inert
+//   by construction: the defect is a backend DIVERGENCE and `--native` was the correct side, so a
+//   receipt showing native moving would mean the guard had stopped testing the right thing.  LEAK
+//   is armed but unmoved — armed because this file has a `main`, which is what makes
+//   `check_store_leaks` run at a clean exit (`scripts/falsify.sh` lines 30-38: the column is read
+//   off that stderr line, `--tests` does not leak-check at all, so a `main`-less guard reports
+//   `leak none` on BOTH trees whatever it leaks and is recorded INERT).  Unmoved because nothing
+//   here leaks on either tree — the defect is a wiped VALUE, not a retained store.  EXPECT reads
+//   `-` on both and cannot do otherwise: `expect_channel` counts only `@EXPECT_ERROR` /
+//   `@EXPECT_FAIL`, never the `@EXPECT_WARNING` this file declares (same script, lines 40-47), so
+//   the two warnings below are scored BY HAND — 2 on both trees, unchanged by the fix, which is
+//   correct since they are inherent to the cells and not to the defect.
+// CHANNEL: the VALUE, and it DIVERGES — `--interpret` reads 0 where `--native` reads 7, so this
+//   is scored per backend and agreement between them is the thing being restored.  Not a leak and
+//   not a release count: the records are all freed either way.
+// ARMED: no instrument.  Ordinary assertions; the `--interpret` side is the one that moved.
+// HOLDS: the four controls, on every tree — test_dense_twin (a non-nullable local, which never
+//   took this path), test_argument_does_not_read_the_local, test_the_callee_mints (its return is
+//   fresh, so the result cannot be the destination's store) and
+//   test_the_callee_returns_the_other_parameter (the return borrows, but not the parameter that
+//   carries the local).  The last is the sharp one: it says the condition is "the result may be
+//   the destination's store", not "the callee borrows something".
+
+struct K { x: integer }
+struct K2 { x: integer, y: integer }
+
+fn keep(s: K) -> K { s }                              // the return BORROWS its parameter
+fn keep2(s: K2) -> K2 { s }
+fn keep_other(a: K, b: K) -> K { b }                  // borrows the OTHER parameter
+fn mint(s: K) -> K { return K { x: s.x }; }           // the return is FRESH
+fn mk() -> K { return K { x: 7 }; }
+fn mk2() -> K2 { return K2 { x: 7, y: 8 }; }
+fn mk_n() -> K? { return K { x: 7 }; }
+
+// THE FILED SHAPE — a nullable local reassigned from a call that hands back what it was given.
+fn test_a_nullable_local_survives_a_borrowing_call_that_reads_it() {
+  c: K? = mk();
+  c = keep(c ?? K { x: 90 });
+  assert(c.x == 7, "the local keeps its value: got {c.x}, want 7");
+}
+
+// The same with the record's FIRST assignment a literal rather than a minting call — the spelling
+// loft#1517 used to witness, so it reached this path only once that was corrected.
+fn test_a_literal_built_nullable_local_survives_it_too() {
+  c: K? = K { x: 7 };
+  c = keep(c ?? K { x: 90 });
+  assert(c.x == 7, "a literal-built local keeps its value: got {c.x}, want 7");
+}
+
+// TWO fields, so a partial wipe is visible as one field right and one wrong rather than as a
+// single zero that could be read as "the whole record went missing".
+fn test_every_field_survives_not_just_the_first() {
+  c: K2? = mk2();
+  c = keep2(c ?? K2 { x: 90, y: 91 });
+  assert(c.x == 7 && c.y == 8, "both fields survive: got {c.x},{c.y}, want 7,8");
+}
+
+// In a LOOP, so the wipe would compound: each pass reads what the last one left.
+fn test_it_survives_every_pass_of_a_loop() {
+  c: K? = mk();
+  for i in 0..3 { c = keep(c ?? K { x: 90 + i }); }
+  assert(c.x == 7, "three passes keep the value: got {c.x}, want 7");
+}
+
+// The local read TWICE in the argument, so the hoist nests.
+fn test_the_local_read_twice_in_the_argument() {
+  c: K? = mk();
+  c = keep(c ?? (c ?? K { x: 90 }));
+  assert(c.x == 7, "read twice: got {c.x}, want 7");
+}
+
+// A nullable-RETURNING callee for the first assignment — the third first-assignment spelling.
+fn test_a_nullable_returning_first_assignment() {
+  c: K? = mk_n();
+  c = keep(c ?? K { x: 90 });
+  assert(c.x == 7, "a nullable-returning mint first: got {c.x}, want 7");
+}
+
+// CONTROL — the DENSE twin.  A non-nullable local never took the deferred-reallocation path, so
+// it was correct throughout; without this cell the cells above read as a call-ownership question
+// rather than as a nullable-local one.
+fn test_dense_twin() {
+  c: K = mk();
+  c = keep(c);
+  assert(c.x == 7, "CONTROL the dense twin: got {c.x}, want 7");
+}
+
+// CONTROL — the argument does NOT read the local, so the result cannot be the destination's
+// store and an in-place re-allocation is harmless.
+fn test_argument_does_not_read_the_local() {
+  o = K { x: 5 };
+  c: K? = mk();
+  c = keep(o);
+  assert(c.x == 5, "CONTROL the argument names another local: got {c.x}, want 5");
+}
+
+// CONTROL — the callee MINTS.  Its return is a fresh store, so the copy's source is never the
+// destination.
+fn test_the_callee_mints() {
+  c: K? = mk();
+  c = mint(c ?? K { x: 90 });
+  assert(c.x == 7, "CONTROL a minting callee: got {c.x}, want 7");
+}
+
+// CONTROL, AND THE SHARP ONE — the callee's return borrows, but the OTHER parameter.  So
+// "the callee borrows something" is not the condition; "the result may be the destination's own
+// store" is.  A cure keyed on the looser fact passes every cell above and this one as well, but
+// pays a fresh allocation here for nothing, and this cell is where that shows up as a
+// deliberate choice rather than an oversight.
+fn test_the_callee_returns_the_other_parameter() {
+  o = K { x: 5 };
+  c: K? = mk();
+  c = keep_other(c ?? K { x: 90 }, o);
+  assert(c.x == 5, "CONTROL the return borrows the other parameter: got {c.x}, want 5");
+}
+
+// CONTROL — no reassignment at all.  Without it every cell above would pass on a build where the
+// first assignment had stopped working.
+fn test_no_reassignment() {
+  c: K? = mk();
+  assert(c.x == 7, "CONTROL no reassignment: got {c.x}, want 7");
+}
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_a_nullable_local_survives_a_borrowing_call_that_reads_it();
+  test_a_literal_built_nullable_local_survives_it_too();
+  test_every_field_survives_not_just_the_first();
+  test_it_survives_every_pass_of_a_loop();
+  test_the_local_read_twice_in_the_argument();
+  test_a_nullable_returning_first_assignment();
+  test_dense_twin();
+  test_argument_does_not_read_the_local();
+  test_the_callee_mints();
+  test_the_callee_returns_the_other_parameter();
+  test_no_reassignment();
+}

@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `ownership.md (O-Move)` — *"if the return BORROWS a parameter, the return type records it
+// (`{Attr(param)}`) and the caller COPIES to obtain its own store"*.  So a local bound from
+// `fn keep(s: K) -> K { s }` OWNS its record: a write through the local does NOT reach the
+// source.  `(B-View)` is the contrast — a struct-typed PROJECTION really is a view, and a write
+// through it DOES reach the container.
+//
+// This is the measurement `formal/ownership.md` D-own-40 and `heap.md` D-heap-6 rest on, and it
+// is here because the rule alone is not enough to settle what those entries needed: they turn on
+// whether such a local's assignments MIX ownership for `(O-Witness)`, and reading "the return
+// borrows" as "the local views" gets the answer backwards.  The copy is what makes a local whose
+// other assignment is a CONSTRUCTION own on BOTH paths — so it does not mix, so it must carry no
+// owner witness.  It carries one today, which is what D-own-40 records.
+//
+// The nullable spelling is measured beside the dense one because `@FR-N-Shape` makes `K?` the
+// synthetic struct-enum `__nullable<K>`, a different storage route to the same question, and it
+// is the spelling the two register entries actually use.
+//
+// @falsified-at: none — this guard states a rule that HOLDS on every tree back to the filing; it
+//   is a control, not a regression catch, so there is no build it fails on.  ⚠ It has a `main`
+//   anyway, and deliberately: without one the LEAK column of any future falsify run would read
+//   `none` on both trees whatever it leaked (`scripts/falsify.sh` lines 30-38 — `--tests` does not
+//   leak-check, so a `main`-less guard is recorded INERT and a leak guard is thereby mislabelled a
+//   lock).  A control is the guard most likely to be re-scored years later by someone checking
+//   whether it still means anything, so it is the one that can least afford a blind channel.  Its falsification
+//   is the THIRD cell: `t_view` writes through and reads 99 from the container, so a run where
+//   all three cells answered "owns" would be a harness that had stopped distinguishing them.
+//   That is the cell to corrupt first if this file ever looks vacuous.
+// CHANNEL: the VALUE read back from the source after a write through the local, identically on
+//   both backends (`(O-NoDiverge)`).  Not a release count and not a leak — this file is about
+//   which binding OWNS, and the hook-count consequences of getting it wrong are scored by
+//   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft`.
+// ARMED: no instrument.  Ordinary assertions on both backends.
+// HOLDS: all four cells, on every tree.
+
+struct K { x: integer }
+struct Box { inner: K }
+
+fn keep(s: K) -> K { s }                      // the return BORROWS its parameter
+fn mint(s: K, i: integer) -> K { K { x: s.x + i } }   // the return is FRESH
+
+// (O-Move)'s borrowing-return clause: the caller copies, so the local owns its own record and a
+// write through it leaves the source alone.
+fn test_a_borrowing_returns_result_is_the_locals_own_store() {
+  src = K { x: 7 };
+  c: K? = keep(src);
+  c.x = 99;
+  assert(src.x == 7, "the source is untouched by a write through the local: got {src.x}, want 7");
+  assert(c.x == 99, "the local took the write: got {c.x}, want 99");
+}
+
+// The same question with the NULLABLE wrapper removed — `@FR-N-Shape` says the `?` is a
+// nullability bit over the same storage, so the answer may not depend on it.
+fn test_the_dense_spelling_answers_the_same() {
+  src = K { x: 7 };
+  c: K = keep(src);
+  c.x = 99;
+  assert(src.x == 7, "dense: the source is untouched: got {src.x}, want 7");
+}
+
+// CONTROL — a genuinely MINTING callee.  Always owned, and it must read the same as the
+// borrowing one, which is the point: `(O-Move)` makes the two indistinguishable at the caller.
+fn test_a_minting_return_is_owned_too() {
+  src = K { x: 7 };
+  c: K? = mint(src, 0);
+  c.x = 99;
+  assert(src.x == 7, "a minting return: the source is untouched: got {src.x}, want 7");
+}
+
+// CONTROL — and the falsification of the three above.  `(B-View)` makes a struct-typed
+// PROJECTION a view, so this write DOES reach the container.  Without this cell a harness that
+// had stopped writing anything would pass every assertion above.
+fn test_a_projection_is_a_view_and_writes_through() {
+  b = Box { inner: K { x: 7 } };
+  c: K = b.inner;
+  c.x = 99;
+  assert(b.inner.x == 99, "a projection writes THROUGH to the container: got {b.inner.x}, want 99");
+}
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_a_borrowing_returns_result_is_the_locals_own_store();
+  test_the_dense_spelling_answers_the_same();
+  test_a_minting_return_is_owned_too();
+  test_a_projection_is_a_view_and_writes_through();
+}

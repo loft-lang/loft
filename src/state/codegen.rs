@@ -2223,6 +2223,36 @@ impl State {
             // OpFreeRefIfDistinct — which also degrades to a no-op for the
             // S1 in-place shapes (the new value IS the old store).
             let rhs_reads_v = value.reads_var(v);
+            // @FR-O-Detach — may the value being assigned name `v`'s OWN store, so that
+            // re-initialising that store IN PLACE would wipe the record the copy reads from?
+            //
+            // Three facts were tried here and two of them are wrong in opposite directions;
+            // the measurements are in `formal/ownership.md` D-own-41, and the short form is:
+            //
+            // - `value.reads_var(v)` is SYNTACTIC and answers NO for the defect, because a `??`
+            //   HOISTS the read of `v` into a temporary in a PRIOR statement — the lowering
+            //   `(O-Detach)` itself prescribes — so the assignment mentions `v` nowhere.  It also
+            //   answers YES for `s = grow(s)`, which needs the in-place destination and leaks one
+            //   store per loop pass without it.
+            // - `Def::returns_borrowed_view` (the return's dep names a visible param) is true for
+            //   a callee that MINTS its record and carries a dep through a `text` field, so it
+            //   forces freshness on the same leaking shape.
+            //
+            // The fact that separates them is the ORACLE's borrow BASE: a `Borrowed`/`Join` whose
+            // base may hold `v`'s store.  The `??` hoist temp carries a dep naming `v` —
+            // `__lift_1` reads `["c", "__ref_p2_1"]` — because the hoist moved the READ and not
+            // the VALUE.  A view of some OTHER binding has a base whose deps do not name `v`
+            // (measured: `w`, `d`, `target` in `1184-a-view-assigned-back-onto-its-own-source`,
+            // all with empty dep lists), and that population needs the in-place destination
+            // precisely because it is assigning a view back onto its own source.
+            let rhs_may_alias_v =
+                match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value) {
+                    crate::use_analysis::Own::Borrowed { base }
+                    | crate::use_analysis::Own::Join { base } => {
+                        base == v || stack.function.tp(base).depend().contains(&v)
+                    }
+                    _ => false,
+                };
             // loft#615 — an OWNED heap variable that is re-assigned must free the
             // store it is dropping, and `Vector` was missing from this list while
             // `Reference` / `Enum` had it.  A `??` materialises its subject into a
@@ -2630,9 +2660,38 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
-                    if witnessed && rhs_reads_v {
-                        // The call is done with the old store; a fresh one, never the
-                        // record the local may be VIEWING.
+                    if (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v) {
+                        // The call is done with the old store; take a FRESH one.  Two reasons,
+                        // each from its own rule, which is why this is not `witnessed` alone: a
+                        // WITNESSED local may be holding a view, so an in-place `OpDatabase`
+                        // would write the copy into the viewed record (@FR-O-Witness's own
+                        // clause); and a value that MAY ALIAS `v`'s store would be WIPED by that
+                        // same in-place re-init before the copy reads it (@FR-O-Detach).
+                        //
+                        // Asked as `witnessed && rhs_reads_v`, it answered no for a nullable
+                        // local reassigned from a borrowed-view call — `c: K? = mk(); c = keep(c
+                        // ?? K { x: 9 })` — whose hoisted argument still named c's store: the
+                        // re-init wiped it and the copy read back the type's ZERO, on
+                        // `--interpret` only, where `--native`'s runtime same-store passthrough
+                        // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly — one
+                        // question, two decoders, and the decoders are the two BACKENDS
+                        // (@FR-O-NoDiverge, `formal/ownership.md` D-own-41).
+                        //
+                        // ⚠ The second disjunct is conjoined with `stash_old_for_post_free` and
+                        // both halves are load-bearing.  That flag is what emits the
+                        // `OpFreeRefIfDistinct` for the store `v` is LEAVING, so a fresh
+                        // allocation without it leaks the old one (measured:
+                        // `303-ref-reassign-free.loft`, 2 stores at exit).  And it is what
+                        // confines this to the population that already DEFERS the re-init past
+                        // the call: forcing freshness more widely moved a view assigned back
+                        // onto its own source into a store the source no longer names
+                        // (`1184-a-view-assigned-back-onto-its-own-source.loft`, `len 0` where 8
+                        // is right, six cells) and double-released a `??` default arm's mint.
+                        // Freshness, the deferral and the post-free are ONE pairing in three
+                        // conditions — BRITTLE.md § 7b.
+                        //
+                        // A nullable local always reaches it (`nullable_local` sets the flag), so
+                        // the defect's own population is covered without widening the flag.
                         stack.add_op("OpInitRef", self);
                         self.code_add(stack.var_pos(v));
                     }

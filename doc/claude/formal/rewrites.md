@@ -300,6 +300,36 @@ before each fast-path store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_pus
 and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
 4.39× → 3.51× of Rust, hashes unchanged.
 
+### A minted element is a record no holder can name
+
+```
+  (R-Mint)       in a loop admitted under (R-InPlace), the record MINT group over a
+                 pure bare-variable path P that TYPES as a plain vector —
+                 OpPreAllocVector(P) · e = OpNewRecord(P) · writes into e ·
+                 OpFinishRecord(P, e) — is a MOVER like a push, admitted beside
+                 other holders under (R-Alias); P itself earns no holder.  A write
+                 whose target is the FRESH variable e — the literal element's
+                 in-place sets, and § V-d's OpCopyRecord delivery of a builder's
+                 result into e (its source-free included) — contributes nothing to
+                 (R-Scalar)'s write set: a record minted inside the body cannot be
+                 named by a variable whose getter the prelude already ran.  The
+                 same op names over a KEYED collection are a keyed insert — a mover
+                 of OTHER records — and stay blocking: admission asks the TYPE,
+                 never the op shape.
+```
+
+**In words.** @PLN157 § V-s.  Before it, `OpNewRecord`/`OpFinishRecord` were
+unclassified writers, so a loop appending a record element hoisted NOTHING — `smooth`'s
+hot line reads eight loop-invariant parameter fields per sample, none lifted.  The fresh
+window is tracked in the same preorder the write-set walk uses (`e` marked at its
+`Set(e, OpNewRecord)`, cleared by any other assignment and by the group's own
+`OpFinishRecord`), which is execution order for the straight-line group the parser emits
+— the only producer of these ops.  Freshness over-applied is the falsified failure:
+the sabotage turns the write-through-parameter and write-through-alias cells red and
+`LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
+falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
+`hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
+
 ### A leaf carries no frame
 
 ```
@@ -314,6 +344,37 @@ and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_cu
 and loses only the innermost frame NAME from the chain.  Switch
 `LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
 `Output::output_function`.
+
+### A fast path inlines; its cold half is outlined
+
+```
+  (R-Cold)       a runtime helper on the per-element fast path — an element read or
+                 write through a holder, a length, a bounds test, a fault note, a
+                 diagnostics hook — must INLINE into the emitted code, and whatever
+                 shares its body but not its frequency (an error report, a growth
+                 step, a watch/verify hook, the off-fast-path re-derivation) is
+                 OUTLINED as its own `#[cold]` `#[inline(never)]` function.  The
+                 split changes no observable behaviour; what it protects is rustc's
+                 SIZE decision — a generic `#[inline]` body that carries its cold
+                 half loses the inline at every call site, and the whole fast path
+                 pays a call for a compare and a load.  `#[inline(never)]` on the
+                 cold half is load-bearing, not a hint: without it rustc folds the
+                 halves back together.
+```
+
+**In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
+un-inlined fault note BESIDE its checks, not for the checks); loft#1508 and its write
+twin re-found it inside `get_elem_hoisted`/`vec_set_hoisted` (7.2 % + 3.2 % of the
+`loft_planet` profile, out of line at all 1,302 call sites of one program); the
+always-off watch hook cost 1.6 % of a real program the same way.  No switch — this is
+a layout discipline, not a semantics rewrite, so (R-Switch) does not apply; the checks
+are the two instruments: `scripts/native_call_census.py` (which fast-path symbols
+still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
+`#[inline]` functions rustc declined — an `#[inline]` function with an out-of-line
+symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
+`Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
+`Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
+`State::mark_stale_handles`, `Stores::watch_oob_text_report`.
 
 ## Validating the emitted routines against their assumptions
 

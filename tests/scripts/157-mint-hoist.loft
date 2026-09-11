@@ -1,0 +1,128 @@
+// @PLN157 § V-s (loft#1426 M2) — a loop that APPENDS a record element (the mint
+// group: OpPreAllocVector · OpNewRecord · in-place sets or a retbuf callee ·
+// OpFinishRecord) still hoists its invariant record scalars on the native
+// backend; the interpreter reads them per iteration and is the oracle.  The
+// cells pin the boundary from both sides:
+//   - an invariant field of a record the loop only READS hoists across a
+//     literal append, a builder-call append (§ V-d's OpCopyRecord delivery
+//     included), an owned-local out vector, and growth past the capacity;
+//   - a field the loop writes — through the parameter, or through a `&`-bound
+//     alias — is NOT hoisted, so the loop sees each write;
+//   - the mint's own writes into the FRESH element evict nothing, even when an
+//     invariant record of the SAME type is read beside it;
+//   - a keyed container (`sorted`, `index`) is a keyed insert, not a mint: the
+//     loop hoists nothing and the walk still finds every record.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-s-mint-hoist-cells.loft
+// (tests/mint_hoist.rs pins which cells hoist); this file carries the VALUE cells
+// that must hold whatever the emitter decides.
+// `LOFT_NO_MINT_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-10) — the fresh-element test in
+// `body_writes` made to answer `true` for EVERY var-targeted set (the exemption
+// over-applied) turns c9 and c10 red on --native (c9 `3 6 4` → `3 3 2`, c10
+// `3 33 13` → `3 30 11`: the stale hoisted read even feeds the increment) and
+// LOFT_HOIST_VERIFY=1 panics naming the stale scalar; restored, interpret /
+// native / LOFT_HOIST_VERIFY / LOFT_NO_MINT_HOIST all green.
+
+struct Pt { ptx: float, pty: float }
+struct KRec { k: integer }
+
+fn pt(x: float, y: float) -> Pt { Pt { ptx: x, pty: y } }
+fn sum_ptx(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.ptx) ?? 0.0; } s }
+
+fn seg_literal(a: Pt, b: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    t = ((i as float) / (n as float)) ?? 0.0;
+    out += [Pt { ptx: (t * a.ptx + b.ptx) ?? 0.0, pty: (t * a.pty + b.pty) ?? 0.0 }];
+  }
+  out
+}
+
+fn seg_call(a: Pt, b: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    t = ((i as float) / (n as float)) ?? 0.0;
+    out += [pt((t * a.ptx + b.ptx) ?? 0.0, (t * a.pty + b.pty) ?? 0.0)];
+  }
+  out
+}
+
+fn grow(a: Pt, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n { out += [Pt { ptx: (a.ptx + (i as float)) ?? 0.0, pty: 0.0 }]; }
+  out
+}
+
+fn written_through_param(a: Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..3 {
+    out += [Pt { ptx: a.ptx, pty: 0.0 }];
+    a.ptx = (a.ptx + 1.0) ?? 0.0;
+  }
+  out
+}
+
+fn written_through_alias(a: Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  al = &a;
+  for _ in 0..3 {
+    out += [Pt { ptx: a.ptx, pty: 0.0 }];
+    al.ptx = (al.ptx + 1.0) ?? 0.0;
+  }
+  out
+}
+
+fn same_type_local() -> float {
+  l = Pt { ptx: 4.0, pty: 6.0 };
+  v: vector<Pt> = [];
+  for i in 0..3 { v += [Pt { ptx: (l.ptx * (i as float)) ?? 0.0, pty: l.pty }]; }
+  (sum_ptx(v) * 1000.0 + l.ptx * 10.0 + l.pty) ?? 0.0
+}
+
+fn keyed(base: KRec) -> sorted<KRec[k]> {
+  s: sorted<KRec[k]> = [];
+  for i in 0..3 { s += [KRec { k: base.k * (3 - i) }]; }
+  s
+}
+
+fn test_mint_hoist() {
+  // The literal append: four invariant reads, values exact after four elements.
+  r1 = seg_literal(Pt { ptx: 3.0, pty: 5.0 }, Pt { ptx: 7.0, pty: 11.0 }, 4);
+  assert(len(r1) == 4 && (r1[0]?.ptx) == 7.0 && (r1[3]?.pty) == 14.75 && sum_ptx(r1) == 32.5,
+    "a literal record append keeps every invariant read's value");
+
+  // The builder-call append (smooth's shape): same numbers through § V-d's delivery.
+  r2 = seg_call(Pt { ptx: 3.0, pty: 5.0 }, Pt { ptx: 7.0, pty: 11.0 }, 4);
+  assert(len(r2) == 4 && (r2[0]?.ptx) == 7.0 && (r2[3]?.pty) == 14.75 && sum_ptx(r2) == 32.5,
+    "a builder-call append keeps every invariant read's value");
+
+  // Growth: 100 appends cross the initial capacity; the hoisted values are untouched.
+  r3 = grow(Pt { ptx: 1.5, pty: 0.0 }, 100);
+  assert(len(r3) == 100 && (r3[99]?.ptx) == 100.5 && sum_ptx(r3) == 5100.0,
+    "growth moves the pushed vector's record and no hoisted value");
+
+  // A field the loop writes through the parameter is read per iteration.
+  a4 = Pt { ptx: 1.0, pty: 0.0 };
+  r4 = written_through_param(a4);
+  assert(len(r4) == 3 && sum_ptx(r4) == 6.0 && a4.ptx == 4.0,
+    "a field the loop writes through the parameter is not hoisted");
+
+  // The same write through a `&`-bound alias: evicted by TYPE, not by name.
+  a5 = Pt { ptx: 10.0, pty: 0.0 };
+  r5 = written_through_alias(a5);
+  assert(len(r5) == 3 && sum_ptx(r5) == 33.0 && a5.ptx == 13.0,
+    "a field written through an alias is not hoisted");
+
+  // The mint's own element writes beside a SAME-type invariant local evict nothing.
+  assert(same_type_local() == 12046.0, "a fresh element's writes evict no invariant local");
+
+  // A keyed container is a keyed insert, not a mint: values right, order kept.
+  s7 = keyed(KRec { k: 2 });
+  first = 0; last = 0; n7 = 0;
+  for r in s7 { if n7 == 0 { first = r.k; } last = r.k; n7 += 1; }
+  assert(len(s7) == 3 && first == 2 && last == 6, "a keyed insert keeps the general path");
+
+  println("mint-hoist ok");
+}

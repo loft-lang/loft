@@ -82,7 +82,77 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   continues, both backends. *Guard.*
 - ✓ **H-WriteLocked** — a `#lock`ed write FAULTS on both (the intended tripwire; `18-locks.loft`).
 - ✓ **H-Free* + H-Sound** — the LIFO / no-stack / no-double-free discipline. *Standing guards:
-  `LOFT_POISON` suite + the ownership fuzz gate + `LOFT_NATIVE_LEAK_CHECK` (ownership.md is 0 open).*
+  `LOFT_POISON` suite + the ownership fuzz gate + `LOFT_NATIVE_LEAK_CHECK` (read ownership.md's
+  own `OPEN` line rather than a number restated here — it is `OPEN: 1` as of 2026-09-11,
+  `D-own-40`, and this row read "0 open" for a cycle after that stopped being true).*
+- ~ **H-Drop — NOT on this worklist until 2026-09-11, and that is the finding.** The rule names
+  THREE deaths at which the hook runs (the owner's scope end in reverse declaration order; a
+  displacing REASSIGNMENT, after the new value is computed and before anything after the
+  statement; a CONTAINER's death through the cascade) plus a responsibility-moves-with-a-copy
+  clause.  Each is separately falsifiable and none had a row.  **No gate represents this rule at
+  all:** the free side has `LOFT_POISON`, the leak check and `ownership_cfg`'s Check D
+  (`LOFT_OWN_ORACLE=check`), and every one of them is clean on a program that loses a hook —
+  Check D measured `clean — 0 RED` over both loft#1517 guards while twelve cells were wrong, and
+  it still does over the fixed ones — closing the defect did not close this gap.
+  `(H-Drop)`'s own ⚠ says why the free-side instruments cannot be reused: a drop's two failures
+  are not ordered the way a free's are, so there is no safe direction to err in.  Until a gate
+  exists, the drop rules are pinned only by per-guard TRACES — each guard writing its hook calls
+  to a file and asserting the sequence.  **Building that gate is the gap this row records.**
+  *Current coverage, all `tests/scripts/`, all trace-asserting, all both-backends:
+  `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
+  and scope-end clauses, 20 cells, all green since loft#1517 closed),
+  `a-copy-of-a-tuple-with-a-droppable-member-releases-once` and
+  `a-tuple-member-releases-once-beside-any-neighbour` (the copy clause through a container),
+  `1510-a-mixed-own-view-locals-record-hooks-once` (the witness's own releases),
+  `a-shared-destination-releases-the-arm-that-did-not-run` and
+  `a-branch-arm-releases-the-source-the-other-arm-took` (the copy clause per path).*
+- ☐ **H-Drop-Not** — the old value of an overwritten FIELD or ELEMENT, an element taken OUT, and a
+  keyed collection's records are NOT released by the language.  A documented boundary, so the
+  falsifiable claim is that nothing releases them; unrowed and unguarded.
+
+## ownership.md
+
+No section existed here before 2026-09-11.  The `deps` rules were treated as covered by the
+@PLN89 differential oracle and the `program_ownership` fuzzer, which is why `ownership.md` sat at
+`OPEN: 0` for two months with `(O-Witness)` armed on locals whose assignments do not mix, and with
+a two-line `(O-Detach)` divergence live on `main`: those instruments ask whether a FREE is sound,
+never whether a witness should EXIST, and the `(O-Detach)` case was masked by the witness the
+first defect armed.  Two deviations, one arc, found by reading the rules rather than by the
+oracle — which is the argument for this section existing.
+
+- ✓ **O-Move** — a return that BORROWS a parameter records it in the return type and **the caller
+  COPIES to obtain its own store**, so the callee's borrow does not make the caller's local a
+  view.  Verified both backends by writing through the local and reading the source back:
+  `c: K? = keep(src); c.x = 99` leaves `src.x == 7`, where a `(B-View)` projection writes through.
+  *Guard: `a-borrowing-returns-result-is-copied-so-the-local-owns-it.loft` (the `(B-View)` cell is
+  its falsification — without it a harness that had stopped writing would pass every row).*
+- ✓ **O-Witness** — a local whose assignments MIX ownership carries a runtime witness.  The
+  falsifiable claim has TWO directions and both are now guarded: that a MIXING local releases
+  correctly (`1336-a-local-with-mixed-ownership-releases-through-its-owner-witness`, which hangs
+  under `LOFT_NO_OWNER_WITNESS=1`), and that a NON-mixing local carries none — which was violated
+  on two measured populations until `D-own-40` closed, and is pinned by the D-heap-6 guard's 20
+  cells.  ⚠ The first guard reports only as a HANG, which cannot say which tree moved; prefer
+  `test_mixed` in the D-heap-6 guard, a release-COUNT channel for the same fact.
+- ~ **O-Owner** — every heap store has exactly one owner at any moment.  Was violated while a
+  witness was armed on a CONSTRUCTION: the hand-off disarm that makes the binding the store's one
+  claimant is conditioned on `proxy_says_owned`, which a witnessed local is not, so the work-ref
+  and the local both named it (`D-own-40`, closed — an unwitnessed local now reaches the disarm).  A falsifiable claim needs an instrument that can ENUMERATE a
+  store's namers, which does not exist; the nearest live proxy is the emission audit
+  (`scripts/emission_audit.py`, one holder per path per frame) and it reads `--native-emit` only.
+- ✓ **O-Detach** — a binding's detach (free, sentinel, or RE-ALLOCATION) is sequenced after every
+  read of that binding by the value assigned to it.  Verified both backends, and the
+  RE-ALLOCATION half is the one that was wrong: the interpreter deferred it correctly and then
+  performed it IN PLACE on the local's own store, wiping the value being copied in (`D-own-41`).
+  ⚠ Two things make this rule hard to guard and both are in that entry: a `??` HOISTS the read
+  into a prior statement, so a syntactic "does the rhs read `v`" predicate sees nothing; and the
+  aliasing is a RUNTIME fact, which is why `--native` tests it at runtime and a static reader has
+  to be conservative.  *Guard:
+  `a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.loft`, whose
+  `test_the_callee_returns_the_other_parameter` cell is what distinguishes "the result may be the
+  destination's store" from "the callee borrows something".*
+- ☐ **O-Override** — no free derived from ownership is emitted for a never-free binding, in any of
+  a free's five spellings.  *Guard: Check D (`LOFT_OWN_ORACLE=check`) — the one rule here that HAS
+  a gate, and it is free-side only, which is the asymmetry the `H-Drop` row above records.*
 
 ## iteration.md
 
