@@ -760,6 +760,16 @@ soundness condition is `store_dead_after_block`, NOT the flag: a local READ afte
 does not confine, because freeing a confined store while the local still holds it returns the
 wrong element on the branch NOT taken. QUALITY.md § Cluster III Route 2.
 
+**Free-block footers (@PLN157 § V-v, default-ON, both backends, `@FR-H-FreeFooter`):** a
+store's FREE block carries its size at both ends, so a record delete coalesces BACKWARD in
+O(1) off the footer (tree-confirmed — claimed data can spell a false footer) instead of
+leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
+the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
+whole (every delete arms it) and is the first bisect step for a store-layout fault in a
+delete-heavy run.  Measured: `fronds` −7.7 % (the § V-u arena's churn), and the class it
+retires is the `coalesce_free` cliff PERFORMANCE.md § V-j P2 first measured at 29.5 % of
+a shared-arena row.
+
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
 another carries a hidden `__own_<name>` naming the store it minted while it still holds it;

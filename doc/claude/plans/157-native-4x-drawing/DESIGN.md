@@ -2273,6 +2273,37 @@ cells.  Switch `LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the declining 
 **350–357k ns/op (−9.5 %)**, `smooth` 2 205 → **1 887 (−14.4 %)** — the smooth Mod-3
 ceiling (−16 %) nearly reached, and `fronds` pays it at every recursion level.
 
+## V-v — free-block footers: delete coalesces backward in O(1) (2026-09-11)
+
+**The evidence.**  `fronds` re-profiled on the § V-u runtime: `Store::coalesce_free` was
+the TOP symbol at 12.0 % — the § V-j P2 cliff, returned exactly as that entry predicted,
+because the adoption chains the recursion's levels into one arena and `claim` runs its
+O(blocks) sweep whenever an allocation would otherwise grow it.  The allocator class as a
+whole was ~49 % of the row.  P2's own sentence named the fix: *"a footer on FREE blocks so
+`delete` coalesces backward in O(1) and the sweep goes."*  The bound probe (sweep off,
+reuse lost) measured −7.5 %, so the footer (sweep off, reuse kept) had at least that.
+
+**Invariant (`@FR-H-FreeFooter`, formal/heap.md).**  A free block of n words carries −n at
+both ends — the header word and the HIGH half of its last word.  The prerequisite was one
+byte of layout: the tree node's fields (`header · LEFT · RIGHT · COLOR`) covered both
+words of a 2-word block, so the COLOR now rides bit 31 of the RIGHT link (positions are
+word indices below `i32::MAX`) and the half-word is clear at every tracked size; a
+one-word block's footer shares its header's word.  `delete` then merges backward: the
+footer names a candidate predecessor, its header must agree, and the free TREE must hold
+that exact block — the falsified step: claimed DATA can spell a matching footer+header
+pair, and without the tree confirmation the guard test merges a freed block into the
+middle of a live claim.  A one-word predecessor is untracked and unconfirmable: `delete`
+leaves it and arms the lazy sweep for exactly that case (its own guard test).  Footers
+live in free space only — persisted images are unchanged and pre-footer images are
+re-footed by `fl_rebuild` on open.  Every free-header write routes through ONE helper
+(`set_free_header`), eleven sites.
+
+**Measured** (ABAB in one window, hash exact): `fronds` 312–319k → **288–295k ns/op
+(−7.7 %)**; `smooth` inside noise (its stores barely fragment).  Store unit tests 50/50
+with the two pre-footer layout tests updated to the new invariant and two new guards
+(the fake-footer safety, the one-word sweep path).  Switch `LOFT_NO_FREE_FOOTER`
+(runtime, both backends — this is a store rewrite, not an emitter one).
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

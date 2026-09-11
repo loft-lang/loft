@@ -66,19 +66,23 @@ fn test_store_reclaim_leaves_a_growth_reserve_the_report_does_not_show() {
 // filter applied across the set).  They do not reclaim the same:
 //
 //                     free-blk  mergeable | after reclaim: free-blk  bytes back
-//   contiguous 2000       2004       1997 |                       7      25 400
-//   scattered  2000       2002          5 |                    1997      16 312
+//   contiguous 2000          7          0 |                       7      25 400
+//   scattered  2000       1997          0 |                    1997      16 312
 //
-// `mergeable` counts adjacent free neighbours that never coalesced, so it is a
-// measure of how CONTIGUOUS the drop was — and it is exactly the part reclaim can
-// fix.  A scattered drop leaves the store permanently in ~2000 pieces, with its
-// largest hole smaller than the contiguous case's, and no call repairs that: the
-// live records between the holes are what keeps them apart.
+// A contiguous drop COALESCES AS IT HAPPENS: each delete finds its freed
+// neighbour through the free-block footer and merges backward on the spot
+// (`@FR-H-FreeFooter`), so the region collapses to a handful of blocks with no
+// call made and `mergeable` stays 0.  A scattered drop leaves the store
+// permanently in ~2000 pieces, with its largest hole smaller than the
+// contiguous case's, and no call repairs that: the live records between the
+// holes are what keeps them apart.
 //
-// So the report tells you, BEFORE you call, which kind of drop you made.  A high
-// `mergeable` says there is a contiguous run to merge; a low one on a store with
-// many free blocks says the space is there and will stay unusable for anything
-// bigger than one hole.
+// So the report tells you, BEFORE you call, which kind of drop you made — now
+// through `free-blk` against the records you dropped: a handful says the drop
+// was contiguous and its space is already usable whole; ~one block per dropped
+// record says the space is there and will stay unusable for anything bigger
+// than one hole.  What reclaim itself adds is the TAIL give-back, which is why
+// the contiguous drop still returns more bytes.
 fn test_what_reclaim_gives_back_depends_on_where_you_dropped() {
   contiguous: hash<Rec947[id]> = [];
   for i in 0..4000 { contiguous += [Rec947 { id: i, label: "cell-{i}-padding-padding" }] }
@@ -89,21 +93,22 @@ fn test_what_reclaim_gives_back_depends_on_where_you_dropped() {
   for i in 0..4000 { if i % 2 == 0 { scattered[i] = null } }
 
   rep = store_memory();
-  assert(num947(rep, "free-blk") > 1000 && num947f(rep, "free-blk") > 1000,
-         "both dropped 2000 records and both hold ~2000 free blocks");
-  assert(num947(rep, "mergeable") > 1000,
-         "the contiguous drop left adjacent free neighbours, got"
-         + " {num947(rep, "mergeable")}");
-  assert(num947f(rep, "mergeable") < 100,
-         "the scattered one did not -- live records keep its holes apart, got"
-         + " {num947f(rep, "mergeable")}");
+  assert(num947(rep, "free-blk") < 100,
+         "the contiguous drop coalesced as it happened -- each delete merged"
+         + " backward through the free-block footer, got"
+         + " {num947(rep, "free-blk")} blocks");
+  assert(num947f(rep, "free-blk") > 1000,
+         "the scattered one stays in ~2000 pieces -- live records keep its"
+         + " holes apart, got {num947f(rep, "free-blk")}");
+  assert(num947(rep, "mergeable") == 0 && num947f(rep, "mergeable") == 0,
+         "no adjacent free pair survives a delete");
 
   freed_c = store_reclaim(contiguous);
   freed_s = store_reclaim(scattered);
   rep2 = store_memory();
 
   assert(num947(rep2, "free-blk") < 100,
-         "reclaim merges the contiguous run into a handful of blocks, got"
+         "the contiguous run stays a handful of blocks, got"
          + " {num947(rep2, "free-blk")}");
   assert(num947f(rep2, "free-blk") > 1000,
          "and cannot merge the scattered one -- it stays in ~2000 pieces, got"

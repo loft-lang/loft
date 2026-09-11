@@ -48,6 +48,15 @@ use std::fmt::{Debug, Formatter};
 static A: System = System;
 const SIGNATURE: u32 = 0x53_74_6f_31;
 pub const PRIMARY: u32 = 1;
+
+/// `LOFT_NO_FREE_FOOTER=1` — `delete` leaves free PREDECESSORS to the lazy sweep, as
+/// before @PLN157 § V-v (`@FR-H-FreeFooter`); the bisect step for a store-layout fault
+/// in a delete-heavy run.  Footers are still WRITTEN (they are inert data in free space);
+/// only the backward merge is off.
+fn free_footer_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_FREE_FOOTER").is_ok_and(|v| v != "0"))
+}
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -105,10 +114,14 @@ pub fn slack_target(live_end: u32) -> u32 {
 
 /// Byte offset of LLRB left-child field within a free block.
 const FL_LEFT: u32 = 4;
-/// Byte offset of LLRB right-child field within a free block.
+
 const FL_RIGHT: u32 = 8;
-/// Byte offset of LLRB color flag within a free block (1 = red, 0 = black).
-const FL_COLOR: u32 = 12;
+
+/// @PLN157 § V-v (`@FR-H-FreeFooter`) — the node's COLOR rides bit 31 of its RIGHT link
+/// (a position is a word index below `i32::MAX`, so the bit is free).  Packing it frees
+/// the last half-word of a 2-word free block for the FOOTER below.
+const FL_RED_BIT: u32 = 0x8000_0000;
+const FL_RIGHT_MASK: u32 = 0x7FFF_FFFF;
 
 /// Internal space-utilisation snapshot of a single store — actual
 /// claimed data vs free space, and how fragmented the free space is.
@@ -1201,7 +1214,7 @@ impl Store {
             self.ptr.add(4).cast::<u32>().write_unaligned(1);
         }
         // Indicate the complete store as empty
-        self.write(1, 0, -(self.size as i32) + 1);
+        self.set_free_header(1, self.size as i32 - 1);
         // Reset the LLRB free-space tree and claims to match the fresh store layout.
         // Without this, a re-used store's stale tree would cause fl_take_ge to allocate
         // from old split blocks at positions other than 1, breaking the rec=1 invariant
@@ -1330,7 +1343,7 @@ impl Store {
         let pos = root;
         let new_free = pos + size;
         self.write(pos, 0, req_size);
-        self.write(new_free, 0, req_size - block_size); // negative = free
+        self.set_free_header(new_free, block_size - req_size);
         // The remainder becomes the root in place: no links, black — what a fresh
         // single-node insert leaves.
         self.write::<u32>(new_free, FL_LEFT, 0);
@@ -1353,7 +1366,7 @@ impl Store {
         if block_size > req_size * 4 / 3 {
             self.write(pos, 0, req_size);
             let new_free = pos + size;
-            self.write(new_free, 0, req_size - block_size); // negative = free
+            self.set_free_header(new_free, block_size - req_size);
             self.fl_insert(new_free);
         } else {
             self.write(pos, 0, block_size); // positive = claimed
@@ -1451,10 +1464,10 @@ impl Store {
         self.resize_store(new_size);
         let increase = (self.size - cur) as i32;
         if last_claim < 0 {
-            self.write(last, 0, last_claim - increase);
+            self.set_free_header(last, -(last_claim - increase));
             last
         } else {
-            self.write(cur, 0, -increase);
+            self.set_free_header(cur, increase);
             cur
         }
     }
@@ -1480,7 +1493,7 @@ impl Store {
                     let new_next = rec + act as u32;
                     let new_free_size = (-next_size) as u32 + next - new_next;
                     self.write(rec, 0, act);
-                    self.write(new_next, 0, -(new_free_size as i32));
+                    self.set_free_header(new_next, new_free_size as i32);
                     self.fl_insert(new_next);
                     act
                 } else {
@@ -1517,6 +1530,39 @@ impl Store {
     }
 
     /// Delete a record, this assumes that all links towards this record are already removed
+    /// @PLN157 § V-v (`@FR-H-FreeFooter`) — write a FREE block's header AND footer: `-words`
+    /// at its first word, and again in the HIGH half of its LAST word (bytes 4..8 — clear of
+    /// the tree node's fields now the color rides the RIGHT link), so [`Store::delete`] can
+    /// find a free PREDECESSOR in O(1) instead of leaving it to the O(blocks) lazy sweep.
+    /// A one-word block's footer shares its header's word.  Footers live in free space
+    /// only: a persisted image is unchanged, and an image written before footers existed is
+    /// re-footed by [`Store::fl_rebuild`] on open.
+    fn set_free_header(&mut self, pos: u32, words: i32) {
+        debug_assert!(words > 0, "free block of {words} words at {pos}");
+        self.write(pos, 0, -words);
+        self.write::<i32>(pos + words as u32 - 1, 4, -words);
+    }
+
+    /// The backward half of `delete`'s coalescing: the free PREDECESSOR of the block at
+    /// `rec`, when the footer at `rec - 1` names one and the free tree CONFIRMS it — a
+    /// claimed block's data can spell a false footer, and the tree cannot lie.  An
+    /// untracked (one-word) predecessor answers `None` and leaves the lazy sweep armed.
+    fn free_predecessor(&self, rec: u32) -> Option<(u32, i32)> {
+        if rec <= PRIMARY {
+            return None;
+        }
+        let f = self.read::<i32>(rec - 1, 4);
+        if f >= 0 {
+            return None;
+        }
+        let words = -f;
+        let prev = rec.checked_sub(words as u32)?;
+        if prev < PRIMARY || words < MIN_FREE_TREE {
+            return None;
+        }
+        (self.read::<i32>(prev, 0) == f && self.fl_tree_contains(prev)).then_some((prev, words))
+    }
+
     pub fn delete(&mut self, rec: u32) {
         // `read_only` is IMMUTABILITY — CONST_STORE, workers, the user-facing
         // `d#lock` tripwire — so nothing in the store may change, deletes included.
@@ -1560,6 +1606,7 @@ impl Store {
             }
         }
         let mut claim = self.read::<i32>(rec, 0);
+        self.claims.remove(rec);
         // Coalesce with any adjacent free blocks that follow.
         while (rec + claim as u32) < self.size {
             let next_pos = rec + claim as u32;
@@ -1571,15 +1618,27 @@ impl Store {
             self.fl_remove(next_pos);
             claim -= next_header;
         }
-        self.write(rec, 0, -claim);
-        self.claims.remove(rec);
+        // @PLN157 § V-v (`@FR-H-FreeFooter`) — and BACKWARD, in O(1) off the footer: a
+        // confirmed free predecessor absorbs this block, so adjacent frees never
+        // accumulate and the O(blocks) sweep stays retired on the delete-heavy path.
+        let mut rec = rec;
+        if !free_footer_enabled() {
+            // The pre-§ V-v behaviour whole: no backward merge, and every delete arms
+            // the lazy sweep — the bisect step must restore exactly what shipped before.
+            self.needs_coalesce = true;
+        } else if let Some((prev, words)) = self.free_predecessor(rec) {
+            self.fl_remove(prev);
+            claim += words;
+            rec = prev;
+        } else if rec > PRIMARY && self.read::<i32>(rec - 1, 4) < 0 {
+            // A negative word that could not be confirmed: either a one-word free
+            // predecessor (real, unmergeable here) or a claimed block's data noise.
+            // Leave the lazy sweep armed for it — the pre-footer behaviour.
+            self.needs_coalesce = true;
+        }
+        self.set_free_header(rec, claim);
         // Register the (possibly coalesced) free block in the tree.
         self.fl_insert(rec);
-        // P6: a free block now exists.  `delete` only merged FORWARD, so an
-        // adjacent free PREDECESSOR (if any) is left uncoalesced; flag it so
-        // the next allocation that would otherwise grow the store runs the
-        // lazy coalescing sweep first.
-        self.needs_coalesce = true;
         #[cfg(debug_assertions)]
         self.fl_validate();
     }
@@ -1642,7 +1701,7 @@ impl Store {
         }
         // [base, pos) prefix stays free.
         if base < pos {
-            self.write::<i32>(base, 0, -((pos - base) as i32));
+            self.set_free_header(base, (pos - base) as i32);
             self.fl_insert(base);
         }
         // [pos, pos + size) becomes the claimed record.
@@ -1651,7 +1710,7 @@ impl Store {
         // [pos + size, bend) suffix stays free.
         let tail = pos + size;
         if tail < bend {
-            self.write::<i32>(tail, 0, -((bend - tail) as i32));
+            self.set_free_header(tail, (bend - tail) as i32);
             self.fl_insert(tail);
         }
         #[cfg(debug_assertions)]
@@ -1975,7 +2034,7 @@ impl Store {
         }
         let tail = mark.max(PRIMARY);
         if tail < self.size {
-            self.write(tail, 0, -((self.size - tail) as i32));
+            self.set_free_header(tail, (self.size - tail) as i32);
         }
         self.fl_rebuild();
         // The same reason `resize` bumps it: a suspended coroutine holding a
@@ -2316,11 +2375,11 @@ impl Store {
     }
 
     fn fl_right(&self, p: u32) -> u32 {
-        self.read::<u32>(p, FL_RIGHT)
+        self.read::<u32>(p, FL_RIGHT) & FL_RIGHT_MASK
     }
 
     fn fl_red(&self, p: u32) -> bool {
-        self.read::<u8>(p, FL_COLOR) != 0
+        self.read::<u32>(p, FL_RIGHT) & FL_RED_BIT != 0
     }
 
     fn fl_set_left(&mut self, p: u32, v: u32) {
@@ -2328,11 +2387,14 @@ impl Store {
     }
 
     fn fl_set_right(&mut self, p: u32, v: u32) {
-        self.write::<u32>(p, FL_RIGHT, v);
+        debug_assert_eq!(v & FL_RED_BIT, 0, "free-tree position with bit 31 set");
+        let red = self.read::<u32>(p, FL_RIGHT) & FL_RED_BIT;
+        self.write::<u32>(p, FL_RIGHT, v | red);
     }
 
     fn fl_set_red(&mut self, p: u32, v: bool) {
-        self.write::<u8>(p, FL_COLOR, u8::from(v));
+        let right = self.read::<u32>(p, FL_RIGHT) & FL_RIGHT_MASK;
+        self.write::<u32>(p, FL_RIGHT, right | if v { FL_RED_BIT } else { 0 });
     }
 
     fn fl_cmp(&self, a: u32, b: u32) -> Ordering {
@@ -2576,13 +2638,19 @@ impl Store {
         }
     }
 
+    /// Return `true` if `target` is reachable from the free-tree root — the release-mode
+    /// confirmation `free_predecessor` needs (a footer can be spelled by claimed data;
+    /// tree membership cannot).  O(log n) by key, not a full walk.
+    fn fl_tree_contains(&self, target: u32) -> bool {
+        self.fl_contains_node(self.free_root, target)
+    }
+
     /// Return `true` if `target` is reachable from the free-tree root.
     #[cfg(debug_assertions)]
     fn fl_contains(&self, target: u32) -> bool {
         self.fl_contains_node(self.free_root, target)
     }
 
-    #[cfg(debug_assertions)]
     fn fl_contains_node(&self, h: u32, target: u32) -> bool {
         if h == 0 {
             return false;
@@ -2613,8 +2681,13 @@ impl Store {
             if block_size == 0 {
                 break;
             }
-            if header < 0 && -header >= MIN_FREE_TREE {
-                self.fl_insert(pos);
+            if header < 0 {
+                // Re-foot every free block: an image written before footers existed
+                // carries none, and the walk is already here (@FR-H-FreeFooter).
+                self.write::<i32>(pos + block_size as u32 - 1, 4, header);
+                if -header >= MIN_FREE_TREE {
+                    self.fl_insert(pos);
+                }
             }
             pos += block_size as u32;
         }
@@ -2647,7 +2720,7 @@ impl Store {
         // Everything past the image is free space, in one block. `init` writes
         // the same negative-header form for a whole fresh store.
         if words < self.size {
-            self.write(words, 0, -((self.size - words) as i32));
+            self.set_free_header(words, (self.size - words) as i32);
         }
         self.free_root = 0;
         self.fl_rebuild();
@@ -2727,7 +2800,7 @@ impl Store {
                     block_size += i32::abs(nh);
                     next = pos + block_size as u32;
                 }
-                self.write(pos, 0, -block_size);
+                self.set_free_header(pos, block_size);
             }
             pos += block_size as u32;
         }
@@ -4914,6 +4987,60 @@ mod tests {
     /// `coalesce_free` sweep must merge them (mergeable-pairs → 0) and the
     /// merged block must be reused by the next allocation instead of
     /// growing the store.
+    /// @FR-H-FreeFooter — a claimed block's DATA can spell a fake footer; the free-tree
+    /// confirmation is what keeps `delete` from merging into the middle of it.
+    #[test]
+    fn a_fake_footer_in_claimed_data_never_merges() {
+        let mut store = Store::new(64);
+        store.free = false;
+        let a = store.claim(5);
+        let b = store.claim(5);
+        let _c = store.claim(5);
+        // Write a "footer" into A's LAST data word claiming a 3-word free block ends
+        // right before B — AND the matching fake "header" at that block's would-be
+        // start (also A's data).  Both header checks pass; only the free-tree
+        // confirmation knows no such block exists.
+        store.write::<i32>(a + 4, 4, -3);
+        store.write::<i32>(a + 2, 0, -3);
+        store.delete(b);
+        // A stayed claimed and whole: its header still says 5 claimed words, and the
+        // free block is exactly B (its own words, no absorption into A's middle).
+        assert_eq!(
+            store.read::<i32>(a, 0),
+            5,
+            "A's claim survived the fake footer"
+        );
+        assert_eq!(
+            store.read::<i32>(b, 0),
+            -5,
+            "B freed as itself, nothing absorbed"
+        );
+    }
+
+    /// @FR-H-FreeFooter — a ONE-word free predecessor is untracked and unconfirmable, so
+    /// the delete leaves it and arms the lazy sweep, which still merges the pair.
+    #[test]
+    fn one_word_frees_still_fall_to_the_lazy_sweep() {
+        let mut store = Store::new(64);
+        store.free = false;
+        let _a = store.claim(4);
+        let b = store.claim(1);
+        let c = store.claim(4);
+        let _d = store.claim(4);
+        store.delete(b);
+        store.delete(c);
+        assert!(
+            store.usage().mergeable_free_pairs >= 1,
+            "the one-word predecessor is left for the sweep"
+        );
+        store.coalesce_free();
+        assert_eq!(
+            store.usage().mergeable_free_pairs,
+            0,
+            "the sweep merges what the footer could not confirm"
+        );
+    }
+
     #[test]
     fn coalesce_free_merges_adjacent_and_reuses_space() {
         let mut store = Store::new(64);
@@ -4923,21 +5050,15 @@ mod tests {
         let c = store.claim(5);
         let d = store.claim(5);
         assert!(b < c && c < d, "A,B,C,D are contiguous and ascending");
-        // Free B then C (forward order): delete only merges with the NEXT
-        // block, so freeing B (C still claimed) then C (D claimed) leaves
-        // B|C adjacent-but-unmerged.
+        // Free B then C (forward order): C's delete finds B through the free-block
+        // FOOTER and merges BACKWARD at the site (@FR-H-FreeFooter) — no adjacent pair
+        // survives, and the lazy sweep has nothing left on this path.
         store.delete(b);
         store.delete(c);
-        assert!(
-            store.usage().mergeable_free_pairs >= 1,
-            "forward-order frees leave an uncoalesced adjacent pair"
-        );
-        // The lazy sweep merges them.
-        store.coalesce_free();
         assert_eq!(
             store.usage().mergeable_free_pairs,
             0,
-            "coalesce_free merges every adjacent free pair"
+            "the footer's backward merge leaves no adjacent free pair"
         );
         // The merged B+C block (10 words) is reused for a request that
         // neither B(5) nor C(5) could satisfy alone — no store growth.
@@ -5197,11 +5318,10 @@ mod tests {
     /// claimed one.
     #[test]
     fn reclaim_tail_returns_the_tail_and_merges_the_interior() {
-        // Freed in runs of two, FORWARD order: `delete` merges only with the
-        // block after it, and that one is still claimed both times, so each run
-        // leaves an adjacent-but-unmerged pair — the shape a lazy sweep leaves
-        // behind.  (Freeing every OTHER record would leave nothing mergeable
-        // and make the sweep assertion below say nothing.)
+        // Freed in runs of two, FORWARD order.  Since @FR-H-FreeFooter the second
+        // delete of each run merges BACKWARD at the site, so the interior arrives
+        // already coalesced and `reclaim_tail`'s sweep finds nothing left — the tail
+        // arithmetic below is what this test still owns.
         fn fragmented() -> (Store, Vec<u32>) {
             let mut store = Store::new(256);
             store.free = false;
@@ -5217,8 +5337,8 @@ mod tests {
         let last_live = *recs.last().expect("21 records");
         assert_eq!(
             store.usage().mergeable_free_pairs,
-            6,
-            "six unmerged pairs to sweep — the precondition this test needs"
+            0,
+            "the footer's backward merge coalesces each run at its second delete"
         );
         let before = store.len();
         let freed = store.reclaim_tail();

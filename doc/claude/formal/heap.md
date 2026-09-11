@@ -248,6 +248,20 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
   (H-FreeStack)  freeing store 0 (the evaluation stack) is a FAULT (#306): a stack-record ref
                  is never an owned heap store.
   (H-FreeTwice)  freeing an already-freed store is a FAULT (use-after-free / double-free).
+  (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
+                 header word and the HIGH half of its LAST word (the tree node's color
+                 rides bit 31 of its RIGHT link, so the half-word is clear at every
+                 tracked size; a one-word block's footer shares its header's word).  A
+                 record delete then coalesces BACKWARD in O(1): the footer at the freed
+                 block's left edge NAMES a candidate predecessor, its header must agree,
+                 and the free TREE must hold that exact block — claimed data can spell a
+                 false footer and header, and the tree cannot lie (falsified: without the
+                 tree confirmation, a fabricated footer+header pair merges a freed block
+                 into the middle of a live claim).  A one-word predecessor is untracked
+                 and unconfirmable: it is left, and the lazy O(blocks) sweep stays armed
+                 for exactly that case.  Footers live in FREE space only — a persisted
+                 image is unchanged, and an image written before footers existed is
+                 re-footed by the open walk.
 ```
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
