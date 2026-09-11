@@ -32,18 +32,62 @@ pub struct OpFreeRefEmitter;
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [db_val] = args {
-            // @PLN157 § V-j (`@FR-R-MoveAppend`) — a PLACED buffer is a record inside the
-            // destination's store, so its free is a record-level release (the deep walk of
-            // whatever the loop did not move — a `break`'s leftovers — then the record's
-            // own block), never the store free `OpFreeRef` performs: that store is the
-            // destination's and lives on.
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — a placed record dies WITH ITS HOST
+            // STORE: this var is the `__vdb` some pair placed a buffer into, and the
+            // store free below is the host's death (an early dead-after-last-read site
+            // as much as scope end), so every record still placed here is released
+            // FIRST, while the store is alive, and its var nulled — the backstop arm
+            // below and any later host site then no-op on the sentinel.  Freeing at the
+            // host's death instead of the paired loop's exit is what lets an enclosing
+            // loop REUSE the placement (24 place/free cycles per `fronds` call → 1,
+            // the −16.6 % hand-measured ceiling); freeing no LATER than it is the
+            // soundness line the 2026-09-11 gate corruption drew.
+            if let Value::Var(v) = db_val.unspan() {
+                let hosted: Vec<(String, u16)> = ctx
+                    .output
+                    .move_pairs
+                    .values()
+                    .filter(|p| p.host_vdb == *v)
+                    .map(|p| {
+                        let name = super::super::sanitize(
+                            ctx.output
+                                .data
+                                .def(ctx.output.def_nr)
+                                .variables()
+                                .name(p.buf),
+                        );
+                        (name, p.buf_tp)
+                    })
+                    .collect();
+                for (buf, tp) in hosted {
+                    write!(
+                        ctx.w,
+                        "stores.free_record_in(&(var_{buf}), {tp}u16); var_{buf} = DbRef::NULL; "
+                    )?;
+                }
+            }
+            // The buffer attr's own free site is the BACKSTOP: it is what releases the
+            // record when the host is an ADOPTED `__retbuf` (returned to the caller, so
+            // no host free exists in this function), and a no-op via the null sentinel
+            // whenever a host site above already ran.  A record-level release — the deep
+            // walk of whatever the loop did not move (a `break`'s leftovers), then the
+            // record's own block — never the store free `OpFreeRef` performs: that store
+            // is the destination's and lives on.
             if let Value::Var(v) = db_val.unspan()
                 && let Some(pair) = ctx.output.move_pairs.get(v)
             {
                 let tp = pair.buf_tp;
-                write!(ctx.w, "stores.free_record_in(&(")?;
-                ctx.emit(db_val)?;
-                write!(ctx.w, "), {tp}u16)")?;
+                let name = super::super::sanitize(
+                    ctx.output
+                        .data
+                        .def(ctx.output.def_nr)
+                        .variables()
+                        .name(pair.buf),
+                );
+                write!(
+                    ctx.w,
+                    "{{ stores.free_record_in(&(var_{name}), {tp}u16); var_{name} = DbRef::NULL; }}"
+                )?;
                 return Ok(());
             }
             // S34/S35: skip_free variables share a slot with an outer variable

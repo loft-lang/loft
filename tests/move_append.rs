@@ -13,10 +13,14 @@
 //! declining shape (a read after the append, a double append, a named source, a nested
 //! loop, a rebound destination, a non-struct element, a struct named like a stdlib
 //! typevar) keeps the deep copy — and the switch (`LOFT_NO_MOVE_APPEND=1`).  Read off
-//! `--native-emit`.  Every paired cell counts TWO record frees: the placed record dies
-//! at its LOOP's exit (the destination's store can die before scope end and its slot be
-//! recycled — the 2026-09-11 gate corruption), and the buffer attr's scope-end free
-//! stays as the no-op that covers a return from inside the loop.
+//! `--native-emit`.  Every paired cell counts TWO record frees per pair: the placed
+//! record dies WITH ITS HOST STORE — a release injected before every free of the host
+//! `__vdb` (early dead-after-last-read sites included, the 2026-09-11 gate corruption's
+//! soundness line) — and the buffer attr's own scope-end free is the null-guarded
+//! backstop that covers an adopted `__retbuf` host, which no in-function site frees.
+//! Between those, an enclosing loop REUSES the placement (the −16.6 % fronds ceiling);
+//! a host recreated per iteration re-arms the guard at its `OpDatabase` site, whose
+//! reuse arm clears the whole store (the c21 corruption when unarmed).
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -49,7 +53,11 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_c19", 0, 0, 0),      // a struct NAMED `T`: the name-based wrapper lookup finds the
     // generic template (typevar field), so the wrapper-identity check declines
     ("n_c20", 1, 1, 2), // loop 1 pairs and its dest dies early; loop 2 declines (read-after)
-    ("n_c21", 1, 1, 2), // an enclosing loop re-enters: the loop-exit free re-arms the placement
+    ("n_c21", 1, 1, 2), // an enclosing loop re-enters: the host's per-iteration OpDatabase
+    // re-arms the placement (its reuse arm cleared the store), the host's one free site
+    // and the backstop carry the two frees
+    ("n_c22", 2, 2, 4), // TWO paired loops, ONE host: the host's death releases both placed
+                        // records (2 injected) and each attr keeps its backstop (2 more)
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

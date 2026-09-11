@@ -53,12 +53,46 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — this var can be the `__vdb` a pair
+            // PLACED a buffer record into, and OpDatabase's reuse arm clears the whole
+            // store: the placement vanishes with the clear (no leak — the clear reclaims
+            // it) while the buffer var would still hold the stale ref, so the place-once
+            // guard must be re-armed HERE or the next call delivers into unclaimed bytes
+            // (the c21 corruption: a host declared inside an enclosing loop).
+            let hosted: Vec<String> = if let Value::Var(w) = var_val.unspan() {
+                ctx.output
+                    .move_pairs
+                    .values()
+                    .filter(|p| p.host_vdb == *w)
+                    .map(|p| {
+                        super::super::sanitize(
+                            ctx.output
+                                .data
+                                .def(ctx.output.def_nr)
+                                .variables()
+                                .name(p.buf),
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !hosted.is_empty() {
+                write!(ctx.w, "{{ ")?;
+            }
             ctx.emit(var_val)?;
             write!(ctx.w, " = OpDatabase(cell,")?;
             ctx.emit(var_val)?;
             write!(ctx.w, ", ")?;
             ctx.emit_i32_slot(tp_val)?;
             write!(ctx.w, ")")?;
+            if !hosted.is_empty() {
+                write!(ctx.w, ";")?;
+                for buf in &hosted {
+                    write!(ctx.w, " var_{buf} = DbRef::NULL;")?;
+                }
+                write!(ctx.w, " }}")?;
+            }
         }
         Ok(())
     }

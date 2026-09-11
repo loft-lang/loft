@@ -386,15 +386,23 @@ the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoist
                  deep copy, which is always correct), and the buffer's free is a
                  record-level release — the deep walk of what the loop did not
                  move, then the record's block — inside the store that lives on.
-                 Two lifetime conditions bound the placement: the placed record
-                 dies AT THE LOOP'S EXIT, never at the buffer attr's scope end —
-                 V's store can die before scope end (dead after its last read) and
-                 a later store recycle its slot, so a deferred release deletes a
-                 record inside whatever owns the slot by then; and the buffer's
-                 type must be V's ELEMENT's own wrapper — the lookup is by name,
-                 and a struct named like a stdlib type variable finds the GENERIC
-                 template whose field still carries the typevar, which a
-                 record-level walk misreads (such a name declines the pairing).
+                 Three lifetime conditions bound the placement.  (1) The placed
+                 record dies WITH ITS HOST STORE: the release is injected before
+                 EVERY free of the host `__vdb` — the early dead-after-last-read
+                 site as much as scope end, since a later store can recycle a dead
+                 host's slot and a deferred release then deletes a record inside
+                 whatever owns it — and the buffer attr's own scope-end free is
+                 the null-guarded backstop that covers an ADOPTED `__retbuf` host,
+                 which no in-function site frees.  Between host deaths an
+                 enclosing loop REUSES the placement (the callee's entry clear
+                 resets its length).  (2) A host store CLEARED whole re-arms the
+                 guard: `OpDatabase`'s reuse arm reclaims the placement with the
+                 clear, so the buffer var is nulled at that site or the next call
+                 delivers into unclaimed bytes.  (3) The buffer's type must be V's
+                 ELEMENT's own wrapper — the lookup is by name, and a struct named
+                 like a stdlib type variable finds the GENERIC template whose
+                 field still carries the typevar, which a record-level walk
+                 misreads (such a name declines the pairing).
 ```
 
 **In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
@@ -405,11 +413,14 @@ and the append is then a shallow relocation whose heap handles never change stor
 zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
 under-approximations on purpose; the one that carries values is use-after — falsified by
 removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
-`3 409 0`).  Both lifetime conditions were falsified on the build that lacked them
-(2026-09-11, a6f30ae7): the scope-end release corrupted a recycled store slot — values
-right, teardown walked another store's live records (the red `native_scripts` gate) —
-and a corpus struct named `T` was walked through `main_vector<T>`'s typevar field (the
-c19/c20/c21 cells).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
+`3 409 0`).  All three lifetime conditions were falsified on builds that lacked them
+(2026-09-11): the scope-end-only release corrupted a recycled store slot on a6f30ae7 —
+values right, teardown walked another store's live records (the red `native_scripts`
+gate) — the host-death build WITHOUT the OpDatabase re-arm corrupted c21 (a store panic
+at rec 472: the reuse clear had reclaimed the placement the guard still trusted), and a
+corpus struct named `T` was walked through `main_vector<T>`'s typevar field (the
+c19–c22 cells).  The host-death form reuses the placement across an enclosing loop's
+entries — `fronds` 351k → 295k ns/op (−16 %), the hand ceiling met exactly.  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
 push header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
 cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
 `hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the

@@ -51,7 +51,13 @@ check its verdict before building on it.**
 — each number measured, not estimated (ABAB best-of-3, `vr_fronds --n 4000`, hash
 `ebcfd875` every run; 10 s `sample` at `--n 60000`):
 
-1. **Reclaim the loop-exit-free regression (~17 %, the top item).**  The gate fix costs
+1. **SHIPPED same day — the host-death form**: the placed record's release rides every
+   `OpFreeRef(host_vdb)` site plus the attr's null-guarded backstop, the host's
+   `OpDatabase` reuse re-arms the guard (the c21 clause, falsified live at rec 472), and
+   an enclosing loop reuses the placement.  Measured: `fronds` standalone 351k →
+   **294.9–298.1k ns/op**, statistically identical to the hand mod-A ceiling; 22/22
+   cells exact both backends under poison; pins (1,1,2) unchanged, c22 (2,2,4) added.
+   The original item, for the record: **Reclaim the loop-exit-free regression (~17 %).**  The gate fix costs
    `fronds` 298–315k → 349–368k ns/op: the `k` loop now pays 24 place/free cycles per top
    call where it paid one, and the fresh profile shows it — allocator + free-tree ~39 %
    (was ~29.5 %), `remove_claims`/`owned_walk` ~6 %.  The sound reclaim: tie the placed

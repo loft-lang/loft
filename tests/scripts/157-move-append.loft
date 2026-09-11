@@ -24,8 +24,10 @@
 // LOFT_POISON / LOFT_NO_MOVE_APPEND all green.  The three later cells carry
 // their own falsification (same day, pre-fix build a6f30ae7): the early-dying
 // destination corrupted the recycled store slot (the #796 walk, then a store
-// panic — the red native_scripts gate), and the struct named `T` was walked
-// through the generic template's typevar field.
+// panic — the red native_scripts gate), the struct named `T` was walked
+// through the generic template's typevar field, and the host-death reuse form
+// without the OpDatabase re-arm corrupted the re-entry cell (a store panic at
+// rec 472: the reuse clear reclaimed the placement the guard still trusted).
 
 struct In { a: integer, b: float }
 struct R { id: integer, ins: vector<In>, ws: vector<float> }

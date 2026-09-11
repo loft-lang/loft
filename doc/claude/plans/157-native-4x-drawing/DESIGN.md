@@ -1385,11 +1385,18 @@ slot, so the deferred `free_record_in` deleted a record inside whatever owned th
 then (values right, teardown corrupt: the #796 walker refused a float-bit "edge", then the
 out-of-bounds panic).  One loop per function never showed it — the slot needs a RECYCLER —
 which is why the landing suite (its `native_scripts` timed out locally, misread as the
-cold-cache class) and every single-cell probe stayed green.  Fix: the free is emitted at
-the For block's exit and NULLS the buffer var (`emit.rs`); the scope-end arm stays as the
-no-op that covers a `return` from inside the loop, so every paired cell now pins TWO
-`free_record_in` sites.  The nulled var also re-arms the place-once guard, so an enclosing
-loop re-enters with a FRESH placement (cell c21).  (2) *The buffer type's name-based
+cold-cache class) and every single-cell probe stayed green.  First fix: the free rode the For
+block's exit — sound, but it cost `fronds` ~17 % (24 place/free cycles per top call), and
+the SECOND pass the same day replaced it with the host-death form: the release is
+injected before every `OpFreeRef(host_vdb)` site (`ref_ops.rs`, falling through to the
+store free), the buffer attr's scope-end arm stays as the null-guarded backstop that
+covers an adopted `__retbuf` host, and an enclosing loop REUSES the placement — `fronds`
+351k → 295k ns/op, the hand-measured mod-A ceiling met exactly.  The reuse form needed a
+third clause, falsified live: a host recreated per outer iteration is not freed but
+CLEARED (`OpDatabase`'s reuse arm), which reclaims the placement while the guard still
+trusts the stale ref — c21 panicked at rec 472 until the buffer vars are nulled at the
+host's `OpDatabase` site too (`misc_ops.rs`).  c22 pins the two-pairs-one-host shape
+(both records released at the host's one death; pins (2,2,4)).  (2) *The buffer type's name-based
 lookup.*  `main_vector<{elem}>` for a struct named `T` finds the stdlib's GENERIC template
 — its `vector` field still carries `__typevar_T`, and a record-level walk through it
 misreads every element.  The pairing now requires the wrapper's `vector` attribute to name

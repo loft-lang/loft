@@ -272,4 +272,14 @@ fn c21() {
   println("c21 {total_len} {total}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); }
+// c22 — TWO paired loops into ONE destination: the host's death releases BOTH placed
+// records (the host-site injection walks every pair hosted by that `__vdb`), and each
+// buffer attr's scope-end backstop no-ops on its null sentinel.
+fn c22() {
+  o: vector<R> = [];
+  for f in mk(2, 1) { o += [f]; }
+  for f in mk(1, 2) { o += [f]; }
+  println("c22 {len(o)} {sum_r(o)}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); c22(); }

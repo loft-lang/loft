@@ -2298,8 +2298,10 @@ impl Output<'_> {
         // call's buffer as a record in the destination's own store, and arm the loop
         // variable so the append's OpCopyRecord emits the move.  The destination's
         // `__vdb` is live here by scoping: the loop appends to it, so its declaration
-        // already ran.  The guard re-places after the block-exit free below nulled the
-        // var — an enclosing loop's next entry gets a fresh placed buffer.
+        // already ran.  The guard places ONCE per host lifetime: an enclosing loop
+        // re-enters with the record still placed and reuses it (the callee's entry
+        // clear resets its length); the var is nulled only where the HOST store is
+        // freed, which re-arms the guard for a host recreated per iteration (c21).
         let move_pair = self.move_pair_for_block(bl).cloned();
         if let Some(pair) = &move_pair {
             let vars = self.data.def(self.def_nr).variables();
@@ -2768,23 +2770,15 @@ impl Output<'_> {
                 writeln!(w, "{}", default_native_value(&bl.result))?;
             }
         }
-        if let Some(pair) = &move_pair {
+        if move_pair.is_some() {
             self.active_move_vars.pop();
-            // @PLN157 § V-j (`@FR-R-MoveAppend`) — the placed record dies WITH the loop,
-            // never at the buffer attr's scope end: the destination's store can die
-            // earlier (dead after its last read), and a later store can recycle its
-            // slot, so a deferred `free_record_in` would delete a record inside
-            // whatever lives there now (the p12/p13 corruption, 2026-09-11).  Nulling
-            // the var makes the scope-end free a no-op and re-arms the placement
-            // guard for an enclosing loop's next entry.
-            let vars = self.data.def(self.def_nr).variables();
-            let buf = super::sanitize(vars.name(pair.buf));
-            self.indent(w)?;
-            writeln!(
-                w,
-                "stores.free_record_in(&(var_{buf}), {}u16); var_{buf} = DbRef::NULL; //@PLN157 § V-j placed buffer freed with its loop",
-                pair.buf_tp
-            )?;
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — no free here: the placed record stays
+            // for an enclosing loop to REUSE (the callee's entry clear resets its length)
+            // and dies WITH ITS HOST STORE — `OpFreeRefEmitter` injects the record-level
+            // release before every free of the host `__vdb` (early dead-after-last-read
+            // sites included, the soundness line the 2026-09-11 gate corruption drew) and
+            // the buffer attr's own scope-end free is the null-guarded backstop that
+            // covers an adopted `__retbuf` host, which no in-function site frees.
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;
