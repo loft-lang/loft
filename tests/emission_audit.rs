@@ -21,6 +21,7 @@ const CORPORA: &[&str] = &[
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-t-record-push-cells.loft",
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-j-move-append-cells.loft",
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-u-retbuf-adopt-cells.loft",
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-w-selfread-literal-cells.loft",
     "tests/scripts/157-write-hoist.loft",
     "tests/scripts/157-callee-inputs.loft",
     "tests/scripts/157-push-hoist.loft",
@@ -28,6 +29,7 @@ const CORPORA: &[&str] = &[
     "tests/scripts/157-record-push.loft",
     "tests/scripts/157-move-append.loft",
     "tests/scripts/157-retbuf-adopt.loft",
+    "tests/scripts/157-selfread-literal.loft",
     "bench/12_drawing/bench.loft",
 ];
 

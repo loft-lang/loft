@@ -2304,6 +2304,38 @@ with the two pre-footer layout tests updated to the new invariant and two new gu
 (the fake-footer safety, the one-word sweep path).  Switch `LOFT_NO_FREE_FOOTER`
 (runtime, both backends — this is a store rewrite, not an emitter one).
 
+## V-w — a self-reading literal rides temps, and the accumulator is linear (2026-09-11)
+
+**The shape** (§ V-q's second finding, promised "a unit of its own for a long path"):
+`cum += [cum[len(cum) - 1]? + d]` — a literal part that reads its own destination.  The
+lowering enforced `(I-Comp)` / `@FR-O-Detach` (*a build reads what its destination held
+when the statement began*) by SNAPSHOTTING the whole vector per execution
+(`snapshot_read_destination`'s `build_src`), which makes every prefix-sum accumulator
+O(n²).  A temp carries the same rule for one part: evaluate the reading part ONCE, before
+anything grows or detaches the destination.
+
+**The gates** (each an under-approximation; the snapshot stays where a temp cannot carry
+the rule): the LITERAL lowering only (a comprehension's reads repeat per iteration — the
+first draft fired on the comprehension call site and crashed q8 on native; the `literal`
+flag is the scar); a bare unlinked VARIABLE destination; a SCALAR element type; parts
+whose calls are all primitives (`#rust`-bodied, no loft body) or `#pure` — a user call
+could mutate the destination through a capture or `&`, and its effect ORDER against the
+appends is the snapshot's to keep (q4).
+
+**Cells** (`V-w-selfread-literal-cells.loft`, nine, hand-computed as the I-Comp oracle
+and pinned green on BOTH backends before the change — the parser lowering changes both):
+q1 the accumulator · q2/q3 the rule's own swap and double-length examples · q4 user call
+(snapshot) · q5 record elements (snapshot) · q6 `&`-linked (snapshot) · q7 field
+(snapshot) · q8 comprehension (its own lowering untouched) · q9 the 2 000-element
+linearity carrier.  `tests/selfread_literal.rs` pins the route per cell.  **Falsified**:
+the temps' Sets dropped (parts renamed onto uninitialized temps) crashes every cell.
+
+**Measured**: the prefix sum is LINEAR — 2 000 → 14 µs, 8 000 → 54 µs (3.9× for 4× the
+size; the snapshot form scaled ~16×).  `lock_curved` itself moved inside noise: at 63
+path points the quadratic barely bites, so the profile's copy band was over-attributed to
+this shape — the unit's value is the SCALING class (any long scan/accumulator), not that
+row.  No switch: a parser lowering, like § V-m's fused push; git is the bisect.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

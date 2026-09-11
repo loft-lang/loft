@@ -3203,6 +3203,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         false,
                         in_t,
                         &mut parts,
+                        false,
                     ) {
                         snap.extend(snapshot);
                     }
@@ -3547,7 +3548,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // statement began (`I-Comp`, @FR-O-Detach) — take the snapshot before the build.
         let snapshot = {
             let mut parts: Vec<&mut Value> = res.iter_mut().collect();
-            self.snapshot_read_destination(vec, val, is_var, is_field, &in_t, &mut parts)
+            self.snapshot_read_destination(vec, val, is_var, is_field, &in_t, &mut parts, true)
         };
         let (tp, mut ls) =
             self.build_vector_list(val, parent_tp, elm, vec, &res, &in_t, tp, is_var, is_field);
@@ -4131,6 +4132,40 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
     }
 
+    /// § V-w — may this literal part be hoisted into a pre-build temp?  Primitives (a
+    /// `#rust`-bodied op with no loft body) and `#pure` functions cannot reach the
+    /// destination to mutate it; anything else — a user call, a fn-ref, a `par` — keeps
+    /// the snapshot, whose copy pins the pre-statement state whatever the call does.
+    fn literal_part_hoistable(&self, part: &Value) -> bool {
+        !part.any_node(&mut |n| match n {
+            Value::CallRef(_, _) | Value::FnRef(_, _, _) | Value::Parallel(_) | Value::Yield(_) => {
+                true
+            }
+            Value::Call(d, _) => {
+                let Some(def) =
+                    ((*d as usize) < self.data.definitions.len()).then(|| self.data.def(*d))
+                else {
+                    return true;
+                };
+                let primitive = matches!(def.code(), Value::Null) && !def.rust().is_empty();
+                !(primitive || def.purity == crate::data::Purity::Pure)
+            }
+            _ => false,
+        })
+    }
+
+    /// § V-w — does `part` mention variable `v`, through a `Var` node or any of the
+    /// variants that carry a var number outside one (`Set`, `TupleGet`, `TuplePut`,
+    /// `Iter`, `CallRef`)?
+    fn mentions_var(part: &Value, v: u16) -> bool {
+        part.any_node(&mut |n| match n {
+            Value::Var(w) | Value::Set(w, _) | Value::TuplePut(w, _, _) => *w == v,
+            Value::TupleGet(w, _) => *w == v,
+            Value::CallRef(w, _) => *w == v,
+            _ => false,
+        })
+    }
+
     /// The snapshot a collection build takes of a destination it READS, so its reads resolve
     /// through what the destination held when the statement began.
     ///
@@ -4160,6 +4195,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// an ELEMENT (`xs[i].items`), which [`Self::field_place`] cannot name — the root-variable
     /// fallback `comprehension_needs_own_buffer` takes is over-wide (a sibling field matches),
     /// so renaming on it would redirect reads of the sibling too.
+    // Eight parameters: the destination in every spelling the two call sites hold (number,
+    // node, var/field flags), the element type, the parts, and which lowering is asking —
+    // a struct would name the bundle once for two callers.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot_read_destination(
         &mut self,
         vec: u16,
@@ -4168,6 +4207,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         is_field: bool,
         in_t: &Type,
         parts: &mut [&mut Value],
+        literal: bool,
     ) -> Option<Vec<Value>> {
         if self.first_pass || (vec != u16::MAX && self.keyed_local(vec)) {
             return None;
@@ -4196,6 +4236,48 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
         };
         if !reads {
+            return None;
+        }
+        // @PLN157 § V-w — a LITERAL's reads ride TEMPS instead of the whole-vector
+        // snapshot where a temp provably carries them: (I-Comp)'s sentence — every read
+        // sees what the destination held when the statement BEGAN — is met by evaluating
+        // each reading part ONCE, before anything grows or detaches the destination.
+        // The snapshot was O(len) per execution, which made the prefix-sum accumulator
+        // `cum += [cum[len(cum) - 1]? + d]` quadratic in the element count (the
+        // `lock_curved` row's copy class).  The temp route is an under-approximation on
+        // purpose: a bare unlinked VARIABLE destination (a field's or a capture's place
+        // rename stays on the snapshot), a SCALAR element type (a record part is built,
+        // not evaluated), and parts whose calls are all primitives or `#pure` — a user
+        // call could mutate the destination through a capture or a `&`, and the ORDER of
+        // its effects against the appends is the snapshot's to keep.  The comprehension
+        // lowering never reaches this branch: its reads repeat per iteration and only the
+        // snapshot carries them.
+        if literal
+            && field_place.is_none()
+            && is_var
+            && vec != u16::MAX
+            && self.vector_link_partner_vars(vec).is_empty()
+            && matches!(
+                in_t.base(),
+                Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
+            )
+            && parts.iter().all(|part| self.literal_part_hoistable(part))
+        {
+            let mut temps: Vec<Value> = Vec::new();
+            for part in parts.iter_mut() {
+                if !Self::mentions_var(part, vec) {
+                    continue;
+                }
+                let tmp = self.create_unique("build_val", in_t);
+                self.vars.defined(tmp);
+                temps.push(crate::data::v_set(
+                    tmp,
+                    std::mem::replace(*part, Value::Var(tmp)),
+                ));
+            }
+            if !temps.is_empty() {
+                return Some(temps);
+            }
             return None;
         }
         let src_tp = Type::Vector(Box::new(in_t.clone()), Deps::none());

@@ -1960,6 +1960,7 @@ impl Stores {
     /// rustc still declined the cross-rlib inline — the helper alone was 31 % of the
     /// `lock_curved` row's self time.  (The § V-i probe that reverted `inline(always)`
     /// on `addr`/`addr_mut` measured fns that were ALREADY inlining; this one was not.)
+    #[allow(clippy::inline_always)] // measured, not habitual — see the doc paragraph above
     #[inline(always)]
     pub fn push_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
         &mut self,

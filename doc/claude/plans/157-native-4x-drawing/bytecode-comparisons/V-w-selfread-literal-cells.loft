@@ -1,0 +1,80 @@
+// @PLN157 § V-w cells — a vector LITERAL that reads its own destination evaluates those
+// reads into TEMPS taken before the build, instead of snapshotting the whole vector
+// (`(I-Comp)` / `@FR-O-Detach` kept: every read still sees what the destination held when
+// the statement began — the temps are evaluated before anything grows or detaches it).
+// The snapshot remains for every shape the temps cannot carry: a part with a CALL, record
+// elements, a `&`-linked or field destination, and every comprehension.
+// BOTH backends change (the lowering is the parser's), so the oracle is these
+// hand-computed values, pinned green on both backends BEFORE the change.
+struct Pt { x: float, y: float }
+struct H { xs: vector<integer> }
+
+// q1 — the prefix-sum accumulator (lock_ribbons' shape): O(n), not O(n²).  TEMPS.
+fn q1() {
+  cum: vector<float> = [0.0];
+  d: vector<float> = [1.5, 2.5, 4.0];
+  for x in d { cum += [cum[len(cum) - 1]? + x]; }
+  println("q1 {len(cum)} {cum[1]?} {cum[3]?}");
+}
+
+// q2 — the swap the rule's own doc names: reads see the PRE-state.  TEMPS.
+fn q2() {
+  v: vector<integer> = [10, 20];
+  v = [v[1] ?? -1, v[0] ?? -1];
+  println("q2 {v[0]?} {v[1]?}");
+}
+
+// q3 — the doc's other example: both parts read the length the statement BEGAN with.  TEMPS.
+fn q3() {
+  v: vector<integer> = [7, 8];
+  v += [len(v), len(v)];
+  println("q3 {len(v)} {v[2]?} {v[3]?}");
+}
+
+// q4 — a part carrying a CALL: effect order against the appends is not provable, the
+// snapshot stays.  Values right.
+fn tail_of(v: const vector<integer>) -> integer { v[len(v) - 1] ?? -1 }
+fn q4() {
+  v: vector<integer> = [3];
+  v += [tail_of(v) + 1, tail_of(v) + 2];
+  println("q4 {len(v)} {v[1]?} {v[2]?}");
+}
+
+// q5 — RECORD elements reading the destination: the snapshot stays.  Values right.
+fn q5() {
+  v: vector<Pt> = [Pt { x: 1.0, y: 2.0 }];
+  v += [Pt { x: (v[0]?.y), y: (v[0]?.x) }];
+  println("q5 {len(v)} {v[1]?.x} {v[1]?.y}");
+}
+
+// q6 — a `&`-linked destination: reads spelled through the link, the snapshot stays.
+fn q6() {
+  b: vector<integer> = [4, 5, 6];
+  r = &b;
+  b = [(r[2] ?? 0), (r[0] ?? 0)];
+  println("q6 {len(b)} {b[0]?} {b[1]?}");
+}
+
+// q7 — a FIELD destination: the place rename is the snapshot's, it stays.  Values right.
+fn q7() {
+  h = H { xs: [2, 3] };
+  h.xs += [(h.xs[0] ?? 0) + (h.xs[1] ?? 0)];
+  println("q7 {len(h.xs)} {h.xs[2]?}");
+}
+
+// q8 — a COMPREHENSION over its own destination: the other lowering, snapshot stays.
+fn q8() {
+  v: vector<integer> = [1, 2, 3];
+  v = [for x in v { x * 2 }];
+  println("q8 {len(v)} {v[0]?} {v[2]?}");
+}
+
+// q9 — a long prefix sum, the linearity carrier: values exact at 2000 elements (a
+// quadratic copy would still ANSWER right — the cells pin values, the bench pins time).
+fn q9() {
+  cum: vector<integer> = [0];
+  for i in 0..2000 { cum += [cum[len(cum) - 1]? + i]; }
+  println("q9 {len(cum)} {cum[2000]?}");
+}
+
+fn main() { q1(); q2(); q3(); q4(); q5(); q6(); q7(); q8(); q9(); }
