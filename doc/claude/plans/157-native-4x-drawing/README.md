@@ -40,6 +40,11 @@ agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash
 The scoreboard above reads lower for some rows because it was taken on the branch; these are the
 JOINED tree's, and the delta is what carries across a join, never the endpoints.
 
+**The 2026-09-11 arc (§ V-t · § V-j · § V-j's gate · § V-u) is commits 2e745655 →
+94dde5ff on `157-native-4x`; the local full targeted suite is GREEN on the tip (4 703
+tests, zero failures, zero timeouts) and GitHub gate run 34603331685 was dispatched on it
+— check its verdict before building on the tip.**
+
 **§ V-u SHIPPED 2026-09-11, the same day, and § V-j grew its callee gate** (DESIGN.md
 § V-u, § V-j): the V-j suite run caught a REAL corruption — the sqldb fixture's
 `collect_leaf` receives its buffer as the witness-promoted ABI and re-inits it with
