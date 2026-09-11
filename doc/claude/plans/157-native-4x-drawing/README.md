@@ -92,11 +92,23 @@ check its verdict before building on it.**
    ZERO (the samples were the vector-store creations), and the Z∩P lesson is honored —
    one argument, not two skips.  The original item, for the record: **Default-prefill
    skip (~7 % class).**
-5. **Element-first temp reorder (~6.4 % class: `vector_add` 207 + `copy_claims` 174 +
-   cross-store copy + memmove).**  Build `fd_pts`/`fd_wid` inside the just-appended
-   `Frond` element instead of two temp stores deep-copied in; the two placement-shaped
-   routes measured NEGATIVE (§ V-u receipts) — the element-first shape is the one to
-   hand-measure before code.
+5. **Element-first temp reorder — CEILING HAND-MEASURED 2026-09-12 at −27–29 %,**
+   far beyond the ~6 % class estimate: on the § V-y tip, 270.2–283.0k → **191.7–210.3k
+   ns/op** (best 191 655), hash exact, ABAB.  The hand-mod (scratchpad `vrf_ef.rs`,
+   rustc-first): mint the `Frond` element FIRST, bind `fd_pts`/`fd_wid` to the element's
+   own FIELD SLOTS (a vector value IS the ref to its handle slot — `elm.pos + 0/+4`),
+   build points and widths in place, drop both `vector_add`s and both temp stores.  The
+   estimate missed three co-removals: the per-iteration temp-store reuse-clears, the
+   temps' claims/frees and their free-tree traffic, and — the compounding surprise —
+   § V-u's adoption composes: `n_pt(cell, …, var__elm)` delivers each point DIRECTLY
+   into the just-minted element, no buffer at all.  Two wrong turns the next reader
+   should skip: `OpNewRecord(elm, Frond, fld)` is NOT "create the field vector" (a
+   vector-typed field's `record_new` path APPENDS an element — the probe answered 0
+   points, hash `811c9dc5`), and the naive parent_tp is the VECTOR type, not the record
+   (the "field 0 of 'vector<Frond>' has no storage" panic).  The rewrite to build
+   (§ V-z): a pairing like V-j's at FIELD level — a local vector built then consumed
+   exactly once as a record-literal field of an append retargets its declaration to the
+   element's slot; cells before code.
 
 **Every ceiling above is now HAND-MEASURED (same day, the rustc-first protocol: the
 emitted `.rs` hand-edited and linked with bare `rustc -O`, plus an env-gated probe rlib
