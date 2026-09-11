@@ -19,7 +19,12 @@
 // is the spelling the two register entries actually use.
 //
 // @falsified-at: none — this guard states a rule that HOLDS on every tree back to the filing; it
-//   is a control, not a regression catch, so there is no build it fails on.  Its falsification
+//   is a control, not a regression catch, so there is no build it fails on.  ⚠ It has a `main`
+//   anyway, and deliberately: without one the LEAK column of any future falsify run would read
+//   `none` on both trees whatever it leaked (`scripts/falsify.sh` lines 30-38 — `--tests` does not
+//   leak-check, so a `main`-less guard is recorded INERT and a leak guard is thereby mislabelled a
+//   lock).  A control is the guard most likely to be re-scored years later by someone checking
+//   whether it still means anything, so it is the one that can least afford a blind channel.  Its falsification
 //   is the THIRD cell: `t_view` writes through and reads 99 from the container, so a run where
 //   all three cells answered "owns" would be a harness that had stopped distinguishing them.
 //   That is the cell to corrupt first if this file ever looks vacuous.
@@ -72,4 +77,18 @@ fn test_a_projection_is_a_view_and_writes_through() {
   c: K = b.inner;
   c.x = 99;
   assert(b.inner.x == 99, "a projection writes THROUGH to the container: got {b.inner.x}, want 99");
+}
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_a_borrowing_returns_result_is_the_locals_own_store();
+  test_the_dense_spelling_answers_the_same();
+  test_a_minting_return_is_owned_too();
+  test_a_projection_is_a_view_and_writes_through();
 }

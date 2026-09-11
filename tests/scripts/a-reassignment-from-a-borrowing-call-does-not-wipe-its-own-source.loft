@@ -34,7 +34,25 @@
 // @EXPECT_WARNING: never-read
 // @EXPECT_WARNING: dead-assignment
 //
-// @falsified-at: PENDING
+// @falsified-at: 83b8870ce — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
+//   INERT (expected for a backend-divergence guard — only one side can move).
+// @falsified-by: tests/falsified/a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.patch
+//   — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT for the same reason.
+//   The patch form is the one that does not decay: re-score with
+//   `scripts/falsify.sh <this file> --patch tests/falsified/<same name>.patch`.
+// ⚠ WHICH COLUMNS MEAN ANYTHING HERE, because `none` and "could not fire" are the same four
+//   characters.  The EXIT and ASSERTION columns carry this guard and they moved.  NATIVE is inert
+//   by construction: the defect is a backend DIVERGENCE and `--native` was the correct side, so a
+//   receipt showing native moving would mean the guard had stopped testing the right thing.  LEAK
+//   is armed but unmoved — armed because this file has a `main`, which is what makes
+//   `check_store_leaks` run at a clean exit (`scripts/falsify.sh` lines 30-38: the column is read
+//   off that stderr line, `--tests` does not leak-check at all, so a `main`-less guard reports
+//   `leak none` on BOTH trees whatever it leaks and is recorded INERT).  Unmoved because nothing
+//   here leaks on either tree — the defect is a wiped VALUE, not a retained store.  EXPECT reads
+//   `-` on both and cannot do otherwise: `expect_channel` counts only `@EXPECT_ERROR` /
+//   `@EXPECT_FAIL`, never the `@EXPECT_WARNING` this file declares (same script, lines 40-47), so
+//   the two warnings below are scored BY HAND — 2 on both trees, unchanged by the fix, which is
+//   correct since they are inherent to the cells and not to the defect.
 // CHANNEL: the VALUE, and it DIVERGES — `--interpret` reads 0 where `--native` reads 7, so this
 //   is scored per backend and agreement between them is the thing being restored.  Not a leak and
 //   not a release count: the records are all freed either way.
@@ -144,4 +162,25 @@ fn test_the_callee_returns_the_other_parameter() {
 fn test_no_reassignment() {
   c: K? = mk();
   assert(c.x == 7, "CONTROL no reassignment: got {c.x}, want 7");
+}
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_a_nullable_local_survives_a_borrowing_call_that_reads_it();
+  test_a_literal_built_nullable_local_survives_it_too();
+  test_every_field_survives_not_just_the_first();
+  test_it_survives_every_pass_of_a_loop();
+  test_the_local_read_twice_in_the_argument();
+  test_a_nullable_returning_first_assignment();
+  test_dense_twin();
+  test_argument_does_not_read_the_local();
+  test_the_callee_mints();
+  test_the_callee_returns_the_other_parameter();
+  test_no_reassignment();
 }

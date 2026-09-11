@@ -38,7 +38,25 @@
 // witness is still armed for a real mix" is a fact the corpus checks rather than a claim here.
 // c_mixed and c_view_after_literal are this file's own boundary on that side.
 
-// @falsified-at: PENDING
+// @falsified-at: 83b8870ce — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  BOTH backends move, which is the signature of
+//   this defect as distinct from the `(O-Detach)` one it depended on: that was a DIVERGENCE and
+//   falsifies on the interpreter alone.
+// @falsified-by: tests/falsified/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.patch
+//   — same four figures.  The patch form is the one that does not decay: re-score with
+//   `scripts/falsify.sh <this file> --patch tests/falsified/<same name>.patch`.
+// ⚠ WHICH COLUMNS MEAN ANYTHING HERE, because `none` and "could not fire" are the same four
+//   characters.  EXIT and ASSERTIONS carry this guard, on both backends, and all four moved.  LEAK
+//   is armed but unmoved — armed because this file has a `main`, which is what makes
+//   `check_store_leaks` run at a clean exit (`scripts/falsify.sh` lines 30-38: the column is read
+//   off that stderr line, `--tests` does not leak-check at all, so a `main`-less guard reports
+//   `leak none` on BOTH trees whatever it leaks and is recorded INERT).  Unmoved because nothing
+//   here leaks on either tree: the records the defect loses the HOOK for are still freed, by the
+//   work-ref's own bare scope-end free — which is exactly why a reader scoring this family on
+//   leaks learns nothing.  EXPECT reads `-` on both and cannot do otherwise: `expect_channel`
+//   counts only `@EXPECT_ERROR` / `@EXPECT_FAIL`, never the `@EXPECT_WARNING` this file declares
+//   (same script, lines 40-47), so the warnings are scored BY HAND — 5 on both trees, unchanged by
+//   the fix, which is correct since they are inherent to the cells and not to the defect.
 // CHANNEL: the assertion text, IDENTICALLY on both backends — `(O-NoDiverge)`, measured, not
 //   assumed.  NOT the leak channel: every record involved is freed, by the work-ref's own bare
 //   scope-end free if by nothing else.  What is lost is the HOOK, so a run scored on leaks
@@ -227,3 +245,33 @@ fn test_arm_literal_false() { reset(); c_arm_literal(false); got = drain(); asse
 fn test_view_after_literal() { reset(); c_view_after_literal(); got = drain(); assert(got == "m47,47,V45,45", "CONTROL a literal then a genuine VIEW: {got}"); }
 fn test_null_then_call_field() { reset(); c_null_then_call_field(); got = drain(); assert(got == "m94,94,V9,9", "CONTROL a nullable literal then a call's field: {got}"); }
 fn test_mixed() { reset(); c_mixed(); got = drain(); assert(got == "m55,55,V56,56", "CONTROL a genuinely MIXED local keeps its witness: {got}"); }
+
+// A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
+// reads that column off stderr's "stores not freed at program exit", which only a `main`-ful run
+// under `--interpret` prints — `--tests` does not leak-check at all (that gate lives in
+// `tests/wrap.rs`).  So a `main`-less guard reports `leak none` on BOTH trees whatever it leaks,
+// and one written to catch a leak is recorded INERT, i.e. mislabelled a lock.  The cells below run
+// twice under the corpus runner (once each as a test function, once through here); each resets its
+// own trace first, so that costs time and nothing else.
+fn main() {
+  test_plain();
+  test_enum();
+  test_struct();
+  test_variant();
+  test_cascade();
+  test_nullable_struct();
+  test_nullable_enum();
+  test_from_call();
+  test_literal_last();
+  test_chain();
+  test_loop();
+  test_two_locals();
+  test_no_rebind();
+  test_arm_true();
+  test_arm_false();
+  test_arm_literal_true();
+  test_arm_literal_false();
+  test_view_after_literal();
+  test_null_then_call_field();
+  test_mixed();
+}
