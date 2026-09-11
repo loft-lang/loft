@@ -31,6 +31,14 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 **4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
 § V-q (2026-09-09, both under the bar).
 
+**Re-measured 2026-09-11 on the reuse tip (5262db1b)** — `compare.py --skip-interp
+--repeat 5`, cdylib caches cleared first, all 14 hashes agreeing: **five rows under the
+bar** — `hash` **2.15×**, `hair` **2.60×**, `lock` **3.36×**, `composite` **3.56×**,
+`smooth` **3.96×** (under, but its reference lane swung low this run) — and five over:
+`fill_star` **4.07×** and `fill_circle` **4.10×** (a hair over), `wide_line` **4.85×**,
+`lock_curved` **5.31×**, `fronds` **5.66×** (271 760 ns/op native, −11.6 % vs the prior
+table's row: the § V-w / free-footer / sound-reuse arc landed on top of parity).
+
 **Re-measured 2026-09-10 on the tree that JOINED this branch into
 `tuxedo-1481-addr-alignment`** (`compare.py --skip-interp --repeat 5`, quiet box, every row's hash
 agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash` **2.12×**,
