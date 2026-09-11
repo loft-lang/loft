@@ -738,6 +738,11 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_LITERAL_HOIST=1`** (@PLN157 § V-x) makes an invariant loop-body vector
+literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
+(or an if-of-literals on a const-param field) under a loop builds ONCE per activation,
+guarded on the local being unbound — and is the bisect step for a wrong constant
+vector inside a loop on native.
 **`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
 delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer
 (built where it must end up; the exits deliver nothing; the buffer's backing reused across

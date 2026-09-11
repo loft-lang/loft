@@ -1,0 +1,168 @@
+// @PLN157 § V-x — a loop-body vector LITERAL whose parts are invariant builds ONCE:
+// the declaration `v: vector<float> = <literal or if-of-literals>` re-ran its whole
+// build every iteration (OpDatabase reuse-clear + pre-alloc + pushes) though nothing
+// in it can change.  The native emitter pre-declares the local at function top and
+// wraps the declaration statement in `if var_v is unbound { … }` — the local itself
+// is the once-flag, so the build runs on the first iteration and every later
+// iteration (and every re-entry from an enclosing loop) reuses the store.
+//
+// Gates (all function-wide where they must be, since the guard is activation-level):
+//   - the element type is a no-heap scalar; the local has no link partners;
+//   - the initializer's parts are literals, pure scalar ops, and scalar field reads
+//     of CONST parameters — and each such parameter appears in the WHOLE function
+//     only as a scalar-getter base (never written, never passed on);
+//   - the local is used only by this one declaration, For-iteration binds, length
+//     reads and its scope-exit free — an append, an element write (whose lvalue base
+//     is the same OpGetVector node a read uses — context-blind, so INDEXED USE of any
+//     kind declines), a whole-value escape or a rebind declines.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-11) — re-allowing OpGetVector* as an
+// accounted use admits c5, and its conditional element write answers 30 on --native
+// (iteration 0's write carried into later iterations) against the oracle's 16;
+// restored, all eleven cells exact on both backends under LOFT_POISON=1, and
+// LOFT_NO_LITERAL_HOIST=1 emits zero guards with values unchanged.
+//
+// The interpreter keeps the per-iteration build and is the VALUES oracle.
+// Switch: LOFT_NO_LITERAL_HOIST=1 keeps the per-iteration build on native.
+
+struct Sp { mirror: boolean, a: float }
+
+// c1 — the base shape: a plain literal in a loop body.  Hoisted; values exact.
+fn c1() {
+  t = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [1.0, 2.0];
+    for s in v { t = (t + s + (i as float)) ?? 0.0; }
+  }
+  println("c1 {t}");
+}
+
+// c2 — the fronds shape: a conditional between two literals on a const-param field.
+fn mirror_total(sp: const Sp, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n {
+    sides: vector<float> = if sp.mirror { [1.0, -1.0] } else { [1.0] };
+    for s in sides { t = (t + s * ((i + 1) as float)) ?? 0.0; }
+  }
+  t
+}
+fn c2() {
+  println("c2 {mirror_total(Sp { mirror: true, a: 0.5 }, 3)} {mirror_total(Sp { mirror: false, a: 0.5 }, 2)}");
+}
+
+// c3 — the body APPENDS to the local: the value differs per iteration, declines.
+fn c3() {
+  t = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [1.0];
+    v += [(i as float) ?? 0.0];
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  println("c3 {t}");
+}
+
+// c4 — the initializer reads the LOOP VARIABLE: not invariant, declines.
+fn c4() {
+  t = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [(i as float) ?? 0.0, 1.0];
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  println("c4 {t}");
+}
+
+// c5 — an ELEMENT WRITE into the local: declines.  The write is CONDITIONAL so the
+// values distinguish the two worlds: a wrong hoist would carry iteration 0's write
+// into later iterations (30, not 16) — an unconditional overwrite masks itself.
+fn c5() {
+  t = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [1.0, 2.0];
+    if i == 0 { v[1] = 9.0; }
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  println("c5 {t}");
+}
+
+// c6 — the local ESCAPES by a whole-value bind (`v = w`): the gate declines it —
+// conservative (each iteration's value is the same, so a hoist would be sound here),
+// but an escape is a route this analysis does not follow.  Values right either way.
+fn c6() {
+  t = 0.0;
+  v: vector<float> = [];
+  for _i in 0..3 {
+    w: vector<float> = [3.0, 4.0];
+    for s in w { t = (t + s) ?? 0.0; }
+    v = w;
+  }
+  println("c6 {t} {len(v)} {v[1] ?? -1.0}");
+}
+
+// c7 — a TEXT element owns heap: declines (the store clear per iteration is what
+// keeps the interned strings' lifetime simple).
+fn c7() {
+  t = 0;
+  for _i in 0..3 {
+    v: vector<text> = ["ab", "cde"];
+    for s in v { t += len(s); }
+  }
+  println("c7 {t}");
+}
+
+// c8 — the condition reads a NON-const parameter's field: the callee may not write
+// it here, but the gate is const-ness, so this declines.
+fn sum_nc(sp: Sp, n: integer) -> float {
+  t = 0.0;
+  for _i in 0..n {
+    v: vector<float> = if sp.mirror { [2.0] } else { [5.0] };
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  t
+}
+fn c8() {
+  println("c8 {sum_nc(Sp { mirror: true, a: 0.0 }, 3)}");
+}
+
+// c9 — the declaration sits under TWO loops: the guard is activation-level, so the
+// build runs once for the whole nest and every (i, j) iteration reuses it.
+fn c9() {
+  t = 0.0;
+  for i in 0..2 {
+    for j in 0..3 {
+      v: vector<float> = [10.0, 20.0];
+      for s in v { t = (t + s + ((i * 3 + j) as float)) ?? 0.0; }
+    }
+  }
+  println("c9 {t}");
+}
+
+// c10 — const-param arithmetic in the parts: invariant, hoisted.
+fn scaled_total(sp: const Sp, n: integer) -> float {
+  t = 0.0;
+  for _i in 0..n {
+    v: vector<float> = [sp.a * 2.0, 1.0];
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  t
+}
+fn c10() {
+  println("c10 {scaled_total(Sp { mirror: false, a: 0.5 }, 4)}");
+}
+
+// c11 — TWO loops each declaring their own same-named local: two distinct slots,
+// two guards, each loop its own value.  (Also the name-collision falsifier: one
+// shared fn-top binding would hand loop 2 loop 1's vector.)
+fn c11() {
+  t = 0.0;
+  for _i in 0..2 {
+    v: vector<float> = [1.0];
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  for _i in 0..2 {
+    v: vector<float> = [100.0, 200.0];
+    for s in v { t = (t + s) ?? 0.0; }
+  }
+  println("c11 {t}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); }

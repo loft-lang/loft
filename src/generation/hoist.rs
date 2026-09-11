@@ -2542,3 +2542,485 @@ fn callee_reinits_buffer(data: &Data, callee: &crate::data::Definition) -> bool 
     });
     reinits
 }
+
+/// The scalar getters a § V-x invariant part may read a value-const parameter through —
+/// an ALLOW-list like the rest of the family: a getter missing here declines the
+/// candidate, never miscompiles it.
+const LIT_HOIST_GETTERS: [&str; 7] = [
+    "OpGetInt",
+    "OpGetFloat",
+    "OpGetSingle",
+    "OpGetBoolean",
+    "OpGetByte",
+    "OpGetShort",
+    "OpGetCharacter",
+];
+
+/// Does `tp` mention record/enum definition `pd` anywhere in its shape?
+fn mentions_def(tp: &Type, pd: u32) -> bool {
+    tp.any_node(&mut |t| matches!(t, Type::Reference(d, _) | Type::Enum(d, _, _) if *d == pd))
+}
+
+/// A FRESH-STORE local (@PLN157 § V-x): every `Set` of it is the `= null` declaration and
+/// an `OpDatabase(v, tp)` creates its own store — so the record it names is minted by
+/// THIS activation and can never be a record a parameter links to.
+fn fresh_store_local(v: u16, data: &Data, vars: &crate::variables::Function, body: &Value) -> bool {
+    if vars.is_argument(v) {
+        return false;
+    }
+    let mut all_null = true;
+    let mut created = false;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(w, x) if *w == v => {
+                if !matches!(x.unspan(), Value::Null) {
+                    all_null = false;
+                }
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpDatabase"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v) =>
+            {
+                created = true;
+            }
+            _ => {}
+        }
+        false
+    });
+    all_null && created
+}
+
+/// A § V-x invariant SCALAR part: a literal, a pure/primitive op over invariant parts, a
+/// by-value scalar parameter the function never reassigns, or a scalar-getter read of a
+/// value-const record parameter (collected into `params` for the caller's alias gate).
+fn lit_part_invariant(
+    val: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+    params: &mut HashSet<u16>,
+) -> bool {
+    match val.unspan() {
+        Value::Int(_)
+        | Value::Long(_)
+        | Value::Float(_)
+        | Value::Single(_)
+        | Value::Boolean(_)
+        | Value::Enum(_, _)
+        | Value::Null => true,
+        Value::Var(p) => {
+            // A by-value scalar parameter never reassigned: copies cannot alias, so
+            // only a rebind could move it, and there is none.
+            vars.is_argument(*p)
+                && matches!(
+                    vars.tp(*p).base(),
+                    Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
+                )
+                && !set_counts.contains_key(p)
+        }
+        Value::If(c, a, b) => {
+            lit_part_invariant(c, data, vars, set_counts, params)
+                && lit_part_invariant(a, data, vars, set_counts, params)
+                && lit_part_invariant(b, data, vars, set_counts, params)
+        }
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .all(|op| lit_part_invariant(op, data, vars, set_counts, params)),
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                return false;
+            }
+            let def = data.def(*d);
+            let name = def.name();
+            // A scalar-getter read of a VALUE-CONST record parameter.
+            if LIT_HOIST_GETTERS.contains(&name)
+                && let Some(Value::Var(p)) = args.first().map(Value::unspan)
+                && vars.is_argument(*p)
+                && vars.is_value_const(*p)
+                && matches!(vars.tp(*p).peel_link(), Type::Reference(_, _))
+                && args[1..]
+                    .iter()
+                    .all(|a| matches!(a.unspan(), Value::Int(_)))
+            {
+                params.insert(*p);
+                return true;
+            }
+            // A pure or primitive scalar op over invariant parts.
+            let primitive = matches!(def.code(), Value::Null) && !def.rust().is_empty();
+            (primitive || def.purity == crate::data::Purity::Pure)
+                && args
+                    .iter()
+                    .all(|a| lit_part_invariant(a, data, vars, set_counts, params))
+        }
+        _ => false,
+    }
+}
+
+/// A § V-x invariant vector-literal INITIALIZER: the parser's build group — `OpDatabase`
+/// on the declaration's own `__vdb` witness, the `_vec` temp bound from it, the length
+/// reset, the reservation, and pushes of invariant scalar parts — possibly under an `if`
+/// whose condition is itself invariant.  Anything else declines.
+fn lit_init_invariant(
+    val: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+    params: &mut HashSet<u16>,
+) -> bool {
+    match val.unspan() {
+        Value::If(c, a, b) => {
+            lit_part_invariant(c, data, vars, set_counts, params)
+                && lit_init_invariant(a, data, vars, set_counts, params)
+                && lit_init_invariant(b, data, vars, set_counts, params)
+        }
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .all(|op| lit_init_invariant(op, data, vars, set_counts, params)),
+        Value::Set(t, x) => {
+            // `_vec_N = OpGetField(__vdb_M, 0, tp)` — the temp bound to the fresh store.
+            vars.name(*t).starts_with("_vec")
+                && matches!(x.unspan(), Value::Call(d, cargs)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if vars.name(*w).starts_with("__vdb")))
+        }
+        Value::Var(t) => vars.name(*t).starts_with("_vec"),
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                return false;
+            }
+            let name = data.def(*d).name();
+            match name {
+                "OpDatabase" | "OpSetInt4" => matches!(
+                    args.first().map(Value::unspan),
+                    Some(Value::Var(w)) if vars.name(*w).starts_with("__vdb")
+                ),
+                "OpPreAllocVector" => matches!(
+                    args.first().map(Value::unspan),
+                    Some(Value::Var(w)) if vars.name(*w).starts_with("_vec")
+                ),
+                _ if name.starts_with("OpPush") => {
+                    matches!(
+                        args.first().map(Value::unspan),
+                        Some(Value::Var(w)) if vars.name(*w).starts_with("_vec")
+                    ) && args[1..]
+                        .iter()
+                        .all(|a| lit_part_invariant(a, data, vars, set_counts, params))
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// @PLN157 § V-x — what [`invariant_literals`] admitted, by SHAPE: a `wrapped` local's
+/// whole build is the one `Set(v, if …)` statement the emitter guards directly; a `flat`
+/// local's build is the parser's statement RUN (`OpDatabase(__vdb) · Set(v, OpGetField) ·
+/// OpSetInt4 · OpPreAlloc · pushes`), which the emitter guards from the `OpDatabase` to
+/// the first non-member statement ([`flat_lit_member`] is the shared predicate, so the
+/// two cannot drift).
+#[derive(Default)]
+pub struct LitHoist {
+    /// Admitted locals whose declaration is ONE `Set` statement.
+    pub wrapped: HashSet<u16>,
+    /// Admitted FLAT groups, keyed by the declaration's `__vdb` witness → the local.
+    pub flat: HashMap<u16, u16>,
+}
+
+impl LitHoist {
+    #[must_use]
+    pub fn contains(&self, v: u16) -> bool {
+        self.wrapped.contains(&v) || self.flat.values().any(|w| *w == v)
+    }
+}
+
+/// Is `stmt` a member of the FLAT build group of local `v` with witness `vdb`
+/// (@PLN157 § V-x)?  Shared by the analysis (group collection) and the emitter (guard
+/// close), so an op admitted by one is admitted by the other.  A `Value::Line` marker is
+/// a member — the parser may interleave source positions with the group.
+#[must_use]
+pub fn flat_lit_member(
+    stmt: &Value,
+    v: u16,
+    vdb: u16,
+    data: &Data,
+    _vars: &crate::variables::Function,
+) -> bool {
+    match stmt.unspan() {
+        Value::Line(_) => true,
+        Value::Set(w, x) if *w == v => matches!(x.unspan(), Value::Call(d, cargs)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpGetField"
+                && matches!(cargs.first().map(Value::unspan), Some(Value::Var(u)) if *u == vdb)),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let first_is =
+                |t: u16| matches!(args.first().map(Value::unspan), Some(Value::Var(u)) if *u == t);
+            match name {
+                "OpSetInt4" => first_is(vdb),
+                "OpPreAllocVector" => first_is(v),
+                _ if name.starts_with("OpPush") => first_is(v),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+    // (The part-invariance of each push was proven at admission; membership here is
+    // positional, so a group the analysis declined never reaches the emitter.)
+}
+
+/// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector LITERALS that build ONCE per
+/// activation: a `Set(v, init)` under a `For` where `v` is a plain no-heap-scalar vector
+/// with one `Set` in the whole function, the initializer's parts are invariant
+/// ([`lit_part_invariant`]), the local's other uses are reads only, and — the alias gate
+/// `(Const-Value)` makes necessary, since `const` is per-NAME — every variable in the
+/// function whose type can reach a record type the initializer reads is either a
+/// fresh-store local (its record is this activation's, never the caller's) or a
+/// value-const parameter itself used ONLY as a scalar-getter base.  The emitter
+/// pre-declares each admitted local at function top and wraps its declaration statement
+/// in an unbound-guard, so the build runs once and every later iteration (and re-entry)
+/// reuses the store.  Two admitted locals sharing a sanitized name would share the one
+/// function-top binding, so a collision declines both (the c11 cell).
+pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    // A coroutine's locals persist as state-machine fields, and a `par` body's captures
+    // run beside the loop: both break the plain-frame assumptions of the fn-top guard.
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))) {
+        return LitHoist::default();
+    }
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            *set_counts.entry(*v).or_default() += 1;
+        }
+        false
+    });
+    // Candidates, with the value-const params each one reads.  `flat_of` remembers which
+    // admitted local is a statement-run build and through which witness.
+    let mut cands: HashMap<u16, HashSet<u16>> = HashMap::new();
+    let mut flat_of: HashMap<u16, u16> = HashMap::new();
+    // A FLAT group's own statements mention the local (`OpPreAllocVector(v, …)`, the
+    // pushes), and the use-reconciliation below must account for exactly those.
+    let mut group_mentions: HashMap<u16, u32> = HashMap::new();
+    let elem_ok = |v: u16| {
+        matches!(vars.tp(v).peel_link(), Type::Vector(elem, _)
+            if matches!(elem.base(), Type::Integer(_) | Type::Float
+                | Type::Single | Type::Boolean | Type::Character))
+    };
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "For block"
+        {
+            bl.operators.iter().for_each(|op| {
+                op.any_node(&mut |m| {
+                    // The WRAPPED shape: one Set whose value packages the whole build.
+                    if let Value::Set(v, init) = m
+                        && !cands.contains_key(v)
+                        && set_counts.get(v) == Some(&1)
+                        && elem_ok(*v)
+                    {
+                        let mut params = HashSet::new();
+                        if lit_init_invariant(init, data, vars, &set_counts, &mut params) {
+                            cands.insert(*v, params);
+                        }
+                    }
+                    // The FLAT shape: `OpDatabase(__vdb) · Set(v, OpGetField(__vdb)) ·
+                    // members…` as a statement run of some inner block.
+                    if let Value::Block(inner) = m {
+                        let ops = &inner.operators;
+                        let trace = std::env::var("LOFT_TRACE_LITHOIST").is_ok();
+                        // The parser interleaves `Line` markers with the group.
+                        let next_code =
+                            |from: usize| (from..ops.len())
+                                .find(|j| !matches!(ops[*j].unspan(), Value::Line(_)));
+                        for i in 0..ops.len() {
+                            let Value::Call(d, dargs) = ops[i].unspan() else {
+                                continue;
+                            };
+                            if (*d as usize) >= data.definitions.len()
+                                || data.def(*d).name() != "OpDatabase"
+                            {
+                                continue;
+                            }
+                            let Some(Value::Var(vdb)) = dargs.first().map(Value::unspan) else {
+                                continue;
+                            };
+                            if !vars.name(*vdb).starts_with("__vdb") {
+                                continue;
+                            }
+                            let Some(si) = next_code(i + 1) else { continue };
+                            let Value::Set(v, _) = ops[si].unspan() else {
+                                if trace {
+                                    eprintln!(
+                                        "[lithoist] {}: after OpDatabase({}) not a Set",
+                                        def.name(),
+                                        vars.name(*vdb)
+                                    );
+                                }
+                                continue;
+                            };
+                            if cands.contains_key(v)
+                                || set_counts.get(v) != Some(&1)
+                                || !elem_ok(*v)
+                                || !flat_lit_member(&ops[si], *v, *vdb, data, vars)
+                            {
+                                if trace {
+                                    eprintln!(
+                                        "[lithoist] {}: {} declined (sets={:?}, elem_ok={}, member={})",
+                                        def.name(),
+                                        vars.name(*v),
+                                        set_counts.get(v),
+                                        elem_ok(*v),
+                                        flat_lit_member(&ops[si], *v, *vdb, data, vars)
+                                    );
+                                }
+                                continue;
+                            }
+                            // Collect the run and prove each push part invariant,
+                            // tallying the group's own mentions of the local.
+                            let mut params = HashSet::new();
+                            let mut sound = true;
+                            let mut mentions = 0u32;
+                            for stmt in ops.iter().skip(si + 1) {
+                                if !flat_lit_member(stmt, *v, *vdb, data, vars) {
+                                    break;
+                                }
+                                stmt.any_node(&mut |n| {
+                                    if matches!(n, Value::Var(u) if u == v) {
+                                        mentions += 1;
+                                    }
+                                    false
+                                });
+                                if let Value::Call(pd, pargs) = stmt.unspan()
+                                    && data.def(*pd).name().starts_with("OpPush")
+                                    && !pargs[1..].iter().all(|a| {
+                                        lit_part_invariant(a, data, vars, &set_counts, &mut params)
+                                    })
+                                {
+                                    sound = false;
+                                    if trace {
+                                        eprintln!(
+                                            "[lithoist] {}: {} push part not invariant",
+                                            def.name(),
+                                            vars.name(*v)
+                                        );
+                                    }
+                                    break;
+                                }
+                            }
+                            if sound {
+                                cands.insert(*v, params);
+                                flat_of.insert(*v, *vdb);
+                                group_mentions.insert(*v, mentions);
+                            }
+                        }
+                    }
+                    false
+                });
+            });
+        }
+        false
+    });
+    if cands.is_empty() {
+        return LitHoist::default();
+    }
+    // The local's OTHER uses must all be reads: For-head binds, indexed/length reads,
+    // whole-value binds to another local, and its scope-exit free.  Reconciled counts,
+    // because `any_node` visits the `Var` inside each allowed context too.
+    let mut var_mentions: HashMap<u16, u32> = HashMap::new();
+    let mut allowed_uses: HashMap<u16, u32> = HashMap::new();
+    let mut getter_bases: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(w) => {
+                *var_mentions.entry(*w).or_default() += 1;
+            }
+            Value::Set(_, x) => {
+                if let Value::Var(w) = x.unspan()
+                    && cands.contains_key(w)
+                {
+                    *allowed_uses.entry(*w).or_default() += 1;
+                }
+            }
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if let Some(Value::Var(w)) = args.first().map(Value::unspan) {
+                    // OpGetVector* is NOT here on purpose: it is context-blind — the
+                    // same node is the base of `v[0] = …`'s WRITE — so an indexed use
+                    // declines the candidate (the c5 cell), costing the optimisation
+                    // and never correctness.  The For-head bind covers iteration.
+                    if matches!(name, "OpLengthVector" | "OpFreeRef") && cands.contains_key(w) {
+                        *allowed_uses.entry(*w).or_default() += 1;
+                    }
+                    if LIT_HOIST_GETTERS.contains(&name) {
+                        *getter_bases.entry(*w).or_default() += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    cands.retain(|v, _| {
+        var_mentions.get(v).copied().unwrap_or(0)
+            == allowed_uses.get(v).copied().unwrap_or(0)
+                + group_mentions.get(v).copied().unwrap_or(0)
+    });
+    // The alias gate: for each record definition an admitted init reads, every variable
+    // whose type can reach it must be a fresh-store local or a value-const parameter
+    // used only as a scalar-getter base.
+    let pds: HashSet<u32> = cands
+        .values()
+        .flatten()
+        .filter_map(|p| match vars.tp(*p).peel_link() {
+            Type::Reference(pd, _) => Some(*pd),
+            _ => None,
+        })
+        .collect();
+    let mut fresh_memo: HashMap<u16, bool> = HashMap::new();
+    let alias_clean = pds.iter().all(|pd| {
+        (0..vars.count()).all(|w| {
+            if !mentions_def(vars.tp(w), *pd) || var_mentions.get(&w).copied().unwrap_or(0) == 0 {
+                return true;
+            }
+            if vars.is_argument(w) && vars.is_value_const(w) {
+                // Its only permitted role is a scalar-getter base — a whole-value
+                // escape (a call argument, a bind, an `&`) could reach a writer.
+                return getter_bases.get(&w).copied().unwrap_or(0)
+                    == var_mentions.get(&w).copied().unwrap_or(0);
+            }
+            *fresh_memo
+                .entry(w)
+                .or_insert_with(|| fresh_store_local(w, data, vars, body))
+        })
+    });
+    if !alias_clean {
+        // The gate is per-FUNCTION on purpose: one unprovable alias route makes every
+        // param-reading candidate unsound, and a literal-only candidate reads no pd.
+        cands.retain(|_, params| params.is_empty());
+    }
+    // Two admitted locals sharing a sanitized name would share the one fn-top binding.
+    let mut by_name: HashMap<String, u32> = HashMap::new();
+    for v in cands.keys() {
+        *by_name.entry(super::sanitize(vars.name(*v))).or_default() += 1;
+    }
+    let mut out = LitHoist::default();
+    for v in cands.into_keys() {
+        if by_name[&super::sanitize(vars.name(v))] != 1 {
+            continue;
+        }
+        if let Some(vdb) = flat_of.get(&v) {
+            out.flat.insert(*vdb, v);
+        } else {
+            out.wrapped.insert(v);
+        }
+    }
+    out
+}

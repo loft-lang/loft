@@ -489,6 +489,26 @@ and loses only the innermost frame NAME from the chain.  Switch
 ### A fast path inlines; its cold half is outlined
 
 ```
+  (R-LitHoist)   a loop-body vector LITERAL whose parts are invariant builds ONCE
+                 per activation: `v: vector<σ> = ℓ` under a `for`, σ a no-heap
+                 scalar, ℓ's parts literals, pure scalar ops, never-reassigned
+                 by-value scalar parameters, or scalar-getter reads of value-const
+                 record parameters — the emitter pre-declares `v` at function top
+                 and guards the declaration (the one wrapped Set, or the flat
+                 `OpDatabase · Set · pushes` run) on `v` being UNBOUND, so the
+                 build runs once and every later iteration and re-entry reuses the
+                 store.  `(Const-Value)` is per-NAME, so const alone cannot carry
+                 cross-iteration invariance: the alias gate requires every variable
+                 whose type can reach a record type ℓ reads to be a fresh-store
+                 local (its record is this activation's, never the caller's) or a
+                 value-const parameter itself used ONLY as a scalar-getter base.
+                 The local's other uses must be reads the analysis can see whole:
+                 For-iteration binds, `len`, its scope-exit free — an indexed use
+                 declines, because the same OpGetVector node is the lvalue base of
+                 an element WRITE (context-blind); an append, an escape, a rebind,
+                 a heap element, and two admitted locals sharing a sanitized name
+                 (they would share the one fn-top binding) all decline.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

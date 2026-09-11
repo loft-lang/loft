@@ -2430,6 +2430,8 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
+        let mut flat_lit_open: Option<(u16, u16)> = None;
         for (vnr, v) in operators.iter().enumerate() {
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
@@ -2440,6 +2442,60 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;
+            }
+            // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
+            // ONCE: the declaration statement (its pre-evals included — an OpDatabase
+            // hoisted out of the guard would re-clear the store per iteration) runs only
+            // while the local is unbound.  The local was pre-declared at function top, so
+            // the binding survives iterations and re-entries.
+            // A FLAT group closes at its first non-member statement.
+            if let Some((fv, fvdb)) = flat_lit_open
+                && !super::hoist::flat_lit_member(
+                    v,
+                    fv,
+                    fvdb,
+                    self.data,
+                    self.data.def(self.def_nr).variables(),
+                )
+            {
+                flat_lit_open = None;
+                self.indent -= 1;
+                self.indent(w)?;
+                writeln!(w, "}}")?;
+            }
+            // …and opens at its witness's OpDatabase.
+            if flat_lit_open.is_none()
+                && let Value::Call(d, cargs) = v.unspan()
+                && self.data.def(*d).name() == "OpDatabase"
+                && let Some(Value::Var(vdb)) = cargs.first().map(Value::unspan)
+                && let Some(fv) = self.invariant_lits.flat.get(vdb).copied()
+            {
+                flat_lit_open = Some((fv, *vdb));
+                let name = sanitize(self.data.def(self.def_nr).variables().name(fv));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ //@PLN157 § V-x invariant literal built once"
+                )?;
+                self.indent += 1;
+            }
+            let lit_guard = match v.unspan() {
+                Value::Set(var, _)
+                    if self.invariant_lits.wrapped.contains(var)
+                        && tail_capture.is_none_or(|(_, ri)| ri != vnr) =>
+                {
+                    Some(*var)
+                }
+                _ => None,
+            };
+            if let Some(gv) = lit_guard {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(gv));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ //@PLN157 § V-x invariant literal built once"
+                )?;
+                self.indent += 1;
             }
             // Ref-return tail-call capture: `return __native_tail_ret;` in
             // place of the Return(Null)'s null-sentinel emission.  No pre_evals
@@ -2731,9 +2787,19 @@ impl Output<'_> {
             self.counter = counter_after_collect;
             // Restore the enclosing statement's pre-eval map (empty at top level).
             self.active_pre_eval = saved_pre_eval;
+            if lit_guard.is_some() {
+                self.indent -= 1;
+                self.indent(w)?;
+                writeln!(w, "}}")?;
+            }
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+        }
+        if flat_lit_open.is_some() {
+            self.indent -= 1;
+            self.indent(w)?;
+            writeln!(w, "}}")?;
         }
         for _ in 0..view_frames {
             self.vec_headers.pop();

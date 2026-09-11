@@ -670,6 +670,14 @@ pub struct Output<'a> {
     /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
     /// `for f in call(…) {{ v += [f] }}` loop.
     pub move_append_disabled: bool,
+    /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
+    /// function that build once per activation ([`hoist::invariant_literals`]): each is
+    /// pre-declared at function top and its declaration statement wrapped in an
+    /// unbound-guard, so every later iteration and re-entry reuses the store.
+    pub invariant_lits: hoist::LitHoist,
+    /// `LOFT_NO_LITERAL_HOIST=1` — every loop-body literal rebuilds per iteration, as
+    /// before @PLN157 § V-x; the bisect step for a wrong constant vector inside a loop.
+    pub literal_hoist_disabled: bool,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -1608,6 +1616,8 @@ impl<'a> Output<'a> {
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            invariant_lits: hoist::LitHoist::default(),
+            literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -1851,6 +1861,11 @@ impl Output<'_> {
         self.def_nr = def_nr;
         self.indent = 0;
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
+        self.invariant_lits = if self.literal_hoist_disabled {
+            hoist::LitHoist::default()
+        } else {
+            hoist::invariant_literals(self.data, def_nr)
+        };
         self.move_pairs = if self.move_append_disabled {
             HashMap::new()
         } else {
@@ -5535,6 +5550,9 @@ extern crate loft;"
                 if !vars.is_argument(v)
                     && (vars.name(v).starts_with("__vdb")
                         || is_iter_scratch
+                        // @PLN157 § V-x — an invariant literal's local is the once-flag
+                        // of its own build guard, so it must outlive the loop body.
+                        || self.invariant_lits.contains(v)
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {

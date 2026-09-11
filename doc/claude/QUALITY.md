@@ -1528,7 +1528,11 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 58 | **12** | 46 |
+| 60 | **12** | 48 |
+
+(The two 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` / `flat_lit_member`,
+which match the parser's literal-build ops by name and DECLINE anything else — a missed
+spelling costs the optimisation, never correctness, so single-spelling is their design.)
 
 
 

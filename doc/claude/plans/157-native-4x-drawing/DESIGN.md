@@ -1405,6 +1405,55 @@ accidentally named `T`, was renamed `Tx` so c11 keeps its purpose).  The def sha
 itself is loft#1519 (registration, needs design).  Cells c19–c21 land in the corpus and
 the value shapes in the guard script; 21/21 exact on both backends under `LOFT_POISON=1`.
 
+## V-x — an invariant loop-body literal builds once (2026-09-11)
+
+**The shape** (`fronds`' `fd_sides`): `v: vector<float> = if sp.mirror { [1.0, -1.0] }
+else { [1.0] }` inside the `i` loop — per iteration an `OpDatabase` reuse-clear, a
+reservation and the pushes, for a value nothing in the loop can change.  The source-level
+ceiling (moving the declaration above the loop by hand) measured **−8.7 %** on the
+standalone probe.
+
+**SHIPPED same day (`@FR-R-LitHoist`, formal/rewrites.md; switch `LOFT_NO_LITERAL_HOIST`,
+trace `LOFT_TRACE_LITHOIST`).**  Generation-side: `hoist::invariant_literals` admits per
+function, the emitter pre-declares each admitted local at FUNCTION TOP (the existing
+`__vdb` prologue, extended) and guards the declaration on the local being UNBOUND — the
+local is its own once-flag, so the build runs on the first iteration and every re-entry
+reuses the store.  Two lowered shapes, one guard: the CONDITIONAL initializer arrives as
+one `Set(v, if …)` statement (wrapped whole), the PLAIN literal as a flat statement run
+(`OpDatabase(__vdb) · Set(v, OpGetField) · OpSetInt4 · OpPreAlloc · pushes`) which the
+emitter brackets from the `OpDatabase` to the first non-member statement —
+`hoist::flat_lit_member` is the ONE membership predicate both the analysis and the close
+use, so they cannot drift; a statement's pre-evals are wrapped too (an `OpDatabase`
+hoisted out of the guard would re-clear the store per iteration).
+
+**The gate**, and why each clause exists: parts are literals, pure/primitive scalar ops,
+never-reassigned by-value scalar params, or scalar-getter reads of VALUE-CONST record
+params.  `(Const-Value)` is per-NAME — the formal chapter settles that const alone cannot
+carry cross-iteration invariance — so the ALIAS gate requires every variable whose type
+can reach a record type the init reads to be a fresh-store local (all its Sets are the
+`= null` decl and an `OpDatabase(v, tp)` mints its own store, so its record is this
+activation's, never the caller's — `fronds`' `fd_sub` is the motivating pass) or a
+value-const parameter used fn-wide ONLY as a scalar-getter base (an escape could reach a
+writer).  The local's other uses must reconcile exactly: For-head binds, `len`, its
+scope-exit free, plus the flat group's own build mentions — an INDEXED use declines,
+because `OpGetVector` is context-blind (the same node is the lvalue base of `v[0] = …`,
+the c5 falsifier); an append joins the flat run and declines on its varying part (c3);
+two admitted locals sharing a sanitized name would share the one fn-top binding (c11).
+Declined live while building: c9 was silently dropped by the use-reconciliation until the
+flat group's own `OpPreAlloc`/`OpPush` mentions were counted as accounted — the trace
+switch was added for exactly that diagnosis.
+
+**Falsified** (sabotage, 2026-09-11): re-allowing `OpGetVector*` as an accounted use
+admits c5, whose CONDITIONAL element write answers 30 on `--native` against the oracle's
+16 — iteration 0's write carried into later iterations (an unconditional overwrite masks
+itself, which is why the first c5 draft was strengthened).  Eleven cells exact on both
+backends under `LOFT_POISON=1`; `LOFT_NO_LITERAL_HOIST=1` emits zero guards, values
+unchanged; `tests/literal_hoist.rs` pins the per-cell guard counts;
+`tests/scripts/157-literal-hoist.loft` carries the value cells.
+
+**Measured**: `fronds` standalone 296.3–302.8k → **279.1–285.4k ns/op (−5.8 %)**, hash
+`ebcfd875` every run, one guard in `n_fronds`.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append
