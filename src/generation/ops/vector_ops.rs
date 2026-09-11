@@ -259,6 +259,71 @@ impl OpEmitter for HoistedPushEmitter {
     }
 }
 
+/// `OpNewRecord` — inside a loop that binds a RECORD-push header for the target path
+/// (@PLN157 § V-t, `@FR-R-PushRec`), the fresh element is the header's next slot: no
+/// `record_new` dispatch and no default prefill, because the group that follows writes
+/// every field explicitly (the IR's literal lowering emits omitted fields' defaults and
+/// sentinels itself, and a declined delivery lands as a whole-record `OpCopyRecord`).
+/// Everywhere else — no header, a keyed container, a heap-owning element (the hoist
+/// declined those paths a header) — the `#rust` template stands.
+pub struct NewRecordEmitter;
+
+impl OpEmitter for NewRecordEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let out = &ctx.output;
+        let vars = out.data.def(out.def_nr).variables();
+        let Some(header) = (!out.record_push_disabled)
+            .then(|| crate::generation::hoist::mint_path(out.data, "OpNewRecord", args, vars))
+            .flatten()
+            .and_then(|path| out.active_mint_push(&path))
+            .map(str::to_owned)
+        else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let Ok(tp) = u16::try_from(*tp) else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let size = out.stores.size(out.stores.content(tp));
+        let verify = verify(ctx);
+        write!(
+            ctx.w,
+            "stores.push_record_hoisted::<{verify}>(&mut {header}, &("
+        )?;
+        ctx.emit(&args[0])?;
+        write!(ctx.w, "), {size})")
+    }
+}
+
+/// `OpFinishRecord` — the finish half of [`NewRecordEmitter`]'s fused form: the length
+/// bump, written to the header and the record, exactly where `record_finish`'s
+/// `vector_finish` bumped.  Same gate; everywhere else the `#rust` template stands.
+pub struct FinishRecordEmitter;
+
+impl OpEmitter for FinishRecordEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let out = &ctx.output;
+        let vars = out.data.def(out.def_nr).variables();
+        let Some(header) = (!out.record_push_disabled)
+            .then(|| crate::generation::hoist::mint_path(out.data, "OpFinishRecord", args, vars))
+            .flatten()
+            .and_then(|path| out.active_mint_push(&path))
+            .map(str::to_owned)
+        else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        let verify = verify(ctx);
+        write!(
+            ctx.w,
+            "stores.push_record_finish::<{verify}>(&mut {header}, &("
+        )?;
+        ctx.emit(&args[0])?;
+        write!(ctx.w, "))")
+    }
+}
+
 /// `OpPreAllocVector` — the reservation the parser emits before a push to a local vector.
 /// Inside a loop that holds a push header for the path it is emitted as NOTHING (@PLN157
 /// § V-q): the push grows the vector on demand, and the reservation would cost a store
@@ -268,9 +333,17 @@ pub struct PreAllocEmitter;
 
 impl OpEmitter for PreAllocEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let held = !ctx.output.push_hoist_disabled
-            && crate::generation::hoist::pre_alloc_path(ctx.output.data, ctx.def_fn.name(), args)
-                .is_some_and(|path| ctx.output.active_push_header(&path).is_some());
+        let held = crate::generation::hoist::pre_alloc_path(
+            ctx.output.data,
+            ctx.def_fn.name(),
+            args,
+        )
+        .is_some_and(|path| {
+            (!ctx.output.push_hoist_disabled && ctx.output.active_push_header(&path).is_some())
+                    // @PLN157 § V-t — a record-push header's growth step reserves for
+                    // itself, exactly as the scalar push's does.
+                    || ctx.output.active_mint_push(&path).is_some()
+        });
         if held {
             return write!(ctx.w, "()");
         }

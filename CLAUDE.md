@@ -727,6 +727,11 @@ serves from it — and is the bisect step for a wrong element or length out of a
 (`v += [Pt{…}]`, `v += [pt(…)]`) hoist nothing — with it on, the mint group is admitted as a
 mover and the loop's invariant record scalars are read once before it — and is the bisect step
 for a wrong scalar read out of a record-appending loop.
+**`LOFT_NO_RECORD_PUSH=1`** (@PLN157 § V-t) makes an admitted record append keep its
+mint-group templates — with it on, a no-heap struct element is built IN the push header's
+next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
+explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
+default value or length out of a record-appending loop.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live

@@ -330,6 +330,46 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
 
+### A record append emits through its push header
+
+```
+  (R-PushRec)    a mint group admitted under (R-Mint) whose element type is a plain
+                 STRUCT owning no heap, on a path that holds a PUSH header, emits
+                 through it: the fresh element e is the header's next slot — a
+                 bounds test against the capacity, no record_new dispatch and no
+                 default prefill — the group's writes fill e as before (the IR's
+                 literal lowering writes every field explicitly, omitted fields'
+                 declared defaults and null sentinels included, and a declined
+                 delivery lands as a whole-record OpCopyRecord), and the
+                 OpFinishRecord is the length bump written to the header AND the
+                 record — the one visibility step, exactly where record_finish's
+                 vector_finish was.  A growth step is the runtime's own append
+                 followed by a fresh header (R-Refresh), taken BEFORE the element's
+                 writes so they land in the moved record.  Admission asks the TYPE:
+                 an element owning heap (text, a nested collection) keeps the
+                 templates, because a raw slot carries stale bytes where a heap
+                 handle's zero matters; a __nullable element's discriminant is not
+                 a field the literal writes.
+```
+
+**In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
+`record_new` dispatch, a `set_default_value` type walk over fields the group was about to
+write, a `zero_range` and a `record_finish` dispatch — ~30 % of `smooth`'s row after every
+other unit.  The prefill is redundant exactly where the write set is complete, and the IR
+makes it complete: a partial literal (`P3 { a: x }`) emits explicit writes for the omitted
+declared default, the omitted zero AND the omitted null sentinel, at the caller and in a
+retbuf-delivered builder alike — the cells pin this from both sides.  The skipped refresh
+is the falsified failure: the sabotage empties every growth cell (`c1 100 0 25 9801 2475`
+→ `0 0 0 0 0`, the elements landing in the dead pre-growth record) and
+`LOFT_HOIST_VERIFY=1` panics naming the stale header.  Switch `LOFT_NO_RECORD_PUSH`;
+falsifier `LOFT_HOIST_VERIFY=1` (the header re-derived and compared at the slot and at
+the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoistable`,
+`Output::begin_vector_hoist`, `Output::active_mint_push`, the registry's
+`NewRecordEmitter`, `FinishRecordEmitter` and `PreAllocEmitter`,
+`Stores::push_record_hoisted`, `Stores::push_record_finish`.  Shipped: standalone
+`smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
+8.4× of Rust on the measuring box, 14/14 hashes unchanged.
+
 ### A leaf carries no frame
 
 ```

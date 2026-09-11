@@ -573,6 +573,23 @@ impl Stores {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::EnumValue(_, _))
     }
 
+    /// True if `tp` is a plain inline-element vector (`Parts::Vector`) — the container
+    /// whose append is a slot at the tail, as opposed to the keyed and handle-holding
+    /// kinds (`Sorted`, `Array`, `Ordered`, …) whose same-named ops place records.
+    #[must_use]
+    pub fn is_plain_vector(&self, tp: u16) -> bool {
+        tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::Vector(_))
+    }
+
+    /// Can a value of `tp` own a heap record?  The @PLN157 § V-f fact
+    /// ([`Stores::heap_facts`]), exposed for the native emitters: a record element that
+    /// owns no heap can be built in a raw slot, because no field of it is a handle whose
+    /// stale bytes something could walk.
+    #[must_use]
+    pub fn owns_heap(&self, tp: u16) -> bool {
+        self.type_owns_heap(tp)
+    }
+
     /// @PLN16.J — resolve a struct field by **name** to `(position, content)`:
     /// `position` is the field's byte offset within the record (added to the
     /// struct's `DbRef.pos`, matching the `ShowDb` read path), `content` its

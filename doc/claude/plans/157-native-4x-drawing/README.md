@@ -40,6 +40,26 @@ agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash
 The scoreboard above reads lower for some rows because it was taken on the branch; these are the
 JOINED tree's, and the delta is what carries across a join, never the endpoints.
 
+**§ V-t SHIPPED 2026-09-11** (DESIGN.md § V-t), from re-profiling `smooth` as the § V-s
+hand-off asked (macOS `sample` on the standalone probe; the branch had been fully absorbed
+into `main` by #1518, so the branch was reset to `origin/main` first): the append machinery
+was ~53 % of the row — per element a `record_new` dispatch, a default prefill over fields
+the group was about to write, and a `record_finish` dispatch.  The ceiling was hand-measured
+on the emitted Rust FIRST, in three independent mods (ABAB, hash exact): the fused record
+push **−37 %**, scalarized tangent temporaries a further **−21 %**, the result vector built
+in the retbuf a further **−16 %** — the full stack ~1.5× of Rust on this box.  Mod 1 shipped
+as § V-t (standalone `smooth` −32 %; consumer `smooth` 11.0× → **4.57×**, `fronds` 11.1× →
+**8.36×** on this box, 14/14 hashes agree).  **Next, in measured order:** mod 2 — the
+frame-local record temporaries (queue item 5: `sp_ta`/`sp_tb` and `half_chord`'s locals as
+scalar pairs, −21 % measured ceiling on `smooth`, the same class in every routine naming a
+struct temporary — M–L, the SROA design); mod 3 — a single-assigned, append-only result
+vector local ADOPTS the retbuf (`sp_out` builds in `__retbuf`, no 61-element return copy,
+the backing reused across calls — M, § V's Route R for vectors); then `fronds`' remaining
+allocation classes (queue 4b, −9 % source-level ceiling) and the § V-t scope left on the
+table (heap-owning elements need an explicit zero of the handle fields only).  The `hair`
+and `lock` rows sit under the bar on this box; re-rank `lock_curved` (6.05×), the fills
+(4.3×) and `wide_line` (5.06×) by profiling WITH callers on the § V-t runtime, as § V-k did.
+
 **That question is CLOSED — § V-s shipped 2026-09-10** (DESIGN.md § V-s): the blocker was the
 record-append MINT group itself (`OpNewRecord`/`OpFinishRecord`, plus § V-d's `OpCopyRecord`
 delivery), unclassified writers that declined the whole loop; the three probe cells re-run on
@@ -96,7 +116,7 @@ its assumptions are written as a rule and checkable by both.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-09 (§ V-r)
+- **Last touched:** 2026-09-11 (§ V-t)
 
 ## Where to resume
 
@@ -344,6 +364,7 @@ unless said otherwise.
 | **V-q** — a loop that PUSHES to a vector path keeps a PUSH header: (R-Header)'s triple plus the capacity, the push writes through it and refreshes it at a growth step, every read of the path serves from it (`hoist::FUSABLE_PUSHES`, `hoist::fused_push`, `Stores::push_hoisted`, the ownership rule in `hoist::hoistable`); `LOFT_NO_PUSH_HOIST` off-switch, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-q](DESIGN.md) | a c1–c18 cell moves; `tests/push_hoist.rs` no longer sees a push header; a consumer hash disagrees | **Shipped 2026-09-09** — `lock_curved` 5.64× → 3.84×, `lock` 4.39× → 3.51× (both under the bar); ceiling measured by hand first at −33 % |
 | **V-r** — the EMISSION AUDIT: `scripts/emission_audit.py` validates a `--native-emit` output against the hoist-state rules (`R-State` one holder per path per frame, `R-Refresh` no mover on a held path, `R-Inputs` a twin handed only live holders); `tests/emission_audit.rs` runs it over every hoist corpus and the in-repo bench | [DESIGN.md § V-r](DESIGN.md) | a corpus audits with a violation; a corpus resolves no holder; the doubled emission is not refused | **Shipped 2026-09-09** — flags the § V-p × § V-q double holder at emission when the collector order is re-introduced; every corpus clean |
 | **V-s** — a record-appending loop hoists its invariant scalars: the mint group (`OpPreAllocVector · OpNewRecord · sets or a retbuf callee · OpFinishRecord`, § V-d's `OpCopyRecord` delivery included) admitted as a mover under `(R-Alias)`, writes into the FRESH element evicting nothing (`@FR-R-Mint`); a keyed container's same-named ops stay blocking (admission asks the TYPE) | [DESIGN.md § V-s](DESIGN.md) | a c9/c10 cell answers the stale value (the falsified sabotage); `tests/mint_hoist.rs` no longer sees the hoists; a consumer hash disagrees | **Shipped 2026-09-10** — fifteen cells exact on both backends, emission pinned; `smooth` −8 % (interleaved ABAB best-of-3), `fronds`/`lock_curved` within noise; switch `LOFT_NO_MINT_HOIST` |
+| **V-t** — a record append EMITS through the push header: an admitted mint whose element is a plain no-heap struct takes the header's next slot (`Stores::push_record_hoisted` — no `record_new` dispatch, no default prefill: the IR's literal lowering writes every field explicitly, a declined delivery is a whole-record copy) and the finish is the length bump (`push_record_finish`), exactly where `record_finish`'s was (`@FR-R-PushRec`); heap-owning, `__nullable` and keyed elements keep the templates | [DESIGN.md § V-t](DESIGN.md) | a growth cell answers empty (the falsified sabotage: c1 `100 0 25 9801 2475` → `0 0 0 0 0`); `tests/record_push.rs` no longer sees the fused forms; the audit accepts a template mint on a held path; a consumer hash disagrees | **Shipped 2026-09-11** — fifteen cells exact on both backends, emission pinned; standalone `smooth` −32 % (ceiling hand-measured at −37 % first); consumer `smooth` 11.0× → 4.6×, `fronds` 11.1× → 8.4× (this box), 14/14 hashes agree; switch `LOFT_NO_RECORD_PUSH` |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

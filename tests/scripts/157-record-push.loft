@@ -1,0 +1,137 @@
+// @PLN157 § V-t (loft#1426 M2) — a record append inside a loop EMITS through a
+// push header on the native backend (`@FR-R-PushRec`): the fresh element is the
+// header's next slot (no `record_new` dispatch, no default prefill — the group's
+// writes fill every field explicitly, the IR's literal lowering emitting omitted
+// fields' defaults and sentinels itself), and the length bump at the finish is
+// the only visibility step, exactly where `record_finish`'s was.  The
+// interpreter keeps the mint-group ops and is the oracle.  The cells pin the
+// boundary from both sides:
+//   - a literal append (growth included), a builder-call append (§ V-d's
+//     delivery, its OpCopyRecord guard kept) and a PARTIAL literal — omitted
+//     declared default, omitted zero, omitted nullable — answer their defaults
+//     out of the raw slot;
+//   - an element that owns heap (text, a nested collection), a keyed container,
+//     a nullable element type and a field-path root keep their templates;
+//   - a read of `len(v)` inside the loop sees the pre-push length — the bump
+//     lands at the finish on both backends.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-t-record-push-cells.loft
+// (tests/record_push.rs pins which appends fuse); this file carries the VALUE
+// cells that must hold whatever the emitter decides.
+// `LOFT_NO_RECORD_PUSH=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-11) — `push_record_hoisted`'s
+// growth arm made to skip the header refresh turns c1–c4 red on --native
+// (c1 `100 0 25 9801 2475` → `0 0 0 0 0`: every element lands in the dead
+// pre-growth record) and LOFT_HOIST_VERIFY=1 panics naming the stale header at
+// the finish; restored, interpret / native / LOFT_HOIST_VERIFY /
+// LOFT_NO_RECORD_PUSH all green.
+
+struct Pt { ptx: float, pty: float }
+struct P3 { a: float, b: float = 2.5, c: integer, d: float? }
+struct Mix { on: boolean, k: integer, f: float }
+struct TxtE { t: text, n: integer }
+
+fn pt(x: float, y: float) -> Pt { Pt { ptx: x, pty: y } }
+fn mk3(x: float) -> P3 { P3 { c: (x as integer) ?? 0 } }
+fn sum_ptx(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.ptx) ?? 0.0; } s }
+
+fn literal_grow(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    out += [Pt { ptx: ((i as float) * 0.5) ?? 0.0, pty: ((i * i) as float) ?? 0.0 }];
+  }
+  out
+}
+
+fn builder(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n { out += [pt(((i as float) + 1.5) ?? 0.0, 2.0)]; }
+  out
+}
+
+fn partial(n: integer) -> vector<P3> {
+  out: vector<P3> = [];
+  for i in 0..n { out += [P3 { a: (i as float) ?? 0.0 }]; }
+  out
+}
+
+fn partial_call(n: integer) -> vector<P3> {
+  out: vector<P3> = [];
+  for i in 0..n { out += [mk3(((i * 10) as float) ?? 0.0)]; }
+  out
+}
+
+fn kinds(n: integer) -> vector<Mix> {
+  out: vector<Mix> = [];
+  for i in 0..n { out += [Mix { on: i >= 2, k: i * 3, f: ((i as float) / 2.0) ?? 0.0 }]; }
+  out
+}
+
+fn heap_element(n: integer) -> vector<TxtE> {
+  out: vector<TxtE> = [];
+  for i in 0..n { out += [TxtE { t: "x{i}", n: i }]; }
+  out
+}
+
+fn len_inside(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..n { out += [Pt { ptx: ((len(out) * 10) as float) ?? 0.0, pty: 0.0 }]; }
+  out
+}
+
+fn two_paths(n: integer) -> float {
+  a: vector<Pt> = [];
+  b: vector<Pt> = [];
+  for i in 0..n {
+    a += [Pt { ptx: (i as float) ?? 0.0, pty: 0.0 }];
+    b += [Pt { ptx: 0.0, pty: ((i * 2) as float) ?? 0.0 }];
+  }
+  bs = 0.0; for p in b { bs = (bs + p.pty) ?? 0.0; }
+  (sum_ptx(a) + bs * 100.0) ?? 0.0
+}
+
+fn main() {
+  // The literal append across growth: 100 elements cross the capacity several times.
+  r1 = literal_grow(100);
+  assert(len(r1) == 100 && (r1[0]?.ptx) == 0.0 && (r1[50]?.ptx) == 25.0
+      && (r1[99]?.pty) == 9801.0 && sum_ptx(r1) == 2475.0,
+    "a literal record append through the push header keeps every element and the length");
+
+  // The builder append (smooth's shape): the callee builds in the slot, the guard kept.
+  r2 = builder(20);
+  assert(len(r2) == 20 && (r2[0]?.ptx) == 1.5 && (r2[19]?.ptx) == 20.5,
+    "a builder-call append delivers into the header slot");
+
+  // The partial literal: every omitted field reads its default out of the raw slot.
+  r3 = partial(3);
+  e3 = r3[2]?;
+  assert(len(r3) == 3 && e3.a == 2.0 && e3.b == 2.5 && e3.c == 0 && (e3.d ?? -9.0) == -9.0,
+    "a partial literal's omitted fields answer their defaults with no prefill");
+
+  // The same pin through a call.
+  e4 = partial_call(3)[1]?;
+  assert(e4.a == 0.0 && e4.b == 2.5 && e4.c == 10 && (e4.d ?? -9.0) == -9.0,
+    "a partial BUILDER literal's omitted fields answer their defaults with no prefill");
+
+  // Mixed field kinds through the slot.
+  r5 = kinds(4);
+  e5 = r5[3]?;
+  assert(len(r5) == 4 && e5.on && e5.k == 9 && e5.f == 1.5 && !(r5[0]?.on),
+    "boolean, integer and float fields land in the header slot");
+
+  // A heap-owning element keeps its templates and its values.
+  r6 = heap_element(3);
+  assert(len(r6) == 3 && (r6[2]?.t) == "x2" && (r6[2]?.n) == 2,
+    "a text-carrying element declines the fusion and stays right");
+
+  // len(v) inside the loop sees the pre-push length — the bump is the finish.
+  r7 = len_inside(4);
+  assert(len(r7) == 4 && (r7[0]?.ptx) == 0.0 && (r7[3]?.ptx) == 30.0,
+    "the length bump lands at the finish, after the element's value is computed");
+
+  // Two minted paths in one loop, one header each.
+  assert(two_paths(3) == 603.0, "two minted paths fuse independently");
+
+  println("record push ok");
+}

@@ -199,6 +199,10 @@ pub struct HoistTiers {
     pub push: bool,
     /// `(R-Mint)` — the record mint group admitted as a mover (`LOFT_NO_MINT_HOIST` off).
     pub mint: bool,
+    /// `(R-PushRec)` — an admitted mint whose element is a plain no-heap struct EMITS
+    /// through a push header of its own (`LOFT_NO_RECORD_PUSH` off).  A refinement of
+    /// `mint`: it changes what the group's ops emit, never whether the loop hoists.
+    pub record_push: bool,
 }
 
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
@@ -363,6 +367,11 @@ pub struct LoopHoist {
     /// `vectors` as well), which the push keeps current and every read of the path serves
     /// from.
     pub pushes: Vec<(PathKey, Value)>,
+    /// @PLN157 § V-t (`@FR-R-PushRec`) — the admitted MINT paths whose element is a plain
+    /// no-heap struct: each takes a [`crate::vector::PushHeader`] the record append emits
+    /// through (the slot from the header, the length bump at the finish).  A mint that does
+    /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
+    pub mint_pushes: Vec<(PathKey, Value)>,
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -400,6 +409,7 @@ pub fn hoistable(
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
         pushes: Vec::new(),
+        mint_pushes: Vec::new(),
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
@@ -491,6 +501,11 @@ pub fn hoistable(
     // the path only has to LEAVE the read list.  The gate admitted every mint in the body
     // as one over a plain bare-variable vector, so this collection cannot disagree with it.
     let mut mints: Vec<PathKey> = Vec::new();
+    // § V-t (`@FR-R-PushRec`) — per mint path, the operand expression and whether EVERY
+    // mint group on it qualifies for the record push (the element a plain no-heap struct).
+    // One unqualified group keeps the whole path on § V-s's no-holder behaviour, because a
+    // header only some of the path's appends keep current would go stale at the others.
+    let mut mint_fused: Vec<(PathKey, Value, bool)> = Vec::new();
     if tiers.mint {
         for op in &body.operators {
             op.any_node(&mut |n| {
@@ -498,9 +513,14 @@ pub fn hoistable(
                     && (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
                     && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
-                    && !mints.contains(&path)
                 {
-                    mints.push(path);
+                    let q = tiers.record_push && mint_push_qualifies(stores, args);
+                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == path) {
+                        row.2 &= q;
+                    } else {
+                        mints.push(path.clone());
+                        mint_fused.push((path, args[0].clone(), q));
+                    }
                 }
                 false
             });
@@ -538,6 +558,10 @@ pub fn hoistable(
         }
         out.vectors.retain(|(q, _)| !mover(q));
         out.pushes = pushes;
+        out.mint_pushes = mint_fused
+            .into_iter()
+            .filter_map(|(p, expr, q)| q.then_some((p, expr)))
+            .collect();
     }
     if found.is_empty() {
         return out;
@@ -1400,6 +1424,36 @@ pub fn mint_path(
         return None;
     }
     matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
+}
+
+/// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
+/// schema is asked, not the op shape: the parent must be a plain inline-element vector
+/// (`Parts::Vector` — an `array`/`ordered` conversion holds 4-byte handles, and a keyed
+/// container's same-named ops place records), the form the tail-slot append (`fld ==
+/// u16::MAX`), and the element a plain struct that owns no heap — a raw slot carries stale
+/// bytes, and a heap handle is the one field kind whose stale bytes something could walk
+/// before the group's writes land.  The group's writes cover every scalar field explicitly
+/// (the IR's literal lowering emits omitted fields' defaults and sentinels itself; a
+/// declined delivery is a whole-record copy), so no prefill is owed.
+#[must_use]
+pub fn mint_push_qualifies(stores: &Stores, args: &[Value]) -> bool {
+    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
+        args.get(1).map(Value::unspan),
+        args.get(2).map(Value::unspan),
+    ) else {
+        return false;
+    };
+    if *fld != i32::from(u16::MAX) {
+        return false;
+    }
+    let Ok(tp) = u16::try_from(*tp) else {
+        return false;
+    };
+    if !stores.is_plain_vector(tp) {
+        return false;
+    }
+    let elem = stores.content(tp);
+    elem != u16::MAX && stores.is_struct(elem) && !stores.owns_heap(elem)
 }
 
 const FUSABLE_SETTERS: [(&str, &str); 3] = [

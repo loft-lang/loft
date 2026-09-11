@@ -647,6 +647,17 @@ pub struct Output<'a> {
     /// records.  `LOFT_HOIST_VERIFY=1` is the falsifier (each hoisted scalar is re-read
     /// and compared).
     pub mint_hoist_disabled: bool,
+    /// @PLN157 § V-t (`@FR-R-PushRec`) — the mint paths of the enclosing loops whose record
+    /// APPEND emits through a push header, innermost last: path → the `__ph_N` local (the
+    /// same local `push_headers`-style; the path is also in [`Self::vec_headers`] as
+    /// `__ph_N.h` for every read).  Pushed and popped beside the other hoist frames.
+    mint_push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// `LOFT_NO_RECORD_PUSH=1` — a record append keeps its mint-group templates
+    /// (`OpNewRecord`'s dispatch + prefill, `OpFinishRecord`'s dispatch) as before @PLN157
+    /// § V-t (`@FR-R-PushRec`); the bisect step for a wrong element out of a record-appending
+    /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
+    /// at the slot and at the finish).
+    pub record_push_disabled: bool,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -1569,6 +1580,8 @@ impl<'a> Output<'a> {
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
+            mint_push_headers: Vec::new(),
+            record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1817,6 +1830,7 @@ impl Output<'_> {
         self.vec_headers.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
+        self.mint_push_headers.clear();
         self.hoist_counter = 0;
     }
 
@@ -1855,6 +1869,7 @@ impl Output<'_> {
                     scalars: !self.scalar_hoist_disabled,
                     push: !self.push_hoist_disabled,
                     mint: !self.mint_hoist_disabled,
+                    record_push: !self.record_push_disabled,
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             )
@@ -1863,9 +1878,31 @@ impl Output<'_> {
             vectors: candidates,
             scalars,
             pushes,
+            mint_pushes,
         } = hoisted;
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        let mut mint_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
+        // `@FR-R-PushRec` — a minted path binds ONE push header its record appends emit
+        // through; reads of the path serve from the same header (`@FR-R-State`).
+        for (path, expr) in mint_pushes {
+            if self.mint_push_headers.iter().any(|f| f.contains_key(&path)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__ph_{}", self.hoist_counter);
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!(
+                "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@PLN157 § V-t record push header"
+            ));
+            frame.insert(path.clone(), format!("{name}.h"));
+            mint_frame.insert(path, name);
+        }
         // `@FR-R-State` — one holder per path per frame: a pushed path binds its push header
         // here and is absent from `candidates`; an enclosing frame's holder is re-used.
         for (path, expr) in pushes {
@@ -1942,6 +1979,7 @@ impl Output<'_> {
         self.vec_headers.push(frame);
         self.scalar_hoists.push(scalar_frame);
         self.push_headers.push(push_frame);
+        self.mint_push_headers.push(mint_frame);
         Ok(opened)
     }
 
@@ -1950,6 +1988,7 @@ impl Output<'_> {
         self.vec_headers.pop();
         self.scalar_hoists.pop();
         self.push_headers.pop();
+        self.mint_push_headers.pop();
         if opened {
             write!(w, " }}")?;
         }
@@ -2157,6 +2196,17 @@ impl Output<'_> {
     #[must_use]
     pub fn active_push_header(&self, path: &hoist::PathKey) -> Option<&str> {
         self.push_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// The `__ph_N` local of the innermost enclosing loop that binds a RECORD-push header
+    /// for `path` (@PLN157 § V-t, `@FR-R-PushRec`), if any — the holder the mint group's
+    /// ops emit through.
+    #[must_use]
+    pub fn active_mint_push(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.mint_push_headers
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))

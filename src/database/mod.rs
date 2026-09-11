@@ -1985,6 +1985,74 @@ impl Stores {
         }
     }
 
+    /// @PLN157 § V-t — a RECORD append's slot through a hoisted [`crate::vector::PushHeader`]
+    /// (`@FR-R-PushRec`): when the element fits, the slot is the header's next position —
+    /// no `record_new` dispatch and no default prefill, because the group that follows
+    /// writes every field of the element explicitly (the IR's literal lowering emits the
+    /// omitted fields' defaults and sentinels itself, and a declined delivery lands as a
+    /// whole-record copy).  Otherwise the runtime's own append grows the record and the
+    /// header is re-derived, since the growth may have moved it.  The length is NOT bumped
+    /// here — [`Self::push_record_finish`] is the visibility step, exactly where
+    /// `record_finish`'s bump was.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
+    /// before the slot is derived.  Never in the emitted default.
+    pub fn push_record_hoisted<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) -> crate::keys::DbRef {
+        self.records_created += 1;
+        if p.h.rec != 0 && p.h.len.saturating_add(1).saturating_mul(size) <= p.cap {
+            if VERIFY {
+                assert_eq!(
+                    *p,
+                    crate::vector::push_header(db, &self.allocations),
+                    "hoisted record-push header is stale — the loop moved the vector it appends to"
+                );
+            }
+            crate::keys::DbRef {
+                store_nr: p.h.store_nr,
+                rec: p.h.rec,
+                pos: crate::vector::checked_vec_pos(p.h.len, size),
+            }
+        } else {
+            let e = crate::vector::vector_append(db, size, &mut self.allocations);
+            *p = crate::vector::push_header(db, &self.allocations);
+            e
+        }
+    }
+
+    /// The finish half of [`Self::push_record_hoisted`]: the length bump, written to BOTH
+    /// the header and the record — the one step that makes the element visible, exactly as
+    /// `record_finish`'s `vector_finish` was for the unfused group.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY`, when the header no longer describes `db` at the bump — a builder
+    /// between the slot and the finish that moved the vector would be caught here.
+    pub fn push_record_finish<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+    ) {
+        if VERIFY {
+            // The slot was handed out before this bump, so a fresh derivation still reads
+            // the OLD length — header and record agree on every field here or something
+            // between the slot and the finish moved the vector.
+            assert_eq!(
+                *p,
+                crate::vector::push_header(db, &self.allocations),
+                "hoisted record-push header is stale at the finish — the element's builder moved the vector"
+            );
+        }
+        p.h.len += 1;
+        self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
+    }
+
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_ref_or_raise`.  Same body; native rewriter
     /// translates `s.vec_ref_or_raise(...)` →

@@ -2134,6 +2134,68 @@ Switch `LOFT_NO_MINT_HOIST` (generation time; values identical, zero hoists).
 itself (its element writes still resolve per element through the templates) — each a
 measured decision for when a judged row shows it.
 
+## V-t — a record append emits through the push header (2026-09-11)
+
+**The evidence.**  `smooth` re-profiled on this box (macOS `sample` on the standalone
+probe, `--native-release --native-debug`, 3M reps, 5 267 program samples) after § V-s and
+the cold-half outlining: the program's own code is 23 %; the k-loop's append
+`sp_out += [pt(…)]` is ~53 % — per element a `record_new` dispatch, a
+`set_default_value_nullable` type walk (356 samples) + `zero_range` (268) over fields the
+builder is about to write, `vector_finish`/`record_finish` (444) and the per-element
+`pre_alloc_vector` (110); the tangent temporaries (`half_chord`'s per-iteration record
+alloc/free) are ~35 %; the whole-result `vector_add` copy into the retbuf ~8 %.  This is
+§ V-s's deliberately-left scope note — "a PUSH-header tier for the minted vector itself"
+— with the judged row now showing it.
+
+**The ceiling, hand-measured first** (the § V-q discipline): the emitted Rust of the
+standalone probe hand-edited in three independent mods, ABAB against the unmodified build,
+hash `669cdc48` exact on every run — the fused record push **−37 %** (2 890 → 1 820
+ns/op), + scalarized tangents −21 % (→ 1 219), + the result vector built in the retbuf
+−16 % (→ 760, ~1.5× the Rust reference on this box).  Mods 2 and 3 are the next queued
+units; this section ships mod 1.
+
+**Invariant (`@FR-R-PushRec`, formal/rewrites.md).**  A mint group admitted under
+`(R-Mint)` whose element is a plain no-heap struct emits through the path's push header:
+the fresh element is the header's next slot (a growth step re-enters the runtime's append
+and refreshes the header BEFORE the element's writes), and `OpFinishRecord` is the length
+bump — the one visibility step, exactly where `record_finish`'s `vector_finish` was
+(`record_new` never bumped; probed on both backends before the design was fixed).  The
+prefill is redundant because the IR's write set is COMPLETE: probed on `--native-emit`,
+a partial literal (`P3 { a: x }` with a declared default, a zero and a nullable field
+omitted) emits explicit writes for ALL fields, at the caller and in a retbuf-delivered
+builder alike, and a declined delivery is a whole-record `OpCopyRecord`.  The type ask
+keeps out what the probe cannot license: a heap-owning element (stale bytes where a
+handle's zero matters), a `__nullable` element (the discriminant is no field), a keyed
+container (never admitted).
+
+**Cells before the code** (`bytecode-comparisons/V-t-record-push-cells.loft`, fifteen,
+hand-computed, both backends green before the change): c1 literal append across growth ·
+c2 the builder append (delivery guard kept) · c3 the partial literal (default + zero +
+sentinel out of the raw slot) · c4 the same through a call · c5 a borrow-returning element
+(declines — V-s c12's `OpDatabase` class) · c6 boolean/integer/float kinds · c7 a text
+field (heap — declines) · c8 a nested collection field (declines) · c9 `sorted` (not
+admitted) · c10 `vector<Pt?>` (declines) · c11 `len(v)` inside the loop (the bump is the
+finish) · c12 two minted paths, one header each · c13 mint + scalar push · c14 a
+field-path root (declines) · c15 the singleton outside a loop (no header).
+`tests/record_push.rs` pins the per-cell emission (headers bound, fused uses, templates
+left) and the switch; `tests/scripts/157-record-push.loft` carries the value cells.
+**Falsified**: the growth arm's header refresh removed empties every growth cell on native
+(c1 `100 0 25 9801 2475` → `0 0 0 0 0` — the elements land in the dead pre-growth record)
+and `LOFT_HOIST_VERIFY=1` panics naming the stale header at the finish.  The emission
+audit learned the new spellings (`push_record_hoisted`/`push_record_finish` validated like
+a push) and REFUSES a template `OpNewRecord`/`OpFinishRecord` on a held path — the
+collector-order class § V-r exists for.
+
+**Measured** (this box): standalone `smooth` −32 % (3 070 → 2 090 ns/op, the compiler
+keeps the builder's guarded writes the hand ceiling inlined); consumer table `smooth`
+11.0× → **4.57×**, `fronds` 11.1× → **8.36×**, `hair`/`lock` under the bar, 14/14 hashes
+agree.  Switch `LOFT_NO_RECORD_PUSH` (generation time; values identical, templates back).
+
+**Scope left on the table, deliberately**: the heap-owning element (needs an explicit
+zero of the slot's handle fields, or the completeness fact per heap field), the
+`__nullable` element, and the c11 self-reading push (its cost is the parser's per-iteration
+whole-vector copy, § V-q's second finding — a unit of its own).
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's
