@@ -2284,6 +2284,24 @@ impl Output<'_> {
         if let Some(prefix) = self.call_stack_prefix.take() {
             writeln!(w, "{prefix}")?;
         }
+        // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
+        // call's buffer as a record in the destination's own store (once — an enclosing
+        // loop re-enters with it live), and arm the loop variable so the append's
+        // OpCopyRecord emits the move.  The destination's `__vdb` is live here by
+        // scoping: the loop appends to it, so its declaration already ran.
+        let move_pair = self.move_pair_for_block(bl).cloned();
+        if let Some(pair) = &move_pair {
+            let vars = self.data.def(self.def_nr).variables();
+            let buf = super::sanitize(vars.name(pair.buf));
+            let vdb = super::sanitize(vars.name(pair.host_vdb));
+            self.indent(w)?;
+            writeln!(
+                w,
+                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}u16); }} //@PLN157 § V-j placed buffer",
+                pair.buf_tp
+            )?;
+            self.active_move_vars.push(pair.loop_var);
+        }
         let is_void_block = matches!(bl.result, Type::Void);
         let is_text_result = wrap_text && matches!(bl.result, Type::Text(_));
         // Fix "hoisted return value" pattern from scopes::free_vars before iterating.
@@ -2733,6 +2751,9 @@ impl Output<'_> {
             } else {
                 writeln!(w, "{}", default_native_value(&bl.result))?;
             }
+        }
+        if move_pair.is_some() {
+            self.active_move_vars.pop();
         }
         self.indent(w)?;
         write!(

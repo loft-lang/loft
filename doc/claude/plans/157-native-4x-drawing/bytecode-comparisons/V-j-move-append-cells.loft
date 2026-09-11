@@ -129,4 +129,52 @@ fn c12() {
   println("c12 {len(out)} {sum_r(out)}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); }
+// c13 — the element type is itself a CONTAINER (`vector<vector<integer>>`): outside the
+// plain-struct admission, the copy stays.  Values right.
+fn mkv(n: integer) -> vector<vector<integer>> {
+  out: vector<vector<integer>> = [];
+  for i in 0..n { out += [[i, i * 2, i * 3]]; }
+  out
+}
+fn c13() {
+  out: vector<vector<integer>> = []; s = 0;
+  for f in mkv(3) { out += [f]; }
+  for xs in out { for x in xs { s += x; } }
+  println("c13 {len(out)} {s}");
+}
+
+// c14 — the append sits under a FURTHER loop, which appends the same `f` once per inner
+// iteration: a move can give the element away only once, so the pair declines (c8's class,
+// with an inner count that would catch a wrong admission).  Values right.
+fn c14() {
+  out: vector<R> = [];
+  for f in mk(2, 8) { for _ in 0..2 { out += [f]; } }
+  println("c14 {len(out)} {sum_r(out)}");
+}
+
+// c15 — the destination is REASSIGNED after the loop: the placed buffer's record would
+// outlive the store that hosts it, so the pair declines.  Values right.
+fn c15() {
+  out: vector<R> = [];
+  for f in mk(2, 9) { out += [f]; }
+  out = mk(1, 10);
+  println("c15 {len(out)} {sum_r(out)}");
+}
+
+// c16 — a NO-HEAP element: the same loop is also § V-t's record push (the mint fuses into
+// the push header), and the move relocates into the header's slot.  Both rewrites on one
+// group; the values are the oracle's either way.
+struct Pt2 { x: float, y: float }
+fn mkp(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: ((i * i) as float) ?? 0.0 }]; }
+  out
+}
+fn c16() {
+  out: vector<Pt2> = []; s = 0.0;
+  for f in mkp(30) { out += [f]; }
+  for p in out { s = (s + p.x + p.y) ?? 0.0; }
+  println("c16 {len(out)} {out[29]?.y} {s}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); }

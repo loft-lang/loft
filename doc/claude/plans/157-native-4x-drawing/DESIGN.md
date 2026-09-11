@@ -1344,6 +1344,36 @@ on both backends under `LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_
 that consumes it, both backends — and is ranked below the allocation items whose ceilings
 are of the same size at S each.  The cells stay as its guard.
 
+**SHIPPED 2026-09-11 (`@FR-R-MoveAppend`, formal/rewrites.md), generation-side like the
+rest of the family — the interpreter keeps the copy and is the oracle.**  The ceiling was
+re-measured by hand on the § V-t runtime first: **−11.3 %** (401–404k → 355–359k ns/op on
+the rebuilt `vr_fronds` probe, hash `ebcfd875` exact), larger than 2026-09-09's −8 %
+because the copy class had grown to 23 % of a faster row.  The build reached the ceiling
+exactly (396–400k → 354–359k ABAB through the `loft` driver).  What shipped is CHEAPER
+than the sketch's "three new ops": no IR change at all — the pairing
+(`hoist::move_appends`) is a per-function analysis the emitter reads, the placement rides
+declaration dominance (V in scope at the For ⇒ its `__vdb` allocated on every path), and
+three runtime helpers (`place_record_in`, `move_record_shallow`, `free_record_in`) carry
+the semantics.  The buffer's `Set(__ref, Null)` decl emits the bare sentinel (the
+`null_named` slot the old form minted is what leaked in the first hand probe), the For
+emits a place-once guard (an enclosing loop re-enters with the buffer live — fronds' `k`
+loop), `OpCopyRecord` from the armed loop variable dispatches on store identity (same
+store → relocate + zero; anything else → the deep copy, always correct), and the buffer's
+`OpFreeRef` becomes the record-level release.  Sixteen cells (c13 container element, c14
+the inner-loop multi-append falsifier, c15 a rebound destination, c16 the § V-t
+composition — the move lands in the push header's slot — added this pass), hand-computed,
+green on both backends under `LOFT_POISON=1` and both leak checks.  **Falsified**: the
+use-after gate removed turns c2 red (`3 409 45` → `3 409 0` — the read sees the zeroed
+source); the same-store guard and the zeroing were probed too and are defence-in-depth on
+the gated shapes (a minting callee always delivers into the buffer, and the host store
+dies whole in every corpus shape) — the values that pin them are the cells, not a
+reachable red.  Two findings for the next reader: `clear_vector` is SHALLOW (len = 0, a
+standing TODO), which is why an un-zeroed source is unobservable through the callee's
+entry clear; and the `For` wrapper block's IR name is `"For block"`, not `"For"` — the
+first matcher draft silently found nothing.  Switch `LOFT_NO_MOVE_APPEND`;
+`LOFT_TRACE_MOVE=1` names the gate that declined a pairing.  `tests/move_append.rs` pins
+the per-cell emission; `tests/scripts/157-move-append.loft` carries the value cells.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

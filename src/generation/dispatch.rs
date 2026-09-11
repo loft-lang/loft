@@ -1731,6 +1731,14 @@ impl Output<'_> {
         first: bool,
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
+        // @PLN157 § V-j (`@FR-R-MoveAppend`) — a PAIRED buffer starts as the null sentinel
+        // and is PLACED (as a record in the destination's store) at its `For`, not here:
+        // the destination's `__vdb` does not exist yet at this declaration.  The
+        // `null_named` slot the ordinary path mints would be orphaned by the placement.
+        if self.move_pairs.contains_key(&var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
         // Only a slot that OWNS its store gets a backing allocation here.  Reading
         // the one `owns_store` predicate rather than re-deriving ownership from the
         // dep list is what keeps this correct for the borrows the deps cannot see: a

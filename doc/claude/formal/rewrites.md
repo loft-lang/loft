@@ -370,6 +370,42 @@ the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoist
 `smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
 8.4× of Rust on the measuring box, 14/14 hashes unchanged.
 
+### A dying temporary's elements move into the append that consumes them
+
+```
+  (R-MoveAppend) in `for f in call(…) { V += [f] }` where the call MINTS its result
+                 (a borrowed-view return declines), the loop variable's ONLY use
+                 after its binding is that one append (a read after it, a second
+                 append, an append under a further loop all decline), V is an owned
+                 local plain vector of a PLAIN STRUCT element never rebound in the
+                 function, and the call's hidden buffer serves nothing else — the
+                 buffer is PLACED as a record inside V's own `__vdb` store at the
+                 loop (V is in scope there, so its store exists on every path), the
+                 append relocates the element's bytes and ZEROES the source when
+                 source and destination share that store (anything else keeps the
+                 deep copy, which is always correct), and the buffer's free is a
+                 record-level release — the deep walk of what the loop did not
+                 move, then the record's block — inside the store that lives on.
+```
+
+**In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
+element re-CLAIMED its inner vectors in the destination's store, copied them, and freed
+the source's — two claims and two frees per element (23 % of the `fronds` row).  Placing
+the buffer where the elements must end up makes the callee's own delivery put them there,
+and the append is then a shallow relocation whose heap handles never change store.  The
+zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
+under-approximations on purpose; the one that carries values is use-after — falsified by
+removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
+`3 409 0`).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the push
+header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
+cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
+`hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the
+placement in `Output::output_block`, the move arm in `OpCopyRecordEmitter`, the record
+free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
+`Stores::place_record_in`, `Stores::move_record_shallow`, `Stores::free_record_in`.
+Shipped: standalone `fronds` −11 % (396–400k → 354–359k ns/op), the hand-measured
+ceiling reached exactly; hash `ebcfd875` on every run.
+
 ### A leaf carries no frame
 
 ```

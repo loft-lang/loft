@@ -1866,3 +1866,421 @@ fn is_scalar(tp: &Type) -> bool {
             | Type::Enum(_, false, _)
     )
 }
+
+/// @PLN157 § V-j (`@FR-R-MoveAppend`) — one paired move-append: a `for f in call(…)` whose
+/// loop variable's SINGLE use after binding is one append into an owned local vector.  The
+/// call's hidden `__ref` buffer is then PLACED as a record inside the destination's own
+/// `__vdb` store, the append relocates the element's bytes instead of re-claiming and
+/// deep-copying its heap, and the buffer's free is a record-level release inside the store
+/// that lives on.
+#[derive(Clone, Debug)]
+pub struct MoveAppend {
+    /// The hidden `__ref` buffer variable the paired call fills.
+    pub buf: u16,
+    /// The `__vdb` witness variable of the destination — the store the buffer is placed in.
+    pub host_vdb: u16,
+    /// The buffer's holder type (`main_vector<E>`), for the placement and the record free.
+    pub buf_tp: u16,
+    /// The loop variable whose single append becomes the move.
+    pub loop_var: u16,
+    /// The destination vector variable.
+    pub dest: u16,
+    /// The element stride the move relocates, from the group's own `OpPreAllocVector`.
+    pub elem_size: u32,
+}
+
+/// The paired move-appends of `def_nr`'s body, keyed by BUFFER variable
+/// (@PLN157 § V-j, `@FR-R-MoveAppend`).  Every gate here is an under-approximation on
+/// purpose — a declined pairing keeps today's deep copy, which is always correct:
+///
+/// - the iterated expression is a CALL of a loft-defined function that MINTS its result
+///   (`returns_borrowed_view` declines — moving out of a borrowed view would zero a named
+///   vector's elements, the V-j c6 cell), delivered through a trailing `__ref` buffer;
+/// - the loop variable is bound once by the iterator and appears EXACTLY once after it, as
+///   the source of the append group `Set(elm, OpNewRecord(dest)) · OpCopyRecord(f, elm) ·
+///   OpFinishRecord(dest, elm)` — a read after the append would see the zeroed source
+///   (c2/c3/c7 decline), and a group under a FURTHER loop appends once per inner iteration
+///   while the move can only give the element away once (c8's class);
+/// - the destination is an owned local plain vector of a PLAIN STRUCT element (an enum /
+///   nullable element's discriminant is not bytes this move reasons about), never rebound
+///   in the function — a rebind frees the store the buffer was placed in while the buffer
+///   is still written through (the placed record must die with the store that hosts it);
+/// - the buffer serves ONLY this call: its other appearances are its null declaration and
+///   its scope-exit frees.
+#[must_use]
+pub fn move_appends(data: &Data, def_nr: u32) -> HashMap<u16, MoveAppend> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    // The rebind set of the WHOLE function: a destination or buffer reassigned anywhere
+    // declines, wherever the For sits.
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n {
+            // A declaration's two initialisation Sets are not rebinds: the `= null` decl,
+            // and the vector local's binding to its own `__vdb` witness's path
+            // (`v = OpGetField(__vdb_N, 0, tp)`).
+            let init = match to.unspan() {
+                Value::Null => true,
+                Value::Call(d, cargs) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if *w < vars.count() && vars.name(*w).starts_with("__vdb"))
+                }
+                _ => false,
+            };
+            if !init {
+                *set_counts.entry(*v).or_default() += 1;
+            }
+        }
+        false
+    });
+    let mut out: HashMap<u16, MoveAppend> = HashMap::new();
+    let mut dead: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "For block"
+            && let Some(pair) = pair_for_block(bl, data, vars, &set_counts)
+        {
+            // A buffer serving TWO paired loops is a buffer this analysis does not own.
+            if out.remove(&pair.buf).is_some() || dead.contains(&pair.buf) {
+                dead.insert(pair.buf);
+            } else {
+                out.insert(pair.buf, pair);
+            }
+        }
+        false
+    });
+    // The buffer's whole-function uses: one call argument (counted inside its own For by
+    // construction), plus frees.  Any OTHER appearance — a second call, a read, a copy —
+    // declines the pair.
+    out.retain(|buf, _| {
+        // Reconciled counts, because `any_node` descends into a call's arguments too:
+        // every `Var(buf)` in the body must be accounted for as the ONE paired call's
+        // argument or as a free's operand — anything else is a use this analysis does
+        // not understand, and the pair declines.
+        let mut total: u32 = 0;
+        let mut call_args: u32 = 0;
+        let mut free_args: u32 = 0;
+        let mut rebound = false;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(v) if v == buf => total += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let name = data.def(*d).name();
+                    let hits = args
+                        .iter()
+                        .filter(|a| matches!(a.unspan(), Value::Var(v) if v == buf))
+                        .count() as u32;
+                    if name == "OpFreeRef" || name == "OpFreeRefTag" {
+                        free_args += hits;
+                    } else {
+                        call_args += hits;
+                    }
+                }
+                // `Set(buf, Null)` is the declaration; any other Set is a rebind.
+                Value::Set(v, to) if v == buf && !matches!(to.unspan(), Value::Null) => {
+                    rebound = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        let ok = call_args == 1 && total == call_args + free_args && !rebound;
+        if !ok && std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!("[move] buf {} uses: total={total} call_args={call_args} free_args={free_args} rebound={rebound}", vars.name(*buf));
+        }
+        ok
+    });
+    out
+}
+
+/// The § V-j pairing of ONE `For` block, or `None` — see [`move_appends`] for the gates.
+fn pair_for_block(
+    bl: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+) -> Option<MoveAppend> {
+    let trace = std::env::var("LOFT_TRACE_MOVE").is_ok();
+    // ops = [Set(_vector, Call(d, [.., Var(buf)])), Set(idx, -1), Loop(..)]
+    let Some(Value::Set(_, call)) = bl.operators.first().map(Value::unspan) else {
+        if trace {
+            eprintln!(
+                "[move] no leading Set: first={:?}",
+                bl.operators.first().map(|v| kind_of(v))
+            );
+        }
+        return None;
+    };
+    let Value::Call(d, cargs) = call.unspan() else {
+        if trace {
+            eprintln!("[move] Set rhs not a Call: {}", kind_of(call));
+        }
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    let callee = data.def(*d);
+    if !callee.is_loft_defined() || callee.returns_borrowed_view() {
+        if trace {
+            eprintln!(
+                "[move] callee {} loft={} borrowed={}",
+                callee.name(),
+                callee.is_loft_defined(),
+                callee.returns_borrowed_view()
+            );
+        }
+        return None;
+    }
+    let Some(Value::Var(buf)) = cargs.last().map(Value::unspan) else {
+        if trace {
+            eprintln!("[move] last arg not Var: {:?}", cargs.last().map(kind_of));
+        }
+        return None;
+    };
+    let buf = *buf;
+    if buf >= vars.count()
+        || !vars.name(buf).starts_with("__ref")
+        || !matches!(vars.tp(buf).peel_link(), Type::Vector(_, _))
+    {
+        if trace {
+            eprintln!(
+                "[move] buf gate: name={} tp-vector={}",
+                vars.name(buf),
+                matches!(vars.tp(buf).peel_link(), Type::Vector(_, _))
+            );
+        }
+        return None;
+    }
+    let lp = bl.operators.iter().find_map(|op| match op.unspan() {
+        Value::Loop(lp) => Some(lp),
+        _ => None,
+    })?;
+    let Some(Value::Set(loop_var, _)) = lp.operators.first().map(Value::unspan) else {
+        return None;
+    };
+    let loop_var = *loop_var;
+    // One rebind only — the iterator's own Set.  A second write to f anywhere declines.
+    if set_counts.get(&loop_var).copied().unwrap_or(0) != 1 {
+        return None;
+    }
+    // Scan the loop past the iterator binding: exactly one append group with f as its
+    // source, no use of f after it, no group under a nested loop.
+    let mut scan = MoveScan {
+        loop_var,
+        copies: 0,
+        group: None,
+        use_after: false,
+        bad: false,
+    };
+    for op in lp.operators.iter().skip(1) {
+        scan_move(op, data, &mut scan, 0);
+    }
+    if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+        eprintln!(
+            "[move] scan: copies={} bad={} use_after={} group={:?}",
+            scan.copies, scan.bad, scan.use_after, scan.group
+        );
+    }
+    let (dest, elem_size) = scan.group?;
+    if scan.bad || scan.use_after || scan.copies != 1 {
+        return None;
+    }
+    if dest >= vars.count() || !owned_local(vars, dest) {
+        if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!("[move] dest {} not owned local", vars.name(dest));
+        }
+        return None;
+    }
+    // Never rebound: the placed buffer record must die with the store that hosts it, and a
+    // rebind frees that store mid-flight.
+    if set_counts.get(&dest).copied().unwrap_or(0) != 0 {
+        if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!(
+                "[move] dest {} rebound {}x",
+                vars.name(dest),
+                set_counts[&dest]
+            );
+        }
+        return None;
+    }
+    let trace2 = std::env::var("LOFT_TRACE_MOVE").is_ok();
+    let Type::Vector(elem, _) = vars.tp(dest).peel_link() else {
+        if trace2 {
+            eprintln!(
+                "[move] dest {} not a vector: {:?}",
+                vars.name(dest),
+                vars.tp(dest)
+            );
+        }
+        return None;
+    };
+    // A plain struct element only: the moved bytes are fields, and zeroing the source is
+    // "owns nothing now" in every field kind; an enum's discriminant is not such a field.
+    if plain_record_type(data, elem).is_none() {
+        if trace2 {
+            eprintln!("[move] elem not plain record: {elem:?}");
+        }
+        return None;
+    }
+    let Type::Reference(ed, _) = elem.peel_link() else {
+        if trace2 {
+            eprintln!("[move] elem not Reference");
+        }
+        return None;
+    };
+    let elem_name = elem.name(data);
+    let _ = ed;
+    let buf_tp = data.name_type(&format!("main_vector<{elem_name}>"), 0);
+    if buf_tp == u16::MAX {
+        if trace2 {
+            eprintln!("[move] no main_vector<{elem_name}> type");
+        }
+        return None;
+    }
+    // The host store: the destination's own `__vdb` witness, named by its type's deps.
+    let deps = vars.tp(dest).depend();
+    let mut vdbs = deps
+        .iter()
+        .filter(|dv| vars.name(**dv).starts_with("__vdb"));
+    let Some(host_vdb) = vdbs.next().copied() else {
+        if trace2 {
+            eprintln!("[move] dest {} has no __vdb dep: {deps:?}", vars.name(dest));
+        }
+        return None;
+    };
+    if vdbs.next().is_some() {
+        if trace2 {
+            eprintln!("[move] dest {} has 2+ __vdb deps", vars.name(dest));
+        }
+        return None;
+    }
+    Some(MoveAppend {
+        buf,
+        host_vdb,
+        buf_tp,
+        loop_var,
+        dest,
+        elem_size,
+    })
+}
+
+struct MoveScan {
+    loop_var: u16,
+    copies: u32,
+    /// `(dest, elem_size)` of the one valid append group.
+    group: Option<(u16, u32)>,
+    use_after: bool,
+    bad: bool,
+}
+
+/// Preorder walk for [`pair_for_block`]: finds the append groups, counts the loop
+/// variable's other appearances, and tracks whether anything reads it after the move.
+fn scan_move(v: &Value, data: &Data, scan: &mut MoveScan, loop_depth: u32) {
+    match v.unspan() {
+        Value::Block(bl) => {
+            let mut i = 0;
+            while i < bl.operators.len() {
+                // The group: [OpPreAllocVector(dest, 1, SIZE)] · Set(elm, OpNewRecord(dest,
+                // tp, MAX)) · OpCopyRecord(f, elm, _) · OpFinishRecord(dest, elm, ..).
+                if let Some((dest, elm, size)) = group_head(&bl.operators, i, data)
+                    && let Some(Value::Call(cd, cargs)) = bl.operators.get(i + 2).map(Value::unspan)
+                    && data.def(*cd).name() == "OpCopyRecord"
+                    && matches!(cargs.first().map(Value::unspan), Some(Value::Var(f)) if *f == scan.loop_var)
+                    && matches!(cargs.get(1).map(Value::unspan), Some(Value::Var(e)) if *e == elm)
+                    && let Some(Value::Call(fd, fargs)) = bl.operators.get(i + 3).map(Value::unspan)
+                    && data.def(*fd).name() == "OpFinishRecord"
+                    && matches!(fargs.first().map(Value::unspan), Some(Value::Var(dv)) if *dv == dest)
+                {
+                    scan.copies += 1;
+                    if scan.copies > 1 || loop_depth > 0 {
+                        scan.bad = true;
+                    } else {
+                        scan.group = Some((dest, size));
+                    }
+                    // The group's own nodes are accounted; a SECOND group or any later
+                    // use still flips the flags above.
+                    i += 4;
+                    continue;
+                }
+                scan_move(&bl.operators[i], data, scan, loop_depth);
+                i += 1;
+            }
+        }
+        Value::Loop(lp) => {
+            for op in &lp.operators {
+                scan_move(op, data, scan, loop_depth + 1);
+            }
+        }
+        Value::Var(f) if *f == scan.loop_var => {
+            if scan.group.is_some() {
+                scan.use_after = true;
+            }
+        }
+        // An OpCopyRecord with f as source OUTSIDE the exact group shape: not movable.
+        Value::Call(d, args) => {
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpCopyRecord"
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(f)) if *f == scan.loop_var)
+            {
+                scan.bad = true;
+            }
+            for a in args {
+                scan_move(a, data, scan, loop_depth);
+            }
+        }
+        Value::Set(_, to) => scan_move(to, data, scan, loop_depth),
+        Value::If(c, t, e) => {
+            scan_move(c, data, scan, loop_depth);
+            scan_move(t, data, scan, loop_depth);
+            scan_move(e, data, scan, loop_depth);
+        }
+        Value::Return(r) => scan_move(r, data, scan, loop_depth),
+        _ => {}
+    }
+}
+
+/// The `Set(elm, OpNewRecord(dest, _, u16::MAX))` head of an append group at `i`
+/// (`i` may point at the optional `OpPreAllocVector` before it) — answers
+/// `(dest, elm, elem_size)`.
+fn group_head(ops: &[Value], i: usize, data: &Data) -> Option<(u16, u16, u32)> {
+    // The stride comes from the group's own OpPreAllocVector — the parser's exact number.
+    let (set_at, size) = if let Some(Value::Call(pd, pargs)) = ops.get(i).map(Value::unspan)
+        && data.def(*pd).name() == "OpPreAllocVector"
+        && let Some(Value::Int(sz)) = pargs.get(2).map(Value::unspan)
+    {
+        (i + 1, u32::try_from(*sz).ok()?)
+    } else {
+        return None;
+    };
+    // Only the shifted shape below is matched, so callers pass the PreAlloc index.
+    let Some(Value::Set(elm, rhs)) = ops.get(set_at).map(Value::unspan) else {
+        return None;
+    };
+    let Value::Call(nd, nargs) = rhs.unspan() else {
+        return None;
+    };
+    if data.def(*nd).name() != "OpNewRecord" {
+        return None;
+    }
+    let Some(Value::Var(dest)) = nargs.first().map(Value::unspan) else {
+        return None;
+    };
+    Some((*dest, *elm, size))
+}
+
+/// Debug label for the move trace.
+fn kind_of(v: &Value) -> &'static str {
+    match v.unspan() {
+        Value::Set(_, _) => "Set",
+        Value::Call(_, _) => "Call",
+        Value::Block(_) => "Block",
+        Value::Loop(_) => "Loop",
+        Value::Var(_) => "Var",
+        Value::Null => "Null",
+        _ => "other",
+    }
+}

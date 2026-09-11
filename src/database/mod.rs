@@ -2053,6 +2053,63 @@ impl Stores {
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
     }
 
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — place a call's return buffer as a RECORD inside
+    /// `host`'s store, so what the callee builds into it is claimed where the consuming
+    /// append wants the elements to live.  The record is shaped exactly as `OpDatabase`
+    /// shapes a fresh-store buffer (type tag at word 1, content defaulted, `pos` 8); only
+    /// the store differs.  The store's `known_type` is the HOST's and stays untouched.
+    #[must_use]
+    pub fn place_record_in(&mut self, host: &crate::keys::DbRef, db_tp: u16) -> crate::keys::DbRef {
+        let size = self.enum_parent_size(db_tp);
+        let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
+        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
+        self.set_default_value(db_tp, &r);
+        r
+    }
+
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the move-append: relocate `size` bytes of the
+    /// dying temporary's element into the fresh destination element and ZERO the source,
+    /// both in ONE store — the element's heap handles stay valid because they never change
+    /// store, and the zeroed source is what keeps the temporary's own clear and free from
+    /// releasing what it no longer owns.  The caller dispatches on store identity and takes
+    /// the deep copy when they differ; this is only the same-store arm.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the two elements do NOT share a store —
+    /// the caller's dispatch failed.  Never in the emitted default.
+    pub fn move_record_shallow<const VERIFY: bool>(
+        &mut self,
+        src: &crate::keys::DbRef,
+        dst: &crate::keys::DbRef,
+        size: u32,
+    ) {
+        if VERIFY {
+            assert_eq!(
+                src.store_nr, dst.store_nr,
+                "move-append across stores — the same-store dispatch let a cross-store pair through"
+            );
+        }
+        self.copy_block(src, dst, size);
+        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
+    }
+
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
+    /// lives on: the deep release of what the record still owns (elements the loop did not
+    /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`
+    /// performed for a fresh-store buffer released the whole STORE; a placed buffer's store
+    /// is the destination's and must survive.
+    pub fn free_record_in(&mut self, db: &crate::keys::DbRef, db_tp: u16) {
+        if db.store_nr == u16::MAX
+            || db.rec == 0
+            || (db.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        self.remove_claims(db, db_tp);
+        self.allocations[db.store_nr as usize].delete(db.rec);
+    }
+
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_ref_or_raise`.  Same body; native rewriter
     /// translates `s.vec_ref_or_raise(...)` →

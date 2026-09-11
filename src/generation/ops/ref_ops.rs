@@ -32,6 +32,20 @@ pub struct OpFreeRefEmitter;
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [db_val] = args {
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — a PLACED buffer is a record inside the
+            // destination's store, so its free is a record-level release (the deep walk of
+            // whatever the loop did not move — a `break`'s leftovers — then the record's
+            // own block), never the store free `OpFreeRef` performs: that store is the
+            // destination's and lives on.
+            if let Value::Var(v) = db_val.unspan()
+                && let Some(pair) = ctx.output.move_pairs.get(v)
+            {
+                let tp = pair.buf_tp;
+                write!(ctx.w, "stores.free_record_in(&(")?;
+                ctx.emit(db_val)?;
+                write!(ctx.w, "), {tp}u16)")?;
+                return Ok(());
+            }
             // S34/S35: skip_free variables share a slot with an outer variable
             // that already owns the record; suppressing their OpFreeRef
             // prevents a double-free.
@@ -328,6 +342,57 @@ pub struct OpCopyRecordEmitter;
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [src, dst, tp_val] = args {
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the
+            // source is the armed loop variable and both elements share a store (the
+            // placed buffer landed the callee's result beside the destination), the
+            // element's bytes RELOCATE and the source is zeroed; anything else — a null
+            // element, a callee that returned another store — keeps the deep copy, which
+            // is always correct.
+            if let Value::Var(f) = src.unspan()
+                && let Some(pair) = ctx.output.active_move_pair(*f)
+            {
+                let size = pair.elem_size;
+                let verify = if ctx.output.hoist_verify {
+                    "true"
+                } else {
+                    "false"
+                };
+                write!(ctx.w, "{{ if ")?;
+                ctx.emit(src)?;
+                write!(ctx.w, ".store_nr == ")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, ".store_nr && ")?;
+                ctx.emit(src)?;
+                write!(ctx.w, ".rec != 0 && ")?;
+                ctx.emit(dst)?;
+                write!(
+                    ctx.w,
+                    ".rec != 0 {{ stores.move_record_shallow::<{verify}>(&("
+                )?;
+                ctx.emit(src)?;
+                write!(ctx.w, "), &(")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, "), {size}) }} else {{ ")?;
+                emit_copy_plain(ctx, src, dst, tp_val)?;
+                write!(ctx.w, " }} }}")?;
+                return Ok(());
+            }
+            emit_copy_plain(ctx, src, dst, tp_val)?;
+        }
+        Ok(())
+    }
+}
+
+/// The plain (deep) `OpCopyRecord` emission — the pre-§ V-j form, and the fallback arm the
+/// move dispatches to.
+fn emit_copy_plain(
+    ctx: &mut EmitCtx<'_, '_>,
+    src: &Value,
+    dst: &Value,
+    tp_val: &Value,
+) -> io::Result<()> {
+    {
+        {
             // #250: when the copy type is a nested vector, resolve its id at
             // RUNTIME (order-independent) rather than trusting the parser's
             // literal — the two diverge in native at 3+ nesting depth.  The
@@ -370,8 +435,8 @@ impl OpEmitter for OpCopyRecordEmitter {
             ctx.emit_i32_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
-        Ok(())
     }
+    Ok(())
 }
 
 /// `OpSizeofRef` — record size of a reference.  `args`: `[val]`.

@@ -658,6 +658,18 @@ pub struct Output<'a> {
     /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
     /// at the slot and at the finish).
     pub record_push_disabled: bool,
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
+    /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
+    pub move_pairs: HashMap<u16, hoist::MoveAppend>,
+    /// The same pairs keyed by LOOP VARIABLE, for the copy emitter's gate.
+    pub move_by_loopvar: HashMap<u16, hoist::MoveAppend>,
+    /// The loop variables of the paired `For` blocks currently being emitted, innermost
+    /// last — an `OpCopyRecord` whose source is one of these emits the move.
+    pub active_move_vars: Vec<u16>,
+    /// `LOFT_NO_MOVE_APPEND=1` — a paired append keeps the deep copy, as before @PLN157
+    /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
+    /// `for f in call(…) {{ v += [f] }}` loop.
+    pub move_append_disabled: bool,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -1582,6 +1594,10 @@ impl<'a> Output<'a> {
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
+            move_pairs: HashMap::new(),
+            move_by_loopvar: HashMap::new(),
+            active_move_vars: Vec::new(),
+            move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1821,6 +1837,18 @@ impl Output<'_> {
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.indent = 0;
+        // @PLN157 § V-j — the function's paired move-appends, before anything emits.
+        self.move_pairs = if self.move_append_disabled {
+            HashMap::new()
+        } else {
+            hoist::move_appends(self.data, def_nr)
+        };
+        self.move_by_loopvar = self
+            .move_pairs
+            .values()
+            .map(|p| (p.loop_var, p.clone()))
+            .collect();
+        self.active_move_vars.clear();
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
@@ -2210,6 +2238,38 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// The § V-j move-append pair of this `For` block, if it is one — recognised by the
+    /// buffer variable its first statement's call carries (@PLN157 § V-j,
+    /// `@FR-R-MoveAppend`).
+    #[must_use]
+    pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {
+        if bl.name != "For block" || self.move_pairs.is_empty() {
+            return None;
+        }
+        let Value::Set(_, call) = bl.operators.first()?.unspan() else {
+            return None;
+        };
+        let Value::Call(_, cargs) = call.unspan() else {
+            return None;
+        };
+        let Value::Var(buf) = cargs.last()?.unspan() else {
+            return None;
+        };
+        self.move_pairs.get(buf)
+    }
+
+    /// The § V-j move pair whose LOOP VARIABLE is `v` while its `For` is being emitted —
+    /// the copy emitter's gate: an `OpCopyRecord` from an armed loop variable is the
+    /// paired append's copy, and emits the move.
+    #[must_use]
+    pub fn active_move_pair(&self, v: u16) -> Option<&hoist::MoveAppend> {
+        if self.active_move_vars.contains(&v) {
+            self.move_by_loopvar.get(&v)
+        } else {
+            None
+        }
     }
 
     /// Whether this push is emitted through a hoisted push header (@PLN157 § V-q): the

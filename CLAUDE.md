@@ -732,6 +732,12 @@ mint-group templates — with it on, a no-heap struct element is built IN the pu
 next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
 explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
 default value or length out of a record-appending loop.
+**`LOFT_NO_MOVE_APPEND=1`** (@PLN157 § V-j) makes `for f in call(…) { v += [f] }` keep the
+deep copy — with it on, the call's buffer is PLACED as a record in `v`'s own store, the
+append relocates the element's bytes (heap handles included — they never change store) and
+zeroes the source, and the buffer's free is record-level — and is the bisect step for a
+wrong element, a leak or a double free out of a loop that appends a dying temporary's
+elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live

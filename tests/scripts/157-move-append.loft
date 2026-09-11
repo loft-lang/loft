@@ -1,0 +1,94 @@
+// @PLN157 § V-j (loft#1426 M2) — the move-append on the native backend: in
+// `for f in call(…) { v += [f] }` where the loop variable's single use after
+// binding is that one append, the call's hidden buffer is PLACED as a record in
+// `v`'s own store, the append relocates the element's bytes (its heap handles
+// stay valid — they never change store) and zeroes the source, and the buffer's
+// free is a record-level release inside the store that lives on.  The
+// interpreter keeps the deep copy and is the oracle.  The cells pin the
+// boundary from both sides:
+//   - the base shape, a `break` (the record free releases the leftovers), an
+//     append under an `if` arm, a text-carrying element, and a no-heap element
+//     (composing with § V-t's record push) all pair;
+//   - a read of `f` AFTER the append, a double append, a named source, an
+//     append under a further loop, a rebound destination and a non-struct
+//     element keep the deep copy.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-j-move-append-cells.loft
+// (tests/move_append.rs pins which loops pair); this file carries the VALUE
+// cells that must hold whatever the emitter decides.
+// `LOFT_NO_MOVE_APPEND=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-11) — the pairing's use-after
+// gate removed turns the read-after-append cell red on --native (`3 409 45` →
+// `3 409 0`: the read sees the zeroed source); restored, interpret / native /
+// LOFT_POISON / LOFT_NO_MOVE_APPEND all green.
+
+struct In { a: integer, b: float }
+struct R { id: integer, ins: vector<In>, ws: vector<float> }
+struct Pt2 { x: float, y: float }
+
+fn mk(n: integer, seed: integer) -> vector<R> {
+  out: vector<R> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    ws: vector<float> = [];
+    for j in 0..(i + 1) {
+      ins += [In { a: seed * 10 + i * 3 + j, b: (j as float) * 0.5 }];
+      ws += [(seed + i + j) as float];
+    }
+    out += [R { id: seed * 100 + i, ins: ins, ws: ws }];
+  }
+  out
+}
+
+fn mkp(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: ((i * i) as float) ?? 0.0 }]; }
+  out
+}
+
+fn sum_r(v: const vector<R>) -> integer {
+  s = 0;
+  for r in v {
+    s += r.id;
+    for x in r.ins { s += x.a; }
+    for w in r.ws { s += w as integer; }
+  }
+  s
+}
+
+fn main() {
+  // The base shape: the child's elements arrive by MOVE, values exact.
+  out1: vector<R> = [];
+  for f in mk(3, 1) { out1 += [f]; }
+  assert(len(out1) == 3 && sum_r(out1) == 409,
+    "a moved append keeps every element, inner vectors included");
+
+  // A read of `f` AFTER the append keeps the deep copy — the read must see the value.
+  out2: vector<R> = []; s2 = 0;
+  for f in mk(3, 1) { out2 += [f]; x = f.ins[0]?; s2 += len(f.ins) + x.a; }
+  assert(len(out2) == 3 && sum_r(out2) == 409 && s2 == 45,
+    "a read after the append sees the source's values — the pair declined");
+
+  // A break: the unmoved leftovers die in the buffer's record-level free, no leak.
+  out3: vector<R> = [];
+  for f in mk(4, 3) { if f.id == 301 { break; } out3 += [f]; }
+  assert(len(out3) == 1 && sum_r(out3) == 333,
+    "a break leaves the rest of the temporary to the record free");
+
+  // Two destinations for one f keep two full copies.
+  a4: vector<R> = []; b4: vector<R> = [];
+  for f in mk(2, 5) { a4 += [f]; b4 += [f]; }
+  a4[0].ins[0].a = 1;
+  assert(sum_r(a4) == 1127 && sum_r(b4) == 1176,
+    "two appends of one element are two independent copies");
+
+  // A no-heap element composes with the record push: both rewrites on one group.
+  out5: vector<Pt2> = []; s5 = 0.0;
+  for f in mkp(30) { out5 += [f]; }
+  for p in out5 { s5 = (s5 + p.x + p.y) ?? 0.0; }
+  assert(len(out5) == 30 && (out5[29]?.y) == 841.0 && s5 == 8990.0,
+    "a no-heap element moves into the push header's slot");
+
+  println("move append ok");
+}
