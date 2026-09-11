@@ -118,7 +118,18 @@ a free function up as `n_<name>`, so the rule is: *a name with ONE definition ke
 compiles today has one definition per name — if it had two it would not compile — so no
 existing key moves.  The only programs whose behaviour changes are ones currently refused.
 
-[IMPL.md](IMPL.md) is the step-by-step design, with a file and line for every claim.
+**3. The hard part is not the key — it is the ORDER.**  Both spellings resolve the definition
+*before* the argument types exist: `find_fn` at `parser/fields.rs:617` runs before
+`parse_method` at `:622`, and `def_nr("n_<name>")` at `parser/control.rs:16602` runs ~180 lines
+before `types.push(t)` at `:16785`.  `find_fn`'s own doc says it — *"a method call's arguments
+are not parsed when its receiver is resolved."*  Multi-parameter dispatch needs the opposite
+order, so resolution becomes two-phase — a candidate SET at the name, SELECTION once the
+types are known — with today's single answer as the degenerate case.  That is why this is `H`
+effort and why phase A of the implementation is five behaviour-preserving steps before
+anything changes.
+
+[IMPL.md](IMPL.md) is the step-by-step design, with a file and line for every claim;
+[RULES.md](RULES.md) is the rule set as amended.
 
 ## Decision — no untyped parameters
 
@@ -144,6 +155,9 @@ Two reasons beyond redundancy:
   subtype) and decidable at compile time — `match` exhaustiveness one level up.  A total
   untyped default makes every call trivially covered, so a forgotten pair becomes a silent
   no-op instead of a refusal.  And it stops `Disp-Specific` being a pure subtype relation.
+
+That check is now a rule — **`Disp-Exhaustive`** in [RULES.md](RULES.md), with its soundness
+argument and the note that it is the one thing Julia's construct structurally cannot have.
 
 Step 6 of [IMPL.md](IMPL.md) is therefore expected to be a no-op.  What would reopen this: a
 case where an argument's type is genuinely unknowable at the call site *and* the body must use
@@ -230,6 +244,8 @@ respectively, not the start.
 
 - [DESIGN.md](DESIGN.md) — the proposal, verbatim.
 - [IMPL.md](IMPL.md) — the implementation design in small steps, measured against the tree.
+- [RULES.md](RULES.md) — the rule set as amended: `Disp-Key`, the restated `Disp-Fallback`,
+  and the new `Disp-Exhaustive`.  Becomes `formal/dispatch.md` when the feature lands.
 - [IMPL.md](IMPL.md) — the implementation design in small steps, measured against the tree.
 - [`loft-lang/plans` #162](https://github.com/loft-lang/plans/issues/162) — `@PLN162`, the
   issue this plan IS.
