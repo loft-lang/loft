@@ -80,9 +80,30 @@ check its verdict before building on it.**
    routes measured NEGATIVE (§ V-u receipts) — the element-first shape is the one to
    hand-measure before code.
 
-The program's own share is ~12.6 %; stacking 1+2 alone projects `fronds` at roughly
-270–290k ns/op (~5.0×), and 3–5 carry it toward the bar.  The pre-fix § V-v profile
-below is kept for the class history it names.
+**Every ceiling above is now HAND-MEASURED (same day, the rustc-first protocol: the
+emitted `.rs` hand-edited and linked with bare `rustc -O`, plus an env-gated probe rlib
+for the runtime levers; every cell hash `ebcfd875`, ABAB best-of-3, `--n 4000`):**
+
+| stack | ns/op (best) | vs base |
+|---|---:|---:|
+| base (tip 6b292d21) | 351 292 | — |
+| **A** — placement reused across re-entries (the loop-exit free deleted by hand; sound here because the host is the returned retbuf) | 292 814 | **−16.6 %** |
+| **A+S** — plus `fd_sides` hoisted above the loop (source-level) | 273 352 | **−22.2 %** |
+| **A+S+P** — plus the mint prefill skipped (`LOFT_PROBE_NO_PREFILL` gating `OpDatabase`/`OpNewRecord`/`place_record_in`'s `set_default_value` in a probe rlib) | 247 372 | **−29.6 %** |
+| A+S+Z — zero-on-claim skipped instead (`LOFT_NO_ZERO_CLAIM=1`, the existing lever) | 265 556 | −24.4 % |
+| A+S+Z+P — both runtime levers | 264 175 | −24.8 % |
+
+Two verified surprises: the zero-claim class measured ~4 %, NOT the ~9 % the sample
+suggested (most of the `bzero` is arena-growth `alloc_zeroed`, untouched by the lever);
+and Z stacked ON TOP of P is reproducibly NEGATIVE (3/3 rounds, 247k → 264k) — the
+claim-zeroing supplies the zeros the skipped prefill no longer writes, so the pair is
+redundant where each alone is profitable, and the implementation should treat
+complete-write as ONE argument that retires both, not two independent skips.  The
+prefill ceiling (−7–8 % beyond A+S) is a GLOBAL skip; the real rewrite only skips where
+the write set is provably complete, so its realizable gain is at or under the ceiling.
+A+S+P lands `fronds` at ~4.3× projected consumer — element-first (item 5, ~6 % class,
+ceiling not yet hand-measured) is the remaining headroom to the bar.  The pre-fix
+§ V-v profile below is kept for the class history it names.
 
 **What remained in `fronds` (6.08×), profiled on the § V-v runtime** (macOS `sample`,
 9 235 samples, `coalesce_free` gone from the table): the arena is still ~41 % but now the
