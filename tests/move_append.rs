@@ -11,8 +11,12 @@
 //! The cell corpus (`bytecode-comparisons/V-j-move-append-cells.loft`) can only say the
 //! VALUES hold; this pins the EMISSION per cell — which loops pair, and that every
 //! declining shape (a read after the append, a double append, a named source, a nested
-//! loop, a rebound destination, a non-struct element) keeps the deep copy — and the
-//! switch (`LOFT_NO_MOVE_APPEND=1`).  Read off `--native-emit`.
+//! loop, a rebound destination, a non-struct element, a struct named like a stdlib
+//! typevar) keeps the deep copy — and the switch (`LOFT_NO_MOVE_APPEND=1`).  Read off
+//! `--native-emit`.  Every paired cell counts TWO record frees: the placed record dies
+//! at its LOOP's exit (the destination's store can die before scope end and its slot be
+//! recycled — the 2026-09-11 gate corruption), and the buffer attr's scope-end free
+//! stays as the no-op that covers a return from inside the loop.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,25 +27,29 @@ const CELLS: &str =
 /// `(function, placements, moves, record frees)` — the predictions written beside the
 /// cells before the emitters existed.
 const EXPECTED: &[(&str, usize, usize, usize)] = &[
-    ("n_c1", 1, 1, 1), // the base shape pairs
+    ("n_c1", 1, 1, 2), // the base shape pairs
     ("n_c2", 0, 0, 0), // f read after the append — declines
     ("n_c3", 0, 0, 0), // the same f appended twice — declines
     ("n_c4", 0, 0, 0), // a NAMED source (no call in the For header) — declines
-    ("n_c5", 1, 1, 1), // break: pairs; the leftovers die in the record free
-    ("n_c6", 1, 1, 1), // a view-returning call still DELIVERS a copy into the placed
+    ("n_c5", 1, 1, 2), // break: pairs; the leftovers die in the record free
+    ("n_c6", 1, 1, 2), // a view-returning call still DELIVERS a copy into the placed
     // buffer, so the move relocates that copy; the same-store dispatch guards the rest
     ("n_c7", 0, 0, 0),       // two destinations for one f — declines
-    ("n_c8", 1, 1, 1),       // the INNER call pairs; the outer f (under the inner loop) declines
+    ("n_c8", 1, 1, 2),       // the INNER call pairs; the outer f (under the inner loop) declines
     ("n_c9", 0, 0, 0),       // an inner record of the temporary — the source is not the loop var
     ("n_c10", 0, 0, 0),      // vector<R?> — not a plain struct element
-    ("n_c11", 1, 1, 1),      // a text field rides the moved bytes (same-store handles)
-    ("n_c12", 1, 1, 1),      // the append under an `if` arm runs at most once per iteration
+    ("n_c11", 1, 1, 2),      // a text field rides the moved bytes (same-store handles)
+    ("n_c12", 1, 1, 2),      // the append under an `if` arm runs at most once per iteration
     ("n_c13", 0, 0, 0),      // a container element — declines
     ("n_c14", 0, 0, 0),      // the append under a FURTHER loop — declines (c8's falsifier)
     ("n_c15", 0, 0, 0),      // the destination is reassigned later — declines
-    ("n_c16", 1, 1, 1),      // a no-heap element: composes with § V-t's record push
+    ("n_c16", 1, 1, 2),      // a no-heap element: composes with § V-t's record push
     ("n_collect2", 0, 0, 0), // c17: the callee re-inits its buffer store — declines
     ("n_collectr", 0, 0, 0), // c18: the same through direct recursion — declines
+    ("n_c19", 0, 0, 0),      // a struct NAMED `T`: the name-based wrapper lookup finds the
+    // generic template (typevar field), so the wrapper-identity check declines
+    ("n_c20", 1, 1, 2), // loop 1 pairs and its dest dies early; loop 2 declines (read-after)
+    ("n_c21", 1, 1, 2), // an enclosing loop re-enters: the loop-exit free re-arms the placement
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

@@ -1285,8 +1285,10 @@ What `loft introspect` says about c1: the append of a loop variable lowers to
 later use of `f`, because @F106's move applies to a local that OWNS its value (a minted
 literal), and a loop variable over a call's result is a view; the `avoidable-copy` advice
 is therefore silent on c1 and fires on c2/c3/c7/c8 for the wrong reason (a later use it
-could not have moved anyway).  The temporary itself (`__ref_1`) is freed at SCOPE EXIT,
-not after the loop, so a move-append does not shorten any lifetime the rules name.
+could not have moved anyway).  The temporary itself (`__ref_1`) was freed at SCOPE EXIT in the
+pre-move world — safe there, because the free released the buffer's own store.  A PLACED
+buffer's record must instead die at the LOOP's exit (see the shipped addendum below): the
+host store can die before scope end and its slot be recycled.
 
 ## V-j — the copy into a fresh element, and the move's ceiling (2026-09-09)
 
@@ -1373,6 +1375,28 @@ entry clear; and the `For` wrapper block's IR name is `"For block"`, not `"For"`
 first matcher draft silently found nothing.  Switch `LOFT_NO_MOVE_APPEND`;
 `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.  `tests/move_append.rs` pins
 the per-cell emission; `tests/scripts/157-move-append.loft` carries the value cells.
+
+**Addendum (same day, found by the GitHub gate — run 34635309871, `native_scripts` red):
+two lifetime defects, both falsified on the landing build (a6f30ae7) and closed.**
+(1) *The placed record outlived its host store.*  The record-level free rode the buffer
+attr's scope-end `OpFreeRef`, but the DESTINATION's store dies at its last read — earlier
+than scope end whenever the destination is not read again — and a later store recycles the
+slot, so the deferred `free_record_in` deleted a record inside whatever owned the slot by
+then (values right, teardown corrupt: the #796 walker refused a float-bit "edge", then the
+out-of-bounds panic).  One loop per function never showed it — the slot needs a RECYCLER —
+which is why the landing suite (its `native_scripts` timed out locally, misread as the
+cold-cache class) and every single-cell probe stayed green.  Fix: the free is emitted at
+the For block's exit and NULLS the buffer var (`emit.rs`); the scope-end arm stays as the
+no-op that covers a `return` from inside the loop, so every paired cell now pins TWO
+`free_record_in` sites.  The nulled var also re-arms the place-once guard, so an enclosing
+loop re-enters with a FRESH placement (cell c21).  (2) *The buffer type's name-based
+lookup.*  `main_vector<{elem}>` for a struct named `T` finds the stdlib's GENERIC template
+— its `vector` field still carries `__typevar_T`, and a record-level walk through it
+misreads every element.  The pairing now requires the wrapper's `vector` attribute to name
+OUR element and declines otherwise (cell c19; the corpus's own text-pairing struct,
+accidentally named `T`, was renamed `Tx` so c11 keeps its purpose).  The def sharing
+itself is loft#1519 (registration, needs design).  Cells c19–c21 land in the corpus and
+the value shapes in the guard script; 21/21 exact on both backends under `LOFT_POISON=1`.
 
 ## V-k — the append path's bookkeeping (2026-09-09)
 

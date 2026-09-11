@@ -2295,10 +2295,11 @@ impl Output<'_> {
             writeln!(w, "{prefix}")?;
         }
         // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
-        // call's buffer as a record in the destination's own store (once — an enclosing
-        // loop re-enters with it live), and arm the loop variable so the append's
-        // OpCopyRecord emits the move.  The destination's `__vdb` is live here by
-        // scoping: the loop appends to it, so its declaration already ran.
+        // call's buffer as a record in the destination's own store, and arm the loop
+        // variable so the append's OpCopyRecord emits the move.  The destination's
+        // `__vdb` is live here by scoping: the loop appends to it, so its declaration
+        // already ran.  The guard re-places after the block-exit free below nulled the
+        // var — an enclosing loop's next entry gets a fresh placed buffer.
         let move_pair = self.move_pair_for_block(bl).cloned();
         if let Some(pair) = &move_pair {
             let vars = self.data.def(self.def_nr).variables();
@@ -2767,8 +2768,23 @@ impl Output<'_> {
                 writeln!(w, "{}", default_native_value(&bl.result))?;
             }
         }
-        if move_pair.is_some() {
+        if let Some(pair) = &move_pair {
             self.active_move_vars.pop();
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — the placed record dies WITH the loop,
+            // never at the buffer attr's scope end: the destination's store can die
+            // earlier (dead after its last read), and a later store can recycle its
+            // slot, so a deferred `free_record_in` would delete a record inside
+            // whatever lives there now (the p12/p13 corruption, 2026-09-11).  Nulling
+            // the var makes the scope-end free a no-op and re-arms the placement
+            // guard for an enclosing loop's next entry.
+            let vars = self.data.def(self.def_nr).variables();
+            let buf = super::sanitize(vars.name(pair.buf));
+            self.indent(w)?;
+            writeln!(
+                w,
+                "stores.free_record_in(&(var_{buf}), {}u16); var_{buf} = DbRef::NULL; //@PLN157 § V-j placed buffer freed with its loop",
+                pair.buf_tp
+            )?;
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;

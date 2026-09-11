@@ -2143,11 +2143,35 @@ fn pair_for_block(
         return None;
     };
     let elem_name = elem.name(data);
-    let _ = ed;
     let buf_tp = data.name_type(&format!("main_vector<{elem_name}>"), 0);
     if buf_tp == u16::MAX {
         if trace2 {
             eprintln!("[move] no main_vector<{elem_name}> type");
+        }
+        return None;
+    }
+    // The lookup above is BY NAME, and a user struct named like a stdlib type
+    // variable shares its wrapper's name with the GENERIC template (a struct `T`
+    // finds `main_vector<T>` whose `vector` field still carries `__typevar_T`) —
+    // a record-level walk through that def misreads every element as the
+    // typevar's layout (the c11 refusal, 2026-09-11).  The def is a valid buffer
+    // type only when its `vector` attribute names OUR element; anything else
+    // declines the pairing and the deep copy stays, which is always correct.
+    let wrapper = data.def_nr(&format!("main_vector<{elem_name}>"));
+    let wrapper_elem_is_ours = wrapper != u32::MAX && {
+        let a = data.attr(wrapper, "vector");
+        a != usize::MAX
+            && matches!(
+                data.attr_type(wrapper, a).peel_link(),
+                Type::Vector(e, _)
+                    if matches!(e.peel_link(), Type::Reference(d2, _) if d2 == ed)
+            )
+    };
+    if !wrapper_elem_is_ours {
+        if trace2 {
+            eprintln!(
+                "[move] main_vector<{elem_name}> is not OUR element's wrapper (a name collision with a generic template) — declined"
+            );
         }
         return None;
     }

@@ -386,6 +386,15 @@ the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoist
                  deep copy, which is always correct), and the buffer's free is a
                  record-level release — the deep walk of what the loop did not
                  move, then the record's block — inside the store that lives on.
+                 Two lifetime conditions bound the placement: the placed record
+                 dies AT THE LOOP'S EXIT, never at the buffer attr's scope end —
+                 V's store can die before scope end (dead after its last read) and
+                 a later store recycle its slot, so a deferred release deletes a
+                 record inside whatever owns the slot by then; and the buffer's
+                 type must be V's ELEMENT's own wrapper — the lookup is by name,
+                 and a struct named like a stdlib type variable finds the GENERIC
+                 template whose field still carries the typevar, which a
+                 record-level walk misreads (such a name declines the pairing).
 ```
 
 **In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
@@ -396,8 +405,12 @@ and the append is then a shallow relocation whose heap handles never change stor
 zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
 under-approximations on purpose; the one that carries values is use-after — falsified by
 removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
-`3 409 0`).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the push
-header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
+`3 409 0`).  Both lifetime conditions were falsified on the build that lacked them
+(2026-09-11, a6f30ae7): the scope-end release corrupted a recycled store slot — values
+right, teardown walked another store's live records (the red `native_scripts` gate) —
+and a corpus struct named `T` was walked through `main_vector<T>`'s typevar field (the
+c19/c20/c21 cells).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
+push header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
 cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
 `hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the
 placement in `Output::output_block`, the move arm in `OpCopyRecordEmitter`, the record

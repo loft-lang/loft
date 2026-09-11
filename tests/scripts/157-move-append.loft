@@ -21,11 +21,16 @@
 // @falsified-at: hand-measured (sabotage, 2026-09-11) — the pairing's use-after
 // gate removed turns the read-after-append cell red on --native (`3 409 45` →
 // `3 409 0`: the read sees the zeroed source); restored, interpret / native /
-// LOFT_POISON / LOFT_NO_MOVE_APPEND all green.
+// LOFT_POISON / LOFT_NO_MOVE_APPEND all green.  The three later cells carry
+// their own falsification (same day, pre-fix build a6f30ae7): the early-dying
+// destination corrupted the recycled store slot (the #796 walk, then a store
+// panic — the red native_scripts gate), and the struct named `T` was walked
+// through the generic template's typevar field.
 
 struct In { a: integer, b: float }
 struct R { id: integer, ins: vector<In>, ws: vector<float> }
 struct Pt2 { x: float, y: float }
+struct T { name: text, ins: vector<In> }
 
 fn mk(n: integer, seed: integer) -> vector<R> {
   out: vector<R> = [];
@@ -44,6 +49,16 @@ fn mk(n: integer, seed: integer) -> vector<R> {
 fn mkp(n: integer) -> vector<Pt2> {
   out: vector<Pt2> = [];
   for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: ((i * i) as float) ?? 0.0 }]; }
+  out
+}
+
+fn mkc(n: integer, seed: integer) -> vector<T> {
+  out: vector<T> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
+    out += [T { name: "n{seed}-{i}", ins: ins }];
+  }
   out
 }
 
@@ -89,6 +104,36 @@ fn main() {
   for p in out5 { s5 = (s5 + p.x + p.y) ?? 0.0; }
   assert(len(out5) == 30 && (out5[29]?.y) == 841.0 && s5 == 8990.0,
     "a no-heap element moves into the push header's slot");
+
+  // The first destination is never read again: its store dies at this line, and the
+  // next loop's stores recycle the slot.  The placed record's free must ride the
+  // LOOP's exit — freed at the buffer attr's scope end it deletes a record inside
+  // whatever owns the slot by then (the 2026-09-11 native_scripts gate corruption).
+  dead: vector<R> = [];
+  for f in mk(3, 1) { dead += [f]; }
+  after: vector<R> = []; s6 = 0;
+  for f in mk(3, 1) { after += [f]; x = f.ins[0]?; s6 += len(f.ins) + x.a; }
+  assert(len(after) == 3 && sum_r(after) == 409 && s6 == 45,
+    "an early-dying destination leaves the recycled slot's new store intact");
+
+  // A struct named like a stdlib TYPE VARIABLE: the wrapper lookup is by name, so
+  // `main_vector<T>` finds the GENERIC template (typevar field) — the pairing declines
+  // on the wrapper-identity check and the deep copy keeps the values right.
+  ct: vector<T> = []; s7 = 0;
+  for f in mkc(2, 5) { ct += [f]; }
+  for t in ct { s7 += len(t.name); for xi in t.ins { s7 += xi.a; } }
+  assert(len(ct) == 2 && s7 == 165 && (ct[1]?).name == "n5-1",
+    "a struct named T declines the pairing and keeps exact values");
+
+  // An enclosing loop re-enters the paired block: the loop-exit free re-arms the
+  // placement, so each outer iteration gets a fresh placed buffer.
+  tl = 0; tt = 0;
+  for k in 0..2 {
+    dest: vector<R> = [];
+    for f in mk(2, k) { dest += [f]; }
+    tl += len(dest); tt += sum_r(dest);
+  }
+  assert(tl == 4 && tt == 255, "re-entry re-places; both entries' values exact");
 
   println("move append ok");
 }

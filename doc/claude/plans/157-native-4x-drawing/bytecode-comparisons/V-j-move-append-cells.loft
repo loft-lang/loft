@@ -79,7 +79,7 @@ fn c9() {
   println("c9 {len(ins_out)} {s}");
 }
 
-struct T { name: text, ins: vector<In> }
+struct Tx { name: text, ins: vector<In> }
 
 fn mkn(seed: integer) -> vector<R?> {
   out: vector<R?> = [];
@@ -89,12 +89,12 @@ fn mkn(seed: integer) -> vector<R?> {
   out
 }
 
-fn mkt(n: integer, seed: integer) -> vector<T> {
-  out: vector<T> = [];
+fn mkt(n: integer, seed: integer) -> vector<Tx> {
+  out: vector<Tx> = [];
   for i in 0..n {
     ins: vector<In> = [];
     for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
-    out += [T { name: "n{seed}-{i}", ins: ins }];
+    out += [Tx { name: "n{seed}-{i}", ins: ins }];
   }
   out
 }
@@ -117,7 +117,7 @@ fn c10() {
   println("c10 {len(outn)} {nulls} {sum_rn(outn)}");
 }
 fn c11() {
-  out: vector<T> = []; s = 0;
+  out: vector<Tx> = []; s = 0;
   for f in mkt(2, 3) { out += [f]; }
   for t in out { s += len(t.name); for x in t.ins { s += x.a; } }
   t1 = out[1]?;
@@ -223,4 +223,53 @@ fn c18() {
   println("c18 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); }
+// c19 — a struct named like a stdlib TYPE VARIABLE (`T`): the buffer type's name-based
+// lookup finds the GENERIC `main_vector<T>` template, whose `vector` field still carries
+// `__typevar_T` — a record-level walk through it misreads every element, so the pairing
+// declines on the wrapper-identity check and the deep copy stays.  Values right.
+struct T { name: text, ins: vector<In> }
+fn mkc(n: integer, seed: integer) -> vector<T> {
+  out: vector<T> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
+    out += [T { name: "n{seed}-{i}", ins: ins }];
+  }
+  out
+}
+fn c19() {
+  out: vector<T> = []; s = 0;
+  for f in mkc(2, 5) { out += [f]; }
+  for t in out { s += len(t.name); for x in t.ins { s += x.a; } }
+  t1 = out[1]?;
+  println("c19 {len(out)} {s} {t1.name}");
+}
+
+// c20 — the first destination is NEVER read after its loop, so its store dies early
+// (dead after last use) and the second loop's stores recycle the slot: the placed
+// record's free must ride the LOOP's exit, not the buffer attr's scope end, or it
+// deletes a record inside whatever lives in the slot now (the native_scripts gate
+// corruption, 2026-09-11).  Loop 1 pairs; loop 2 (a read after the append) declines.
+fn c20() {
+  out1: vector<R> = [];
+  for f in mk(3, 1) { out1 += [f]; }
+  out2: vector<R> = []; s2 = 0;
+  for f in mk(3, 1) { out2 += [f]; x = f.ins[0]?; s2 += len(f.ins) + x.a; }
+  println("c20 {s2} {len(out2)} {sum_r(out2)}");
+}
+
+// c21 — an ENCLOSING loop re-enters the paired For block: the loop-exit free nulls the
+// buffer var, so the placement guard re-places on the next entry and each outer
+// iteration gets a fresh placed buffer.  Values exact across both entries.
+fn c21() {
+  total_len = 0; total = 0;
+  for k in 0..2 {
+    dest: vector<R> = [];
+    for f in mk(2, k) { dest += [f]; }
+    total_len += len(dest);
+    total += sum_r(dest);
+  }
+  println("c21 {total_len} {total}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); }
