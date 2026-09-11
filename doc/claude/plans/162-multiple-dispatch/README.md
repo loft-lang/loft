@@ -1,0 +1,154 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+
+# 162 — Multiple dispatch
+
+## Status
+
+**PROPOSAL — design written, nothing accepted, nothing in the tree.**  The design is
+[DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
+the owner's to answer and at least one (question 6) changes the rules, so **no phase below
+starts until questions 1, 2 and 6 have answers**.
+
+⚠ **The design says so itself and it governs this plan: every claim in it about the CURRENT
+implementation was written from reading the repository, not from running it.**  Phase 0 exists
+to check those claims before anything is built on them, and a mismatch is a deviation to
+record — not a fact to assume.
+
+**One such claim has already been checked, and it does not hold (2026-09-11).**  The design's
+motivation section says the feature "closes INCONSISTENCY #6 — *plain enums cannot have
+methods*".  Measured:
+
+- [INCONSISTENCIES.md](../../INCONSISTENCIES.md) has **no entry 6** — the live list is 2, 8,
+  18, 26, 27, and the resolved table (33, 34, 2, 3, 8, 9, 12, 17, 18, 26, 27, 28, 29, 30, 31)
+  has nothing about enums and methods either.
+- More to the point, **a plain enum can already have a method.**  `fn describe(self: Colour)
+  -> text` over `enum Colour { Red, Green, Blue }` compiles and `c.describe()` calls it,
+  printing its result on `--interpret`.
+
+So this is not a motivation for the plan and must not be carried as one.  The design is kept
+VERBATIM as the owner wrote it — the correction lives here, in the plan, because that is the
+document that is answerable to the tree.  If enums-with-methods is still wanted as a
+motivation, it needs restating as whatever gap actually remains (perhaps: a method cannot be
+defined per VARIANT of a plain enum, which is a different claim and is untested).
+
+## Goal
+
+A function name may carry several definitions distinguished by the types of all its
+parameters, with the language selecting the unique most-specific applicable one; resolved at
+compile time to a direct call wherever the argument types are statically concrete.
+
+## Effort + design
+
+- **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
+- **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
+- **Last touched:** 2026-09-11
+
+## Composition matrix — Stage A
+
+The feature adds an *operation* (selection at a call), so the matrix is required before the
+implementation phases.  Write these as `/tmp` probes on `--interpret` first; they graduate to
+`tests/scripts/162-*.loft` as the regression suite.  Axes the change actually touches:
+
+| Axis | Domain to cover |
+|---|---|
+| **Parameter count** | 1 (the degenerate case = today) · 2 (the motivating case) · 3+ |
+| **Parameter kind** | concrete struct · interface · untyped · **mixed within one signature** |
+| **Argument staticness** | all statically concrete (Disp-Closed) · some dynamic (Disp-Dynamic) · all dynamic |
+| **Specificity shape** | a total order · a partial order with a unique minimum · **ambiguous** (must refuse) |
+| **Arity** | same-arity definitions only, vs. a name carrying two arities — *is that one name or two?* Not answered by the design; the matrix is where it gets decided |
+| **Return type** | all definitions agree (open question 4's proposal) · they disagree (must refuse) |
+| **Method count** | 1 definition (must be identical to today's emission) · 2 · many |
+| **Backend** | `--interpret` · `--native` · `--native-wasm` — every cell, all three |
+
+⚠ The **1-definition** row is the one that is easy to leave out and the one that protects
+every existing program: a name with a single definition must emit byte-identically to what it
+emits today.  If that cell moves, dispatch has changed the cost of code that does not use it.
+
+## Sub-arcs
+
+`Verify` names the comparison that would go RED if the phase were done wrong.  The phases are
+cut finer than the design's four-step landing order, because several of its steps have no
+half-done state to compare against — see [§ Phase cutting](#phase-cutting-why-these-and-not-the-designs-four).
+
+| Item | Source | Verify | Status |
+|---|---|---|---|
+| **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | Started — the INCONSISTENCY #6 claim checked and struck (see Status); §Where it lands' select-then-monomorphise claim still unchecked |
+| **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | Open |
+| **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | Open |
+| **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | Open |
+| **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | Open |
+| **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | Open |
+| **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | Open |
+| **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | Open |
+| **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | Open |
+
+## Phase cutting — why these, and not the design's four
+
+The design's landing order is right about sequence and too coarse to validate.  Its phase 1
+bundles six rules, a lowering and the acceptance program: half-way through there is nothing
+exact to compare against, which is the upper bound the plan workflow forbids.  The cut above
+splits it where a comparison exists.
+
+Two of the splits are load-bearing:
+
+- **0 before 1.** Recording the canonical-`match` answers *before* dispatch exists is what
+  makes phase 4 a comparison rather than an inspection.  It is also the cheapest possible
+  falsification of `Disp-Match-Equiv`: if the three backends do not already agree on the
+  `match` form of the acceptance program, the rule is in trouble before a line is written.
+- **1 before 3.** Selection as a pure function can go red on its own — a wrong partial order
+  picks the wrong definition and a unit test says so.  Folded into the lowering it could only
+  be tested by running programs, where a selection bug and a lowering bug look alike.
+
+Phase 5 is separate from 3 for the opposite reason: it is the only phase whose failure is
+invisible in behaviour.  A dispatch implementation that quietly retains every method passes
+every value test and silently costs the slim artifact its whole point.
+
+## Phase ordering
+
+1. **0** — pre-flight.  Gated on open questions 1, 2 and 6 being answered.
+2. **1 → 2 → 3 → 4** — the closed-world core, in order; 4 is the first phase with a
+   user-visible feature.
+3. **5** — the artifact property, once 3 lands and there is something to strip.
+4. **6** — dynamic selection.
+5. **7** — the open profile, last: it is the only phase that depends on the promote path.
+6. **8** — the oracle pairing, any time after 4.
+
+## Open design questions
+
+The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), unchanged
+and unanswered.  Three of them gate phase 0:
+
+- **Q1** (is `interface` the abstract type?) — changes `Disp-Specific`'s subtype relation.
+- **Q2** (select-then-monomorphise, or the reverse?) — phase 3 cannot be designed without it,
+  and the design flags that the tree may already do the reverse.
+- **Q6** (type dispatch or pattern-clause dispatch?) — if pattern-clause, `Disp-Applicable`
+  and `Disp-Specific` grow value and guard cases, `Disp-Closed`'s direct-call lowering stops
+  holding for value-discriminating definitions, and `Disp-Match-Equiv` becomes bidirectional.
+  Every phase below 1 changes shape.
+
+Q3, Q4 and Q5 can be answered later — they gate phases 7, 1 and the catalogue entry
+respectively, not the start.
+
+## Cross-arc dependencies
+
+- ~~**INCONSISTENCY #6**~~ — **struck; see Status.**  There is no entry 6 and plain enums
+  already take methods, so nothing in
+  [INCONSISTENCIES.md](../../INCONSISTENCIES.md) depends on this plan.
+- **`formal/interfaces.md`** — Q1 decides whether the abstract-parameter case is `interface`
+  or a new notion; either answer edits that doc.
+- **The promote path** — phase 7 is an invalidation rule *on top of* live-reload, not a new
+  mechanism; it cannot be designed before that path's current shape is confirmed (phase 0).
+- **The differential oracle** — phase 8 adds a pairing rather than a backend.
+
+## See also
+
+- [DESIGN.md](DESIGN.md) — the proposal, verbatim.
+- [`loft-lang/plans` #162](https://github.com/loft-lang/plans/issues/162) — `@PLN162`, the
+  issue this plan IS.
+- [INTERFACES.md](../../INTERFACES.md) · [`formal/interfaces.md`](../../formal/interfaces.md)
+  — the abstract-parameter question.
+- [INCONSISTENCIES.md](../../INCONSISTENCIES.md) — checked; carries nothing this plan closes.
+- [GOALS.md](../../GOALS.md) — the slim-artifact and closed-world commitments phase 5 defends.
