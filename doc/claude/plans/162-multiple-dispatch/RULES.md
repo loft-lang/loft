@@ -13,8 +13,8 @@ a 100 % deviation.
 
 ## Unchanged from DESIGN.md
 
-`Disp-Applicable` · `Disp-Specific` · `Disp-Select` · `Disp-Ambiguous` · `Disp-Closed` ·
-`Disp-Dynamic` · `Disp-World` · `Disp-Match-Equiv` — as written there.
+`Disp-Applicable` · `Disp-Select` · `Disp-Ambiguous` · `Disp-Closed` · `Disp-Dynamic` ·
+`Disp-World` · `Disp-Match-Equiv` — as written there.
 
 ## Amended
 
@@ -29,10 +29,29 @@ definition is *also* callable as `x.f(…)`; they no longer decide whether it di
 The second sentence is what makes *no existing program changes* true by construction: a
 program that compiles today has one definition per name, because two would not compile.
 
+**Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
+design says *"a concrete struct is more specific than any interface it implements"*.  Measured
+2026-09-11: **an interface cannot be a parameter type** — `fn describe(x: Shape)` is refused
+with *"Expecting a type"* — so that clause has no surface.  An `interface` is a generic BOUND
+(`fn describe<T: Shape>(x: T)` works), not a type.
+
+The subtype relation loft actually has, and the one this rule needs, is **enum ⊃ variant**: a
+variant argument already widens to an enum parameter (`take(e: Entity)` accepts `Fire{…}`),
+and a variant-typed definition already coexists with the enum-typed one as a separate key.  So:
+
+> **A VARIANT is more specific than its ENUM.  Otherwise specificity is type equality.**
+
+⚠ This narrows the rule's reach and it is an honest narrowing, not a simplification: with
+interfaces unavailable as parameter types, the OPEN half of DESIGN.md's two profiles has no
+abstract position.  Either interfaces gain existential/parameter use — a language change well
+beyond this plan — or the open profile dispatches over enums too, which is closed by
+construction.  **This is a question for the owner and it is the one the verification opened
+rather than closed.**
+
 **Disp-Fallback** *(amended).*  The design says *a definition whose parameters are all
 untyped*.  Untyped parameters do not exist and are not being added (README § Decision), so:
 the fallback is the definition whose parameter types are the most general applicable ones —
-the enum for a closed set, the interface for an open one.  It is less specific than every
+the ENUM (an interface cannot occupy a parameter position — see `Disp-Specific` above).  It is less specific than every
 other definition of that name by `Disp-Specific`, with no special case, because it is a type
 like any other.
 

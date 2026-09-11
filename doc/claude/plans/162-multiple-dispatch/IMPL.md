@@ -33,24 +33,59 @@ fn hit(self: Fire, t: Crate) { … }
 `Data::bound_stub_name` (`src/data.rs:7197`) already folds a marker and an arity into a key —
 `t_<LEN><holder>#g<arity>_<method>` — so the widening has a shape to follow, not invent.
 
-**3. ⚠ THE HARD PART: resolution happens BEFORE the argument types exist.**  Both spellings.
+**3. The bare path ALREADY has the argument types.  The method path does not.**  Corrected
+2026-09-11 after reading all 13 `find_fn` sites — an earlier draft of this file said the order
+was the hard part everywhere, and that was too strong.
 
-| Spelling | Resolves at | Argument types known at |
+| Spelling | Real resolution | Types in hand there? |
 |---|---|---|
-| `x.f(a)` | `find_fn` — `parser/fields.rs:617` | `parse_method` — `:622` |
-| `f(x, a)` | `def_nr("n_<name>")` — `parser/control.rs:16602` | `types.push(t)` — `:16785` |
+| `f(x, a)` | `parser/mod.rs:5922` | **YES** — `types` is the full argument list, and the site already inspects ALL of it for nullability (*"routes `max(5, a?)` … arg0-only dispatch missed the arg1 case"*).  It then collapses to `types[0]` when building the key. |
+| `x.f(a)` | `parser/fields.rs:617` | **NO** — `parse_method` parses the arguments at `:622`. |
 
-`find_fn`'s own doc says so: *"a method call's arguments are not parsed when its receiver is
-resolved."*  **Multi-parameter dispatch needs the opposite order.**  This — not the key — is
-the work, and it is why the plan is `H` rather than `S`.
+`parser/control.rs:16602`'s `def_nr("n_<name>")` is **not** the resolution — it is `fn_def_nr`,
+a HINT used to type-direct argument parsing (lambda inference, loft#1067; vector-literal
+element widths, #432).
 
-The move it forces, and today's code is the degenerate case of it:
+⚠ **So the real difficulty is not ordering — it is a circularity in the hint.**  Argument
+parsing is type-directed by the chosen definition, and the choice depends on the argument
+types.  With one definition that is fine.  With several, an argument that *needs* the hint —
+a lambda, a width-carrying vector literal, a named argument — cannot be parsed until the
+choice is made, and the choice cannot be made until it is parsed.
 
-> **Resolution becomes two-phase: a CANDIDATE SET at the name, then SELECTION once the
-> argument types are known.**
+Two ways out, and the plan does not pick yet: **(a)** hint only where the candidate set AGREES
+on that parameter's type, refusing otherwise; **(b)** parse hint-free and refuse if the result
+is ambiguous.  (a) is more permissive and more code; (b) is a one-line rule with a worse error
+message.  This is the design's genuinely open implementation question and it belongs to step 3.
 
-`find_fn` already does a version of this for bound holders — *"probe the arities and answer
-only when ONE bound signature carries the name"* — so the precedent is in the same function.
+**4. The remaining 11 sites are fixed-shape protocol lookups, not user call paths.**  `next`
+(iteration) ×2, `Op<name>` (operators, dispatching on operand 1), interface conformance,
+generic stubs.  Each looks up a known signature and none needs multi-parameter dispatch — so
+steps 3–4 touch **two** sites, not thirteen.
+
+**5. Select-then-monomorphise — confirmed, with a precedent for the two-phase move.**
+`try_generic_instantiation(first_id, &types)` (`parser/builtins.rs:257`) takes the argument
+types and REPLACES the chosen `def_nr` with a monomorph.  So a resolution already gets revised
+once the types are known; the candidate-set selection is an extension of that shape, not a new
+mechanism.  (Open question 2, answered.)
+
+**6. `interface` is NOT a type — the abstract position must be the ENUM.**  Measured:
+
+```loft
+fn describe(x: Shape) -> integer { … }   // error: Expecting a type
+fn describe<T: Shape>(x: T) -> integer   // works — an interface is a BOUND
+fn take(e: Entity) -> text { … }  take(Fire{n:1})   // works — variant widens to enum
+```
+
+So `Disp-Specific`'s *"a concrete struct is more specific than any interface it implements"*
+has no surface: there is no interface-typed parameter to be less specific than.  The subtype
+relation loft actually has is **enum ⊃ variant**, and it is exactly what the rule needs — a
+variant argument already widens to an enum parameter, and `fn tag(self: Entity)` already
+coexists with `fn tag(self: Fire)` as separate keys.  (Open question 1, answered: the enum.)
+
+**7. All three backends agree on every probe above** — `--interpret`, `--native`, and
+`--native-wasm` run under `wasmtime`.  ⚠ `--native-wasm` COMPILES to `.loft/<script>.wasm`; it
+does not run, so a bare invocation exits 0 having printed nothing.  Verifying wasm behaviour
+means running the artifact.
 
 ---
 
@@ -91,21 +126,23 @@ its existing fallback ladder (`τ?` → `τ`, `n_<name>`, the operator map) insi
 - **Why separate:** the set is the new concept; introducing it while it always has one element
   means the concept and the behaviour change never share a diff.
 
-### Step 3 — move the BARE path's selection after the arguments  ·  M
+### Step 3 — the BARE path passes the whole type list  ·  S
 
-In `parse_call`, defer the choice: collect the candidate set at `control.rs:16602`, parse the
-arguments, then select at the point `types` is complete (`:16785`).  With one candidate this
-is a pure reordering.
+`parser/mod.rs:5922` already holds `types`; stop collapsing it to `types[0]` and hand the
+whole list to selection.  With one candidate the answer is unchanged.
 
-- **Red on its own:** any program whose diagnostics depend on resolving early — the
-  `hint_d_nr` uses at `:16618` and `:16687` — changes its message.
-- **Compared against:** `introspect` byte-identical, **and** the diagnostic corpus unmoved.
-  ⚠ The error-message comparison is the one that matters here; the IR is the easy half.
+⚠ **This is where the hint circularity is decided** (fact 3).  Pick (a) or (b) before writing
+it, and write the decision into RULES.md — it is user-visible in error messages either way.
 
-### Step 4 — move the METHOD path's selection after the arguments  ·  M
+- **Red on its own:** the `hint_d_nr` uses at `control.rs:16618` and `:16687` — a lambda
+  argument and a width-carrying vector literal must still infer.
+- **Compared against:** `introspect` byte-identical, **and the diagnostic corpus unmoved**.
+  ⚠ The error-message comparison is the one that matters; the IR is the easy half.
 
-The same for `x.f(a)`: `fields.rs:617` collects candidates, `parse_method` selects once the
-argument types are known.
+### Step 4 — the METHOD path selects after its arguments  ·  M
+
+`fields.rs:617` collects candidates; `parse_method` selects once the argument types exist.
+This is the one genuine reordering in the plan.
 
 - **Red on its own:** `x.f()` on a `τ?` receiver must still reach `m(τ)` (`@FR-F-Recv`), and
   the `t_`-prefix guard at `:618` must still decline a free function.
@@ -150,14 +187,19 @@ Two applicable definitions, neither more specific: refuse, naming both.
 - **Red on its own:** DESIGN.md's ambiguity program must fail to compile with both names in
   the message; the near-miss control (one parameter made concrete) must still compile.
 
-### Step 9 — `Disp-Specific` over interfaces  ·  M
+### Step 9 — `Disp-Specific` over the ENUM lattice  ·  M
 
-The partial order: a concrete struct beats an interface it implements.  The abstract side is
-`bound_holder` (`src/data.rs:4226`, marked `#g`) — **open question 1's subject; confirm before
-building.**
+The partial order: a VARIANT is more specific than its ENUM.  **Not interfaces** — fact 6
+measured that an interface cannot be a parameter type, so the design's interface-based
+specificity has no surface.  The enum/variant relation is real, already widens on argument
+passing, and already produces two distinct keys.
 
-- **Red on its own:** a concrete argument with both a concrete and an interface definition
-  must select the concrete one, and swapping declaration order must not change the answer.
+- **Red on its own:** with `fn tag(self: Entity)` and `fn tag(self: Fire)` both declared and a
+  value held at `Entity`, selection must reach the `Fire` definition — today it reaches
+  `Entity` (measured: `generic generic`).  Swapping declaration order must not change it.
+- ⚠ This overlaps `Disp-Dynamic` (step 13): held at `Entity`, the variant is a RUNTIME fact.
+  So step 9 is the static half — a value whose static type IS the variant — and step 13 is
+  the rest.  Cut them apart or step 9 cannot go red on its own.
 
 ### Step 10 — `Disp-Exhaustive`  ·  S
 
@@ -215,11 +257,8 @@ all three backends.  Nothing in `src/` changes.
 
 ## What I did not verify
 
-- **Select-then-monomorphise vs the reverse** (open question 2) — unchecked; step 11 is where
-  it bites.
-- **`bound_holder` is the right abstract notion** (open question 1) — its existence and `#g`
-  marker are measured, its fitness is not.
-- **The 11 `find_fn` call sites** — I read two (`fields.rs:617`, `mod.rs:8055`).  The other
-  nine may have their own ordering assumptions; steps 3–4 must enumerate them first.
-- **The wasm backend** — every probe was `--interpret`, with `--native` on the redefine cases
-  only.  Every step's matrix owes all three.
+- **The hint circularity's two ways out** (fact 3) — neither (a) nor (b) has been prototyped;
+  step 3 owes a probe before it is written.
+- **Whether a variant can be spelled as a parameter type in every position** — `fn tag(self:
+  Fire)` works; `fn f(x: Fire, y: Rock)` as a free function is untested.
+- **`Disp-World` against the actual promote path** — its current shape is unread.

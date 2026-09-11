@@ -218,9 +218,18 @@ every value test and silently costs the slim artifact its whole point.
 The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), unchanged
 and unanswered.  Three of them gate phase 0:
 
-- **Q1** (is `interface` the abstract type?) — changes `Disp-Specific`'s subtype relation.
-- **Q2** (select-then-monomorphise, or the reverse?) — phase 3 cannot be designed without it,
-  and the design flags that the tree may already do the reverse.
+- ~~**Q1**~~ **ANSWERED 2026-09-11 — no, and it opens a bigger question.**  An interface
+  cannot be a parameter type (`fn describe(x: Shape)` → *"Expecting a type"*); it is a generic
+  BOUND.  The subtype relation loft has is **enum ⊃ variant**, and that is what
+  `Disp-Specific` now uses.  ⚠ **But that leaves the OPEN profile without an abstract
+  position** — enums are closed by construction, so a library adding a type must edit the
+  central enum, which is the "addition not edit" motivation partly back.  Either interfaces
+  gain parameter use (a language change beyond this plan) or the open profile is enum-only.
+  **Owner's call, and it is the question the verification opened.**
+- ~~**Q2**~~ **ANSWERED — select-then-monomorphise, as wanted.**
+  `try_generic_instantiation(first_id, &types)` already takes the argument types and REPLACES
+  the chosen `def_nr`, so a resolution getting revised once types are known is an existing
+  shape, not a new one.
 - **Q6** (type dispatch or pattern-clause dispatch?) — if pattern-clause, `Disp-Applicable`
   and `Disp-Specific` grow value and guard cases, `Disp-Closed`'s direct-call lowering stops
   holding for value-discriminating definitions, and `Disp-Match-Equiv` becomes bidirectional.
