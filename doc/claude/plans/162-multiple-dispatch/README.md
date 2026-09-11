@@ -164,7 +164,7 @@ case where an argument's type is genuinely unknowable at the call site *and* the
 the value — that is `Any`, and it deserves its own proposal weighed against the ownership and
 artifact-size commitments, not a side door through dispatch.
 
-## Why this feature — the enum struct is loft's sound OO, and this is its missing half
+## Why this feature — a boost for complex interactions, not a gap being filled
 
 Owner's framing, 2026-09-11, and it is the motivation the design should lead with:
 
@@ -172,6 +172,25 @@ Owner's framing, 2026-09-11, and it is the motivation the design should lead wit
 > object-oriented programming without the pitfalls that normally come with it.  It gives the
 > freedom to combine hugely different objects in one structure.  That is the case that makes
 > the function matcher shine.
+
+⚠ **Scope, and it is smaller than an earlier draft of this section claimed.**  The current
+implementation ALREADY gives most of what OO-like code wants, and the measurements in this plan
+are the evidence: an enum holds hugely different objects in one structure; a plain enum takes
+methods; `fn hit(self: Fire)` and `fn hit(self: Ice)` already coexist and already dispatch;
+`f.hit()` and `hit(f)` already agree.  Pairwise interaction already WORKS too — as one central
+`match` on a pair of variants.
+
+So this is **a boost for writing more complex interactions, with no new syntax** — not a
+missing half, and not a language that is unsound without it.  The earlier heading said
+otherwise and was wrong; it is the same over-claim the design's own INCONSISTENCY #6 motivation
+made, one draft later, and it is corrected here rather than quietly rewritten so the shape stays
+visible.
+
+What it changes is how that pairwise case SCALES.  The central `match` is N² in entity types,
+reopens one shared function for every new type, interleaves every element's logic in one body,
+and repeats each fallback per type.  The matcher dissolves it into only the pairs that do
+something, each next to the type it concerns.  That is an ergonomics and modularity win, which
+sets the priority honestly: valuable, not urgent.
 
 The pitfall it dodges is the one OO **structurally cannot**: a vtable dispatches on the
 receiver, so it cannot see the second argument's type.  Every OO language needs a design
@@ -213,6 +232,12 @@ does *from the caller's side*.
 
 **The one-sentence version:** *write a function for the case you mean, and loft runs the one
 that fits.*
+
+⚠ **And do not sell it as new power.**  It is a better notation for something loft can already
+express — the same decision a central `match` makes today, written where the types live instead
+of in one growing table.  Presenting it as a capability the language lacked would be both
+untrue and the wrong expectation to set: a reader who believes their current code is unsound
+will rewrite things that are fine.
 
 **Teaching order** — and note that none of it introduces syntax:
 
