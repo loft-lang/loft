@@ -3024,3 +3024,157 @@ pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
     }
     out
 }
+
+/// @PLN157 § V-y — what [`complete_writes`] admitted: `db_vars` are locals whose EVERY
+/// `OpDatabase` site heads a covering literal group (the emitter calls `OpDatabaseNP`);
+/// `mint_tps` are element types whose every `OpNewRecord` site in this function does
+/// (the emitter calls `OpNewRecordNP`).
+#[derive(Default)]
+pub struct CompleteWrites {
+    pub db_vars: HashSet<u16>,
+    pub mint_tps: HashSet<u16>,
+}
+
+/// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
+/// with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
+/// against the schema's field list, the variant tag included (its field sits at
+/// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
+/// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
+/// leaves the group incomplete, and the prefill stays: the check can only DECLINE the
+/// elision, never miscompile it.
+fn group_covers_type(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> bool {
+    if (tp as usize) >= stores.types.len() {
+        return false;
+    }
+    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
+        &stores.types[tp as usize].parts
+    else {
+        return false;
+    };
+    if fields.is_empty() {
+        return false;
+    }
+    let mut written: HashSet<u16> = HashSet::new();
+    for stmt in ops.iter().skip(at) {
+        match stmt.unspan() {
+            Value::Line(_) => {}
+            // The declaration's own bind (`v = OpGetField(target, 0, tp)`) interleaves
+            // a VECTOR store's group between the OpDatabase and the length reset — a
+            // member that covers nothing.  (The collection-field prefill is ONE u32
+            // zero at the field position, exactly the group's `OpSetInt4`'s width, so
+            // admitting the shape is width-equal, not width-blind.)
+            Value::Set(_, x)
+                if matches!(x.unspan(), Value::Call(d, cargs)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(u)) if *u == target)) => {}
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if name.starts_with("OpSet")
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == target)
+                    && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
+                    && let Ok(off) = u16::try_from(*off)
+                {
+                    written.insert(off);
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    fields.iter().all(|f| written.contains(&f.position))
+}
+
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
+/// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
+/// writes every field explicitly (a named value, the declared default, the interned
+/// empty text, the null sentinel, `false`, the variant tag), and the emitter's proof is
+/// coverage of every schema field position by the group's contiguous `OpSet*`s.
+/// `db_vars` is keyed by the LOCAL (every `OpDatabase(v, …)` site must head a covering
+/// group — a var built completely in one branch and partially in another declines);
+/// `mint_tps` by the ELEMENT TYPE (every `Set(_, OpNewRecord(…, tp, …))` group in the
+/// function must cover it).  The interpreter keeps the prefill and is the oracle.
+pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWrites {
+    let def = data.def(def_nr);
+    let body = def.code();
+    let mut out = CompleteWrites::default();
+    let mut db_declined: HashSet<u16> = HashSet::new();
+    let mut mint_declined: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                match stmt.unspan() {
+                    // `OpDatabase(v, tp)` heading a struct-literal group.
+                    Value::Call(d, args)
+                        if (*d as usize) < data.definitions.len()
+                            && data.def(*d).name() == "OpDatabase" =>
+                    {
+                        let (Some(Value::Var(v)), Some(Value::Int(tp))) = (
+                            args.first().map(Value::unspan),
+                            args.get(1).map(Value::unspan),
+                        ) else {
+                            continue;
+                        };
+                        let Ok(tp) = u16::try_from(*tp) else {
+                            db_declined.insert(*v);
+                            continue;
+                        };
+                        if group_covers_type(ops, i + 1, *v, tp, data, stores) {
+                            out.db_vars.insert(*v);
+                        } else {
+                            db_declined.insert(*v);
+                        }
+                    }
+                    // `Set(e, OpNewRecord(P, tp, fld))` heading a mint group: the sets
+                    // that follow write through `e`.
+                    Value::Set(e, inner) => {
+                        let Value::Call(d, cargs) = inner.unspan() else {
+                            continue;
+                        };
+                        if (*d as usize) >= data.definitions.len()
+                            || data.def(*d).name() != "OpNewRecord"
+                        {
+                            continue;
+                        }
+                        let Some(Value::Int(ptp)) = cargs.get(1).map(Value::unspan) else {
+                            continue;
+                        };
+                        let Ok(ptp) = u16::try_from(*ptp) else {
+                            continue;
+                        };
+                        // The element's CONTENT type is what the prefill would walk.
+                        let fld = match cargs.get(2).map(Value::unspan) {
+                            Some(Value::Int(f)) => u16::try_from(*f).unwrap_or(u16::MAX),
+                            _ => u16::MAX,
+                        };
+                        let etp = if fld == u16::MAX {
+                            stores.content(ptp)
+                        } else {
+                            stores.content(stores.field_type(ptp, fld))
+                        };
+                        if etp != u16::MAX && group_covers_type(ops, i + 1, *e, etp, data, stores) {
+                            out.mint_tps.insert(ptp);
+                        } else {
+                            mint_declined.insert(ptp);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
+    });
+    out.db_vars.retain(|v| !db_declined.contains(v));
+    out.mint_tps.retain(|t| !mint_declined.contains(t));
+    out
+}

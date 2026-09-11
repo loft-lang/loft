@@ -278,6 +278,22 @@ impl OpEmitter for NewRecordEmitter {
             .and_then(|path| out.active_mint_push(&path))
             .map(str::to_owned)
         else {
+            // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
+            // in this function covers the element type calls the no-prefill twin; the
+            // call shape mirrors the `#rust` template exactly.
+            if let Some(Value::Int(ptp)) = args.get(1).map(Value::unspan)
+                && u16::try_from(*ptp)
+                    .is_ok_and(|t| ctx.output.complete_writes.mint_tps.contains(&t))
+                && args.len() == 3
+            {
+                write!(ctx.w, "OpNewRecordNP(cell,")?;
+                ctx.emit(&args[0])?;
+                write!(ctx.w, ", ")?;
+                ctx.emit_i32_slot(&args[1])?;
+                write!(ctx.w, ", ")?;
+                ctx.emit_i32_slot(&args[2])?;
+                return write!(ctx.w, ")");
+            }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
         let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) else {

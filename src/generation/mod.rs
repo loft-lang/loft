@@ -678,6 +678,14 @@ pub struct Output<'a> {
     /// `LOFT_NO_LITERAL_HOIST=1` — every loop-body literal rebuilds per iteration, as
     /// before @PLN157 § V-x; the bisect step for a wrong constant vector inside a loop.
     pub literal_hoist_disabled: bool,
+    /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the current function's literal groups
+    /// whose write set covers every field ([`hoist::complete_writes`]): their
+    /// `OpDatabase`/`OpNewRecord` emit the no-prefill twin.
+    pub complete_writes: hoist::CompleteWrites,
+    /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
+    /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
+    /// record on native.
+    pub complete_write_disabled: bool,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -1618,6 +1626,9 @@ impl<'a> Output<'a> {
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
+            complete_writes: hoist::CompleteWrites::default(),
+            complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
+                .is_ok_and(|v| v != "0"),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -1865,6 +1876,11 @@ impl Output<'_> {
             hoist::LitHoist::default()
         } else {
             hoist::invariant_literals(self.data, def_nr)
+        };
+        self.complete_writes = if self.complete_write_disabled {
+            hoist::CompleteWrites::default()
+        } else {
+            hoist::complete_writes(self.data, self.stores, def_nr)
         };
         self.move_pairs = if self.move_append_disabled {
             HashMap::new()

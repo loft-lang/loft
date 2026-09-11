@@ -2086,7 +2086,12 @@ impl Stores {
         let size = self.enum_parent_size(db_tp);
         let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
         self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
-        self.set_default_value(db_tp, &r);
+        // @PLN157 § V-y (`@FR-R-CompleteWrite`) — the placed buffer is a vector record
+        // whose only field the CALLEE's entry clear rewrites (the shape-A clear, or the
+        // adopted init's len reset — the ABI every admitted callee has); the prefill's
+        // whole effect is this one u32 zero, written directly instead of dispatching
+        // through `set_default_value`.
+        self.store_mut(&r).set_u32_raw(r.rec, 8, 0);
         r
     }
 

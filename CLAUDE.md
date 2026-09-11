@@ -738,6 +738,12 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_COMPLETE_WRITE=1`** (@PLN157 § V-y) makes every record keep its default
+prefill again — with it off, a literal group the emitter PROVES writes every field
+(declared defaults, sentinels, the variant tag included: the parser's lowering is
+complete by construction) calls a no-prefill `OpDatabaseNP`/`OpNewRecordNP` twin —
+and is the bisect step for a wrong default or sentinel in a literal-built record
+on native.
 **`LOFT_NO_LITERAL_HOIST=1`** (@PLN157 § V-x) makes an invariant loop-body vector
 literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
 (or an if-of-literals on a const-param field) under a loop builds ONCE per activation,

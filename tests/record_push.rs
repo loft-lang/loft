@@ -77,7 +77,10 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
         }
         row.1 += line.matches("push_record_hoisted").count()
             + line.matches("push_record_finish").count();
-        row.2 += line.matches("OpNewRecord(cell,").count();
+        // @PLN157 § V-y — the no-prefill twin IS the template call (minus the default
+        // walk), so both spellings count as "template left".
+        row.2 +=
+            line.matches("OpNewRecord(cell,").count() + line.matches("OpNewRecordNP(cell,").count();
     }
     map
 }

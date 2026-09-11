@@ -80,8 +80,16 @@ impl OpEmitter for OpDatabaseEmitter {
             if !hosted.is_empty() {
                 write!(ctx.w, "{{ ")?;
             }
+            // @PLN157 § V-y (`@FR-R-CompleteWrite`) — a site whose literal group covers
+            // every field calls the no-prefill twin.
+            let np = matches!(var_val.unspan(), Value::Var(w)
+                if ctx.output.complete_writes.db_vars.contains(w));
             ctx.emit(var_val)?;
-            write!(ctx.w, " = OpDatabase(cell,")?;
+            if np {
+                write!(ctx.w, " = OpDatabaseNP(cell,")?;
+            } else {
+                write!(ctx.w, " = OpDatabase(cell,")?;
+            }
             ctx.emit(var_val)?;
             write!(ctx.w, ", ")?;
             ctx.emit_i32_slot(tp_val)?;

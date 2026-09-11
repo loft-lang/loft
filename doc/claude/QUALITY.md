@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 465 | 441 | **24** |
+| 469 | 445 | **24** |
+
+(2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
+§ V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
+the aware side; the opaque count is unchanged.)
 
 
 
@@ -1528,11 +1532,12 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 60 | **12** | 48 |
+| 61 | **12** | 49 |
 
-(The two 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` / `flat_lit_member`,
-which match the parser's literal-build ops by name and DECLINE anything else — a missed
-spelling costs the optimisation, never correctness, so single-spelling is their design.)
+(The three 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
+`flat_lit_member` and § V-y's `group_covers_type`, which match the parser's
+literal-build ops by name and DECLINE anything else — a missed spelling costs the
+optimisation, never correctness, so single-spelling is their design.)
 
 
 
@@ -2548,7 +2553,10 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 783 | 440 | 6 | **337** |
+| 786 | 442 | 7 | **337** |
+
+(2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
+schema through `Parts`, not `Type` — the three new discriminating sites are all aware.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

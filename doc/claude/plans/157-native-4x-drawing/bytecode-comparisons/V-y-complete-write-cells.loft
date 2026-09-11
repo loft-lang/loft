@@ -1,0 +1,98 @@
+// @PLN157 § V-y — a record built by a COMPLETE literal skips the default prefill:
+// the parser's literal lowering writes EVERY field explicitly — a named value, the
+// declared default (`b: float = 2.5`), the interned empty text, the null sentinel of a
+// nullable, `false` — measured on the vy_probe introspection, so `set_default_value`'s
+// per-field walk (or its all-zero `zero_range`, which duplicates the zero-on-claim)
+// is redundant BY CONSTRUCTION for such a group.  The native emitter proves coverage
+// per site — every field position of the type is written by the group's contiguous
+// `OpSet*`s, the variant TAG included (`OpSetEnum` at 0) — and calls the no-prefill
+// twin (`OpDatabaseNP` / `OpNewRecordNP`).  An uncovered field (a nested struct
+// arriving by `OpCopyRecord`, a vector field bound by `vector_add`) keeps the prefill.
+//
+// The interpreter keeps the prefill everywhere and is the VALUES oracle.
+// Switch: LOFT_NO_COMPLETE_WRITE=1 keeps the prefill on native.
+
+struct W { a: integer, b: float = 2.5, c: text, d: integer?, e: boolean }
+struct S { name: text, k: integer }
+enum E { A { x: integer }, B { y: float } }
+struct N { inner: integer }
+struct O { n: N, z: integer }
+
+// c1 — every field named, minted per iteration: the prefill walk is skipped and every
+// value is exactly the write's.
+fn c1() {
+  t = 0;
+  for i in 0..3 {
+    w = W { a: i, b: 1.0, c: "xy", d: i * 2, e: false };
+    t += w.a + (w.b as integer) + len(w.c) + (w.d ?? -1);
+  }
+  println("c1 {t}");
+}
+
+// c2 — OMITTED fields: the parser writes the declared default, the interned empty
+// text, the null sentinel and false explicitly, so the skip changes nothing the
+// oracle can see.
+fn c2() {
+  w = W { a: 4 };
+  println("c2 {w.a} {w.b} '{w.c}' {w.d ?? -9} {w.e}");
+}
+
+// c3 — a VARIANT literal writes its own tag (OpSetEnum at 0): coverage includes it,
+// the skip is admitted, and match still dispatches on the right variant.
+fn c3() {
+  e: E = A { x: 5 };
+  match e { A{x} => println("c3 a {x}"), B{y} => println("c3 b {y}") }
+}
+
+// c4 — an UNFUSED mint in an appending loop (S carries text, so § V-t's fused push
+// declines it): the element's OpNewRecord skips the prefill, values exact.
+fn c4() {
+  out: vector<S> = [];
+  for i in 0..3 { out += [S { name: "n{i}", k: i * 10 }]; }
+  t = 0;
+  for s in out { t += len(s.name) + s.k; }
+  println("c4 {len(out)} {t}");
+}
+
+// c5 — a record built by CAST keeps the FINAL prefill (a different call site): the
+// absent fields must still read the declared default / empty text / null.
+fn c5() {
+  w = ("{{ \"a\": 1 }}" as W?) ?? W { a: -1 };
+  println("c5 {w.a} {w.b} '{w.c}' {w.d ?? -9} {w.e}");
+}
+
+// c6 — a NESTED struct arrives by OpCopyRecord, so the `n` field is never covered by
+// an OpSet: the group is incomplete and the prefill stays.  Values exact either way.
+fn c6() {
+  t = 0;
+  for _i in 0..3 {
+    o = O { n: N { inner: 3 }, z: 9 };
+    t += o.n.inner + o.z;
+  }
+  println("c6 {t}");
+}
+
+// c7 — a CONDITIONAL part still writes its field on every path: covered, skipped.
+fn c7() {
+  t = 0;
+  for i in 0..3 {
+    w = W { a: if i == 1 { 100 } else { i }, b: 0.5, c: "z", d: 1, e: true };
+    t += w.a;
+  }
+  println("c7 {t}");
+}
+
+// c8 — a NULLABLE element mint (`vector<S?>`): the element is a `__nullable<S>` whose
+// DISCRIMINANT the prefill writes; whether the literal's group covers it decides the
+// admission, and the values must show non-null elements either way (a wrong admission
+// reads the claim-zero as the discriminant — the sabotage's failure mode).
+fn c8() {
+  outn: vector<S?> = [];
+  for i in 0..3 { outn += [S { name: "q{i}", k: i }]; }
+  outn += [null];
+  t = 0; nulls = 0;
+  for s in outn { g = s ?? S { name: "", k: -100 }; if g.k == -100 { nulls += 1; } else { t += len(g.name) + g.k; } }
+  println("c8 {len(outn)} {nulls} {t}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); }

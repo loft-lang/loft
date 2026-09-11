@@ -509,6 +509,23 @@ and loses only the innermost frame NAME from the chain.  Switch
                  a heap element, and two admitted locals sharing a sanitized name
                  (they would share the one fn-top binding) all decline.
 
+  (R-CompleteWrite) a record built by a COMPLETE literal group skips the default
+                 prefill: the parser's lowering writes EVERY field explicitly — a
+                 named value, the declared default, the interned empty text, the
+                 null sentinel of a nullable, `false`, the variant TAG — so where
+                 the emitter proves coverage of every schema field position by the
+                 group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
+                 `set_default_value`'s walk (or its all-zero `zero_range`, which
+                 duplicates the zero-on-claim) writes nothing that survives, and
+                 the site calls the no-prefill twin (`OpDatabaseNP` /
+                 `OpNewRecordNP`).  An uncovered field — a nested struct arriving
+                 by `OpCopyRecord`, a vector field bound by an append, a
+                 `__nullable` element whose discriminant no `OpSet` names — keeps
+                 the prefill: the check can only DECLINE the elision.  `db_vars`
+                 is keyed by the local (every `OpDatabase` site must cover);
+                 `mint_tps` by the element type (every mint group in the function
+                 must).  The interpreter keeps the prefill and is the oracle.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

@@ -1,0 +1,50 @@
+// @PLN157 § V-y (`@FR-R-CompleteWrite`) — a record built by a COMPLETE literal skips
+// the default prefill on the native backend: the parser writes every field explicitly
+// (a named value, the declared default, the interned empty text, the null sentinel,
+// false, the variant tag), so `set_default_value` writes nothing that survives.  The
+// interpreter keeps the prefill and is the oracle; tests/complete_write.rs pins which
+// sites earn the no-prefill twin.  This file carries the VALUE cells that must hold
+// whatever the emitter decides.
+// `LOFT_NO_COMPLETE_WRITE=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-12) — the coverage check replaced by
+// an admit-all crashes the V-j move-append corpus at its c17 callee shape under
+// LOFT_NO_ZERO_CLAIM=1 (a skipped prefill reads stale arena bytes), while the restored
+// check keeps that corpus green under the same lever (values identical, control run);
+// under the production default the claim-zeroing masks an over-admission, so the
+// stale-arena lever is the channel that shows the check working.
+
+struct W { a: integer, b: float = 2.5, c: text, d: integer?, e: boolean }
+struct S { name: text, k: integer }
+enum E { A { x: integer }, B { y: float } }
+
+fn main() {
+  // Omitted fields read the declared default, empty text, null and false — exactly
+  // what the explicit writes give, prefill or no prefill.
+  w = W { a: 4 };
+  assert(w.a == 4 && w.b == 2.5 && w.c == "" && (w.d ?? -9) == -9 && !w.e,
+    "omitted fields read their declared/absent values under the elided prefill");
+
+  // A variant literal dispatches on the tag it wrote itself.
+  e: E = A { x: 5 };
+  ok = match e { A{x} => x == 5, B{y} => false };
+  assert(ok, "a variant literal's tag survives the elided prefill");
+
+  // An unfused mint in an appending loop keeps every element value.
+  out: vector<S> = [];
+  for i in 0..3 { out += [S { name: "n{i}", k: i * 10 }]; }
+  t = 0;
+  for s in out { t += len(s.name) + s.k; }
+  assert(len(out) == 3 && t == 36, "an unfused mint's elements read exactly the writes");
+
+  // A nullable-element mint keeps its discriminants: three present, one null.
+  outn: vector<S?> = [];
+  for i in 0..3 { outn += [S { name: "q{i}", k: i }]; }
+  outn += [null];
+  nulls = 0; t2 = 0;
+  for s in outn { g = s ?? S { name: "", k: -100 }; if g.k == -100 { nulls += 1; } else { t2 += len(g.name) + g.k; } }
+  assert(len(outn) == 4 && nulls == 1 && t2 == 9,
+    "a nullable element's discriminant is never left to the arena");
+
+  println("complete write ok");
+}

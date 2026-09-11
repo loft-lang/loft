@@ -1454,6 +1454,49 @@ unchanged; `tests/literal_hoist.rs` pins the per-cell guard counts;
 **Measured**: `fronds` standalone 296.3–302.8k → **279.1–285.4k ns/op (−5.8 %)**, hash
 `ebcfd875` every run, one guard in `n_fronds`.
 
+## V-y — the complete-write prefill elision (2026-09-12)
+
+**The evidence first.**  The prefill class measured ~7 % of the post-reuse `fronds`
+profile (`set_default_value_nullable` 400 samples), and the global-skip ceiling probe
+(env-gated rlib) −7–8 % beyond A+S; the same matrix showed zero-on-claim stacked ON TOP
+of the skip reproducibly NEGATIVE — the two are one redundancy, so this ships as ONE
+complete-write argument, not two independent skips.  The design question was settled by
+introspection before any code: the parser's literal lowering writes EVERY field
+explicitly — the vy_probe shows an omitted `b: float = 2.5` written as 2.5, an omitted
+`text` as the interned empty, an omitted nullable as the sentinel, an omitted boolean as
+`false`, and a variant literal writes its own tag (`OpSetEnum` at 0) — so the prefill is
+redundant BY CONSTRUCTION for a complete group.
+
+**SHIPPED (`@FR-R-CompleteWrite`, formal/rewrites.md; switch `LOFT_NO_COMPLETE_WRITE`).**
+Runtime twins `OpDatabaseNP` / `OpNewRecordNP` (one inner fn each, the public names
+unchanged); `hoist::complete_writes` proves coverage of every schema field position by
+the group's contiguous `OpSet*`s — `db_vars` keyed by the local (every `OpDatabase` site
+must cover), `mint_tps` by the element type (every mint group in the function must).  A
+VECTOR store's group interleaves its bind (`v = OpGetField(__vdb…)`) between the
+`OpDatabase` and the length reset; admitting that member is width-EQUAL, not width-blind:
+the collection-field prefill is ONE u32 zero at the field position, exactly the group's
+own `OpSetInt4`.  `place_record_in` drops its `set_default_value` dispatch for one
+explicit len-zero — the placed buffer's only field is what the callee's entry-clear ABI
+rewrites.  An uncovered field — a nested struct arriving by `OpCopyRecord`, a
+`__nullable` element whose discriminant no `OpSet` names — keeps the prefill: the check
+only DECLINES.
+
+**Falsified the honest way — the first sabotage could not fail.**  Admit-everything
+stayed green under the production default, because the parser genuinely completes every
+record through SOME op (copies and appends included) and the claim-zeroing papers over
+the rest; a falsifier that cannot fail proves nothing, so the channel had to be found:
+under `LOFT_NO_ZERO_CLAIM=1` (the stale-arena perf lever) the sabotaged build CRASHES the
+V-j corpus at its c17 callee shape, while the restored check keeps that corpus green
+under the same lever (control run, values identical).  Eight cells exact on both
+backends under poison AND under the stale-arena lever; `tests/complete_write.rs` pins
+(no-prefill, prefilled) per cell; `tests/scripts/157-complete-write.loft` carries the
+value cells; the corpus joins the emission audit.
+
+**Measured**: struct literals alone moved `fronds` NOTHING (277–279k flat, 4 NP sites) —
+the samples live in the vector-store creations; with those and the placement admitted
+(9 NP sites), 278.3–279.3k → **264.9–272.7k ns/op (best −4.8 %)**, hash `ebcfd875`
+every run — ~60 % of the global-skip ceiling captured soundly.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append
