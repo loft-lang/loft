@@ -2035,6 +2035,16 @@ fn pair_for_block(
         }
         return None;
     }
+    // The callee must treat the buffer VECTOR-level.  A callee whose result witness was
+    // promoted INTO the buffer parameter re-inits it with `OpDatabase`, and that reuse arm
+    // clears the buffer's WHOLE STORE — which under placement is the caller's result store,
+    // half-built (the sqldb `collect_leaf` corruption; the mv2 cells pin it).
+    if callee_reinits_buffer(data, callee) {
+        if trace {
+            eprintln!("[move] callee {} re-inits its buffer store", callee.name());
+        }
+        return None;
+    }
     let Some(Value::Var(buf)) = cargs.last().map(Value::unspan) else {
         if trace {
             eprintln!("[move] last arg not Var: {:?}", cargs.last().map(kind_of));
@@ -2283,4 +2293,228 @@ fn kind_of(v: &Value) -> &'static str {
         Value::Null => "Null",
         _ => "other",
     }
+}
+
+/// @PLN157 § V-u (`@FR-R-RetAdopt`) — a vector-returning function whose result local ADOPTS
+/// the hidden return buffer: the local builds in the caller's buffer from its declaration,
+/// so every delivery copy at the exits (`OpReplaceVector`, the `OpClearVector` +
+/// `OpAppendVector` pair) has nothing left to move and is emitted as nothing, and the
+/// local's own witness store is never allocated.
+#[derive(Clone, Copy, Debug)]
+pub struct RetAdopt {
+    /// The result local every delivery site copies into the buffer.
+    pub v: u16,
+    /// Its `__vdb` witness variable — the store the adoption leaves unallocated.
+    pub vdb: u16,
+    /// The hidden return-buffer variable the local aliases.
+    pub buf: u16,
+    /// The witness's `OpDatabase` type, for the buffer's null arm (a caller that offered
+    /// no buffer gets one allocated exactly as the witness would have been).
+    pub db_tp: i32,
+}
+
+/// The § V-u adoption of `def_nr`, or `None`.  Every gate is an under-approximation on
+/// purpose — a declined function keeps the delivery copies, which are always correct:
+///
+/// - the function VALUE-returns a plain vector through a hidden buffer (a borrow return
+///   publishes a dep and delivers nothing);
+/// - every delivery into the buffer sources the SAME local `v`, and the buffer serves
+///   nothing else — a site delivering another value, or a call handed the buffer (the
+///   `one_buffer_chain` shape), declines;
+/// - `v` is bound exactly once, from its own witness (`Set(v, OpGetField(__vdb, 0, _))`),
+///   never reassigned (a rebind's `OpDatabase` reuse would clear the CALLER's store) and
+///   never captured;
+/// - the witness serves only its init and its frees;
+/// - no `Parallel` or `Yield` in the body (a resumable frame's buffer discipline is its
+///   own question).
+#[must_use]
+pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
+    let def = data.def(def_nr);
+    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
+    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
+    if !def.is_loft_defined() || def.returns_borrowed_view() {
+        return None;
+    }
+    if !matches!(def.returned().peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    let attr = def.hidden_return_buffer_attr()?;
+    let vars = def.variables();
+    let buf = vars.var(&def.attributes()[attr].name);
+    if buf == u16::MAX {
+        return None;
+    }
+    let body = def.code();
+    // One pass collects every fact the gates need.
+    let mut delivery_src: Option<u16> = None;
+    let mut bad = false;
+    let mut init: Option<(u16, u16)> = None; // (v, vdb)
+    let mut v_sets: u32 = 0;
+    // The Clear+Append delivery pair is only skippable as its `one_buffer_vec_copy`
+    // BLOCK; an append reaching the buffer outside one has no emission that elides it,
+    // so it declines the adoption.
+    let mut appends_total: u32 = 0;
+    let mut appends_in_copy_block: u32 = 0;
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "one_buffer_vec_copy"
+        {
+            for op in &bl.operators {
+                if let Value::Call(d, args) = op.unspan()
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpAppendVector"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == buf)
+                {
+                    appends_in_copy_block += 1;
+                }
+            }
+        }
+        false
+    });
+    body.any_node(&mut |n| {
+        match n {
+            Value::Parallel(_) | Value::Yield(_) => bad = true,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                match name {
+                    "OpReplaceVector" | "OpAppendVector"
+                        if matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == buf) =>
+                    {
+                        if name == "OpAppendVector" {
+                            appends_total += 1;
+                        }
+                        match args.get(1).map(Value::unspan) {
+                            Some(Value::Var(s)) => match delivery_src {
+                                None => delivery_src = Some(*s),
+                                Some(prev) if prev == *s => {}
+                                Some(_) => bad = true,
+                            },
+                            _ => bad = true,
+                        }
+                    }
+                    "OpClearVector" => {}
+                    _ => {
+                        // Any other call handed the buffer is a use this analysis
+                        // does not own (the chain shape delivers THROUGH a callee).
+                        if args
+                            .iter()
+                            .any(|a| matches!(a.unspan(), Value::Var(b) if *b == buf))
+                        {
+                            bad = true;
+                        }
+                    }
+                }
+            }
+            Value::Set(sv, to) => {
+                if let Value::Call(d, gargs) = to.unspan()
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpGetField"
+                    && let Some(Value::Var(w)) = gargs.first().map(Value::unspan)
+                    && (*w as usize) < vars.count() as usize
+                    && vars.name(*w).starts_with("__vdb")
+                    && init.is_none()
+                {
+                    init = Some((*sv, *w));
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+        eprintln!(
+            "[adopt] {}: bad={bad} src={delivery_src:?} init={init:?} appends={appends_total}/{appends_in_copy_block}",
+            def.name()
+        );
+    }
+    if bad || appends_total != appends_in_copy_block {
+        return None;
+    }
+    let v = delivery_src?;
+    let (iv, vdb) = init?;
+    if iv != v || v >= vars.count() || vars.is_argument(v) || vars.is_captured(v) {
+        return None;
+    }
+    // Exactly one Set of v (its init), and the witness's OpDatabase for the null arm.
+    let mut db_tp: Option<i32> = None;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(sv, to) if *sv == v && !matches!(to.unspan(), Value::Null) => {
+                v_sets += 1;
+            }
+            Value::Set(sv, to) if *sv == vdb && !matches!(to.unspan(), Value::Null) => {
+                bad = true;
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpDatabase"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == vdb) =>
+            {
+                if let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) {
+                    if db_tp.is_some() {
+                        bad = true; // two OpDatabase on the witness: a rebind
+                    }
+                    db_tp = Some(*tp);
+                }
+            }
+            // The witness reached by any call BUT its own init family declines.
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if !matches!(
+                    name,
+                    "OpDatabase" | "OpGetField" | "OpSetInt4" | "OpFreeRef" | "OpFreeRefTag"
+                ) && args
+                    .iter()
+                    .any(|a| matches!(a.unspan(), Value::Var(w) if *w == vdb))
+                {
+                    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+                        eprintln!("[adopt] {}: witness touched by {name}", def.name());
+                    }
+                    bad = true;
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+        eprintln!(
+            "[adopt] {}: second pass bad={bad} v_sets={v_sets} db_tp={db_tp:?}",
+            def.name()
+        );
+    }
+    if bad || v_sets != 1 {
+        return None;
+    }
+    Some(RetAdopt {
+        v,
+        vdb,
+        buf,
+        db_tp: db_tp?,
+    })
+}
+
+/// Does `callee` run `OpDatabase` on its own hidden return buffer (@PLN157 § V-j)?  That
+/// is the witness-promoted delivery shape: the reuse arm CLEARS the buffer's whole store,
+/// so a buffer such a callee receives must own its store — it cannot be placed.
+fn callee_reinits_buffer(data: &Data, callee: &crate::data::Definition) -> bool {
+    let Some(attr) = callee.hidden_return_buffer_attr() else {
+        return true; // no buffer attr: not a delivery this analysis understands
+    };
+    let bv = callee.variables().var(&callee.attributes()[attr].name);
+    if bv == u16::MAX {
+        return true;
+    }
+    let mut reinits = false;
+    callee.code().any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpDatabase"
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == bv)
+        {
+            reinits = true;
+        }
+        false
+    });
+    reinits
 }

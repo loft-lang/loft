@@ -2226,6 +2226,53 @@ zero of the slot's handle fields, or the completeness fact per heap field), the
 `__nullable` element, and the c11 self-reading push (its cost is the parser's per-iteration
 whole-vector copy, § V-q's second finding — a unit of its own).
 
+## V-u — a result vector adopts the return buffer (2026-09-11)
+
+**The evidence.**  `fronds` re-profiled after § V-j with callers: the top INCLUSIVE chain
+was `vector_add` → nested `copy_claims` → `claim`/`claim_block` — the per-level RETURN
+COPY of the whole result vector into the caller's buffer, carrying both the remaining copy
+class (~18 %) and most of the claim/free-tree time (the copies are claimed in the buffer's
+store).  Two cheaper-looking routes were measured first and both came out NEGATIVE on
+today's runtime — the receipts matter as much as the win: the 2026-09-08 "variant A"
+source shape (builders appending into `fd_out[fk].fpts`) is now +7 % because a field-path
+append misses every bare-variable fast path this week built, and placing the two builder
+temporaries in `fd_out`'s store to ADOPT their backings at the literal is +5 % — the same
+lesson as § V-j's P2: churn concentrated into one store costs more than the copies it
+saves, and a per-call temp store is cheap exactly because it dies whole.  The route that
+measured POSITIVE by hand (−7.3 % one level deep) is the § V's Route R twin for vectors:
+the result local IS the caller's buffer.
+
+**Two callee ABIs, and only one pays.**  The witness-promoted shape (the buffer parameter
+IS the `__vdb` witness — `mid`, `mkr`, `collect`) already builds in the caller's buffer
+and its `OpReplaceVector` deliveries self-detect the same backing and no-op.  The SHAPE-A
+ABI (a separate `__retbuf` attr — `fronds`, `smooth_pts`, `mkn`, functions whose appends
+source other calls' buffers) pays the full copy at every exit.  § V-u adopts exactly
+shape A (`@FR-R-RetAdopt`, formal/rewrites.md): `hoist::ret_adopt` proves one result
+local sources every delivery (bound once from its witness, never rebound or captured, the
+buffer serving nothing else, every Clear+Append inside its `one_buffer_vec_copy` block),
+and the emitter aliases the declaration to the buffer, skips the witness's `OpDatabase`,
+blanks the delivery pair INSIDE the block while keeping the block's scope-exit frees and
+the bare entry clear, and re-targets a § V-j placement at the adopted witness to the
+buffer.
+
+**Falsified LIVE, twice, at the scoping that carries the rule**: blanking every
+`OpClearVector(buf)` (the IR-level entry clear included) corrupts the fronds probe — the
+reused buffer accumulates across the recursion's calls (store access out of bounds); and
+collapsing the delivery BLOCK whole drops its scope-exit frees — 2 stores leaked in the
+V-j corpus (`mkn`), caught by `LOFT_NATIVE_LEAK_CHECK`.  Both scars are in the cells.
+
+**Cells** (`bytecode-comparisons/V-u-retbuf-adopt-cells.loft`, seven, hand-computed, both
+backends): u1 the mid-return shape · u2 two delivered locals (declines) · u3 the result
+local rebound (declines) · u4 recursion + reuse + the § V-j composition · u5 a discarded
+result and a caller loop reusing the buffer · u6 the shape-A adopter (the emission pin's
+positive) · u7 shape A with two delivered locals (declines).  `tests/retbuf_adopt.rs`
+pins which functions adopt; `tests/scripts/157-retbuf-adopt.loft` carries the value
+cells.  Switch `LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the declining gate.
+
+**Measured** (ABAB, hashes exact, leak-free under poison): standalone `fronds` 381–396k →
+**350–357k ns/op (−9.5 %)**, `smooth` 2 205 → **1 887 (−14.4 %)** — the smooth Mod-3
+ceiling (−16 %) nearly reached, and `fronds` pays it at every recursion level.
+
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 
 **The instrument.**  A standalone copy of the consumer's `fronds` row (drawing.loft's

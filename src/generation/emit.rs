@@ -2264,6 +2264,16 @@ impl Output<'_> {
         // expression's type would be `DbRef`, not `(u32, DbRef)`; and
         // the `i64` from OpGetInt4 needs an explicit `as u32` cast to
         // match the fn-ref tuple's first slot.
+        // @PLN157 § V-u (`@FR-R-RetAdopt`) — inside the delivery block of an ADOPTED
+        // result local, the `OpClearVector(buf)` + `OpAppendVector(buf, v, tp)` pair has
+        // nothing to move (the local IS the buffer; the clear would wipe the result, the
+        // append would self-copy).  The block's OTHER statements — the scope-exit frees,
+        // the returned value — emit unchanged, and the ENTRY clear (a bare statement
+        // outside any such block) stays: it is the buffer's reuse contract.
+        let adopt_delivery = bl.name == "one_buffer_vec_copy" && self.ret_adopt.is_some();
+        if adopt_delivery {
+            self.in_adopt_delivery += 1;
+        }
         if bl.name == "fn_ref_field_read" && bl.operators.len() == 2 {
             write!(w, "((")?;
             self.output_code_inner(w, &bl.operators[0])?;
@@ -2293,7 +2303,12 @@ impl Output<'_> {
         if let Some(pair) = &move_pair {
             let vars = self.data.def(self.def_nr).variables();
             let buf = super::sanitize(vars.name(pair.buf));
-            let vdb = super::sanitize(vars.name(pair.host_vdb));
+            // @PLN157 § V-u — an adopted result local has no witness store; its elements
+            // live in the return buffer, which is where the paired call's buffer belongs.
+            let vdb = match &self.ret_adopt {
+                Some(a) if a.vdb == pair.host_vdb => super::sanitize(vars.name(a.buf)),
+                _ => super::sanitize(vars.name(pair.host_vdb)),
+            };
             self.indent(w)?;
             writeln!(
                 w,
@@ -2754,6 +2769,9 @@ impl Output<'_> {
         }
         if move_pair.is_some() {
             self.active_move_vars.pop();
+        }
+        if adopt_delivery {
+            self.in_adopt_delivery -= 1;
         }
         self.indent(w)?;
         write!(

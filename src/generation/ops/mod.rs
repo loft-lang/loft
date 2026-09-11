@@ -249,6 +249,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
     r.insert("OpNewRecord", Box::new(vector_ops::NewRecordEmitter));
     r.insert("OpFinishRecord", Box::new(vector_ops::FinishRecordEmitter));
+
     r.insert("OpGetRecord", Box::new(key_ops::OpGetRecordEmitter));
     r.insert("OpIterate", Box::new(key_ops::OpIterateEmitter));
 
@@ -516,7 +517,10 @@ mod tests {
         // scalar field getters (a hoisted record scalar emits its local), not
         // only the three fusable kinds.  @PLN157 § V-t raised it by 2:
         // `NewRecordEmitter` and `FinishRecordEmitter`, the record push through
-        // a hoisted push header (`@FR-R-PushRec`).
+        // a hoisted push header (`@FR-R-PushRec`).  § V-u adds no entry: the
+        // adopted buffer's `OpReplaceVector` delivery is aliasing-safe at run
+        // time, and its `one_buffer_vec_copy` block is skipped whole in
+        // `output_block` (`@FR-R-RetAdopt`).
         assert!(
             count <= 111,
             "registry has {count} custom emitters — bump the cap if \

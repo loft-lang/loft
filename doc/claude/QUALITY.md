@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 460 | 436 | **24** |
+| 465 | 441 | **24** |
 
 
 
@@ -1528,7 +1528,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 55 | **12** | 43 |
+| 58 | **12** | 46 |
 
 
 
@@ -2544,7 +2544,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 780 | 437 | 6 | **337** |
+| 782 | 439 | 6 | **337** |
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

@@ -1,0 +1,119 @@
+// @PLN157 § V-u cells — a vector-returning function's result local ADOPTS the hidden
+// return buffer (`@FR-R-RetAdopt`): the local builds in the caller's buffer from its
+// declaration, the delivery copies at the exits have nothing left to move, and the
+// buffer's backing is REUSED across calls (the entry clear is the reuse contract).
+// The interpreter keeps the copies and is the oracle.  Expected values are hand-computed
+// in V-u-retbuf-adopt-cells.expected; tests/retbuf_adopt.rs pins which functions adopt.
+struct Pt2 { x: float, y: float }
+struct In2 { a: integer, b: float }
+struct R2 { id: integer, ins: vector<In2> }
+
+// u1 — the MID-RETURN shape the parser's own rename refuses: an early `return out` and a
+// tail.  ADOPTS; both paths deliver the same local.
+fn mid(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  if n < 0 { return out }
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: 2.0 }]; }
+  return out;
+}
+fn u1() {
+  a = mid(4); b = mid(-1);
+  s = 0.0; for p in a { s = (s + p.x + p.y) ?? 0.0; }
+  println("u1 {len(a)} {len(b)} {s}");
+}
+
+// u2 — two exits returning DIFFERENT locals: the adoption declines (a delivery of the
+// other local through the shared buffer would self-clear the first).  Values right.
+fn twolocal(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  alt: vector<Pt2> = [];
+  alt += [Pt2 { x: 9.0, y: 9.0 }];
+  if n < 0 { return alt }
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: 1.0 }]; }
+  return out;
+}
+fn u2() {
+  a = twolocal(3); b = twolocal(-1);
+  println("u2 {len(a)} {a[2]?.x} {len(b)} {b[0]?.x}");
+}
+
+// u3 — the result local REBOUND mid-body (`out = []`): declines — a rebind's store reuse
+// would clear the caller's buffer store mid-build.  Values right.
+fn rebound(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: 0.0 }]; }
+  out = [];
+  out += [Pt2 { x: 42.0, y: 0.0 }];
+  return out;
+}
+fn u3() { r = rebound(3); println("u3 {len(r)} {r[0]?.x}"); }
+
+// u4 — heap-carrying elements, recursion, buffer REUSE across an enclosing loop, and the
+// § V-j move landing in the adopted buffer's store: the full composition.
+fn mkr(n: integer, seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  for i in 0..n {
+    ins: vector<In2> = [];
+    ins += [In2 { a: seed * 10 + i, b: (i as float) * 0.5 }];
+    out += [R2 { id: seed * 100 + i, ins: ins }];
+  }
+  return out;
+}
+fn deep(d: integer, seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  if d == 0 {
+    for f in mkr(2, seed) { out += [f]; }
+    return out;
+  }
+  for k in 0..2 {
+    for f in deep(d - 1, seed * 7 + k) { out += [f]; }
+  }
+  return out;
+}
+fn sum_r2(v: const vector<R2>) -> integer {
+  s = 0;
+  for r in v { s += r.id; for x in r.ins { s += x.a; } }
+  s
+}
+fn u4() { r = deep(2, 1); println("u4 {len(r)} {sum_r2(r)}"); }
+
+// u5 — the result DISCARDED at a statement call, and the same fn re-called in a loop
+// (the caller's one buffer reused; each call's answer replaces the last).
+fn u5() {
+  mid(2);
+  t = 0.0;
+  for i in 0..3 {
+    r = mid(i + 1);
+    t = (t + r[len(r) - 1]?.x) ?? 0.0;
+  }
+  println("u5 {t}");
+}
+
+// u6 — the SHAPE-A adopter (a separate `__retbuf` attr beside the locals — the ABI the
+// parser gives a fn whose appends source other calls' buffers): the init aliases the
+// buffer, the delivery block's pair emits as nothing, the scope-exit frees stay.
+fn mixed(seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  for r in mkr(1, seed) { out += [r]; }
+  for r in mkr(1, seed + 1) { out += [r]; }
+  out
+}
+fn u6() { r = mixed(3); println("u6 {len(r)} {sum_r2(r)}"); }
+
+// u7 — TWO locals delivered from a SHAPE-A fn (both built from calls' buffers): the
+// same-source gate declines, because a shared buffer delivering the OTHER local would
+// self-clear the first.  Values right; the falsified sabotage turns exactly this red.
+fn twolocal2(n: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  alt: vector<R2> = [];
+  for r in mkr(1, 9) { alt += [r]; }
+  if n < 0 { return alt }
+  for r in mkr(1, n) { out += [r]; }
+  return out;
+}
+fn u7() {
+  a = twolocal2(5); b = twolocal2(-1);
+  println("u7 {len(a)} {sum_r2(a)} {len(b)} {sum_r2(b)}");
+}
+
+fn main() { u1(); u2(); u3(); u4(); u5(); u6(); u7(); }

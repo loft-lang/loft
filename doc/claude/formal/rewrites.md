@@ -406,6 +406,47 @@ free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
 Shipped: standalone `fronds` −11 % (396–400k → 354–359k ns/op), the hand-measured
 ceiling reached exactly; hash `ebcfd875` on every run.
 
+### A result vector adopts the return buffer
+
+```
+  (R-RetAdopt)   a function VALUE-returning a plain vector through a hidden buffer
+                 (the shape-A ABI: a separate `__retbuf` attr; a borrow return
+                 delivers nothing and declines), whose EVERY delivery into that
+                 buffer sources ONE result local — bound once from its own
+                 witness, never rebound, never captured, the buffer serving
+                 nothing else, every Clear+Append delivery inside its
+                 `one_buffer_vec_copy` block — has that local ADOPT the buffer:
+                 the declaration aliases it (allocating one exactly as the
+                 witness would have been when the caller offered none), the
+                 witness store is never allocated, the delivery pair inside the
+                 block emits as nothing while the block's OTHER statements — the
+                 scope-exit frees, the returned value — stay, the bare ENTRY
+                 clear stays (it is the buffer's reuse contract across calls),
+                 and `OpReplaceVector` deliveries stay as emitted — they are
+                 aliasing-safe at run time and self-detect the adopted no-op.
+                 The witness-promoted ABI (the buffer parameter IS the witness)
+                 already delivers copy-free through that same self-detection and
+                 declines here.  A § V-j placement into the adopted local's
+                 witness re-targets the return buffer.
+```
+
+**In words.** @PLN157 § V-u.  Before it, a shape-A function copied its WHOLE result
+vector into the caller's buffer at every exit — per element a claim in the buffer's
+store plus a deep copy, at every recursion level (`vector_add` → `copy_claims` was the
+top inclusive chain of `fronds`' profile, carrying most of the claim/free-tree time
+with it).  Adoption builds the result where it must end up, so the exits deliver
+nothing and the buffer's backing capacity survives across calls.  Falsified LIVE,
+twice, at the scoping that carries the rule: blanking every `OpClearVector(buf)`
+(the entry clear included) corrupts the fronds probe — the reused buffer accumulates
+across calls — and collapsing the delivery BLOCK whole drops its scope-exit frees
+(2 stores leaked in the V-j corpus, caught by `LOFT_NATIVE_LEAK_CHECK`).  Switch
+`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  Sites:
+`hoist::ret_adopt`, the init arm in `Output::output_set`, the witness skip in
+`OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
+`in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
+§ V-j hook.  Shipped: standalone `fronds` −9.5 % (381–396k → 350–357k ns/op) and
+`smooth` −14.4 % (2 205 → 1 887), hashes exact, cells leak-free under poison.
+
 ### A leaf carries no frame
 
 ```

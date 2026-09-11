@@ -46,6 +46,13 @@ pub struct OpDatabaseEmitter;
 impl OpEmitter for OpDatabaseEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [var_val, tp_val] = args {
+            // @PLN157 § V-u (`@FR-R-RetAdopt`) — the adopted result local's witness store
+            // is never allocated: the local builds in the return buffer instead.
+            if let Value::Var(w) = var_val.unspan()
+                && ctx.output.ret_adopt.is_some_and(|a| a.vdb == *w)
+            {
+                return write!(ctx.w, "()");
+            }
             ctx.emit(var_val)?;
             write!(ctx.w, " = OpDatabase(cell,")?;
             ctx.emit(var_val)?;

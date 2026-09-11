@@ -670,6 +670,16 @@ pub struct Output<'a> {
     /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
     /// `for f in call(…) {{ v += [f] }}` loop.
     pub move_append_disabled: bool,
+    /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
+    /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
+    pub ret_adopt: Option<hoist::RetAdopt>,
+    /// `LOFT_NO_RETBUF_ADOPT=1` — a vector-returning function keeps its delivery copies,
+    /// as before @PLN157 § V-u; the bisect step for a wrong vector return or a leak at a
+    /// vector-returning call.
+    pub retbuf_adopt_disabled: bool,
+    /// Non-zero while a `one_buffer_vec_copy` block of an ADOPTED function is being
+    /// emitted — the clear/append pair inside it emits as nothing (§ V-u).
+    pub in_adopt_delivery: u32,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -1598,6 +1608,9 @@ impl<'a> Output<'a> {
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            ret_adopt: None,
+            retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
+            in_adopt_delivery: 0,
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1849,6 +1862,13 @@ impl Output<'_> {
             .map(|p| (p.loop_var, p.clone()))
             .collect();
         self.active_move_vars.clear();
+        self.in_adopt_delivery = 0;
+        // @PLN157 § V-u — does this function's result local adopt the return buffer?
+        self.ret_adopt = if self.retbuf_adopt_disabled {
+            None
+        } else {
+            hoist::ret_adopt(self.data, def_nr)
+        };
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();

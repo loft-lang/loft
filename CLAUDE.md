@@ -738,6 +738,11 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
+delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer
+(built where it must end up; the exits deliver nothing; the buffer's backing reused across
+calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
+call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live

@@ -20,12 +20,14 @@ const CORPORA: &[&str] = &[
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-s-mint-hoist-cells.loft",
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-t-record-push-cells.loft",
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-j-move-append-cells.loft",
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-u-retbuf-adopt-cells.loft",
     "tests/scripts/157-write-hoist.loft",
     "tests/scripts/157-callee-inputs.loft",
     "tests/scripts/157-push-hoist.loft",
     "tests/scripts/157-mint-hoist.loft",
     "tests/scripts/157-record-push.loft",
     "tests/scripts/157-move-append.loft",
+    "tests/scripts/157-retbuf-adopt.loft",
     "bench/12_drawing/bench.loft",
 ];
 

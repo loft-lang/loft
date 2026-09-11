@@ -177,4 +177,50 @@ fn c16() {
   println("c16 {len(out)} {out[29]?.y} {s}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); }
+// c17/c18 — the callee RE-INITS its buffer (`OpDatabase` on the hidden attr, the
+// witness-promoted delivery shape): its reuse arm clears the buffer's WHOLE STORE, so a
+// placed buffer would let the callee wipe the caller's half-built result — the sqldb
+// `collect_leaf` corruption.  The pair declines; values right.  c17 is the two-function
+// shape, c18 the direct recursion.
+struct FI2 { name: text, depth: integer, kids: integer }
+struct CF2 { path_name: text, f: FI2 }
+fn fields_of(d: integer) -> vector<FI2> {
+  out: vector<FI2> = [];
+  for i in 0..3 {
+    out += [FI2 { name: "f{d}_{i}", depth: d, kids: if d > 0 && i == 1 { 1 } else { 0 } }];
+  }
+  out
+}
+fn collect_leaf(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; }
+  return out;
+}
+fn collect2(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) {
+    if f.kids == 0 { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; continue; }
+    for cf in collect_leaf(d - 1, "{prefix}{f.name}_") { out += [cf] }
+  }
+  return out;
+}
+fn collectr(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) {
+    if f.kids == 0 { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; continue; }
+    for cf in collectr(d - 1, "{prefix}{f.name}_") { out += [cf] }
+  }
+  return out;
+}
+fn c17() {
+  r = collect2(2, ""); s = 0;
+  for c in r { s += len(c.path_name) + c.f.depth; }
+  println("c17 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
+}
+fn c18() {
+  r = collectr(2, ""); s = 0;
+  for c in r { s += len(c.path_name) + c.f.depth; }
+  println("c18 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); }

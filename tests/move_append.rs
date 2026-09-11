@@ -30,16 +30,18 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_c5", 1, 1, 1), // break: pairs; the leftovers die in the record free
     ("n_c6", 1, 1, 1), // a view-returning call still DELIVERS a copy into the placed
     // buffer, so the move relocates that copy; the same-store dispatch guards the rest
-    ("n_c7", 0, 0, 0),  // two destinations for one f — declines
-    ("n_c8", 1, 1, 1),  // the INNER call pairs; the outer f (under the inner loop) declines
-    ("n_c9", 0, 0, 0),  // an inner record of the temporary — the source is not the loop var
-    ("n_c10", 0, 0, 0), // vector<R?> — not a plain struct element
-    ("n_c11", 1, 1, 1), // a text field rides the moved bytes (same-store handles)
-    ("n_c12", 1, 1, 1), // the append under an `if` arm runs at most once per iteration
-    ("n_c13", 0, 0, 0), // a container element — declines
-    ("n_c14", 0, 0, 0), // the append under a FURTHER loop — declines (c8's falsifier)
-    ("n_c15", 0, 0, 0), // the destination is reassigned later — declines
-    ("n_c16", 1, 1, 1), // a no-heap element: composes with § V-t's record push
+    ("n_c7", 0, 0, 0),       // two destinations for one f — declines
+    ("n_c8", 1, 1, 1),       // the INNER call pairs; the outer f (under the inner loop) declines
+    ("n_c9", 0, 0, 0),       // an inner record of the temporary — the source is not the loop var
+    ("n_c10", 0, 0, 0),      // vector<R?> — not a plain struct element
+    ("n_c11", 1, 1, 1),      // a text field rides the moved bytes (same-store handles)
+    ("n_c12", 1, 1, 1),      // the append under an `if` arm runs at most once per iteration
+    ("n_c13", 0, 0, 0),      // a container element — declines
+    ("n_c14", 0, 0, 0),      // the append under a FURTHER loop — declines (c8's falsifier)
+    ("n_c15", 0, 0, 0),      // the destination is reassigned later — declines
+    ("n_c16", 1, 1, 1),      // a no-heap element: composes with § V-t's record push
+    ("n_collect2", 0, 0, 0), // c17: the callee re-inits its buffer store — declines
+    ("n_collectr", 0, 0, 0), // c18: the same through direct recursion — declines
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

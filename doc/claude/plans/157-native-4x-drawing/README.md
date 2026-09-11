@@ -40,6 +40,20 @@ agreeing, `make ci` green 4813/4813 and the in-tree ratio gate under bar): `hash
 The scoreboard above reads lower for some rows because it was taken on the branch; these are the
 JOINED tree's, and the delta is what carries across a join, never the endpoints.
 
+**§ V-u SHIPPED 2026-09-11, the same day, and § V-j grew its callee gate** (DESIGN.md
+§ V-u, § V-j): the V-j suite run caught a REAL corruption — the sqldb fixture's
+`collect_leaf` receives its buffer as the witness-promoted ABI and re-inits it with
+`OpDatabase`, whose reuse arm clears the buffer's WHOLE store, under placement the
+caller's half-built result (`hoist::callee_reinits_buffer` now declines such callees;
+cells c17/c18).  § V-u then shipped the return-copy removal the fronds profile named as
+the top inclusive chain: standalone `fronds` −9.5 % and `smooth` −14.4 % on top of
+everything above, hashes exact, cells leak-free under poison.  Two negative measurements
+recorded on the way (DESIGN.md § V-u): the 2026-09-08 variant-A source shape is now +7 %
+(field-path appends miss the bare-variable fast paths) and placing the builder
+temporaries for a field-adopt is +5 % (§ V-j P2's lesson again) — the allocation queue
+item 4b is therefore RE-RANKED DOWN; what remains for `fronds` is the per-side element
+machinery and the temp-store cycle, to be re-profiled on the § V-u runtime.
+
 **§ V-j's MOVE SHIPPED 2026-09-11, the same day** (DESIGN.md § V-j, the SHIPPED addendum;
 `@FR-R-MoveAppend`): the ceiling re-measured by hand on the § V-t runtime came out **−11.3 %**
 on `fronds` (the copy class had grown to 23 % of a 2× faster row), and the build reached it
@@ -133,7 +147,7 @@ its assumptions are written as a rule and checkable by both.
 - **Effort:** H total (P1 S · P2 S · P3 M · P4 L · P0/P5 XS)
 - **Design:** ✓ — [DESIGN.md](DESIGN.md): per-phase invariant, code sites,
   claims + falsifying probes, predicted numbers
-- **Last touched:** 2026-09-11 (§ V-t, § V-j move)
+- **Last touched:** 2026-09-11 (§ V-t, § V-j move, § V-u)
 
 ## Where to resume
 
@@ -382,6 +396,7 @@ unless said otherwise.
 | **V-r** — the EMISSION AUDIT: `scripts/emission_audit.py` validates a `--native-emit` output against the hoist-state rules (`R-State` one holder per path per frame, `R-Refresh` no mover on a held path, `R-Inputs` a twin handed only live holders); `tests/emission_audit.rs` runs it over every hoist corpus and the in-repo bench | [DESIGN.md § V-r](DESIGN.md) | a corpus audits with a violation; a corpus resolves no holder; the doubled emission is not refused | **Shipped 2026-09-09** — flags the § V-p × § V-q double holder at emission when the collector order is re-introduced; every corpus clean |
 | **V-s** — a record-appending loop hoists its invariant scalars: the mint group (`OpPreAllocVector · OpNewRecord · sets or a retbuf callee · OpFinishRecord`, § V-d's `OpCopyRecord` delivery included) admitted as a mover under `(R-Alias)`, writes into the FRESH element evicting nothing (`@FR-R-Mint`); a keyed container's same-named ops stay blocking (admission asks the TYPE) | [DESIGN.md § V-s](DESIGN.md) | a c9/c10 cell answers the stale value (the falsified sabotage); `tests/mint_hoist.rs` no longer sees the hoists; a consumer hash disagrees | **Shipped 2026-09-10** — fifteen cells exact on both backends, emission pinned; `smooth` −8 % (interleaved ABAB best-of-3), `fronds`/`lock_curved` within noise; switch `LOFT_NO_MINT_HOIST` |
 | **V-j (move)** — the move-append: in `for f in call(…) { v += [f] }` with the loop var's single post-binding use that one append, the call's buffer is PLACED as a record in `v`'s own store (`Stores::place_record_in`), the append relocates the element's bytes and zeroes the source (`move_record_shallow`; store-identity dispatch, deep copy the fallback), the buffer's free record-level (`free_record_in`) (`@FR-R-MoveAppend`); declines on read-after, double append, named source, nested loop, rebound dest, non-struct element | [DESIGN.md § V-j](DESIGN.md) | the use-after sabotage turns c2 red (`3 409 45` → `3 409 0`); `tests/move_append.rs` no longer sees the pairs; a cell leaks or answers wrong under `LOFT_POISON=1` on either backend | **Shipped 2026-09-11** — sixteen cells exact both backends under poison + leak checks; ceiling re-measured by hand first (−11.3 %) and reached exactly: `fronds` 396–400k → 354–359k ns/op, consumer 8.36× → 7.88×; switch `LOFT_NO_MOVE_APPEND` |
+| **V-u** — a result vector ADOPTS the return buffer: a shape-A fn (separate `__retbuf` attr) whose every delivery sources ONE never-rebound result local aliases that local to the buffer (`hoist::ret_adopt`), the `one_buffer_vec_copy` pair emits as nothing while the block's frees and the entry clear stay, `OpReplaceVector` self-detects, a § V-j placement re-targets (`@FR-R-RetAdopt`); the witness-promoted ABI is already copy-free and declines | [DESIGN.md § V-u](DESIGN.md) | the un-scoped blanking corrupts the fronds probe; the whole-block collapse leaks 2 stores in the V-j corpus; `tests/retbuf_adopt.rs` no longer sees the adoption; a cell answers wrong under `LOFT_POISON=1` | **Shipped 2026-09-11** — seven cells exact both backends, leak-free under poison; `fronds` −9.5 % (350–357k), `smooth` −14.4 % (1 887 ns/op) standalone; switch `LOFT_NO_RETBUF_ADOPT` |
 | **V-t** — a record append EMITS through the push header: an admitted mint whose element is a plain no-heap struct takes the header's next slot (`Stores::push_record_hoisted` — no `record_new` dispatch, no default prefill: the IR's literal lowering writes every field explicitly, a declined delivery is a whole-record copy) and the finish is the length bump (`push_record_finish`), exactly where `record_finish`'s was (`@FR-R-PushRec`); heap-owning, `__nullable` and keyed elements keep the templates | [DESIGN.md § V-t](DESIGN.md) | a growth cell answers empty (the falsified sabotage: c1 `100 0 25 9801 2475` → `0 0 0 0 0`); `tests/record_push.rs` no longer sees the fused forms; the audit accepts a template mint on a held path; a consumer hash disagrees | **Shipped 2026-09-11** — fifteen cells exact on both backends, emission pinned; standalone `smooth` −32 % (ceiling hand-measured at −37 % first); consumer `smooth` 11.0× → 4.6×, `fronds` 11.1× → 8.4× (this box), 14/14 hashes agree; switch `LOFT_NO_RECORD_PUSH` |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 

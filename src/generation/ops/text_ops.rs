@@ -75,6 +75,15 @@ impl OpEmitter for TextDispatchEmitter {
                 ctx.output.append_character(&mut *ctx.w, args)
             }
             "OpClearStackText" | "OpClearText" => ctx.output.clear_stack_text(&mut *ctx.w, args),
+            // @PLN157 § V-u (`@FR-R-RetAdopt`) — the delivery pair inside an adopted
+            // function's `one_buffer_vec_copy` block: the result local IS the buffer.
+            "OpClearVector" | "OpAppendVector"
+                if ctx.output.in_adopt_delivery > 0
+                    && matches!(args.first().map(crate::data::Value::unspan), Some(crate::data::Value::Var(b))
+                        if ctx.output.ret_adopt.is_some_and(|a| a.buf == *b)) =>
+            {
+                write!(ctx.w, "()")
+            }
             "OpClearVector" => ctx.output.clear_vector(&mut *ctx.w, args),
             "OpAppendVector" => ctx.output.append_vector(&mut *ctx.w, args),
             "OpFreeText" | "OpCreateStack" => Ok(()),

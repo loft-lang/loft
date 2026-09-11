@@ -24,6 +24,27 @@ impl Output<'_> {
         var: u16,
         to: &Value,
     ) -> std::io::Result<()> {
+        // @PLN157 § V-u (`@FR-R-RetAdopt`) — the adopted result local's init: instead of
+        // reading the (never-allocated) witness's vector path, the local IS the return
+        // buffer.  A caller that offered no buffer gets one allocated exactly as the
+        // witness would have been, so ownership travels the same route.
+        if let Some(a) = self.ret_adopt
+            && var == a.v
+            && matches!(to.unspan(), Value::Call(d, _)
+                if (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpGetField")
+        {
+            let variables = self.data.def(self.def_nr).variables();
+            let name = sanitize(variables.name(var));
+            let buf = sanitize(variables.name(a.buf));
+            let tp_str = rust_type(variables.tp(var), &Context::Variable);
+            self.declared.insert(var);
+            let db_tp = a.db_tp;
+            return write!(
+                w,
+                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} var_{buf} }}"
+            );
+        }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {
             return self.output_set_witnessed(w, var, to);
         }
