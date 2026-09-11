@@ -19,14 +19,14 @@ const CELLS: &str =
 /// `(function, push headers bound, hoisted pushes emitted, plain headers bound)` — the
 /// predictions written beside the cells.
 const EXPECTED: &[(&str, usize, usize, usize)] = &[
-    ("n_c1", 2, 2, 0),   // the two constant-fill comprehensions
-    ("n_c2", 1, 1, 1),   // out pushed, xs read: two owners, both hoisted
+    ("n_c1", 2, 2, 0), // the two constant-fill comprehensions
+    ("n_c2", 1, 1, 1), // out pushed, xs read: two owners, both hoisted
     ("n_c3", 1, 1, 0), // the value READS the pushed vector: since § V-w the read rides a
     // pre-push TEMP instead of a per-iteration whole-vector copy, so the loop hoists —
     // the tail read serves from the push header and the accumulator is linear
-    ("n_c4", 2, 2, 0), // two pushed locals
-    ("n_c5", 1, 1, 0), // a view root, alone: admitted
-    ("n_c6", 1, 1, 0), // v pushed; the view w is dropped from the hoist (a runtime read)
+    ("n_c4", 2, 2, 0),   // two pushed locals
+    ("n_c5", 1, 1, 0),   // a view root, alone: admitted
+    ("n_c6", 1, 1, 0),   // v pushed; the view w is dropped from the hoist (a runtime read)
     ("n_c7", 1, 1, 1), // the outer loop holds out's push header and rows' header; the inner re-uses
     ("n_c8", 0, 0, 0), // the pushed root is rebound
     ("n_fill", 1, 1, 0), // c9: a parameter's field, alone: admitted
