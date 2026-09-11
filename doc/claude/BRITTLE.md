@@ -346,10 +346,18 @@ a compile error**:
   are ONE pairing, the two wrong answers are on OPPOSITE sides, and the middle is NARROW: three
   candidate predicates were measured, two of them wrong in opposite directions, and every one of
   the 70 targeted tests across eight guards was green on each.  `formal/ownership.md` D-own-41
-  carries all three.  ⚠ The leak direction is invisible to a plain run — `--interpret`,
-  `--native` and `--tests` on `303-ref-reassign-free.loft` are all clean, because only `wrap`'s
-  in-process SUITE run arms the leak gate.  Verify this area with
-  `cargo test --release --test wrap loft_suite` and nothing cheaper;
+  carries all three.  ⚠ The leak direction is invisible to a plain run of the guard that
+  caught it, and the reason is a property of the GUARD rather than of the area: **a `main`-ful
+  file IS leak-checked by a direct `--interpret` run** (`src/main.rs` calls `check_store_leaks`
+  at any clean exit), while a `fn test_*`-only file is leak-checked by nothing but `wrap`'s
+  in-process suite — `--tests` does not leak-check at all.  `303-ref-reassign-free.loft` is
+  `main`-less with four test functions, which is why `--interpret`, `--native` AND `--tests` on it
+  were all clean while the suite failed, and why two agents independently concluded it was fixed.
+  **So the fix is to give a leak-relevant guard a `main`**; running the suite is the workaround
+  that catches it afterwards.  Until 303 has one, verify this area with
+  `cargo test --release --test wrap loft_suite` and nothing cheaper.  The same blindness is
+  documented in `scripts/falsify.sh`'s own header (lines 30-38) for the falsification receipt,
+  where it silently converts a leak guard into one recorded INERT;
 - the per-site ownership reads (`owned_ref`, `witnessed`, `nullable_local`, `proxy_says_owned`)
   are asked by several of the arms above at different strengths, so a condition that looks local
   is usually one of a pair.
