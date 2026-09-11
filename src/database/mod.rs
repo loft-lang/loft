@@ -1954,7 +1954,13 @@ impl Stores {
     ///
     /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
     /// before the push — the point of the switch.  Never in the emitted default.
-    #[inline]
+    ///
+    /// `#[inline(always)]` rather than `#[inline]`, measured (`@FR-R-Cold`): with the
+    /// growth arm already outlined the body is a bounds test, two stores and a bump, and
+    /// rustc still declined the cross-rlib inline — the helper alone was 31 % of the
+    /// `lock_curved` row's self time.  (The § V-i probe that reverted `inline(always)`
+    /// on `addr`/`addr_mut` measured fns that were ALREADY inlining; this one was not.)
+    #[inline(always)]
     pub fn push_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
         &mut self,
         p: &mut crate::vector::PushHeader,
@@ -1980,9 +1986,25 @@ impl Stores {
             p.h.len += 1;
             store.write::<u32>(p.h.rec, 4, p.h.len);
         } else {
-            T::append_in(self, db, val);
-            *p = crate::vector::push_header(db, &self.allocations);
+            self.push_hoisted_grow(p, db, val);
         }
+    }
+
+    /// The growth arm of [`Self::push_hoisted`], outlined (`@FR-R-Cold`): with the
+    /// runtime's whole append ladder folded into the generic `#[inline]` caller, rustc
+    /// declined to inline it across the rlib boundary, and every in-capacity push — a
+    /// bounds test, one store and a length bump — paid a real call (23.8 % of the
+    /// `lock_curved` row's self time sat in the helper).
+    #[cold]
+    #[inline(never)]
+    fn push_hoisted_grow<T: crate::vector::HoistScalar>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        val: T,
+    ) {
+        T::append_in(self, db, val);
+        *p = crate::vector::push_header(db, &self.allocations);
     }
 
     /// @PLN157 § V-t — a RECORD append's slot through a hoisted [`crate::vector::PushHeader`]
