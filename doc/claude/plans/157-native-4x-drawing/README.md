@@ -47,7 +47,44 @@ pre-footer fragmentation story, re-derived and re-taught — plus the two establ
 cold-cache timeouts, green isolated) and GitHub gate run 34617868644 was dispatched on the tip —
 check its verdict before building on it.**
 
-**What remains in `fronds` (6.08×), profiled on the § V-v runtime** (macOS `sample`,
+**What remains in `fronds`, RE-VERIFIED 2026-09-11 on the post-gate-fix tip (595e5d98)**
+— each number measured, not estimated (ABAB best-of-3, `vr_fronds --n 4000`, hash
+`ebcfd875` every run; 10 s `sample` at `--n 60000`):
+
+1. **Reclaim the loop-exit-free regression (~17 %, the top item).**  The gate fix costs
+   `fronds` 298–315k → 349–368k ns/op: the `k` loop now pays 24 place/free cycles per top
+   call where it paid one, and the fresh profile shows it — allocator + free-tree ~39 %
+   (was ~29.5 %), `remove_claims`/`owned_walk` ~6 %.  The sound reclaim: tie the placed
+   record's free to the HOST STORE's death instead of the loop exit — emit
+   `free_record_in` immediately before every `OpFreeRef(host_vdb)` site (early-death
+   sites included; that ordering is the invariant the corruption violated), null the
+   buffer var there, and let re-entries REUSE the still-placed record (the callee's
+   entry clear resets its length; the reinit gate already declines the callees that
+   would wipe the host).  Needs its own cells: the p12/p13 shapes must stay green, plus
+   a re-entry-reuse cell asserting one placement.
+2. **`fd_sides` loop-invariant hoist (−8.7 % MEASURED).**  The `if sp.mirror { [1.0,
+   -1.0] } else { [1.0] }` literal is rebuilt per `i` iteration (store clear + pre-alloc
+   + appends); hoisting it above the loop in the SOURCE gives 354.7k → 323.8k best-of.
+   A generation rewrite (loop-invariant vector literal, body proven read-only for it)
+   earns exactly this without touching the library.
+3. **Zero-on-claim skip (~9 % class: `bzero` + `memset` + `zero_range` = 701/7 700
+   samples).**  A claim fully written by its group skips the memset — § V-t's
+   complete-write argument one level down.
+4. **Default-prefill skip (~7 % class: `set_default_value_nullable` 400 + `record_new`
+   94 + `record_finish` 59).**  `Frond`'s literal writes every field, and
+   `place_record_in`'s `set_default_value` re-runs per placement; extend V-t's
+   no-prefill to unfused complete-write mints and to the placement.
+5. **Element-first temp reorder (~6.4 % class: `vector_add` 207 + `copy_claims` 174 +
+   cross-store copy + memmove).**  Build `fd_pts`/`fd_wid` inside the just-appended
+   `Frond` element instead of two temp stores deep-copied in; the two placement-shaped
+   routes measured NEGATIVE (§ V-u receipts) — the element-first shape is the one to
+   hand-measure before code.
+
+The program's own share is ~12.6 %; stacking 1+2 alone projects `fronds` at roughly
+270–290k ns/op (~5.0×), and 3–5 carry it toward the bar.  The pre-fix § V-v profile
+below is kept for the class history it names.
+
+**What remained in `fronds` (6.08×), profiled on the § V-v runtime** (macOS `sample`,
 9 235 samples, `coalesce_free` gone from the table): the arena is still ~41 % but now the
 honest per-claim cost — `claim`+`claim_block` 15.5 %, the fl-tree ops ~14 % (partly the
 backward merges' own insert/delete churn), zero-on-claim `memset`/`bzero` 7.2 %, and
