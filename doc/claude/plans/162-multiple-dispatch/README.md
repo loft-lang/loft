@@ -24,6 +24,12 @@ methods*".  Measured:
 - [INCONSISTENCIES.md](../../INCONSISTENCIES.md) has **no entry 6** — the live list is 2, 8,
   18, 26, 27, and the resolved table (33, 34, 2, 3, 8, 9, 12, 17, 18, 26, 27, 28, 29, 30, 31)
   has nothing about enums and methods either.
+- A second claim fails the same way: **untyped parameters do not exist** — `fn twice(a)` is
+  refused with *"Expecting a clear type, found unknown"*.  So `Disp-Fallback` as written has
+  no surface, and the worked example's `fn hit(a, b, world) { }` would not parse.  See
+  [IMPL.md § Step 6](IMPL.md#step-6--disp-fallback--s-and-it-needs-a-surface-decision-first).
+- A second claim fails the same way: **untyped parameters do not exist**, so `Disp-Fallback`
+  as written has no surface — see § Decision below.
 - More to the point, **a plain enum can already have a method.**  `fn describe(self: Colour)
   -> text` over `enum Colour { Red, Green, Blue }` compiles and `c.describe()` calls it,
   printing its result on `--interpret`.
@@ -66,6 +72,83 @@ implementation phases.  Write these as `/tmp` probes on `--interpret` first; the
 ⚠ The **1-definition** row is the one that is easy to leave out and the one that protects
 every existing program: a name with a single definition must emit byte-identically to what it
 emits today.  If that cell moves, dispatch has changed the cost of code that does not use it.
+
+## The finding that reshapes this plan
+
+**Single dispatch already works, keyed on the FIRST parameter only** (measured 2026-09-11):
+`fn hit(self: Fire)` and `fn hit(self: Ice)` coexist, and both `f.hit()` and the bare
+`hit(f)` resolve by argument type.  Add a second parameter and they collide —
+*cannot redefine method `hit` on `Fire`*.
+
+So this plan is **widening an existing key**, not building a dispatcher.  The key has two
+homes — `Data::get_fn` (write) and `Data::find_fn` (read) — and `Data::bound_stub_name`
+already folds a marker and an arity into a key, which is the shape the widening follows.
+[IMPL.md](IMPL.md) is the step-by-step design; it is written against the tree with a file and
+line for every claim.
+
+## The findings that reshape this plan
+
+Measured 2026-09-11, before any design was written.  Both change what the feature IS.
+
+**1. Single dispatch already works — the syntax exists.**  `fn hit(self: Fire)` and
+`fn hit(self: Ice)` coexist today, and both `f.hit()` and the bare `hit(f)` resolve by
+argument type.  Add a second parameter and they collide — *cannot redefine method `hit` on
+`Fire`*.  So the user-visible change is **an error message going away**: nothing new to
+learn, no keyword, no construct.  The plan is widening an existing key, not building a
+dispatcher.
+
+**2. Dispatch is tied to the parameter NAME `self`, and that is the wart to remove.**  The
+key is only built when `arguments[0].name == "self"` / `"both"` (`src/data.rs:7568`), so
+ordinary parameter names collide:
+
+```loft
+fn hit(f: Fire) { … }
+fn hit(i: Ice)  { … }     // error: Cannot redefine 'hit'
+```
+
+A programmer who just writes the function for a specific case therefore meets a redefine
+error whose cure is to rename a parameter.  **Decision (owner, 2026-09-11): key on the
+parameter TYPES, whatever the parameters are named.  `self` keeps its current meaning and
+only that — the definition is also callable as `x.f(…)`.**  Dispatch and method-call sugar
+become independent.
+
+**And existing programs are safe by construction, not by testing.**  145 sites in `src/` look
+a free function up as `n_<name>`, so the rule is: *a name with ONE definition keys as
+`n_<name>`, exactly as today; a name with SEVERAL keys by parameter types.*  A program that
+compiles today has one definition per name — if it had two it would not compile — so no
+existing key moves.  The only programs whose behaviour changes are ones currently refused.
+
+[IMPL.md](IMPL.md) is the step-by-step design, with a file and line for every claim.
+
+## Decision — no untyped parameters
+
+DESIGN.md's `Disp-Fallback` is *a definition whose parameters are all untyped*.  **Untyped
+parameters do not exist** (`fn twice(a)` → *"Expecting a clear type, found unknown"*), so the
+worked example's `fn hit(a, b, world) { }` would not parse — and after a search for use cases,
+they should not be added.  Both things they would be wanted for already have typed, zero-cost
+spellings:
+
+| Wanted for | Already served by |
+|---|---|
+| the dispatch total fallback | the most general TYPE — `Entity`, or an interface; already a working key |
+| "accepts literally anything" | `fn dump<T>(x: T)` — an unbounded generic, **measured** accepting a struct, another struct and an integer, monomorphised |
+
+Two reasons beyond redundancy:
+
+- **Efficiency splits the feature in two and neither half pays.**  An untyped parameter that
+  can never be READ is a wildcard — zero cost, but it buys exactly what the typed fallback
+  buys.  One that can be read must hold a value of unknown type, which is `Any` plus boxing —
+  the first entry on DESIGN.md's own non-goals list.
+- **It would make the exhaustiveness check unfireable.**  With a typed fallback, *a call must
+  have a definition covering its STATIC argument types* is sound (every runtime type is a
+  subtype) and decidable at compile time — `match` exhaustiveness one level up.  A total
+  untyped default makes every call trivially covered, so a forgotten pair becomes a silent
+  no-op instead of a refusal.  And it stops `Disp-Specific` being a pure subtype relation.
+
+Step 6 of [IMPL.md](IMPL.md) is therefore expected to be a no-op.  What would reopen this: a
+case where an argument's type is genuinely unknowable at the call site *and* the body must use
+the value — that is `Any`, and it deserves its own proposal weighed against the ownership and
+artifact-size commitments, not a side door through dispatch.
 
 ## Sub-arcs
 
@@ -146,6 +229,8 @@ respectively, not the start.
 ## See also
 
 - [DESIGN.md](DESIGN.md) — the proposal, verbatim.
+- [IMPL.md](IMPL.md) — the implementation design in small steps, measured against the tree.
+- [IMPL.md](IMPL.md) — the implementation design in small steps, measured against the tree.
 - [`loft-lang/plans` #162](https://github.com/loft-lang/plans/issues/162) — `@PLN162`, the
   issue this plan IS.
 - [INTERFACES.md](../../INTERFACES.md) · [`formal/interfaces.md`](../../formal/interfaces.md)
