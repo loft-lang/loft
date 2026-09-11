@@ -514,9 +514,11 @@ mod tests {
         // template form unless the non-sentinel proof holds.  @PLN157 P4c
         // raised it by 11: `FusedElementReadEmitter` now serves all fourteen
         // scalar field getters (a hoisted record scalar emits its local), not
-        // only the three fusable kinds.
+        // only the three fusable kinds.  @PLN157 § V-t raised it by 2:
+        // `NewRecordEmitter` and `FinishRecordEmitter`, the record push through
+        // a hoisted push header (`@FR-R-PushRec`).
         assert!(
-            count <= 109,
+            count <= 111,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
