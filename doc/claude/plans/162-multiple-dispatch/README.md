@@ -164,6 +164,71 @@ case where an argument's type is genuinely unknowable at the call site *and* the
 the value — that is `Any`, and it deserves its own proposal weighed against the ownership and
 artifact-size commitments, not a side door through dispatch.
 
+## Why this feature — the enum struct is loft's sound OO, and this is its missing half
+
+Owner's framing, 2026-09-11, and it is the motivation the design should lead with:
+
+> The enum variant is loft's **"poor man's way"** of implementing a sound version of
+> object-oriented programming without the pitfalls that normally come with it.  It gives the
+> freedom to combine hugely different objects in one structure.  That is the case that makes
+> the function matcher shine.
+
+The pitfall it dodges is the one OO **structurally cannot**: a vtable dispatches on the
+receiver, so it cannot see the second argument's type.  Every OO language needs a design
+pattern — double dispatch, visitor — to express *what happens when THIS hits THAT*, and that
+pattern is boilerplate that grows N² and is re-derived per interaction.  **The enum gives the
+heterogeneous collection; the function matcher gives the pairwise behaviour OO needs a pattern
+for.**  That is why the acceptance program is pairwise interaction and not something else.
+
+The other pitfalls fall out of closedness rather than being separately avoided: no inheritance
+chain, so no fragile base class and no *"where is this actually implemented"*; no open
+extension, so exhaustiveness is decidable; variants are values, so ownership applies uniformly
+with no identity semantics forced on the programmer.
+
+**Two consequences.**
+
+1. **The motivating case is DYNAMIC.**  A `vector<Entity>` is the whole point of the model,
+   and every element read from it is statically `Entity` with a runtime variant — so
+   `for (a, b) in world.overlapping_pairs()` is `Disp-Dynamic`, not `Disp-Closed`.  Measured:
+   `f: Entity = Fire{…}; f.hit()` selects the `Entity` definition today, so the enum model
+   currently cannot reach variant behaviour through a collection at all.  `Disp-Closed`'s
+   zero-cost direct call covers plenty of real code but **not the loop the design is built
+   around**.  Phase ordering is deliberately NOT changed for this — the owner is implementing
+   the full plan — but the cost story must be honest about which case is which.
+
+2. **Closedness makes dynamic selection a table INDEX, not a search.**  With N variants a
+   two-parameter call is a 2-D array indexed by the two discriminators: O(1), N² small
+   entries, built at compile time because the set is known.  Strictly better than a hash lookup
+   over a growable table, and the third thing closedness buys after decidable exhaustiveness
+   and single ownership.
+
+## How this is presented to programmers
+
+The owner flagged this as the part that matters, separately from the semantics.
+
+**Call it the function matcher.**  "Multiple dispatch" is a compiler-writer's term and a
+Julia import; it stays in [RULES.md](RULES.md), `formal/`, and this plan, where it connects to
+the literature.  User-facing docs use the owner's own phrase, because it says what the feature
+does *from the caller's side*.
+
+**The one-sentence version:** *write a function for the case you mean, and loft runs the one
+that fits.*
+
+**Teaching order** — and note that none of it introduces syntax:
+
+1. *You already do this.*  One function per enum variant is how loft is written today; the
+   matcher just looks at every parameter instead of the first.
+2. *Keep different things in one collection.*  An enum struct holds them; write the pair you
+   mean and it runs for that pair.
+3. *The rest is covered by the enum type.*  One fallback definition, not N² cases.
+4. *What the compiler tells you.*  Which pairs reach the fallback (advice); a tie it cannot
+   settle (error, with the two cures).
+
+**Do not lead with** the specificity lattice, world age, or Julia.  A programmer does not need
+to know a partial order exists — they need *"more specific wins, and you will be told about a
+tie."*  Eventual home: [USER_DOCS.md](../../USER_DOCS.md)'s three tiers, with the reference
+tier carrying the rules and the teaching tier carrying the four steps above.
+
 ## Decisions taken (owner, 2026-09-11)
 
 All four follow one principle — *refusal is the only reversible direction* — stated in
