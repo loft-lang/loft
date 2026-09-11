@@ -16,6 +16,30 @@ a 100 % deviation.
 `Disp-Applicable` · `Disp-Select` · `Disp-Ambiguous` · `Disp-Closed` · `Disp-Dynamic` ·
 `Disp-World` · `Disp-Match-Equiv` — as written there.
 
+## The principle the rules keep landing on
+
+**Where the language could either refuse or choose, it refuses — because refusal is the only
+reversible direction.**
+
+A refusal defines a SUBSET of valid programs.  Broadening it later only ever ADDS programs, so
+everything that compiles today keeps compiling and keeps meaning what it meant.  A rule that
+silently chooses does the opposite: it fixes the meaning of programs that would otherwise be
+refused, so revising that choice later leaves them compiling and **silently doing something
+different** — a compatibility break that arrives as changed behaviour rather than as an error.
+
+Four rules here are the same decision, and they should be read as one (owner, 2026-09-11):
+
+| rule | could have | refuses instead |
+|---|---|---|
+| `Disp-Ambiguous` | picked by declaration order | names both definitions |
+| `Disp-Specific` | ranked unrelated abstractions by kind | incomparable ⇒ ambiguous |
+| `Disp-Exhaustive` | no-op'd an uncovered call at runtime | refuses at compile time |
+| *(untyped parameters)* | a total default that swallows everything | not added; the fallback is a type |
+
+⚠ This matters more at **contract 0** than it will later: `src/manifest.rs::CONTRACT_VERSION`
+is `0`, the one era with no compatibility promise.  Every "choose" shipped now becomes
+permanent at the flip; every "refuse" stays broadenable afterwards.
+
 ## Amended
 
 **Disp-Key** *(new, replaces the design's silence on how a definition is found).*  A
@@ -39,7 +63,22 @@ The subtype relation loft actually has, and the one this rule needs, is **enum �
 variant argument already widens to an enum parameter (`take(e: Entity)` accepts `Fire{…}`),
 and a variant-typed definition already coexists with the enum-typed one as a separate key.  So:
 
-> **A VARIANT is more specific than its ENUM.  Otherwise specificity is type equality.**
+> **A VARIANT is more specific than its ENUM; a CONCRETE type is more specific than a BOUND
+> that admits it; a bound is more specific than a strictly weaker bound.  Two abstractions of
+> DIFFERENT kinds are INCOMPARABLE — and a call to which both apply is `Disp-Ambiguous`.**
+
+Measured 2026-09-11: the concrete-beats-bound edge **already works** —
+`fn kind(self: Sq)` beside `fn kind<T: Shape>(x: T)` selects `"square"` for an `Sq` and
+`"some shape"` for a `Tri`.  So a bounded generic is the OPEN abstract position this rule
+needs: any type satisfying the bound, including one a library adds later, typed, monomorphised
+and free.  That closes the gap the interface finding opened — the open profile is not
+enum-only after all.
+
+⚠ The cross-kind case (an `Entity` variant that also satisfies `Projectile`) is deliberately
+ambiguous rather than ranked.  Owner's decision, and the reason is the principle above: **we
+can broaden later.**  Ranking by kind would be an invented precedence that a reader cannot
+derive from the signatures, and changing it afterwards would move programs rather than admit
+them.
 
 ⚠ This narrows the rule's reach and it is an honest narrowing, not a simplification: with
 interfaces unavailable as parameter types, the OPEN half of DESIGN.md's two profiles has no
@@ -51,7 +90,8 @@ rather than closed.**
 **Disp-Fallback** *(amended).*  The design says *a definition whose parameters are all
 untyped*.  Untyped parameters do not exist and are not being added (README § Decision), so:
 the fallback is the definition whose parameter types are the most general applicable ones —
-the ENUM (an interface cannot occupy a parameter position — see `Disp-Specific` above).  It is less specific than every
+the ENUM for a closed set, or a BOUNDED GENERIC for an open one (an interface cannot occupy
+a parameter position, but a bound can — see `Disp-Specific` above).  It is less specific than every
 other definition of that name by `Disp-Specific`, with no special case, because it is a type
 like any other.
 

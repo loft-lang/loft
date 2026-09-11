@@ -224,8 +224,16 @@ and unanswered.  Three of them gate phase 0:
   `Disp-Specific` now uses.  ⚠ **But that leaves the OPEN profile without an abstract
   position** — enums are closed by construction, so a library adding a type must edit the
   central enum, which is the "addition not edit" motivation partly back.  Either interfaces
-  gain parameter use (a language change beyond this plan) or the open profile is enum-only.
-  **Owner's call, and it is the question the verification opened.**
+  gain parameter use or the open profile is enum-only.  **RESOLVED the same day by a further
+  measurement: a BOUNDED GENERIC is the open abstract position, and it already works** —
+  `fn kind(self: Sq)` beside `fn kind<T: Shape>(x: T)` already selects the concrete one for an
+  `Sq` and the generic for a `Tri`.  Open, typed, monomorphised, no new type form.
+- **Cross-kind specificity — ANSWERED: incomparable ⇒ ambiguous** (owner, 2026-09-11).  An
+  `Entity` variant that also satisfies a bound matches two definitions of different kinds;
+  neither is ranked.  The reason is the general one now stated in
+  [RULES.md § The principle](RULES.md#the-principle-the-rules-keep-landing-on): **refusal is
+  the only reversible direction** — broadening later adds programs, while a silent choice
+  revised later moves programs that already compile.
 - ~~**Q2**~~ **ANSWERED — select-then-monomorphise, as wanted.**
   `try_generic_instantiation(first_id, &types)` already takes the argument types and REPLACES
   the chosen `def_nr`, so a resolution getting revised once types are known is an existing
