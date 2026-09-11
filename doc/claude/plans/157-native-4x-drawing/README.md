@@ -47,6 +47,20 @@ pre-footer fragmentation story, re-derived and re-taught — plus the two establ
 cold-cache timeouts, green isolated) and GitHub gate run 34617868644 was dispatched on the tip —
 check its verdict before building on it.**
 
+**What remains in `fronds` (6.08×), profiled on the § V-v runtime** (macOS `sample`,
+9 235 samples, `coalesce_free` gone from the table): the arena is still ~41 % but now the
+honest per-claim cost — `claim`+`claim_block` 15.5 %, the fl-tree ops ~14 % (partly the
+backward merges' own insert/delete churn), zero-on-claim `memset`/`bzero` 7.2 %, and
+`set_default` 5.5 % beside it; the append entries (`vector_append`/`pre_alloc`/`finish`/
+`record_new`) 12 %; the remaining per-side temp→element copies (`vector_add` +
+`copy_claims`) ~5.5 %; the program's own share is up to ~14 % as machinery falls.  Next
+candidates, in that order: **skip the zero-on-claim where the claim is fully written**
+(§ V-t's complete-write argument one level down, ~7–12 % ceiling with the prefill),
+then the per-side temp cycle — but by the ELEMENT-FIRST reorder (build `fpts`/`fwid`
+inside the just-appended element), since the two placement-shaped routes are measured
+NEGATIVE (DESIGN.md § V-u's receipts).  `lock_curved` (6.24×) and `wide_line` (5.55×)
+still owe their with-callers profile.
+
 **§ V-u SHIPPED 2026-09-11, the same day, and § V-j grew its callee gate** (DESIGN.md
 § V-u, § V-j): the V-j suite run caught a REAL corruption — the sqldb fixture's
 `collect_leaf` receives its buffer as the witness-promoted ABI and re-inits it with
