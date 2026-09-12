@@ -200,7 +200,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**  `D-clo-27` closed 2026-09-12, the last entry this chapter carried.
 
 - **D-clo-34** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(F-Ret)` did not hold for
   a COLLECTION a lambda hands back out of its CAPTURE.  `fn() -> vector<S> { q }` and
@@ -338,14 +338,25 @@ with the closure's environment in scope.
   standing, `--native` nulls `store_nr` — so a test placed after it declines on one and
   double-frees on the other.  Guard
   `1464-a-capture-built-in-a-branch-is-released-on-the-path-that-skips-it.loft`.
-- **D-clo-27** *(open, loft#1447)* — `(L-CapHeap)` says a rebind is not a mutation-through for a
-  captured **struct** as much as for a vector, and the DENSE spelling breaks it: `d: C = C{a:5};
+- **D-clo-27** *(opened 2026-09-08, CLOSED 2026-09-12, loft#1447)* — `(L-CapHeap)` says a rebind
+  is not a mutation-through for a captured **struct** as much as for a vector, and the DENSE
+  spelling breaks it: `d: C = C{a:5};
   out = fn() { d.a }; d = C{a:9}` answers 9 on both backends where its nullable twin answers 5.
   A dense local has no literal buffer — the literal is built straight into it and the rebind
   re-mints through `OpDatabase(d, …)`, which reuses the slot's store IN PLACE — so one store
   exists and the record's `DbRef` still names it.  Upstream of every free, so nothing is freed
   twice and no instrument fires; the in-place re-mint is deliberate (it is what keeps a loop from
   allocating per pass), and what is missing is that a local a record has ADOPTED cannot take it.
+
+  **CLOSED 2026-09-12.**  Re-measured on both backends: the dense `d: C = C{a:5}` now answers 5,
+  matching the nullable twin this entry named as the right answer.  The control that says the cure
+  did not simply freeze every capture is the OTHER half of `(L-CapHeap)` — a mutation-through
+  (`d.a = 9`) still reads 9 inside the closure — so the rebind stopped being read without the
+  read direction being lost.  ⚠ **The cell was unguarded when it closed.**  The keyed guard
+  `1447b-…` carries a `struct_control` in the INFERRED spelling (`s = S{…}`), which this entry
+  measured at 5 while the dense one answered 9 — the same notion in two lowerings, one of them
+  covered.  The dense cell and its mutation-through control are now cells of that file, each
+  mutation-tested to fail on both backends.
 - **D-clo-25** *(closed 2026-09-07, loft#1444)* — "which record leaves the frame" was answered
   from the declared return type's `DepEntry::CalleeFrame`, which is published once per LAMBDA
   and overwritten, so wherever a function builds more than one it named the last one BUILT

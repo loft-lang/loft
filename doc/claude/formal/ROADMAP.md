@@ -34,8 +34,11 @@ Closing a row means the implementation obeys the rule (then the deviation entry 
 | [capabilities.md](capabilities.md) | 0 | the `deps` borrow checker's sibling — **✓ CLOSED (2026-07-04)**: sandbox admission enforces all six rules, each with a RED/GREEN pair. **D-cap-1** the parameter `#default` lock (`param_lock_violations`); **D-cap-2** the closure descent (`mark_lambda_sandboxed` — a script-only lambda is usable, a host-reaching one is rejected naming the reach); **D-cap-3** the owned-vs-host write split (`raw_write_is_host_owned` gained a `Type::Vector` owned arm — a probe proved a local vector never aliases host, every whole-value bind incl. `&` COPIES, so only a PARAMETER-root write is a host effect and the `arguments()` check already IS that boundary; the feared `ownership_of` consultation was NOT needed) |
 | [layout.md](layout.md) | 1 | **D-layout-1** — no version guard on persisted bytes (#477: same types, different bytes, silently misread; `L-Sound`). **Mechanism shipped (@PLN97):** the golden byte-layout test catches a change at commit; the `.dschema` sidecar (`CorruptReason::SchemaMismatch`) detects a stale store at load → the `on_corruption` rebuild. **Residual:** the durable store ([plans/43](../plans/43-loft-store-durable/)) isn't loft-driven yet, so nothing auto-invokes the load-time gate — closes when a persistence consumer wires `check_beside` into its open path |
 
-**Four open, in three chapters** (re-measured 2026-09-03 night, after `D-own-16`, `D-own-26`, `D-clo-14`, `D-clo-7` and `D-bind-11`
-closed), and they are not seven problems:
+**Seven open, in five chapters** — `D-op-1`/`D-op-2` (operational), `D-layout-1`, `D-heap-1`/
+`D-heap-LIFO`, `D-tup-10` and `D-perf-1`.  Counted 2026-09-12 by `rule_tags.py registers`, which
+reads each chapter's stated `OPEN: n` against the entries it lists rather than restating it here;
+the line below was hand-maintained and read **four** for nine days.  This paragraph is prose beside
+a measured number, so re-run the tool rather than quoting it.  They are not seven problems:
 
 - **2 meta** — `D-op-1`/`D-op-2`. There is no shared operational semantics, so the interpreter IS
   the spec and a backend divergence is caught by test rather than by definition. An open-ended

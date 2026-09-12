@@ -257,7 +257,8 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's D-op-1).
+OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
+deviation of its own.  `D-match-4` closed 2026-09-12.
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the
@@ -299,8 +300,9 @@ OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's 
   asserted beside the un-named spelling on the same subject, so a future drift between the two
   paths fails here.  Falsified at `4e5725a2c` (both backends refuse, exit 0 → 1).
 
-- **D-match-4 — OPEN (loft#1419).**  `(P-Rest)`'s `t` counts *fixed patterns*, and `(P-Point)`
-  makes a unit variant, a struct variant, a literal, `_` and a bare binding all point patterns.
+- **D-match-4 — OPENED 2026-09-08, CLOSED 2026-09-12 (loft#1419).**  `(P-Rest)`'s `t` counts
+  *fixed patterns*, and `(P-Point)` makes a unit variant, a struct variant, a literal, `_` and
+  a bare binding all point patterns.
   Only `_` and a bare binding are accepted after a `..`: the element loop takes `has_identifier()`
   there, so `[Kw { word }, .., End { e }]` binds the name `End` and then chokes on `{`, reporting
   four cascading *"Expect token ,"* messages that name nothing.  Pre-existing and independent of
@@ -310,9 +312,18 @@ OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's 
   (`35o-tail-elements.loft`), which is the precedent to follow.  Workaround (verified, both
   backends): bind a bare name and destructure it in a nested `match`.
 
+  **CLOSED 2026-09-12** — and it closed the way the entry predicted, by knowing the tail length
+  before the sub-pattern is parsed.  Re-measured on both backends: the entry's own
+  `[Kw { word }, .., End { e }]` binds `let 9`, the literal tail `[1, .., 9]` matches, and the
+  bare-name control still binds — so the cure admitted the two forms `(P-Point)` names without
+  disturbing the two that already worked.  Guard
+  `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`, which also holds the
+  named-rest spelling, a two-fixed tail and a head control; falsified at `d9850164`.
+
 - **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
   [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
-  with the ONE exception D-match-4 records below. Each rule is pinned by the @PLN89 oracle in
+  with no standing exception since `D-match-4` closed 2026-09-12. Each rule is pinned by the
+  @PLN89 oracle in
   [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).  This bullet read *"opens no
   deviation"* for as long as `(P-Rest)`'s `t` was refused outright, which is the shape of claim
   the rule-led walk exists to re-measure: a conformance line is only as strong as the oracle
@@ -349,7 +360,9 @@ OPEN: **1** (D-match-4 — a *rules* doc otherwise: it shrinks operational.md's 
 - **A rest need not be last (`P-Rest`)** — `match v { [a, ..mid, z] => … }` over `[1,2,3,4,5]`
   binds `a=1`, `mid=[2,3,4]`, `z=5`; over `[1,2]` it MATCHES with `mid` empty; over `[1]` it does
   not match at all (`head + tail` is 2).  `mid` is a fresh vector, so mutating it leaves `v`
-  untouched.  A tail element is a bare name or `_` (D-match-4).
+  untouched.  A tail element is any point pattern `(P-Point)` admits — a bare name, `_`, a
+  literal, or a variant sub-pattern: `[Kw { word }, .., End { e }]` and `[1, .., 9]` both
+  match (D-match-4, closed 2026-09-12).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on which
 arm a `match` selects, on a bound payload value, or on whether a match is exhaustive is the

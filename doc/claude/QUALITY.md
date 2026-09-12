@@ -7356,7 +7356,9 @@ is `head + tail <= len`, the tail is read at negative indices, and `hi = len −
 being computed *inside the refused branch*.  The diagnostic stood in front of a correct lowering,
 so the work was establishing that it was safe to delete, not writing a lowering.  Recorded as
 D-match-3; `OPEN: 0` is now `OPEN: 1`, because a variant sub-pattern after a `..` is still a
-parse-error cascade in both spellings (loft#1419, D-match-4).
+parse-error cascade in both spellings (loft#1419, D-match-4).  *(That `OPEN: 1` went back to 0 on
+2026-09-12: D-match-4 closed the way this paragraph predicted — by knowing the tail length before
+the sub-pattern is parsed — and the register had been reading OPEN over the merged fix for days.)*
 
 **Then `matrix_axes.py` earned its keep.**  Run on the new guard it reported `narrow-int` as an
 element type the cells did not reach.  Building that one cell found loft#1420: a `vector<u8>`

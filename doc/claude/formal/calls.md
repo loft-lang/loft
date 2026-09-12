@@ -275,17 +275,19 @@ cannot see.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 0.**  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
+in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
+bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,
+generic and concrete) read 7, and all five of D-call-20's rows read as wanted, including the one
+that used to abort on the H5 two-pass contract.  The fixes and their guards landed in the same PR
+that opened the entries (#1490), and only the register was left behind.
 
-- **`D-call-19`** (loft#1484) — a generic monomorph's `-> T` record return hands back the argument
-  where its concrete twin copies; the monomorph publishes an empty dep list, D-call-13's residual.
-  Its guard reads green because every cell binds the result before mutating it, and a record bind
-  copies — so the cell measures the bind, not the return.
-- **`D-call-20`** (loft#1485) — a lambda's heap return that NAMES a capture (`fn() -> S { q }`,
-  `{ e = q; e }`) is handed out as a view; the vector former appends to the captured store, and
-  `{ e = q[0]; e }` aborts on the H5 two-pass contract.  A direct projection tail (`q[0]`) is the
-  green control.  `(L-CapHeap)` shares the store in the READ direction only, so `(F-Ret)` is
-  unopposed.
+> ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
+> flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads
+> each chapter's stated `OPEN: n` against the entries it lists, and reports an open entry whose
+> issue the tracker has since closed.  FIVE entries were in that state the first time it ran,
+> and four of them were stale — the fifth, `D-tup-10`, is why the report says re-measure
+> rather than deciding.
 
 The full register — every closed deviation with its dates and issue numbers, and the
 measurement that closed it — is the companion [calls-history.md](calls-history.md).

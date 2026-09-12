@@ -24,8 +24,10 @@
 // build-time store and the new one LEAKED, caught by
 // `1324-a-reassigned-capture-suppresses-the-store-the-record-holds`.
 //
-// Axes this file MOVES:  the keyed KIND (hash · sorted · index), and the CONTROLS are the two
-//                        spellings that were already right (a struct, a vector).
+// Axes this file MOVES:  the keyed KIND (hash · sorted · index) and the struct SPELLING
+//                        (dense-declared · inferred), and the CONTROLS are the two spellings
+//                        that were already right (an inferred struct, a vector) plus the
+//                        mutation-through direction `(L-CapHeap)` still licenses.
 // Axes it HOLDS FIXED:   the rebind is a non-empty literal — the empty `= []` spelling is a
 //                        declaration's own init and is `505-collection-capture`'s.
 //
@@ -34,6 +36,13 @@
 //   aborts at the first assert, so the hash cell is the only one that reports even though all
 //   three keyed kinds answer 9 there.  I wrote "three" from the matrix and the tool corrected
 //   it — the count belongs to the harness, not to the defect.)
+//
+// ⚠ The two DENSE cells were added 2026-09-12 and are NOT covered by that receipt — they were
+//   not run against `21a497a6`.  What stands behind them instead: `formal/closures.md` D-clo-27
+//   recorded the dense spelling answering 9 on both backends while the inferred `struct_control`
+//   below answered 5, and both now answer as asserted here.  Each was mutation-tested on both
+//   backends (flip the expected value, confirm it fails) so neither is vacuous, and the
+//   mutation-through control is what says a cure did not simply freeze every capture.
 
 struct Row1447 { k: integer, v: integer }
 struct S1447 { a: integer }
@@ -59,6 +68,29 @@ fn index_cell() -> integer {
   x += [Row1447 { k: 1, v: 5 }];
   f: fn(integer) -> integer = |i| { (x[1]?.v ?? 0) + i };
   x = [Row1447 { k: 1, v: 9 }];
+  f(0)
+}
+
+// The DENSE-DECLARED struct — `d: C = C{…}` — which is a THIRD spelling, not this file's
+// `struct_control` under another name.  `formal/closures.md` D-clo-27 measured the two apart:
+// the inferred `s = S{…}` below answered 5 while this one answered 9 on both backends, because
+// a dense local has no literal buffer and the rebind re-mints through `OpDatabase(d, …)`, which
+// reuses the slot's store IN PLACE — so the record's `DbRef` still named it and the closure read
+// the rebind.  Upstream of every free, so no leak or free instrument fires and the value channel
+// is the only one that moves.
+fn dense_declared_cell() -> integer {
+  d: S1447 = S1447 { a: 5 };
+  f: fn(integer) -> integer = |i| { d.a + i };
+  d = S1447 { a: 9 };
+  f(0)
+}
+
+// The other half of `(L-CapHeap)`, and the control that says a cure did not simply freeze every
+// capture: a mutation-THROUGH is still read inside the closure, so this one must answer 9.
+fn dense_mutate_through_control() -> integer {
+  d: S1447 = S1447 { a: 5 };
+  f: fn(integer) -> integer = |i| { d.a + i };
+  d.a = 9;
   f(0)
 }
 
@@ -93,6 +125,10 @@ fn main() {
   assert(hash_cell() == 5, "hash: closure answers the build-time value, got {hash_cell()}");
   assert(sorted_cell() == 5, "sorted: got {sorted_cell()}");
   assert(index_cell() == 5, "index: got {index_cell()}");
+  assert(dense_declared_cell() == 5,
+         "dense-declared capture answers the build-time value, got {dense_declared_cell()}");
+  assert(dense_mutate_through_control() == 9,
+         "(L-CapHeap) still reads a mutation-through, got {dense_mutate_through_control()}");
   assert(struct_control() == 5, "struct control unmoved: got {struct_control()}");
   assert(vector_control() == 5, "vector control unmoved: got {vector_control()}");
   assert(the_local_itself_moves() == 14, "local 9 + closure 5: got {the_local_itself_moves()}");

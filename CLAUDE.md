@@ -145,8 +145,11 @@ up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for q
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
 rule already implemented somewhere?"* is a lookup. `scripts/rule_tags.py` is the tool
-(`list` · `check` · `sites <tag>` · `dups`); `check` gates that every citation resolves and no
-rule is defined twice.
+(`list` · `check` · `sites <tag>` · `dups` · `registers`); `check` gates that every citation
+resolves and no rule is defined twice, and **`registers` reads each chapter's stated
+`OPEN: n` against the entries it lists** — with `--issues` it also names an open deviation
+whose issue the tracker has closed, which is a pair to RE-MEASURE and not a closure (the
+first run found four stale entries and one honestly-open one).
 
 ⚠ **A bare `@Name` is NOT unambiguous here** — `@` already carries the tracker tags above, the
 worked-example family (`@AAA-###`) and the corpus annotations (`@ARGS`, `@NAME`, `@IGNORE`,
