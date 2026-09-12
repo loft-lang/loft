@@ -3465,10 +3465,13 @@ impl Store {
     /// silent inheritance into a named failure.
     pub fn poison_fill(&self, rec: u32) {
         let bytes = self.payload_bytes(rec, "Store::poison_fill");
+        // Byte-wise: a payload starts at `rec * 8 + 4` and is written through a `*mut u8`,
+        // the same alignment story `Store::read`/`write` tell.
         let base = unsafe { self.ptr.offset(rec as isize * 8 + 4) };
         for i in 0..bytes / 4 {
             unsafe {
-                base.cast::<u32>().add(i).write_unaligned(0xDEAD_BEEF);
+                base.add(i * 4)
+                    .copy_from_nonoverlapping(0xDEAD_BEEF_u32.to_ne_bytes().as_ptr(), 4);
             }
         }
         // The tail below four bytes keeps whatever it had: a sub-word payload cannot

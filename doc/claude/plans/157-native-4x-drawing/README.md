@@ -273,9 +273,15 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
-**ZERO-ON-CLAIM IS ON ITS WAY OUT, AND THE CENSUS SAYS HOW FAR (owner's ruling,
+**ZERO-ON-CLAIM: 29 DEPENDENT → 6, AND NATIVE NEEDS IT NOT AT ALL (owner's ruling,
 2026-09-12): fix the callers that rely on zeros rather than paying the memset on every
-claim.**  The falsifier this needed now exists — `LOFT_POISON_CLAIM=1` fills a fresh claim
+claim.**  First fix landed — both `OpDatabase` paths now initialise the record they mint
+(once per store CREATION), which retired the dominant class: `clear_vector` asking a
+store-root wrapper's unwritten payload whether a vector is there.  `--native` is CLEAN
+across the whole corpus under the falsifier, so its flip needs nobody's permission but a
+measurement; the interpreter's last six are named with their readers in DESIGN.md and
+ratcheted by `tests/poison_claim.rs` (the list may only shrink).  Prize when they go:
+246.2–246.8k against 250.8–253.0k on `fronds`.**  The falsifier this needed now exists — `LOFT_POISON_CLAIM=1` fills a fresh claim
 with `0xDEADBEEF` (the claim-side twin of poison-on-free), so a caller relying on zero-init
 fails loudly instead of inheriting recycled bytes that look like zeros.  Census on the
 interpreter over every `tests/scripts`: **1 232 clean, 29 dependent**, and all seven
@@ -291,7 +297,17 @@ must survive, because zero is the wrong null for nullable integers (`i64::MIN`),
 `zero_claim_enabled()` claims the hazard is interpreter-only while the zeroing runs on both
 backends — if that holds, `--native` can stop zeroing today.
 
-**USING THE STORE RESET RELIABLY (the −36 % design, written up 2026-09-12):** the reset
+**THE STORE RESET WAS RETRIED ON THE FIXED TREE AND MEASURED AWAY (2026-09-12).**  With
+the zero-on-claim fix in place it runs CLEAN — 42 corpus runs (7 corpora × 2 backends × 3
+levers), guards, leak test, 1 116 lib tests — because the blocker was never a live alias:
+`record 1.12` was the wrapper's un-initialised slack.  But sound, it buys nothing: 0.84–
+0.87 s against the element walk's 0.78–0.94 s on a qualifying shape, and on `fronds` it
+does not apply at all (§ V-j places a record in that store, so `hosts_placed` declines).
+**The −36 % came from the unsound configuration** — the first probe had no gate, so
+`fronds` took a reset it was not entitled to.  Reverted; do not rebuild it.  Details and
+the analysis that survives: [DESIGN.md § The store reset, retried](DESIGN.md).
+
+**The design as it was written (kept for the analysis, not as a plan):** the reset
 cannot be decided inside `clear_vector` — a runtime op cannot see whether a reference into
 the store is live — but the CALLER'S FRAME can, and § V-u already emits the buffer's init
 there.  The reset form is that site's `if` branch verbatim (`OpDatabase`'s reuse arm IS

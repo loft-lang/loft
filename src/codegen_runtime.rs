@@ -349,6 +349,10 @@ fn op_database_inner(
     // free_named can recognise closure-record stores at free time
     // (cascade-free walks `__closure_*` records' DbRef fields).
     stores.allocations[r.store_nr as usize].set_known_type(db_tp);
+    // See `State::database`: the minted record is read before it is fully written, so a
+    // fresh store's collection handles must read as absent.  One fill per store creation,
+    // and BEFORE the type tag — `zero_fill` starts at byte 4, which is the tag itself.
+    stores.store_mut(&r).zero_fill(r.rec);
     stores.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
     if prefill {
         stores.set_default_value(db_tp, &r);

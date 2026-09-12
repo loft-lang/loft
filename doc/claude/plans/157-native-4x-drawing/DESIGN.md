@@ -1578,6 +1578,34 @@ interpreter's `State::database` and native's `op_database_inner` each call
 next step is to name that producer, and the trace hook for it is one `eprintln` at the
 `vector_replace` read.
 
+**FIRST FIX LANDED (the owner's ruling applied): initialise the record where it is
+CREATED.**  The census's dominant class was `clear_vector` asking a collection handle *"is
+there a vector here?"* on a store-root `main_vector<T>` wrapper whose payload nothing had
+written — the registered field sits at position 0 while the handle the interpreter reads
+is four bytes further in, so `set_default_value`'s typed write never covered it and the
+claim-zeroing was the only thing making the answer "no".  Both `OpDatabase` paths now
+`zero_fill` the record they mint, once per store CREATION, against a memset on every
+claim.  **Census: 29 dependent → 6.**  Cost measured on `fronds`: nothing (251–253k before,
+255–259k after is within this box's spread, and the same fill was already being paid by
+zero-on-claim).  The prize that becomes collectable when the last six go: **246.2–246.8k
+against 250.8–253.0k**, ~2 % on this row and more on allocation-heavy ones.
+
+**NATIVE ALREADY DOES NOT NEED IT.**  Under `LOFT_POISON_CLAIM=1` the whole script corpus
+and all seven cell corpora are clean on `--native` — zero dependence, exactly as
+`zero_claim_enabled()`'s comment claimed ("native uses Rust ownership and never hits
+this").  So the flip can be per-backend the moment someone wants it, without waiting for
+the interpreter's last six.
+
+**The six that remain**, each a PRODUCER that hands out un-initialised words (the fix is
+always at that site, never a wider memset), pinned as a ratchet by
+`tests/poison_claim.rs`:
+| script | reader | what is un-initialised |
+|---|---|---|
+| `json-walker-absent-field` | `native::populate_vector_from_jarray` → `vector_append` | the handle of a collection field the JSON walker materialises into |
+| `a-keyed-view-joins-a-nullable-element-vector` | `remove_claims_mode` → `delete` | a nullable element's payload edge, walked at teardown |
+| `987-par-empty-body-discard`, `40-par-ref-return` | `clear_vector` | a `par` worker's buffer slot |
+| `75-native-stub`, `945-stdlib-worked-examples` | (not yet classified) | — |
+
 **The order of work this implies** (each step falsifiable on its own):
 1. Name the producer of an un-prefilled store-root wrapper; make it write the handle
    explicitly.  That is the owner's ruling applied to the one class the census found.
@@ -1589,7 +1617,37 @@ next step is to name that producer, and the trace hook for it is one `eprintln` 
    hazard is "interpreter only; native uses Rust ownership and never hits this", yet the
    zeroing runs on both.  If that is still true, `--native` can stop zeroing today.
 
-## Using the store reset reliably for a function result (the −36 % design)
+## The store reset, retried on the fixed tree — and MEASURED AWAY (2026-09-12)
+
+The design below was built a second time, on top of the zero-on-claim fix, and the retry
+settled two things — one good, one that retires the idea.
+
+**The blocker was not what it looked like.**  The failure that stopped the first attempt —
+`the vector handle in record 1.12 points at record 3 … has been freed` — was NOT a live
+alias.  Record 1 at **+12** is the store-root wrapper's un-initialised slack, the very
+thing the zero-on-claim fix closed; with the producer initialising its record, the reset
+runs clean across all seven cell corpora on BOTH backends under THREE levers
+(`LOFT_POISON`, `LOFT_NO_ZERO_CLAIM`, `LOFT_POISON_CLAIM`) — 42 runs, plus the guard
+scripts, the leak test and 1 116 lib tests.  The `hosts_placed` flag (set in
+`place_record_in`) is what keeps § V-j's placed record safe.
+
+**And then it measured to nothing.**  On a shape that QUALIFIES (`adopt.loft`, no
+placement): reset 0.84–0.87 s against the element walk's 0.78–0.94 s.  On `fronds` the
+reset does not even apply — § V-j places the recursive call's buffer in that very store,
+so `hosts_placed` declines it and the row keeps the walk at ~250k.  **The −36 % this
+section was named for came from the UNSOUND configuration**: the first probe had no
+`hosts_placed` gate, so `fronds` took a reset it was not entitled to, and the 160–167k was
+the speed of freeing a record another frame still held.  A measurement taken before the
+gates exist measures the wrong program.
+
+**So the reset is reverted and should not be rebuilt**: it buys nothing over the element
+walk once it is sound, and it costs a `Store` field, a flag and a second release path.
+What remains true is the ANALYSIS: the buffer's store is exclusive for allocation but not
+for references, and the two holders are a placed record and a live alias.  The allocator
+churn the reset was really attacking is the recycler's target, and the owner's
+record-reuse idea attacks it without freeing anything at all.
+
+## Using the store reset reliably for a function result (the design as it was written)
 
 The measurement is in the README's mechanic note: resetting the buffer's store instead of
 walking its elements puts `fronds` at **160–167k ns/op** against the element walk's 250k
