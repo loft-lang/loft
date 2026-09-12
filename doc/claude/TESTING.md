@@ -2862,6 +2862,16 @@ recursive walk.
 | `--native` | Compile to native Rust instead of interpreting (with `--tests`) |
 | `--no-warnings` | Suppress warning diagnostics in test output |
 
+⚠ **Put the mode flag BEFORE `--tests`.**  `--tests` takes the NEXT token as its optional
+`[dir|file]`, and it does not check whether that token is a flag — so `loft --tests --interpret
+g.loft` consumes `--interpret` as the target, falls back to the default `.` and runs **every
+`.loft` under the current directory**.  From the repo root that is the whole project: measured
+2026-09-12, it ran for minutes and reported a failure in
+`doc/claude/plans/145-authoring-libs/probe-d0b.loft`, a file the caller had never touched.
+`loft --interpret --tests g.loft` runs the one file.  The two spellings differ only in flag
+order, both exit 0 on a clean tree, and the wrong one prints `2 files` where the right one
+prints `1 file` — that count is the only thing that distinguishes them, so read it.
+
 ### The shared library base (loft#925)
 
 Each test file is its own program with its own parser — a shared one would let one
