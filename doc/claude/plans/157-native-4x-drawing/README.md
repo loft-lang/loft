@@ -273,6 +273,48 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
+**WHY THE RETURN BUFFER ACCUMULATED, AND THE 36 % THE RIGHT FIX IS WORTH (owner's
+question, 2026-09-12 — measured, then found unsound at this layer).**
+
+*The mechanic.*  A vector-returning function's hidden `__retbuf` store is minted once and
+reused for every call.  The elements' OWN heap — `Heavy.hv`, `Frond.fpts` — is claimed
+INSIDE that same store, because a field vector is claimed in its owner's store.  The
+entry clear then resets only the outer length word.  So call 1 leaves 50 element records
+plus 50 inner vector blocks claimed; call 2 appends new elements whose inner vectors
+claim NEW blocks beside them, and the only route to the old ones (the outer length) was
+just zeroed.  Linear growth per call.
+
+*The owner's proposal — reset the whole store instead of walking the elements — is
+right about the prize and was measured:* replacing the per-element release with
+`clear` + re-claim of the root wrapper puts `fronds` at **160–167k ns/op** against the
+walk's 250k and even against the LEAKING build's 186–200k, hash exact, still flat at
+13 MB.  −36 %, because resetting the store also erases the free/claim churn its contents
+generate (the 39.7 % allocator class, for this workload, at a stroke).
+
+*Why it cannot ship at this layer, twice measured:* the store-root vector's store is
+exclusively its own for ALLOCATION, but not for REFERENCES.
+1. § V-j deliberately places the callee's buffer as a record in the destination's store,
+   held by a variable in another frame; a reset frees it under that variable.  (Fixable:
+   a `hosts_placed` flag set in `place_record_in` — built, and it removed the native
+   failure.)
+2. The one that settles it: a live VIEW into the cleared vector, or a caller's earlier
+   result that § V-u aliases to the same buffer.  The length reset leaves those records
+   intact (a stale view reads stale-but-valid data); a store reset FREES them, and the
+   V-j corpus on `--interpret` under `LOFT_NO_ZERO_CLAIM=1` says so out loud
+   (`the vector handle in record 1.12 points at record 3 … has been freed`).
+`clear_vector` is a runtime op with no way to know whether a reference into the store is
+live — that is the ownership question, and it is decidable at GENERATION time.
+
+*So the unit this names* (worth −36 % on `fronds`, and it retires most of the allocator
+class without touching the allocator): emit the store-reset form of the entry clear only
+for a buffer the analysis proves has no live alias — no `&`-view of it or of its
+elements outstanding, no adopted result local read after the next call, no placement in
+its store.  Cells before code, and the two failures above are already its first two
+cells.  The owner's second idea — REUSE the element records and their inner vector
+allocations instead of freeing and re-claiming them — is the same prize reached from the
+other side, and it needs no alias proof: nothing is freed, so nothing can dangle.  That
+is probably the better unit to build first.
+
 **THE ALLOCATOR IS THE NEXT UNIT, AND A FIRST ATTEMPT WAS REVERTED (2026-09-12) —
 read this before starting it again.**  Profiled on the post-leak-fix build (8 s sample,
 1 626 in-binary samples, `vr_fronds --n 40000`): the free-list TREE is **39.7 %** of the
