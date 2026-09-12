@@ -478,9 +478,27 @@ loop {
 ```
 
 The idiomatic lowering initialises before the loop and increments at its end, and needs
-neither the sentinel nor the test.  This is not a `pil_hline` fact: **every `for i in a..b`
-in the language pays it.**  Measured on a bare loop, an iteration costs ~0.85 ns with a
-trivial body — roughly half the cost of a tight loft loop is the loop machinery.
+neither the sentinel nor the test.  Measured on a bare loop, an iteration costs ~0.85 ns
+with a trivial body — roughly half the cost of a tight loft loop is the loop machinery.
+
+⚠ **Scope, measured rather than assumed** (an earlier revision of this section claimed
+"every `for i in a..b` in the language pays it", which is FALSE).  A ten-cell corpus plus a
+three-cell discriminator says the axis is whether the range's START is a compile-time
+LITERAL:
+
+| start | sentinel test per iteration |
+|---|---|
+| `0..n`, `0..=n`, `2..n` — a literal | no |
+| `a..b` — a parameter | **yes** |
+| `z..n` — a local that HOLDS zero | **yes** |
+| `(n - n)..n` — an expression | **yes** |
+
+So it is not every loop; it is every loop whose lower bound is not written as a literal.
+That is narrower than claimed and still covers the hot ones exactly: `pil_hline`'s
+`hl_lo..=hl_hi` and `raster_segment`'s `rs_y0..(rs_y1 + 1)` / `rs_x0..(rs_x1 + 1)` are all
+variable-start.  A `for x in v` over a vector is clean, as are `break`/`continue` bodies
+and nesting — the shape alone decides it.  Corpus and the before-capture:
+`bytecode-comparisons/loop-start-cells.loft`.
 
 **Unit 2 — the FILL idiom is not recognised.**  `for i in a..=b { v[i] = <invariant> }` is a
 bulk fill, and LLVM turns the reference's identical-looking Rust loop into one.  loft's
