@@ -450,6 +450,33 @@ shape passes under a 64 MiB ceiling with the release on and TRIPS it under
 ask the SHAPE, never an offset), and a trailing `//` comment in an emitted template ate
 the caller's `;` (the cell corpora went red at once).
 
+**THE NEXT UNIT ON `lock_curved` IS THE RECORD-FIELD RETURN DELIVERY — measured 6 %,
+2026-09-12.**  A function that builds a vector into a local and returns it as a FIELD of a
+record copies the whole buffer at the return.  `lock_layer` does exactly this — `ll_out =
+[for _i in 0..ll_n { 0 }]` (`brush.loft:476`, one `OpAppendCopy`) filled by the resolve
+loop, then `Layer { …, px: ll_out }` (`:509`, `vector_add` → `copy_claims`).  Priced by
+deleting the delivery (`px: []`, which the driver's `sink` does not read, so the answer is
+unchanged at `122400`): **1.02–1.04 s → 0.96–0.98 s, ~6 %**.
+
+§ V-u already closes this for a function returning a vector DIRECTLY — the result local
+adopts the hidden return buffer and the exits deliver nothing.  It does not fire here
+because the vector is a FIELD of the returned record, so the local has no buffer to adopt;
+§ V-z's element-first build has the right mechanism (build the vector where it must end up)
+and the wrong gate (it admits an APPENDED element, not a returned record).  The unit is to
+extend one of the two to *a vector local consumed exactly once as a field of the record a
+function returns*.  It generalises well beyond this row: **build a buffer, return it
+wrapped in a struct** is one of the most common shapes a loft library has.
+
+⚠ **How this was found is the cautionary part.**  The first estimate off the machine
+profile was "~13 % in the copy/alloc band" (`copy_claims` 6.3 %, `get_vector` 5.9 %,
+`copy_block`/`vector_add`/`store_mut`/`memmove` ~9 %), and the first HYPOTHESIS — that the
+seven `Lay` vectors were being deep-copied into the struct literal — was wrong: the emitted
+`n_lock_layer` contains **zero** `OpCopyRecord`.  The call tree named `OpAppendCopy`, the
+emitted source named the two lines, and deleting the delivery priced it.  Most of that
+13 % band is allocation and initialisation the algorithm genuinely needs (7 × 38 250 floats
+per call); only the delivery is removable.  Estimate from a band, and you size a unit
+wrong in both directions.
+
 **THE REMAINING GAP IS OPERATOR COUNT, NOT OPERATOR COST — four measurements, 2026-09-12,
 and it redirects the queue.**  `LOFT_NATIVE_CHECKPOINTS` (PERFORMANCE.md) counts every
 operator a native run executes.  On `lock_curved` at n=400: **3 295 449 657 operator
