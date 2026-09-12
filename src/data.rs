@@ -10521,14 +10521,17 @@ mod caller_graph_tests {
         ] {
             let a = d.attr(wrapper, "vector");
             assert_ne!(a, usize::MAX, "{what}: wrapper has no `vector` attribute");
-            match d.attr_type(wrapper, a) {
-                Type::Vector(e, _) => assert!(
-                    matches!(*e, Type::Reference(got, _) if got == elem),
-                    "{what}: wrapper element is {:?}, want def {elem}",
-                    *e
-                ),
-                other => panic!("{what}: wrapper attribute is {other:?}, want a vector"),
-            }
+            // `peel_link` before naming variants (@FR-N-Shape): `τ?` is `τ` with a
+            // nullability bit over the same layout, and a `&τ` reads through to its
+            // referent, so a shape question that matches the bare type answers for one
+            // spelling of the shape and silently misses the others.
+            let at = d.attr_type(wrapper, a);
+            assert!(
+                matches!(at.peel_link(), Type::Vector(e, _)
+                    if matches!(e.peel_link(), Type::Reference(got, _) if *got == elem)),
+                "{what}: wrapper element is not def {elem} — the attribute is {}",
+                at.name(&d)
+            );
         }
 
         // The user's `T` keeps the unadorned spelling; only the placeholders step aside,

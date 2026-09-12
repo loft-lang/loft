@@ -11,8 +11,10 @@
 //! The cell corpus (`bytecode-comparisons/V-j-move-append-cells.loft`) can only say the
 //! VALUES hold; this pins the EMISSION per cell — which loops pair, and that every
 //! declining shape (a read after the append, a double append, a named source, a nested
-//! loop, a rebound destination, a non-struct element, a struct named like a stdlib
-//! typevar) keeps the deep copy — and the switch (`LOFT_NO_MOVE_APPEND=1`).  Read off
+//! loop, a rebound destination, a non-struct element) keeps the deep copy — and the switch
+//! (`LOFT_NO_MOVE_APPEND=1`).  A struct named like a stdlib type variable was a seventh
+//! declining shape until loft#1519; `hoist.rs`'s wrapper-identity check still stands as a
+//! net, but nothing reaches it now, so c19 pins the PAIRING.  Read off
 //! `--native-emit`.  Every paired cell counts TWO record frees per pair: the placed
 //! record dies WITH ITS HOST STORE — a release injected before every free of the host
 //! `__vdb` (early dead-after-last-read sites included, the 2026-09-11 gate corruption's
@@ -50,8 +52,11 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_c16", 1, 1, 2),      // a no-heap element: composes with § V-t's record push
     ("n_collect2", 0, 0, 0), // c17: the callee re-inits its buffer store — declines
     ("n_collectr", 0, 0, 0), // c18: the same through direct recursion — declines
-    ("n_c19", 0, 0, 0),      // a struct NAMED `T`: the name-based wrapper lookup finds the
-    // generic template (typevar field), so the wrapper-identity check declines
+    ("n_c19", 1, 1, 2),      // a struct NAMED `T`.  This cell pinned the DECLINE while the
+    // name-based wrapper lookup found the generic template (typevar field); loft#1519 fixed
+    // that at its root, so the wrapper is the element's own and the shape pairs like c11 —
+    // a text field riding the moved bytes.  Kept as the regression for the naming AND for
+    // the pairing being value-neutral here: the cell prints the same under either outcome
     ("n_c20", 1, 1, 2), // loop 1 pairs and its dest dies early; loop 2 declines (read-after)
     ("n_c21", 1, 1, 2), // an enclosing loop re-enters: the host's per-iteration OpDatabase
     // re-arms the placement (its reuse arm cleared the store), the host's one free site

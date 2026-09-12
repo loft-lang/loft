@@ -2553,10 +2553,14 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 787 | 444 | 6 | **337** |
+| 788 | 445 | 6 | **337** |
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
-schema through `Parts`, not `Type` — the three new discriminating sites are all aware.)
+schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through
+`peel_link` as well — the four new discriminating sites are all aware, so the opaque column
+and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
+obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
+`make optional-ratchet` fail — a new test is as able to grow this count as new code is.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque
