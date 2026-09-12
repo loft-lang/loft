@@ -35,9 +35,11 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         if let [Value::Var(nr)] = vals {
             let v_nr = self.var_place(*nr);
+            // @FR-H-ClearRelease — the release-aware clear: a length reset for no-heap
+            // elements and field vectors, the owed heap release for a reused root vector.
             write!(
                 w,
-                "if {v_nr}.rec != 0 {{ vector::clear_vector(&{v_nr}, &mut stores.allocations); }}"
+                "if {v_nr}.rec != 0 {{ stores.clear_vector_release(&{v_nr}); }}"
             )?;
             return Ok(());
         }
@@ -48,7 +50,7 @@ impl Output<'_> {
             let expr = self.generate_expr_buf(val)?;
             write!(
                 w,
-                "{{ let _cv = {expr}; if _cv.rec != 0 {{ vector::clear_vector(&_cv, &mut stores.allocations); }} }}"
+                "{{ let _cv = {expr}; if _cv.rec != 0 {{ stores.clear_vector_release(&_cv); }} }}"
             )?;
             return Ok(());
         }

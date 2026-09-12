@@ -1,0 +1,35 @@
+// `@FR-H-ClearRelease` — a REUSED vector's entry clear releases what its elements
+// own.  `vector::clear_vector` is a length reset: sound wherever the vector's store
+// dies straight after (every use it was written for) and unsound for the shape-A
+// hidden return buffer the ABI reuses across calls, where each clear stranded the
+// previous elements' owned heap in a store that never dies (~357 KB per `fronds`
+// call, unbounded — measured on x86-64 and Apple).  Both backends call one function.
+//
+// @falsified-at: hand-measured (switch A/B, 2026-09-12) — under
+// `LOFT_NO_CLEAR_RELEASE=1` (the pre-fix pure length reset) this same shape crosses a
+// 64 MiB store-heap ceiling on the interpreter ("store memory limit reached — 46.2
+// MiB in use ... main_vector<Heavy>"), and passes with the release on; RSS on
+// `--native-release` goes 60/134/310/848 MB at n=400/800/1600/3200 without it and a
+// flat 12-13 MB with it.  tests/clear_release.rs runs BOTH halves, so the guard
+// proves the leak is closed AND that it can still see it.
+
+struct Heavy { hv: vector<float> }
+
+fn make(k: integer) -> vector<Heavy> {
+  mk_out: vector<Heavy> = [];
+  for i in 0..k {
+    mk_in: vector<float> = [];
+    for j in 0..200 { mk_in += [(i + j) as float]; }
+    mk_out += [Heavy { hv: mk_in }];
+  }
+  mk_out
+}
+
+fn test_reused_buffer_releases_heavy_elements() {
+  sink = 0;
+  for _r in 0..1600 {
+    hv = make(50);
+    sink += len(hv);
+  }
+  assert(sink == 80000, "every call's elements arrive");
+}

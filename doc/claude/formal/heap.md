@@ -248,6 +248,23 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
   (H-FreeStack)  freeing store 0 (the evaluation stack) is a FAULT (#306): a stack-record ref
                  is never an owned heap store.
   (H-FreeTwice)  freeing an already-freed store is a FAULT (use-after-free / double-free).
+  (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
+                 elements own.  `clear_vector` is a length reset — sound wherever
+                 the vector's store dies straight after (every use it was written
+                 for) and unsound for a vector the ABI REUSES: a shape-A hidden
+                 return buffer, or any store-root vector cleared per call.  There
+                 each clear strands the previous elements' owned heap in a store
+                 that never dies, unbounded in the call count.  The release arm is
+                 gated on the SHAPE and the ELEMENT TYPE, both read from the
+                 layout: the store's root record is a one-field `main_vector<T>`
+                 wrapper (what `OpDatabase` mints — asking the shape, never a byte
+                 offset, is what keeps the two backends together: the field sits at
+                 8 on `--native` and 12 on the interpreter) and the element type
+                 OWNS HEAP.  A no-heap element pays exactly the old reset; a field
+                 vector, a user-struct root and a placed buffer (never record 1)
+                 keep it too.  Values are unaffected either way — this is a leak
+                 rule, not a semantics rule.
+
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
                  rides bit 31 of its RIGHT link, so the half-word is clear at every

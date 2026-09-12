@@ -2122,6 +2122,118 @@ impl Stores {
         self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
     }
 
+    /// @PLN157 / loft's oldest deferred TODO (`@FR-H-ClearRelease`, formal/heap.md) — the
+    /// clear a REUSED vector owes: `vector::clear_vector` is a LENGTH RESET, sound
+    /// wherever the vector's store dies right after (every use it was written for) and
+    /// unsound for a vector that OUTLIVES the clear — the shape-A return buffer the ABI
+    /// reuses across calls, or a long-lived local cleared per frame — where each clear
+    /// strands the previous elements' owned heap in a store that never dies (~357 KB per
+    /// `fronds` call, unbounded; measured on both architectures).
+    ///
+    /// The release arm exists for the STORE-ROOT vector (`rec == 1 && pos == 8`, the
+    /// shape `OpDatabase` mints): it is the one shape that outlives calls, and its
+    /// element type is readable from the store's own `known_type`.  A FIELD vector
+    /// keeps the plain reset — its store dies with its owner (the recorded residual).
+    /// A placed § V-j buffer is never record 1 (the host's own vector is), so it keeps
+    /// the reset too: its elements are moved out (zeroed) or record-level freed.
+    /// The gate is the ELEMENT TYPE, read from the layout (`owns_heap`), so there is no
+    /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
+    pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
+        // `LOFT_NO_CLEAR_RELEASE=1` restores the pre-fix pure length reset — the bisect
+        // step for a double free or a wrong value at a cleared vector on either backend.
+        fn release_enabled() -> bool {
+            static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *F.get_or_init(|| !std::env::var("LOFT_NO_CLEAR_RELEASE").is_ok_and(|v| v != "0"))
+        }
+        if !release_enabled() {
+            crate::vector::clear_vector(db, &mut self.allocations);
+            return;
+        }
+        if std::env::var("LOFT_TRACE_CLEAR").is_ok() {
+            let kt = if (db.store_nr as usize) < self.allocations.len() {
+                self.allocations[db.store_nr as usize].known_type
+            } else {
+                u16::MAX
+            };
+            let one = kt != u16::MAX
+                && (kt as usize) < self.types.len()
+                && matches!(&self.types[kt as usize].parts,
+                    crate::database::Parts::Struct(f) if f.len() == 1);
+            let vec_tp = if one {
+                self.field_type(kt, 0)
+            } else {
+                u16::MAX
+            };
+            let elem = if vec_tp != u16::MAX
+                && (vec_tp as usize) < self.types.len()
+                && matches!(
+                    self.types[vec_tp as usize].parts,
+                    crate::database::Parts::Vector(_)
+                ) {
+                self.content(vec_tp)
+            } else {
+                u16::MAX
+            };
+            eprintln!(
+                "[clear] store={} rec={} pos={} kt={} elem={} owns_heap={}",
+                db.store_nr,
+                db.rec,
+                db.pos,
+                kt,
+                elem,
+                elem != u16::MAX && self.owns_heap(elem)
+            );
+        }
+        if !db.is_null() && db.rec == 1 && (db.store_nr as usize) < self.allocations.len() {
+            // The shape, not a byte offset: the store's root record is a
+            // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
+            // is exactly what `OpDatabase` mints for a vector local or a return buffer,
+            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
+            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
+            // 12 on the interpreter, and a hardcoded offset silently released on one
+            // backend only (measured: the interpreter kept leaking).  Any other root —
+            // a user struct with collection fields, a placed § V-j buffer (never record
+            // 1) — keeps the plain reset.
+            let kt = self.allocations[db.store_nr as usize].known_type;
+            let one_field_vector = kt != u16::MAX
+                && (kt as usize) < self.types.len()
+                && matches!(&self.types[kt as usize].parts,
+                    crate::database::Parts::Struct(f) if f.len() == 1);
+            let vec_tp = if one_field_vector {
+                self.field_type(kt, 0)
+            } else {
+                u16::MAX
+            };
+            let is_vector = vec_tp != u16::MAX
+                && (vec_tp as usize) < self.types.len()
+                && matches!(
+                    self.types[vec_tp as usize].parts,
+                    crate::database::Parts::Vector(_)
+                );
+            let elem = if is_vector {
+                self.content(vec_tp)
+            } else {
+                u16::MAX
+            };
+            if elem != u16::MAX && self.owns_heap(elem) {
+                let len = crate::vector::length_vector(db, &self.allocations);
+                let size = u32::from(self.size(elem));
+                let v_rec = self.store(db).collection_rec(db.rec, db.pos);
+                if v_rec != 0 {
+                    for i in 0..len {
+                        let e = crate::keys::DbRef {
+                            store_nr: db.store_nr,
+                            rec: v_rec,
+                            pos: 8 + i * size,
+                        };
+                        self.remove_claims(&e, elem);
+                    }
+                }
+            }
+        }
+        crate::vector::clear_vector(db, &mut self.allocations);
+    }
+
     /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
     /// lives on: the deep release of what the record still owns (elements the loop did not
     /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`

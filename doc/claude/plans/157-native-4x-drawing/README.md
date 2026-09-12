@@ -273,6 +273,29 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
+**THE LEAK IS CLOSED (2026-09-12, `@FR-H-ClearRelease`) — and it re-prices the § V-z
+row.**  The x86 lane's run-down attributed `fronds`' unbounded ~357 KB/call growth to
+`vector::clear_vector` being a LENGTH RESET while a shape-A return buffer outlives its
+call (not to § V-j or § V-u, which only make the store live longer).  Fixed at the one
+chokepoint both backends call — `Stores::clear_vector_release`, routed from the native
+emitter's two arms, the `#rust` template and § V-u's reuse init — gated on the SHAPE
+(the store root is a one-field `main_vector<T>` wrapper, what `OpDatabase` mints) and
+the ELEMENT TYPE (`owns_heap`, read from the layout, so no predicate can drift).
+Measured: the `adopt` probe 60/134/310/848 MB at n=400/800/1600/3200 → **flat 12–13 MB**;
+`fronds` 3.3 GB at n=8000 → **13 MB**; the interpreter's separately-reported ~92 KB/call
+leak closes with it (one defect, two lifetimes); `plain` (no-heap elements) unchanged,
+switch A/B identical.  **The honest price: `fronds` standalone is 250–255k ns/op, not
+the 186–200k § V-z reported — that number was taken on a LEAKING build**, exactly as the
+x86 hand-off warned; releasing 1 296 inner vectors per call is work the leak skipped.
+Rejected alternatives, with reasons: declining buffer reuse for heap elements pays the
+same release AND loses the backing; a whole-store clear cannot reach inner vectors that
+live in other stores.  Guard `tests/clear_release.rs` is self-falsifying — the same
+shape passes under a 64 MiB ceiling with the release on and TRIPS it under
+`LOFT_NO_CLEAR_RELEASE=1`.  Two findings on the way, both caught by existing gates: a
+`pos == 8` gate released on `--native` only (the interpreter's root vector sits at 12 —
+ask the SHAPE, never an offset), and a trailing `//` comment in an emitted template ate
+the caller's `;` (the cell corpora went red at once).
+
 **Re-measured 2026-09-12 on the § V-z tip (d80307b0)** — `compare.py --skip-interp
 --repeat 5`, caches cleared, all 14 hashes agreeing: **five under the bar** — `hash`
 **2.19×**, `hair` **2.76×**, `lock` **3.64×**, `composite` **3.68×**, `smooth` **3.92×**

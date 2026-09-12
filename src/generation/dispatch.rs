@@ -42,7 +42,7 @@ impl Output<'_> {
             let db_tp = a.db_tp;
             return write!(
                 w,
-                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} var_{buf} }}"
+                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
             );
         }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {

@@ -738,6 +738,12 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
+vector's entry clear a pure length reset again — with it off, clearing a REUSED
+store-root vector whose elements own heap releases what they own first, closing an
+unbounded leak in every shape-A return buffer (~357 KB per `fronds` call) — and is the
+bisect step for a double free or a wrong value at a cleared vector.  `LOFT_TRACE_CLEAR=1`
+names each clear's shape and element verdict.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's

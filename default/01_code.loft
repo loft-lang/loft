@@ -1150,7 +1150,7 @@ pub fn len(both: sorted) -> integer {
 #pure
 
 fn OpClearVector(r: vector);
-#rust"vector::clear_vector(&@r, &mut s.database.allocations);"
+#rust"s.database.clear_vector_release(&@r);"
 // Remove all elements from the vector, setting its length to 0.
 pub fn clear(both: vector) {
   OpClearVector(both)
