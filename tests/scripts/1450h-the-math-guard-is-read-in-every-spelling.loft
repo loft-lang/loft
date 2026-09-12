@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Domain`'s GUARD licence, the MATH family — the row `1450g` left open.
+//
+// The rule promises ONE elision — "provably in-domain (constant / range / GUARD)" — over three
+// families of partial operation, and walked as a RULE the promise was kept unevenly.  The
+// divisor and index families each take their guard in both spellings; the domain-partial math
+// functions took neither, so `if x >= 0.0 { sqrt(x) }` typed `float?` while `if d != 0 { a/d }`
+// typed `integer`.  The code did what `DN3-Float` promised (a sign lattice over EXPRESSIONS);
+// it was `types.md`'s own sentence that named "guard" for all three families.  Recorded as
+// `D-Domain-Guard` and closed by making a zero-comparison contribute a `Sign` for the slot, so
+// the guard COMPOSES with that lattice instead of sitting beside it — which is why `ln` still
+// refuses a merely-`NonNeg` proof.
+//
+// The TYPE is what moved, and a value assertion cannot see it: the values were always right,
+// and a too-conservative `?` is invisible until something READS the type.  So each cell casts
+// its result — `(N-Cast)` refuses a possibly-null subject, so a cell compiles only if the
+// elision happened.  That is `1450g`'s channel, one family over.
+//
+// ⚠ The unsound directions are NOT here, because a refusal cannot share a file with cells that
+// must compile.  They live in `tests/math_domain.rs::math_domain_guard_proves_only_what_it_
+// proves` — the else side of `x >= 0.0`, a `!= 0` that proves no sign, an upper bound alone,
+// `ln` given only `NonNeg`, and a slot reassigned after its guard.  That is the half a widening
+// has to be measured on: the divisor's truthy arm was written and reverted within the hour
+// because eliding on `if !d` answered a silent null through a non-null slot.
+//
+// Axes this file MOVES:  the guard's spelling (positive · early return) and the function's
+//                        domain (`sqrt` needs `>= 0`, `ln` needs `> 0`).
+// Axes it HOLDS FIXED:   the sibling families, which ride their own proof and must not move —
+//                        they are the controls that say this widened one row, not the rule.
+//
+// @falsified-at: f537a18f9 — interpret exit 1 -> 0, native exit 1 -> 0.  MEASURED both backends.
+//   The EXIT channel carries this file and the assertion count does NOT move (0 on both trees):
+//   on the control the four math cells do not COMPILE — `(N-Cast)` refuses a possibly-null
+//   `float?` — so no assertion runs there to move.  That is the same shape `1450g` records one
+//   family over, and it is why the sibling-family controls are in this file: they compile and
+//   pass on BOTH trees, which says this file moved the math row alone rather than the rule.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees.
+// @falsified-by: tests/falsified/1450h-the-math-guard-is-read-in-every-spelling.patch —
+//   interpret exit 1 -> 0, native exit 1 -> 0.  The runnable form of the receipt; score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>`.
+
+fn guard_positive_sqrt(x: float) -> integer {
+  if x >= 0.0 { return (sqrt(x) as integer); }
+  0 - 1
+}
+
+fn guard_clause_sqrt(x: float) -> integer {
+  if x < 0.0 { return 0 - 1; }
+  (sqrt(x) as integer)
+}
+
+fn guard_positive_ln(x: float) -> integer {
+  if x > 0.0 { return (ln(x) as integer); }
+  0 - 1
+}
+
+fn guard_clause_ln(x: float) -> integer {
+  if x <= 0.0 { return 0 - 1; }
+  (ln(x) as integer)
+}
+
+// --- the sibling families: controls that must not move ---
+
+fn divisor_control(a: integer, d: integer) -> integer {
+  if d == 0 { return 0 - 1; }
+  ((a / d) as float * 2.0) as integer
+}
+
+fn index_control(v: vector<integer>, i: integer) -> integer {
+  if i < len(v) { return ((v[i]) as float * 2.0) as integer; }
+  0 - 1
+}
+
+fn main() {
+  assert(guard_positive_sqrt(9.0) == 3, "the positive guard takes sqrt: {guard_positive_sqrt(9.0)}");
+  assert(guard_positive_sqrt(0.0) == 0, "and holds at the boundary: {guard_positive_sqrt(0.0)}");
+  assert(guard_positive_sqrt(0.0 - 4.0) == 0 - 1, "and the guard still refuses a negative");
+  assert(guard_clause_sqrt(16.0) == 4, "the guard clause takes sqrt: {guard_clause_sqrt(16.0)}");
+  assert(guard_clause_sqrt(0.0 - 4.0) == 0 - 1, "and its early return still fires");
+  assert(guard_positive_ln(1.0) == 0, "the positive guard takes ln: {guard_positive_ln(1.0)}");
+  assert(guard_clause_ln(1.0) == 0, "the guard clause takes ln: {guard_clause_ln(1.0)}");
+  assert(guard_clause_ln(0.0) == 0 - 1, "and its early return still fires");
+
+  assert(divisor_control(10, 2) == 10, "divisor control unmoved: {divisor_control(10, 2)}");
+  assert(divisor_control(10, 0) == 0 - 1, "divisor control's guard still fires");
+  assert(index_control([1, 2, 3], 1) == 4, "index control unmoved: {index_control([1,2,3], 1)}");
+  assert(index_control([1, 2, 3], 9) == 0 - 1, "index control's guard still fires");
+
+  println("1450h OK sqrt={guard_positive_sqrt(9.0)} ln={guard_positive_ln(1.0)}");
+}

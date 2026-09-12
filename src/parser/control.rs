@@ -748,6 +748,8 @@ impl Parser {
         let ib_base = self.index_bounded.len();
         // …and the DIVISOR proof, the third of `@FR-N-Domain`'s families, on the same discipline.
         let dz_base = self.divisor_nonzero.len();
+        // …and the MATH family's sign proofs, on the same block discipline.
+        let ms_base = self.math_sign_proven.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
@@ -1043,6 +1045,13 @@ impl Parser {
                     && !self.divisor_nonzero.contains(&v)
                 {
                     self.divisor_nonzero.push(v);
+                }
+                // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same guard
+                // clause one family over.
+                if let Some((v, sg, false)) = self.math_sign_proof_from_condition(test)
+                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                {
+                    self.math_sign_proven.push((v, sg));
                 }
             }
             if let Value::Insert(ls) = n {
@@ -1596,6 +1605,7 @@ impl Parser {
         self.narrowed_non_null.truncate(nn_base);
         self.index_bounded.truncate(ib_base);
         self.divisor_nonzero.truncate(dz_base);
+        self.math_sign_proven.truncate(ms_base);
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -4456,6 +4466,69 @@ impl Parser {
     /// the branch it holds in: `v != 0` proves it in the THEN branch (`Some((v, true))`); `v == 0`
     /// proves it in the ELSE branch (`Some((v, false))`) — the common `if b == 0 { … } else { a / b }`
     /// safe-division idiom. Mirrors `narrowing_from_condition`'s then/else convention.
+    /// `@FR-N-Domain`'s guard licence, MATH family — read a SIGN proof for a variable out of
+    /// a parsed `if` condition, with the branch it holds in.
+    ///
+    /// Only `<` and `<=` exist as ops; every spelling lowers into one of four shapes, and each
+    /// proves a sign on exactly one side:
+    ///
+    /// | written | lowered | proves | branch |
+    /// |---|---|---|---|
+    /// | `x > 0`  | `OpLt(0, x)` | `Pos`    | THEN |
+    /// | `x >= 0` | `OpLe(0, x)` | `NonNeg` | THEN |
+    /// | `x < 0`  | `OpLt(x, 0)` | `NonNeg` | ELSE |
+    /// | `x <= 0` | `OpLe(x, 0)` | `Pos`    | ELSE |
+    ///
+    /// ⚠ **NOT the truthy spellings**, for the reason `divisor_proof_from_condition` records
+    /// from measurement: `if x { … }` proves nothing about a sign, an arm for the divisor twin
+    /// was written and reverted the same hour, and eliding on it answered a silent null through
+    /// a non-null slot.  A comparison against a zero LITERAL is the whole admissible set.
+    fn math_sign_proof_from_condition(&self, test: &Value) -> Option<(u16, super::Sign, bool)> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        let name = self.data.def(*op).name();
+        let strict = if name.starts_with("OpLt") {
+            true
+        } else if name.starts_with("OpLe") {
+            false
+        } else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        let is_zero = |a: &Value| match a.unspan() {
+            Value::Int(0) | Value::Long(0) => true,
+            Value::Float(f) => *f == 0.0,
+            Value::Single(f) => *f == 0.0,
+            _ => false,
+        };
+        match (args[0].unspan(), args[1].unspan()) {
+            // `0 < x` / `0 <= x` — the proof holds in the THEN branch.
+            (zero, Value::Var(v)) if is_zero(zero) => Some((
+                *v,
+                if strict {
+                    super::Sign::Pos
+                } else {
+                    super::Sign::NonNeg
+                },
+                true,
+            )),
+            // `x < 0` / `x <= 0` — the proof is the NEGATION, so it holds in the ELSE branch.
+            (Value::Var(v), zero) if is_zero(zero) => Some((
+                *v,
+                if strict {
+                    super::Sign::NonNeg
+                } else {
+                    super::Sign::Pos
+                },
+                false,
+            )),
+            _ => None,
+        }
+    }
+
     fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -4547,6 +4620,12 @@ impl Parser {
         if let Some((v, true)) = divisor {
             self.divisor_nonzero.push(v);
         }
+        // …and the MATH twin, the third family, on the same discipline.
+        let math_sign = self.math_sign_proof_from_condition(&test);
+        let math_base = self.math_sign_proven.len();
+        if let Some((v, sg, true)) = math_sign {
+            self.math_sign_proven.push((v, sg));
+        }
         // @PLN25 DN3 fault-op (index): `if idx < len(vec) { … }` proves `vec[idx]` in-bounds in the
         // THEN branch (skip-pattern 5) — reuse the warning walk's guard-pair extractor. THEN-only
         // (the else side has idx >= len, no fit). The len-capture form (`n = len(v); if idx < n`)
@@ -4583,6 +4662,7 @@ impl Parser {
         // Leaving the THEN branch, drop its `!= 0` divisor proof; an `== 0` condition instead
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
+        self.math_sign_proven.truncate(math_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {
@@ -4593,6 +4673,9 @@ impl Parser {
         }
         if let Some((v, false)) = divisor {
             self.divisor_nonzero.push(v);
+        }
+        if let Some((v, sg, false)) = math_sign {
+            self.math_sign_proven.push((v, sg));
         }
         let mut false_type = Type::Void;
         let mut false_code = Value::Null;
@@ -4733,6 +4816,7 @@ impl Parser {
         self.narrowed_non_null.truncate(narrow_base);
         self.narrowed_non_null_exprs.truncate(proj_base);
         self.divisor_nonzero.truncate(divisor_base);
+        self.math_sign_proven.truncate(math_base);
         // Belt-and-suspenders: `index_bounded` was already restored after the THEN block (it is
         // THEN-only, no else-push), so this is a no-op today — kept for parity with the two
         // narrowings above and to stay correct if an else-side in-bounds proof is added later.

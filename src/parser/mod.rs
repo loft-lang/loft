@@ -71,8 +71,12 @@ fn registry_fn_hint(_name: &str, _resolved: &[String]) -> Option<String> {
 /// @PLN102 case B (soften-nullflow-discharge.md) — the sign / lower-bound lattice used to
 /// prove a domain-fault op's argument is in its safe domain (`sqrt` needs `≥ 0`, `ln` needs
 /// `> 0`). `Pos ⊑ NonNeg ⊑ Unknown` (stronger → weaker); `Unknown` is the conservative default.
+///
+/// `pub(crate)` because `Parser::math_sign_proven` carries it: a zero-comparison guard
+/// contributes a `Sign` for a slot, which is what makes `@FR-N-Domain`'s guard licence
+/// compose with this lattice rather than sit beside it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Sign {
+pub(crate) enum Sign {
     Pos,
     NonNeg,
     Unknown,
@@ -1120,6 +1124,13 @@ pub struct Parser {
     /// non-zero literal) is provably fit and types NON-null; otherwise it types `τ?`. Same
     /// push/truncate/invalidate discipline as `narrowed_non_null`.
     pub(crate) divisor_nonzero: Vec<u16>,
+    /// `@FR-N-Domain`'s guard licence for the domain-partial MATH family — local-var slots
+    /// proven `> 0` (`Pos`) or `>= 0` (`NonNeg`) by an enclosing comparison against zero.
+    /// `domain_sign` reads it for a bare `Value::Var`, so a guarded `sqrt(x)` types non-null
+    /// exactly as a guarded `a / d` and a guarded `v[i]` already do.  Same
+    /// push/truncate/invalidate discipline as `divisor_nonzero`; the fact is a `Sign` rather
+    /// than a bool so it composes with the expression lattice instead of sitting beside it.
+    pub(crate) math_sign_proven: Vec<(u16, Sign)>,
     /// #673 — struct-enum `text` payload bindings that WRITE THROUGH to the subject.
     ///
     /// A heap payload binding (`vector`/`ref`/struct-enum) holds a DbRef into the
@@ -1513,6 +1524,7 @@ impl Parser {
             narrowed_non_null: Vec::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
+            math_sign_proven: Vec::new(),
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,
             index_bounded: Vec::new(),
@@ -6435,8 +6447,9 @@ impl Parser {
         }
         // @PLN102 case B (soften-nullflow-discharge.md) — beyond the constant subset, prove the
         // argument is in-domain from an EXPRESSION via the sign lattice (`sqrt(a*a + b*b)`,
-        // `sqrt(max(x, 0.01))`). Opt-in until the default-on flip (B5); default-off keeps the
-        // surface byte-identical (a narrowed `τ?` would else re-flag `… ?? d` as redundant).
+        // `sqrt(max(x, 0.01))`), or from an enclosing GUARD via `domain_sign`'s var arm.
+        // Default-ON since the B5 flip; `LOFT_NO_MATH_DOMAIN=1` is the escape hatch and reverts
+        // BOTH licences to the constant-only elision, which is the A/B for either.
         if !crate::keys::math_domain_enabled() {
             return false;
         }
@@ -6527,11 +6540,13 @@ impl Parser {
     /// `divisor_proof_from_condition` for `÷0`.  Each carries its own set of admissible
     /// spellings, and none reads the others.
     ///
-    /// This family is the one with NO flow-guard licence: `if a >= 0.0 { sqrt(a) }` still types
-    /// `τ?` where the index and divisor families both take their guard.  That is recorded as a
-    /// rules-vs-history question rather than a plain gap — the sign lattice below does what
-    /// `DN3-Float` promised, and it is `types.md`'s own sentence that names "guard" for all
-    /// three families.  `formal/types-history.md` § D-Domain-Guard.
+    /// The flow-GUARD licence enters here too, and that is deliberate rather than incidental:
+    /// a comparison against zero contributes a `Sign` for the slot (`math_sign_proven`, read by
+    /// the `Value::Var` arm below), so a guard COMPOSES with this lattice instead of sitting
+    /// beside it as a second mechanism.  It is what makes `ln` given only `x >= 0.0` still
+    /// refuse — `NonNeg` is not `Pos`, and the lattice says so without a special case.
+    /// `formal/types-history.md` § D-Domain-Guard (opened 2026-09-08, closed 2026-09-12: the
+    /// owner ruled the lattice widens rather than the rule narrowing).
     fn domain_sign(&self, v: &Value) -> Sign {
         fn of_const(x: f64) -> Sign {
             if x > 0.0 {
@@ -6549,6 +6564,15 @@ impl Parser {
             Value::Int(n) => of_const(f64::from(*n)),
             #[allow(clippy::cast_precision_loss)]
             Value::Long(n) => of_const(*n as f64),
+            // A bare variable is Unknown UNLESS an enclosing guard proved its sign
+            // (`@FR-N-Domain`'s third licence).  Latest proof wins: the stack is pushed
+            // in parse order, so an inner guard shadows an outer one for the same slot.
+            Value::Var(v) => self
+                .math_sign_proven
+                .iter()
+                .rev()
+                .find(|(slot, _)| slot == v)
+                .map_or(Sign::Unknown, |(_, sg)| *sg),
             Value::Call(d_nr, args) => {
                 let nm = self.data.def(*d_nr).name.as_str();
                 if args.len() == 2 && matches!(nm, "OpMulFloat" | "OpMulSingle") {

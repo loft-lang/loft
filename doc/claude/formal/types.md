@@ -663,13 +663,17 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1** — `D-Domain-Guard` (opened 2026-09-08), whose entry lives in the register next
-door: `(N-Domain)`'s GUARD licence is not uniform across its three families, and whether the
-domain-partial MATH row is a code gap or a rule that over-promises is an OWNER call, not yet
-taken.  This line read `OPEN: 0` from 2026-09-08 to 2026-09-12 because the count sits here
-and the entry sits in [types-history.md](types-history.md) — a chapter that delegates its
-register states a number nothing beside it can check.  `rule_tags.py registers` now checks
-it, by attributing a `-history` companion's entries to its chapter.
+**OPEN: 0.**  `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
+call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
+so `(N-Domain)`'s one promise now holds over all three families.  A comparison against zero
+contributes a `Sign` for the slot, which is what makes the guard COMPOSE with the expression
+lattice instead of sitting beside it — and is why `ln` given only `x >= 0.0` still refuses
+(`NonNeg` is not `Pos`).  Measured both backends; the register next door carries the matrix.
+
+⚠ This line read `OPEN: 0` from 2026-09-08 to 2026-09-12 while the deviation was live, because
+the count sits here and the entry sits in [types-history.md](types-history.md) — a chapter that
+delegates its register states a number nothing beside it can check.  `rule_tags.py registers`
+now checks it, by attributing a `-history` companion's entries to its chapter.
 
 `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
 (loft#1450): `(N-Domain)`'s in-domain elision was asked about the RECEIVER when it only ever

@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 469 | 445 | **24** |
+| 470 | 446 | **24** |
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
