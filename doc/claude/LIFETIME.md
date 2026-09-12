@@ -393,6 +393,21 @@ reuse on, the allocator usually hands the store straight back.
 - *A static ownership veto keyed on the binding's shape* — unnecessary once the above is
   understood, and unsound in principle: the same shape both owns and does not own depending on the
   path that reached it.
+- *Routing a PROJECTION RHS to the runtime-guarded post-free*, the way an `OpNewRecord` RHS
+  already is — the most promising of the four, because the two are the same situation (both return
+  an interior `DbRef` sharing `store_nr` with their container, which is what the `OpNewRecord` arm
+  exists for) and because `--native`'s `if _old.store_nr != new.store_nr` has always asked exactly
+  that question, so it looked like closing an @FR-O-NoDiverge gap.  It passes the residual, `1194`
+  and all six count oracles (`literal_hoist`, `move_append`, `retbuf_adopt`, `value_record`,
+  `clear_release`, `poison_claim`) — and the four-channel corpus says no: six files answer WRONG
+  and `strict_uaf` goes 0 → 10, led by `1184-a-view-assigned-back-onto-its-own-source` with six.
+  That is the three-condition pairing `state/codegen.rs` warns about in place — *"freshness, the
+  deferral and the post-free are ONE pairing in three conditions — BRITTLE.md § 7b"* — so moving
+  the route moves the other two conditions with it.
+
+So the pre-`Set` free at a projection RHS is load-bearing in at least three separate ways — the
+self-read snapshot, the view-materialise pairing, and the release after a rebuild — and any fifth
+attempt should start by naming which of the three it is changing.
 
 What the failures together say is that the free is **not** spurious — it is how the old store is
 released after a rebuild — and the defect is only that it runs when `OpDatabase` reused that store
