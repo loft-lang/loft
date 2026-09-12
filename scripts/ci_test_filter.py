@@ -118,10 +118,25 @@ CORPUS = "binary(native) & test(=native_scripts)"
 # runs.  A pair of explicit lists could omit one silently, and a test that runs on no leg
 # is the one failure mode a sharding scheme must not have.
 #
-# Measured 2026-08-28 from a full `make ci` (per-binary seconds; regenerate the same way
-# and re-pack when the halves drift): A 1317s over 16 binaries, B 1285s over 200 — 1.2
-# percent apart.  Drift costs only balance, never coverage, so re-measuring is a tuning
-# job and not a gate.
+# ⚠ THIS LIST DRIFTS BY CONSTRUCTION, and the drift is one-directional: the light half is
+# the COMPLEMENT, so every test binary added to the repo lands in `rest-b` and never in
+# `rest-a`.  Balance therefore decays monotonically between re-packs, and the re-pack is
+# the maintenance this scheme trades for its safety property.  Re-measure whenever
+# `rest-b`'s wall clock pulls away from `rest-a`'s.
+#
+# Measured 2026-08-28: A 1317s over 16 binaries, B 1285s over 200 — 1.2 percent apart.
+# RE-MEASURED 2026-09-12 from a full local `nextest --profile ci` run's `junit.xml`
+# (`target/nextest/ci/junit.xml`; sum each testcase's `time` per binary): A 2973s, B 5417s
+# — **82 percent apart**, and the CI wall clock showed it (rest-b 21.4 min against rest-a
+# 16.1 on the last PR-path run, the leg that put the run over its 20-minute budget).
+# Re-packed by moving the five heaviest unlisted binaries across, which lands at 4199s /
+# 4192s — 0.2 percent apart — for the smallest possible change to the list.
+#
+# To regenerate: run the suite once with `--profile ci`, then sum `time` per testsuite from
+# the junit report, drop the `heavy`/`corpus` binaries and the four excluded ones, and move
+# the largest unnamed binaries across until the halves meet.
+#
+# Drift costs only balance, never coverage, so re-measuring is a tuning job and not a gate.
 REST_HEAVY_HALF = [
     "issues",
     "store_persist_loft",
@@ -139,6 +154,12 @@ REST_HEAVY_HALF = [
     "use_analysis",
     "engine_host_kernel",
     "parse_errors",
+    # Added by the 2026-09-12 re-pack (seconds from that run).
+    "e1_code_set",      # 515.2s
+    "heap_nstore",      # 194.1s
+    "coroutine_matrix", # 190.8s
+    "wrap",             # 166.9s
+    "exit_codes",       # 158.7s
 ]
 
 

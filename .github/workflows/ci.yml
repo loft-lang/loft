@@ -167,7 +167,19 @@ jobs:
           # `inputs.os` is set by a dispatch or by the release gate's call and is
           # empty on every other event, so the test needs no event name.
           if [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
-            echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
+            # A DISPATCH IS AN INTERACTIVE RUN AND SHARDS LIKE A PR.  CLAUDE.md sends every
+            # agent here when the local gate is unreliable ("Run the SAME gate on GitHub,
+            # no PR needed"), so this is the path the day actually runs on: of the last ten
+            # ci.yml runs, ten were `workflow_dispatch` and none was a pull_request.  It
+            # used to take the one-leg branch below and run the whole suite unsharded —
+            # 32-42 min against the PR path's 21 — which is the gap that made the budget
+            # look unreachable.  Sharding it costs runner-minutes and buys back ~20 min of
+            # a person's time per run.
+            if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
+              echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"}]' >> "$GITHUB_OUTPUT"
+            else
+              echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
+            fi
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             # @PLN159 phase E1 — a FOURTH shard carries the native script corpus alone
             # (`native::native_scripts`, 219.6 s of the heavy shard's 764.8 s on the run that
@@ -301,6 +313,18 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    # THE 20-MINUTE BUDGET IS ENFORCED, NOT ASPIRED TO.  A leg that runs long is cancelled
+    # and the run goes red, because a budget nothing checks is a budget that drifts: this
+    # one was written down in CI_BUDGET.md and had already slipped to 21.4 min on `rest-b`
+    # and 32-42 min on the dispatch path before anyone measured it again.  A red here means
+    # "re-balance the shards or cut the work", never "raise the number" — raising it is how
+    # a 20-minute gate becomes a 40-minute one an hour at a time.
+    #
+    # SHARDED legs only.  The unsharded macOS and Windows legs are the scheduled
+    # full-matrix runs (40 min and 78 min measured); they are a different instrument with a
+    # different purpose, and capping them at 20 would simply paint the nightly red every
+    # night without making anything faster.  Sharding those too is the open question.
+    timeout-minutes: ${{ matrix.shard && 20 || 90 }}
     strategy:
       fail-fast: false
       # SHARDED ON THE PR PATH ONLY, and only along the `heavy-serial` boundary.
