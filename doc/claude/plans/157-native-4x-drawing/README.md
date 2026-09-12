@@ -31,6 +31,16 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 **4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
 § V-q (2026-09-09, both under the bar).
 
+**Re-measured 2026-09-12 on the § V-z tip (d80307b0)** — `compare.py --skip-interp
+--repeat 5`, caches cleared, all 14 hashes agreeing: **five under the bar** — `hash`
+**2.19×**, `hair` **2.76×**, `lock` **3.64×**, `composite` **3.68×**, `smooth` **3.92×**
+— and `fronds` at **4.05×** (184 340 ns/op native, from 6.17× at the 09-11 close: the
+two-day arc − sound placement reuse, § V-x, § V-y, § V-z − is −46 % standalone and the
+reference lane's swing now decides its side of the bar).  Still over: `fill_circle`
+**4.36×**, `fill_star` **4.38×**, `wide_line` **5.36×**, `lock_curved` **5.76×** — the
+fills and `wide_line` have never had a dedicated profile, and `lock_curved` owes its
+with-callers profile; those are the next hand-off items.
+
 **Re-measured 2026-09-11 on the reuse tip (5262db1b)** — `compare.py --skip-interp
 --repeat 5`, cdylib caches cleared first, all 14 hashes agreeing: **five rows under the
 bar** — `hash` **2.15×**, `hair` **2.60×**, `lock` **3.36×**, `composite` **3.56×**,
