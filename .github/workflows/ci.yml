@@ -776,7 +776,12 @@ jobs:
       # than one that is loud, so this reports even when the suite above is already
       # failing.
       - name: Stdlib round-trip (the exhaustive pair, off the PR path)
-        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        # `!= 'pull_request'` used to include a workflow_dispatch, which is the INTERACTIVE
+        # path CLAUDE.md sends every agent down — so the nightly extras ran on the runs a
+        # person waits for.  Measured on the corpus leg: this plus the two below were 5.7
+        # of its 20.0 minutes, against 4.25 minutes of actual tests.  A dispatch is not a
+        # nightly; schedule and push are.
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'push') }}
         shell: bash
         run: >
           cargo nextest run --profile ci --no-fail-fast
@@ -789,7 +794,7 @@ jobs:
       # bundle (and where binaryen supplies the `wasm-opt` that build needs).
       # `html_asyncify` builds its own artefact, so it belongs here.
       - name: Browser asyncify (nightly — off the flaky PR path)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
         run: cargo nextest run --profile ci -E 'binary(html_asyncify)'
 
@@ -808,16 +813,16 @@ jobs:
       # interp == native == WASM an actual nightly gate (the lib-tested-on-3-backends gap).
       # Nightly + push-to-main only, Linux only — mirrors the oracle step below.
       - name: Install wasip2 target (oracle wasm leg)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         run: rustup target add wasm32-wasip2
       - name: Install wasmtime (oracle wasm leg)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
         with:
           tool: wasmtime
 
       - name: Differential oracle (nightly cross-backend sweep)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
         run: cargo test --release --test differential_oracle -- --ignored --nocapture
 
