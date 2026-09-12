@@ -185,16 +185,60 @@ process runs.  Turning the leak off is therefore FASTER, at n=5 000:
 | `LOFT_NO_RETBUF_ADOPT=1` | 372 349 (−4 %) | no |
 | `LOFT_NO_MOVE_APPEND=1` | **328 637 (−15 %)** | no |
 
-**So the first `fronds` improvement is not a new optimisation — it is repairing or
-reverting § V-j's composition with § V-u.**  It is worth −15 % and 357 KB/call before
+**So the first `fronds` improvement is not a new optimisation — it is closing the leak**
+(point 5 corrects WHERE: not in § V-j, which is sound, but in the return buffer's reuse
+contract, which § V-j and § V-u each keep alive longer).  It is worth −15 % and 357 KB/call before
 any new work is ranked, and it moves the row from 8.4× to ~7.1×.
 
-**5. A SECOND, independent leak on the interpreter: ~92 KB per call.**  Max RSS 32 →
-52 → 85 → 163 MB at n = 100/400/800/1 600, linear, and **neither switch changes it**
-(68.1 / 66.1 / 68.1 KB per call).  So this is not the composition defect wearing another
-hat; it is a separate interpreter-side leak in the same routine, and native with either
-switch off (0.2–0.5 KB/call) is cleaner than the interpreter.  It has not been narrowed
-further.
+**5. RUN DOWN FURTHER — it is ONE leak, it is NOT § V-j's, and § V-j is not defective.**
+The switch A/B in point 3 localises the fronds growth correctly but attributes it
+wrongly.  Four probes settle it (`leak/adopt.loft`, `leak/plain.loft`, kept beside this
+plan):
+
+| probe | element owns heap | adopted? | native | interpret |
+|---|---|---|---|---|
+| `plain.loft` — a § V-j move-append loop, no-heap element | no | — | **0.03 KB/call** | 1.2 |
+| `adopt.loft` — a plain vector-returning fn, heap-owning element | yes | **no** (`LOFT_TRACE_ADOPT`: `bad=true`) | **213 KB/call** | 128 |
+
+A § V-j move-append with a NO-HEAP element does not leak at all, so **the move-append
+has no defect of its own**.  And `adopt.loft` leaks on both backends with § V-u and
+§ V-j BOTH OFF, and with adoption declined outright — so the leak is neither unit's, and
+it is not a @PLN157 regression.
+
+**The root defect: a shape-A hidden return buffer is REUSED across calls, and its entry
+clear is a length reset.**  `vector::clear_vector` (`src/vector.rs:527`) does one thing —
+`store.set_u32_raw(v_rec, 4, 0)` — under its own standing TODOs (*"Only set size of the
+vector to 0 … TODO … lower string reference counts where needed"*).  That is sound
+wherever the buffer's store is freed straight afterwards, which is every use it was
+written for.  It is NOT sound for the shape-A return buffer, which by ABI survives across
+calls: every call therefore strands the previous call's element-owned heap in a store
+that never dies.  The axis is the ELEMENT TYPE — a vector of scalars or of no-heap
+structs is fine; a vector whose elements own vectors, text or records leaks the lot.
+`main_vector<Frond>` is the type the store-heap ceiling names when `fronds` is driven
+under `loft test` (307.7 MiB → 718.0 MiB, *"one type holding nearly all of it in ONE
+store is a runaway length"*).
+
+**What § V-u and § V-j actually do here is make the store survive LONGER, so they widen
+an existing hole rather than open one.**  That is why disabling either takes fronds'
+growth to ~0 while neither touches `adopt.loft`: with them off the buffer's store dies
+per call and takes the strand with it.  The 357 KB/call on native and 92 KB/call on the
+interpreter are the same defect reached through different lifetimes.
+
+**So "repair § V-j" is the wrong target and was not done.**  The repair belongs at the
+buffer's reuse contract, and it is a real design call with a measured cost, because the
+release is work the program currently never does:
+
+- **(a) deep-release at the entry clear** — correct everywhere, and the honest cost:
+  `fronds` gets slower by whatever the release costs, which today is simply missing;
+- **(b) free and reallocate the buffer's store per call** — gives up § V-u's
+  across-calls backing reuse, which is most of what § V-u bought;
+- **(c) decline buffer REUSE when the element type owns heap** — narrow, keeps the
+  optimisation for scalar vectors, and leaves the general contract unchanged.
+
+(c) is the smallest change that closes the class without paying (a)'s cost on the rows
+that do not need it, but it needs the element-owns-heap predicate to be exact — an
+under-approximation there is a leak, not a slowdown.  Owner's call; nothing has been
+edited.
 
 **Reduction status — honest:** `leak2.loft` (kept beside this plan) reproduces *a* leak
 in all three shapes (move-append once / in a loop / self-recursive) on both backends,

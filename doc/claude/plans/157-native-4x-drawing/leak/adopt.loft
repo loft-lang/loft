@@ -1,0 +1,39 @@
+// @PLN157 § V-u × clear_vector — a heap-owning element in an ADOPTED return buffer.
+//
+// `make` is shape A: one result local, bound once, delivered at the single exit,
+// so § V-u has it ADOPT the caller's hidden buffer and the buffer's store then
+// survives across calls.  Each element owns an inner vector.  The entry clear is
+// a LENGTH reset, so the previous call's inner vectors are stranded in a store
+// that never dies -- ~50 * 200 * 8 B = 80 KB per call.
+struct Heavy {
+  hv: vector<float>,
+}
+
+fn make(k: integer) -> vector<Heavy> {
+  mk_out: vector<Heavy> = [];
+  for i in 0..k {
+    mk_in: vector<float> = [];
+    for j in 0..200 { mk_in += [(i + j) as float]; }
+    mk_out += [Heavy { hv: mk_in }];
+  }
+  mk_out
+}
+
+fn main() {
+  mn_n = 400;
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  mn_sink = 0;
+  for _r in 0..mn_n {
+    mn_out = make(50);
+    mn_sink += len(mn_out);
+  }
+  println("sink {mn_sink}");
+}
