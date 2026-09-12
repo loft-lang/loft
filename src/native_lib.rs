@@ -821,7 +821,13 @@ fn shared_bridge_wrapper(
             let setter = match *rt {
                 "f64" => format!("set_float(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
                 "f32" => format!("set_single(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
-                "bool" => format!("set_byte(__vd.rec, __vd.pos + {off}u32, 0, u8::from(__vt.{i}))"),
+                // `set_byte` takes the value as `i32`, not as the `u8` a boolean's
+                // STORAGE form suggests (@PLN17) — `u8::from` here compiled to
+                // "expected `i32`, found `u8`" and broke the whole cdylib, which is the
+                // only reason a library with one boolean-field record could not build.
+                "bool" => {
+                    format!("set_byte(__vd.rec, __vd.pos + {off}u32, 0, i32::from(__vt.{i}))")
+                }
                 _ => format!("set_int(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
             };
             let _ = writeln!(w, "        __s.store_mut(&__vd).{setter};");

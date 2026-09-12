@@ -2340,6 +2340,12 @@ impl Output<'_> {
                 }
                 self.output_code_inner(w, val)?;
             }
+            // The 1-tuple's trailing comma, matching the signature built in
+            // `hoist::value_records` — without it a single-field record returns a bare
+            // scalar and the call site's `.0` does not compile.
+            if parts.len() == 1 {
+                write!(w, ",")?;
+            }
             write!(w, ")")?;
             // The block's OPENING brace is already out; close it exactly as the ordinary
             // path does, or the arm eats a delimiter (measured: `unclosed delimiter` on

@@ -3652,7 +3652,18 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             }
             continue;
         }
-        out.tuple.insert(d_nr, format!("({})", parts.join(", ")));
+        // A ONE-FIELD record needs the trailing comma: `(bool)` is Rust for a
+        // PARENTHESISED bool, not a 1-tuple, so the signature promised a scalar while
+        // every call site read `.0` off it and the generated crate would not compile
+        // (measured on `pub fn tx_new() -> Tx { Tx { open: false } }` in the sqldb
+        // fixture: "`bool` is a primitive type and therefore doesn't have fields").
+        // The same comma is required on the VALUE side in `emit.rs`, or the two disagree.
+        let tuple = if parts.len() == 1 {
+            format!("({},)", parts[0])
+        } else {
+            format!("({})", parts.join(", "))
+        };
+        out.tuple.insert(d_nr, tuple);
         out.fields.insert(d_nr, order);
         cand.insert(d_nr, tp);
     }

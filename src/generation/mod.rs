@@ -2716,8 +2716,13 @@ impl Output<'_> {
                     _ => format!("__s.store(&__lv).get_int(__lv.rec, __lv.pos + {off}u32)"),
                 })
                 .collect();
+            // The 1-tuple's trailing comma, as in `hoist::value_records` and the `Object`
+            // tail: this is the THIRD site that builds the tuple, and each one needs it.
+            // A single-field record made all three emit `(x)` — a parenthesised scalar —
+            // against a signature that by then said `(bool,)`.
+            let tail = if reads.len() == 1 { "," } else { "" };
             return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{ let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __s: &Stores = unsafe {{ &*cell.get() }}; return ({}); }}\n",
+                "  if loft::live_dispatch::live_flipped({idx}) {{ let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __s: &Stores = unsafe {{ &*cell.get() }}; return ({}{tail}); }}\n",
                 reads.join(", ")
             ));
         }
