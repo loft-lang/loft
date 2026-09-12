@@ -692,6 +692,25 @@ caller — one probe inverted from `100 % app_bit` to `99.5 % lib_grind` under
 Prefer `make profile`, which picks the instrument. Off costs nothing (the
 sampler rides the existing per-op debug branch); armed costs +7–11 %. PERFORMANCE.md § Profiling.
 
+**`LOFT_NATIVE_CHECKPOINTS=count|time[:filter]`** — the SECOND profiler, for where the
+sampler cannot reach (a stripped binary, no `perf`, **wasm**). The generator writes a probe
+at the one call/op chokepoint, so every OPERATOR is counted at its own loft `file:line`,
+with a by-function rollup that is exclusive by construction (a user CALL is deliberately
+not a site — timing it would mix inclusive and exclusive rows). `count` needs no clock and
+so behaves identically on native, wasip2 and in a browser; `time` adds the cycle counter
+where one exists and says so where it does not. **The COUNTS are the trustworthy column; the tick
+share is a hint.** Counts validate exactly against the pure-Rust reference (whole-number
+operators per call: `chan` 3.00, `color_g` 2.00, `ramp` 9.00). Ticks do not: the counter
+advances only every ~41.7 ns against a ~1-3 ns operator, so a total is a sum of dithered
+samples, AND the per-operator probe inflates operator-dense functions — measured against
+the instrumented reference, the two biggest `lock_curved` rows disagree ~2× in opposite
+directions. Never quote a tick share as "where the time goes". Costs 3.0×
+(`count`) / 5.4× (`time`), and `:filter` narrows it to one function or module. It changes
+what rustc may inline ACROSS a probe, so it tells you WHICH code runs and roughly where
+time concentrates — confirm a ratio with `compare.py` or `profile.sh`. It is not the normal
+route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
+`LOFT_NATIVE_CHECKPOINTS`.
+
 **Vector-header hoist (loft#885, `--native` only, both switches read at GENERATION time):**
 a loop the emitter proves writes NO store derives each vector's `(store_nr, record, length)`
 once before the loop, so an element read is a bounds test plus address arithmetic (~2×).

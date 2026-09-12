@@ -480,11 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 469 | 445 | **24** |
+| 472 | 448 | **24** |
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
-the aware side; the opaque count is unchanged.)
+the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
+all three on the peel side, **24** opaque still.)
 
 
 
@@ -2553,10 +2554,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 787 | 444 | 6 | **337** |
+| 789 | 446 | 6 | **337** |
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
-schema through `Parts`, not `Type` — the three new discriminating sites are all aware.)
+schema through `Parts`, not `Type` — the three new discriminating sites are all aware.
+Re-measured at the § V-aa tip: +2 discriminating, both see-through, **337** opaque
+still.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

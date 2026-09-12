@@ -1960,6 +1960,16 @@ impl Output<'_> {
         // emissions one Op at a time (without touching the bulk match).
         if crate::generation::ops::has_custom_emitter(name) {
             let name_owned = name.to_string();
+            if self.checkpoints.armed() {
+                let mut buf: Vec<u8> = Vec::new();
+                let mut ctx = crate::generation::ops::EmitCtx {
+                    w: &mut buf,
+                    def_fn,
+                    output: self,
+                };
+                crate::generation::ops::emit_op(&mut ctx, &name_owned, vals)?;
+                return self.ckpt_write(w, &name_owned, &buf);
+            }
             let mut ctx = crate::generation::ops::EmitCtx {
                 w,
                 def_fn,
@@ -1975,8 +1985,19 @@ impl Output<'_> {
             return self.output_call_inner(w, op, &args);
         }
         if def_fn.rust().is_empty() {
+            // A USER call is deliberately NOT a checkpoint site.  Wrapping it would make
+            // its ticks INCLUSIVE of every operator in the callee, so one table would mix
+            // inclusive and exclusive rows and the shares would sum past 100 %.  Per-
+            // function attribution comes out of the site table's owner column instead,
+            // which is exclusive by construction.
             self.output_call_user_fn(w, def_fn, vals)
         } else {
+            if self.checkpoints.armed() {
+                let name_owned = name.to_string();
+                let mut buf: Vec<u8> = Vec::new();
+                self.output_call_template(&mut buf, def_fn, vals)?;
+                return self.ckpt_write(w, &name_owned, &buf);
+            }
             self.output_call_template(w, def_fn, vals)
         }
     }

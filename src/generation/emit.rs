@@ -92,6 +92,10 @@ impl Output<'_> {
                 // P198 / DX-source-map: a `// loft:<file>:<line>` comment so
                 // rustc errors trace back to the loft source line.
                 let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // @PLN157 — remember where we are, so an operator checkpoint can name the
+                // loft line it came from.  This stream is the emitter's only notion of
+                // position.
+                self.ckpt_cur_line = node.line_nr();
                 return writeln!(w, "// loft:{file}:{}", node.line_nr());
             }
             ValueType::Break => {
@@ -2469,6 +2473,9 @@ impl Output<'_> {
             // expression context get rendered (rare in practice).
             if let Value::Line(line) = v {
                 let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // @PLN157 — see the sibling in `output_code_node`: the statement-level
+                // half of the same position stream.
+                self.ckpt_cur_line = *line;
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;

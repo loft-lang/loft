@@ -32,8 +32,9 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 § V-q (2026-09-09, both under the bar).
 
 **Which MACHINE a row was measured on is part of the row.**  The tables below through
-2026-09-12 are the **Apple** lane; the one directly under this paragraph is **x86-64
-Linux** (this dev box).  The two do not compare row-for-row and neither is wrong: the
+2026-09-12 are the **Apple** lane (host `firewall02`, arm64 Darwin); the one directly
+under this paragraph is **x86-64 Linux** (host unrecorded — it read "this dev box",
+which resolves to nothing for a later reader on another machine).  The two do not compare row-for-row and neither is wrong: the
 bar is *within 4× of the Rust reference on the same machine*, and which routines clear
 it differs by target.  Label every future row with its machine.
 
@@ -275,8 +276,11 @@ done, and raising the baseline is a portability decision, not just a perf one.
 
 **§ V-aa SHIPPED — `lock_curved`'s named target is closed** (the record-returning call
 per pixel): the value-record return is default-on, measured 1.65× on the call, `smooth`
-−25 %, `lock_curved` −3 %, with the cdylib bridge taught to materialise so library
-functions qualify.  The profile that named it:
+−25 % on the standalone probe, `lock_curved` −3 %, with the cdylib bridge taught to
+materialise so library functions qualify.  ⚠ The two row figures are from DIFFERENT
+harnesses: `lock_curved`'s −3 % is the consumer lane and re-measured there as −2.9 %;
+`smooth`'s −25 % is the standalone `vr_smooth.loft` probe and does NOT appear on the
+consumer lane, where the same A/B moves it −0.9 % (2026-09-12 HEAD block above).  The profile that named it:
 
 **`lock_curved` IS NOT AN ALLOCATION ROW — profiled 2026-09-12, and it names ONE target.**
 77.9 % of samples are the program's own code (`n_lock_layer` 77.6 %), allocator 6.8 %.
@@ -446,12 +450,50 @@ shape passes under a 64 MiB ceiling with the release on and TRIPS it under
 ask the SHAPE, never an offset), and a trailing `//` comment in an emitted template ate
 the caller's `;` (the cell corpora went red at once).
 
+**Re-measured 2026-09-12 on HEAD (d954a39e + the uncommitted § V-aa tree), Apple lane,
+host `firewall02` (arm64 Darwin)** — fresh scratch clone of `drawing-lock`, `compare.py
+--skip-interp --repeat 5` five times, all 14 hashes agreeing every run, native columns
+within 1.2 %: **four under the bar** — `hash` **2.15–2.29×**, `hair` **2.63–2.73×**,
+`lock` **3.26–3.40×**, `composite` **3.54–3.59×** — and six over: `smooth`
+**3.89–4.50×**, `fill_star` **4.04–4.33×**, `fill_circle` **4.06–4.11×**, `fronds`
+**4.48–4.76×** (217.1–219.8k ns/op), `wide_line` **4.96–5.12×**, `lock_curved`
+**5.11–5.45×** (2 229.6–2 255.7k ns/op).
+
+Two rows read worse than the d80307b0 block below, for two unrelated reasons, and
+neither is a code regression:
+
+- **`fronds` 4.05× → 4.48–4.76× is `@FR-H-ClearRelease`, and it is the price of
+  correctness.**  eeae8a27 landed after d80307b0; the row below was measured on the
+  LEAKING build.  `LOFT_NO_CLEAR_RELEASE=1` on HEAD gives **184 680 ns/op / 4.05×**,
+  reproducing it to 0.2 % — so the leak fix accounts for 100 % of the delta and nothing
+  else moved this row.  **Do not chase it by reverting**; the route that reclaims it is
+  the element/allocation REUSE unit (−36 %, 160–167k), which frees nothing and so needs
+  no alias proof.
+- **`smooth` 3.92× → 3.89–4.50× is the reference lane, not loft.**  Its native column
+  here (2 100–2 160 ns/op) is BETTER than the 2 379 best that § V-aa records; rust came
+  in at 480–540.  The row's side of the bar is decided by a lane that swings ~1.6×, so
+  **`smooth` under the bar is not a reproducible claim** on this machine.
+
+**§ V-aa A/B on the consumer lane** (cache cleared on BOTH sides — the cdylib cache is
+keyed by content, so an env-var-only re-run silently re-measures the same binary and
+reads as a null result): `lock_curved` **−2.9 %** (2 295.1k → 2 229.6k), confirming the
+−3 % claimed.  `smooth` moves **−0.9 %**, not the −25 % recorded — that figure is the
+standalone `vr_smooth.loft` probe (~3.2k ns/op), a different harness from this bench row
+(~2.1k), and § V-aa's summary line gives the two numbers side by side without saying so.
+Every other native column improved or held.
+
 **Re-measured 2026-09-12 on the § V-z tip (d80307b0)** — `compare.py --skip-interp
 --repeat 5`, caches cleared, all 14 hashes agreeing: **five under the bar** — `hash`
 **2.19×**, `hair` **2.76×**, `lock` **3.64×**, `composite` **3.68×**, `smooth` **3.92×**
 — and `fronds` at **4.05×** (184 340 ns/op native, from 6.17× at the 09-11 close: the
 two-day arc − sound placement reuse, § V-x, § V-y, § V-z − is −46 % standalone and the
-reference lane's swing now decides its side of the bar).  Still over: `fill_circle`
+reference lane's swing now decides its side of the bar).  ⚠ **That `fronds` row was
+taken on a LEAKING build and is not a target.**  `@FR-H-ClearRelease` (eeae8a27) landed
+one commit later and makes the shape-A return buffer's entry clear release what its
+elements own, closing a ~357 KB-per-call leak; the walk costs ~18 %.  Proven on ONE
+binary rather than by bisect: `LOFT_NO_CLEAR_RELEASE=1` on HEAD reproduces this row at
+**184 680 ns/op / 4.05×**, within 0.2 % of the 184 340 here, and the honest post-fix
+row is the 2026-09-12 HEAD block above.  Still over: `fill_circle`
 **4.36×**, `fill_star` **4.38×**, `wide_line` **5.36×**, `lock_curved` **5.76×** — the
 fills and `wide_line` have never had a dedicated profile, and `lock_curved` owes its
 with-callers profile; those are the next hand-off items.
@@ -879,6 +921,13 @@ corruption; a cell that passes alone proves nothing about the frees it leaves.
   inline twin beside the call form, saved under `bytecode-comparisons/`; the
   per-cell store count is a generated one-cell driver per cell under
   `LOFT_STORES=log` on BOTH backends, on and off the switch.
+- **The A/B trap on the consumer bench: a GENERATION-time switch needs the cdylib
+  cache cleared.**  `bench/.loft/cache/` is keyed by content, so re-running
+  `compare.py` with `LOFT_NO_VALUE_RECORD=1` (or any `LOFT_NO_*` the emitter reads)
+  re-measures the SAME binary and reports a flat result that reads as "the unit is
+  worth nothing".  `rm -rf bench/.loft native-auto` on each side.  Runtime switches
+  (`LOFT_NO_CLEAR_RELEASE`) are exempt — they live in the linked `libloft`, which is
+  why one moved a row while the other did not, and that asymmetry is the tell.
 - Traps met this arc: `cargo build --bin loft` does not rebuild the rlib the
   native lane links (`cargo build --release --lib` or `make check-rlib`
   first); a `src/ir_schema_gen.rs` edit is a `tools/ir_schema/ir.loft` edit +
