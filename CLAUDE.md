@@ -147,9 +147,11 @@ site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep
 rule already implemented somewhere?"* is a lookup. `scripts/rule_tags.py` is the tool
 (`list` · `check` · `sites <tag>` · `dups` · `registers`); `check` gates that every citation
 resolves and no rule is defined twice, and **`registers` reads each chapter's stated
-`OPEN: n` against the entries it lists** — with `--issues` it also names an open deviation
-whose issue the tracker has closed, which is a pair to RE-MEASURE and not a closure (the
-first run found four stale entries and one honestly-open one).
+`OPEN: n` against the entries actually attributed to it** — its `-history` companion's
+included, because a chapter that delegates its register states a number nothing beside it
+can check (`types.md` read `OPEN: 0` over an open `D-Domain-Guard` next door). With
+`--issues` it also names an open deviation whose issue the tracker has closed, which is a
+pair to RE-MEASURE and not a closure: of the first five, four were stale and one was not.
 
 ⚠ **A bare `@Name` is NOT unambiguous here** — `@` already carries the tracker tags above, the
 worked-example family (`@AAA-###`) and the corpus annotations (`@ARGS`, `@NAME`, `@IGNORE`,

@@ -128,7 +128,36 @@ def defined_deviations():
             line = text.count("\n", 0, m.start()) + 1
             entries[tag].append(
                 (os.path.basename(path), line, status, date.group(1) if date else "0000-00-00"))
+        # The BULLET form is a third spelling, and it is how five chapters write every entry
+        # they own.  Reading only the two above made `D-layout-1`, `D-match-4` and `D-tup-10`
+        # answer *"is not a defined rule"* — in the GATING path, so a site citing an open
+        # deviation the way the skill instructs would have failed CI with a message saying the
+        # rule does not exist.  Green only because nothing cited one yet.  Bullets are scoped
+        # to the `## Deviations` section for the reason `chapter_registers` gives: elsewhere
+        # the same shape is prose (`DbRef`, `Destructure`) rather than an entry.
+        for tag, status, _issues, date, line in _section_bullets(text):
+            entries[tag].append((os.path.basename(path), line, status, date))
     return {tag: ([r[0] for r in rows], _resolve_status(rows)) for tag, rows in entries.items()}
+
+
+def _section_bullets(text):
+    """(tag, status, issues, date, line) for each bullet entry in a `## Deviations` section."""
+    m = re.search(r"^## Deviations\s*$", text, re.M)
+    if not m:
+        return
+    end = re.search(r"^## ", text[m.end():], re.M)
+    body = text[m.end():m.end() + end.start()] if end else text[m.end():]
+    base = m.end()
+    found = list(REG_ENTRY_BULLET.finditer(body))
+    for i, e in enumerate(found):
+        stop = found[i + 1].start() if i + 1 < len(found) else len(body)
+        head = REG_OPEN.sub("", body[e.end():stop].split("\n\n")[0][:400])
+        date = DEV_DATE.search(head)
+        yield (e.group("tag"),
+               "CLOSED" if "closed" in head.lower() else "OPEN",
+               REG_ISSUE.findall(head),
+               date.group(1) if date else "0000-00-00",
+               text.count("\n", 0, base + e.start()) + 1)
 
 
 def _resolve_status(rows):
@@ -300,8 +329,9 @@ def main():
         tag = sys.argv[2].removeprefix("@FR-").lstrip("@")
         if tag in devs:
             files, status = devs[tag]
-            print(f"@FR-{tag} is an {status} DEVIATION entry ({', '.join(sorted(set(files)))}), "
-                  "not a rule.")
+            article = "an" if status == "OPEN" else "a"
+            print(f"@FR-{tag} is {article} {status} DEVIATION entry "
+                  f"({', '.join(sorted(set(files)))}), not a rule.")
             if status == "CLOSED":
                 print("A closed deviation is history — cite the RULE it was measured against.")
             else:
@@ -324,12 +354,25 @@ def main():
         # actually lists, and (with --issues) whether each open entry's issue still is.
         want_issues = "--issues" in sys.argv
         regs = chapter_registers()
+        # Status comes from `defined_deviations`, the ONE home: it resolves a tag with several
+        # entries by date, which a fresh scan does not — `D-bind-11` and `D-bind-28` each read
+        # OPEN in isolation and are closed once their later rows are taken into account.  It
+        # also attributes a chapter that keeps its register in the `-history` companion, which
+        # is how `types.md` stated `OPEN: 0` over an open `D-Domain-Guard` next door.
+        devs = defined_deviations()
+        chapter_open = collections.defaultdict(set)
+        for tag, (files, status) in devs.items():
+            if status != "OPEN":
+                continue
+            for f in set(files):
+                chapter_open[f.replace("-history.md", ".md")].add(tag)
         drift, live = [], []
         for f, stated, entries in regs:
-            found = [e for e in entries if e[1] == "OPEN"]
+            found = sorted(chapter_open.get(f, ()))
             if stated is not None and stated != len(found):
-                drift.append((f, stated, len(found), [e[0] for e in found]))
-            live += [(f, t, iss) for t, s, iss in entries if s == "OPEN"]
+                drift.append((f, stated, len(found), found))
+            issues = {t: iss for t, st, iss in entries}
+            live += [(f, t, issues.get(t, [])) for t in found]
         print(f"{len(regs)} chapters with a Deviations section · "
               f"{len(live)} open entries · {len(drift)} chapter(s) whose count disagrees\n")
         for f, stated, found, tags in drift:
@@ -385,15 +428,15 @@ def main():
                 problems.append(f"{f}:{n}: cites @FR-{tag}, which is not a defined rule")
     cited = sum(1 for t in cites if t in rules)
     n_open = sum(1 for v in devs.values() if v[1] == "OPEN")
-    # `{n_open} open` counts ENTRIES in the heading and blockquote forms, across chapters and
-    # their history files alike — the number that decides whether a citation is legal.  It is
-    # NOT a chapter's live register: `registers` answers that, reads the bullet form too, and
-    # gives a different (larger) number for good reason.  Two unlabelled open-counts are what
-    # let four closed deviations sit in the register for days.
+    # This count and `registers`' are now the SAME set — both read `defined_deviations`, in all
+    # three entry spellings.  They differ in the question asked, not the number: this one decides
+    # whether a CITATION is legal; `registers` checks each chapter's own stated `OPEN: n` against
+    # it.  They disagreed while this one could not see the bullet form, and that is what let four
+    # closed deviations sit in the register reading OPEN.
     print(f"{len(rules)} defined rules · {cited} cited · "
           f"{sum(len(v) for v in cites.values())} citation sites · "
-          f"{len(devs)} deviation entries ({n_open} citable as open; "
-          f"`registers` counts the chapters' live ones), "
+          f"{len(devs)} deviation entries ({n_open} open; "
+          f"`registers` checks the chapters' stated counts against these), "
           f"{implementing} site(s) implementing one")
     if problems:
         print(f"\n{len(problems)} problem(s):")
