@@ -1271,6 +1271,11 @@ impl Stores {
 
     /// S29: Find the lowest free slot index below `max` using the `free_bits` bitmap.
     /// Returns `self.max` when no freed slot is available (caller must grow the Vec).
+    ///
+    /// `@FR-H-FreeAny` — this is why order is not a constraint: a slot is reclaimed by its BIT,
+    /// so a store freed while newer ones are live is reusable immediately.  The predecessor was
+    /// a cascade-based scan that could only reclaim on an unwinding free, which is where the
+    /// retired `(H-FreeLIFO)` came from.
     fn find_free_slot(&self) -> u16 {
         // @PLN118 arc D — LOFT_NO_SLOT_REUSE=1: never reclaim a freed slot; always
         // grow. A diagnostic stopgap that proves whether the corruption is

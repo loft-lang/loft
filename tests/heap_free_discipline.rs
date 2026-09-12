@@ -6,7 +6,7 @@
 //! The rest of @PLN155 is about the COMPILE-TIME licence — which binding may be freed, derived
 //! from `deps` and the oracle.  These four rules are the other half: given that a free is
 //! emitted, what does the RUNTIME refuse?  `(H-Free)`'s side conditions, `(H-FreeNull)`,
-//! `(H-FreeTwice)`, `(H-FreeStack)` and `(H-FreeLIFO)`.
+//! `(H-FreeTwice)`, `(H-FreeStack)`, `@FR-H-FreeAny` and `@FR-H-FreeAll`.
 //!
 //! **They are tested here rather than in `tests/scripts/` because no loft program can express
 //! them.** A double free, a free of the evaluation stack, a free out of allocation order — the
@@ -21,11 +21,16 @@
 //! and the debugger's own teardown. It enforces three of the four rules on its own, and the
 //! compile-time licence never needs to reach them.
 //!
-//! The fourth is the finding: **`(H-FreeLIFO)` is enforced nowhere and was deliberately
-//! retired.** `Stores::free_bits` (S29) says so in its own doc — *"eliminates the LIFO-order
-//! requirement on `free()` that the old cascade-based scan imposed"* — and `rule_tags.py`
-//! agrees from the other side: zero citations, alone among the five. `lifo_order_is_not_a_fault`
-//! measures the current behaviour so the rule's state is a reading rather than a claim.
+//! The fourth WAS the finding: `(H-FreeLIFO)` was enforced nowhere and had been deliberately
+//! retired — `Stores::free_bits` (S29) says so in its own doc, *"eliminates the LIFO-order
+//! requirement on `free()` that the old cascade-based scan imposed"*, and `rule_tags.py` agreed
+//! from the other side with zero citations, alone among the five.  **Closed 2026-09-12 by owner
+//! ruling: the rules were rewritten to how the mechanism functions.**  `@FR-H-FreeAny` now
+//! states the positive fact — the store released is the one the reference NAMES, whatever its
+//! allocation order — and `lifo_order_is_not_a_fault` is its guard rather than a reading of a
+//! rule nobody obeyed.  `(H-Free)`'s own premise carried the same retired requirement and was
+//! corrected with it; so was its `free_protected` side condition, which `free_named` never
+//! checks (that gate lives at the deep-copy call sites).
 //!
 //! ⚠ **Each cell records whether it was FALSIFIED, and two were not.**  Every guard here was
 //! removed by hand and the suite re-run; `freeing_the_stack_store_is_refused` went red and the
