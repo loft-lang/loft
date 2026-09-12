@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A local that ADOPTS a construction work-ref's store does not release that store when a
+// later assignment displaces it — the buffer still names it, and the buffer's own scope-exit
+// free is the one release (`formal/ownership.md` `(O-Complete)`, `@FR-O-Proxy`'s veto).
+//
+// @P378(a) paired the local's SCOPE-EXIT free with the buffer it adopted:
+// `OpFreeRefIfDistinct(y, buffer)`, declined while they alias, so the buffer keeps its store
+// across iterations and frees it once at function exit.  The DISPLACEMENT free was never
+// paired.  `y: S? = S { n: 3 }` leaves `y`'s dep list empty, so @FR-O-Proxy reads it as
+// ownership, and `y = mk()` released the buffer's store while `__ref_p2_1` kept naming it.
+// The next pass then re-minted through `OpDatabase`, which reuses the slot's store IN PLACE —
+// a number the free had handed back to the allocator and that `o`, allocated first in every
+// iteration, had since taken.  `o.opt` read 4294967199 for 6.
+//
+// The cure is the veto, not a sharper condition: `Function::owns_displaced_store` — the ONE
+// fact both backends read (@FR-O-NoDiverge) — answers NO for a buffer-witnessed local, which
+// is @FR-O-Complete's own stated direction where one static site cannot separate the paths
+// ("a leak is recoverable, a premature free is not").  Nothing leaks, because the store the
+// rebind stops freeing belongs to a work-ref that frees it at function exit; the `no-leak`
+// cells below are what says so rather than assuming it.
+//
+// ⚠ EVERY cell allocates `o` FIRST and reads it back on every iteration.  That is
+// load-bearing: the premature free is invisible without a second record to take the freed
+// slot, and a cell that stops allocating `o` stops testing.  The two-iteration minimum is the
+// other half — iteration 1 frees, iteration 2 is where the reuse lands.
+//
+// ⚠ This file PASSES on the parent build in a plain run, and is measured under
+// `LOFT_STRICT_STORES=1`, which never recycles a slot and so turns the premature free into a
+// visible one.  `tests/store_lifetime_1522.rs` is the harness that arms that channel, per
+// test, because the scripts corpus does not run under it and nothing else would.  On the
+// parent the strict run reports `USE AFTER FREE (read) store #N type=S` on the interpreter
+// and a WRONG `o.opt` on `--native`.
+//
+// The controls are the shapes that were right before and must stay right: the DENSE literal
+// (which never enters a work-ref and is the reference route), a `??` default arm, a literal
+// local handed to the caller, a rebind from a VIEW rather than a minting call, a vector-typed
+// nullable local, and the same shape outside a loop — where the local outlives the buffer and
+// the other half of the pairing (`literal_buffer`) applies instead.
+//
+// @falsified-at: 75145b28f — interpret exit 0 -> 1, native exit 0 -> 1, both under
+//   `LOFT_STRICT_STORES=1`; the parent reports four `USE AFTER FREE (read) … type=S1522` per
+//   backend, at two offsets.
+//   The receipt is RE-RUNNABLE rather than sha-only: `LOFT_NO_BUFFER_VETO=1` emits the parent
+//   form on this build, so
+//     LOFT_NO_BUFFER_VETO=1 LOFT_STRICT_STORES=1 loft --interpret <this file>
+//   reproduces the failure today, on either backend.
+//   HOLDS: in PLAIN mode nothing moves — measured on both backends with the pairing on and off,
+//   exit, assertions, leak and panic are all equal, because with slot reuse ON the allocator
+//   usually hands the buffer its own freed number straight back and the premature free lands on
+//   the store it just released.  `LOFT_STRICT_STORES=1` is the channel that separates them.
+//   ⚠ A bulk row taken without `LOFT_STRICT_STORES=1` is the absence of the instrument, not of
+//   the defect — see TESTING.md § The patch receipt.
+
+struct S1522 { n: integer }
+struct O1522 { opt: S1522? }
+
+fn rdn1522(s: S1522?) -> integer { if s != null { s.n } else { -1 } }
+fn mk1522() -> S1522 { S1522 { n: 81 } }
+fn mk2_1522() -> S1522 { S1522 { n: 92 } }
+fn mkv1522() -> vector<integer> { [41, 52] }
+fn literal_local1522() -> S1522? { c: S1522? = S1522 { n: 55 }; c }
+
+fn main() {
+  // ---- the filed cell: a nullable literal local rebound from a minting call ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    y: S1522? = S1522 { n: 37 };
+    y = mk1522();
+    assert(rdn1522(o.opt) == 63, "iteration {i}: the record allocated first is intact, o.opt={rdn1522(o.opt)}");
+    assert(rdn1522(y) == 81, "iteration {i}: and the rebind delivered its own value, y={rdn1522(y)}");
+  }
+
+  // ---- TWO rebinds: the second displaces a store the FIRST call minted ----
+  // The leak question the veto raises, asked directly: the first call's store is a work-ref's,
+  // released at function exit, so declining the rebind free retains nothing.
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    y: S1522? = S1522 { n: 37 };
+    y = mk1522();
+    y = mk2_1522();
+    assert(rdn1522(o.opt) == 63, "two rebinds, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(rdn1522(y) == 92, "two rebinds, iteration {i}: the LAST call's value, y={rdn1522(y)}");
+  }
+
+  // ---- an if-VALUED literal: every arm mints a buffer and the pairing carries them all ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    y: S1522? = if i >= 0 { S1522 { n: 37 } } else { S1522 { n: 48 } };
+    y = mk1522();
+    assert(rdn1522(o.opt) == 63, "arm buffers, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(rdn1522(y) == 81, "arm buffers, iteration {i}: y={rdn1522(y)}");
+  }
+
+  // ---- CONTROL: the dense literal never enters a work-ref, so it owns and frees ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    d = S1522 { n: 37 };
+    d = mk1522();
+    assert(rdn1522(o.opt) == 63, "dense control, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(d.n == 81, "dense control, iteration {i}: d={d.n}");
+  }
+
+  // ---- CONTROL: a `??` default arm borrows the lift temp; the buffer stays owner ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    nn: S1522? = null;
+    c = nn ?? S1522 { n: 37 };
+    assert(rdn1522(o.opt) == 63, "coalesce control, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(c.n == 37, "coalesce control, iteration {i}: c={c.n}");
+  }
+
+  // ---- CONTROL: a literal local handed to the CALLER is the caller's ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    h = literal_local1522();
+    assert(rdn1522(o.opt) == 63, "hand-up control, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(rdn1522(h) == 55, "hand-up control, iteration {i}: h={rdn1522(h)}");
+  }
+
+  // ---- CONTROL: a rebind from a VIEW mints nothing, so there is nothing to displace ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    w: S1522? = S1522 { n: 37 };
+    w = o.opt;
+    assert(rdn1522(o.opt) == 63, "view rebind control, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(rdn1522(w) == 63, "view rebind control, iteration {i}: w={rdn1522(w)}");
+  }
+
+  // ---- CONTROL: the same question for a COLLECTION, where length is the extra channel ----
+  for i in 0..3 {
+    o = O1522 { opt: S1522 { n: 63 } };
+    v: vector<integer>? = [11, 22];
+    v = mkv1522();
+    assert(rdn1522(o.opt) == 63, "vector control, iteration {i}: o.opt={rdn1522(o.opt)}");
+    assert(len(v) == 2, "vector control, iteration {i}: len={len(v)}");
+    assert(v[0] == 41 && v[1] == 52, "vector control, iteration {i}: v={v[0]},{v[1]}");
+  }
+
+  // ---- CONTROL: outside a loop the local outlives the buffer — the pairing's other half ----
+  ou = O1522 { opt: S1522 { n: 63 } };
+  yu: S1522? = S1522 { n: 37 };
+  yu = mk1522();
+  assert(rdn1522(ou.opt) == 63, "outer scope: ou.opt={rdn1522(ou.opt)}");
+  assert(rdn1522(yu) == 81, "outer scope: yu={rdn1522(yu)}");
+
+  print("1522 rebind releases the buffer it adopted OK");
+}

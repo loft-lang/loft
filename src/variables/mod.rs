@@ -470,6 +470,9 @@ pub struct Function {
     inline_ref_vars: BTreeSet<u16>,
     /// Locals assigned a BORROW on one path and an owned value on another (loft#1333).
     borrow_arm_vars: BTreeSet<u16>,
+    /// Locals whose store may still be named by the work-ref that CONSTRUCTED it
+    /// (loft#1522) — see [`Self::mark_buffer_witnessed`].
+    buffer_witnessed_vars: BTreeSet<u16>,
     // The names store only the last known instance of this variable in the function.
     names: HashMap<String, u16>,
     // Scope numbers that correspond to loop bodies (Value::Loop), i.e. scopes whose
@@ -595,6 +598,7 @@ impl Function {
             arm_consumed: BTreeSet::new(),
             inline_ref_vars: BTreeSet::new(),
             borrow_arm_vars: BTreeSet::new(),
+            buffer_witnessed_vars: BTreeSet::new(),
             names: HashMap::new(),
             loop_scopes: HashSet::new(),
             loop_seq_ranges: HashMap::new(),
@@ -868,6 +872,7 @@ impl Function {
             work_refs: BTreeSet::new(),
             inline_ref_vars: other.inline_ref_vars.clone(),
             borrow_arm_vars: other.borrow_arm_vars.clone(),
+            buffer_witnessed_vars: other.buffer_witnessed_vars.clone(),
             names: other.names.clone(),
             loop_scopes: other.loop_scopes.clone(),
             loop_seq_ranges: other.loop_seq_ranges.clone(),
@@ -3765,6 +3770,33 @@ impl Function {
         self.borrow_arm_vars.insert(v);
     }
 
+    /// Record that the store `v` holds may still be NAMED by the work-ref that constructed
+    /// it — the @P378(a) adoption pairing (`Scopes::witness_buffer`), where an inner-scoped
+    /// binding adopts a literal built in a work-ref of an outer scope.
+    ///
+    /// Two names, one store.  The scope-exit free already asks about it at run time
+    /// (`OpFreeRefIfDistinct(v, buffer)`, declined while they alias, so the buffer keeps its
+    /// store and frees it once); the DISPLACEMENT free had no such pairing, and @FR-O-Proxy
+    /// reads `v`'s empty dep list as ownership, so a rebind released the buffer's store while
+    /// the buffer kept naming it.  The next pass then re-minted through `OpDatabase`, which
+    /// reuses the slot's store IN PLACE — a number the free had handed back to the allocator
+    /// and another record had since taken (loft#1522).
+    ///
+    /// @FR-O-Complete is the rule: the ownership fact is per BINDING and per PATH, and where
+    /// one static site cannot separate them it names the direction — a leak is recoverable, a
+    /// premature free is not.  So this vetoes [`Self::owns_displaced_store`] rather than
+    /// refining its condition.
+    pub fn mark_buffer_witnessed(&mut self, v: u16) {
+        self.buffer_witnessed_vars.insert(v);
+    }
+
+    /// Does `v` adopt a construction work-ref's store — see
+    /// [`Self::mark_buffer_witnessed`]?
+    #[must_use]
+    pub fn is_buffer_witnessed(&self, v: u16) -> bool {
+        self.buffer_witnessed_vars.contains(&v)
+    }
+
     /// Is `v` a mixed binding, borrowed on some path?  Read by ONE site — the fn-ref
     /// collection-delivery strip in `scopes.rs` (loft#1333), which then leaves the binding's
     /// dep in place.  Neither backend's displacement free reads this flag: both read the DEPS
@@ -3826,6 +3858,11 @@ impl Function {
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
             && self.proxy_says_owned_or_arg(v)
             && !self.is_captured(v)
+            // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
+            // proxy answers "owned" for such a local because the adoption leaves its dep list
+            // empty, so without this the rebind released the buffer's store out from under it;
+            // the buffer's own scope-exit free is what releases it, once.
+            && !(self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled())
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
     }
 

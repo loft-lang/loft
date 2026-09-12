@@ -3138,7 +3138,14 @@ fn run_scan_phase(
     }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
-        let name = format!("__lbo_{}", function.name(v));
+        // loft#1522 — keyed by the VAR, not by its name.  `add_temp_var` identifies a temp by
+        // name and hands back the existing one, so two locals of the same name in SIBLING
+        // scopes (`for … { y: S? = … }` twice, which is ordinary) shared one ownership bit —
+        // and the second got no guarded free at all, leaving its displaced store to whatever
+        // free site happened to be left.  A per-run ownership fact belongs to one binding; the
+        // `#` matches the compiler's own `i#index` spelling and cannot collide with a user
+        // name.
+        let name = format!("__lbo_{}#{v}", function.name(v));
         let flag = function.add_temp_var(&name, &Type::Boolean);
         scopes.var_scope.insert(flag, 0);
         scopes.var_order.push(flag);
@@ -8044,9 +8051,16 @@ impl Scopes<'_> {
         // the per-local witness.  See `nullable_locals_that_displace` for why the guard is a
         // runtime flag and not a predicate: the local's first store is shared with a work-ref
         // that frees it too, and no static site separates that iteration from the rest.
+        // Keyed by the ORIGINAL var `ov`, which is what built the map: the flags are minted
+        // from `orig_code` before the scan, while a second local of the same NAME in a sibling
+        // scope is split into a var of its own by the time it reaches here (`v=19 ov=3`).
+        // Looking it up by `v` found nothing for that half, so its rebinds got no guarded free
+        // at all and the displaced store fell to whatever other site was left (loft#1522).  The
+        // two locals never overlap in time — sibling scopes — so the one flag answers for
+        // whichever is live, which is exactly what @FR-O-Latest says it records.
         if transition_free.is_none()
             && was_in_scope
-            && let Some(&flag) = self.local_owns.get(&v)
+            && let Some(&flag) = self.local_owns.get(&ov)
             && mints_a_store_the_target_does_not_hold(value, v, ov, data)
         {
             transition_free = Some(v_if(
@@ -8635,6 +8649,11 @@ impl Scopes<'_> {
                     if !buffers.contains(&av) {
                         buffers.push(av);
                     }
+                    // loft#1522 — the same pairing the scope-exit free asks about, carried to
+                    // the one fact BOTH backends read for the DISPLACEMENT free.  Recorded
+                    // here so the two cannot drift: a local gains the veto exactly when it
+                    // gains the guarded scope-exit free.
+                    function.mark_buffer_witnessed(v);
                 }
             }
         }
@@ -9006,7 +9025,8 @@ impl Scopes<'_> {
         // question than `owned_refs`'s.  An inline mint into a work-ref is `Owned` and still
         // not solely owned: the work-ref frees it too.  Only a MINTING CALL hands the local a
         // store nothing else names, so that is the one shape that sets the flag true.
-        if let Some(&flag) = self.local_owns.get(&v) {
+        // By `ov` for the reason the guarded free above is: the map's keys are original vars.
+        if let Some(&flag) = self.local_owns.get(&ov) {
             let sole = mints_a_store_the_target_does_not_hold(value, v, ov, data);
             witness_update = Some(match witness_update {
                 Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(sole))]),

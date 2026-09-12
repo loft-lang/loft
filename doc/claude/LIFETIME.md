@@ -346,6 +346,30 @@ transition, also when the reassign sits inside a loop (the depth guard).
 Correctness is unaffected.  Walks that start from a borrow (e.g. iterating a
 structure owned elsewhere) do not pay it.
 
+**An adopted buffer takes no displacement free (loft#1522).**  A local that ADOPTS a
+construction work-ref's store — `y: S? = S { n: 3 }` builds the literal in the function-scoped
+`__ref_p2_N` and the binding then aliases it, two names for one store — must not release that
+store when a later assignment displaces it.  @P378(a) already paired the SCOPE-EXIT free with
+the buffer (`OpFreeRefIfDistinct(y, buffer)`, declined while they alias, so the buffer keeps
+its store across iterations and frees it once); the displacement free was never paired, and
+`Function::owns_displaced_store` reads @FR-O-Proxy's empty dep list as ownership.  Inside a
+loop the rebind therefore released the buffer's store while the buffer kept naming it, and the
+next pass re-minted through `OpDatabase` — which reuses the slot's store IN PLACE, over
+whatever record the allocator had since put there.
+
+`Function::mark_buffer_witnessed` records the pairing where `witness_buffer` records it, so the
+two cannot drift, and `owns_displaced_store` — the ONE fact both backends read (@FR-O-NoDiverge)
+— vetoes on it.  That is @FR-O-Complete's own stated direction where a single static site cannot
+separate the paths: *a leak is recoverable, a premature free is not.*  Nothing leaks, because
+the store the rebind stops releasing belongs to a work-ref that frees it at function exit.
+
+The veto is safe only because the loft#1200 runtime flag covers the case it declines — and that
+flag had a hole of its own: `local_owns` is keyed by the ORIGINAL var, built from `orig_code`
+before the scan, while a second local of the SAME NAME in a sibling scope (`for … { y: S? = … }`
+twice, which is ordinary) is split into a var of its own by the time `scan_set` runs.  Looking
+it up by the current var found nothing for that half, so its rebinds got no guarded free at all.
+Both lookups read `ov` now.  The pairing's bisect step is `LOFT_NO_BUFFER_VETO=1`.
+
 Two runtime backstops make any future wrong-free loud instead of corrupting:
 `free_named` refuses to free the eval-stack store (slot 0,
 `Stores::stack_store_at_zero`), and the slot allocator panics with a

@@ -1563,6 +1563,17 @@ pub fn owner_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OWNER_WITNESS"))
 }
 
+/// loft#1522 — the @P378(a) adoption pairing carried to the DISPLACEMENT free: a local that
+/// adopted a construction work-ref's store does not release it at a rebind, because the buffer
+/// still names it and frees it once at function exit.  `LOFT_NO_BUFFER_VETO=1` emits the
+/// unpaired form — the rebind frees the buffer's store — and is the first bisect step for a
+/// leak or a wrong value at a nullable literal local reassigned inside a loop.
+#[must_use]
+pub fn buffer_veto_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_VETO"))
+}
+
 /// D-heap-3 (loft#1506) — the field-grained copy-out hand-off: a projection copied out of a
 /// lifted call result moves that field's release to the copy, and the lift's scope-end drop
 /// runs the `…OpDropAllExcept` cascade.  `LOFT_NO_FIELD_HANDOFF=1` keeps the full cascade —
