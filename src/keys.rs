@@ -1824,6 +1824,55 @@ pub fn strict_store_violations() -> usize {
 /// One relaxed add on a path that must never execute; free when it does not.
 static STACK_FREE_REFUSALS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// `LOFT_DOUBLE_FREE` — the double-free audit, with the discriminator that makes it mean
+/// something.
+///
+/// `free_named`'s already-free branch is NOT a rare backstop: measured over the corpus it is
+/// taken **824 588 times in 264 of 1366 files**, almost all of it the join/conditional-ownership
+/// model working as designed — each arm of a value branch emits its free, and the arm that did
+/// not mint this pass lands here.  In a loop that is hundreds of hits on a handful of slots.  So
+/// a bare count of this branch measures the ownership model, not a defect.
+///
+/// The discriminator is the free SITE.  `strict_note_free` already records `(pc, name)` per slot;
+/// a second free from the SAME pc is that loop, and one from a DIFFERENT pc is two sites both
+/// believing they own the store — the shape worth reading.
+///
+/// ⚠ **What this does NOT catch, and it is the dangerous one.**  A stale free only reaches this
+/// branch while the slot is still free.  Once the slot has been REUSED the store is live again,
+/// so the second free takes the ORDINARY path and silently releases its new owner's store.
+/// `LOFT_STRICT_STORES` is what converts that case into this one, by never recycling a slot.
+///
+/// ⚠ **Interpreter only.**  `Stores::alloc_pc` is zero outside interpretation, so every free on
+/// `--native` carries the same pc and the audit would call all of it benign.  The report says so
+/// rather than printing a clean bill.
+#[must_use]
+pub fn double_free_audit() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
+}
+
+static DF_SAME_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DF_OTHER_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Record a re-free of an already-free slot, classified by whether the freeing SITE differs
+/// from the one that freed it first.
+pub fn note_double_free(same_site: bool) {
+    if same_site {
+        DF_SAME_SITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        DF_OTHER_SITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `(same-site, other-site)` re-free counts — the second is the one to read.
+#[must_use]
+pub fn double_free_counts() -> (usize, usize) {
+    (
+        DF_SAME_SITE.load(std::sync::atomic::Ordering::Relaxed),
+        DF_OTHER_SITE.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
 /// Record a refused whole-store free of the eval-stack store. See [`stack_free_refusals`].
 pub fn note_stack_free_refusal() {
     STACK_FREE_REFUSALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

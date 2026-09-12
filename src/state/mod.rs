@@ -6089,6 +6089,25 @@ impl State {
         // which the store timeline above cannot see (they are not loft stores). No-op unless
         // `LOFT_TEXT_TIMELINE`.
         crate::state::text::text_timeline_summary();
+        // `@FR-H-FreeTwice` — the double-free audit's verdict, printed whenever it is armed so
+        // an empty one is a MEASUREMENT rather than a silence.  Same-site re-frees are the join
+        // model and are reported as a count only; a different-site one has already printed its
+        // own line above, because that is the one worth reading.
+        if crate::keys::double_free_audit() {
+            let (same, other) = crate::keys::double_free_counts();
+            eprintln!(
+                "[double-free] {n} re-free(s) of an already-free slot: {other} from a \
+                 DIFFERENT site (a branch join — one free emitted per arm, only one arm mints) \
+                 and {same} from the SAME site (a runtime-guarded free whose guard let it \
+                 through twice).  Both are deliberate; this is a census, not a defect count.  \
+                 A re-free reaching here found the slot NOT reused, so nothing else was harmed \
+                 — the dangerous free, a stale reference releasing a slot handed to a new \
+                 owner, finds it LIVE and never appears here.  `LOFT_STRICT_STORES` converts \
+                 that case into this one by never recycling a slot.  Interpreter only: \
+                 `alloc_pc` is zero on `--native`, which collapses the split.",
+                n = same + other
+            );
+        }
         if !leaked.is_empty() {
             let count = leaked.len();
             let preview = if count <= 5 {

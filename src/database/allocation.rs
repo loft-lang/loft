@@ -1079,8 +1079,32 @@ impl Stores {
         }
         // @PLN130 F8 — remember WHERE a store died, so a later access through a stale
         // reference can name the free that killed it rather than only the corpse.
-        if crate::keys::strict_stores() && !self.allocations[al as usize].free {
+        let already_free = self.allocations[al as usize].free;
+        // The double-free audit needs the same record, so it is armed by either instrument.
+        if (crate::keys::strict_stores() || crate::keys::double_free_audit()) && !already_free {
             crate::keys::strict_note_free(al, self.alloc_pc, name);
+        }
+        if already_free && crate::keys::double_free_audit() {
+            // `@FR-H-FreeTwice` — a CENSUS of tolerated re-frees, split by the emission that
+            // produced each.  It is not a defect channel, and measuring is what settled that:
+            // 433 762 re-frees over the corpus, every one deliberate.
+            //
+            // DIFFERENT site (433 754) — the branch join: the compiler emits one free per ARM of
+            // a value branch, only one arm mints, and the other arm's free op lands here.
+            // SAME site (8, all in `85-record-arm-return-join.loft`) — a runtime-GUARDED free,
+            // `OpFreeRefIfDistinct(src, __ret_N)`, whose guard let the same instruction through
+            // for a store already released on the transferred path.
+            //
+            // Both polarities were predicted to be the anomaly, in that order, and both were
+            // measured to be the design.  The branch cannot host a defect gate for a reason that
+            // is structural rather than empirical: reaching it means the slot was NOT reused, so
+            // nothing else could have been harmed.  The free that IS dangerous — a stale
+            // reference releasing a slot handed to a new owner — finds the slot LIVE and takes
+            // the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
+            // this one, by never recycling a slot.
+            let same_site =
+                crate::keys::strict_free_site(al).is_some_and(|(pc, _)| pc == self.alloc_pc);
+            crate::keys::note_double_free(same_site);
         }
         let store = &mut self.allocations[al as usize];
         if store.free {
