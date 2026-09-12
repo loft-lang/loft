@@ -2553,7 +2553,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 788 | 445 | 6 | **337** |
+| 789 | 446 | 6 | **337** |
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through

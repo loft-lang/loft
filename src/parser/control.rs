@@ -4466,6 +4466,99 @@ impl Parser {
     /// the branch it holds in: `v != 0` proves it in the THEN branch (`Some((v, true))`); `v == 0`
     /// proves it in the ELSE branch (`Some((v, false))`) — the common `if b == 0 { … } else { a / b }`
     /// safe-division idiom. Mirrors `narrowing_from_condition`'s then/else convention.
+    /// `@FR-E-Truthy-1` — a truthiness position whose subject cannot be absent is CONSTANT.
+    ///
+    /// `LOFT.md` § Conversions states the language's rule — *"`false` and null are falsy;
+    /// integer `i32::MIN` is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
+    /// records only the `null` half.  The behaviour is documented and is NOT changing here: the
+    /// silence at the call site was the defect, because the shape reads to a programmer as a
+    /// test.  What is constant is a HEAP value that cannot be absent: `if v` on a non-optional
+    /// `vector` or `text` always runs its THEN branch.
+    ///
+    /// `warning` rather than `advice` by CLAUDE.md's split — ignoring it can produce a wrong
+    /// RESULT, and did: `if !d { return -1; } … a / d` divides by zero because that guard never
+    /// fires, which is what reverted the divisor family's truthy arm within the hour of its
+    /// being written.
+    ///
+    /// Quiet on a NULLABLE subject, which is the cell that keeps this honest: `if x` on an
+    /// `integer?` is a genuine presence test (measured — an absent one takes the ELSE branch),
+    /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
+    /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
+    /// `ir_walker_audit.py optional` counts as an OPAQUE site.
+    fn warn_constant_condition(&mut self, tp: &Type, at: &crate::lexer::Position, kw: &str) {
+        // Pass 1 parses every body a second time, so an unguarded report lands twice — measured
+        // exactly 2x on every cell before this line existed.
+        if self.first_pass || !crate::keys::constant_condition_enabled() {
+            return;
+        }
+        let (base, nullable) = tp.peel_optional();
+        if nullable {
+            return;
+        }
+        // An ALLOW-list of concrete types, not a deny-list of the ones to skip.  The gate is
+        // deliberately this way round: a type missing from it costs the LINT, never a false
+        // report — the same trade `src/generation/hoist.rs` makes, and the opposite of the
+        // drifted mutation deny-lists PERFORMANCE.md § P8 records.  Measured why: a deny-list
+        // fired on `if got != want` inside the stdlib's own generics, where a comparison on a
+        // BOUND type variable types as `AssertValue` rather than `boolean` at parse time — 32
+        // false reports on an empty program, and a user generic is the same shape.  A type
+        // variable is a `Reference` to its def, so there is no variant to exclude by name.
+        // HEAP kinds only, and the exclusion is measured rather than cautious.  A SCALAR's
+        // absent value is IN-BAND and reachable from a non-optional declaration — `LOFT.md`
+        // § Conversions: *"integer `i32::MIN` is falsy"* — so `if d` on a plain `integer` is a
+        // genuine two-state test, not a constant: measured on both backends, an `integer`
+        // holding `i64::MIN` takes the ELSE branch.  A heap value has no such in-band value;
+        // it is falsy exactly when it is null (`heap-value-as-a-condition.loft`), and a
+        // NON-optional one cannot be, so the condition really is constant.
+        //
+        // The scalar case is not un-linted, it is someone else's: `!x` on a scalar whose
+        // declaration gave the sentinel up is `redundant-null-negation`, which reads
+        // `IntegerSpec::non_null_reads_null` — the same question asked where the answer is
+        // known.  Adding a type list here that re-answered it would be a second decoder.
+        if !matches!(
+            base,
+            Type::Text(_)
+                | Type::Vector(_, _)
+                | Type::Hash(_, _, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+        ) {
+            return;
+        }
+        let shown = base.source_name(&self.data);
+        diagnostic_at!(
+            self.lexer,
+            at,
+            Level::Warning,
+            code = "constant-condition",
+            "a non-null `{shown}` is always true in a `{kw}` condition — a heap value is falsy \
+             only when absent, and this one cannot be"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "compare explicitly — `if d != 0`, `if len(v) > 0`, `if s != \"\"`".to_string(),
+            condition: Some(
+                "a value of this type has no `false` state, so the branch it guards always runs"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "truthiness",
+            concept_ref: "@F12",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "for a PRESENCE test the value must be nullable (`d: integer?`)".to_string(),
+            condition: Some(
+                "`(E-Truthy)` reads an absent value as false, which is the two-state test this \
+                 spelling looks like"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "truthiness",
+            concept_ref: "@F12",
+        });
+    }
+
     /// `@FR-N-Domain`'s guard licence, MATH family — read a SIGN proof for a variable out of
     /// a parsed `if` condition, with the branch it holds in.
     ///
@@ -4593,8 +4686,10 @@ impl Parser {
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
+        let cond_at = self.lexer.peek().position;
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
+        self.warn_constant_condition(&tp, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;

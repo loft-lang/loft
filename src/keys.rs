@@ -569,6 +569,20 @@ pub fn warn_copies_enabled() -> bool {
 /// suite-wide sweep proved the whole corpus clean (stdlib + all `tests/scripts` + fixture libs +
 /// `tests/lib` + examples); `LOFT_NO_DEAD_STORES` opts out. One cached env read. See
 /// `use_analysis::warn_dead_stores`, `doc/claude/plans/107-dead-code-lint/`.
+/// `@FR-E-Truthy` — the constant-condition warning: a non-optional HEAP value in an
+/// `if`/`while` condition cannot be absent, and a heap value is falsy only when absent, so the
+/// test cannot fail.  `LOFT_NO_CONSTANT_CONDITION` opts out.  One cached env read.
+///
+/// Scalars are deliberately outside it: their absent value is IN-BAND and reachable from a
+/// non-optional declaration (`LOFT.md` § Conversions — *"integer `i32::MIN` is falsy"*), so
+/// `if d` on a plain `integer` is a real two-state test.  See
+/// `Parser::warn_constant_condition`.
+#[must_use]
+pub fn constant_condition_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONSTANT_CONDITION"))
+}
+
 #[must_use]
 pub fn dead_stores_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
