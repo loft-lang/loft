@@ -1,0 +1,124 @@
+// @PLN157 § V-aa — a NO-HEAP RECORD returned BY VALUE: a function whose result is a
+// plain struct of scalars, and whose every call site consumes it by reading fields,
+// returns those fields as a Rust tuple (in registers, no return buffer, no store) exactly
+// as a TUPLE return already does — and the call site reads the tuple's elements instead
+// of the store.  The record round-trip it removes is four writes and four reads per call
+// in `lock_curved`'s resolve loop (measured 2.1–2.4× on the call itself).
+//
+// Gates: a plain no-heap struct, all scalar fields, few of them; and EVERY call site in
+// the program consumes the result by field reads only — a site that stores the record,
+// passes it on, returns it or binds it into a collection declines the whole function, so
+// no site has to materialise and no site can regress.
+//
+// The interpreter keeps the record and is the VALUES oracle.
+// Switch: LOFT_NO_VALUE_RECORD=1 keeps the return buffer on native.
+
+struct Smp { sa: float, sr: float, sg: float, sb: float }
+struct Mixed { mi: integer, mf: float, mb: boolean }
+struct Owner { on: text, ov: integer }
+struct Big { b1: float, b2: float, b3: float, b4: float, b5: float,
+             b6: float, b7: float, b8: float, b9: float }
+
+// c1 — the base shape: every site reads fields.  Admitted.
+fn mk_smp(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+fn c1() {
+  t = 0.0;
+  for i in 0..4 {
+    r = mk_smp((i as float) + 1.0);
+    t = (t + r.sa + r.sr + r.sg + r.sb) ?? 0.0;
+  }
+  println("c1 {t}");
+}
+
+// c2 — mixed scalar field types, read in a different order.  Admitted.
+fn mk_mixed(k: integer) -> Mixed { Mixed { mi: k * 3, mf: (k as float) * 0.5, mb: k % 2 == 0 } }
+fn c2() {
+  s = 0; f = 0.0; n = 0;
+  for i in 0..5 {
+    m = mk_mixed(i);
+    if m.mb { n += 1; }
+    s += m.mi;
+    f = (f + m.mf) ?? 0.0;
+  }
+  println("c2 {s} {f} {n}");
+}
+
+// c3 — a site STORES the record into a collection: the function declines (every site
+// must consume by field reads), and both the stored and the read values stay exact.
+fn c3() {
+  keep: vector<Smp> = [];
+  t = 0.0;
+  for i in 0..3 {
+    r = mk_smp_kept((i as float) + 1.0);
+    keep += [r];
+    t = (t + r.sa) ?? 0.0;
+  }
+  for k in keep { t = (t + k.sb) ?? 0.0; }
+  println("c3 {len(keep)} {t}");
+}
+fn mk_smp_kept(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+
+// c4 — an element type that OWNS HEAP declines (a text field cannot ride a register
+// tuple without the handle's ownership question).  Values exact.
+fn mk_owner(k: integer) -> Owner { Owner { on: "n{k}", ov: k * 7 } }
+fn c4() {
+  s = 0;
+  for i in 0..3 { o = mk_owner(i); s += len(o.on) + o.ov; }
+  println("c4 {s}");
+}
+
+// c5 — TOO MANY fields declines (the admission's width bound), values exact.
+fn mk_big(v: float) -> Big {
+  Big { b1: v, b2: v + 1.0, b3: v + 2.0, b4: v + 3.0, b5: v + 4.0,
+        b6: v + 5.0, b7: v + 6.0, b8: v + 7.0, b9: v + 8.0 }
+}
+fn c5() {
+  t = 0.0;
+  for i in 0..2 { b = mk_big((i as float) * 10.0); t = (t + b.b1 + b.b5 + b.b9) ?? 0.0; }
+  println("c5 {t}");
+}
+
+// c6 — the result is PASSED ON to another function: declines, values exact.
+fn take_smp(s: const Smp) -> float { s.sa + s.sb }
+fn mk_smp_passed(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+fn c6() {
+  t = 0.0;
+  for i in 0..3 { t = (t + take_smp(mk_smp_passed((i as float) + 1.0))) ?? 0.0; }
+  println("c6 {t}");
+}
+
+// c7 — a CONDITIONAL construction: both arms build the record, the caller reads fields.
+// Admitted; the value must follow the arm taken.
+fn mk_cond(k: integer) -> Smp {
+  if k % 2 == 0 { Smp { sa: 1.0, sr: 2.0, sg: 3.0, sb: 4.0 } }
+  else { Smp { sa: 10.0, sr: 20.0, sg: 30.0, sb: 40.0 } }
+}
+fn c7() {
+  t = 0.0;
+  for i in 0..4 { r = mk_cond(i); t = (t + r.sa + r.sb) ?? 0.0; }
+  println("c7 {t}");
+}
+
+// c8 — the result is read field-wise in a NESTED call chain (a caller that is itself
+// admitted): both levels ride the value path.
+fn mk_inner(v: float) -> Smp { Smp { sa: v, sr: v + 1.0, sg: v + 2.0, sb: v + 3.0 } }
+fn mk_outer(v: float) -> Smp {
+  i = mk_inner(v);
+  Smp { sa: i.sa * 2.0, sr: i.sr * 2.0, sg: i.sg * 2.0, sb: i.sb * 2.0 }
+}
+fn c8() {
+  t = 0.0;
+  for i in 0..3 { r = mk_outer((i as float) + 1.0); t = (t + r.sa + r.sg) ?? 0.0; }
+  println("c8 {t}");
+}
+
+// c9 — the record is RETURNED onward by its caller: the caller's own return needs a
+// record, so the inner function still declines at that site.  Values exact.
+fn mk_ret(v: float) -> Smp { Smp { sa: v, sr: v, sg: v, sb: v } }
+fn pass_through(v: float) -> Smp { mk_ret(v * 2.0) }
+fn c9() {
+  r = pass_through(3.0);
+  println("c9 {r.sa} {r.sb}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); }

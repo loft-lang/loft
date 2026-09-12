@@ -31,6 +31,13 @@ pub struct OpFreeRefEmitter;
 
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a local holding a value-returned record
+        // owns no store record, so there is nothing to release.
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.value_record_locals.contains_key(v)
+        {
+            return write!(ctx.w, "()");
+        }
         if let [db_val] = args {
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — a placed record dies WITH ITS HOST
             // STORE: this var is the `__vdb` some pair placed a buffer into, and the
@@ -268,6 +275,13 @@ pub struct OpFreeRefIfDistinctEmitter;
 
 impl OpEmitter for OpFreeRefIfDistinctEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — nothing to release: the local holds a
+        // tuple in registers, not a record in a store.
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.value_record_locals.contains_key(v)
+        {
+            return write!(ctx.w, "()");
+        }
         if let [ph_val, wit_val] = args {
             let ph_name = if let Value::Var(v) = ph_val {
                 format!(

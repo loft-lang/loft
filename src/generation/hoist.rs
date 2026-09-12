@@ -3518,3 +3518,254 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
     }
     out_map
 }
+
+/// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose NO-HEAP RECORD result is
+/// returned BY VALUE (a Rust tuple of its fields, in registers) instead of through a
+/// return buffer, with the field offsets that map a `OpGetField` to a tuple index.
+#[derive(Default)]
+pub struct ValueRecords {
+    /// Admitted functions → their record type.
+    pub fns: HashMap<u32, u16>,
+    /// `(record type, byte offset)` → tuple index, for the call site's field reads.
+    pub index: HashMap<(u16, i64), usize>,
+    /// The Rust tuple type of an admitted function's result.
+    pub tuple: HashMap<u32, String>,
+    /// Per admitted function, its fields in ORDER: `(byte offset, Rust type)` — what the
+    /// tuple carries, and what the live-reload arm must read back out of the record the
+    /// interpreter answers with.
+    pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
+}
+
+/// `LOFT_NO_VALUE_RECORD=1` restores the return buffer for every record return — the
+/// bisect step for a wrong field out of a record-returning call on native.
+///
+/// The library integration the opt-in phase existed for is closed: a cdylib bridge now
+/// MATERIALISES the tuple into the destination record it already owns
+/// (`native_lib::shared_bridge_wrapper`), so the C boundary keeps its record contract
+/// while loft-to-loft calls inside the library take the value path.
+fn value_record_disabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_NO_VALUE_RECORD").is_ok_and(|v| v != "0"))
+}
+
+/// The scalar field kinds a register tuple can carry: no heap, no collection, no nested
+/// record — the fields `rust_type` maps to a plain Rust scalar.
+fn value_field_type(tp: &Type) -> Option<&'static str> {
+    match tp.base() {
+        Type::Float => Some("f64"),
+        Type::Single => Some("f32"),
+        Type::Integer(_) => Some("i64"),
+        Type::Boolean => Some("bool"),
+        _ => None,
+    }
+}
+
+/// @PLN157 § V-aa (`@FR-R-ValueRecord`) — which record-returning functions may return
+/// their fields in registers.
+///
+/// Two gates, and the second is what makes the first safe to apply per FUNCTION: the
+/// result type is a plain no-heap struct of at most [`VALUE_RECORD_MAX_FIELDS`] scalar
+/// fields; and EVERY call site in the program consumes the result by reading fields off a
+/// local it binds — never storing it, passing it on, returning it or binding it into a
+/// collection.  A single non-reading site declines the whole function, so no site has to
+/// materialise a record out of a tuple and no site can be made slower.
+pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+    let mut out = ValueRecords::default();
+    if value_record_disabled() {
+        return out;
+    }
+    let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    // Candidates by RESULT TYPE.
+    let mut cand: HashMap<u32, u16> = HashMap::new();
+    for d_nr in 0..data.definitions.len() as u32 {
+        let def = data.def(d_nr);
+        if !matches!(def.def_type, crate::data::DefType::Function)
+            || matches!(def.code(), Value::Null)
+        {
+            continue;
+        }
+        let Type::Reference(rd, _) = def.returned().peel_link() else {
+            continue;
+        };
+        if trace {
+            eprintln!("[valuerec] candidate {} returns ref({rd})", def.name());
+        }
+        let Some(tp) = plain_record_type(data, def.returned()) else {
+            if trace {
+                eprintln!("[valuerec] {}: not a plain record", def.name());
+            }
+            continue;
+        };
+        if stores.owns_heap(tp) {
+            continue;
+        }
+        let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
+            &stores.types[tp as usize].parts
+        else {
+            continue;
+        };
+        if fields.is_empty() || fields.len() > VALUE_RECORD_MAX_FIELDS {
+            continue;
+        }
+        let mut parts: Vec<&'static str> = Vec::new();
+        let mut order: Vec<(i64, &'static str)> = Vec::new();
+        let mut ok = true;
+        for (i, f) in fields.iter().enumerate() {
+            let ftp = data.attr_type(*rd, i);
+            if let Some(rt) = value_field_type(&ftp) {
+                parts.push(rt);
+                order.push((i64::from(f.position), rt));
+            } else {
+                ok = false;
+                break;
+            }
+            out.index.insert((tp, i64::from(f.position)), i);
+        }
+        if !ok {
+            continue;
+        }
+        // The BODY must build the record itself, through `Object` blocks: the value form
+        // is those blocks' writes turned into a tuple, so a tail that FORWARDS another
+        // call's record (or yields a variable) has nothing to convert and the signature
+        // would promise a tuple over a `DbRef` body.
+        if !builds_record_by_object(def.code()) {
+            if trace {
+                eprintln!("[valuerec] {}: tail is not an Object build", def.name());
+            }
+            continue;
+        }
+        out.tuple.insert(d_nr, format!("({})", parts.join(", ")));
+        out.fields.insert(d_nr, order);
+        cand.insert(d_nr, tp);
+    }
+    if cand.is_empty() {
+        return out;
+    }
+    // Every CALL SITE must bind the result to a local that is read only by field reads.
+    for caller in 0..data.definitions.len() as u32 {
+        let cdef = data.def(caller);
+        if matches!(cdef.code(), Value::Null) {
+            continue;
+        }
+        let vars = cdef.variables();
+        cdef.code().any_node(&mut |n| {
+            match n {
+                // `r = f(…)` — the admitted shape, if `r`'s other uses are field reads.
+                Value::Set(v, inner) => {
+                    if let Value::Call(d, _) = inner.unspan()
+                        && cand.contains_key(d)
+                        && !local_read_fieldwise(cdef.code(), *v, data, vars)
+                    {
+                        cand.remove(d);
+                    }
+                }
+                // A call in ANY other position — an argument, a return, a field value —
+                // needs a record the tuple cannot supply.
+                Value::Call(d, args) => {
+                    for a in args {
+                        if let Value::Call(inner_d, _) = a.unspan()
+                            && cand.contains_key(inner_d)
+                        {
+                            cand.remove(inner_d);
+                        }
+                    }
+                    let _ = d;
+                }
+                Value::Return(x) => {
+                    if let Value::Call(d, _) = x.unspan() {
+                        cand.remove(d);
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+    out.fns = cand;
+    out.tuple.retain(|d, _| out.fns.contains_key(d));
+    out.fields.retain(|d, _| out.fns.contains_key(d));
+    out
+}
+
+/// Does every RESULT position of `body` build the record with an `Object` block?  The
+/// value path converts those blocks and nothing else, so a forwarded call result, a bare
+/// variable or any other tail declines the function.
+fn builds_record_by_object(body: &Value) -> bool {
+    fn leaf_ok(v: &Value) -> bool {
+        match v.unspan() {
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) => bl.operators.last().is_some_and(leaf_ok),
+            Value::If(_, a, b) => leaf_ok(a) && leaf_ok(b),
+            Value::Insert(ops) => ops.last().is_some_and(leaf_ok),
+            Value::Return(x) => leaf_ok(x),
+            _ => false,
+        }
+    }
+    // Every `Return` in the body, plus the body's own tail.
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        if let Value::Return(x) = n
+            && !leaf_ok(x)
+        {
+            ok = false;
+            return true;
+        }
+        false
+    });
+    ok && leaf_ok(body)
+}
+
+/// The widest record the value path carries.  A register tuple past this is spilled by
+/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
+pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+
+/// Is every use of local `v` in `body` a FIELD READ (or the binding itself)?  The value
+/// path replaces the record with a tuple, so a use that needs the record — an argument, a
+/// return, an append, a copy — answers `false`.
+fn local_read_fieldwise(
+    body: &Value,
+    v: u16,
+    data: &Data,
+    _vars: &crate::variables::Function,
+) -> bool {
+    let mut mentions = 0u32;
+    let mut accounted = 0u32;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(w) if *w == v => mentions += 1,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                let first_is_v =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                // A SCALAR FIELD READ at a constant offset — what the value path turns
+                // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
+                // record's scalar field reads through its typed getter.)
+                if first_is_v
+                    && VALUE_RECORD_GETTERS.contains(&name)
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
+                {
+                    accounted += 1;
+                }
+                // The local's own release: with no record there is nothing to free, so
+                // the value path DELETES this use rather than being declined by it.
+                if first_is_v && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct") {
+                    accounted += 1;
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    mentions == accounted
+}
+
+/// The typed scalar getters a record's field read uses — the reads the value path
+/// rewrites into tuple indices.
+pub const VALUE_RECORD_GETTERS: [&str; 6] = [
+    "OpGetFloat",
+    "OpGetInt",
+    "OpGetSingle",
+    "OpGetBoolean",
+    "OpGetByte",
+    "OpGetShort",
+];

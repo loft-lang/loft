@@ -1758,6 +1758,60 @@ the issue either: only a library's RUST parts are dylibs
 (`libloft_graphics_native.dylib`); its loft-level functions (`graphics::color_r`) are
 compiled into the program's own crate and inline normally.
 
+## V-aa — the value-record return (2026-09-12)
+
+**SHIPPED, default-on (`@FR-R-ValueRecord`; switch `LOFT_NO_VALUE_RECORD`, trace
+`LOFT_TRACE_VALUEREC`).**  A function whose result is a plain no-heap record of at most
+six scalar fields returns those fields BY VALUE — a Rust tuple, in registers — instead of
+writing them into a return buffer the caller reads back.  `lock_curved`'s profile named
+it: after the hoist family has taken everything it can (8 headers, 7 invariant scalars, 7
+hoisted element reads), the ONLY per-pixel store traffic left was `brush_sample`'s
+four-float record — four writes in, four reads out.
+
+**The mechanism already existed for TUPLES** (`rust_type(Type::Tuple, …)` maps straight to
+a Rust tuple, in registers, no buffer), which is why this is an admission plus five
+emission sites rather than a new ABI: the signature (no `__retbuf` parameter, `-> (f64,
+…)`), the callee's `Object` tail (its writes become the tuple in field order), the call
+site (tuple binding, buffer argument dropped), the field reads (`v.<index>`), and the
+release (nothing to free).
+
+**Three gates, each falsified.**  (1) the result is a plain no-heap struct of ≤6 scalar
+fields; (2) EVERY call site consumes it by reading fields off a local it binds — sabotaged
+by making `local_read_fieldwise` answer true, which admits a stored record and a passed-on
+one: **8 rustc errors**; (3) the BODY builds the record through `Object` blocks at every
+result position — sabotaged by removing `builds_record_by_object`, which admits a
+FORWARDING body whose signature then promises a tuple over a `DbRef`: **14 rustc errors**.
+Gates (2) and (3) are what make (1) safe per FUNCTION: no site ever has to materialise a
+record out of a tuple, so no site can be made slower.
+
+**Two boundaries keep the record contract**, and both were found by building, not by
+thinking: the LIVE-RELOAD arm answers a `DbRef`, so it reads the fields back out of that
+record; and a library's CDYLIB BRIDGE writes the tuple into the destination record it
+already owns (`shared_bridge_wrapper`), so the C ABI is unchanged while loft-to-loft calls
+INSIDE the library take the value path — which is the whole point, since `brush_sample`
+and `lock_layer` are both in `drawing`.
+
+**Measured** (hashes exact throughout): the call itself **1.65×** (29.1–30.1 ms →
+17.7–18.0 ms per 3 M calls); `smooth` **3 192–3 309 → 2 379–3 163 ns/op** (best-to-best
+−25 %, the row the x86 lane named this class for); `lock_curved` **2 339–2 402k →
+2 276–2 331k** (−3 %); and on the full consumer bench every native column improved or held.
+
+**Four defects the cells caught before they could ship**: an unclosed delimiter (the
+`Object` interception ate the block's closing brace — visible only in the
+conditional-construction cell, where the block sits inside an `if` arm); a stale return-buffer
+push in the live arm; the two unsound admissions above; and a by-name callee lookup
+(`data.def_nr(name)` resolves for the CURRENT source, so a library function called from
+another module resolved to a different definition and kept its buffer argument while its
+signature had dropped it — `current_call_def` is what the emitter threads for exactly this).
+That is the SECOND by-name-across-sources bug of the day, after `main_vector<T>`'s wrapper
+collision; both are now written up, and the lesson is one line: **a definition is a NUMBER,
+and a name is only a number within one source.**
+
+**And the registry collision the codegen skill warns about, hit verbatim**: the six scalar
+getters were registered for the value path, and `FusedElementReadEmitter` — registered
+later for the same keys — silently won.  The check now lives inside that emitter, with a
+comment saying why it cannot live in a second registration.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

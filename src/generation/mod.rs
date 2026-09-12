@@ -686,6 +686,14 @@ pub struct Output<'a> {
     /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
     /// record on native.
     pub complete_write_disabled: bool,
+    /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose no-heap record result
+    /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
+    /// for the whole program because the admission asks every call site.
+    pub value_records: hoist::ValueRecords,
+    /// @PLN157 § V-aa — the CURRENT function's locals bound from an admitted call: each
+    /// holds a Rust tuple, not a `DbRef`, so its `let` type, its field reads and its
+    /// release all take the value form.  Local → the callee's def nr.
+    pub value_record_locals: HashMap<u16, u32>,
     /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
@@ -1637,6 +1645,8 @@ impl<'a> Output<'a> {
             complete_writes: hoist::CompleteWrites::default(),
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
+            value_records: hoist::ValueRecords::default(),
+            value_record_locals: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             ret_adopt: None,
@@ -1887,6 +1897,23 @@ impl Output<'_> {
         } else {
             hoist::invariant_literals(self.data, def_nr)
         };
+        // @PLN157 § V-aa — the locals this function binds from an admitted call.
+        self.value_record_locals.clear();
+        if !self.value_records.fns.is_empty() {
+            let body = self.data.def(def_nr).code();
+            let admitted = &self.value_records.fns;
+            let mut found: Vec<(u16, u32)> = Vec::new();
+            body.any_node(&mut |n| {
+                if let Value::Set(v, inner) = n
+                    && let Value::Call(d, _) = inner.unspan()
+                    && admitted.contains_key(d)
+                {
+                    found.push((*v, *d));
+                }
+                false
+            });
+            self.value_record_locals.extend(found);
+        }
         self.elem_first = if self.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {
@@ -2309,7 +2336,62 @@ impl Output<'_> {
     /// The § V-j move-append pair of this `For` block, if it is one — recognised by the
     /// buffer variable its first statement's call carries (@PLN157 § V-j,
     /// `@FR-R-MoveAppend`).
+    /// @PLN157 § V-aa — the Rust type a local is BOUND at: the callee's tuple when it
+    /// holds a value-returned record, otherwise what `rust_type` says.
     #[must_use]
+    pub fn local_rust_type(&self, var: u16, tp: &Type) -> String {
+        if let Some(d) = self.value_record_locals.get(&var)
+            && let Some(t) = self.value_records.tuple.get(d)
+        {
+            return t.clone();
+        }
+        rust_type(tp, &Context::Variable)
+    }
+
+    /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
+    /// writes, in field order, or `None` when the block is not the complete
+    /// constant-offset write set the value path needs (then the buffer form stands).
+    #[must_use]
+    pub fn value_record_parts<'b>(
+        &self,
+        bl: &'b crate::data::Block,
+        tp: u16,
+    ) -> Option<Vec<&'b Value>> {
+        let n = self
+            .value_records
+            .index
+            .keys()
+            .filter(|(t, _)| *t == tp)
+            .count();
+        let mut slots: Vec<Option<&Value>> = vec![None; n];
+        for op in &bl.operators {
+            let Value::Call(d, args) = op.unspan() else {
+                continue;
+            };
+            if (*d as usize) >= self.data.definitions.len() {
+                return None;
+            }
+            let name = self.data.def(*d).name();
+            if !name.starts_with("OpSet") {
+                // The allocate-or-reuse guard and the trailing yield are what the value
+                // path replaces; anything ELSE in the block is work it would lose.
+                if matches!(op.unspan(), Value::Var(_)) {
+                    continue;
+                }
+                continue;
+            }
+            let Some(Value::Int(off)) = args.get(1).map(Value::unspan) else {
+                return None;
+            };
+            let idx = *self.value_records.index.get(&(tp, i64::from(*off)))?;
+            if idx >= slots.len() || slots[idx].is_some() {
+                return None;
+            }
+            slots[idx] = args.get(2);
+        }
+        slots.into_iter().collect()
+    }
+
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {
         if bl.name != "For block" || self.move_pairs.is_empty() {
             return None;
@@ -2476,6 +2558,12 @@ impl Output<'_> {
         use std::fmt::Write as _;
         let mut pushes = String::new();
         for a in def.attributes() {
+            // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
+            // parameter, so the live-reload arm must not push one either: the
+            // interpreter allocates its own for the parked call.
+            if self.value_records.fns.contains_key(&self.def_nr) && a.name == "__retbuf" {
+                continue;
+            }
             match &a.typedef {
                 Type::Integer(_)
                 | Type::Float
@@ -2506,6 +2594,27 @@ impl Output<'_> {
         };
         let idx = self.live_fns.len();
         self.live_fns.push(def.name().to_string());
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — the live-reload arm answers the OLD
+        // shape, a `DbRef` into the interpreter's record, while an admitted function's
+        // signature says tuple.  Read the fields back out of that record, in field
+        // order, so the reload path and the value path agree on what a call returns.
+        if let Some(fields) = self.value_records.fields.get(&self.def_nr) {
+            let reads: Vec<String> = fields
+                .iter()
+                .map(|(off, rt)| match *rt {
+                    "f64" => format!("__s.store(&__lv).get_float(__lv.rec, __lv.pos + {off}u32)"),
+                    "f32" => format!("__s.store(&__lv).get_single(__lv.rec, __lv.pos + {off}u32)"),
+                    "bool" => {
+                        format!("__s.store(&__lv).get_byte(__lv.rec, __lv.pos + {off}u32, 0) == 1")
+                    }
+                    _ => format!("__s.store(&__lv).get_int(__lv.rec, __lv.pos + {off}u32)"),
+                })
+                .collect();
+            return Some(format!(
+                "  if loft::live_dispatch::live_flipped({idx}) {{ let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __s: &Stores = unsafe {{ &*cell.get() }}; return ({}); }}\n",
+                reads.join(", ")
+            ));
+        }
         Some(format!(
             "  if loft::live_dispatch::live_flipped({idx}) {{ return loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); }}\n"
         ))
@@ -4768,6 +4877,20 @@ extern crate loft;"
         } else {
             None
         };
+        // @PLN157 § V-aa — whole-program, computed once: the admission asks every call
+        // site, so it cannot be a per-function analysis.
+        if self.value_records.fns.is_empty() {
+            self.value_records = hoist::value_records(self.data, self.stores);
+            if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                for (d, tp) in &self.value_records.fns {
+                    eprintln!(
+                        "[valuerec] {} -> {} (tp={tp})",
+                        self.data.def(*d).name(),
+                        self.value_records.tuple[d]
+                    );
+                }
+            }
+        }
         for dnr in from..till {
             if !matches!(self.data.def(dnr).def_type(), DefType::Function) {
                 continue;
@@ -5500,7 +5623,13 @@ extern crate loft;"
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" }
         )?;
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
+        // record's fields in registers, so it needs no return BUFFER to write them into.
+        let value_rec = self.value_records.tuple.get(&def_nr).cloned();
         for a in def.attributes() {
+            if value_rec.is_some() && a.name == "__retbuf" {
+                continue;
+            }
             let tp = rust_type(&a.typedef, &Context::Argument);
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
@@ -5525,7 +5654,9 @@ extern crate loft;"
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if returns_owned_string(def) {
+            if let Some(t) = &value_rec {
+                write!(w, "-> {t} ")?;
+            } else if returns_owned_string(def) {
                 write!(w, "-> String ")?;
             } else {
                 write!(w, "-> {} ", rust_type(def.returned(), &Context::Result))?;
@@ -5649,6 +5780,11 @@ extern crate loft;"
             // retbuf-attr entirely).  Leading `_` suppresses the unused warning
             // for retbuf locals that are never reassigned.
             for a in def.attributes() {
+                // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no
+                // buffer witness either (the parameter itself is gone).
+                if self.value_records.fns.contains_key(&def_nr) && a.name == "__retbuf" {
+                    continue;
+                }
                 if a.hidden && matches!(&a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))
                 {
                     let av = vars.var(&a.name);

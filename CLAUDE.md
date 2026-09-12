@@ -738,6 +738,13 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa) makes a record-returning function write
+its result into a return buffer again — with it off, a function whose result is a plain
+no-heap record of ≤6 scalar fields, whose every call site reads fields off it and whose
+body builds it with `Object` blocks, returns those fields in REGISTERS and the call site
+reads tuple elements (measured: 1.65× on the call, `smooth` −25 %, `lock_curved` −3 %) —
+and is the bisect step for a wrong field out of a record-returning call on native.
+`LOFT_TRACE_VALUEREC=1` names each admission and decline.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
 the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of

@@ -55,6 +55,27 @@ pub struct FusedElementReadEmitter;
 
 impl OpEmitter for FusedElementReadEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a field read off a local that holds a
+        // VALUE-RETURNED record is a tuple index: there is no record in a store to read.
+        // Checked here rather than from a second registration, because this emitter owns
+        // every scalar getter and a later insert would silently replace it.
+        if let [base, fld, ..] = args
+            && let Value::Var(v) = base.unspan()
+            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
+            && let Some(tp) = ctx.output.value_records.fns.get(&d).copied()
+            && let Value::Int(off) = fld.unspan()
+            && let Some(idx) = ctx
+                .output
+                .value_records
+                .index
+                .get(&(tp, i64::from(*off)))
+                .copied()
+        {
+            let name =
+                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(*v));
+            return write!(ctx.w, "var_{name}.{idx}");
+        }
+
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
             return emit_hoisted_scalar_or_default(ctx, args);
         };
