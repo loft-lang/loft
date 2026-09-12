@@ -484,7 +484,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
-the aware side; the opaque count is unchanged.)
+the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
+all three on the peel side, **24** opaque still.)
 
 
 
@@ -2557,10 +2558,11 @@ and who does not.
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through
-`peel_link` as well — the four new discriminating sites are all aware, so the opaque column
-and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
+`peel_link` as well — every new discriminating site on both streams is aware, so the opaque
+column and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
 obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
-`make optional-ratchet` fail — a new test is as able to grow this count as new code is.)
+`make optional-ratchet` fail — a new test is as able to grow this count as new code is.
+§ V-aa's sites land on the see-through side for the same reason.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque
