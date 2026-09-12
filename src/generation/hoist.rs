@@ -2558,7 +2558,11 @@ const LIT_HOIST_GETTERS: [&str; 7] = [
 
 /// Does `tp` mention record/enum definition `pd` anywhere in its shape?
 fn mentions_def(tp: &Type, pd: u32) -> bool {
-    tp.any_node(&mut |t| matches!(t, Type::Reference(d, _) | Type::Enum(d, _, _) if *d == pd))
+    // `.base()` at each node so a `τ?`-wrapped reference is the same mention
+    // (`@FR-N-Shape` — the walk descends wrappers, and the test must too).
+    tp.any_node(
+        &mut |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == pd),
+    )
 }
 
 /// A FRESH-STORE local (@PLN157 § V-x): every `Set` of it is the `= null` declaration and
@@ -3177,4 +3181,340 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
     out.db_vars.retain(|v| !db_declined.contains(v));
     out.mint_tps.retain(|t| !mint_declined.contains(t));
     out
+}
+
+/// @PLN157 § V-z — one paired temp of an ELEMENT-FIRST append: the local `tmp` (declared
+/// through witness `vdb`) is consumed exactly once as the record-literal field at byte
+/// `field_off` of the element `elm` appended to `out`.
+pub struct ElemBind {
+    pub tmp: u16,
+    pub vdb: u16,
+    pub field_off: i32,
+    /// This temp's declaration carries the element MINT (the first temp in decl order).
+    pub first: bool,
+}
+
+/// @PLN157 § V-z — an admitted element-first APPEND: the element minted at the first
+/// temp's declaration site, every paired temp bound to its field slot, the append site
+/// keeping its scalar sets and finish while the reservation, the mint, the paired
+/// handle-zeros and the paired `OpAppendVector` copies are suppressed.
+pub struct ElemFirst {
+    pub out: u16,
+    pub out_tp: i32,
+    pub elm: u16,
+    pub prealloc_size: i32,
+    pub binds: Vec<ElemBind>,
+}
+
+/// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of one function.
+/// Keyed for the emitter: `by_vdb` finds a temp's declaration (the `OpDatabase` site is
+/// where the prelude or the slot bind emits), `elms` marks the append-site element vars
+/// whose reservation/mint/zeros/copies the statement loop suppresses.
+#[derive(Default)]
+pub struct ElemFirstMap {
+    pub pairs: Vec<ElemFirst>,
+    pub by_vdb: HashMap<u16, usize>,
+    pub by_elm: HashMap<u16, usize>,
+    pub elms: HashSet<u16>,
+}
+
+fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
+    if let Value::Call(d, args) = stmt.unspan()
+        && (*d as usize) < data.definitions.len()
+        && data.def(*d).name() == name
+    {
+        Some(args)
+    } else {
+        None
+    }
+}
+
+fn as_var(v: Option<&Value>) -> Option<u16> {
+    match v.map(Value::unspan) {
+        Some(Value::Var(w)) => Some(*w),
+        _ => None,
+    }
+}
+
+fn as_int(v: Option<&Value>) -> Option<i32> {
+    match v.map(Value::unspan) {
+        Some(Value::Int(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+/// @PLN157 § V-z (`@FR-R-ElemFirst`) — pair the temps with their one consuming append.
+///
+/// Gates, each carried by a cell: the temp's declaration (`OpDatabase(vdb) ·
+/// Set(tmp, OpGetField(vdb)) · OpSetInt4(vdb, 0, 0)`) and the append group
+/// (`OpPreAlloc(out, 1) · Set(elm, OpNewRecord(out)) · zeros · appends · finish`) are
+/// top-level statements of the SAME block (an append under an `if` arm declines — the
+/// early mint would strand an unfinished element per skipped iteration, c7); nothing
+/// between them mentions `out` (an early mint changes what `len(out)` answers, c5); the
+/// temp's whole-function uses reconcile to its build mentions plus the ONE
+/// `OpAppendVector` (a read after the append or a second append declines, c3/c4);
+/// `out` is an owned plain vector never rebound, its element a plain struct.
+pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))) {
+        return ElemFirstMap::default();
+    }
+    let trace = std::env::var("LOFT_TRACE_ELEMFIRST").is_ok();
+    // Rebind counts, decl-style Sets excluded (the move-append convention).
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n {
+            let init = match to.unspan() {
+                Value::Null => true,
+                Value::Call(d, cargs) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if *w < vars.count()
+                                && vars.name(*w).starts_with("__vdb"))
+                }
+                _ => false,
+            };
+            if !init {
+                *set_counts.entry(*v).or_default() += 1;
+            }
+        }
+        false
+    });
+    let mut out_map = ElemFirstMap::default();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else { return false };
+        let ops = &bl.operators;
+        let code_idx: Vec<usize> = (0..ops.len())
+            .filter(|j| !matches!(ops[*j].unspan(), Value::Line(_)))
+            .collect();
+        // Temp declarations in this list: tmp -> (vdb, position in code_idx).
+        let mut decls: HashMap<u16, (u16, usize)> = HashMap::new();
+        for (k, &j) in code_idx.iter().enumerate() {
+            if let Some(args) = call_named(&ops[j], data, "OpDatabase")
+                && let Some(vdb) = as_var(args.first())
+                && vars.name(vdb).starts_with("__vdb")
+                && k + 2 < code_idx.len()
+                && let Value::Set(tmp, x) = ops[code_idx[k + 1]].unspan()
+                && matches!(x.unspan(), Value::Call(d, cargs)
+                    if data.def(*d).name() == "OpGetField"
+                        && as_var(cargs.first()) == Some(vdb))
+                && call_named(&ops[code_idx[k + 2]], data, "OpSetInt4")
+                    .is_some_and(|a| as_var(a.first()) == Some(vdb))
+            {
+                decls.insert(*tmp, (vdb, k));
+            }
+        }
+        if decls.is_empty() {
+            return false;
+        }
+        // Append groups: reservation + mint + zeros/appends/sets + finish.
+        for (k, &j) in code_idx.iter().enumerate() {
+            let Some(pa) = call_named(&ops[j], data, "OpPreAllocVector") else {
+                continue;
+            };
+            let Some(out) = as_var(pa.first()) else {
+                continue;
+            };
+            if as_int(pa.get(1)) != Some(1) {
+                continue;
+            }
+            let Some(size) = as_int(pa.get(2)) else {
+                continue;
+            };
+            if k + 1 >= code_idx.len() {
+                continue;
+            }
+            let Value::Set(elm, mint) = ops[code_idx[k + 1]].unspan() else {
+                continue;
+            };
+            let Value::Call(md, margs) = mint.unspan() else {
+                continue;
+            };
+            if data.def(*md).name() != "OpNewRecord"
+                || as_var(margs.first()) != Some(out)
+                || as_int(margs.get(2)) != Some(65535)
+            {
+                continue;
+            }
+            let Some(out_tp) = as_int(margs.get(1)) else {
+                continue;
+            };
+            // `out`: owned plain vector, never rebound, element a plain struct.
+            if set_counts.contains_key(&out)
+                || !matches!(vars.tp(out).peel_link(), Type::Vector(e, _)
+                    if plain_record_type(data, e).is_some())
+            {
+                continue;
+            }
+            // Scan the group: paired appends, and the finish that closes it.
+            let mut appended: Vec<(u16, i32)> = Vec::new();
+            let mut fin = None;
+            for &j2 in code_idx.iter().skip(k + 2) {
+                let stmt = &ops[j2];
+                if let Some(a) = call_named(stmt, data, "OpSetInt4")
+                    && as_var(a.first()) == Some(*elm)
+                {
+                    continue;
+                }
+                if let Some(a) = call_named(stmt, data, "OpAppendVector")
+                    && let Value::Call(gd, gargs) = a[0].unspan()
+                    && data.def(*gd).name() == "OpGetField"
+                    && as_var(gargs.first()) == Some(*elm)
+                    && let Some(off) = as_int(gargs.get(1))
+                    && let Some(tmp) = as_var(a.get(1))
+                {
+                    appended.push((tmp, off));
+                    continue;
+                }
+                // A scalar field set on the element stays untouched.
+                if let Value::Call(sd, sargs) = stmt.unspan()
+                    && data.def(*sd).name().starts_with("OpSet")
+                    && as_var(sargs.first()) == Some(*elm)
+                {
+                    continue;
+                }
+                if let Some(a) = call_named(stmt, data, "OpFinishRecord")
+                    && as_var(a.first()) == Some(out)
+                    && as_var(a.get(1)) == Some(*elm)
+                {
+                    fin = Some(j2);
+                }
+                break;
+            }
+            if fin.is_none() || appended.is_empty() {
+                continue;
+            }
+            // Pair each appended temp with a declaration EARLIER in this list, and
+            // require the stretch between declaration and reservation clean of `out`.
+            let mut binds: Vec<ElemBind> = Vec::new();
+            let mut first_decl = usize::MAX;
+            let mut sound = true;
+            for (tmp, off) in &appended {
+                let Some((vdb, dk)) = decls.get(tmp).copied() else {
+                    sound = false;
+                    break;
+                };
+                if dk + 2 >= k {
+                    // the declaration must fully precede the reservation
+                    sound = false;
+                    break;
+                }
+                first_decl = first_decl.min(dk);
+                binds.push(ElemBind {
+                    tmp: *tmp,
+                    vdb,
+                    field_off: *off,
+                    first: false,
+                });
+            }
+            if !sound {
+                if trace {
+                    eprintln!("[elemfirst] {}: append pairing incomplete", def.name());
+                }
+                continue;
+            }
+            // `out`'s own declaration must PRECEDE the first temp's: a temp declared
+            // first would put the prelude before `out`'s binding exists (the sqldb
+            // schema fixture's E0425, and a mint into a store not yet allocated).
+            // `out` declared in an ENCLOSING block is not in this list and passes.
+            if decls.get(&out).is_some_and(|(_, ok)| *ok >= first_decl) {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: out declared after the first temp",
+                        def.name()
+                    );
+                }
+                continue;
+            }
+            // No `out` mention strictly between the first declaration and the group.
+            for &j2 in &code_idx[first_decl + 3..k] {
+                ops[j2].any_node(&mut |m| {
+                    if matches!(m, Value::Var(w) if *w == out) {
+                        sound = false;
+                        return true;
+                    }
+                    false
+                });
+            }
+            if !sound {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: out read between decl and append",
+                        def.name()
+                    );
+                }
+                continue;
+            }
+            // Whole-function reconciliation per temp: its mentions are its builds
+            // (between its own declaration and the group), the one append — and
+            // nothing else (a later read, a second append, an escape all decline).
+            for b in &binds {
+                let mut total = 0u32;
+                body.any_node(&mut |m| {
+                    if matches!(m, Value::Var(w) if *w == b.tmp) {
+                        total += 1;
+                    }
+                    false
+                });
+                let mut allowed = 1u32; // the one OpAppendVector
+                let (_, dk) = decls[&b.tmp];
+                for &j2 in &code_idx[dk + 1..k] {
+                    ops[j2].any_node(&mut |m| {
+                        if matches!(m, Value::Var(w) if *w == b.tmp) {
+                            allowed += 1;
+                        }
+                        false
+                    });
+                }
+                if total != allowed {
+                    if trace {
+                        eprintln!(
+                            "[elemfirst] {}: {} has uses beyond its build ({} vs {})",
+                            def.name(),
+                            vars.name(b.tmp),
+                            total,
+                            allowed
+                        );
+                    }
+                    sound = false;
+                }
+            }
+            if !sound {
+                continue;
+            }
+            // The FIRST temp in declaration order carries the mint.
+            binds.sort_by_key(|b| decls[&b.tmp].1);
+            if let Some(b0) = binds.first_mut() {
+                b0.first = true;
+            }
+            let idx = out_map.pairs.len();
+            for b in &binds {
+                out_map.by_vdb.insert(b.vdb, idx);
+            }
+            out_map.elms.insert(*elm);
+            out_map.by_elm.insert(*elm, idx);
+            out_map.pairs.push(ElemFirst {
+                out,
+                out_tp,
+                elm: *elm,
+                prealloc_size: size,
+                binds,
+            });
+        }
+        false
+    });
+    // A temp or an element serving TWO admitted pairs is beyond this keying.
+    let mut vdb_seen: HashMap<u16, u32> = HashMap::new();
+    for p in &out_map.pairs {
+        for b in &p.binds {
+            *vdb_seen.entry(b.vdb).or_default() += 1;
+        }
+    }
+    if vdb_seen.values().any(|c| *c > 1) {
+        return ElemFirstMap::default();
+    }
+    out_map
 }

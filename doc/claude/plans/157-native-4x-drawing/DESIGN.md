@@ -1497,6 +1497,47 @@ the samples live in the vector-store creations; with those and the placement adm
 (9 NP sites), 278.3–279.3k → **264.9–272.7k ns/op (best −4.8 %)**, hash `ebcfd875`
 every run — ~60 % of the global-skip ceiling captured soundly.
 
+## V-z — the element-first build (2026-09-12)
+
+**Ceiling first** (rustc-first on the § V-y tip): 270.2–283.0k → **191.7–210.3k ns/op
+(−27–29 %)**, hash exact — far beyond the ~6 % class estimate, because the hand-mod also
+removed the temp stores' reuse-clears, their claims/frees and free-tree traffic, and
+composed with § V-u: `n_pt(cell, …, var__elm)` delivers each point DIRECTLY into the
+just-minted element, no buffer at all.  Two wrong turns kept for the next reader:
+`OpNewRecord(elm, RecordTp, fld)` on a vector field APPENDS AN ELEMENT (0 points, hash
+`811c9dc5`), and the naive parent_tp names the VECTOR type ("field 0 of 'vector<Frond>'
+has no storage").  The correct binding is trivial: a vector value IS the ref to its
+handle slot, so `var_tmp = DbRef { elm.store_nr, elm.rec, elm.pos + off }`.
+
+**SHIPPED same day (`@FR-R-ElemFirst`, formal/rewrites.md; switch
+`LOFT_NO_ELEMENT_FIRST`, trace `LOFT_TRACE_ELEMFIRST`).**  `hoist::element_first` pairs
+each appended temp (its `OpDatabase · Set(tmp, OpGetField) · OpSetInt4` declaration, in
+the same statement list as the append group, `out` unmentioned between, whole-function
+mentions reconciling to build + one copy) with the append's `OpAppendVector(OpGetField
+(elm, off), tmp)`; the emitter's statement loop overrides: the first temp's declaration
+becomes the reservation + the element mint (PLAIN OpNewRecord — its prefill is a
+load-bearing third of the invariant), every temp's declaration becomes the field-slot
+bind, and the append site drops its reservation, mint, paired zeros and paired copies
+while scalar sets and the finish stay — the finish is the length bump, so the element
+stays invisible until the append, and a skipped-append mint would overwrite the same
+invisible slot.
+
+**A prediction the cells corrected**: c4 (one temp, TWO appends) was written as a
+decline, and the SECOND append soundly pairs — the first append's pairing fails the
+reconciliation, and once the temp is a slot ref, the intervening first append merely
+READS it (its own copy stays).  **Falsified the compound way** (the single sabotages
+cannot fail — the prelude's prefill or the claim-zeroing covers each alone): the
+paired-offset check dropped AND the prelude minting NP crashes the corpus under
+`LOFT_NO_ZERO_CLAIM=1` ("the vector handle in record 3.16 points at record 26, whose
+size word is -207"), naming the invariant: every field written before the finish — by
+the prelude's prefill, a paired build, or the kept sets.
+
+**Measured**: the BUILD meets the hand ceiling exactly — fronds standalone 265k →
+**186.4–199.7k ns/op** (hand 191.8–192.8k), hash `ebcfd875` every run, one admitted
+pair in `n_fronds`.  Eight cells exact on both backends under poison AND the
+stale-arena lever; pins in `tests/element_first.rs`; the value guard
+`tests/scripts/157-element-first.loft`.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

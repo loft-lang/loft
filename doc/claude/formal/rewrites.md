@@ -526,6 +526,29 @@ and loses only the innermost frame NAME from the chain.  Switch
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.
 
+  (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
+                 an append (`out += [R { f: v, … }]`) is built INSIDE the appended
+                 element: the element is minted at the FIRST paired temp's
+                 declaration site (the mint claims the slot; the LENGTH BUMP stays
+                 at the append's finish, so the element is invisible until then —
+                 and a re-mint overwrites the same invisible slot), each temp is
+                 bound to the element's own field slot (a vector value IS the ref
+                 to its handle slot), the build targets it in place — an adopted
+                 callee then delivers its record DIRECTLY into the element — and
+                 the append site keeps its scalar sets and finish while the
+                 reservation, the mint, the paired handle-zeros and the paired
+                 copies vanish.  The invariant: every field is written before the
+                 finish — by the prelude mint's prefill, a paired build, or the
+                 kept sets.  Gates: declaration and append are top-level
+                 statements of ONE block (an if-arm append strands unfinished
+                 elements per skipped iteration); nothing between them mentions
+                 `out`; the temp's whole-function mentions reconcile to its build
+                 plus the one copy (a later read or a second consuming append
+                 declines — though an INTERVENING append merely reads the slot and
+                 the later one may pair); `out` an owned never-rebound plain
+                 vector of a plain-struct element.  The interpreter keeps the
+                 temp-store build and is the oracle.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

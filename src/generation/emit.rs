@@ -2479,6 +2479,136 @@ impl Output<'_> {
                 )?;
                 self.indent += 1;
             }
+            // @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first overrides: a paired
+            // temp's declaration becomes the element mint (first temp) plus a bind to
+            // the element's own field slot, and the append site loses its reservation,
+            // mint, paired handle-zeros and paired copies (scalar sets and the finish
+            // stay — the finish is the length bump that keeps the element invisible
+            // until the append).
+            if !self.elem_first.pairs.is_empty() {
+                let dvars = self.data.def(self.def_nr).variables();
+                let named = |d: &u32, n: &str| {
+                    (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
+                };
+                let uv = |x: Option<&Value>| match x.map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let ui = |x: Option<&Value>| match x.map(Value::unspan) {
+                    Some(Value::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                let mut handled = false;
+                match v.unspan() {
+                    // The temp's declaration site.
+                    Value::Call(d, args) if named(d, "OpDatabase") => {
+                        if let Some(vdb) = uv(args.first())
+                            && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
+                        {
+                            let pair = &self.elem_first.pairs[pi];
+                            let b = pair
+                                .binds
+                                .iter()
+                                .find(|b| b.vdb == vdb)
+                                .expect("by_vdb names a bind");
+                            let outn = sanitize(dvars.name(pair.out));
+                            let elmn = sanitize(dvars.name(pair.elm));
+                            let tmpn = sanitize(dvars.name(b.tmp));
+                            self.indent(w)?;
+                            if b.first {
+                                writeln!(
+                                    w,
+                                    "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration",
+                                    pair.prealloc_size, pair.out_tp
+                                )?;
+                                self.indent(w)?;
+                            }
+                            writeln!(
+                                w,
+                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {} }}; //@PLN157 § V-z field-slot bind",
+                                b.field_off
+                            )?;
+                            handled = true;
+                        }
+                    }
+                    // The declaration's bind and length reset are replaced above.
+                    Value::Set(_, x)
+                        if matches!(x.unspan(), Value::Call(d, cargs)
+                            if named(d, "OpGetField")
+                                && uv(cargs.first())
+                                    .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
+                    {
+                        handled = true;
+                    }
+                    Value::Call(d, args)
+                        if named(d, "OpSetInt4")
+                            && uv(args.first())
+                                .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
+                    {
+                        handled = true;
+                    }
+                    // The append site's reservation (only when the next statement is
+                    // the suppressed mint of an admitted element).
+                    Value::Call(d, args) if named(d, "OpPreAllocVector") => {
+                        if ui(args.get(1)) == Some(1)
+                            && let Some(next) = operators[vnr + 1..]
+                                .iter()
+                                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                            && let Value::Set(e2, m2) = next.unspan()
+                            && self.elem_first.by_elm.contains_key(e2)
+                            && matches!(m2.unspan(), Value::Call(md, margs)
+                                if named(md, "OpNewRecord")
+                                    && uv(margs.first()) == uv(args.first()))
+                        {
+                            handled = true;
+                        }
+                    }
+                    // The append site's mint.
+                    Value::Set(e2, m2)
+                        if self.elem_first.by_elm.contains_key(e2)
+                            && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
+                    {
+                        handled = true;
+                    }
+                    // Paired handle-zeros and paired copies on the element.
+                    Value::Call(d, args)
+                        if named(d, "OpSetInt4")
+                            && uv(args.first())
+                                .and_then(|e| self.elem_first.by_elm.get(&e))
+                                .is_some_and(|&pi| {
+                                    ui(args.get(1)).is_some_and(|off| {
+                                        self.elem_first.pairs[pi]
+                                            .binds
+                                            .iter()
+                                            .any(|b| b.field_off == off)
+                                    })
+                                }) =>
+                    {
+                        handled = true;
+                    }
+                    Value::Call(d, args)
+                        if named(d, "OpAppendVector")
+                            && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                            if named(gd, "OpGetField")
+                                && uv(gargs.first())
+                                    .and_then(|e| self.elem_first.by_elm.get(&e))
+                                    .is_some_and(|&pi| {
+                                        ui(gargs.get(1)).is_some_and(|off| {
+                                            self.elem_first.pairs[pi]
+                                                .binds
+                                                .iter()
+                                                .any(|b| b.field_off == off)
+                                        })
+                                    })) =>
+                    {
+                        handled = true;
+                    }
+                    _ => {}
+                }
+                if handled {
+                    continue;
+                }
+            }
             let lit_guard = match v.unspan() {
                 Value::Set(var, _)
                     if self.invariant_lits.wrapped.contains(var)

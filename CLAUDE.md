@@ -738,6 +738,11 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
+keep its temp-store build and deep copy again — with it off, a local vector consumed
+exactly once by one append is built INSIDE the appended element (minted at the temp's
+declaration, invisible until the finish's length bump) — and is the bisect step for a
+wrong vector field of an appended record on native.
 **`LOFT_NO_COMPLETE_WRITE=1`** (@PLN157 § V-y) makes every record keep its default
 prefill again — with it off, a literal group the emitter PROVES writes every field
 (declared defaults, sentinels, the variant tag included: the parser's lowering is

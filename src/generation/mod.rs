@@ -686,6 +686,14 @@ pub struct Output<'a> {
     /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
     /// record on native.
     pub complete_write_disabled: bool,
+    /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
+    /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
+    /// appended element instead of its own store.
+    pub elem_first: hoist::ElemFirstMap,
+    /// `LOFT_NO_ELEMENT_FIRST=1` — every record-literal field keeps its temp-store
+    /// build and deep copy, as before @PLN157 § V-z; the bisect step for a wrong
+    /// vector field of an appended record on native.
+    pub element_first_disabled: bool,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -1629,6 +1637,8 @@ impl<'a> Output<'a> {
             complete_writes: hoist::CompleteWrites::default(),
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
+            elem_first: hoist::ElemFirstMap::default(),
+            element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -1876,6 +1886,11 @@ impl Output<'_> {
             hoist::LitHoist::default()
         } else {
             hoist::invariant_literals(self.data, def_nr)
+        };
+        self.elem_first = if self.element_first_disabled {
+            hoist::ElemFirstMap::default()
+        } else {
+            hoist::element_first(self.data, def_nr)
         };
         self.complete_writes = if self.complete_write_disabled {
             hoist::CompleteWrites::default()
@@ -5569,6 +5584,11 @@ extern crate loft;"
                         // @PLN157 § V-x — an invariant literal's local is the once-flag
                         // of its own build guard, so it must outlive the loop body.
                         || self.invariant_lits.contains(v)
+                        // @PLN157 § V-z — an element-first pair's element is minted at
+                        // the first temp's declaration site, and each temp is bound
+                        // there to its field slot: both lose their in-place `let`.
+                        || self.elem_first.elms.contains(&v)
+                        || self.elem_first.pairs.iter().any(|p| p.binds.iter().any(|b| b.tmp == v))
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {

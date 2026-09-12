@@ -1532,12 +1532,12 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 61 | **12** | 49 |
+| 62 | **12** | 50 |
 
-(The three 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
-`flat_lit_member` and § V-y's `group_covers_type`, which match the parser's
-literal-build ops by name and DECLINE anything else — a missed spelling costs the
-optimisation, never correctness, so single-spelling is their design.)
+(The four 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
+`flat_lit_member`, § V-y's `group_covers_type` and § V-z's `element_first`, which match
+the parser's literal-build ops by name and DECLINE anything else — a missed spelling
+costs the optimisation, never correctness, so single-spelling is their design.)
 
 
 
@@ -2553,7 +2553,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 786 | 442 | 7 | **337** |
+| 787 | 444 | 6 | **337** |
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type` — the three new discriminating sites are all aware.)
