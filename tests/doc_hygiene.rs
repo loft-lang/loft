@@ -2840,6 +2840,136 @@ fn every_ignore_reason_says_how_it_runs() {
     );
 }
 
+/// Every subject's PATH pattern claims the sources it names — the map `--changed` reads.
+///
+/// loft#1520: `changed_filter` looped over `${!SUBJECT_PATHS[@]}`, an array nothing ever
+/// assigned, so it ran zero times and `--changed` never selected a subject by path.  The map was
+/// not missing — `subject_paths` carried it, complete, and was called by NOBODY.  Both the
+/// reference and the map were dead, and nothing noticed because the selection still produced a
+/// filterset: `tests/<x>.rs` and the corpus arms kept working, so a run looked targeted while a
+/// `src/` edit contributed nothing to it.
+///
+/// This is NOT the guard that catches that — measured: with the dead loop restored, this test
+/// still passes and `changed_selects_subjects_by_path` below is the one that fails.  A test
+/// that reads the map directly agrees with a caller that never reads it at all.  What this
+/// covers is the other half, the drifted pattern: a row naming a path that no longer exists
+/// claims nothing while still reading plausibly.
+///
+/// It is the sibling of the binary-pattern test further down: that one asks *which binaries
+/// does a subject own*, this asks *which subject owns a path*.
+#[test]
+fn every_subject_claims_the_paths_it_names() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // One representative source path per subject, chosen to be a file that exists — a pattern
+    // that stopped matching its own subsystem is the drift this pins.
+    let cells: &[(&str, &str)] = &[
+        ("src/parser/mod.rs", "parser"),
+        ("src/scopes.rs", "scopes"),
+        ("src/generation/hoist.rs", "codegen"),
+        ("src/state/mod.rs", "runtime"),
+        ("src/store.rs", "store"),
+        ("src/lsp.rs", "lsp"),
+        ("src/ffi_deliver.rs", "wasm"),
+        ("src/engine_host.rs", "host"),
+        ("doc/claude/TESTING.md", "docs"),
+    ];
+    for (path, want) in cells {
+        assert!(
+            root.join(path).exists(),
+            "{path} no longer exists — pick another representative for `{want}`, \
+             or the cell stops measuring the pattern"
+        );
+        let script = format!(
+            "source scripts/test_subjects.sh; for n in $SUBJECT_NAMES; do \
+             p=$(subject_paths \"$n\") || continue; \
+             [[ \"{path}\" =~ $p ]] && echo \"$n\"; done"
+        );
+        let out = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .current_dir(root)
+            .output()
+            .expect("bash + scripts/test_subjects.sh");
+        let got = String::from_utf8_lossy(&out.stdout);
+        let hits: Vec<&str> = got.split_whitespace().collect();
+        assert!(
+            hits.contains(want),
+            "`{path}` must be claimed by subject `{want}`, got {hits:?} — \
+             `--changed` selects by this map, so an unclaimed source path means an edit there \
+             runs no targeted suite (loft#1520)"
+        );
+    }
+
+    // And every subject owns a row at all.  `host` had none — it was not a drifted pattern but
+    // a missing one, which the per-cell loop above cannot see, since a subject with no row is
+    // simply never a candidate answer.  A subject that selects binaries by name but claims no
+    // path is unreachable from `--changed` by construction.
+    let script = "source scripts/test_subjects.sh; \
+                  for n in $SUBJECT_NAMES; do subject_paths \"$n\" >/dev/null || echo \"$n\"; done";
+    let out = std::process::Command::new("bash")
+        .args(["-c", script])
+        .current_dir(root)
+        .output()
+        .expect("bash + scripts/test_subjects.sh");
+    let missing = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        missing.trim().is_empty(),
+        "these subjects have no `subject_paths` row, so no source edit can ever select them: {}",
+        missing.trim()
+    );
+}
+
+/// `--changed` actually selects by path — the guard that would have caught loft#1520.
+///
+/// The cell test above checks the MAP; this checks the one caller that reads it, and only the
+/// second one could have failed on the broken build.  `changed_filter` looped over
+/// `${!SUBJECT_PATHS[@]}`, an array nothing assigned, so the map was correct and unreachable at
+/// the same time — a guard that reads `subject_paths` directly agrees with a dead caller.
+///
+/// `changed_paths` is redefined after sourcing, so the diff under test is a literal list rather
+/// than whatever the working tree happens to hold.  The second cell is the fail-safe control:
+/// an unclaimed `src/` path beside a test file must widen the run, because the false green the
+/// issue named is precisely that the test file narrows it alone.
+#[test]
+fn changed_selects_subjects_by_path() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let run = |diff: &[&str]| -> (bool, String, String) {
+        let list = diff.join(" ");
+        let script = format!(
+            "source scripts/test_subjects.sh; changed_paths() {{ printf '%s\\n' {list}; }}; \
+             changed_filter HEAD"
+        );
+        let out = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .current_dir(root)
+            .output()
+            .expect("bash + scripts/test_subjects.sh");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+
+    let (ok, stdout, stderr) = run(&["src/parser/mod.rs"]);
+    assert!(
+        ok && stderr.contains("subjects parser"),
+        "a parser edit must select the `parser` subject; got rc={ok} stderr={stderr:?} \
+         stdout={stdout:?} (loft#1520)"
+    );
+    assert!(
+        stdout.contains("binary(parse_errors)"),
+        "the selected subject must reach its binaries, not just name itself: {stdout:?}"
+    );
+
+    let (ok, stdout, stderr) = run(&["src/json.rs", "tests/wrap.rs"]);
+    assert!(
+        !ok && stderr.contains("no subject claims src/json.rs"),
+        "an unclaimed `src/` path must widen the run — otherwise the test file beside it \
+         narrows the selection to itself and reports a targeted pass; got rc={ok} \
+         stderr={stderr:?} stdout={stdout:?}"
+    );
+}
+
 /// @PLN159 phase H — every test binary belongs to a subject.
 ///
 /// `scripts/find_problems.sh --subject <name>` and `--changed` select binaries through

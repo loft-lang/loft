@@ -29,7 +29,7 @@
 # ── The excluded eight ──────────────────────────────────────────────────────
 # Each is slow-and-few: minutes of wall time for a handful of tests.  Kept OUT of
 # the default and pulled back IN automatically when a change touches what they
-# cover (see SUBJECT_PATHS).  `--full` always runs them.
+# cover (see `subject_paths`).  `--full` always runs them.
 HEAVY_BINARIES=(
   deliver_wasm         # 1011s /  17 tests — cross-target delivery matrix
   ir_schema_roundtrip  #  360s /   8 tests — IR codec over every tests/scripts file
@@ -96,9 +96,23 @@ subject_patterns() {
 }
 
 # ── Which subjects a changed PATH belongs to ────────────────────────────────
-# Used by the default run to pull an excluded heavyweight back in.  A path that
-# matches NOTHING widens to `--full` rather than narrowing — the fail-safe
-# direction, since an unknown path is exactly where a guess is least reliable.
+# Used by `--changed` to add the subjects a diff's SOURCE files belong to, and by the default
+# run to pull an excluded heavyweight back in.
+#
+# The map is deliberately PARTIAL, and the fallback is what makes partial safe: a `src/` path
+# no row claims widens the whole run to the curated set rather than letting the diff's other
+# paths narrow it.  Measured 2026-09-12 over the last 400 commits — 264 touch `src/*.rs`, and
+# 84 of those (32%) are claimed end to end and get a targeted run; the other 68% take the
+# honest fallback.  That is the whole trade: the rows cover the hot core (parser, scopes,
+# codegen, runtime, store), and a file nobody has mapped costs breadth, never a false green.
+#
+# ⚠ An alternative naming a path that does not exist matches nothing and costs the subject
+# silently — three had drifted when `changed_filter` was first wired to read this map
+# (loft#1520): `^src/lsp/` (the source is `src/lsp.rs`, a FILE), `^src/deliver` (moved to
+# `src/ffi_deliver.rs`) and `^lib/graphics/` (that library lives in its own repo).  The map
+# read plausibly and claimed nothing.  `doc_hygiene::every_subject_claims_the_paths_it_names`
+# pins one existing representative per subject, and asserts the file exists before matching —
+# a cell pointed at a deleted path stops measuring the pattern instead of failing.
 subject_paths() {
   case "$1" in
     (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/' ;;
@@ -106,11 +120,12 @@ subject_paths() {
     (codegen)  echo '^src/generation/|^src/compile\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs' ;;
     (store)    echo '^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs' ;;
-    (wasm)     echo '^src/wasm|^src/html|^src/deliver|^lib/graphics/' ;;
+    (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
     (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_' ;;
-    (lsp)      echo '^src/lsp/' ;;
+    (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
+    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs' ;;
     (*)        return 1 ;;
   esac
 }
@@ -176,7 +191,7 @@ unmatched_binaries() {
   done
 }
 
-# @PLN159 phase D — the subjects a DIFF touches, read off the SUBJECT_PATHS map above.
+# @PLN159 phase D — the subjects a DIFF touches, read off the `subject_paths` map above.
 #
 # `changed_paths [ref]` lists what differs from `ref` (default HEAD: the uncommitted
 # edits, untracked files included).  `changed_filter [ref]` maps them to a nextest
@@ -192,12 +207,17 @@ changed_paths() {
 }
 
 changed_filter() {
-  local ref="${1:-HEAD}" paths p n b
+  local ref="${1:-HEAD}" paths p n b pat
   paths=$(changed_paths "$ref")
   [[ -n "$paths" ]] || { echo "changed: nothing differs from $ref" >&2; return 1; }
-  local -A seen=() subs=()
+  # Space-delimited membership strings, not `declare -A`.  This function is the one place the
+  # associative form outlived the bash-3.2 fix above, so `--changed` still died on a Mac with
+  # `seen: bad array subscript` long after `--subject` was portable there.  Same reason, same
+  # spelling as SUBJECT_NAMES; the string also gives the subject list a deterministic order,
+  # which the hash did not.
+  local seen=" " subs=" "
   local -a parts=()
-  local wide=""
+  local wide="" unclaimed=""
   while IFS= read -r p; do
     [[ -n "$p" ]] || continue
     case "$p" in
@@ -205,27 +225,50 @@ changed_filter() {
         wide="$p" ;;
       tests/scripts/*.loft|tests/docs/*.loft)
         for b in wrap native ir_schema_roundtrip; do
-          [[ -z "${seen[$b]:-}" ]] && { seen[$b]=1; parts+=("binary($b)"); }
+          [[ "$seen" == *" $b "* ]] || { seen="$seen$b "; parts+=("binary($b)"); }
         done ;;
       tests/*.rs)
         b=$(basename "$p" .rs)
-        [[ -f "tests/$b.rs" && -z "${seen[$b]:-}" ]] && { seen[$b]=1; parts+=("binary($b)"); } ;;
+        if [[ -f "tests/$b.rs" && "$seen" != *" $b "* ]]; then
+          seen="$seen$b "; parts+=("binary($b)")
+        fi ;;
     esac
-    for n in "${!SUBJECT_PATHS[@]}"; do
-      [[ "$p" =~ ${SUBJECT_PATHS[$n]} ]] && subs[$n]=1
+    # loft#1520 — this loop asked `${!SUBJECT_PATHS[@]}`, an array NOTHING ever assigned, so it
+    # ran zero times and `--changed` never selected a subject by path: editing
+    # `src/parser/mod.rs` did not select `parser`.  The map was not missing, only unreachable —
+    # `subject_paths` above carries it, complete, and was called by nobody.  Read it by NAME,
+    # the spelling every other caller of the map already uses.
+    local matched=""
+    for n in $SUBJECT_NAMES; do
+      pat=$(subject_paths "$n") || continue
+      if [[ "$p" =~ $pat ]]; then
+        matched=1
+        [[ "$subs" == *" $n "* ]] || subs="$subs$n "
+      fi
     done
+    # The fail-safe the map's own header asks for, and the false green the issue named: a SOURCE
+    # path no subject claims would otherwise ride along in silence while the selection was
+    # driven by some OTHER path in the same diff — `tests/scripts/x.loft` plus an unmapped
+    # `src/` edit selected the corpus runners alone and reported a targeted run.  Widening is
+    # the safe direction; `host` has no path row at all, so this is a live arm, not a
+    # hypothetical one.
+    [[ -z "$matched" && "$p" == src/* ]] && unclaimed="$p"
   done <<<"$paths"
   if [[ -n "$wide" ]]; then
     echo "changed: the diff touches $wide, which every binary depends on — running the curated set" >&2
     return 1
   fi
+  if [[ -n "$unclaimed" ]]; then
+    echo "changed: no subject claims $unclaimed — running the curated set" >&2
+    return 1
+  fi
   local f
-  for n in "${!subs[@]}"; do
+  for n in $subs; do
     f=$(subject_filter "$n") || continue
     parts+=("$f")
   done
   [[ ${#parts[@]} -gt 0 ]] || { echo "changed: nothing in the diff maps to a subject — running the curated set" >&2; return 1; }
-  [[ ${#subs[@]} -gt 0 ]] && echo "changed: subjects ${!subs[*]}" >&2
+  [[ -n "${subs// /}" ]] && echo "changed: subjects${subs% }" >&2
   local joined
   joined=$(IFS='+'; echo "${parts[*]}")
   echo "${joined//+/ + }"

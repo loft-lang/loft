@@ -1581,8 +1581,20 @@ Measured before the guard: 80 of 261 binaries matched nothing, so a source-side 
 same commit; the failure message names the binary.
 
 `--changed` is the same map read from the other side: `scripts/test_subjects.sh`'s
-`SUBJECT_PATHS` maps a source PATH to a subject, so the diff picks the subjects, an edited
+`subject_paths` maps a source PATH to a subject, so the diff picks the subjects, an edited
 `tests/<name>.rs` picks its own binary, and an edited corpus file picks the three corpus runners.
+
+That map is deliberately **partial**, and its fallback is what makes partial safe: a `src/` path
+no row claims widens the whole run to the curated set instead of letting the diff's other paths
+narrow it.  Measured 2026-09-12 over 400 commits — of the 264 touching `src/*.rs`, 84 (32 %) are
+claimed end to end and get a targeted run, and the rest take the fallback.  The rows cover the
+hot core (parser, scopes, codegen, runtime, store), so an unmapped file costs breadth, never a
+false green.  Two guards hold it up and they fail on different things:
+`doc_hygiene::every_subject_claims_the_paths_it_names` reads the map and catches a row whose
+pattern has drifted off a moved file, while `changed_selects_subjects_by_path` runs
+`changed_filter` itself against a synthetic diff.  Only the second catches a map nothing reads —
+loft#1520 was exactly that, a loop over an array nobody assigned, and the first test passes on
+that build.
 `make ci` uses the same mapping for ORDER only — `scripts/nextest_priority.sh` hands nextest a
 `priority` override so the diff's binaries run first and a red gate says so in its first minute
 (the gate is fail-fast); what runs is unchanged.
