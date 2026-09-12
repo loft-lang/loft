@@ -198,10 +198,23 @@ def main() -> None:
         clauses.append(f"not ({CORPUS})")
     elif shard == "corpus":
         clauses.append(f"({CORPUS})")
-    elif shard in ("rest", "rest-a", "rest-b"):
+    elif shard in ("rest", "rest-a", "rest-b", "rest-c"):
+        # `rest-a/b/c` are ONE filterset, split by `nextest --partition hash:i/3` in the
+        # workflow rather than by a named list here.  The list-based half (REST_HEAVY_HALF,
+        # kept below for the record) could not hold: its light side is the COMPLEMENT, so
+        # every binary added to the repo landed there and the balance decayed in one
+        # direction — measured 1.2 % apart when written and 82 % apart three weeks later.
+        # A partition cannot drift, because nothing has to be maintained.
+        #
+        # ci.yml records that hash partitioning was tried across the WHOLE suite and
+        # reverted, for a reason that does not reach here: it scattered the single-slot
+        # serial groups across shards, pinning each to a serial floor.  Every such group
+        # now lives whole in `heavy`, so `rest` has none left to scatter — the same
+        # argument that admitted the duration split, applied one step further.  And the
+        # partition is over TESTS, not binaries, so a 765-second binary spreads across all
+        # three legs instead of pinning one.
         clauses.append(f"not ({serial_boundary()})")
-        if shard != "rest":
-            clauses.append(rest_half(shard == "rest-a"))
+        clauses.append(f"not ({CORPUS})")
     elif shard is not None:
         raise SystemExit(
             f"unknown shard '{shard}' (expected 'heavy', 'corpus', 'rest', 'rest-a' or 'rest-b')"

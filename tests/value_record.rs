@@ -34,7 +34,11 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // § V-aa is OPT-IN (see `hoist::value_record_disabled`): its gates do not hold
+        // across the script corpus, so the default build keeps the return buffer.  These
+        // tests are what the unit is developed against, so they ask for it explicitly.
+        .env("LOFT_VALUE_RECORD", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -85,13 +89,16 @@ fn each_cell_returns_by_value_exactly_where_predicted() {
 }
 
 #[test]
-fn the_switch_restores_the_return_buffer() {
+fn the_default_build_keeps_every_return_buffer() {
     let out = std::env::temp_dir().join("loft_value_record_off.rs");
-    let rust = emit(&cells(), &out, &[("LOFT_NO_VALUE_RECORD", "1")]);
+    // The unit is OPT-IN, so asking for nothing is the off state: `emit` sets
+    // LOFT_VALUE_RECORD=1 and this overrides it back to 0.  Pinning the DEFAULT here (not
+    // just "a switch turns it off") is the point — it is what a user's build does.
+    let rust = emit(&cells(), &out, &[("LOFT_VALUE_RECORD", "0")]);
     for (name, _) in EXPECTED {
         assert!(
             !returns_tuple(&rust, name),
-            "{name}: under LOFT_NO_VALUE_RECORD=1 every record return keeps its buffer"
+            "{name}: the default build keeps its return buffer (§ V-aa is opt-in)"
         );
     }
     let _ = std::fs::remove_file(&out);

@@ -3536,7 +3536,17 @@ pub struct ValueRecords {
     pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
 }
 
-/// `LOFT_NO_VALUE_RECORD=1` restores the return buffer for every record return — the
+/// WARNING - OPT-IN as of 2026-09-12 (`LOFT_VALUE_RECORD=1`), not default-on.  The
+/// admission gates do not hold across the script corpus: sites survive that use the
+/// result AS A DbRef (rustc: no field store_nr on type (f64,)), that pass a buffer
+/// argument to a signature which dropped it, and that join a tuple arm with a record arm
+/// in one `match` - each one a generated crate that does not compile.  Gate (2) claims
+/// EVERY call site consumes the result by reading fields off a local it binds; the corpus
+/// says otherwise.  Until that gate is proven against the corpus rather than against nine
+/// hand-written cells, the unit is worth -2.9 % on one bench row against a compiler that
+/// cannot build real programs.  Turn it on to work on it; the tests pass it explicitly.
+///
+/// The old switch restored the return buffer for every record return — the
 /// bisect step for a wrong field out of a record-returning call on native.
 ///
 /// The library integration the opt-in phase existed for is closed: a cdylib bridge now
@@ -3545,7 +3555,7 @@ pub struct ValueRecords {
 /// while loft-to-loft calls inside the library take the value path.
 fn value_record_disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("LOFT_NO_VALUE_RECORD").is_ok_and(|v| v != "0"))
+    *F.get_or_init(|| !std::env::var("LOFT_VALUE_RECORD").is_ok_and(|v| v != "0"))
 }
 
 /// The scalar field kinds a register tuple can carry: no heap, no collection, no nested
