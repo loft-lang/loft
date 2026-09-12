@@ -1,0 +1,66 @@
+// @PLN157 § V-u × § V-j composition leak — axis probe.
+//   A: the move-append runs ONCE per call        (`build_once`)
+//   B: the move-append runs in a LOOP per call   (`build_loop`)
+//   C: the producer is the function itself       (`build_rec`, recursive)
+struct Leaf {
+  lv: vector<float>,
+}
+
+fn sub(k: integer) -> vector<Leaf> {
+  sb_out: vector<Leaf> = [];
+  for i in 0..k { sb_out += [Leaf { lv: [(i as float), 2.0] }]; }
+  sb_out
+}
+
+fn build_once(k: integer) -> vector<Leaf> {
+  b1_out: vector<Leaf> = [];
+  for i in 0..k { b1_out += [Leaf { lv: [(i as float), 1.0] }]; }
+  for f in sub(k) { b1_out += [f]; }
+  b1_out
+}
+
+fn build_loop(k: integer) -> vector<Leaf> {
+  b2_out: vector<Leaf> = [];
+  for i in 0..k { b2_out += [Leaf { lv: [(i as float), 1.0] }]; }
+  b2_base = len(b2_out);
+  for j in 0..b2_base {
+    for f in sub(4) { b2_out += [f]; }
+  }
+  b2_out
+}
+
+fn build_rec(k: integer, depth: integer) -> vector<Leaf> {
+  b3_out: vector<Leaf> = [];
+  for i in 0..k { b3_out += [Leaf { lv: [(i as float), 1.0] }]; }
+  if depth <= 1 { return b3_out }
+  b3_base = len(b3_out);
+  for j in 0..b3_base {
+    for f in build_rec(4, depth - 1) { b3_out += [f]; }
+  }
+  b3_out
+}
+
+fn main() {
+  mn_n = 2000;
+  mn_which = "once";
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    if mn_args[mn_i]? == "--which" && mn_i + 1 < len(mn_args) {
+      mn_which = mn_args[mn_i + 1]?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  mn_sink = 0;
+  for _r in 0..mn_n {
+    if mn_which == "once" { mn_sink += len(build_once(24)); }
+    if mn_which == "loop" { mn_sink += len(build_loop(24)); }
+    if mn_which == "rec"  { mn_sink += len(build_rec(24, 2)); }
+  }
+  println("sink " + mn_sink.to_text());
+}

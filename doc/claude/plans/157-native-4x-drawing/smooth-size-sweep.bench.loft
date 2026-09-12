@@ -457,6 +457,86 @@ fn bench_probe(n: integer, np: integer, literal: boolean, nm: text) -> Row {
         sink: pb_sink }
 }
 
+
+/// `fronds` at a chosen count and depth — the SIZE axis (scratch only).
+fn bench_fronds_n(n: integer, cnt: integer, dep: integer, nm: text) -> Row {
+  fn_sp = drawing::FrondSpec { count: cnt, len1: 0.1, len2: 0.1, wid1: 3.0, wid2: 3.0,
+              ang1: 30.0, ang2: 30.0, mirror: false, jitter: 0.5, clump: 0.6, fray: 0.4,
+              bow: 0.0, seed: 1, depth: dep, sub: 0.32 };
+  fn_t0 = ticks();
+  fn_sink = 0;
+  for _r in 0..n {
+    fn_out = fronds(0.1, 0.5, 0.9, 0.5, fn_sp, 256, 256);
+    fn_sink += len(fn_out);
+  }
+  fn_us = ticks() - fn_t0;
+  fn_one = fronds(0.1, 0.5, 0.9, 0.5, fn_sp, 256, 256);
+  fn_px = 0;
+  for f in fn_one { fn_px += len(f.fpts); }
+  Row { name: nm, iters: n, us: fn_us, px: fn_px, hash: fnv_fronds(fn_one), sink: fn_sink }
+}
+
+
+/// Does one PROCESS get slower as it repeats `fronds`?  Times the first 50 and
+/// the last 50 iterations of the same run, so store state is the only variable
+/// (scratch only).
+fn bench_fronds_phase(n: integer) {
+  fp_sp = frond_spec();
+  fp_sink = 0;
+  fp_first = 0;
+  fp_last = 0;
+  for _w in 0..300 {
+    fp_w = fronds(0.1, 0.5, 0.9, 0.5, fp_sp, 256, 256);
+    fp_sink += len(fp_w);
+  }
+  fp_t0 = ticks();
+  for _a in 0..50 {
+    fp_o = fronds(0.1, 0.5, 0.9, 0.5, fp_sp, 256, 256);
+    fp_sink += len(fp_o);
+  }
+  fp_first = ticks() - fp_t0;
+  for _b in 0..n {
+    fp_o2 = fronds(0.1, 0.5, 0.9, 0.5, fp_sp, 256, 256);
+    fp_sink += len(fp_o2);
+  }
+  fp_t1 = ticks();
+  for _c in 0..50 {
+    fp_o3 = fronds(0.1, 0.5, 0.9, 0.5, fp_sp, 256, 256);
+    fp_sink += len(fp_o3);
+  }
+  fp_last = ticks() - fp_t1;
+  fp_one = fronds(0.1, 0.5, 0.9, 0.5, fp_sp, 256, 256);
+  print_row(Row { name: "fr_first50", iters: 50, us: fp_first, px: 1296,
+                  hash: fnv_fronds(fp_one), sink: fp_sink });
+  print_row(Row { name: "fr_last50", iters: 50, us: fp_last, px: 1296,
+                  hash: fnv_fronds(fp_one), sink: fp_sink });
+}
+
+
+/// Ten consecutive blocks of 50 `fronds` calls, after a CPU warm-up that touches
+/// NO store — so the only thing changing across blocks is the store's own state
+/// (scratch only).
+fn bench_fronds_blocks() {
+  fb_sp = frond_spec();
+  fb_spin = 0.0;
+  fb_i = 0;
+  while fb_i < 40000000 {
+    fb_spin += (fb_i as float) * 0.5;
+    fb_i += 1;
+  }
+  fb_sink = 0;
+  if fb_spin < 0.0 { fb_sink += 1; }
+  for b in 0..40 {
+    fb_t = ticks();
+    for _j in 0..50 {
+      fb_o = fronds(0.1, 0.5, 0.9, 0.5, fb_sp, 256, 256);
+      fb_sink += len(fb_o);
+    }
+    fb_us = ticks() - fb_t;
+    print_row(Row { name: "blk", iters: 50, us: fb_us, px: b, hash: 0, sink: fb_sink });
+  }
+}
+
 fn main() {
   mn_n = 20;
   mn_only = "";
@@ -485,6 +565,18 @@ fn main() {
   if mn_only == "smooth_48" { print_row(bench_smooth_n(mn_n, 48, "smooth_48")); }
   if mn_only == "smooth_96" { print_row(bench_smooth_n(mn_n, 96, "smooth_96")); }
   if mn_only == "smooth_192" { print_row(bench_smooth_n(mn_n, 192, "smooth_192")); }
+  if mn_only == "fr_6_2" { print_row(bench_fronds_n(mn_n, 6, 2, "fr_6_2")); }
+  if mn_only == "fr_12_2" { print_row(bench_fronds_n(mn_n, 12, 2, "fr_12_2")); }
+  if mn_only == "fr_24_2" { print_row(bench_fronds_n(mn_n, 24, 2, "fr_24_2")); }
+  if mn_only == "phase" { bench_fronds_phase(mn_n); }
+  if mn_only == "blocks" { bench_fronds_blocks(); }
+  if mn_only == "fr_48_2" { print_row(bench_fronds_n(mn_n, 48, 2, "fr_48_2")); }
+  if mn_only == "fr_96_2" { print_row(bench_fronds_n(mn_n, 96, 2, "fr_96_2")); }
+  if mn_only == "fr_24_1" { print_row(bench_fronds_n(mn_n, 24, 1, "fr_24_1")); }
+  if mn_only == "fr_48_1" { print_row(bench_fronds_n(mn_n, 48, 1, "fr_48_1")); }
+  if mn_only == "fr_96_1" { print_row(bench_fronds_n(mn_n, 96, 1, "fr_96_1")); }
+  if mn_only == "fr_192_1" { print_row(bench_fronds_n(mn_n, 192, 1, "fr_192_1")); }
+  if mn_only == "fr_384_1" { print_row(bench_fronds_n(mn_n, 384, 1, "fr_384_1")); }
   if mn_only == "call_6" { print_row(bench_probe(mn_n, 6, false, "call_6")); }
   if mn_only == "lit_6" { print_row(bench_probe(mn_n, 6, true, "lit_6")); }
   if mn_only == "call_192" { print_row(bench_probe(mn_n, 192, false, "call_192")); }

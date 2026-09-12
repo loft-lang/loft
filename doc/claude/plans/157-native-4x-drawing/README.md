@@ -136,6 +136,80 @@ callee-writes-into-the-slot rewrite (the § V-p twin / § V-u adoption idea, app
 scalar record return) is worth ~30 % of this loop.  It would NOT close the row on its
 own: the literal form is still 18.1 ns/point against rust's 4.05.
 
+### `fronds` run down — TWO memory leaks, and § V-j is currently a net negative
+
+Run down the same way as `smooth`, on x86-64.  The reference lane was cleared first
+(`.len()` sink → consume one produced coordinate → consume all of them: **48 812 →
+48 518 → 51 882** ns/op, so no dead-code elimination and the comparison is fair), and
+at 16 ms per timing the row is clear of the frequency ramp that contaminates `smooth`.
+
+**1. The measured ratio was wrong, in the honest direction.**  At `--n 5000`,
+median-of-10: loft **421 264** vs rust **50 126** ns/op — **8.4×**, not the 6.20× the
+`--n 50` table reports.  Both lanes carry ~12–15 % run-to-run spread on this box, so
+single runs at either `n` are not decisive; the medians are.
+
+**2. `fronds` LEAKS on `--native-release`: ~357 KB per call, unbounded.**  Max RSS is
+linear in the iteration count — 348 MB at n=1 000, 611 MB at 2 000, 1.42 GB at 4 000,
+3.30 GB at 8 000, and **7.7 GB at 20 000** on a 14 GiB box.  This is the row a consumer
+calls once per frame.
+
+**3. The native leak is a COMPOSITION defect between two shipped units of this plan.**
+Each is sound alone; together they leak:
+
+| config | KB leaked per call |
+|---|---|
+| baseline (§ V-u and § V-j both on) | **356.7** |
+| `LOFT_NO_RETBUF_ADOPT=1` (§ V-u off) | 0.5 |
+| `LOFT_NO_MOVE_APPEND=1` (§ V-j off) | 0.2 |
+| both off | −1.0 |
+
+`fronds` is exactly the shape that meets both: it is self-recursive, its result local
+adopts the return buffer (§ V-u shape A), and the recursion appends a dying temporary's
+elements — `for f in fronds(..) { fd_out += [f] }` — 24 times per call (§ V-j).  The
+switch documentation already anticipated this failure mode: CLAUDE.md gives
+`LOFT_NO_MOVE_APPEND=1` as the bisect step for *"a wrong element, a leak or a double
+free out of a loop that appends a dying temporary's elements."*
+
+**4. What the leak costs in TIME — § V-j is currently a net negative.**  The store's
+free structure degrades as the footprint grows, so the cost is not only memory.  Timing
+consecutive blocks of 50 calls in one process, after a non-allocating CPU warm-up, gives
+a steady state of ~257 k ns/op punctuated by deterministic spikes at blocks **0, 2, 5,
+12, 29** — each interval ~2.4× the last, each spike bigger: 454 k, 568 k, 929 k,
+1 938 k, **5 219 k** ns/op.  The last is **20× the steady state**: geometric growth with
+a full copy, which in a game is a frame-time hitch that gets worse the longer the
+process runs.  Turning the leak off is therefore FASTER, at n=5 000:
+
+| config | ns/op | leaks |
+|---|---|---|
+| baseline | 387 953 | yes |
+| `LOFT_NO_RETBUF_ADOPT=1` | 372 349 (−4 %) | no |
+| `LOFT_NO_MOVE_APPEND=1` | **328 637 (−15 %)** | no |
+
+**So the first `fronds` improvement is not a new optimisation — it is repairing or
+reverting § V-j's composition with § V-u.**  It is worth −15 % and 357 KB/call before
+any new work is ranked, and it moves the row from 8.4× to ~7.1×.
+
+**5. A SECOND, independent leak on the interpreter: ~92 KB per call.**  Max RSS 32 →
+52 → 85 → 163 MB at n = 100/400/800/1 600, linear, and **neither switch changes it**
+(68.1 / 66.1 / 68.1 KB per call).  So this is not the composition defect wearing another
+hat; it is a separate interpreter-side leak in the same routine, and native with either
+switch off (0.2–0.5 KB/call) is cleaner than the interpreter.  It has not been narrowed
+further.
+
+**Reduction status — honest:** `leak2.loft` (kept beside this plan) reproduces *a* leak
+in all three shapes (move-append once / in a loop / self-recursive) on both backends,
+but at 4.6–10.7 KB per call, and the switches do NOT clear it there.  So it is the
+interpreter-side leak, not a faithful reduction of the native composition defect.  The
+clean attribution above stands on `fronds` itself; a minimal native repro is still owed.
+
+**What remains after the leaks, for ranking.**  The size sweep (count 6→96 at depth 2,
+24→384 at depth 1; the `fr_*` cells) puts the per-frond cost at **~550–670 ns against
+rust's ~70–80** with no fixed-cost term worth naming — the same per-element shape as
+`smooth`.  The allocation profile (claim 9.1 %, free-list tree 14.8 %, vector
+append/finish 6.9 %) is real but should be RE-TAKEN once the leaks are closed: it was
+measured on a run whose store was growing without bound, so the free-tree's share is
+inflated by the defect rather than by the steady-state algorithm.
+
 **The three newest units were A/B'd on this box and all three pay here too** (each
 variant a fresh `bench/.loft` — the program cache is keyed on the SOURCE, so an
 env-gated emitter change is otherwise served the previous variant's binary; best of 3,
