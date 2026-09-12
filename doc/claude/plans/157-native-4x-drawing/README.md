@@ -273,6 +273,21 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
+**`lock_curved` IS NOT AN ALLOCATION ROW — profiled 2026-09-12, and it names ONE target.**
+77.9 % of samples are the program's own code (`n_lock_layer` 77.6 %), allocator 6.8 %.
+The resolve loop is fully hoisted already (8 headers, 7 invariant scalars, 7 hoisted
+element reads); the ONLY per-pixel store traffic left is `brush_sample` returning a
+four-float RECORD — four writes into the return buffer, four reads back.  Measured
+against the tuple return that carries the same four values: **2.1–2.4×** (29.5–33.0 ms vs
+13.8–14.1 ms per 3 M calls), ~10–15 % of the row, and the SAME class the x86 lane named as
+`smooth`'s cause (27–35 % there) — **one unit moves both**.  The mechanism exists for
+tuples (`-> (f64, f64, f64, f64)`, in registers, no buffer); a no-heap record return
+should ride it.  Scoped in four steps with its blocker (the live-dispatch fallback returns
+`DbRef`) in [DESIGN.md § lock_curved profiled](DESIGN.md).  Two hypotheses killed there
+too: the per-call bookkeeping costs nothing (rustc inlines same-crate calls — an earlier
+"1.3 ns/call" claim from this session is retracted), and cross-library loft calls inline
+normally (only a library's Rust parts are dylibs).
+
 **ZERO-ON-CLAIM: 29 DEPENDENT → 6, AND NATIVE NEEDS IT NOT AT ALL (owner's ruling,
 2026-09-12): fix the callers that rely on zeros rather than paying the memset on every
 claim.**  First fix landed — both `OpDatabase` paths now initialise the record they mint

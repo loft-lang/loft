@@ -1707,6 +1707,57 @@ freed, so nothing can dangle, and the free/claim churn disappears rather than be
 cheaper (which is what the reverted size-class recycler was trying to buy, and what most of
 the 39.7 % allocator class actually is).  That is the better unit to build first.
 
+## lock_curved profiled at last, and it names ONE target (2026-09-12)
+
+**The first profile this row has ever had** (`sample`, 10 301 in-process samples,
+`--only lock_curved --n 20000`): **77.9 % is the program's own loft code**
+(`n_lock_layer` alone 77.6 %), allocator 6.8 %, vector ops 5.8 %.  Nothing like `fronds`
+— this row is not allocation-bound, and the allocator work queued for `fronds` will not
+move it.
+
+**The hot loop's per-pixel store traffic is FOUR reads, and they are all one thing.**  The
+resolve loop already has everything the hoist family can give it: 8 vector headers and 7
+invariant scalars hoisted into the prelude (`__vh_31..38`, `__vs_39..45`), 7 element reads
+through `get_elem_hoisted`.  What remains per pixel is `brush_sample` returning a
+four-float `Smp` RECORD: the callee writes four floats into the return buffer, the caller
+reads four back.  (A first count said eleven reads; seven of those were the prelude,
+which runs once per loop.  The corrected count is what this section is about.)
+
+**Measured, three ways.**  A record-returning call against a scalar-returning one:
+**33.0/29.5 ms vs 6.4/5.6 ms** per 3 M calls.  Against a TUPLE-returning one, which is
+the honest comparison because it carries the same four values: **29.5–33.0 ms vs
+13.8–14.1 ms — 2.1–2.4×**.  For `lock_curved` that call is ~10–15 % of the row on its own
+at ~60 ns/pixel, and it is the same class the x86 lane named as `smooth`'s cause (a
+record-returning call per output point, 27–35 % there).  **One unit moves both rows.**
+
+**The mechanism already exists — for tuples.**  `fn mk_tup(v) -> (float, float, float,
+float)` emits as `fn n_mk_tup(cell, var_v: f64) -> (f64, f64, f64, f64)`: in registers, no
+buffer, no store.  `rust_type(Type::Tuple, …)` maps straight to a Rust tuple and the rest
+of the emitter carries it.  A no-heap record return should ride that path.
+
+**What the unit needs** (scoped, not started — it is a multi-session codegen change and
+the cells come first):
+1. the SIGNATURE of an admitted fn: `(f64, …)` instead of `DbRef`, and no `__retbuf`
+   parameter;
+2. the callee's `Object` block: build the Rust tuple instead of writing the buffer;
+3. every CALL SITE: bind the tuple and rewrite each `OpGetField(result, off)` into a tuple
+   index read — plus a MATERIALISATION fallback wherever a real record is needed (stored
+   into a collection, passed on, returned), which costs exactly what today costs, so a
+   declining site cannot regress;
+4. the blocker to solve first: the `live_dispatch::live_flipped` fallback arm returns
+   `live_call_ref(…) -> DbRef` for a record-returning fn, so the value path needs its own
+   arm or the admission must exclude live-dispatchable functions.
+Gate: a PLAIN no-heap struct, all scalar fields, small field count.
+
+**Two hypotheses killed on the way, so nobody re-chases them.**  (a) The per-call
+bookkeeping (`live_flipped`, `cr_call_push`, `CallGuard`) is NOT a cost: on a quiet box a
+call-in-a-loop and its hand-inlined twin measure identical (35.4 ms both) — rustc inlines
+same-crate loft calls, bookkeeping included.  An earlier "1.30 ns per call" from this
+session was a contaminated measurement and is retracted.  (b) Cross-library calls are not
+the issue either: only a library's RUST parts are dylibs
+(`libloft_graphics_native.dylib`); its loft-level functions (`graphics::color_r`) are
+compiled into the program's own crate and inline normally.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append
