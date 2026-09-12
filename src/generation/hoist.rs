@@ -3611,7 +3611,25 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         let mut order: Vec<(i64, &'static str)> = Vec::new();
         let mut ok = true;
         for (i, f) in fields.iter().enumerate() {
-            let ftp = data.attr_type(*rd, i);
+            // Pair the schema field with the DECLARATION that named it, by name.  The two
+            // lists are not the same list and need not be the same length: a runtime
+            // schema can carry a field the definition declares no attribute for, and
+            // indexing `attributes` by the schema's position then reads another field's
+            // type -- or panics, which is what it did (`882-keyed-element-read-borrows-
+            // its-container.loft` crashed the compiler: "len is 2 but the index is 2").
+            // No match means the record has a part this analysis cannot account for, so
+            // the function declines and keeps its return buffer; declining only ever costs
+            // the optimisation.
+            let Some(a_nr) = data
+                .def(*rd)
+                .attributes
+                .iter()
+                .position(|a| a.name == f.name)
+            else {
+                ok = false;
+                break;
+            };
+            let ftp = data.attr_type(*rd, a_nr);
             if let Some(rt) = value_field_type(&ftp) {
                 parts.push(rt);
                 order.push((i64::from(f.position), rt));

@@ -1809,6 +1809,21 @@ and `lock_layer` are both in `drawing`.
 −25 %, the row the x86 lane named this class for); `lock_curved` **2 339–2 402k →
 2 276–2 331k** (−3 %); and on the full consumer bench every native column improved or held.
 
+**A fifth defect the cells did NOT catch, found by the suite (2026-09-12).**  The field
+loop paired the runtime SCHEMA's fields with the DEFINITION's attributes by position —
+`for (i, f) in fields.iter().enumerate() { data.attr_type(*rd, i) }` — and those are two
+different lists that need not be the same length.  A keyed container's schema carries a
+part the definition declares no attribute for, so the index ran off the end and the
+compiler ICE'd on an EXISTING test script
+(`882-keyed-element-read-borrows-its-container.loft`: *"len is 2 but the index is 2"*,
+`hoist::value_records` → `Data::attr_type`).  Nine cells all used plain structs whose two
+lists happen to agree, which is exactly why a cell corpus cannot replace the suite.
+Closed by pairing the schema field with the declaration that NAMED it and declining the
+function when there is no match — a record with a part this analysis cannot account for
+keeps its return buffer, and declining only ever costs the optimisation.  Note the shape of
+the bug: had the two lists been the same length but differently ordered, the same code would
+have read another field's type and shipped a silently wrong signature rather than crashing.
+
 **Four defects the cells caught before they could ship**: an unclosed delimiter (the
 `Object` interception ate the block's closing brace — visible only in the
 conditional-construction cell, where the block sits inside an `if` arm); a stale return-buffer
