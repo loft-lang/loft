@@ -37,7 +37,7 @@ impl Output<'_> {
             let variables = self.data.def(self.def_nr).variables();
             let name = sanitize(variables.name(var));
             let buf = sanitize(variables.name(a.buf));
-            let tp_str = rust_type(variables.tp(var), &Context::Variable);
+            let tp_str = self.local_rust_type(var, variables.tp(var));
             self.declared.insert(var);
             let db_tp = a.db_tp;
             return write!(
@@ -751,7 +751,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 // @PLN157 § V-g — an elided local aliases the call's result and never
                 // copies into a slot store of its own, so the `null_named` pre-allocation
                 // (a store minted for the copy to land in) would only be minted to be
@@ -1006,7 +1006,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 writeln!(
                     w,
                     "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
@@ -1060,7 +1060,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 writeln!(
                     w,
                     "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
@@ -1255,7 +1255,7 @@ impl Output<'_> {
                 write!(w, "var_{name} = ")?;
             } else {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 write!(w, "let mut var_{name}: {tp_str} = ")?;
             }
             // The tail is the assigned VALUE, so it needs the same storage-form coercion
@@ -1330,7 +1330,7 @@ impl Output<'_> {
                 write!(w, "var_{name} = ")?;
             } else {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 write!(w, "let mut var_{name}: {tp_str} = ")?;
             }
             // P199 — user-fn / Op-stub callees take `&UnsafeCell<Stores>`
@@ -1416,7 +1416,7 @@ impl Output<'_> {
             } else {
                 variables.tp(var).clone()
             };
-            let tp_str = rust_type(&var_tp, &Context::Variable);
+            let tp_str = self.local_rust_type(var, &var_tp);
             write!(w, "let mut var_{name}: {tp_str} = ")?;
         }
         if matches!(to, Value::Null) && rust_type(variables.tp(var), &Context::Variable) == "DbRef"

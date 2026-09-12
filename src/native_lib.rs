@@ -619,7 +619,7 @@ pub fn generate_shared_cdylib_lib_rs(
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in export_set {
         src.push('\n');
-        src.push_str(&shared_bridge_wrapper(data, &dups, d));
+        src.push_str(&shared_bridge_wrapper(data, stores, &dups, d));
     }
     src.push('\n');
     src.push_str(&layout_fp_export(type_layout_fingerprint(stores)));
@@ -702,7 +702,20 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
 ///   caller would — so the caller-side dispatcher only ever passes the public args.
 ///
 /// Finally it forwards to the inner `--native` fn and writes the return.
-fn shared_bridge_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
+fn shared_bridge_wrapper(
+    data: &Data,
+    stores: &Stores,
+    dups: &HashSet<String>,
+    d_nr: u32,
+) -> String {
+    // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its record's
+    // fields in REGISTERS, so this wrapper stops forwarding the hidden dest and writes
+    // the tuple into it instead.  The dest is the ABI's own return record: the caller's
+    // when it supplied one, a fresh store when it did not, and `(*ret).dbref` names it
+    // either way — so the C boundary keeps its record contract while the loft-to-loft
+    // call inside the cdylib takes the value path.
+    let value_rec = crate::generation::hoist::value_records(data, stores);
+    let value_fields = value_rec.fields.get(&d_nr).cloned();
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
@@ -715,6 +728,7 @@ fn shared_bridge_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> Stri
     // forwarded a null/empty ref).  If the inner fn ignores its retbuf and returns
     // a fresh store (a struct-literal return does), that fallback record is orphaned
     // — one leaked store per call.  Freed after the call when the return differs.
+    let mut value_dest: Option<String> = None;
     let mut fresh_dests: Vec<String> = Vec::new();
     let ret_text = matches!(def.returned().base(), Type::Text(_));
     for (i, a) in def.attributes().iter().enumerate() {
@@ -775,7 +789,11 @@ fn shared_bridge_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> Stri
                 let _ = writeln!(body, "    }}");
                 fresh_dests.push(var.clone());
                 slot += 1;
-                let _ = write!(fwd, ", {var}");
+                if value_fields.is_none() {
+                    let _ = write!(fwd, ", {var}");
+                } else {
+                    value_dest = Some(var.clone());
+                }
             }
             crate::native_gate::BridgeAttrKind::WorkText => {
                 // text_return work buffer (`&mut String`) — own a LOCAL String, pass
@@ -796,7 +814,23 @@ fn shared_bridge_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> Stri
     }
 
     let call = format!("{inner}(cell{fwd})");
-    let ret_stmt = bridge_write_ret(def.returned(), &call, returns_owned_string(def));
+    let ret_stmt = if let (Some(fields), Some(dest)) = (&value_fields, &value_dest) {
+        let mut w = format!("    let __vt = {call};\n    let __vd = {dest};\n");
+        let _ = writeln!(w, "    unsafe {{ let __s = &mut *cell.get();");
+        for (i, (off, rt)) in fields.iter().enumerate() {
+            let setter = match *rt {
+                "f64" => format!("set_float(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
+                "f32" => format!("set_single(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
+                "bool" => format!("set_byte(__vd.rec, __vd.pos + {off}u32, 0, u8::from(__vt.{i}))"),
+                _ => format!("set_int(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
+            };
+            let _ = writeln!(w, "        __s.store_mut(&__vd).{setter};");
+        }
+        let _ = write!(w, "    }}\n    unsafe {{ (*ret).dbref = __vd; }}");
+        w
+    } else {
+        bridge_write_ret(def.returned(), &call, returns_owned_string(def))
+    };
 
     // @PLN118 arc F — after writing the return, free every bridge-allocated
     // FALLBACK dest the callee did not return (`(*ret).dbref` differs).  A hidden

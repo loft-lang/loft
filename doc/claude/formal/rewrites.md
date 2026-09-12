@@ -549,6 +549,27 @@ and loses only the innermost frame NAME from the chain.  Switch
                  vector of a plain-struct element.  The interpreter keeps the
                  temp-store build and is the oracle.
 
+  (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
+                 scalar fields returns those fields BY VALUE — a Rust tuple, in
+                 registers — instead of writing them into a return buffer the
+                 caller then reads back.  Three gates, and the second and third
+                 are what make the first safe per FUNCTION: every CALL SITE in the
+                 program consumes the result by reading fields off a local it binds
+                 (a site that stores it, passes it on, returns it onward or binds
+                 it into a collection declines the whole function, so no site has
+                 to materialise a record out of a tuple and none can be made
+                 slower); and the BODY builds the record through `Object` blocks at
+                 every result position (a tail that FORWARDS another call's record
+                 has nothing to convert, and its signature would promise a tuple
+                 over a `DbRef`).  The callee's `Object` block becomes the tuple of
+                 its writes in field order; the call site binds the tuple, drops the
+                 buffer argument, reads `v.<index>` where it read a store, and
+                 releases nothing.  Two boundaries keep the record contract: the
+                 LIVE-RELOAD arm answers a `DbRef` and so reads the fields back out
+                 of it, and a library's CDYLIB BRIDGE materialises the tuple into
+                 the destination record it already owns — so the C ABI is unchanged
+                 while loft-to-loft calls inside the library take the value path.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

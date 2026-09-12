@@ -2320,6 +2320,36 @@ impl Output<'_> {
             )?;
             self.active_move_vars.push(pair.loop_var);
         }
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function's `Object` tail
+        // builds its record's fields in REGISTERS: the block's `OpSet*` calls carry one
+        // value per field at a constant offset, so the whole block — the buffer's
+        // allocate-or-reuse, the writes, the yield — is exactly the tuple of those
+        // values, in field order.  The buffer it wrote into no longer exists.
+        if bl.name == "Object"
+            && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
+            && let Some(parts) = self.value_record_parts(bl, tp)
+        {
+            write!(w, "(")?;
+            for (i, val) in parts.iter().enumerate() {
+                if i > 0 {
+                    write!(w, ", ")?;
+                }
+                self.output_code_inner(w, val)?;
+            }
+            write!(w, ")")?;
+            // The block's OPENING brace is already out; close it exactly as the ordinary
+            // path does, or the arm eats a delimiter (measured: `unclosed delimiter` on
+            // the conditional-construction cell, where the Object sits inside an `if` arm).
+            self.indent(w)?;
+            return write!(
+                w,
+                "}} /*{}_{}: {}*/",
+                bl.name,
+                bl.scope,
+                bl.result
+                    .show(self.data, self.data.def(self.def_nr).variables())
+            );
+        }
         let is_void_block = matches!(bl.result, Type::Void);
         let is_text_result = wrap_text && matches!(bl.result, Type::Text(_));
         // Fix "hoisted return value" pattern from scopes::free_vars before iterating.
