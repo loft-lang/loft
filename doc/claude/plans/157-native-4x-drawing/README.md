@@ -56,18 +56,85 @@ reasons:
   `vector_append`+`vector_finish` 6.9 %, `record_new`/`record_finish` 3.2 %, `memset`
   3.6 % — against `n_fronds` itself at 8.4 %.  That is the ~39 % allocator+free-tree the
   09-11 profile named, so queue items 4b / 5 / the move still rank first for this row.
-- **`smooth` — per-CALL store lifecycle, a class the queue does not yet carry.**  The
-  routine is 61 points, and the fixed cost of standing a store up and tearing it down is
-  not amortised: `op_database_inner` 4.9 %, `database_named` 4.2 %, `set_free_protected`
-  6.9 %, `set_free_header` 2.8 %, `OpFreeRef` 2.9 %, `n_protect_store_frees` 2.5 %,
-  `free_named` 2.3 %, `Stores::clear` 1.3 % — ~28 % of the row in create/free, against
-  ~39 % in the four `n_*` functions doing the actual arithmetic.  A SMALL routine is the
-  shape that exposes this; every large row hides it.
+- **`smooth` — a record-returning CALL per output point.**  ⚠ An earlier revision of
+  this section read the profile as *per-call store lifecycle*; that was WRONG and the
+  size sweep below falsified it.  The gap is per-POINT: `raster::pt(x, y)` returns a
+  `Pt` (two floats, no heap) and is called once per output point, where Rust inlines the
+  same constructor to nothing.  `n_pt` is **18.1 %** of the loop's self time in the call
+  form and **absent entirely** from the literal form.  Full working below.
 - **`wide_line` — code quality in one raster loop, plus libm.**  `n_polygon_generic`
   alone is 64.1 % (real user code), and what surrounds it is small and concrete:
   `floor`+`ceil` as out-of-line libm calls 7.3 %, `n_round_down`+`n_round_up` not
   inlined 4.7 %, `get_vector`+`vec_get_or_raise_runtime` 7.0 % of unhoisted element
   reads.  Only ~7 % is store machinery, so this row is NOT the allocation class.
+
+### `smooth` run down — the size sweep, and what the ratio actually is
+
+Four measurements, in the order that each falsified the previous reading.  A
+scratch-only `--only <routine>` switch was added to BOTH `bench.loft` and `bench.rs`
+in the clone so one row could be swept alone; every cell's hash agrees across the
+two lanes.
+
+**1. `--n 50` does not measure `smooth` at all.**  The row is 360 ns/op in the full
+table and **1,360 ns/op run alone** — 3.8× apart for the same work.  At `--n 50` the
+reference lane runs for 18 µs *total*, so what it measures is the CPU's frequency
+ramp: this box idles cores at 400 MHz and reaches 3.28 GHz, and `bench_hash` +
+`bench_hair` ahead of it in the full table are what warm it up.  `smooth` is the
+shortest row on the board by three orders of magnitude (`lock` runs 78 ms at the same
+`--n`), which is why it and no other row is dominated by this.  **Any row whose lane
+runs under ~100 ms is reporting the clock it was measured at.**  Swept to convergence
+(`--n` 100 000–500 000): rust **281–285**, loft-native **2,694–2,707** ns/op — so the
+honest x86 ratio is **≈9.6×**, and compare.py's 8.0–8.4× was flattering it.
+
+**2. The reference is not hollowed out.**  The bench folds `.len()` into its sink, and
+`smooth_pts`' output length is purely structural — so LLVM is free to delete every
+float in the loop and keep the count.  Probed by rebuilding the reference with the sink
+consuming one produced coordinate, then all of them: **281 → 282 → 333** ns/op.  No
+elimination; the 281 ns is real work, and the comparison is fair.
+
+**3. The gap is per-POINT, not per-call.**  Swept the input ring from 3 to 192 points
+(output 31 → 1 921) with `n` scaled so every cell runs long:
+
+| input pts | output pts | rust ns/op | loft ns/op | ratio |
+|---|---|---|---|---|
+| 3 | 31 | 160 | 1 601 | 10.01× |
+| 6 | 61 | 308 | 2 878 | 9.34× |
+| 12 | 121 | 529 | 5 357 | 10.13× |
+| 24 | 241 | 1 083 | 10 547 | 9.74× |
+| 48 | 481 | 2 152 | 20 943 | 9.73× |
+| 96 | 961 | 3 797 | 41 889 | 11.03× |
+| 192 | 1 921 | 7 686 | 84 457 | 10.99× |
+
+Flat across a 64× size range.  Taking the slope off the top two rows: **rust 4.05,
+loft 44.3 ns per output point**, with loft's fixed per-call cost ~173 ns against rust's
+~61 ns — an excess of ~112 ns, under **4 %** of the 61-point call.  A per-call class
+would have collapsed this ratio as the input grew; it does not move.  The profile at
+np=192 is also within a point of the np=6 profile on every symbol, which says the same
+thing a second way.
+
+**4. What the per-point cost IS.**  `raster::pt(x, y)` is a function returning a
+no-heap two-float record, called once per output point inside the innermost loop
+(`sp_out += [raster::pt(...)]`), plus twice per segment through `half_chord`.  Two
+copies of the same loop differing ONLY in that append — a call versus a
+`raster::Pt{..}` literal, same hash — cost:
+
+| | np=6 (out 61) | np=192 (out 1 921) |
+|---|---|---|
+| `raster::pt(..)` call | 1 586 ns | 53 684 ns |
+| `Pt{..}` literal | 1 148 ns | 34 867 ns |
+| saved | **27.6 %** | **35.1 %** (9.8 ns/point) |
+
+and `n_pt` is 18.1 % of the call form's self time, absent from the literal's.
+
+**The unit this names: § V-t's in-place record push does not admit a record-RETURNING
+call.**  With `LOFT_NO_RECORD_PUSH=1` the two forms converge — 75 121 vs 72 755 ns, 3 %
+apart — so the literal's advantage IS the push, not the arithmetic.  With it on they
+are 49 955 vs 35 055.  The literal is built directly in the push header's next slot;
+the call still mints its result somewhere and copies it in, so it collects the
+header half of the optimisation and not the build-in-place half.  Extending the
+callee-writes-into-the-slot rewrite (the § V-p twin / § V-u adoption idea, applied to a
+scalar record return) is worth ~30 % of this loop.  It would NOT close the row on its
+own: the literal form is still 18.1 ns/point against rust's 4.05.
 
 **The three newest units were A/B'd on this box and all three pay here too** (each
 variant a fresh `bench/.loft` — the program cache is keyed on the SOURCE, so an

@@ -1,0 +1,503 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// bench — the performance pass: every public routine, timed on a fixed workload, with a
+// hash of what it produced.
+//
+//     loft bench/bench.loft [--n N]                     the interpreter
+//     loft --native-release bench/bench.loft [--n N]    compiled
+//     python3 bench/compare.py                          all three lanes, joined
+//
+// One tab-separated line per routine: name, iterations, total µs, ns per op, output
+// pixels (or points), ns per pixel, and an FNV-1a-32 hash of the output.  The hash is what
+// makes a benchmark a VALIDATION: the interpreter, the native build and the pure-Rust
+// reference in bench/reference/ must print the same hash for a row, or one of them is not
+// computing the routine it claims to — and only then does comparing their speeds mean
+// anything.  Every routine has to pull its weight against the reference (@FR-Perf-Weight);
+// the bar and the measured table are in the README.
+//
+// A workload is fixed by construction, never by a seed alone: the same points, the same
+// style, the same canvas in every lane, so a hash that differs is a real disagreement.
+// Each timed loop folds something of its result into `sink`, which the row carries, so no
+// backend can drop the work as unused.
+use brush;
+use drawing;
+use graphics;
+use noise;
+use raster;
+
+/// One measured routine.
+struct Row {
+  name: text = "",
+  iters: integer = 0,
+  us: integer = 0,
+  px: integer = 0,
+  hash: integer = 0,
+  sink: integer = 0,
+}
+
+const FNV_OFFSET = 2166136261;
+const FNV_PRIME = 16777619;
+
+/// FNV-1a-32 over the low 32 bits of each integer, high byte first — a pixel's a, r, g, b.
+fn fnv(h0: integer, v: const vector<integer>) -> integer {
+  fv_h = h0;
+  for x in v {
+    fv_w = x & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 24) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 16) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 8) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ (fv_w & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+  }
+  fv_h
+}
+
+/// A coordinate as a hashable integer: thousandths, truncated.
+fn milli(v: float) -> integer { (v * 1000.0) as integer }
+
+fn fnv_pts(pts: const vector<raster::Pt>) -> integer {
+  fp_ints: vector<integer> = [];
+  for p in pts { fp_ints += [milli(p.ptx), milli(p.pty)]; }
+  fnv(FNV_OFFSET, fp_ints)
+}
+
+fn fnv_fronds(fs: const vector<drawing::Frond>) -> integer {
+  ff_ints: vector<integer> = [];
+  for f in fs {
+    for p in f.fpts { ff_ints += [milli(p.ptx), milli(p.pty)]; }
+    for w in f.fwid { ff_ints += [milli(w)]; }
+  }
+  fnv(FNV_OFFSET, ff_ints)
+}
+
+/// How many pixels of the canvas carry `ink` — the work a fill actually did.
+fn count_ink(cv: const graphics::Canvas, ink: integer) -> integer {
+  ci_n = 0;
+  for i in 0..(cv.width * cv.height) { if cv.data[i]? == ink { ci_n += 1; } }
+  ci_n
+}
+
+fn print_row(r: const Row) {
+  pr_ns = ((r.us * 1000) / r.iters) ?? 0;
+  pr_px = if r.px > 0 { (((r.us * 1000) as float) / ((r.iters * r.px) as float)) ?? 0.0 }
+          else { 0.0 };
+  println("{r.name}\t{r.iters}\t{r.us}\t{pr_ns}\t{r.px}\t{pr_px:.3}\t{r.hash:x}");
+}
+
+// ── The seeded hash ─────────────────────────────────────────────────
+
+fn bench_hash(n: integer) -> Row {
+  bh_t0 = ticks();
+  bh_acc = 0.0;
+  for _r in 0..n {
+    for i in 0..100000 { bh_acc += hash01(1, i, 7); }
+  }
+  bh_us = ticks() - bh_t0;
+  bh_one = 0.0;
+  for i in 0..100000 { bh_one += hash01(1, i, 7); }
+  bh_v: vector<integer> = [(bh_one * 1000000.0) as integer];
+  Row { name: "hash", iters: n, us: bh_us, px: 100000, hash: fnv(FNV_OFFSET, bh_v),
+        sink: (bh_acc * 1000.0) as integer }
+}
+
+// ── The footprint ───────────────────────────────────────────────────
+
+fn bench_hair(n: integer) -> Row {
+  hb_t0 = ticks();
+  hb_sink = 0;
+  for _r in 0..n {
+    hb_img = brush::hair_brush(12, 48, 1, 0.35);
+    hb_sink += hb_img[0]?;
+  }
+  hb_us = ticks() - hb_t0;
+  hb_one = brush::hair_brush(12, 48, 1, 0.35);
+  Row { name: "hair", iters: n, us: hb_us, px: 576, hash: fnv(FNV_OFFSET, hb_one), sink: hb_sink }
+}
+
+// ── Smoothing ───────────────────────────────────────────────────────
+
+fn petal_outline() -> vector<raster::Pt> {
+  [raster::pt(100.0, 100.0), raster::pt(80.0, 140.0), raster::pt(88.0, 193.0),
+   raster::pt(100.0, 200.0), raster::pt(112.0, 193.0), raster::pt(120.0, 140.0)]
+}
+
+fn bench_smooth(n: integer) -> Row {
+  sm_pts = petal_outline();
+  sm_flags: vector<boolean> = [true, true, true, true, true, true];
+  sm_t0 = ticks();
+  sm_sink = 0;
+  for _r in 0..n {
+    sm_out = smooth_pts(sm_pts, sm_flags, true);
+    sm_sink += len(sm_out);
+  }
+  sm_us = ticks() - sm_t0;
+  sm_one = smooth_pts(sm_pts, sm_flags, true);
+  Row { name: "smooth", iters: n, us: sm_us, px: len(sm_one), hash: fnv_pts(sm_one), sink: sm_sink }
+}
+
+// ── The frond array ─────────────────────────────────────────────────
+
+fn frond_spec() -> drawing::FrondSpec {
+  drawing::FrondSpec { count: 24, len1: 0.1, len2: 0.1, wid1: 3.0, wid2: 3.0, ang1: 30.0, ang2: 30.0,
+              mirror: false, jitter: 0.5, clump: 0.6, fray: 0.4, bow: 0.0, seed: 1,
+              depth: 2, sub: 0.32 }
+}
+
+fn bench_fronds(n: integer) -> Row {
+  bf_sp = frond_spec();
+  bf_t0 = ticks();
+  bf_sink = 0;
+  for _r in 0..n {
+    bf_out = fronds(0.1, 0.5, 0.9, 0.5, bf_sp, 256, 256);
+    bf_sink += len(bf_out);
+  }
+  bf_us = ticks() - bf_t0;
+  bf_one = fronds(0.1, 0.5, 0.9, 0.5, bf_sp, 256, 256);
+  bf_px = 0;
+  for f in bf_one { bf_px += len(f.fpts); }
+  Row { name: "fronds", iters: n, us: bf_us, px: bf_px, hash: fnv_fronds(bf_one), sink: bf_sink }
+}
+
+// ── The brush ───────────────────────────────────────────────────────
+
+fn hair() -> brush::Brush {
+  brush::Brush { bname: "hair", bw: 12, bh: 48, period: 48.0,
+                 img: brush::hair_brush(12, 48, 1, 0.35) }
+}
+
+/// A lock style in canvas pixels (the 3× canvas of a 120×60 paper).
+fn lock_style(w: float, tips: integer, seed: integer) -> brush::LockStyle {
+  brush::LockStyle { w0: 6.0, w: w, swell: 0.3, body: 0.8, tips: tips, tipvar: 0.35,
+                     spread: 8.0, seed: seed, period: 144.0,
+                     dark: graphics::rgba(60, 40, 20, 255),
+                     base: graphics::rgba(120, 80, 40, 255),
+                     lit: graphics::rgba(167, 141, 115, 255),
+                     lx: -0.5, ly: -0.8, lz: 0.6, alpha: 1.0, flip: false }
+}
+
+fn bench_lock(n: integer) -> Row {
+  bl_br = hair();
+  bl_st = lock_style(60.0, 3, 1);
+  bl_xs: vector<float> = [18.0, 342.0];
+  bl_ys: vector<float> = [90.0, 90.0];
+  bl_t0 = ticks();
+  bl_sink = 0;
+  for _r in 0..n {
+    bl_lay = brush::lock_layer(bl_xs, bl_ys, 360, 180, bl_br, bl_st);
+    bl_sink += bl_lay.lw;
+  }
+  bl_us = ticks() - bl_t0;
+  bl_one = brush::lock_layer(bl_xs, bl_ys, 360, 180, bl_br, bl_st);
+  Row { name: "lock", iters: n, us: bl_us, px: bl_one.lw * bl_one.lh,
+        hash: fnv(FNV_OFFSET, bl_one.px), sink: bl_sink }
+}
+
+fn curved_path() -> vector<raster::Pt> {
+  cp_ctrl: vector<raster::Pt> = [raster::pt(36.0, 54.0), raster::pt(216.0, 90.0),
+                                 raster::pt(324.0, 162.0)];
+  cp_flags: vector<boolean> = [false, true, false];
+  smooth_pts(cp_ctrl, cp_flags, false)
+}
+
+fn bench_lock_curved(n: integer) -> Row {
+  bc_br = hair();
+  bc_st = lock_style(40.0, 4, 2);
+  bc_pts = curved_path();
+  bc_xs: vector<float> = [];
+  bc_ys: vector<float> = [];
+  for p in bc_pts { bc_xs += [p.ptx]; bc_ys += [p.pty]; }
+  bc_t0 = ticks();
+  bc_sink = 0;
+  for _r in 0..n {
+    bc_lay = brush::lock_layer(bc_xs, bc_ys, 360, 180, bc_br, bc_st);
+    bc_sink += bc_lay.lw;
+  }
+  bc_us = ticks() - bc_t0;
+  bc_one = brush::lock_layer(bc_xs, bc_ys, 360, 180, bc_br, bc_st);
+  Row { name: "lock_curved", iters: n, us: bc_us, px: bc_one.lw * bc_one.lh,
+        hash: fnv(FNV_OFFSET, bc_one.px), sink: bc_sink }
+}
+
+fn bench_composite(n: integer) -> Row {
+  cm_br = hair();
+  cm_st = lock_style(60.0, 3, 1);
+  cm_xs: vector<float> = [18.0, 342.0];
+  cm_ys: vector<float> = [90.0, 90.0];
+  cm_lay = brush::lock_layer(cm_xs, cm_ys, 360, 180, cm_br, cm_st);
+  cm_cv = graphics::canvas(360, 180, graphics::rgba(128, 128, 128, 255));
+  cm_t0 = ticks();
+  cm_sink = 0;
+  for _r in 0..n {
+    brush::composite_layer(cm_cv, cm_lay);
+    cm_sink += cm_cv.get_pixel(100, 90) & 255;
+  }
+  cm_us = ticks() - cm_t0;
+  cm_one = graphics::canvas(360, 180, graphics::rgba(128, 128, 128, 255));
+  brush::composite_layer(cm_one, cm_lay);
+  Row { name: "composite", iters: n, us: cm_us, px: cm_lay.lw * cm_lay.lh,
+        hash: fnv(FNV_OFFSET, cm_one.data), sink: cm_sink }
+}
+
+// ── Pillow's rasteriser ─────────────────────────────────────────────
+
+fn circle_px(cx: float, cy: float, r: float, n: integer) -> vector<raster::Pt> {
+  cx_out: vector<raster::Pt> = [];
+  for i in 0..=n {
+    cx_a = ((2.0 * noise::PI * (i as float)) / (n as float)) ?? 0.0;
+    cx_out += [raster::pt(cx + r * cos(cx_a), cy + r * sin(cx_a))];
+  }
+  cx_out
+}
+
+/// Five points joined every second one — self-intersecting, so even-odd leaves the
+/// centre hollow.
+fn pentagram_px() -> vector<raster::Pt> {
+  pg_out: vector<raster::Pt> = [];
+  for k in 0..=5 {
+    pg_a = (-90.0 + ((k * 2) % 5 ?? 0) as float * 72.0) * noise::PI / 180.0;
+    pg_out += [raster::pt(128.0 + 110.0 * cos(pg_a), 128.0 + 110.0 * sin(pg_a))];
+  }
+  pg_out
+}
+
+fn bench_fill(n: integer, name: text, pts: const vector<raster::Pt>) -> Row {
+  bp_ink = graphics::rgba(200, 40, 40, 255);
+  bp_cv = graphics::canvas(256, 256, 0);
+  bp_t0 = ticks();
+  bp_sink = 0;
+  for _r in 0..n {
+    raster::fill_poly(bp_cv, pts, bp_ink);
+    bp_sink += bp_cv.get_pixel(128, 40) & 255;
+  }
+  bp_us = ticks() - bp_t0;
+  Row { name: name, iters: n, us: bp_us, px: count_ink(bp_cv, bp_ink),
+        hash: fnv(FNV_OFFSET, bp_cv.data), sink: bp_sink }
+}
+
+fn bench_wide_line(n: integer) -> Row {
+  wl_ink = graphics::rgba(200, 40, 40, 255);
+  wl_cv = graphics::canvas(256, 256, 0);
+  wl_t0 = ticks();
+  wl_sink = 0;
+  for _r in 0..n {
+    raster::wide_line(wl_cv, 20.0, 30.0, 236.0, 200.0, wl_ink, 9);
+    wl_sink += wl_cv.get_pixel(128, 115) & 255;
+  }
+  wl_us = ticks() - wl_t0;
+  Row { name: "wide_line", iters: n, us: wl_us, px: count_ink(wl_cv, wl_ink),
+        hash: fnv(FNV_OFFSET, wl_cv.data), sink: wl_sink }
+}
+
+// ── End to end (loft only: parsing, rendering and the resample) ─────
+
+fn lock_scene() -> text {
+  `
+  size 120x60
+  Background top=0.5 bottom=0.5
+  Lock (0.05,0.5) (0.95,0.5) w0=2 w=20 tips=3 tipvar=0 spread=0 rgb=120,80,40
+  `
+}
+
+fn marks_scene() -> text {
+  `
+  size 64x64
+  Background transparent
+  name body
+  Poly (0.15,0.20) (0.80,0.25) (0.70,0.85) (0.20,0.80) rgb=190,60,50
+  Circle (0.50,0.45) r=0.22 rgb=40,120,180
+  name trim
+  Poly (0.10,0.90)~ (0.50,0.55)~ (0.90,0.92)~ stroke=20,220,90 w=2
+  Poly (0.20,0.30)@6 (0.85,0.40)@1 stroke=250,240,60
+  Line (0.05,0.05) - (0.95,0.15) w=1
+  Fronds (0.2,0.7)-(0.8,0.7) n=8 len=0.08 w=2 stroke=60,120,40
+  `
+}
+
+fn fnv_sketch(sk: const drawing::Sketch) -> integer {
+  fs_ints: vector<integer> = [len(sk.ops), len(sk.elems), len(sk.unparsed)];
+  for op in sk.ops {
+    for p in op.pts { fs_ints += [milli(p.ptx), milli(p.pty)]; }
+  }
+  fnv(FNV_OFFSET, fs_ints)
+}
+
+fn bench_parse(n: integer) -> Row {
+  bs_src = marks_scene();
+  bs_t0 = ticks();
+  bs_sink = 0;
+  for _r in 0..n {
+    bs_sk = parse_scene(bs_src);
+    bs_sink += len(bs_sk.ops);
+  }
+  bs_us = ticks() - bs_t0;
+  bs_one = parse_scene(bs_src);
+  Row { name: "parse", iters: n, us: bs_us, px: len(bs_one.ops), hash: fnv_sketch(bs_one), sink: bs_sink }
+}
+
+fn bench_render(n: integer, name: text, src: text) -> Row {
+  br_sk = parse_scene(src);
+  br_t0 = ticks();
+  br_sink = 0;
+  for _r in 0..n {
+    br_cv = render(br_sk);
+    br_sink += br_cv.width;
+  }
+  br_us = ticks() - br_t0;
+  br_one = render(br_sk);
+  Row { name: name, iters: n, us: br_us, px: br_one.width * br_one.height,
+        hash: fnv(FNV_OFFSET, br_one.data), sink: br_sink }
+}
+
+fn bench_resize(n: integer) -> Row {
+  rz_cv = graphics::canvas(768, 768, 0);
+  for y in 0..768 {
+    for x in 0..768 {
+      rz_cv.set_pixel(x, y, graphics::rgba(x & 255, y & 255, (x ^ y) & 255, 255));
+    }
+  }
+  rz_t0 = ticks();
+  rz_sink = 0;
+  for _r in 0..n {
+    rz_small = rz_cv.resize_lanczos(256, 256);
+    rz_sink += rz_small.width;
+  }
+  rz_us = ticks() - rz_t0;
+  rz_one = rz_cv.resize_lanczos(256, 256);
+  Row { name: "resize", iters: n, us: rz_us, px: 256 * 256, hash: fnv(FNV_OFFSET, rz_one.data),
+        sink: rz_sink }
+}
+
+
+/// A ring of `np` points — the SIZE axis for the smooth sweep (scratch only).
+fn smooth_ring(np: integer) -> vector<raster::Pt> {
+  sr_out: vector<raster::Pt> = [];
+  for i in 0..np {
+    sr_a = 6.283185307179586 * (i as float) / (np as float);
+    sr_out += [raster::pt(128.0 + 100.0 * cos(sr_a), 128.0 + 100.0 * sin(sr_a))];
+  }
+  sr_out
+}
+
+/// `smooth_pts` on a ring of `np` points, so the per-call FIXED cost separates
+/// from the per-point cost (scratch only).
+fn bench_smooth_n(n: integer, np: integer, nm: text) -> Row {
+  sn_pts = smooth_ring(np);
+  sn_flags: vector<boolean> = [];
+  for _i in 0..np { sn_flags += [true]; }
+  sn_t0 = ticks();
+  sn_sink = 0;
+  for _r in 0..n {
+    sn_out = smooth_pts(sn_pts, sn_flags, true);
+    sn_sink += len(sn_out);
+  }
+  sn_us = ticks() - sn_t0;
+  sn_one = smooth_pts(sn_pts, sn_flags, true);
+  Row { name: nm, iters: n, us: sn_us, px: len(sn_one),
+        hash: fnv_pts(sn_one), sink: sn_sink }
+}
+
+
+// ── Probe: is the per-point cost the record-returning CALL? ─────────
+// Two copies of the smoothing inner loop, identical except for how the output
+// point is made: a call to `raster::pt(..)` (form A, what drawing.loft ships)
+// versus a `raster::Pt{..}` literal (form B).  Everything else — the Hermite
+// arithmetic, the tangents, the appends — is the same, so the difference
+// between the rows is the cost of returning a no-heap record from a function.
+
+fn probe_ctrl(pts: const vector<raster::Pt>, i: integer, cn: integer) -> raster::Pt {
+  pts[i.floor_mod(cn) ?? 0]?
+}
+
+fn probe_smooth(pts: const vector<raster::Pt>, np: integer, literal: boolean)
+    -> vector<raster::Pt> {
+  ps_out: vector<raster::Pt> = [];
+  ps_out += [pts[0]?];
+  for i in 0..np {
+    ps_a = pts[i % np ?? 0]?;
+    ps_b = pts[(i + 1) % np ?? 0]?;
+    ps_pa = probe_ctrl(pts, i - 1, np);
+    ps_pb = probe_ctrl(pts, i + 1, np);
+    ps_qa = probe_ctrl(pts, i, np);
+    ps_qb = probe_ctrl(pts, i + 2, np);
+    ps_tax = (ps_pb.ptx - ps_pa.ptx) * 0.5;
+    ps_tay = (ps_pb.pty - ps_pa.pty) * 0.5;
+    ps_tbx = (ps_qb.ptx - ps_qa.ptx) * 0.5;
+    ps_tby = (ps_qb.pty - ps_qa.pty) * 0.5;
+    for k in 1..=10 {
+      ps_t = ((k as float) / 10.0) ?? 0.0;
+      ps_t2 = ps_t * ps_t;
+      ps_t3 = ps_t2 * ps_t;
+      ps_h00 = 2.0 * ps_t3 - 3.0 * ps_t2 + 1.0;
+      ps_h10 = ps_t3 - 2.0 * ps_t2 + ps_t;
+      ps_h01 = -2.0 * ps_t3 + 3.0 * ps_t2;
+      ps_h11 = ps_t3 - ps_t2;
+      ps_x = ps_h00 * ps_a.ptx + ps_h10 * ps_tax + ps_h01 * ps_b.ptx + ps_h11 * ps_tbx;
+      ps_y = ps_h00 * ps_a.pty + ps_h10 * ps_tay + ps_h01 * ps_b.pty + ps_h11 * ps_tby;
+      if literal {
+        ps_out += [raster::Pt { ptx: ps_x, pty: ps_y }];
+      } else {
+        ps_out += [raster::pt(ps_x, ps_y)];
+      }
+    }
+  }
+  ps_out
+}
+
+fn bench_probe(n: integer, np: integer, literal: boolean, nm: text) -> Row {
+  pb_pts = smooth_ring(np);
+  pb_t0 = ticks();
+  pb_sink = 0;
+  for _r in 0..n {
+    pb_o = probe_smooth(pb_pts, np, literal);
+    pb_sink += len(pb_o);
+  }
+  pb_us = ticks() - pb_t0;
+  pb_one = probe_smooth(pb_pts, np, literal);
+  Row { name: nm, iters: n, us: pb_us, px: len(pb_one), hash: fnv_pts(pb_one),
+        sink: pb_sink }
+}
+
+fn main() {
+  mn_n = 20;
+  mn_only = "";
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    if mn_args[mn_i]? == "--only" && mn_i + 1 < len(mn_args) {
+      mn_only = mn_args[mn_i + 1]?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  if mn_n < 1 { mn_n = 1; }
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  if mn_only == "" || mn_only == "hash" { print_row(bench_hash(mn_n)); }
+  if mn_only == "" || mn_only == "hair" { print_row(bench_hair(mn_n)); }
+  if mn_only == "" || mn_only == "smooth" { print_row(bench_smooth(mn_n)); }
+  if mn_only == "smooth_3" { print_row(bench_smooth_n(mn_n, 3, "smooth_3")); }
+  if mn_only == "smooth_6" { print_row(bench_smooth_n(mn_n, 6, "smooth_6")); }
+  if mn_only == "smooth_12" { print_row(bench_smooth_n(mn_n, 12, "smooth_12")); }
+  if mn_only == "smooth_24" { print_row(bench_smooth_n(mn_n, 24, "smooth_24")); }
+  if mn_only == "smooth_48" { print_row(bench_smooth_n(mn_n, 48, "smooth_48")); }
+  if mn_only == "smooth_96" { print_row(bench_smooth_n(mn_n, 96, "smooth_96")); }
+  if mn_only == "smooth_192" { print_row(bench_smooth_n(mn_n, 192, "smooth_192")); }
+  if mn_only == "call_6" { print_row(bench_probe(mn_n, 6, false, "call_6")); }
+  if mn_only == "lit_6" { print_row(bench_probe(mn_n, 6, true, "lit_6")); }
+  if mn_only == "call_192" { print_row(bench_probe(mn_n, 192, false, "call_192")); }
+  if mn_only == "lit_192" { print_row(bench_probe(mn_n, 192, true, "lit_192")); }
+  if mn_only == "" || mn_only == "fronds" { print_row(bench_fronds(mn_n)); }
+  if mn_only == "" || mn_only == "lock" { print_row(bench_lock(mn_n)); }
+  if mn_only == "" || mn_only == "lock_curved" { print_row(bench_lock_curved(mn_n)); }
+  if mn_only == "" || mn_only == "composite" { print_row(bench_composite(mn_n)); }
+  if mn_only == "" || mn_only == "fill_circle" { print_row(bench_fill(mn_n, "fill_circle", circle_px(128.0, 128.0, 100.0, 28))); }
+  if mn_only == "" || mn_only == "fill_star" { print_row(bench_fill(mn_n, "fill_star", pentagram_px())); }
+  if mn_only == "" || mn_only == "wide_line" { print_row(bench_wide_line(mn_n)); }
+  if mn_only == "" || mn_only == "parse" { print_row(bench_parse(mn_n)); }
+  if mn_only == "" || mn_only == "render_lock" { print_row(bench_render(mn_n, "render_lock", lock_scene())); }
+  if mn_only == "" || mn_only == "render_marks" { print_row(bench_render(mn_n, "render_marks", marks_scene())); }
+  if mn_only == "" || mn_only == "resize" { print_row(bench_resize(mn_n)); }
+}
