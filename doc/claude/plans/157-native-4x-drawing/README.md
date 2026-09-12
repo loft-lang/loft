@@ -450,6 +450,52 @@ shape passes under a 64 MiB ceiling with the release on and TRIPS it under
 ask the SHAPE, never an offset), and a trailing `//` comment in an emitted template ate
 the caller's `;` (the cell corpora went red at once).
 
+**THE FILLS AND `wide_line` PROFILED AT LAST (2026-09-12) — and they name TWO units, one
+of them language-wide.**  These three rows had never had a dedicated profile; the
+checkpoint instrument costs minutes now.  Both rows land on ONE function:
+
+| | `n_pil_hline` | `n_polygon_generic` | `n_edge_x` |
+|---|---:|---:|---:|
+| `fill_circle` (ticks) | **59.7 %** | 32.4 % | 5.8 % |
+| `wide_line` (ticks) | 32.0 % | **50.1 %** | 10.1 % |
+
+`pil_hline`'s whole body is a contiguous fill — `for hl_x in hl_lo..=hl_hi { hl_d[hl_base +
+hl_x] = ink }` (`raster.loft:121`) — and the instrument prices it at **six operators per
+pixel**: `OpSetInt` + `OpAddInt` for the write, and FOUR more (`OpAddInt`, `OpLtInt`,
+`OpConvBoolFromInt`, `OpNot`, 63.5 M each) for the loop itself.
+
+**Unit 1 — the counted loop pays a null test per iteration.**  The emitted form initialises
+the loop counter to `i64::MIN` (the null sentinel) and then, EVERY ITERATION, asks whether
+it is still null in order to decide whether this is the first one:
+
+```rust
+let mut idx: i64 = i64::MIN;
+loop {
+    idx = if op_conv_bool_from_int(idx) as u8 != 1 { lo } else { op_add_int(idx, 1) };
+    if hi < idx { break }
+    …
+}
+```
+
+The idiomatic lowering initialises before the loop and increments at its end, and needs
+neither the sentinel nor the test.  This is not a `pil_hline` fact: **every `for i in a..b`
+in the language pays it.**  Measured on a bare loop, an iteration costs ~0.85 ns with a
+trivial body — roughly half the cost of a tight loft loop is the loop machinery.
+
+**Unit 2 — the FILL idiom is not recognised.**  `for i in a..=b { v[i] = <invariant> }` is a
+bulk fill, and LLVM turns the reference's identical-looking Rust loop into one.  loft's
+per-element `vec_set_hoisted_or_raise_runtime` cannot be recognised as contiguous, so it
+stays a scalar store per element.  Measured on 204.8 M writes of the same idiom: **loft 1.27
+ns/write against Rust 0.10 — 13×.**  Worth most where the fill is the program: 59.7 % of
+`fill_circle`.
+
+⚠ Both are COUNT reductions, and § "the remaining gap is operator count" says a count is not
+automatically a cost — three probes there removed executions and bought ~2 %.  The
+difference is what the removed work IS: those probes removed checks rustc was already
+folding, while these remove a per-iteration branch LLVM cannot fold (the sentinel could
+legitimately be `i64::MIN`) and a scalar-store loop it cannot vectorise.  Size each by
+building it and re-measuring, not by multiplying the counts.
+
 **THE NEXT UNIT ON `lock_curved` IS THE RECORD-FIELD RETURN DELIVERY — measured 6 %,
 2026-09-12.**  A function that builds a vector into a local and returns it as a FIELD of a
 record copies the whole buffer at the return.  `lock_layer` does exactly this — `ll_out =
