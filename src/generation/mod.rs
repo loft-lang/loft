@@ -2920,6 +2920,31 @@ fn loft_ckpt_report() {{
         }};
         {emit_line}
     }}
+    // The by-OPERATOR rollup: which operator KINDS the program executes, which is the
+    // question a language change is costed against (\"what would making this op cheaper be
+    // worth?\"), where the per-site table answers \"which line\".
+    let mut ops: Vec<(u64, u64, &str)> = Vec::new();
+    for (t, c, i) in &rows {{
+        let sym = LOFT_CKPT_SITES[*i].0;
+        if let Some(e) = ops.iter_mut().find(|e| e.2 == sym) {{
+            e.0 += *t;
+            e.1 += *c;
+        }} else {{
+            ops.push((*t, *c, sym));
+        }}
+    }}
+    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    __l = format!(\"  -- by operator --\\n\");
+    {emit_line}
+    for (t, c, sym) in ops.iter().take(25) {{
+        __l = if ticks {{
+            format!(\"{{:>6.2}}% {{:>6.2}}% {{:>14}}  {{}}\\n\",
+                100.0 * (*c as f64) / (tot_c as f64), 100.0 * (*t as f64) / (tot_t as f64), c, sym)
+        }} else {{
+            format!(\"{{:>6.2}}% {{:>14}}  {{}}\\n\", 100.0 * (*c as f64) / (tot_c as f64), c, sym)
+        }};
+        {emit_line}
+    }}
     // The by-FUNCTION rollup.  Every site is one operator inside exactly one loft
     // function, so summing sites by owner is exclusive by construction — this is the view
     // that answers \"what takes the time\", where the per-site table answers \"which
