@@ -450,6 +450,47 @@ shape passes under a 64 MiB ceiling with the release on and TRIPS it under
 ask the SHAPE, never an offset), and a trailing `//` comment in an emitted template ate
 the caller's `;` (the cell corpora went red at once).
 
+**THE REMAINING GAP IS OPERATOR COUNT, NOT OPERATOR COST — four measurements, 2026-09-12,
+and it redirects the queue.**  `LOFT_NATIVE_CHECKPOINTS` (PERFORMANCE.md) counts every
+operator a native run executes.  On `lock_curved` at n=400: **3 295 449 657 operator
+executions in 1.03 s = 0.313 ns each, about 1.25 cycles at 4 GHz.**  An operator is already
+at roughly one cycle, so there is almost nothing left to win by making operators CHEAPER —
+and three probes, each removing a whole class of per-operator work, say exactly that:
+
+| probe | executions removed / made cheaper | measured |
+|---|---|---|
+| every integer op's null-sentinel test elided (11 sites in `ops.rs`, throwaway) | 753 M (23 % of all ops) | 1.04 → **1.02 s (~2 %)** |
+| `raster_segment`'s seven field reads hand-bound to `&` views | `OpGetField` 295 M (8.9 %) **gone** | 1.04 → **1.06 s (nothing)** |
+| the float non-sentinel fast path turned OFF (`LOFT_NO_NN_FAST=1`) | — | 1.02 → 1.04 s (~2 %) |
+
+The second is the sharpest: 295 million operator executions disappeared from the mix and
+the program did not get faster.  **So a count is not a cost**, and the same caution applies
+to the checkpoint tick column (PERFORMANCE.md § the tick column is biased toward
+operator-dense functions).  A micro-optimisation on the per-operator path is worth ~2 % on
+this row; the reference runs the same work in 0.12 s, **8.6×** less, so 2 % is not the
+shape of the answer.
+
+*What this rules IN.*  The gap is that loft EXECUTES 3.3 billion operators where rustc
+executes far fewer machine instructions for identical work — it vectorises, fuses and
+strength-reduces across the per-operator boundary that loft's IR makes opaque.  So the
+levers that can still pay are the ones that reduce the COUNT, not the price:
+
+- **Fuse a compare with its bool conversion.**  `OpLtFloat` 154 M is followed by
+  `OpConvBoolFromFloat` 149 M, and `OpConvBoolFromInt` adds 61 M — ~210 M executions (6.4 %)
+  that are pure representation shuffling (`… as u8) == 1`).  A fused compare-and-test op
+  removes them outright.
+- **Strength-reduce a loop-invariant divide.**  `OpDivFloatNullable` 74 M, and
+  `raster_segment`'s is `/ rs_l2` with `rs_l2` invariant across both loops.  ⚠ Not
+  automatable behind the author's back: reciprocal-multiply is not bit-identical, and the
+  bench validates by hash.  It is an ADVICE-tier diagnostic, not a rewrite.
+- Anything that lets a loop body become one vector operation instead of N scalar ones.
+
+*What this rules OUT, with the measurement beside it:* an integer non-sentinel analysis
+(the float one already exists and is worth ~2 %), and a record-field-read hoist for
+`raster_segment`'s shape — loft#1426's consumer comment *"a struct field read costs a store
+lookup per pixel … and nothing hoists it for us"* is true about the COUNT and false about
+the cost, so the hand-hoist it asks for buys nothing.  Do not build either for performance.
+
 **Re-measured 2026-09-12 on HEAD (d954a39e + the uncommitted § V-aa tree), Apple lane,
 host `firewall02` (arm64 Darwin)** — fresh scratch clone of `drawing-lock`, `compare.py
 --skip-interp --repeat 5` five times, all 14 hashes agreeing every run, native columns
