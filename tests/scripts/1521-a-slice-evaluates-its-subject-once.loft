@@ -30,12 +30,12 @@
 // which `tests/store_lifetime_1522.rs`'s sibling harness arms; in a plain run the allocator
 // usually hands the freed store straight back and the write lands where it was going to.
 //
-// ⚠ KNOWN RESIDUAL, deliberately not scored here: the same slice inside a LOOP
-// (`for i in 0..3 { s = vn?[0..2]; }`) still reports two UAF writes under strict stores.  The
-// subject is named once per iteration now, but the view of the default's work-ref still takes a
-// pre-`Set` displacement free AFTER `OpDatabase` has re-minted that store in place.  That is
-// the `_vec_N` / `__vdb_N` ownership question, not this one, and scoring it here would tie this
-// rule's guard to that fix.
+// ⚠ KNOWN RESIDUAL, deliberately not scored here — loft#1523.  The same slice inside a LOOP
+// still reports two UAF writes under `LOFT_STRICT_STORES=1`: the subject is named once per
+// iteration by this rule, and the view of the literal's backing (`_vec_N = OpGetField(__vdb_N,
+// 0)`) still takes a pre-`Set` displacement free after `OpDatabase` has re-minted that store in
+// place.  That is the `_vec_N` / `__vdb_N` ownership question, not this one, and scoring it here
+// would tie this rule's guard to that fix.
 //
 // @falsified-at: d5ab985c2 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1521-a-slice-evaluates-its-subject-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

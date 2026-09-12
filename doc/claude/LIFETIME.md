@@ -370,6 +370,43 @@ twice, which is ordinary) is split into a var of its own by the time `scan_set` 
 it up by the current var found nothing for that half, so its rebinds got no guarded free at all.
 Both lookups read `ov` now.  The pairing's bisect step is `LOFT_NO_BUFFER_VETO=1`.
 
+**A literal's backing view releases the store its own mint just re-took — OPEN, loft#1523.**
+Every vector literal is a PAIR: the wrapper record `__vdb_N` and the view
+`_vec_N = OpGetField(__vdb_N, 0)`.  Two names, one store, and only the wrapper owns it — but the
+parser strips the view's dep so the first bind's preamble gate fires, after which @FR-O-Proxy
+reads the empty list as ownership and the `Set` takes a displacement free.  `OpDatabase` reuses
+the wrapper's store IN PLACE, so on a second pass that free releases the store the mint just
+re-took and the slot write lands in it.  Visible only under `LOFT_STRICT_STORES=1`; with slot
+reuse on, the allocator usually hands the store straight back.
+
+**Three cures are measured wrong.**  Recorded here because each looks obviously right:
+
+- *A runtime-guarded free before the mint* — `OpFreeRefIfDistinct(_vec_N, __vdb_N)`, release what
+  the view held unless the backing names it: **560 use-after-frees across 75 corpus files.**  The
+  view's previous store is usually a view of something still live.
+- *Resetting the view to the null sentinel before the mint*, so the free has nothing to release:
+  corpus-neutral on the leak and strict channels (1370 files, zero differing cells) and still
+  wrong — `1194-a-comprehension-reads-its-destination` fails 9 of 12 functions with `got null`.
+  **The view's claim on the old store is LOAD-BEARING for a self-reading comprehension.**  Three
+  optimisation-count oracles moved with it as well (`literal_hoist`, `move_append`,
+  `retbuf_adopt`), so four independent tests pin this lowering.
+- *A static ownership veto keyed on the binding's shape* — unnecessary once the above is
+  understood, and unsound in principle: the same shape both owns and does not own depending on the
+  path that reached it.
+
+What the failures together say is that the free is **not** spurious — it is how the old store is
+released after a rebuild — and the defect is only that it runs when `OpDatabase` reused that store
+IN PLACE.  So a cure has to compare the view's OLD store against the backing's store *after* the
+mint, the way codegen's own #330 epilogue does, rather than suppress the free or compare before.
+
+⚠ **Two instrument holes found while measuring this, both of which produced a confident wrong
+answer.**  A sweep wrote `timeout 90 FOO=1 ./loft …`, where `timeout` runs the assignment as the
+command — so the control read 0 everywhere and two cures were rejected against nothing.  An
+all-zero control over 1370 files is the tell; the real baseline has one retained store and three
+files that exhaust the store table under strict mode.  And the sweep scored only leak and
+store-lifetime strings, never the VALUE channel, which is why it called the sentinel reset
+corpus-neutral while `1194` was answering `null`.
+
 Two runtime backstops make any future wrong-free loud instead of corrupting:
 `free_named` refuses to free the eval-stack store (slot 0,
 `Stores::stack_store_at_zero`), and the slot allocator panics with a
