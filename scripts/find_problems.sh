@@ -300,7 +300,17 @@ rebuild_native_cdylibs() {
   # scheduling — it is the argument for a steadier build, not evidence that serial is
   # faster, and an earlier version of this comment got that wrong.
   #
-  # So: if this box is yours alone and idle, set LOFT_PARALLEL_REBUILD=1 and take the 20 %.
+  # THE REGIME THIS IS CHOSEN FOR IS THREE OR FOUR AGENTS ON ONE BOX, which is the normal
+  # case here; a box running a single gate is the exception (a perf-test machine).  Measured
+  # above, one cargo build averages ~3.5 of 14 cores, so the arithmetic is:
+  #
+  #   1 agent,  parallel:  4 builds x 3.5 = 14 cores  -> saturates exactly, 20 % faster
+  #   4 agents, parallel: 16 builds x 3.5 = 56 cores  -> 4x oversubscribed, everyone thrashes
+  #   4 agents, serial:    4 builds x 3.5 = 14 cores  -> saturated, nobody oversubscribed
+  #
+  # Per-agent parallelism MULTIPLIES across agents, so the fan-out that wins alone is the
+  # one that destroys a shared box.  Serial gives up 20 % in the rare case to stay at
+  # capacity in the common one.  Set LOFT_PARALLEL_REBUILD=1 when the box really is yours.
   schedule() {
     local label="$1" dir="$2" cmd="$3"
     local tf="$timing_dir/$idx"
