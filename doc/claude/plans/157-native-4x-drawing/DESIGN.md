@@ -1401,9 +1401,22 @@ lookup.*  `main_vector<{elem}>` for a struct named `T` finds the stdlib's GENERI
 — its `vector` field still carries `__typevar_T`, and a record-level walk through it
 misreads every element.  The pairing now requires the wrapper's `vector` attribute to name
 OUR element and declines otherwise (cell c19; the corpus's own text-pairing struct,
-accidentally named `T`, was renamed `Tx` so c11 keeps its purpose).  The def sharing
-itself is loft#1519 (registration, needs design).  Cells c19–c21 land in the corpus and
-the value shapes in the guard script; 21/21 exact on both backends under `LOFT_POISON=1`.
+accidentally named `T`, was renamed `Tx` so c11 keeps its purpose).  Cells c19–c21 land in
+the corpus and the value shapes in the guard script; 21/21 exact on both backends under
+`LOFT_POISON=1`.
+
+**The def sharing itself was loft#1519, and it is fixed (2026-09-12), so this decline no
+longer has a cause.**  The root was one step further back than "registration": the wrapper
+KEY was being built by the DIAGNOSTIC renderer.  `Type::name` is the schema key and
+`Type::source_name` the user-facing spelling — two jobs of one `render` body, every
+differing arm guarded by `if source` except the type-var placeholder arm, which applied
+`Data::type_var_spelling`'s `T#2`→`T` fold to both.  Guarding that arm gives the key the
+`__typevar_` escape `typedef.rs` already mints for the placeholder's runtime row.  Measured
+here: `LOFT_TRACE_MOVE=1` on `V-j-move-append-cells.loft` fires the decline **twice** before
+and **zero** times after, all 22 cells print identically on both backends before and after,
+the backends agree, and both leak channels are clean — so re-admitting the pairing for
+c19's shape is value-neutral.  **Keep the check**: it costs only the optimisation when it
+fires and is a correct net, but it is no longer load-bearing.
 
 ## V-x — an invariant loop-body literal builds once (2026-09-11)
 

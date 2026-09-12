@@ -9,6 +9,40 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A synthetic type key is one-to-one with its element DEF, not with its spelling (2026-09-12)
+
+`Type::name` is the SCHEMA KEY and `Type::source_name` is the user-facing renderer — two jobs of
+one `render` body, and every arm where they differ is guarded by `if source`.  The type-var
+placeholder arm was not: it applied `Data::type_var_spelling` to both.  That fold is a
+diagnostic's business (two generic headers may each write `<T>`, so the second binds a
+placeholder minted under the internal name `T#2`, and a message has to name the variable the
+reader wrote); as a KEY it erases exactly the distinction a key exists to make, against
+`type_var_spelling`'s own stated contract that "the internal name stays the key everything else
+looks up".
+
+A generic header's `vector<T>` and a program's `struct T` therefore both keyed `main_vector<T>`,
+and whichever asked second was handed the other's wrapper — the program's vector carrying a
+`vector` attribute whose element is the PLACEHOLDER, which a record-level walk reads at the
+placeholder's layout (loft#1519).  The three stdlib headers binding `T` shared one wrapper
+between them for the same reason.  Guarding the arm on `source` gives the key the `__typevar_`
+escape `typedef.rs` already mints for that placeholder's runtime row, so the def table and the
+runtime type table spell a placeholder alike.
+
+Fixed in the renderer rather than at `Data::vector_def`: the wrapper name is hand-spelled at
+eleven sites (one of which comments *"Mirror `Data::vector_def`'s wrapper naming exactly"*), and
+`__tuple<…>` is keyed off the same member spellings — a helper at the vector site would have left
+the tuple family holding the defect.
+
+The value channel never moved, and the guard says so rather than claiming one: the loft#796
+walker refuses the mis-shaped edge and leaks instead of corrupting, and @PLN157 § V-j's
+wrapper-identity decline had already closed the one path that reported.  What moves is
+structural — `introspect` on a program declaring `struct T` shows one `main_vector<T>` before and
+four after — and § V-j's decline, which fires twice on `V-j-move-append-cells.loft` before the fix
+and zero times after, with its 22 cells printing identically on both backends and both leak
+channels clean.  `data.rs`'s `vector_wrapper_is_per_element_def_not_per_spelling` is what fails
+pre-fix; its sibling pins the diagnostic half unchanged, so the fold cannot be re-applied to the
+key without one of the two going red.
+
 ### `Claims::clear` resets the WIDTH, not just the bits (2026-09-10)
 
 `Claims` is indexed by record POSITION and only ever grows (`insert` resizes, nothing shrinks),

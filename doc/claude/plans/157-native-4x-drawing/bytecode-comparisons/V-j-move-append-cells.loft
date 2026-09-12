@@ -223,10 +223,14 @@ fn c18() {
   println("c18 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
 }
 
-// c19 — a struct named like a stdlib TYPE VARIABLE (`T`): the buffer type's name-based
-// lookup finds the GENERIC `main_vector<T>` template, whose `vector` field still carries
-// `__typevar_T` — a record-level walk through it misreads every element, so the pairing
-// declines on the wrapper-identity check and the deep copy stays.  Values right.
+// c19 — a struct named like a stdlib TYPE VARIABLE (`T`).  The buffer type's name-based
+// lookup USED to find the GENERIC `main_vector<T>` template, whose `vector` field carried
+// `__typevar_T`, so the pairing declined on the wrapper-identity check and the deep copy
+// stayed.  loft#1519 fixed that at its root (2026-09-12 — the wrapper key was being built
+// by the DIAGNOSTIC renderer, which folds `T#2` back to `T`), so this cell now PAIRS: the
+// decline fires zero times where it fired twice, and the cell prints the same either way.
+// It is kept as the regression for both halves — the naming, and that the pairing is
+// value-neutral for this shape.  Values right under either outcome.
 struct T { name: text, ins: vector<In> }
 fn mkc(n: integer, seed: integer) -> vector<T> {
   out: vector<T> = [];
