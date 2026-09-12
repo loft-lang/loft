@@ -313,6 +313,10 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  A reversed range (after that normalisation) ⟹ [].
                  `..` is end-EXCLUSIVE, `..=` end-INCLUSIVE.  (Index vs slice asymmetry for text:
                  v[i] ⇒ character, v[i..j] ⇒ text.)
+                 The SUBJECT is evaluated EXACTLY ONCE.  A slice reads it for the length and
+                 again for every element, so a subject with an EFFECT — a call, or a `??` / `?`
+                 default arm that BUILDS a value — is named first and every read goes through
+                 that name.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
 negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
@@ -332,6 +336,24 @@ independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
 > that had it right (`ops::sub_text`, which INTERNALS.md documents as end-relative on both ends)
 > was the unused one. Pinned by `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft`,
 > which reads every text cell against the vector cell for the same bound.
+
+> **The subject's evaluation count is part of this rule because leaving it out was silently
+> wrong.** Until 2026-09-13 the BOUNDS were hoisted — `parse_in_range_body` says "evaluated
+> once" about them in so many words — and the subject was not: `src(c)[0..2]` called `src`
+> **four times** on both backends, and a slice of a discharge default rebuilt that default's
+> work-ref store per read, the second build re-minting the store IN PLACE while the previous
+> view of it was being freed, so the length write landed in a freed store (loft#1521, visible
+> only under `LOFT_STRICT_STORES=1`).
+>
+> Neither the rule nor the mechanism had to be invented. The principle is written one construct
+> over, in [operational.md](operational.md)'s `(E-Asgn-Compound)` — *the place evaluates exactly
+> once* — for exactly this hazard: *"if one of them is side-effecting or divergent … the read
+> and the write land on different slots — a plausible-looking, silently wrong result with no
+> error."* And `Parser::is_repeatable_place` is the shared answer to *"is repeating this
+> free?"*, already used by the nullable-slot read for the same reason; a variable and a
+> projection chain ARE free to repeat, which is what keeps the ordinary `v[a..b]` from gaining a
+> name or a copy. Pinned by `tests/scripts/1521-a-slice-evaluates-its-subject-once.loft`, whose
+> first cell is an evaluation COUNT and so fails on the parent with no instrument armed.
 
 ### 1.6 Keyed range-slice iterators — `Slice-KeyedIter` (`D-key-1`, the shipped decided edge)
 
@@ -550,7 +572,7 @@ the new `(N-Chain)`.  The rest of the record is in the companion
 Existing coverage: oracle `16` (keyed copy / hash behaviour). To add, as a `collections.md` block in
 VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
 - `Col-Order` per kind (esp. spatial Morton order + hash unsorted vs sorted key-order).
-- `Slice-Value` clamp + freshness (vector + text).
+- `Slice-Value` clamp + freshness (vector + text) + the subject evaluated exactly ONCE.
 - `Slice-KeyedIter` value-position REJECT (driver-agreement) + iterate-in-key-order.
 - `Slice-Box/Open/Cap` — the superset membership + `:n` cap + open-walk `break` (extend
   tests/scripts/48b-spatial-slice.loft → an oracle program).

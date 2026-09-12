@@ -2789,7 +2789,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // comprehension's length.
         self.last_range_from = None;
         self.last_range_till = None;
-        let mut in_type = self.parse_in_range(&mut expr, &Value::Null, &id);
+        let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
         let range_bounds = self
             .last_range_from
             .clone()

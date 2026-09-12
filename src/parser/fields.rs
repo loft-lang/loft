@@ -1857,7 +1857,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         etp: &Type,
     ) -> Option<Type> {
         let mut p = Value::Null;
-        let index_t = self.parse_in_range(&mut p, code, "$");
+        // The subject's own type, so the slice's once-only naming (loft#1521) has something to
+        // declare the name with.  Rebuilt from the element type rather than threaded down: this
+        // is the vector arm, so `etp` IS the element and the dep list belongs to the name's
+        // SOURCE, which borrows (`skip_free`) and frees nothing.
+        let subject_tp = Type::Vector(Box::new(etp.clone()), crate::data::Deps::none());
+        let index_t = self.parse_in_range(&mut p, code, &subject_tp, "$");
         // @PLN25 — a nullable `τ?` INDEX is ACCEPTED (not an (N-Store) violation): `v[i]`
         // is already `τ?` (out-of-bounds → null), so the caller must null-check the result
         // regardless, and a null index just propagates to that null result. (N-Store) governs
