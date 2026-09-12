@@ -273,6 +273,34 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
+**ZERO-ON-CLAIM IS ON ITS WAY OUT, AND THE CENSUS SAYS HOW FAR (owner's ruling,
+2026-09-12): fix the callers that rely on zeros rather than paying the memset on every
+claim.**  The falsifier this needed now exists — `LOFT_POISON_CLAIM=1` fills a fresh claim
+with `0xDEADBEEF` (the claim-side twin of poison-on-free), so a caller relying on zero-init
+fails loudly instead of inheriting recycled bytes that look like zeros.  Census on the
+interpreter over every `tests/scripts`: **1 232 clean, 29 dependent**, and all seven
+@PLN157 cell corpora clean on BOTH backends.  The 29 are one family — return buffers, NRVO
+aliasing, fn-ref delivery, loop-local buffer lifetime — and the class is an unwritten
+COLLECTION HANDLE read as a record id (first instance: `vector_replace` reading a store-root
+wrapper nothing had written; both `OpDatabase` paths prefill, so the producer is some other
+route and naming it is step 1).  Worth ~4 % standalone, and the § V-y matrix already showed
+zeroing and the typed prefill are redundant with each other — the prefill is the one that
+must survive, because zero is the wrong null for nullable integers (`i64::MIN`), booleans
+(`255`) and non-null `text` (an interned empty).  Full plan, in four falsifiable steps:
+[DESIGN.md § Zero-on-claim](DESIGN.md).  **Check first, it may be free:** the comment on
+`zero_claim_enabled()` claims the hazard is interpreter-only while the zeroing runs on both
+backends — if that holds, `--native` can stop zeroing today.
+
+**USING THE STORE RESET RELIABLY (the −36 % design, written up 2026-09-12):** the reset
+cannot be decided inside `clear_vector` — a runtime op cannot see whether a reference into
+the store is live — but the CALLER'S FRAME can, and § V-u already emits the buffer's init
+there.  The reset form is that site's `if` branch verbatim (`OpDatabase`'s reuse arm IS
+`clear` + re-claim), so the runtime needs NOTHING new: the unit is an analysis plus a
+one-line emission choice, with four per-call-site obligations (the previous result is dead;
+no live `&`-view of it or its elements; nothing § V-j-placed in that store; no escape).
+Six cells listed, two of which already exist as today's failures.
+[DESIGN.md § Using the store reset reliably](DESIGN.md).
+
 **WHY THE RETURN BUFFER ACCUMULATED, AND THE 36 % THE RIGHT FIX IS WORTH (owner's
 question, 2026-09-12 — measured, then found unsound at this layer).**
 

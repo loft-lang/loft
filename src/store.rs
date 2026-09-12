@@ -1251,10 +1251,24 @@ impl Store {
     /// `zero_claim` is enabled (@P317 debugging lever).  No-op otherwise.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
-        if Self::zero_claim_enabled() {
+        // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
+        // falsifier for the zero-on-claim question: fill a freshly claimed payload with
+        // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
+        // loudly and deterministically instead of inheriting recycled bytes that happen
+        // to look like zeros.  `LOFT_NO_ZERO_CLAIM=1` is the weak form of the same test
+        // (stale data is often benign); this one cannot be passed by luck.
+        if Self::poison_claim_enabled() {
+            self.poison_fill(pos);
+        } else if Self::zero_claim_enabled() {
             self.zero_fill(pos);
         }
         pos
+    }
+
+    /// `LOFT_POISON_CLAIM=1` — see [`Self::finish_claim`].  Read once, cached.
+    fn poison_claim_enabled() -> bool {
+        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("LOFT_POISON_CLAIM").is_ok_and(|v| v != "0"))
     }
 
     /// Claim the space of a record
@@ -3444,6 +3458,23 @@ impl Store {
     }
 
     #[inline]
+    /// Fill a freshly claimed payload with `0xDEADBEEF` — the claim-side twin of
+    /// `free_named`'s poison (`keys::poison_enabled`).  A record id, a vector handle or
+    /// a length read out of this reads as a loud, out-of-range value that the store's
+    /// own guards refuse, which is what turns "this caller relied on zero-init" from a
+    /// silent inheritance into a named failure.
+    pub fn poison_fill(&self, rec: u32) {
+        let bytes = self.payload_bytes(rec, "Store::poison_fill");
+        let base = unsafe { self.ptr.offset(rec as isize * 8 + 4) };
+        for i in 0..bytes / 4 {
+            unsafe {
+                base.cast::<u32>().add(i).write_unaligned(0xDEAD_BEEF);
+            }
+        }
+        // The tail below four bytes keeps whatever it had: a sub-word payload cannot
+        // hold a handle, and writing past `bytes` would leave the block.
+    }
+
     pub fn zero_fill(&self, rec: u32) {
         let bytes = self.payload_bytes(rec, "Store::zero_fill");
         unsafe {

@@ -1538,6 +1538,117 @@ pair in `n_fronds`.  Eight cells exact on both backends under poison AND the
 stale-arena lever; pins in `tests/element_first.rs`; the value guard
 `tests/scripts/157-element-first.loft`.
 
+## Zero-on-claim: who actually relies on it (owner's ruling, 2026-09-12)
+
+**The ruling: if some callers rely on zeros, fix those callers rather than paying the
+price on every claim.**  Right, and the code half-agrees already — `zero_claim_enabled()`
+documents the belt it fastens: `claim` reuses freed blocks without clearing, and a caller
+relying on zero-init (an empty `[]` collection placeholder whose handle field is never
+written) otherwise inherits stale bytes, resolves a junk record id in
+`remove_claims`/`length_vector`, and takes the interpreter down (@PLN25).
+
+**Why the prefill, not the zeroing, is the mechanism that should survive:** zeroing cannot
+replace `set_default_value`, because zero is the WRONG null for several types (a nullable
+integer's is `i64::MIN`, a nullable boolean's is `255`, a non-null `text` wants an interned
+empty string) — but the prefill can replace zeroing.  § V-y already established the other
+half: the parser's literal lowering writes EVERY field explicitly.  And the § V-y ceiling
+matrix measured the redundancy directly — zero-on-claim stacked on top of the prefill skip
+is reproducibly NEGATIVE (247k → 264k, 3/3).  Standalone the lever is worth ~4 % on
+`fronds`; the sample's 9 % `bzero`/`memset` class is mostly arena-growth `alloc_zeroed`,
+which is the OS handing out zero pages and must not be touched.
+
+**The falsifier this needed, and now has: `LOFT_POISON_CLAIM=1`** (`Store::poison_fill`,
+the claim-side twin of `LOFT_POISON`'s poison-on-free).  It fills a freshly claimed payload
+with `0xDEADBEEF`, so a caller relying on zero-init fails loudly and deterministically
+instead of inheriting recycled bytes that happen to look like zeros — which is why
+`LOFT_NO_ZERO_CLAIM=1` was never a real test of this question.
+
+**The census it produced** (2026-09-12, `--interpret`, every `tests/scripts/*.loft` minus
+the `@EXPECT_ERROR`/`@IGNORE` files): **1 232 clean, 29 dependent.**  All seven @PLN157
+cell corpora are clean on BOTH backends under it.  The 29 are one family by their names —
+return buffers, NRVO aliasing, fn-ref delivery, loop-local buffer lifetime, mapped-lambda
+collections — i.e. the buffer/delivery machinery, not user code at large.
+
+**The class, diagnosed:** the poison arrives as a RECORD ID (`rec=3735928559` = `0xDEADBEEF`)
+where a collection HANDLE should be — first instance `Stores::vector_replace` reading its
+destination handle out of a store-ROOT `main_vector<T>` wrapper (`store=3 rec=1 pos=12`)
+that nothing had written.  Note what this rules out: BOTH `OpDatabase` paths prefill (the
+interpreter's `State::database` and native's `op_database_inner` each call
+`set_default_value`), so the un-initialised wrapper is produced by some OTHER route — the
+next step is to name that producer, and the trace hook for it is one `eprintln` at the
+`vector_replace` read.
+
+**The order of work this implies** (each step falsifiable on its own):
+1. Name the producer of an un-prefilled store-root wrapper; make it write the handle
+   explicitly.  That is the owner's ruling applied to the one class the census found.
+2. Re-run the census; repeat until it reads 0 dependent.
+3. Promote the invariant — *every claimed block is either typed-prefilled or completely
+   written before any read* (§ V-y's coverage proof, generalised from literals to all
+   claim sites) — and demote zero-on-claim to a debug lever beside the poison.
+4. Check first, because it may be free: `zero_claim_enabled()`'s own comment claims the
+   hazard is "interpreter only; native uses Rust ownership and never hits this", yet the
+   zeroing runs on both.  If that is still true, `--native` can stop zeroing today.
+
+## Using the store reset reliably for a function result (the −36 % design)
+
+The measurement is in the README's mechanic note: resetting the buffer's store instead of
+walking its elements puts `fronds` at **160–167k ns/op** against the element walk's 250k
+and the LEAKING build's 186–200k, hash exact, memory flat.  It is worth building properly.
+
+**Why it cannot be decided in `clear_vector`, and where it CAN be.**  The store-root
+vector's store is exclusively its own for ALLOCATION but not for REFERENCES, and the two
+holders are invisible from inside the op: a § V-j placed record (another frame's variable)
+and a live alias of the PREVIOUS result — an `&`-view of it or of an element, or a caller
+local that § V-u adopted onto the same buffer.  A length reset leaves those records intact
+(a stale view reads stale-but-valid data); a store reset frees them under a live reference.
+`clear_vector` is a runtime op with no liveness knowledge.  **The caller's frame has it
+all**, and § V-u already emits the buffer's init THERE:
+
+```rust
+let mut var_result: DbRef = { if var_BUF.store_nr == u16::MAX || var_BUF.rec == 0 {
+    var_BUF = OpDatabase(cell, var_BUF, TP);          // first call: mint the store
+} else { stores.clear_vector_release(&var_BUF); }     // reuse: the clear this fixes
+    var_BUF };
+```
+
+The reset form is the `if` branch verbatim — `OpDatabase`'s reuse arm IS `clear` +
+re-claim — so the RUNTIME needs nothing new at all: the change is to emit the mint on both
+paths when the proof holds, and the whole unit is an analysis plus a one-line emission
+choice.
+
+**The proof obligation, per call site** (all four decidable where the site is emitted):
+1. **The previous result is dead** — this call REASSIGNS the result local and nothing reads
+   the old value afterwards.  (The liveness question § V-u's adoption analysis already asks
+   about the same local, one step further.)
+2. **No live `&`-view** of the previous result or of its elements outlives this point (the
+   dep lists carry it; `@FR-B-View` is the rule).
+3. **Nothing was PLACED in that store** — no § V-j pairing targets it.  Statically decidable
+   from `hoist::move_appends`; the runtime flag `Store::hosts_placed` (set in
+   `place_record_in`) was built and measured as the conservative fallback, and it removed
+   the native half of the failure.
+4. **The previous result did not ESCAPE** — not returned, not stored into a field, not
+   captured by a closure.
+
+**Cells to write before the code** — the first two already exist as failures, which is the
+cheapest possible start:
+- the § V-j corpus on `--native` (a placed record in the reset store) → must decline (3);
+- the § V-j corpus on `--interpret` under `LOFT_NO_ZERO_CLAIM=1` (the live-view case) →
+  must decline (2); it names itself out loud: *"the vector handle in record 1.12 points at
+  record 3 … has been freed"*;
+- `a = make(1); b = make(2); use(a)` → must decline (1);
+- a `&`-view of an element that outlives the next call → must decline (2);
+- a recursive callee whose own buffer lives in that store → must decline (3);
+- the no-heap element case → the reset is pointless but harmless; pin which form is emitted;
+- the admitted shape (`for … { r = make(…); consume(r) }`) → resets, and `fronds` measures
+  160–167k.
+
+**And the sibling design the owner named, which needs no alias proof at all:** REUSE the
+element records and their inner vector allocations instead of freeing and re-claiming them
+— keep the capacity, reset the lengths, let the next call's appends refill.  Nothing is
+freed, so nothing can dangle, and the free/claim churn disappears rather than being made
+cheaper (which is what the reverted size-class recycler was trying to buy, and what most of
+the 39.7 % allocator class actually is).  That is the better unit to build first.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append
