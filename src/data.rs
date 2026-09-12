@@ -2882,11 +2882,31 @@ impl Type {
             Type::Optional(tp) => format!("{}?", tp.render(data, source)),
             Type::Rewritten(tp) => tp.render(data, source),
             Type::RefVar(tp) => format!("&{}", tp.render(data, source)),
-            // A type-variable placeholder renders under the spelling its header wrote: two
-            // headers may both write `T` and bind different placeholders, so the second is
-            // minted as `T#2`, and a diagnostic must name what the reader wrote.
-            Type::Enum(t, _, _) | Type::Reference(t, _) if data.is_type_var_placeholder(*t) => {
+            // A type-variable placeholder is the fifth arm where the two jobs differ, and it
+            // differs in BOTH directions.  The DIAGNOSTIC names the variable the reader wrote:
+            // two headers may both write `T` and bind different placeholders, so the second is
+            // minted as `T#2`, which the source cannot write.  The KEY may not take that
+            // spelling — `Data::type_var_spelling`'s contract is that "the internal name stays
+            // the key everything else looks up", and the collapse erases exactly the
+            // distinction a key exists to make.  It also erases the line between a placeholder
+            // and a USER type of the same name, which is the sharper half: a generic header's
+            // `vector<T>` and a program's `struct T { … }` both keyed `main_vector<T>`, so the
+            // program's vector resolved the TEMPLATE's wrapper and every record-level walk read
+            // its elements at the placeholder's layout (loft#1519).  The key therefore takes
+            // the `__typevar_` row spelling `typedef.rs` already mints for the placeholder's
+            // runtime row — one escape, for one reason, so the def table and the type table
+            // name a placeholder the same way.
+            Type::Enum(t, _, _) | Type::Reference(t, _)
+                if data.is_type_var_placeholder(*t) && source =>
+            {
                 Data::type_var_spelling(&data.def(*t).name).to_string()
+            }
+            Type::Enum(t, _, _) | Type::Reference(t, _) if data.is_type_var_placeholder(*t) => {
+                format!(
+                    "{}{}",
+                    crate::database::TYPEVAR_ROW_PREFIX,
+                    data.def(*t).name
+                )
             }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
@@ -10435,6 +10455,105 @@ mod caller_graph_tests {
             u32::MAX,
             "wrapper must resolve cross-source after rebuild_indices"
         );
+    }
+
+    /// loft#1519 — a synthetic wrapper is one-to-one with its ELEMENT DEF, never with
+    /// the element's diagnostic spelling.
+    ///
+    /// A generic header's `<T>` placeholder and a program's `struct T` are two different
+    /// defs that a DIAGNOSTIC deliberately spells alike (`Data::type_var_spelling` folds
+    /// the internally-minted `T#2` back to the `T` the reader wrote).  `Type::name` is the
+    /// SCHEMA KEY rather than a renderer, so when that fold reached it too, both defs keyed
+    /// `main_vector<T>` and the SECOND to ask got the first's wrapper — the program's
+    /// `vector<T>` carrying a `vector` attribute whose element is the placeholder, which
+    /// every record-level walk then reads at the placeholder's layout.
+    ///
+    /// Two placeholders bound by two headers are the same question one level down: they are
+    /// distinct defs (`T`, `T#2`) that the fold also spells alike.
+    #[test]
+    fn vector_wrapper_is_per_element_def_not_per_spelling() {
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let mut d = Data::new();
+        let mut lexer = crate::lexer::Lexer::from_str("", "test");
+
+        // A type-var placeholder is a struct with no attributes whose `returned` points at
+        // itself — what `is_type_var_placeholder` reads.  `T` and `T#2` are two headers
+        // both writing `T`; the second is minted under the internal name.
+        let placeholder = |d: &mut Data, name: &str| {
+            let n = d.add_def(name, &pos, DefType::Struct);
+            d.definitions[n as usize].returned = Type::Reference(n, Deps::none());
+            assert!(
+                d.is_type_var_placeholder(n),
+                "{name} must read as a placeholder"
+            );
+            n
+        };
+        let tv1 = placeholder(&mut d, "T");
+        let tv2 = placeholder(&mut d, "T#2");
+
+        // The user's `struct T` — a different SOURCE, the same spelling.
+        d.source = 1;
+        let user = d.add_def("T", &pos, DefType::Struct);
+
+        let w_tv1 = d.vector_def(&mut lexer, &Type::Reference(tv1, Deps::none()));
+        let w_tv2 = d.vector_def(&mut lexer, &Type::Reference(tv2, Deps::none()));
+        let w_user = d.vector_def(&mut lexer, &Type::Reference(user, Deps::none()));
+
+        assert_ne!(
+            w_tv1, w_user,
+            "a user `struct T`'s wrapper must not be the `<T>` template's wrapper"
+        );
+        assert_ne!(
+            w_tv1, w_tv2,
+            "two headers' placeholders are two defs and want two wrappers"
+        );
+
+        // Each wrapper's `vector` attribute must name the element it was minted for — the
+        // property the shared def actually broke, and the one a record-level walk reads.
+        for (wrapper, elem, what) in [
+            (w_tv1, tv1, "<T> template"),
+            (w_tv2, tv2, "<T#2> template"),
+            (w_user, user, "user struct T"),
+        ] {
+            let a = d.attr(wrapper, "vector");
+            assert_ne!(a, usize::MAX, "{what}: wrapper has no `vector` attribute");
+            match d.attr_type(wrapper, a) {
+                Type::Vector(e, _) => assert!(
+                    matches!(*e, Type::Reference(got, _) if got == elem),
+                    "{what}: wrapper element is {:?}, want def {elem}",
+                    *e
+                ),
+                other => panic!("{what}: wrapper attribute is {other:?}, want a vector"),
+            }
+        }
+
+        // The user's `T` keeps the unadorned spelling; only the placeholders step aside,
+        // under the `__typevar_` escape `typedef.rs` already mints for their runtime row.
+        assert_eq!(d.def_nr("main_vector<T>"), w_user);
+        assert_eq!(d.def_nr("main_vector<__typevar_T>"), w_tv1);
+        assert_eq!(d.def_nr("main_vector<__typevar_T#2>"), w_tv2);
+    }
+
+    /// loft#1519 — the DIAGNOSTIC half of the same arm must not move: a message names the
+    /// variable the reader wrote, so `T#2` still reads `T` and neither spelling leaks the
+    /// `__typevar_` escape in front of a user.
+    #[test]
+    fn type_var_diagnostic_spelling_is_unchanged() {
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let mut d = Data::new();
+        let n = d.add_def("T#2", &pos, DefType::Struct);
+        d.definitions[n as usize].returned = Type::Reference(n, Deps::none());
+        let tp = Type::Vector(Box::new(Type::Reference(n, Deps::none())), Deps::none());
+        assert_eq!(tp.source_name(&d), "vector<T>");
+        assert_eq!(tp.name(&d), "vector<__typevar_T#2>");
     }
 }
 

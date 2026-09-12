@@ -1,0 +1,171 @@
+// loft#1519 — a program may name a type `T`, and its `vector<T>` must be ITS vector.
+//
+// The stdlib's generic headers (`min_of<T: Ordered>`, `sum<T: Addable>`, …) each bind a
+// type-var placeholder whose def name is the bare `T`.  The synthetic wrapper struct that
+// carries a `vector<τ>` is keyed by `Type::name`, which is the SCHEMA KEY — and the key
+// used to be built through the DIAGNOSTIC fold (`Data::type_var_spelling`, which reports
+// the internally-minted `T#2` as the `T` the reader wrote).  Folded, a placeholder and a
+// user `struct T` keyed the same `main_vector<T>`, so whichever asked second was handed
+// the other's wrapper: the program's vector then carried a `vector` attribute whose
+// element is the PLACEHOLDER, and every record-level walk over it read the elements at the
+// placeholder's layout.  The reported channel was @PLN157 § V-j's `free_record_in`, where
+// the loft#796 walker refused the edge (`refused to walk a vector (length) edge of
+// `vector<__typevar_T#3>``) and leaked rather than corrupting.
+//
+// The cells below are the VALUE half — the shapes a wrapper's element type decides: a
+// plain scalar record, one that owns heap (text), one holding a nested collection, a
+// vector of vectors, a struct-enum, a keyed collection, and a build/free cycle repeated
+// enough times that a per-call leak shows on the harness's store gate.  Each is written
+// twice, once under the colliding name `T` and once under `Tq`, which no header binds:
+// the two columns must agree, and each must equal its hand-computed value.  A cell that
+// only compared the two spellings would pass while both were wrong.
+//
+// The structural half — that the two wrappers are distinct DEFS and each names its own
+// element — is `data.rs`'s `vector_wrapper_is_per_element_def_not_per_spelling`, because
+// no program can observe a def table.  That unit test is what fails on the pre-fix build;
+// these cells are what must keep holding whatever the wrapper is keyed on.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-12) — the `source` guard removed from
+// `Type::render`'s placeholder arm (the pre-fix spelling restored, everything else equal)
+// turns BOTH of `data.rs`'s new tests red: `vector_wrapper_is_per_element_def_not_per_
+// spelling` on its first assertion — `left: 4, right: 4`, the user's wrapper IS the
+// template's, one def where two are wanted — and `type_var_diagnostic_spelling_is_
+// unchanged` on the key half, which reads `vector<T>` where the key is `vector<__typevar_
+// T#2>`.  Every cell in THIS file stays green on that build, on both backends, and so do
+// both leak channels.  That is the honest record of this defect rather than a weakness of
+// the cells: the value channel never moved (the loft#796 walker refuses the mis-shaped
+// edge and leaks instead of corrupting), and @PLN157 § V-j's wrapper-identity decline had
+// already closed the one path that reported.  Measured the same way from the other side —
+// a pre-fix binary run with `--path` at its own worktree — `introspect` shows ONE
+// `main_vector<T>` for a program declaring `struct T` where the fixed binary shows four
+// (the user's, plus one per placeholder).  ⚠ That baseline reads EMPTY, not "clean",
+// without `--path`: the pre-fix binary finds no stdlib and the grep matches nothing.
+//   ARMED: LOFT_STRICT_STORES=1 on the interpreter, LOFT_NATIVE_LEAK_CHECK=1 on native —
+//   both clean before and after, so the leak column is a control here, not the signal.
+//   HOLDS: exit, assertions, panic, expectations equal on both trees.
+
+struct T { ta: integer, tb: integer }
+struct Tq { qa: integer, qb: integer }
+
+struct TTxt { xa: integer, xs: text }
+struct TNest { na: integer, nxs: vector<integer> }
+
+enum TE { TLeaf { lk: integer }, TNode { nk: integer, nm: integer } }
+
+struct TKey { kid: integer, ka: integer }
+
+fn build_t(n: integer) -> vector<T> {
+  out: vector<T> = [];
+  for i in 0..n { out += [T { ta: i, tb: i * 10 }]; }
+  out
+}
+
+fn build_q(n: integer) -> vector<Tq> {
+  out: vector<Tq> = [];
+  for i in 0..n { out += [Tq { qa: i, qb: i * 10 }]; }
+  out
+}
+
+// A build-and-drop cycle: the vector dies with the call, so a wrapper whose element is
+// the placeholder leaks one store per call rather than freeing the records it walked.
+fn cycle(n: integer) -> integer {
+  v: vector<TTxt> = [];
+  for i in 0..n { v += [TTxt { xa: i, xs: "s{i}" }]; }
+  t = 0;
+  for e in v { t = t + e.xa + size(e.xs); }
+  t
+}
+
+fn main() {
+  // --- c1: a plain scalar record, under both spellings ---
+  vt = build_t(4);
+  vq = build_q(4);
+  assert(len(vt) == 4, "c1 T len {len(vt)}");
+  assert(len(vq) == 4, "c1 Tq len {len(vq)}");
+  assert(vt[0].ta == 0 && vt[0].tb == 0, "c1 T head {vt[0].ta},{vt[0].tb}");
+  assert(vt[3].ta == 3 && vt[3].tb == 30, "c1 T tail {vt[3].ta},{vt[3].tb}");
+  assert(vt[3].tb == vq[3].qb, "c1 columns disagree: {vt[3].tb} vs {vq[3].qb}");
+
+  // --- c2: an element that OWNS heap — the walk has a text edge to follow ---
+  vx: vector<TTxt> = [];
+  for i in 0..3 { vx += [TTxt { xa: i, xs: "v{i}" }]; }
+  assert(len(vx) == 3, "c2 len {len(vx)}");
+  assert(vx[0].xs == "v0", "c2 head {vx[0].xs}");
+  assert(vx[2].xs == "v2" && vx[2].xa == 2, "c2 tail {vx[2].xa},{vx[2].xs}");
+
+  // --- c3: an element holding a nested COLLECTION — a second wrapper one level down ---
+  vn: vector<TNest> = [];
+  for i in 0..3 { vn += [TNest { na: i, nxs: [i, i + 1] }]; }
+  assert(len(vn) == 3, "c3 len {len(vn)}");
+  assert(len(vn[0].nxs) == 2 && vn[0].nxs[1] == 1, "c3 head {len(vn[0].nxs)},{vn[0].nxs[1]}");
+  assert(vn[2].nxs[0] == 2, "c3 tail {vn[2].nxs[0]}");
+
+  // --- c4: vector<vector<T>> — the element is itself a wrapper-carrying type ---
+  vv: vector<vector<T>> = [];
+  for i in 0..3 {
+    row: vector<T> = [];
+    for j in 0..2 { row += [T { ta: i * 10 + j, tb: j }]; }
+    vv += [row];
+  }
+  assert(len(vv) == 3 && len(vv[0]) == 2, "c4 shape {len(vv)},{len(vv[0])}");
+  assert(vv[0][0].ta == 0 && vv[2][1].ta == 21, "c4 {vv[0][0].ta},{vv[2][1].ta}");
+
+  // --- c5: the stdlib generics the placeholder belongs to still work beside `T` ---
+  xs: vector<integer> = [5, 2, 9, 1];
+  assert((min_of(xs) ?? -1) == 1, "c5 min {min_of(xs) ?? -1}");
+  assert((max_of(xs) ?? -1) == 9, "c5 max {max_of(xs) ?? -1}");
+
+  // --- c6: a struct-enum element (variants are defs of their own) ---
+  ve: vector<TE> = [];
+  ve += [TLeaf { lk: 7 }];
+  ve += [TNode { nk: 1, nm: 2 }];
+  se = 0;
+  for e in ve { match e { TLeaf { lk } => { se = se + lk; }, TNode { nk, nm } => { se = se + nk * nm; } } }
+  assert(len(ve) == 2 && se == 9, "c6 {len(ve)},{se}");
+
+  // --- c7: a KEYED collection over the colliding type ---
+  kh: index<TKey[kid]> = [];
+  for i in 0..4 { kh += [TKey { kid: i, ka: i * 3 }]; }
+  kn = 0;
+  for r in kh { kn = kn + r.ka; }
+  assert(len(kh) == 4 && kn == 18, "c7 {len(kh)},{kn}");
+
+  // --- c8: repeated build-and-drop — the store gate reads this cell ---
+  tot = 0;
+  for r in 0..20 { tot = tot + cycle(3); }
+  assert(tot == 180, "c8 total {tot}");
+
+  // --- c9: PARAMETER provenance.  A `vector<T>` the callee receives rather than builds:
+  // the wrapper is looked up where the argument is bound, not where it was minted.
+  assert(total_t(vt) == 66, "c9 by value {total_t(vt)}");
+  assert(total_view(vt) == 66, "c9 by view {total_view(vt)}");
+
+  // --- c10: an IF-ARM and a nested BLOCK.  Arm materialisation resolves the wrapper by
+  // name to decide whether the bound vector is copied (`ArmBind::CopyVector`), so the arm
+  // and the bare block are their own route to the same lookup.
+  pick = if len(vt) > 2 { build_t(2) } else { build_t(5) };
+  assert(len(pick) == 2 && pick[1].tb == 10, "c10 arm {len(pick)},{pick[1].tb}");
+  inner = { b = build_t(3); b };
+  assert(len(inner) == 3 && inner[2].ta == 2, "c10 block {len(inner)},{inner[2].ta}");
+
+  // --- c11: a TUPLE element.  `__tuple<…>` is the sibling synthetic def, keyed by the
+  // same member spellings — so a placeholder member folded onto a user type there too.
+  tp: vector<(integer, text)> = [];
+  for i in 0..3 { tp += [(i * 2, "t{i}")]; }
+  assert(len(tp) == 3, "c11 len {len(tp)}");
+  assert(tp[2].0 == 4 && tp[2].1 == "t2", "c11 tail {tp[2].0},{tp[2].1}");
+}
+
+// Reads its parameter, so the cell measures the vector that ARRIVED and not merely that a
+// call happened.  `vt` holds tb = 0,10,20,30 and ta = 0,1,2,3 — 60 + 6.
+fn total_t(v: vector<T>) -> integer {
+  s = 0;
+  for e in v { s = s + e.ta + e.tb; }
+  s
+}
+
+fn total_view(v: const vector<T>) -> integer {
+  s = 0;
+  for e in v { s = s + e.ta + e.tb; }
+  s
+}
