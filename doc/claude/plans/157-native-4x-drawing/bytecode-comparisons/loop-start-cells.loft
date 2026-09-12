@@ -1,0 +1,20 @@
+// One function per counted-loop emission path the sentinel-peel would touch.
+fn c1_range(n: integer) -> integer { r = 0; for i in 0..n { r += i; } r }          // exclusive
+fn c2_incl(n: integer) -> integer { r = 0; for i in 0..=n { r += i; } r }          // inclusive
+fn c3_from(a: integer, b: integer) -> integer { r = 0; for i in a..b { r += i; } r } // non-zero start
+fn c4_empty(n: integer) -> integer { r = 0; for i in n..n { r += 1; } r }          // zero trips
+fn c5_one(n: integer) -> integer { r = 0; for i in n..(n + 1) { r += 1; } r }      // one trip
+fn c6_nested(n: integer) -> integer { r = 0; for i in 0..n { for j in 0..n { r += 1; } } r }
+fn c7_break(n: integer) -> integer { r = 0; for i in 0..n { if i > 3 { break } r += i; } r }
+fn c8_cont(n: integer) -> integer { r = 0; for i in 0..n { if i == 2 { continue } r += i; } r }
+fn c9_vec(v: const vector<integer>) -> integer { r = 0; for x in v { r += x; } r }  // over a vector
+fn c10_neg(n: integer) -> integer { r = 0; for i in (0 - n)..0 { r += i; } r }      // negative range
+
+fn main() {
+  print("c1 {c1_range(5)} c2 {c2_incl(5)} c3 {c3_from(2, 6)} c4 {c4_empty(3)} c5 {c5_one(3)}");
+  print("c6 {c6_nested(4)} c7 {c7_break(9)} c8 {c8_cont(5)} c9 {c9_vec([3, 4, 5])} c10 {c10_neg(3)}");
+}
+fn d1_litnz(n: integer) -> integer { r = 0; for i in 2..n { r += i; } r }        // literal non-zero start
+fn d2_var0(n: integer) -> integer { z = 0; r = 0; for i in z..n { r += i; } r }  // variable that IS zero
+fn d3_expr(n: integer) -> integer { r = 0; for i in (n - n)..n { r += i; } r }   // expression start
+fn main() { print("d1 {d1_litnz(5)} d2 {d2_var0(4)} d3 {d3_expr(4)}") }
