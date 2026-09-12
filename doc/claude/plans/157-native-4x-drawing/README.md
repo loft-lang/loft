@@ -31,6 +31,63 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 **4.4×** after § V-n + § V-o, **2.3×** after § V-p; `lock` **3.5×** and `lock_curved` **3.8×** after
 § V-q (2026-09-09, both under the bar).
 
+**Which MACHINE a row was measured on is part of the row.**  The tables below through
+2026-09-12 are the **Apple** lane; the one directly under this paragraph is **x86-64
+Linux** (this dev box).  The two do not compare row-for-row and neither is wrong: the
+bar is *within 4× of the Rust reference on the same machine*, and which routines clear
+it differs by target.  Label every future row with its machine.
+
+**Re-measured 2026-09-12 on x86-64 Linux, the same § V-z tip (d3c31d82, doc-only over
+d80307b0)** — rebuilt release lib + binary, fresh scratch clone of `drawing-lock`,
+`compare.py --skip-interp --repeat 5` run twice, every row within 1 % of itself and all
+14 hashes agreeing: **seven of the ten judged rows under the bar** — `hair` **2.03×**,
+`hash` **2.24×**, `composite` **2.34×**, `fill_circle` **2.66×**, `fill_star` **2.71×**,
+`lock` **2.86×**, `lock_curved` **2.98×** — and three over: `wide_line` **4.11×**,
+`fronds` **6.20×** (318 300 / 322 460 ns/op native), `smooth` **8.00–8.39×**.  Note how
+far the two lanes disagree on WHICH rows fail: `lock_curved` and both fills clear the
+bar here and miss it on Apple, while `smooth` clears it there and is the worst row here.
+
+The three rows that fail here were profiled (`scripts/profile.sh --engine`, a scratch-only
+`--only <routine>` switch on the clone's `bench.loft`), and they fail for three DIFFERENT
+reasons:
+
+- **`fronds` — the allocation class, unchanged.**  `claim` 9.1 %, the free-list tree
+  (`fl_set_red`/`fl_delete_node`/`fl_balance`/`fl_set_right`/`fl_flip_colors`) 14.8 %,
+  `vector_append`+`vector_finish` 6.9 %, `record_new`/`record_finish` 3.2 %, `memset`
+  3.6 % — against `n_fronds` itself at 8.4 %.  That is the ~39 % allocator+free-tree the
+  09-11 profile named, so queue items 4b / 5 / the move still rank first for this row.
+- **`smooth` — per-CALL store lifecycle, a class the queue does not yet carry.**  The
+  routine is 61 points, and the fixed cost of standing a store up and tearing it down is
+  not amortised: `op_database_inner` 4.9 %, `database_named` 4.2 %, `set_free_protected`
+  6.9 %, `set_free_header` 2.8 %, `OpFreeRef` 2.9 %, `n_protect_store_frees` 2.5 %,
+  `free_named` 2.3 %, `Stores::clear` 1.3 % — ~28 % of the row in create/free, against
+  ~39 % in the four `n_*` functions doing the actual arithmetic.  A SMALL routine is the
+  shape that exposes this; every large row hides it.
+- **`wide_line` — code quality in one raster loop, plus libm.**  `n_polygon_generic`
+  alone is 64.1 % (real user code), and what surrounds it is small and concrete:
+  `floor`+`ceil` as out-of-line libm calls 7.3 %, `n_round_down`+`n_round_up` not
+  inlined 4.7 %, `get_vector`+`vec_get_or_raise_runtime` 7.0 % of unhoisted element
+  reads.  Only ~7 % is store machinery, so this row is NOT the allocation class.
+
+**The three newest units were A/B'd on this box and all three pay here too** (each
+variant a fresh `bench/.loft` — the program cache is keyed on the SOURCE, so an
+env-gated emitter change is otherwise served the previous variant's binary; best of 3,
+`--n 50`).  On `fronds`: base **322.9k** ns/op, `LOFT_NO_ELEMENT_FIRST=1` **488.8k**
+(§ V-z is worth −34 %), `LOFT_NO_LITERAL_HOIST=1` **357.2k** (§ V-x −9.6 %),
+`LOFT_NO_COMPLETE_WRITE=1` **332.7k** (§ V-y −2.9 %).  ⚠ **Read only the row the switch
+targets.**  Each variant is a different binary, and code layout alone moved `hash`
+between 246k and 436k across the four — wider than any of the effects above — so an
+untargeted row in a switch A/B measures layout, not the switch.
+
+**`floor`/`ceil` are a baseline-target artefact, and the note in `src/main.rs` that
+`-C target-cpu=native` "moved nothing" is an APPLE measurement.**  Probed on this box
+(scratch `fl.rs`, rustc 1.97): at plain `-O` `x.floor()`/`x.ceil()` emit PLT calls into
+libm; at `-C target-cpu=x86-64-v2` each becomes one `roundsd`.  On aarch64 `frintm`/
+`frintp` are baseline, so the flag genuinely cannot move that row there — which is
+exactly why the earlier measurement found nothing.  Re-measuring the shipped tier's
+flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
+done, and raising the baseline is a portability decision, not just a perf one.
+
 **Re-measured 2026-09-12 on the § V-z tip (d80307b0)** — `compare.py --skip-interp
 --repeat 5`, caches cleared, all 14 hashes agreeing: **five under the bar** — `hash`
 **2.19×**, `hair` **2.76×**, `lock` **3.64×**, `composite` **3.68×**, `smooth` **3.92×**
