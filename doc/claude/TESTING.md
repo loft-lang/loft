@@ -3379,6 +3379,29 @@ fact rather than a guess: a missing toolchain does not fail a `--native` run at 
 `exit 1, zero asserts` is none of those three, and the cause was a second concurrent run of the
 same guard clobbering the trace file it writes into the checkout.
 
+**⚠ The sibling of all three, and the commonest in practice: the probe that never RAN.**  The
+shapes above are instruments that ran and could not see.  This one is an instrument that was
+never applied, and its output is indistinguishable — a clean result, from an experiment that did
+not happen.  Six instances in one session (2026-09-12), four distinct causes:
+
+* a `python3` mutation whose `old` string no longer matched because `cargo fmt` had reflowed it.
+  The script raised `AssertionError`, wrote NOTHING, and the suite then passed against the
+  UNMUTATED build — which reads exactly like *"the control has no teeth"*.  Twice.
+* an extraction regex expecting a comma the message does not contain, so a corpus sweep reported
+  `0` where the instrument itself printed `2099` on the same file.
+* a stray `cat > file` with no input, which consumed the heredoc intended for the `python3` on
+  the next line of the same compound command — the mutation silently vanished and the shell hung
+  reading stdin.
+* `pgrep -f "[c]argo"` matching the COMMAND LINE of that hung shell, so a wait-loop reported a
+  build running for minutes when no `cargo` process existed (`ps -C cargo` was empty).
+
+**How to apply.**  A mutation is not applied until you have read it back: `grep` the file for the
+mutant after writing it, and treat a PASS on an unverified mutation as no result at all.  An
+extraction is not measuring until it has reproduced a number you already know by another route —
+run it against one case whose answer you have, before trusting it over a thousand.  Both are one
+command, and both are the only things that caught these.  Sibling of the `--changed` selection
+trap (loft#1520): a suite that runs the wrong subjects also reports green.
+
 **Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
 and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each
 unmatched one (`unmatched_expect` over the whole list, loft#929's own fix), so a file CAN hold
