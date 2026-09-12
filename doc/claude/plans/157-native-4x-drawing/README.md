@@ -273,6 +273,50 @@ exactly why the earlier measurement found nothing.  Re-measuring the shipped tie
 flags on x86 is therefore an open, cheap unit worth ~7 % of `wide_line`; it is not yet
 done, and raising the baseline is a portability decision, not just a perf one.
 
+**THE ALLOCATOR IS THE NEXT UNIT, AND A FIRST ATTEMPT WAS REVERTED (2026-09-12) —
+read this before starting it again.**  Profiled on the post-leak-fix build (8 s sample,
+1 626 in-binary samples, `vr_fronds --n 40000`): the free-list TREE is **39.7 %** of the
+row (`fl_set_red` 185 the hottest single symbol, `fl_balance` 115, insert/delete/rotate
+the rest), `claim`/`delete`/alloc another **12.4 %**, against the program's own
+**11.8 %** — the allocator is 52 % of `fronds` and 4.4× the program.  The x86 lane
+measured the same class independently (fl-tree 14.8 % + claim 9.1 %), and closing the
+leak RAISED it, because blocks now actually get returned.
+
+The design that fits: a **size-class recycler** in front of the tree — per-size LIFO
+lists of freed blocks (loft recycles a handful of uniform sizes: growth-doubled vectors
+and same-shaped records), so a free is a push and a claim of that size is a pop, with
+the tree kept for large or odd sizes and as the fallback.  `claim` today is
+`bump_tail → fl_take_ge → coalesce → grow`; the recycler slots in before `bump_tail`.
+
+**What the reverted attempt established (the next attempt starts here, not from
+scratch):**
+1. **Membership cannot live inside the block.**  A one-word free block's footer is
+   `-1` = `0xFFFF_FFFF`, so every in-block sentinel collides with one, and a walker that
+   reads a footer as a marker corrupts the heap (measured: a footer read back as a tree
+   link).  Use an out-of-band position bitset — the store already has `Claims` for it.
+2. **Parked blocks must stay FREE-LOOKING** (negative header + footer).  Making them
+   read as claimed is safe for every walker but blinds the use-after-free detection the
+   store's safety story depends on, and makes `usage`, the store-heap ceiling and
+   `release_resident` all lie.
+3. **Five sites must flush the recycler first**, because each reads or reshapes the heap
+   as a whole: `coalesce_free`, `claim_at`, `reclaim_tail`, `fl_rebuild`,
+   `release_resident`, plus `resize` and `claim_scan` — the last two because
+   `claim_grow` EXTENDS THE STORE'S LAST BLOCK IN PLACE (the `radix_tree` r7 crash).
+4. **`Store::init` must drop the recycler**: a reused slot's parked positions are fresh
+   data a moment later.
+5. **A recording store must not park** — @PLN16.J is position-addressed replay and the
+   recycler changes which block a claim returns.
+6. **Still unresolved at revert**: a tree corruption inside `fl_find_ge` on `fronds`
+   that none of the above explained, with a double-park guard and a disturbance detector
+   both silent.  The next attempt should build the invariant checker FIRST (a release-mode
+   `fl_validate` + a parked-set audit callable after every claim/delete under an env
+   var), because the failure surfaces far from its cause.
+
+The unit was reverted rather than landed half-verified: it touches the heap every
+program shares, and the session's evidence did not reach "provably sound".  The
+measurement it exists to earn was never taken — so its ceiling is still the 39.7 %
+Amdahl bound above, not a number.
+
 **THE LEAK IS CLOSED (2026-09-12, `@FR-H-ClearRelease`) — and it re-prices the § V-z
 row.**  The x86 lane's run-down attributed `fronds`' unbounded ~357 KB/call growth to
 `vector::clear_vector` being a LENGTH RESET while a shape-A return buffer outlives its
