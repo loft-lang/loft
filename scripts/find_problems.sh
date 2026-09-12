@@ -277,19 +277,41 @@ rebuild_native_cdylibs() {
   local rebuild_start_ns
   rebuild_start_ns=$(date +%s%N)
 
-  echo "=== rebuild_native_cdylibs (parallel; per-step timings) ===" >&2
+  if [[ "${LOFT_PARALLEL_REBUILD:-0}" == 1 ]]; then
+    echo "=== rebuild_native_cdylibs (parallel; per-step timings) ===" >&2
+  else
+    echo "=== rebuild_native_cdylibs (serial; per-step timings) ===" >&2
+  fi
 
   local jobs=()
   local timing_files=()
   local idx=0
 
+  # SERIAL by default (`LOFT_PARALLEL_REBUILD=1` restores the fan-out), and the honest
+  # reason is NOT speed — measured head-to-head on this 14-core box, same four builds each
+  # forced cold: **serial 109 s, parallel 89 s**.  The fan-out is ~20 % faster.
+  #
+  # What serial buys is PREDICTABILITY on a shared machine.  Each of these is a `cargo
+  # build` that already parallelises across every core, so four at once do not get four
+  # times the hardware — they divide it, and they divide it with whatever else the box is
+  # doing (an editor, a browser, an agent running benchmarks).  The observed spread on this
+  # block across today's runs was 30.8 s to 112.7 s, with the release step alone going 30 s
+  # → 112 s.  ⚠ Both of those were PARALLEL runs, so that spread measures LOAD, not
+  # scheduling — it is the argument for a steadier build, not evidence that serial is
+  # faster, and an earlier version of this comment got that wrong.
+  #
+  # So: if this box is yours alone and idle, set LOFT_PARALLEL_REBUILD=1 and take the 20 %.
   schedule() {
     local label="$1" dir="$2" cmd="$3"
     local tf="$timing_dir/$idx"
     timing_files+=("$tf")
     idx=$(( idx + 1 ))
-    rebuild_one "$label" "$dir" "$cmd" "$log" "$tf" &
-    jobs+=($!)
+    if [[ "${LOFT_PARALLEL_REBUILD:-0}" == 1 ]]; then
+      rebuild_one "$label" "$dir" "$cmd" "$log" "$tf" &
+      jobs+=($!)
+    else
+      rebuild_one "$label" "$dir" "$cmd" "$log" "$tf"
+    fi
   }
 
   # 1. Sibling cdylibs under lib/*/native/
@@ -379,7 +401,8 @@ rebuild_native_cdylibs() {
     printf '  %-44s %s\n' "release rlib + loft binary" "skipped — no selected binary spawns target/release/loft" >&2
   fi
 
-  # Wait for all parallel rebuilds; `wait` exits after the slowest.
+  # Wait for any parallel rebuilds (none unless LOFT_PARALLEL_REBUILD=1, in which case
+  # `wait` exits after the slowest).  Serial builds have already finished.
   for pid in "${jobs[@]}"; do wait "$pid"; done
 
   # Collect timings — one file per scheduled job.  Concatenate in
