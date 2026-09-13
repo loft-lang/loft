@@ -313,18 +313,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    # THE 20-MINUTE BUDGET IS ENFORCED, NOT ASPIRED TO.  A leg that runs long is cancelled
-    # and the run goes red, because a budget nothing checks is a budget that drifts: this
-    # one was written down in CI_BUDGET.md and had already slipped to 21.4 min on `rest-b`
-    # and 32-42 min on the dispatch path before anyone measured it again.  A red here means
-    # "re-balance the shards or cut the work", never "raise the number" — raising it is how
-    # a 20-minute gate becomes a 40-minute one an hour at a time.
+    # THE 20-MINUTE BUDGET IS ENFORCED LOCALLY, NOT HERE.  A sharded leg used to carry
+    # `timeout-minutes: 20`, so a run that went long was cancelled and the PR went red.  That
+    # is the wrong place for it: a hosted runner's wall time is not the diff's to control —
+    # a slow runner, a cold cache or a queue makes the same commit red or green — and the
+    # cancel threw away the whole leg's output, which is the one thing that would have said
+    # WHY it ran long.  The budget now lives in `make ci` (`CI_BUDGET_SECS`), where it is
+    # measured against a machine whose load is knowable and where the verdict is read by the
+    # person who can act on it.
     #
-    # SHARDED legs only.  The unsharded macOS and Windows legs are the scheduled
-    # full-matrix runs (40 min and 78 min measured); they are a different instrument with a
-    # different purpose, and capping them at 20 would simply paint the nightly red every
-    # night without making anything faster.  Sharding those too is the open question.
-    timeout-minutes: ${{ matrix.shard && 20 || 90 }}
+    # The cap that remains is a HANG guard, not a budget: 90 minutes, the same number the
+    # unsharded macOS and Windows legs carry (40 and 78 min measured).  A red there means
+    # something is stuck, never "re-balance the shards".
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       # SHARDED ON THE PR PATH ONLY, and only along the `heavy-serial` boundary.
