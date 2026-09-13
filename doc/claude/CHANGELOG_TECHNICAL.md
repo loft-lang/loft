@@ -9,6 +9,31 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A counted loop with a computed start pays no null test per iteration (2026-09-13)
+
+`for i in a..b` where `a` is not a literal was lowered with a null-encoded counter: seeded at
+the typed null, and every iteration asked `if !i#index { a } else { i#index + 1 }` to tell the
+first trip from the rest.  That is a null test and a select per iteration that LLVM cannot
+fold (the counter can legitimately be `i64::MIN`), and on a bare loop it was a third of the
+iteration; P3b had removed it for a LITERAL start by seeding at `a - 1`, a seed a computed
+start cannot use because `a - 1` is the null sentinel when `a` is the type's minimum.
+
+The loop now runs a second counter, `next`, seeded AT `a` in the iterator's init: the bound
+is tested against `next`, `next` is yielded into `i#index`, then stepped.  A reverse
+exclusive range seeds its one counter at `till`; a reverse inclusive range runs `next`
+downward.  Every value the compare and the step see is the value the old form computed on
+the same trip, so the edges are unchanged on both backends, and `i#index` (readable in a
+range body) stays equal to `i`.  Measured: a bare loop 0.79 → 0.54 ns/iteration, a
+contiguous fill 1.41 → 1.16 ns/write, the interpreter −11 % on both; the drawing bench's
+fill rows and `wide_line` −2–3 %.  `LOFT_NO_NEXT_COUNTER=1` emits the old form
+(`@FR-R-Switch`); `tests/next_counter.rs` pins the emission per cell and the switch,
+`tests/scripts/157-next-counter.loft` the values (@PLN157 § V-ab, loft#1426).  An inclusive
+range ending at the type maximum never terminates on either form — pre-existing, filed as
+loft#1525.
+
+`scripts/find_problems.sh --changed` died with `jobs[@]: unbound variable` under bash 3.2
+when every rebuild step was skipped (an empty array expanded under `set -u`); fixed.
+
 ### A synthetic type key is one-to-one with its element DEF, not with its spelling (2026-09-12)
 
 `Type::name` is the SCHEMA KEY and `Type::source_name` is the user-facing renderer — two jobs of

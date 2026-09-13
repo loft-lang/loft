@@ -7,7 +7,9 @@
 //! (`bytecode-comparisons/V-aa-value-record-cells.loft`) says the VALUES hold; this pins
 //! the EMISSION — which functions are admitted, and that every declining shape (a stored
 //! record, a heap field, too many fields, a passed-on or returned-onward result, a
-//! forwarding body) keeps its buffer — and the switch (`LOFT_NO_VALUE_RECORD=1`).
+//! forwarding body) keeps its buffer — and the switch: the unit is OPT-IN (`LOFT_VALUE_RECORD=1`
+//! arms it; unset or `0` is the return buffer, the default until the call-site gate holds over
+//! the script corpus).
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

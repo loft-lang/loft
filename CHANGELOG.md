@@ -14,6 +14,11 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A counting loop that starts at a variable is faster.**  `for i in lo..hi` where `lo` is a
+parameter, a local or an expression used to check on every trip whether it was the first one.
+It no longer does, on both backends: a tight loop of that shape runs about a third faster
+natively and a tenth faster interpreted, and every value it yields is the same as before.
+
 **You can call a type `T`.**  The standard library's generic functions — `min_of`, `max_of`,
 `sum`, `tree_walk` — each write `<T>` for "whatever type you pass".  If your own program also
 declared `struct T`, the two names met behind the scenes, and a `vector<T>` of *your* `T` was

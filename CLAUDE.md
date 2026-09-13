@@ -762,12 +762,15 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
-**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa) makes a record-returning function write
-its result into a return buffer again — with it off, a function whose result is a plain
-no-heap record of ≤6 scalar fields, whose every call site reads fields off it and whose
-body builds it with `Object` blocks, returns those fields in REGISTERS and the call site
-reads tuple elements (measured: 1.65× on the call, `smooth` −25 %, `lock_curved` −3 %) —
-and is the bisect step for a wrong field out of a record-returning call on native.
+**`LOFT_VALUE_RECORD=1`** (@PLN157 § V-aa, **OPT-IN** — off unless set, since 2026-09-12)
+makes a function whose result is a plain no-heap record of ≤6 scalar fields, whose every
+call site reads fields off it and whose body builds it with `Object` blocks, return those
+fields in REGISTERS with the call site reading tuple elements (measured: 1.65× on the
+call, `smooth` −25 % standalone, `lock_curved` −3 %).  Not default-on because its
+call-site gate does not yet hold over the script corpus — three call shapes (a result
+used as a `DbRef`, a buffer argument kept for a signature that dropped it, a `match`
+joining a tuple arm with a record arm) generate a crate that does not compile — so
+the default is the return buffer, and the tests arm the switch explicitly.
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
@@ -838,3 +841,15 @@ never-free (`formal/ownership.md` @FR-O-Witness). **`LOFT_NO_OWNER_WITNESS=1`** 
 pre-witness form: the first bisect step for a leak or a wrong answer in a local that is both
 copy-bound and view-bound (a walker `cur: Node? = a; cur = cur.next`), and what the
 `LOFT_NO_JOIN_OWN` positive controls set beside their own switch.
+
+**The counted loop's second counter (@PLN157 § V-ab, default-ON, both backends):** a
+`for i in a..b` whose start is not a literal runs a hidden `next` counter seeded AT `a`
+(tested, yielded into `i#index`, then stepped) instead of a null-encoded counter that asked
+`if !i#index { a } else { i#index + 1 }` on every iteration — a null test and a select LLVM
+cannot fold, half the cost of a tight loop; a literal start already took P3b's single
+counter seeded at `a - 1`, which a computed start cannot use because `a - 1` is the null
+sentinel when `a` is the type's minimum.  **`LOFT_NO_NEXT_COUNTER=1`** emits the
+null-encoded form again on both backends: the first bisect step for a wrong value out of a
+counted loop whose start is a variable or an expression.  Every value the compare and the
+step see is unchanged, so the edges are too — including loft#1525, an inclusive range to
+the type MAXIMUM that never terminates on either form.

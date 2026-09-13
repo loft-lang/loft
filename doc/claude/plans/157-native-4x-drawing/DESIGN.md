@@ -1773,8 +1773,16 @@ compiled into the program's own crate and inline normally.
 
 ## V-aa — the value-record return (2026-09-12)
 
-**SHIPPED, default-on (`@FR-R-ValueRecord`; switch `LOFT_NO_VALUE_RECORD`, trace
-`LOFT_TRACE_VALUEREC`).**  A function whose result is a plain no-heap record of at most
+**SHIPPED OPT-IN (`@FR-R-ValueRecord`; armed by `LOFT_VALUE_RECORD=1`, trace
+`LOFT_TRACE_VALUEREC`) — NOT default-on.**  ⚠ An earlier revision of this header read
+"default-on, switch `LOFT_NO_VALUE_RECORD`", and CLAUDE.md and the README repeated it;
+the code (`hoist::value_record_disabled`) has been opt-in since 2026-09-12 because gate
+(2) below does not hold over the script corpus — a result used as a `DbRef`, a buffer
+argument kept for a signature that dropped it, and a `match` joining a tuple arm with a
+record arm each generate a crate that does not compile.  Until the gate declines those
+three shapes and is proven over the corpus, every record return keeps its buffer by
+default, and the measurements below were taken with the switch armed (found 2026-09-13
+while evaluating `lock_curved`'s emission: `brush_sample` returns `DbRef` by default).  A function whose result is a plain no-heap record of at most
 six scalar fields returns those fields BY VALUE — a Rust tuple, in registers — instead of
 writing them into a return buffer the caller reads back.  `lock_curved`'s profile named
 it: after the hoist family has taken everything it can (8 headers, 7 invariant scalars, 7
@@ -1839,6 +1847,69 @@ and a name is only a number within one source.**
 getters were registered for the value path, and `FusedElementReadEmitter` — registered
 later for the same keys — silently won.  The check now lives inside that emitter, with a
 comment saying why it cannot live in a second registration.
+
+## V-ab — the counted loop's second counter (2026-09-13)
+
+**SHIPPED, default-on, BOTH backends (the `@FR-I-Range` lowering; switch
+`LOFT_NO_NEXT_COUNTER`, `@FR-R-Switch`).**  The unit the fills' and `wide_line`'s first
+profile named (README § the fills and `wide_line` profiled): a counted `for` whose START
+is not a literal was lowered with a null-encoded counter — seeded at the typed null, and
+on every iteration `if !i#index { lo } else { i#index + 1 }` told the first trip from the
+rest — a null test and a select per iteration that LLVM cannot fold, because the counter
+can legitimately be `i64::MIN`.  P3b had already taken the literal-start loop to ONE
+counter seeded at `lo - 1`; a computed start cannot use that seed: `lo - 1` is
+unrepresentable when `lo` is the type's minimum, where it IS the null sentinel, and the
+loop would sit at null — silently wrong at exactly one value.
+
+**The lowering.**  A second counter `next`, seeded AT `lo` in the iterator's init; per
+iteration `if till <= next { break }; i#index = next; next = next + 1; yield i#index`.
+A reverse EXCLUSIVE range needs no second counter: the one counter is seeded at `till` and
+stepped before the test.  A reverse INCLUSIVE range runs `next` downward from `till`.
+Every value the compare and the step see is the value the null-encoded form computed on
+the same trip, so the edges are unchanged — measured on both backends before and after: a
+null start runs the body once with `i = null` (pre-existing; `(I-NullSrc)` would say zero
+times — recorded, not changed here), a start at the type minimum iterates, and an
+inclusive end at the type MAXIMUM never terminates (pre-existing: the old form RESTARTED
+from `lo` when the step overflowed to null; the new one sits at null — loft#1525, filed
+with the design question it needs).  The visible counter `i#index` — readable in a range
+body, measured — stays equal to `i` on every trip, which is why `next` is a separate
+variable and not the index run one ahead.  Evaluation order is kept: `lo` is evaluated
+once (before the loop instead of on the first trip; nothing runs between), `till` once
+per iteration as before.  `Value::Iter`'s init carries the seed as one more `Set` in the
+prelude the slice clamp already uses.
+
+**Measured** (ABAB × 3, Apple lane, `--native-release`, values exact throughout): a bare
+loop with a trivial body **0.79 → 0.54 ns/iteration (−32 %)**; a `pil_hline`-shaped
+contiguous fill `d[x] = v` **1.41 → 1.16 ns/write (−18 %)**; the INTERPRETER **−11 %** on
+both probes (the select, the not and the null conversion go, one `Set` comes).  Consumer
+lane (`compare.py --skip-interp --repeat 5`, caches cleared on both sides, the bench
+program's emission checked: 21 loops in the new form, `n_pil_hline` among them):
+`fill_circle` 107 560 → **104 000 ns/op (−3.3 %)**, `fill_star` 38 280 → **37 420
+(−2.2 %)**, `wide_line` 15 620 → **15 260 (−2.3 %)**; every other native column within
+lane noise (`lock_curved` +1.3 %, `lock` +1.9 %, with both lanes' rust column moving the
+same way).  So the loop machinery was a third of a bare loop and a fifth of a bare fill,
+but the judged rows' loops carry a bounds-checked element write per trip, and there the
+count reduction is worth 2–3 % — the README's *"a count is not a cost"* holds at this
+granularity as well.  `fill_star` read 3.92× in that run; the reference lane swings, so
+that is not a claim.
+
+**Pins.**  `tests/next_counter.rs` pins the emission per cell — which loops bind a `next`
+counter, and that no iterator block pays `op_conv_bool_from_int` — and the switch, which
+restores the base emission exactly (the cell functions diff EMPTY against the pre-unit
+binary's output); `tests/scripts/157-next-counter.loft` carries twenty value cells
+(falsified by sabotage — seeding at `lo + 1` turns 11 red on both backends); the P3b
+matrix stays byte-identical.  Corpus: `bytecode-comparisons/loop-start-cells.loft`.
+
+**Two findings beside it.**  (1) `--native-emit`'s `init()` type table is NOT stable
+between two runs of one binary over one file (1 707 lines differed — a
+`main_vector<__typevar_T#2>` minted in one run and not the other), so compare emissions
+per FUNCTION, never whole-file.  (2) `scripts/find_problems.sh --changed` died with
+`jobs[@]: unbound variable` on this box's bash 3.2 when every rebuild step was skipped
+(an empty array expanded under `set -u`); fixed with the `${jobs[@]+…}` idiom.
+
+**What it does NOT do.**  The FILL idiom (README's Unit 2): `for i in a..=b { v[i] = c }`
+is still one bounds-checked scalar store per element — 1.16 ns against Rust's 0.10 — and
+that, not the loop machinery, is what remains of `pil_hline`.
 
 ## V-k — the append path's bookkeeping (2026-09-09)
 

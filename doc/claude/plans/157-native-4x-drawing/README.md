@@ -21,6 +21,12 @@ place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
 SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
+**§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a
+literal runs a second counter seeded AT the start instead of a null-encoded one — no null
+test per iteration on either backend (bare loop −32 %, a contiguous fill −18 %, the
+interpreter −11 %; consumer lane `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line`
+−2.3 %, the rest noise).  Switch `LOFT_NO_NEXT_COUNTER`.  The inclusive-to-type-maximum
+hang it met is pre-existing and filed as loft#1525.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -464,7 +470,7 @@ hl_x] = ink }` (`raster.loft:121`) — and the instrument prices it at **six ope
 pixel**: `OpSetInt` + `OpAddInt` for the write, and FOUR more (`OpAddInt`, `OpLtInt`,
 `OpConvBoolFromInt`, `OpNot`, 63.5 M each) for the loop itself.
 
-**Unit 1 — the counted loop pays a null test per iteration.**  The emitted form initialises
+**Unit 1 — the counted loop pays a null test per iteration — SHIPPED 2026-09-13 as § V-ab** (DESIGN.md § V-ab: the numbers, and why the consumer rows moved 2–3 % where the bare loop moved 32 %).  The original finding, for the record:  The emitted form initialises
 the loop counter to `i64::MIN` (the null sentinel) and then, EVERY ITERATION, asks whether
 it is still null in order to decide whether this is the first one:
 
@@ -862,6 +868,54 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-13 — § V-ab shipped on a fresh branch off `main` (ec4a9522, which had absorbed
+the whole branch in #1524).**  The unit was the fills' Unit 1 (the variable-start counted
+loop's per-iteration null test); DESIGN.md § V-ab has the numbers.  Two things for the
+next session: **Unit 2, the FILL idiom**, is now the whole of what `pil_hline` costs —
+`for i in a..=b { v[i] = c }` is a bounds-checked scalar store per element at 1.16 ns
+against Rust's 0.10 (a `memset`/`fill` LLVM recognises), 60 % of `fill_circle` and a
+third of `wide_line` by tick share; the emitter would have to recognise a loop whose only
+store write is an in-place set at `base + i` of an invariant value over a hoisted header
+and emit ONE bounds test plus a slice fill (M; write the cells first, including a
+non-contiguous index and a value that reads the vector).  And **loft#1525** (an inclusive
+range to the type maximum never terminates, both backends, pre-existing) is filed with
+its design question — it should be fixed before the PR, not shipped open.  The
+`compare.py` A/B recipe worked as documented (base worktree built with `cargo build
+--release --lib --bin loft`, caches cleared on both sides, the bench emission checked for
+the new form before trusting the numbers).
+
+**`lock_curved` evaluated off its release-tier emission (2026-09-13; `--native-release
+--native-emit` of the bench, the row's 09-12 profile beside it), ranked:**
+
+1. **§ V-aa is OFF by default** (`hoist::value_record_disabled`: opt-in `LOFT_VALUE_RECORD=1`
+   since 2026-09-12) while CLAUDE.md, DESIGN.md and this README said default-on with a
+   `LOFT_NO_VALUE_RECORD` switch nothing reads — corrected the same day.  By default
+   `brush_sample` returns `DbRef` through its buffer: per resolved pixel four float writes,
+   four `get_float` reads behind a `rec == 0` test, a store-identity free check.  The code
+   comment names why: gate (2) fails the corpus on three call shapes (result used as a
+   `DbRef`, a buffer argument kept, a `match` joining a tuple and a record arm).  Unit: make
+   the gate DECLINE those shapes, prove it over the corpus, flip the default.  Re-measured
+   2026-09-13 on the § V-ab tree (`compare.py --repeat 5`, caches cleared, same run for both
+   sides): `lock_curved` 2 293 260 → **2 198 240 ns/op (−4.1 %)**, `fill_star` and `fronds` flat,
+   `smooth` +3 % (lane noise) — so the row's honest ceiling from this unit is ~4 %.
+2. **`brush_sample`'s four `img[…]?` reads are each a full store resolution** —
+   `get_vector` (allocations lookup + bounds) then `store(&db).get_int` then the discharge —
+   while the caller holds `br` invariant.  The § V-p twin passes a RECORD parameter's
+   headers; `img` is a plain vector parameter (`br.img` at the call) and never qualifies.
+   Extend the twin to a vector parameter whose argument is a hoistable path: four
+   header-served reads.  Hand-measure the ceiling on the emitted Rust first.
+3. **The raster inner loop's checked integer arithmetic LLVM cannot hoist**: `rs_idx =
+   op_add_int_nullable(op_mul_int(op_min_int(yy, ly0), llw), op_min_int(xx, lx0))` — the row
+   term invariant across the inner loop, the column term an induction variable, and each op
+   carries a guarded overflow note (a side effect), so LICM declines.  Same for the bound
+   `rs_x1 + 1`, a checked add per iteration.  Plus eight bounds tests per written pixel
+   against seven same-length `Lay` vectors built from one `ll_n` — a same-length fact for a
+   struct literal's comprehension fields would let one test serve eight.
+4. Invariant divisors (`rs_l2`, `ll_period`, `ll_crest`): the ADVICE lint already named
+   above, never a rewrite (reciprocal is not bit-identical; the bench validates by hash).
+   The rest of the resolve loop's machinery — literal shift-range tests, the `/255.0` zero
+   test, NaN-aware compares on operands that cannot be proven non-NaN — folds under LLVM.
+
 **Rebased onto `main` again on 2026-09-09 (e4c7db58, main's squash of this branch
 through § V-l together with 18 issues): § V-m, P4c, § V-n and § V-o were replayed
 with `git rebase --onto origin/main 91b15a44`; only the derived audit rows
@@ -1055,7 +1109,7 @@ corruption; a cell that passes alone proves nothing about the frees it leaves.
   `LOFT_STORES=log` on BOTH backends, on and off the switch.
 - **The A/B trap on the consumer bench: a GENERATION-time switch needs the cdylib
   cache cleared.**  `bench/.loft/cache/` is keyed by content, so re-running
-  `compare.py` with `LOFT_NO_VALUE_RECORD=1` (or any `LOFT_NO_*` the emitter reads)
+  `compare.py` with `LOFT_VALUE_RECORD=1` (or any `LOFT_NO_*` the emitter reads)
   re-measures the SAME binary and reports a flat result that reads as "the unit is
   worth nothing".  `rm -rf bench/.loft native-auto` on each side.  Runtime switches
   (`LOFT_NO_CLEAR_RELEASE`) are exempt — they live in the linked `libloft`, which is
@@ -1121,7 +1175,8 @@ unless said otherwise.
 | **V-x** — an invariant loop-body vector LITERAL builds once per activation: the local pre-declared at fn top is its own once-flag, the declaration (one wrapped `Set`, or the flat `OpDatabase · Set · pushes` run bracketed by `hoist::flat_lit_member`, the shared predicate) guarded on it being unbound; gates: no-heap scalar elements, invariant parts (literals / pure ops / never-reassigned scalar params / scalar-getter reads of value-const record params), the `(Const-Value)`-mandated alias gate (every pd-reaching var fresh-store or const-getter-only), reads-only uses (indexed use declines — OpGetVector is context-blind) | [DESIGN.md § V-x](DESIGN.md) | the sabotage turns c5 red (`16` → `30`: iteration 0's write carried); `tests/literal_hoist.rs` no longer sees the guards; a cell answers wrong under `LOFT_POISON=1` on either backend | **Shipped 2026-09-11** — eleven cells exact both backends under poison; `fronds` −5.8 % (279–285k ns/op); switch `LOFT_NO_LITERAL_HOIST` |
 | **V-y** — the complete-write prefill ELISION: a literal group the emitter proves writes every schema field position (declared defaults, sentinels, the variant tag — the parser's lowering is complete by construction) calls the no-prefill twin (`OpDatabaseNP`/`OpNewRecordNP`); a vector store's group is width-equal (the collection-field prefill is the one u32 its own `OpSetInt4` writes) and `place_record_in`'s prefill becomes one explicit len-zero (the callee entry-clear ABI covers it); the Z∩P redundancy ships as ONE argument | [DESIGN.md § V-y](DESIGN.md) | the admit-all sabotage crashes the V-j corpus at c17 under `LOFT_NO_ZERO_CLAIM=1` (the production default masks it — the first falsifier could not fail and was replaced); `tests/complete_write.rs` no longer sees the twins; a cell answers wrong under poison or the stale-arena lever | **Shipped 2026-09-12** — eight cells exact both backends under poison + the lever; `fronds` −4.8 % (264.9–272.7k ns/op, 9 twin sites); switch `LOFT_NO_COMPLETE_WRITE` |
 | **V-z** — the ELEMENT-FIRST build: a local vector consumed exactly once as a record-literal field of an append is built inside the appended element — minted at the first temp's declaration (the length bump stays at the finish, so it is invisible until the append), each temp bound to the element's own field slot, the paired copies and temp stores gone; § V-u's adoption composes (a callee delivers its record straight into the element) | [DESIGN.md § V-z](DESIGN.md) | the compound sabotage (paired-offset check dropped + prefill-less prelude) crashes the corpus under `LOFT_NO_ZERO_CLAIM=1`; `tests/element_first.rs` no longer sees the early mints; a cell answers wrong under poison or the lever | **Shipped 2026-09-12** — eight cells exact both backends under poison + the lever; fronds standalone 265k → **186.4–199.7k ns/op**, the hand ceiling (−27–29 %) met exactly; switch `LOFT_NO_ELEMENT_FIRST` |
-| **V-aa** — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
+| **V-aa** — ⚠ **OPT-IN since 2026-09-12** (`LOFT_VALUE_RECORD=1`; the call-site gate does not hold over the script corpus — three shapes generate a crate that does not compile — so the return buffer is the default until it does; the 2026-09-13 emission of the drawing bench confirms `brush_sample` still returns through its buffer by default) — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
+| **V-ab** — the counted loop's SECOND COUNTER: a `for` whose start is not a literal seeds `next` AT the start, tests it, yields it into `i#index`, then steps it — no null-encoded "not started yet" state on either backend (P3b covered the literal start; `lo - 1` is unrepresentable at the type minimum); reverse exclusive seeds the one counter at `till`; switch `LOFT_NO_NEXT_COUNTER` | [DESIGN.md § V-ab](DESIGN.md) | `tests/next_counter.rs` (emission per cell + the switch), `tests/scripts/157-next-counter.loft` (20 value cells, sabotage-falsified), the P3b matrix byte-identical | **Shipped 2026-09-13** — bare loop 0.79 → 0.54 ns/iter, fill 1.41 → 1.16 ns/write, interpreter −11 %; consumer `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line` −2.3 % |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)
