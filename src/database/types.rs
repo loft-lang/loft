@@ -3079,13 +3079,15 @@ impl Stores {
         // own declaration naming the argument `tp` / `…_tp`, which is a convention,
         // not a checked fact.  Measured silent across the 4310-test corpus, so it
         // costs a comparison that fails on the first byte for every real type name.
+        // The prefix test costs a `strncmp` per allocation (3 % of an allocation-heavy
+        // row); every user type's name starts with a letter, so one byte settles it first.
+        let name = &self.types[tp as usize].name;
         assert!(
-            !self.types[tp as usize].name.starts_with(TYPEVAR_ROW_PREFIX),
+            name.as_bytes().first() != Some(&b'_') || !name.starts_with(TYPEVAR_ROW_PREFIX),
             "internal compiler error: a record is being allocated with a generic \
-             TYPE VARIABLE's row ({}, kt={tp}) — a template's layout escaped \
+             TYPE VARIABLE's row ({name}, kt={tp}) — a template's layout escaped \
              substitution, so its fields would be read at the wrong offsets. \
-             Please report this program at https://github.com/loft-lang/loft/issues",
-            self.types[tp as usize].name
+             Please report this program at https://github.com/loft-lang/loft/issues"
         );
         let own_size = self.types[tp as usize].size;
         // Check if any type in the system is an Enum whose variants include tp.

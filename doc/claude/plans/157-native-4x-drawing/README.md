@@ -46,6 +46,16 @@ per-element loop its fallback — aarch64 Linux (host `lima-default`): `wide_lin
 `LOFT_NO_FILL_HOIST`.  With § V-ad the row read 17.0k ns/op this morning: **−47 % in a
 day, 5.35× → 2.91×**.  Eight of the ten judged rows are under the bar here; `smooth` and
 `fronds` remain, and neither is this class.
+**§ V-af SHIPPED 2026-09-13** (DESIGN.md § V-af): a value branch of buffer-delivering calls
+witnesses every arm's buffer, so `smooth_pts`'s `sp_ta`/`sp_tb` (an `if` of `half_chord` and
+`pt`) reuse four buffers allocated once instead of minting and freeing a store per
+iteration — aarch64 Linux (host `lima-default`): standalone `smooth` 1 728 → **1 286 ns/op**
+(−26 %), the consumer row 2 100 → **1 620** (10.5× → **9.0×**), allocations per call 33 → 17;
+14/14 hashes.  Beside it two runtime fixes measured on the same profile (−8 % on the row):
+an uncached `LOFT_TRACE_CLEAR` read in `clear_vector_release` and the per-allocation
+type-variable prefix compare in `enum_parent_size`.  **§ V-aa is NOT the unit for
+`smooth`**: switched on, the row reads +1–3 % — `pt` already builds into the appended
+element, so the tuple only adds a materialisation.  Switch `LOFT_NO_JOIN_BUFFER_WITNESS`.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -887,6 +897,21 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-13 (late) — § V-af shipped: the smooth profile, run down.**  `perf` on this box
+(`sm_only.loft --n 2000000`, the recipe of § V-ad) read a third of the row as runtime
+store lifecycle: `database_named`/`claim_block`/`op_database_inner`/`set_default_value_
+nullable` under `n_pt` via `n_half_chord` (~12 %), `free_named` from the loop (3.7 %),
+the borrowed-view protect bracket around `ctrl` (8 %), an uncached `getenv` in
+`clear_vector_release` (3.8 %) and a per-allocation `strncmp` in `enum_parent_size` (3 %).
+The two uncached costs were fixed in the runtime (−8 %); the lifecycle was the unpaired
+`if`-join of `sp_ta`/`sp_tb` (§ V-af, −26 %).  `smooth` is 9.0× in the consumer table
+and 1 286 ns/op standalone against Rust's ~180: **what remains is the protect bracket
+around `ctrl` (8 %, a callee whose only frees are its own discharge buffers should need
+no bracket), `n_pt`'s remaining per-call field writes through the buffer, and the
+harness's own cold-row effect** (the compare row reads 1 620 where the standalone reads
+1 286 — the `--n 50` clock, README § `smooth` run down).  § V-aa is ruled out for this
+row (+1–3 % switched on).
+
 **2026-09-13 (night) — § V-ae shipped: the FILL idiom, Unit 2 of the fills' profile and the
 second unit for `wide_line`** (DESIGN.md § V-ae).  `wide_line` 2.91×, `fill_circle` 1.70×,
 `fill_star` 1.79× on this box — the row the day started on at 5.35× is under the bar, and
@@ -1250,6 +1275,7 @@ unless said otherwise.
 | **V-ac** — a VECTOR parameter's header crosses the call: a § V-p header input is keyed on the argument's pure PATH (`br.img`, `h.cv` + the callee's offsets — `hoist::input_header_at`, the one definition the loop's candidate and the twin call ask; `hoist::substitute_path` re-spells the callee's read over the argument), a return-buffer writer is admitted with its buffer's type as its write set, and the return-buffer DELIVERY site asks the twin question too; same switch `LOFT_NO_CALLEE_INPUTS`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ac](DESIGN.md) | a k-cell moves; `tests/callee_inputs.rs`'s § V-ac predictions no longer see a twin or a twin call; the two-paths cell answers b's elements for a (the falsified rotation); a consumer hash disagrees | **Shipped 2026-09-13** — 21 cells exact on both backends under six levers; hand ceiling −5.7 % met and passed: `lock_curved` −6.3 %, `lock` −8.7 %, `render_lock` −2.9 % (aarch64 Linux, ABAB, 14/14 hashes) |
 | **V-ad** — a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`) is admitted at the header gate and read as the record's type whole by the scalar tier (`hoist::null_buffer_alloc`, `@FR-R-InPlace`'s hidden-buffer allowance); before it the never-taken arm declined every header in `polygon_generic`'s crossing loop; switch `LOFT_NO_NULL_BUFFER_HOIST`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ad](DESIGN.md) | a d-cell moves; `tests/null_buffer_hoist.rs` no longer sees the headers, or sees one for a heap-owning record; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under the verifier, the switch and poison; `wide_line` −29 % (5.35× → 4.02×), the fills −15/−19 % (aarch64 Linux, 14/14 hashes) |
 | **V-ae** — the FILL idiom: a counted loop whose body is ONE in-place scalar set at `invariant + i` of an invariant value over a held header emits one guarded `Stores::fill_hoisted` (a range test, then `Store::fill` — one bounds check per end, a vectorisable store loop) with the per-element loop as the fallback for every range the fill declines and the counters left as the loop leaves them (`hoist::fill_loop`, `Output::fill_fast_path`, `@FR-R-Fill`); switch `LOFT_NO_FILL_HOIST`, `LOFT_TRACE_FILL` names a decline | [DESIGN.md § V-ae](DESIGN.md) | an f-cell moves; `tests/fill_hoist.rs` no longer sees a fill, its guard or its tail; the count sabotage turns the in-range cell red; a consumer hash disagrees | **Shipped 2026-09-13** — 16 cells exact on both backends under the verifier, the switch and poison; `wide_line` −23 % (4.02× → 2.91×), `fill_circle` −48 %, `fill_star` −43 % (aarch64 Linux, 14/14 hashes) |
+| **V-af** — a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else { mk2(i) }`) witnesses every arm's hidden buffer (`scopes` pairing per tail call, `@FR-O-Complete`): the buffers are allocated once by `reuse_record_buffers` and the local's scope-exit free is the existing multi-buffer `OpDistinctStore` ladder; an IR fact, both backends; switch `LOFT_NO_JOIN_BUFFER_WITNESS`, `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers.  Beside it: the uncached `LOFT_TRACE_CLEAR` read and the per-allocation prefix compare removed from the runtime hot path | [DESIGN.md § V-af](DESIGN.md) | a j-cell answers wrong or reports a use-after-free under strict stores; `tests/join_witness.rs` no longer sees the preamble allocations or the ladder; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under strict stores, poison and the switch, store allocations 85 → 45; `smooth` −26 % standalone, 10.5× → 9.0× in the consumer table, allocations per call 33 → 17 |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

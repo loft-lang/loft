@@ -2210,7 +2210,14 @@ impl Stores {
             crate::vector::clear_vector(db, &mut self.allocations);
             return;
         }
-        if std::env::var("LOFT_TRACE_CLEAR").is_ok() {
+        // Cached like the switch above: this runs on every clear of a reused vector, and
+        // an uncached `getenv` here was 3.8 % of the consumer's `smooth` row (perf,
+        // 2026-09-13).
+        fn trace_enabled() -> bool {
+            static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *F.get_or_init(|| std::env::var("LOFT_TRACE_CLEAR").is_ok())
+        }
+        if trace_enabled() {
             let kt = if (db.store_nr as usize) < self.allocations.len() {
                 self.allocations[db.store_nr as usize].known_type
             } else {

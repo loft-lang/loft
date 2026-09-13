@@ -2201,6 +2201,99 @@ on the loop variable (f7) is not invariant; a second statement (f9, f16) is not 
 loop whose path has no header — a body the gate declines for another reason — keeps its
 form, because the fill serves from the header.
 
+
+## V-af — a value branch of calls witnesses every arm's buffer (2026-09-13)
+
+**SHIPPED, default-on, BOTH backends (an IR fact in `scopes`; switch
+`LOFT_NO_JOIN_BUFFER_WITNESS`, `@FR-R-Switch`; the rule `@FR-O-Complete`,
+formal/ownership.md).**  The `smooth` profile run down, on this box.
+
+**The profile** (`sm_only.loft --n 2000000`, the recipe of § V-ad): `n_smooth_pts` 13 %,
+`n_pt` 11 %, and a THIRD of the row in runtime store lifecycle — `database_named` 3.8 %,
+`enum_parent_size` 3.1 %, `claim_block` 2.1 %, `op_database_inner` 1.8 %,
+`set_default_value_nullable` 1.1 %, all reached from `n_pt` through `n_half_chord`;
+`free_named` 3.7 % from the segment loop; the borrowed-view protect bracket around `ctrl`
+(`n_protect_store_frees` 3.6 %, `set_free_protected` 2.6 %, `clear_free_protected` 1.8 %);
+`getenv` + `strncmp` 3.8 % from `clear_vector_release`.  `perf report --symbol-filter`
+over the kept `perf.data` attributed each (the program's frames need `--keep`; the
+first run's data was gone).
+
+**Three findings, in the order they were measured.**  (1) **§ V-aa is not the unit for
+this row.**  Switched on (`LOFT_VALUE_RECORD=1`, caches cleared) the row reads **+1–3 %**
+(1 887–1 890 → 1 907–1 944 ns/op): `pt` already builds into the appended element
+(§ V-d), so the tuple only adds a materialisation; `ctrl` and `half_chord` decline as
+non-`Object` tails.  The plan's earlier −25 % was the standalone `vr_smooth` probe, a
+different harness.  (2) **Two uncached costs in the runtime**: `clear_vector_release`
+read `LOFT_TRACE_CLEAR` through `std::env::var` on every clear (cached in a `OnceLock`
+like its sibling switch), and `enum_parent_size`'s type-variable assert ran a
+`starts_with` — a `strncmp` — on every allocation (a one-byte pre-check now settles every
+user type).  Together **−8.2 %** (1 887 → 1 732 ns/op), both backends, every
+allocation-heavy row.  (3) **The lifecycle third is one shape**: `sp_ta = if flags[ia]
+{ half_chord(pts, ia, closed) } else { pt(chx, chy) }` (and `sp_tb`).  Each arm delivers
+through its own hidden buffer (`__ref_1`/`__ref_2`), the local adopts whichever ran, and
+the pairing that a direct call gets (`witness_buffer`, @P378(a)) was never made for a
+branch — so `reuse_record_buffers` left all four buffers null, every call minted a
+store, and the local's plain per-iteration free released it.  Correct, and slow.
+
+**The change.**  In `scopes`, beside the direct call's pairing: when the right-hand side
+of a record local's `Set` is an `if`, `tail_calls` collects the calls at its value
+positions (arms, and a value block's last statement, recursively) and every
+`__ref_`/`__rref_` argument of a loft-defined tail call is paired with the local exactly
+as a direct call's would be — `paired_witness` where the local outlives the buffer,
+`witness_buffer` where the buffer is the function's and the local a loop body's.
+`reuse_record_buffers` then allocates each buffer once in the preamble (one guarded use,
+a single-assigned local), and `get_free_vars` emits the multi-buffer ladder `if
+OpDistinctStore(v, B1) { if OpDistinctStore(v, B2) { OpFreeRef(v) } }` it already had for
+a literal branch.  ⚠ The first cut required the callee to `return_adopts_fresh_store`,
+mirroring the direct call's record case — and made the row SLOWER (+6.5 %, allocations
+33 → 37 per call): only the `pt` arms qualified, so their buffers were pre-allocated per
+activation and rarely used, while `half_chord` (which fills the buffer it is handed) kept
+minting per iteration.  The direct call needs that condition because its set lowering
+interposes a deep copy in the non-adopting case, so local and buffer cannot alias; a
+branch binds the arm's `DbRef` as it is, so both kinds alias and both must be witnessed.
+Dropping the condition gave the intended form.
+
+**Cells before the code** (`bytecode-comparisons/V-af-join-witness-cells.loft`, twelve,
+hand-computed, all matching the interpreter): j1 two arms · j2 a call and a literal · j3
+three arms · j4 nested branches · j5 a call and a VIEW · j6 the local reassigned · j7 a
+join outside a loop · j8 the value escaping into a vector · j9 into a field · j10 two
+joined locals · j11 nested loops · j12 a forwarding callee.  Every cell answers the same
+on `--interpret`, `--native`, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and the switch;
+store allocations over the corpus **85 → 45** on both backends (`LOFT_STORES=log`).
+`tests/join_witness.rs` pins the IR (preamble allocations and ladders per cell, and the
+switch): two predictions were wrong and are recorded — j2 pre-allocates TWO buffers,
+because the literal arm's `__ref_p2` was already a literal witness; j5 pairs nothing,
+because a branch with a view arm is lowered through the lift-join path, which carries a
+distinct-store guard of its own.  `tests/scripts/157-join-witness.loft` carries the values.
+
+**Falsified.**  The positive control `LOFT_NO_RETBUF_WITNESS_GATE=1` (allocate every
+buffer) under `LOFT_STRICT_STORES=1` on a one-cell probe of j1: the pairing ON runs clean
+on both backends; `LOFT_NO_JOIN_BUFFER_WITNESS=1` reports `USE AFTER FREE (write) …
+type=Pt` on both.  A sabotage witnessing only the FIRST arm stayed green everywhere, and
+that is a finding, not a miss: a missing witness costs the reuse for that arm and nothing
+else, because the reuse pass allocates only witnessed buffers — the unsound combination
+is a pre-allocated buffer with an unguarded free, which is what the control produces.
+
+**Measured** (aarch64 Linux, host `lima-default`, shipped tier, hash `669cdc48` every run):
+
+| instrument | before | after | move |
+|---|---:|---:|---:|
+| `sm_only.loft --n 300000`, the two runtime fixes | 1 887 / 1 890 ns/op | 1 732 / 1 736 | −8.2 % |
+| `sm_only.loft`, switch A/B on one binary, ABAB | 1 728 / 1 736 | **1 286 / 1 286** | **−25.7 %** |
+| store allocations per `smooth_pts` call | 33 | **17** | |
+| `compare.py --repeat 3`, `smooth` | 2 100 (10.5×) | **1 620 (9.0×)** | −23 % |
+| every other row | | flat, 14/14 hashes | |
+
+The consumer row reads 1 620 where the standalone bench reads 1 286: the harness's
+`--n 50` default runs this row for microseconds, and it reports the clock it was measured
+at (README § `smooth` run down) — the standalone number is the row's cost.
+
+**What remains in the row.**  The protect bracket around `ctrl` (8 %): a callee whose
+only frees are its own discharge buffers cannot free an argument's store, so it needs no
+bracket — a precision question for `protectable_ref_args`.  `n_pt`'s per-call field
+writes through the buffer (the record form is what the append wants).  And the harness
+effect above, which is the consumer's to change (`--n` per row).
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

@@ -1114,6 +1114,19 @@ pub fn inplace_callee_hoist_enabled() -> bool {
 /// fallback — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FILL_HOIST` (read at GENERATION
 /// time): the before-half of the A/B on one binary, and the first bisect step for a wrong
 /// element or a missed write out of a filling loop.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+/// @PLN157 § V-af: a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else {
+/// mk2(i) }`) witnesses every arm's hidden buffer, so the buffers are allocated once and the
+/// local's per-iteration free declines against each — **DEFAULT ON**, both backends (an IR
+/// fact).  Opt OUT with `LOFT_NO_JOIN_BUFFER_WITNESS` (read at PARSE time): the
+/// before-half of the A/B on one binary — a store minted and freed per iteration — and the
+/// first bisect step for a leak, a double free or a stale record out of a loop that binds
+/// a record from a branch of calls.  `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the
+/// falsifiers.
+pub fn join_buffer_witness_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_BUFFER_WITNESS"))
+}
+
 pub fn fill_hoist_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FILL_HOIST"))

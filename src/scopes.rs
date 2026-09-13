@@ -2879,6 +2879,22 @@ fn tuple_call_mints(
 /// the buffer's: the next call then writes a store that is back in the pool (measured, a
 /// use-after-free on every turn after the first).  Guarding that free against the buffer is
 /// the widening that lifts this condition; until then the buffer stays null there.
+/// The calls at the VALUE positions of a branch (@PLN157 § V-af): an `if`'s two arms, a
+/// value block's last statement, recursively; a `Call` is its own tail.  Anything else — a
+/// variable, a literal, a null — contributes no call.
+fn tail_calls(v: &Value) -> Vec<&Value> {
+    match v.unspan() {
+        Value::Call(_, _) => vec![v.unspan()],
+        Value::If(_, a, b) => {
+            let mut out = tail_calls(a);
+            out.extend(tail_calls(b));
+            out
+        }
+        Value::Block(bl) => bl.operators.last().map_or_else(Vec::new, tail_calls),
+        _ => Vec::new(),
+    }
+}
+
 fn reuse_record_buffers(
     code: &mut Value,
     function: &Function,
@@ -8322,6 +8338,52 @@ impl Scopes<'_> {
         // `CallRef`.  While this read `Value::Call` alone the two disagreed for a fn-ref
         // bind: codegen deep-copied into a store `v` owns and the deps stayed, so
         // `get_free_vars` emitted no `OpFreeRef` and every copy leaked.
+        // @PLN157 § V-af (`@FR-O-Complete`) — the right-hand side is a value BRANCH whose arms
+        // end in buffer-delivering calls: `v = if c { mk(i) } else { mk2(i) }`.  Each arm's
+        // call delivers through a hidden buffer of its own and `v` adopts whichever ran, so
+        // every arm's buffer is `v`'s witness — the same pairing a direct call takes below,
+        // applied per tail call.  Without it `v`'s per-iteration free released the buffer's
+        // store, the buffers stayed unreused, and every call minted a store (16 % of the
+        // consumer's `smooth` row).  Records only: a vector's alias rules are the direct
+        // call's own case.  Whether the callee adopts a fresh store or fills the one it is
+        // handed makes no difference here: a branch binds the arm's `DbRef` as it is, with
+        // none of the copy a direct call's set lowering interposes, so `v` aliases the
+        // buffer either way.
+        if record_shaped
+            && !publishes_through_ref
+            && crate::keys::join_buffer_witness_enabled()
+            && matches!(unspanned_value, Value::If(_, _, _))
+        {
+            let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
+            for call in tail_calls(unspanned_value) {
+                let Value::Call(fn_nr, args) = call else {
+                    continue;
+                };
+                if (*fn_nr as usize) >= data.definitions.len()
+                    || !data.def(*fn_nr).is_loft_defined()
+                {
+                    continue;
+                }
+                for arg in args {
+                    let Value::Var(av) = arg.unspan() else {
+                        continue;
+                    };
+                    let n = function.name(*av);
+                    if !(n.starts_with("__ref_") || n.starts_with("__rref_")) || *av == v {
+                        continue;
+                    }
+                    let av_scope = self.var_scope.get(av).copied().unwrap_or(u16::MAX);
+                    if v_scope <= av_scope && v_scope != u16::MAX {
+                        self.paired_witness.entry(*av).or_insert(v);
+                    } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope {
+                        let buffers = self.witness_buffer.entry(v).or_default();
+                        if !buffers.contains(av) {
+                            buffers.push(*av);
+                        }
+                    }
+                }
+            }
+        }
         if (record_shaped || vector_shaped)
             && matches!(unspanned_value, Value::Call(_, _) | Value::CallRef(_, _))
             && let Some(fn_nr) = crate::use_analysis::callee_of(data, self.d_nr, unspanned_value)

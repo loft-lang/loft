@@ -823,6 +823,16 @@ when it did).  **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and 
 first bisect step for a wrong element read in a loop that discharges a record element
 with `?`; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**A value branch of calls witnesses every arm's buffer (@PLN157 § V-af, BOTH backends,
+parse time):** `v = if c { mk(i) } else { mk2(i) }` in a loop binds `v` to whichever arm's
+hidden return buffer ran, so every arm's buffer is `v`'s witness — the buffers are
+allocated once per activation and `v`'s per-iteration free declines against each, where
+before the branch paired nothing and every iteration minted and freed a store (the
+consumer's `smooth` −26 %).  **`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
+form and is the first bisect step for a leak, a double free or a stale record out of a
+loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
+`LOFT_POISON=1` are the falsifiers.
+
 **A filling loop is one slice fill (@PLN157 § V-ae, `--native`, generation time):**
 `for i in lo..hi { v[base + i] = c }` with `base` and `c` invariant, over a vector a
 header is held for, emits ONE range test and a slice fill, the per-element loop kept as
