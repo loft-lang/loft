@@ -519,7 +519,12 @@ TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 # answered 3.  `ci-guard`'s own sibling loop skips self the same way.
 # `nproc` is Linux; macOS spells it `sysctl -n hw.ncpu` — a bare $(nproc) made the
 # recipe die with `nproc: command not found` on every Mac (same 2808e183 throttle).
-CI_NPROC = $$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4 )
+# On macOS the default is HALF the logical cores, measured (2026-09-13, M3 Max, 10 P + 4 E
+# cores, a 243-test slice of the suite): 14 threads 390 s, 7 threads 325 s — the tests
+# spawn their own rustc/loft processes, the last four threads land on efficiency cores, and
+# every exec pays the endpoint-security agent, so more threads meant more waiting.  10 is
+# untested; `CI_JOBS=<n>` overrides on any OS.  CI_BUDGET.md § A macOS box.
+CI_NPROC = $$( if [ -n "$${CI_JOBS:-}" ]; then echo "$${CI_JOBS}"; elif [ "$$(uname -s)" = Darwin ]; then n=$$(sysctl -n hw.ncpu 2>/dev/null || echo 8); echo $$(( n / 2 )); else nproc 2>/dev/null || echo 4; fi )
 # A test/build thread costs roughly 0.7 GiB at peak (rustc for native fixtures,
 # the codegen units of the release build), so sizing by cores alone over-commits
 # a small-memory box into swap — measured on a 14 GiB laptop: 20 threads drove
