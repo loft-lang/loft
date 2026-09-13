@@ -2354,12 +2354,22 @@ pub struct RetAdopt {
 #[must_use]
 pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
     let def = data.def(def_nr);
-    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
-    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
-    if !def.is_loft_defined() || def.returns_borrowed_view() {
+    if !def.is_loft_defined() {
         return None;
     }
+    // The RETURN-TYPE gate comes FIRST, and the order is load-bearing.
+    // `returns_borrowed_view` is a heap-return ownership read: it walks the return's dep list
+    // as ATTRIBUTE indices, and a `Type::Function` return does not carry those — a closure's
+    // deps are callee-frame notes tagged `0x8000`, which are not attr indices at all.
+    // `data.rs` states that invariant as an assert ("closure-internal note reached a heap-return
+    // ownership read") and it fired here on every closure factory under `-C debug-assertions=on`,
+    // because this gate asked the ownership question before knowing the return was a vector.
     if !matches!(def.returned().peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
+    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
+    if def.returns_borrowed_view() {
         return None;
     }
     let attr = def.hidden_return_buffer_attr()?;
