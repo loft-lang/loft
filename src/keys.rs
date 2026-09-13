@@ -1563,6 +1563,18 @@ pub fn owner_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OWNER_WITNESS"))
 }
 
+/// loft#1523 — the pre-`Set` displaced-store free asks the CONTAINER whether the store it is
+/// about to release is the container's own.  For a projection right-hand side it can be: `v` was
+/// already a view of that container and the statement above re-minted it IN PLACE, which is what
+/// every vector literal does (`OpDatabase(__vdb_N)` then `_vec_N = OpGetField(__vdb_N, 0)`).
+/// `LOFT_NO_DISPLACED_WITNESS=1` restores the unconditional free and is the first bisect step for
+/// a leak or a use-after-free at a projection-bound local.
+#[must_use]
+pub fn displaced_witness_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DISPLACED_WITNESS"))
+}
+
 /// loft#1522 — the @P378(a) adoption pairing carried to the DISPLACEMENT free: a local that
 /// adopted a construction work-ref's store does not release it at a rebind, because the buffer
 /// still names it and frees it once at function exit.  `LOFT_NO_BUFFER_VETO=1` emits the

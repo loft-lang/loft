@@ -370,7 +370,7 @@ twice, which is ordinary) is split into a var of its own by the time `scan_set` 
 it up by the current var found nothing for that half, so its rebinds got no guarded free at all.
 Both lookups read `ov` now.  The pairing's bisect step is `LOFT_NO_BUFFER_VETO=1`.
 
-**A literal's backing view releases the store its own mint just re-took — OPEN, loft#1523.**
+**A displaced free asks the container it came from (loft#1523).**
 Every vector literal is a PAIR: the wrapper record `__vdb_N` and the view
 `_vec_N = OpGetField(__vdb_N, 0)`.  Two names, one store, and only the wrapper owns it — but the
 parser strips the view's dep so the first bind's preamble gate fires, after which @FR-O-Proxy
@@ -405,9 +405,24 @@ reuse on, the allocator usually hands the store straight back.
   deferral and the post-free are ONE pairing in three conditions — BRITTLE.md § 7b"* — so moving
   the route moves the other two conditions with it.
 
-So the pre-`Set` free at a projection RHS is load-bearing in at least three separate ways — the
-self-read snapshot, the view-materialise pairing, and the release after a rebuild — and any fifth
-attempt should start by naming which of the three it is changing.
+So the pre-`Set` free at a projection RHS is load-bearing in three separate ways — the self-read
+snapshot, the view-materialise pairing, and the release after a rebuild.  **That is what the fix
+had to respect, and it is why the four above fail:** each of them suppresses the free, moves it,
+or re-routes it, and every one of those breaks one of the three.
+
+**The cure that holds moves nothing.**  Same position, same timing, same route; the existing
+`OpFreeRef` simply becomes `OpFreeRefIfDistinct` against the CONTAINER the projection reads out
+of — the one thing that can answer *is the store I am about to release your own?* at run time.
+For a projection RHS it can be, because `v` was already a view of that container and the
+statement above re-minted it in place.  Gated on the container being free to repeat
+(`Parser::is_repeatable_place`, the same shared predicate the nullable-slot read uses), since it
+is pushed a second time as the witness.  `--native` has asked this exact question all along
+(`if _old.store_nr != new.store_nr`), so the defect was an @FR-O-NoDiverge gap rather than a
+missing mechanism.  Bisect step: `LOFT_NO_DISPLACED_WITNESS=1`.
+
+Measured: the residual repro 2 → 0; `1194` and `1184` and the rest of the sensitive family green;
+the five count oracles green; and a four-channel corpus A/B on one binary — 1370 files scored on
+exit, assertions, leak and store lifetime — with **zero differing cells**.
 
 What the failures together say is that the free is **not** spurious — it is how the old store is
 released after a rebuild — and the defect is only that it runs when `OpDatabase` reused that store
