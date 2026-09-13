@@ -245,18 +245,20 @@ cannot see.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.  Sites:
 ### A callee's invariant inputs cross the call
 
 ```
-  (R-Inputs)     a callee admitted by (R-Callee), of a plain-struct parameter p it
-                 never rebinds, has INVARIANT INPUTS: the scalar fields p.f its own
-                 write set does not reach, and the vector paths p.g it views (R-View)
-                 or indexes (R-Header).  A caller loop that holds, for the leaf
-                 argument variable c it passes for p, the value of (c, f) under
-                 (R-Scalar) and the header of (c, g) under (R-Header) — EVERY input
-                 of the callee — calls the callee's TWIN: the same body emitted with
-                 those values as extra parameters, read in place of the record — the
-                 caller's holders handed in (R-State: a path held by a push header
-                 hands in that header, current at the call).  A call missing any
-                 input keeps the plain form; the twin exists beside the original,
-                 never instead of it.
+  (R-Inputs)     a callee admitted by (R-Callee), of a parameter p it never
+                 rebinds, has INVARIANT INPUTS: for a plain-struct p, the scalar
+                 fields p.f its own write set does not reach and the vector paths
+                 p.g it views (R-View) or indexes (R-Header); for a vector p, its
+                 own header when it indexes p (g empty).  A caller loop that holds,
+                 for the argument a it passes for p — a leaf variable c for a scalar
+                 input, a pure path (R-Header) for a header input — the value of
+                 (c, f) under (R-Scalar) and the header of a.g under (R-Header) —
+                 EVERY input of the callee — calls the callee's TWIN: the same body
+                 emitted with those values as extra parameters, read in place of
+                 the record — the caller's holders handed in (R-State: a path held
+                 by a push header hands in that header, current at the call).  A
+                 call missing any input keeps the plain form; the twin exists
+                 beside the original, never instead of it.
 ```
 
 **In words.** @PLN157 § V-p.  The pixel methods read `self.width` / `self.height`
@@ -272,7 +274,18 @@ small twin — so the rewrite passes values and never clones IR; shipped, the co
 `LOFT_NO_CALLEE_INPUTS`; falsifier `LOFT_HOIST_VERIFY=1`, which inside the twin
 re-reads every input against the record.  Sites: `hoist::callee_inputs`,
 `hoist::hoistable` (the mapping through the argument), the twin's emission in
-`Output::output_function`, the twin call in `Output::user_fn_call_body`.
+`Output::output_function`, the twin call in `Output::user_fn_call_body` and in the
+return-buffer delivery site of `dispatch.rs`.
+**The path-argument half** (@PLN157 § V-ac): a header input is keyed on the
+ARGUMENT's pure path, so `brush_sample(br.img, …)` over `img: const vector<integer>`
+takes the header of `(br, img)` the loop already holds, and `rd(h.cv, i)` over
+`c.data` takes `(h, cv, data)`; the callee's path is re-spelled over the argument by
+`hoist::substitute_path` (a walk of its own — `map_nodes` descends into the
+replacement, whose variable numbers are the caller's), the key by
+`hoist::input_header_at`, the ONE definition both the loop's candidate and the twin
+call ask.  A scalar input still needs a leaf variable — its key carries a variable,
+not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
+other: its write set is its buffer's type whole, which no parameter's field shares.
 
 ### A push keeps its own header current
 

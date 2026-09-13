@@ -27,6 +27,11 @@ test per iteration on either backend (bare loop −32 %, a contiguous fill −18
 interpreter −11 %; consumer lane `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line`
 −2.3 %, the rest noise).  Switch `LOFT_NO_NEXT_COUNTER`.  The inclusive-to-type-maximum
 hang it met is pre-existing and filed as loft#1525.
+**§ V-ac SHIPPED 2026-09-13** (DESIGN.md § V-ac): a header input of a § V-p twin is keyed
+on the argument's PATH, so `brush_sample(br.img, …)` takes the header the resolve loop
+already holds, and a return-buffer writer earns a twin — measured on **aarch64 Linux
+(host `lima-default`)**, ABAB: `lock_curved` −6.3 % (3.89× → 3.63×), `lock` −8.7 % (3.73× →
+3.42×), `render_lock` −2.9 %, the rest noise, 14/14 hashes.  Same switch as § V-p.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -868,6 +873,21 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-13 (later) — § V-ac shipped on the same branch** (DESIGN.md § V-ac): item 2 of
+the `lock_curved` ranking below is done, and the row read 3.63× here (aarch64 Linux, host
+`lima-default`; the lane's rows differ from Apple's and from the 09-12 x86-64 table, so
+compare within a machine).  What the ranking leaves, re-ranked for the next session:
+**Unit 2, the FILL idiom** (below: `for i in a..=b { v[i] = c }` as one bounds test plus a
+slice fill — 60 % of `fill_circle`, a third of `wide_line`, the only judged rows still
+over the bar on Apple; cells first, including a non-contiguous index and a value that reads
+the vector), then **item 1** (the value-record gate's three declining call shapes, −4.1 %
+on `lock_curved`), then **item 3** (the raster loop's checked arithmetic LLVM cannot hoist,
+and the same-length fact for a struct literal's comprehension fields).  A twin now reaches
+a callee through ANY pure path argument, so a profile that shows a vector-parameter reader
+hot inside a hoisting loop is a cell to add, not a unit to build.  loft#1525 (the
+inclusive-to-maximum hang) is fixed on the sibling branches `macos-probe` and
+`tuxedo-1502-pr-followups` (b8c7d39a), not on this one — it lands with their join.
+
 **2026-09-13 — § V-ab shipped on a fresh branch off `main` (ec4a9522, which had absorbed
 the whole branch in #1524).**  The unit was the fills' Unit 1 (the variable-start counted
 loop's per-iteration null test); DESIGN.md § V-ab has the numbers.  Two things for the
@@ -912,7 +932,9 @@ the new form before trusting the numbers).
    spread < 0.3 %, hash `2a3aa61` every run).  That beats the value-record unit's −4.1 %, so
    it is the next unit to BUILD: cells first (a parameter re-bound in the callee, a callee
    that pushes to its parameter, two callers passing different paths, a null vector, a
-   non-hoistable argument), then the admission in `hoist::callee_inputs`.
+   non-hoistable argument), then the admission in `hoist::callee_inputs`.  **BUILT the
+   same day as § V-ac**: −6.3 % on `lock_curved` and −8.7 % on `lock` (this box), the
+   second admission it needed being the return-buffer callee, which § V-p had refused.
 3. **The raster inner loop's checked integer arithmetic LLVM cannot hoist**: `rs_idx =
    op_add_int_nullable(op_mul_int(op_min_int(yy, ly0), llw), op_min_int(xx, lx0))` — the row
    term invariant across the inner loop, the column term an induction variable, and each op
@@ -1186,6 +1208,7 @@ unless said otherwise.
 | **V-z** — the ELEMENT-FIRST build: a local vector consumed exactly once as a record-literal field of an append is built inside the appended element — minted at the first temp's declaration (the length bump stays at the finish, so it is invisible until the append), each temp bound to the element's own field slot, the paired copies and temp stores gone; § V-u's adoption composes (a callee delivers its record straight into the element) | [DESIGN.md § V-z](DESIGN.md) | the compound sabotage (paired-offset check dropped + prefill-less prelude) crashes the corpus under `LOFT_NO_ZERO_CLAIM=1`; `tests/element_first.rs` no longer sees the early mints; a cell answers wrong under poison or the lever | **Shipped 2026-09-12** — eight cells exact both backends under poison + the lever; fronds standalone 265k → **186.4–199.7k ns/op**, the hand ceiling (−27–29 %) met exactly; switch `LOFT_NO_ELEMENT_FIRST` |
 | **V-aa** — ⚠ **OPT-IN since 2026-09-12** (`LOFT_VALUE_RECORD=1`; the call-site gate does not hold over the script corpus — three shapes generate a crate that does not compile — so the return buffer is the default until it does; the 2026-09-13 emission of the drawing bench confirms `brush_sample` still returns through its buffer by default) — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
 | **V-ab** — the counted loop's SECOND COUNTER: a `for` whose start is not a literal seeds `next` AT the start, tests it, yields it into `i#index`, then steps it — no null-encoded "not started yet" state on either backend (P3b covered the literal start; `lo - 1` is unrepresentable at the type minimum); reverse exclusive seeds the one counter at `till`; switch `LOFT_NO_NEXT_COUNTER` | [DESIGN.md § V-ab](DESIGN.md) | `tests/next_counter.rs` (emission per cell + the switch), `tests/scripts/157-next-counter.loft` (20 value cells, sabotage-falsified), the P3b matrix byte-identical | **Shipped 2026-09-13** — bare loop 0.79 → 0.54 ns/iter, fill 1.41 → 1.16 ns/write, interpreter −11 %; consumer `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line` −2.3 % |
+| **V-ac** — a VECTOR parameter's header crosses the call: a § V-p header input is keyed on the argument's pure PATH (`br.img`, `h.cv` + the callee's offsets — `hoist::input_header_at`, the one definition the loop's candidate and the twin call ask; `hoist::substitute_path` re-spells the callee's read over the argument), a return-buffer writer is admitted with its buffer's type as its write set, and the return-buffer DELIVERY site asks the twin question too; same switch `LOFT_NO_CALLEE_INPUTS`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ac](DESIGN.md) | a k-cell moves; `tests/callee_inputs.rs`'s § V-ac predictions no longer see a twin or a twin call; the two-paths cell answers b's elements for a (the falsified rotation); a consumer hash disagrees | **Shipped 2026-09-13** — 21 cells exact on both backends under six levers; hand ceiling −5.7 % met and passed: `lock_curved` −6.3 %, `lock` −8.7 %, `render_lock` −2.9 % (aarch64 Linux, ABAB, 14/14 hashes) |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

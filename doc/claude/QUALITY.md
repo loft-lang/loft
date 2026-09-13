@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 473 | 449 | **24** |
+| 474 | 450 | **24** |
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
@@ -516,7 +516,7 @@ comparison, and reads that op's argument through its own.  The join re-measures 
 above, which is neither branch's number, as every join so far.  The `@FR-O-Complete` walk (B7u)
 added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
-construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
+construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  @PLN157 § V-ac added one — `hoist::substitute_path` re-spells a callee's pure path over the caller's argument through each level's `Span`, so the position survives the substitution.  `scripts/ir_walker_audit.py unspan` re-measures it, and
 @PLN157 § V-d adds one peeling site — **420 · 396 · 24** — `vectors::element_call_takes_record_buffer` reads a vector-literal element through its `Span` to ask whether it is a buffer-returning call.
 
 @PLN157 § V-g adds one peeling site — **421 · 397 · 24** — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.

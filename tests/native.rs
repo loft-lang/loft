@@ -2147,8 +2147,14 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
         // The per-backend READ expression is still load-bearing for a different
         // reason: sqlite renders a `REAL` as `%!.15g`, so reading the column
         // naively loses the low bits of values that ARE stored correctly.
+        //
+        // The one-ULP miss is the LIBRARY's, so it is a fact per sqlite version:
+        // 3.46.1 (measured 2026-09-13) parses that text exactly and answers 7/7,
+        // the older library 6/7.  Both are the honest answer for their sqlite;
+        // any other count is loft's defect.
         assert!(
-            s.contains("sqlite float wrote=7 exact=6/7 inlined=false plain=true"),
+            s.contains("sqlite float wrote=7 exact=6/7 inlined=false plain=true")
+                || s.contains("sqlite float wrote=7 exact=7/7 inlined=false plain=true"),
             "sqlite: a bound float must round-trip exactly (see @PLN133 P3):\n{s}"
         );
         assert_eq!(

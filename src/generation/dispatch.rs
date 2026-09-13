@@ -857,7 +857,15 @@ impl Output<'_> {
             // whose test file happened to name a helper the way the library did (loft#878).
             write!(w, "{{ let _dst = var_{name}; {protect}let _src = ")?;
             if let Value::Call(_, args) = to_unspanned {
-                write!(w, "{}(cell", self.fn_ident(callee))?;
+                // @PLN157 § V-p — the TWIN form here too (`@FR-R-Inputs`): this site spells
+                // the call itself, so it asks the same question `user_fn_call_body` does.
+                let twin_args = self.twin_call_inputs(fn_nr, args);
+                write!(
+                    w,
+                    "{}{}(cell",
+                    self.fn_ident(callee),
+                    if twin_args.is_some() { "__inv" } else { "" }
+                )?;
                 // Emit each arg through the shared `emit_call_arg` helper so the
                 // ABI-B call applies the same per-parameter coercions (boolean→u8,
                 // narrow-int, text deref, typed-null, fn-ref) as the normal call
@@ -866,6 +874,9 @@ impl Output<'_> {
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
                     self.emit_call_arg(w, callee, idx, arg)?;
+                }
+                for extra in twin_args.iter().flatten() {
+                    write!(w, ", {extra}")?;
                 }
                 write!(w, ")")?;
             } else {

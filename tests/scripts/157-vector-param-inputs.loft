@@ -1,0 +1,113 @@
+// @PLN157 § V-ac (loft#1426) — a VECTOR parameter's header crosses the call on the native
+// backend (@FR-R-Inputs, the path-argument half): a callee admitted under @FR-R-Callee
+// indexes a plain vector parameter, or a record parameter's vector field; a caller loop
+// that hoisted the header of the pure PATH it passes (`br.img`, `h.cv`) calls the callee's
+// TWIN with that header, and a callee answering a scalar record through its return buffer
+// earns a twin like any other.  The interpreter (no rewrite) is the oracle.  The cells pin
+// the boundary from both sides:
+//   - the brush_sample shape, two paths in one loop, an empty and an omitted vector, an
+//     in-place element write beside the call, a path held by a PUSH header, a record
+//     parameter's field through a path, nested loops, a float and a boolean vector, a
+//     transitive pass-through (a vector and a record path), a `&` alias, two callees over
+//     one path and a nested path answer the same values through the twin;
+//   - a callee that rebinds or pushes to its parameter, a conditional or a call result as
+//     the argument, a rebound root, a length-only reader and a call outside a loop keep the
+//     plain call and their values.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ac-vector-param-cells.loft
+// (tests/callee_inputs.rs pins which callees earn a twin and which calls take it); this
+// file carries the VALUE cells that must hold whatever the emitter decides.
+// `LOFT_NO_CALLEE_INPUTS=1`, `LOFT_HOIST_VERIFY=1` and `LOFT_VALUE_RECORD=1` must answer
+// identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-13) — `Output::twin_call_inputs` made to hand
+// the OTHER holder of the frame whenever the loop holds two headers turns exactly the two-paths
+// cell red on --native (`two_paths()` 345 → 570: a's elements read through b's header) and
+// LOFT_HOIST_VERIFY=1 panics at the twin's first fast-path read (`hoisted vector header is
+// stale`, src/vector.rs); every other cell stays green, as it must — they hold one header.
+// A first sabotage stayed GREEN and says where the invariant is held: deriving the header
+// from the argument's ROOT variable (the pre-unit spelling `Var(c)` applied to a path
+// argument) reads a record word as the vector's record number, `vec_header` answers length 0
+// for it, and every read takes the cold path, which re-resolves from the real vector — a
+// wrong header is only ever wrong when its length is plausible.  Restored byte-identically;
+// interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_CALLEE_INPUTS / LOFT_VALUE_RECORD all green.
+
+struct Smp { a: float = 0.0, r: float = 0.0 }
+struct Brush { bw: integer = 0, bh: integer = 0, img: vector<integer> = [] }
+struct Holder { br: Brush }
+struct Cv { width: integer, data: vector<integer> }
+struct H { cv: Cv }
+struct Fl { data: vector<float> }
+struct Fg { flags: vector<boolean> }
+
+fn sample(img: const vector<integer>, bw: integer, u: integer, v: integer) -> Smp {
+  c00 = img[v * bw + u]?;
+  c10 = img[v * bw + u + 1] ?? 0;
+  Smp { a: (c00 ?? 0) as float, r: (c10 as float) * 0.5 }
+}
+fn rb_copy(img: vector<integer>, other: const vector<integer>, i: integer) -> integer { img = other; img[i] ?? 0 }
+fn grow(img: vector<integer>, x: integer) -> integer { img += [x]; len(img) }
+fn rd(c: const Cv, i: integer) -> integer { c.data[i] ?? 0 }
+fn cnt(img: const vector<integer>) -> integer { len(img) }
+fn fs(v: const vector<float>, i: integer) -> float { v[i] ?? 0.0 }
+fn s2(img: const vector<integer>, bw: integer, u: integer, v: integer) -> Smp { sample(img, bw, u, v) }
+fn first(img: const vector<integer>) -> integer { img[0] ?? -1 }
+fn s3(c: const Cv) -> integer { first(c.data) }
+fn flag(v: const vector<boolean>, i: integer) -> integer { if v[i] ?? false { 1 } else { 0 } }
+fn mk() -> vector<integer> { [7, 8, 9] }
+
+fn brush() -> Brush { Brush { bw: 3, bh: 2, img: [1, 2, 3, 4, 5, 6] } }
+fn wide() -> Brush { Brush { bw: 2, bh: 2, img: [7, 8, 9, 10] } }
+fn tenth(x: float) -> integer { (x * 10.0) as integer }
+
+fn brush_shape() -> integer { br = brush(); t = 0.0; for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r; } tenth(t) }
+fn callee_rebinds() -> integer { br = brush(); o = Brush { bw: 1, bh: 1, img: [10, 20, 30] }; s = 0; for i in 0..3 { s += rb_copy(br.img, o.img, i); } assert(len(br.img) == 6, "the copy lands in the callee's own local"); s }
+fn callee_pushes() -> integer { br = brush(); s = 0; for i in 0..3 { s += grow(br.img, i); } assert(len(br.img) == 9, "the pushes land"); s }
+fn two_paths() -> integer { a = brush(); b = wide(); t = 0.0; for i in 0..3 { p = sample(a.img, a.bw, i, 0); q = sample(b.img, b.bw, i, 1); t += p.a + p.r + q.a + q.r; } tenth(t) }
+fn empty_and_omitted() -> integer {
+  e = Brush { bw: 3, bh: 2, img: [] }; n = Brush { bw: 3, bh: 2 }; t = 0.0;
+  for i in 0..3 { s = sample(e.img, e.bw, i, 0); t += s.a + s.r; }
+  for i in 0..3 { s = sample(n.img, n.bw, i, 0); t += s.a + s.r; }
+  tenth(t)
+}
+fn conditional_argument() -> integer { a = brush(); b = wide(); t = 0.0; for i in 0..3 { s = sample(if i == 1 { b.img } else { a.img }, if i == 1 { b.bw } else { a.bw }, i, 0); t += s.a + s.r; } tenth(t) }
+fn element_write_beside() -> integer { br = brush(); t = 0.0; for i in 0..3 { br.img[0] = 100 + i; s = sample(br.img, br.bw, 0, 0); t += s.a + s.r; } assert(br.img[0]? == 102, "the last write lands"); tenth(t) }
+fn push_header_handed() -> integer { br = brush(); t = 0.0; for i in 0..3 { br.img += [50 + i]; s = sample(br.img, br.bw, 6 + i, 0); t += s.a + s.r; } assert(len(br.img) == 9, "three pushes"); tenth(t) }
+fn rebound_root() -> integer { a = brush(); b = wide(); cur = &a; t = 0.0; for _i in 0..2 { s = sample(cur.img, cur.bw, 0, 0); t += s.a + s.r; cur = &b; } tenth(t) }
+fn record_field_path() -> integer { h = H { cv: Cv { width: 3, data: [5, 6, 7] } }; s = 0; for i in 0..3 { s += rd(h.cv, i); } s }
+fn length_only() -> integer { br = brush(); s = 0; for _i in 0..3 { s += cnt(br.img); } s }
+fn nested_loops() -> integer { br = brush(); t = 0.0; for _j in 0..2 { for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r; } } tenth(t) }
+fn float_vector() -> integer { f = Fl { data: [0.5, 1.5, 2.5] }; t = 0.0; for i in 0..4 { t += fs(f.data, i); } tenth(t) }
+fn transitive_vector() -> integer { br = brush(); t = 0.0; for u in 0..3 { s = s2(br.img, br.bw, u, 1); t += s.a + s.r; } tenth(t) }
+fn through_alias() -> integer { br = brush(); v = &br; t = 0.0; for u in 0..3 { s = sample(v.img, v.bw, u, 1); t += s.a + s.r; } tenth(t) }
+fn two_callees_one_path() -> integer { br = brush(); t = 0.0; for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r + (first(br.img) as float); } tenth(t) }
+fn nested_path() -> integer { h = Holder { br: brush() }; t = 0.0; for u in 0..3 { s = sample(h.br.img, h.br.bw, u, 1); t += s.a + s.r; } tenth(t) }
+fn outside_loop() -> integer { br = brush(); s = sample(br.img, br.bw, 1, 1); tenth(s.a + s.r) }
+fn transitive_record_path() -> integer { cv = Cv { width: 3, data: [5, 6, 7] }; s = 0; for _i in 0..3 { s += s3(cv); } s }
+fn call_result_argument() -> integer { t = 0.0; for u in 0..3 { s = sample(mk(), 3, u, 0); t += s.a + s.r; } tenth(t) }
+fn boolean_vector() -> integer { f = Fg { flags: [true, false, true] }; s = 0; for i in 0..4 { s += flag(f.flags, i); } s }
+
+fn main() {
+  assert(brush_shape() == 205, "the brush shape through the path's header: (4+2.5) + (5+3) + (6+0)");
+  assert(callee_rebinds() == 60, "a callee rebinding its parameter keeps the plain call: 10 + 20 + 30");
+  assert(callee_pushes() == 24, "a callee pushing to its parameter keeps the plain call: 7 + 8 + 9");
+  assert(two_paths() == 345, "two paths in one loop, each its own header: 10.5 + 24");
+  assert(empty_and_omitted() == 0, "an empty and an omitted vector read absent everywhere");
+  assert(conditional_argument() == 195, "a conditional argument keeps the plain call: 2 + 12.5 + 5");
+  assert(element_write_beside() == 3060, "an in-place element write beside the call is seen by the twin: 101 + 102 + 103");
+  assert(push_header_handed() == 1530, "a pushed path hands its push header, current at the call: 50 + 51 + 52");
+  assert(rebound_root() == 130, "a rebound `&` root hoists nothing: 2 + 11");
+  assert(record_field_path() == 18, "a record parameter's field through the path `h.cv`: 5 + 6 + 7");
+  assert(length_only() == 18, "a length-only reader earns no input: 3 * 6");
+  assert(nested_loops() == 410, "nested loops share one header: 2 * 20.5");
+  assert(float_vector() == 45, "a float vector through a path: 0.5 + 1.5 + 2.5 + 0");
+  assert(transitive_vector() == 205, "a pass-through of the vector parameter hands the header on");
+  assert(through_alias() == 205, "a `&` alias of the record as the path's root");
+  assert(two_callees_one_path() == 235, "two callees over one path share its header: 20.5 + 3");
+  assert(nested_path() == 205, "a nested path `h.br.img` keys on the whole path");
+  assert(outside_loop() == 80, "a call outside any loop keeps the plain call: 5 + 3");
+  assert(transitive_record_path() == 15, "a record parameter's path handed to a vector-parameter callee: 3 * 5");
+  assert(call_result_argument() == 325, "a call result as the argument keeps the plain call: 11 + 12.5 + 9");
+  assert(boolean_vector() == 2, "a boolean vector's header is handed, its read left unfused: true + false + true + absent");
+  println("vector-param-inputs ok");
+}

@@ -28,6 +28,8 @@ const CORPORA: &[&str] = &[
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-w-selfread-literal-cells.loft",
     "tests/scripts/157-write-hoist.loft",
     "tests/scripts/157-callee-inputs.loft",
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ac-vector-param-cells.loft",
+    "tests/scripts/157-vector-param-inputs.loft",
     "tests/scripts/157-push-hoist.loft",
     "tests/scripts/157-mint-hoist.loft",
     "tests/scripts/157-record-push.loft",

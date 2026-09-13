@@ -1,0 +1,132 @@
+// @PLN157 § V-ac cells — a VECTOR parameter's header crosses the call (@FR-R-Inputs, the
+// path-argument half).  A callee admitted under @FR-R-Callee indexes a plain vector
+// PARAMETER (`img: const vector<integer>`); a caller loop that hoisted the header of the
+// pure PATH it passes for it (`br.img`, @FR-R-Header) calls the callee's TWIN with that
+// header.  Two admissions this extends: the argument may be a path, not only a leaf
+// variable, and a callee that writes only its own scalar return buffer earns a twin.
+// The interpreter (no rewrite) is the oracle; native must answer the same under
+// LOFT_HOIST_VERIFY=1 and under LOFT_VALUE_RECORD=1, and the emission (which callees get
+// a twin, which calls use it) is pinned by tests/callee_inputs.rs.  Expected values are
+// hand-computed in each cell's comment.
+struct Smp { a: float = 0.0, r: float = 0.0 }
+struct Brush { bw: integer = 0, bh: integer = 0, img: vector<integer> = [] }
+struct Holder { br: Brush }
+struct Cv { width: integer, data: vector<integer> }
+struct H { cv: Cv }
+struct Fl { data: vector<float> }
+
+// The brush_sample shape: a free function over a plain vector parameter, two element reads
+// (the `?` form and the `?? 0` form), a scalar return buffer.
+fn sample(img: const vector<integer>, bw: integer, u: integer, v: integer) -> Smp {
+  c00 = img[v * bw + u]?;
+  c10 = img[v * bw + u + 1] ?? 0;
+  Smp { a: (c00 ?? 0) as float, r: (c10 as float) * 0.5 }
+}
+// Rebinds its parameter by COPY: a store write, not admitted at all.
+fn rb_copy(img: vector<integer>, other: const vector<integer>, i: integer) -> integer { img = other; img[i] ?? 0 }
+// Pushes to its parameter: a growth, not admitted.
+fn grow(img: vector<integer>, x: integer) -> integer { img += [x]; len(img) }
+// A record parameter whose only inputs are headers: `c.data` indexed, nothing scalar.
+fn rd(c: const Cv, i: integer) -> integer { c.data[i] ?? 0 }
+// Length only: no header, no input.
+fn cnt(img: const vector<integer>) -> integer { len(img) }
+// A float vector parameter.
+fn fs(v: const vector<float>, i: integer) -> float { v[i] ?? 0.0 }
+// Transitive: passes its vector parameter on to `sample`.
+fn s2(img: const vector<integer>, bw: integer, u: integer, v: integer) -> Smp { sample(img, bw, u, v) }
+// A second reader of the same parameter kind, to share one header with `sample`.
+fn first(img: const vector<integer>) -> integer { img[0] ?? -1 }
+// Transitive through a record parameter's PATH: `c.data` handed to a vector-parameter callee.
+fn s3(c: const Cv) -> integer { first(c.data) }
+// A boolean vector parameter: the header input is admitted, the element read is NOT fusable.
+fn flag(v: const vector<boolean>, i: integer) -> integer { if v[i] ?? false { 1 } else { 0 } }
+struct Fg { flags: vector<boolean> }
+fn mk() -> vector<integer> { [7, 8, 9] }
+
+fn brush() -> Brush { Brush { bw: 3, bh: 2, img: [1, 2, 3, 4, 5, 6] } }
+fn tenth(x: float) -> integer { (x * 10.0) as integer }
+
+// k1 — the brush shape: `sample(br.img, …)` in a loop; one header for (br, img), a twin call.
+// v = 1, u = 0..3: c00 = img[3+u] = 4, 5, 6; c10 = img[4+u] = 5, 6, absent→0.
+// a + r = 4+2.5, 5+3, 6+0 = 20.5 → 205.
+fn k1() { br = brush(); t = 0.0; for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r; } println("k1 {tenth(t)}"); }
+// k2 — the callee REBINDS its parameter by copy: a store write, no twin, plain calls.
+// other = [10, 20, 30] → 60; br.img unchanged (the copy lands in the callee's own local).
+fn k2() { br = brush(); o = Brush { bw: 1, bh: 1, img: [10, 20, 30] }; s = 0; for i in 0..3 { s += rb_copy(br.img, o.img, i); } println("k2 {s} {len(br.img)}"); }
+// k3 — the callee PUSHES to its parameter: not admitted, and the loop hoists nothing.  Lengths 7, 8, 9 → 24; final 9.
+fn k3() { br = brush(); s = 0; for i in 0..3 { s += grow(br.img, i); } println("k3 {s} {len(br.img)}"); }
+// k4 — two different paths in one loop: two headers, two twin calls.
+// a: v=0 u=i: c00 = 1,2,3; c10 = img[1+i] = 2,3,4 → a+r = 1+1, 2+1.5, 3+2 = 10.5.
+// b (bw 2, img [7,8,9,10]): v=1 u=i: c00 = img[2+i] = 9, 10, absent→0; c10 = img[3+i] = 10, absent, absent → 9+5, 10+0, 0+0 = 24.
+// 10.5 + 24 = 34.5 → 345.
+fn k4() {
+  a = brush(); b = Brush { bw: 2, bh: 2, img: [7, 8, 9, 10] }; t = 0.0;
+  for i in 0..3 { p = sample(a.img, a.bw, i, 0); q = sample(b.img, b.bw, i, 1); t += p.a + p.r + q.a + q.r; }
+  println("k4 {tenth(t)}");
+}
+// k5 — an EMPTY vector and an OMITTED one (the field's zero): every read absent, 0 both.
+fn k5() {
+  e = Brush { bw: 3, bh: 2, img: [] }; n = Brush { bw: 3, bh: 2 }; t = 0.0; u = 0.0;
+  for i in 0..3 { s = sample(e.img, e.bw, i, 0); t += s.a + s.r; }
+  for i in 0..3 { s = sample(n.img, n.bw, i, 0); u += s.a + s.r; }
+  println("k5 {tenth(t)} {tenth(u)}");
+}
+// k6 — the argument is an EXPRESSION, not a path: plain calls.
+// i=0 → a (bw 3): v=0,u=0: 1 + 1 = 2; i=1 → b (bw 2): v=0,u=1: c00 = 8, c10 = 9 → 8 + 4.5 = 12.5; i=2 → a: u=2: c00 = 3, c10 = img[3] = 4 → 3 + 2 = 5.  19.5 → 195.
+fn k6() {
+  a = brush(); b = Brush { bw: 2, bh: 2, img: [7, 8, 9, 10] }; t = 0.0;
+  for i in 0..3 { s = sample(if i == 1 { b.img } else { a.img }, if i == 1 { b.bw } else { a.bw }, i, 0); t += s.a + s.r; }
+  println("k6 {tenth(t)}");
+}
+// k7a — the caller loop writes an ELEMENT of the path in place: the header stays valid, a
+// twin call, and the twin reads the new value.  img[0] = 100 + i before the read of u=0,v=0:
+// c00 = 100, 101, 102; c10 = img[1] = 2 → (100+1) + (101+1) + (102+1) = 306 → 3060.
+fn k7a() { br = brush(); t = 0.0; for i in 0..3 { br.img[0] = 100 + i; s = sample(br.img, br.bw, 0, 0); t += s.a + s.r; } println("k7a {tenth(t)} {br.img[0]?}"); }
+// k7b — the caller loop PUSHES to the path: the path is held by a PUSH header, current at
+// the call, and the twin is handed it.  After the push in iteration i, len = 7 + i; the read
+// u = 6 + i, v = 0 finds the just-pushed 50 + i, u + 1 absent: 50 + 51 + 52 = 153 → 1530; len 9.
+fn k7b() { br = brush(); t = 0.0; for i in 0..3 { br.img += [50 + i]; s = sample(br.img, br.bw, 6 + i, 0); t += s.a + s.r; } println("k7b {tenth(t)} {len(br.img)}"); }
+// k8 — the path's ROOT is a `&` view rebound in the loop: no hoist, plain calls.
+// a: u=0,v=0 → 1 + 1 = 2; then b (bw 2): u=0,v=0 → 7 + 4 = 11.  13 → 130.
+fn k8() {
+  a = brush(); b = Brush { bw: 2, bh: 2, img: [7, 8, 9, 10] }; cur = &a; t = 0.0;
+  for _i in 0..2 { s = sample(cur.img, cur.bw, 0, 0); t += s.a + s.r; cur = &b; }
+  println("k8 {tenth(t)}");
+}
+// k9 — a RECORD parameter whose inputs are headers only, passed as a PATH `h.cv`: the
+// header (h, cv, data) is hoisted and the twin called.  data = [5, 6, 7]: 5 + 6 + 7 = 18.
+fn k9() { h = H { cv: Cv { width: 3, data: [5, 6, 7] } }; s = 0; for i in 0..3 { s += rd(h.cv, i); } println("k9 {s}"); }
+// k10 — a length-only reader earns no input: plain calls.  3 × 6.
+fn k10() { br = brush(); s = 0; for _i in 0..3 { s += cnt(br.img); } println("k10 {s}"); }
+// k11 — NESTED loops: the outer loop derives the header once, the inner twin calls re-use it.
+// Two passes of k1's row (v = 1): 2 × 20.5 = 41 → 410.
+fn k11() { br = brush(); t = 0.0; for _j in 0..2 { for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r; } } println("k11 {tenth(t)}"); }
+// k12 — a FLOAT vector parameter through a record path.  [0.5, 1.5, 2.5] + absent → 4.5 → 45.
+fn k12() { f = Fl { data: [0.5, 1.5, 2.5] }; t = 0.0; for i in 0..4 { t += fs(f.data, i); } println("k12 {tenth(t)}"); }
+// k13 — TRANSITIVE over a vector parameter: `s2` earns `img`'s header from `sample` and its
+// twin calls `sample`'s twin.  `s2` forwards its buffer, so its delivery frees a displaced
+// record (`OpFreeRefIfDistinct`) — the caller's gate admits that as a record free, and the
+// call site is the return-buffer DELIVERY emission, which asks the twin question too.
+// k1's values: 205.
+fn k13() { br = brush(); t = 0.0; for u in 0..3 { s = s2(br.img, br.bw, u, 1); t += s.a + s.r; } println("k13 {tenth(t)}"); }
+// k14 — the path through a `&` ALIAS of the record: the alias's own hoist, a twin call.  205.
+fn k14() { br = brush(); v = &br; t = 0.0; for u in 0..3 { s = sample(v.img, v.bw, u, 1); t += s.a + s.r; } println("k14 {tenth(t)}"); }
+// k15 — TWO callees over ONE path in one loop: one header serves both twin calls.
+// sample as k1 (20.5) plus first() = 1 three times → 20.5 + 3 = 23.5 → 235.
+fn k15() { br = brush(); t = 0.0; for u in 0..3 { s = sample(br.img, br.bw, u, 1); t += s.a + s.r + (first(br.img) as float); } println("k15 {tenth(t)}"); }
+// k16 — a NESTED path argument `h.br.img`: the key is the whole path.  k1's values: 205.
+fn k16() { h = Holder { br: brush() }; t = 0.0; for u in 0..3 { s = sample(h.br.img, h.br.bw, u, 1); t += s.a + s.r; } println("k16 {tenth(t)}"); }
+// k17 — a call OUTSIDE any loop keeps the plain form.  u=1,v=1: c00 = 5, c10 = 6 → 5 + 3 = 8 → 80.
+fn k17() { br = brush(); s = sample(br.img, br.bw, 1, 1); println("k17 {tenth(s.a + s.r)}"); }
+// k18 — TRANSITIVE through a record parameter's path: `s3` earns (c, data) from `first`'s
+// vector parameter and its twin calls `first`'s twin.  3 × 5.
+fn k18() { cv = Cv { width: 3, data: [5, 6, 7] }; s = 0; for _i in 0..3 { s += s3(cv); } println("k18 {s}"); }
+
+// k19 — the argument is a CALL RESULT: no path, plain calls.  mk() = [7, 8, 9], bw 3, v = 0:
+// u = 0..3: c00 = 7, 8, 9; c10 = 8, 9, absent → 7+4, 8+4.5, 9+0 = 32.5 → 325.
+fn k19() { t = 0.0; for u in 0..3 { s = sample(mk(), 3, u, 0); t += s.a + s.r; } println("k19 {tenth(t)}"); }
+// k20 — a BOOLEAN vector parameter through a path: the header is handed over, the twin's read
+// stays the runtime's (not fusable).  [true, false, true] + absent → 2.
+fn k20() { f = Fg { flags: [true, false, true] }; s = 0; for i in 0..4 { s += flag(f.flags, i); } println("k20 {s}"); }
+
+fn main() { k1(); k2(); k3(); k4(); k5(); k6(); k7a(); k7b(); k8(); k9(); k10(); k11(); k12(); k13(); k14(); k15(); k16(); k17(); k18(); k19(); k20(); }

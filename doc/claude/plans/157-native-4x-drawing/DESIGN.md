@@ -1911,6 +1911,118 @@ per FUNCTION, never whole-file.  (2) `scripts/find_problems.sh --changed` died w
 is still one bounds-checked scalar store per element — 1.16 ns against Rust's 0.10 — and
 that, not the loop machinery, is what remains of `pil_hline`.
 
+
+## V-ac — a vector parameter's header crosses the call (2026-09-13)
+
+**SHIPPED, default-on, `--native` (the `@FR-R-Inputs` rewrite; switch
+`LOFT_NO_CALLEE_INPUTS`, `@FR-R-Switch`).**  The unit the `lock_curved` evaluation ranked
+first (README § Where to resume, item 2): `brush_sample(img: const vector<integer>, bw, bh,
+fu, fv) -> Smp` reads four `img[…]?` per resolved pixel, each a full store resolution —
+`get_vector` (the allocations lookup and the bounds test), `store(&db).get_int`, the
+discharge — while the caller's resolve loop holds `br` invariant and already derives
+headers for its seven `Lay` vectors.  § V-p's twin could not reach it for two reasons, and
+both were admission, not mechanism: the caller keyed a header input on a LEAF argument
+variable, and `br.img` is a path; and the callee side refused any function with a hidden
+return buffer outright, which `Smp` gives `brush_sample`.
+
+**The ceiling, measured first** (the hand-off's number, rustc-first): the release-tier
+emission of a `lock_curved`-only bench hand-edited so `n_brush_sample` takes `br.img`'s
+header derived once beside the resolve loop's other headers and reads through
+`get_elem_hoisted::<i64,_>`, linked with loft's own flags — 2 256–2 263k → **2 127–2 141k
+ns/op (−5.7 %)**, ABAB × 3, hash `2a3aa61` every run.
+
+**Invariant** (`@FR-R-Inputs`, extended — [formal/rewrites.md](../../formal/rewrites.md)).
+*A header input is keyed on the ARGUMENT's pure path: the callee's `img` at an argument
+`br.img` is the caller's `(br, img)`, its `c.data` at `h.cv` is `(h, cv, data)`; a scalar
+input still needs a leaf variable, because its key carries a variable.  A return-buffer
+writer is admitted like any other (R-Callee) callee: its write set is its buffer's type
+WHOLE, which no parameter's field shares.*  Nothing about the twin changes — the same body,
+the same `__ih_k` parameter, the same frames — only which calls reach it.
+
+**The code.**  Four sites, one definition.  `hoist::input_header_at` answers, for a
+callee's header input `(pf, offs, path)` and a caller's argument, the caller's key (the
+argument's path extended by the callee's offsets) and the expression that derives it —
+`hoist::substitute_path` re-spells the callee's path over the argument with a walk of its
+own, because `map_nodes` descends into the replacement, and the argument is spelled over
+the CALLER's variable numbers, which can coincide with the callee's parameter number.
+`hoist::hoistable` (the loop's candidates) and `Output::twin_call_inputs` (the twin call)
+both ask it, so the candidate the prelude binds and the holder the call hands over cannot
+name different paths; `hoist::callee_inputs_inner`'s transitive pass-through asks it too
+(`s3(c) { first(c.data) }` earns `(c, data)`).  The callee admission drops the
+return-buffer refusal and reads its write set as the caller's gate does: a
+`retbuf_only_writer` reaches its buffer's type whole, any other admitted body its own
+typed set.  ⚠ The first cut asked `callee_writes` for that set and every store-free callee
+LOST its twin: that predicate is built to be asked about a callee from a body walk, and
+read the function's own presence in the active set as recursion — the return-buffer case
+alone worked, by the order of its two branches.  The emission test caught it on the first
+run (`rd`, `fs`, `first` without twins).  And the return-buffer DELIVERY site in
+`dispatch.rs` — `{ let _dst = …; let _src = <call> }`, the ABI-B adopt-or-copy — spells the
+call itself, so it asks the twin question too; without it `s2`'s twin existed and no call
+took it (k13).
+
+**Cells before the code** (`bytecode-comparisons/V-ac-vector-param-cells.loft`, twenty-one,
+hand-computed, matching the interpreter before the emitter changed — two comments had my
+arithmetic wrong on one fact, `img[3]` present in a six-element brush, and were corrected
+against the hand recount, not the oracle): k1 the brush shape · k2 a callee rebinding its
+parameter by copy · k3 a callee pushing to its parameter · k4 two paths in one loop · k5 an
+empty and an omitted vector · k6 a conditional argument · k7a an in-place element write
+beside the call · k7b the path held by a PUSH header, handed current at the call · k8 a
+`&` root rebound in the loop · k9 a record parameter's field through the path `h.cv` · k10
+length only · k11 nested loops · k12 a float vector · k13 transitive over a vector
+parameter · k14 a `&` alias · k15 two callees over one path · k16 a nested path
+`h.br.img` · k17 outside any loop · k18 transitive through a record parameter's path · k19
+a call result as the argument · k20 a boolean vector (the header admitted, the read left
+unfused).  Predicted emission: twins for `sample`, `rd`, `fs`, `first`, `s3`, `flag`; none
+for `rb_copy`, `grow`, `cnt`; twin calls at k1, k4 (2), k5 (2), k7a, k7b, k9, k11, k12,
+k14, k15 (2), k16, k18, k20, and inside `s3`'s twin.  Two predictions were wrong and are
+recorded as such: `s2` (forwards `img` to `sample` and its buffer to `sample`'s) I
+predicted declined for the `OpFreeRefIfDistinct` in its delivery — the caller's gate
+admits that as a record free, so it earns a twin, and k13 takes it through the delivery
+site.  `tests/callee_inputs.rs` pins the emission and the switch;
+`tests/scripts/157-vector-param-inputs.loft` carries the values; both join
+`tests/emission_audit.rs` (0 violations, 30 holders, 24 uses resolved).  Every cell
+answers the same on `--interpret`, `--native`, `LOFT_HOIST_VERIFY=1`,
+`LOFT_NO_CALLEE_INPUTS=1`, `LOFT_VALUE_RECORD=1` (with and without the verifier) and
+`LOFT_POISON=1`.
+
+**Falsified** — and the first sabotage teaches where the invariant is held.  (1) The
+header derived from the argument's ROOT variable — `Var(c)` applied to a path argument,
+the pre-unit spelling — stayed GREEN on every cell: `vec_header` of a record `DbRef`
+reads a record word as the vector's record number, answers length 0 for it, and every
+read takes the cold path, which re-resolves from the real vector.  A wrong header is
+only ever wrong when its LENGTH is plausible, which is what a verifier keyed on the fast
+path can see and a refusal-shaped sabotage cannot.  (2) `Output::twin_call_inputs` made
+to hand the OTHER holder of the frame whenever the loop holds two turns exactly the
+two-paths cell red on native (`two_paths()` 345 → 570: a's elements read through b's
+header) and `LOFT_HOIST_VERIFY=1` panics at the twin's first fast-path read (`hoisted
+vector header is stale`, `src/vector.rs`); every one-header cell stays green, as it
+must.  Restored byte-identically.
+
+**Measured** (aarch64 Linux, host `lima-default`; shipped tier; `compare.py --skip-interp
+--repeat 3`, caches cleared per side, ABAB, 14/14 hashes agree on every run):
+
+| row | base (A, A) | § V-ac (B, B) | move |
+|---|---:|---:|---:|
+| `lock_curved` | 2 382 040 / 2 386 140 | **2 231 120 / 2 235 240** | **−6.3 %** (3.89× → 3.63×) |
+| `lock` | 2 682 280 / 2 683 100 | **2 449 280 / 2 448 980** | **−8.7 %** (3.73× → 3.42×) |
+| `render_lock` | 15.79M / 15.83M | 15.35M / 15.38M | −2.9 % |
+| `render_marks` | 7.42M / 7.41M | 7.29M / 7.28M | −1.7 % |
+| `hash` `hair` `smooth` `fronds` `composite` fills `wide_line` | | | within the lane's swing |
+
+The straight `lock` moved more than the curved row the unit was ranked on: both resolve
+every pixel through `brush_sample`, and the straight lock's resolve loop is a larger
+share of its row.  The ceiling was met and passed (−5.7 % hand, −6.3 % shipped) because
+the hand edit kept the four reads' `rec == 0` tests, which the fused read folds into its
+bounds test.
+
+**What it does not cover, by construction.**  A scalar input through a path argument
+(`readw(h.cv)`, c5) keeps the plain call — the scalar key is `(variable, offset)`, and a
+path-keyed scalar is a different unit; an argument that is not a pure path (k6's
+conditional, k19's call result) keeps the plain call, as (R-Header) already decided for
+the loop's own reads; and a callee with a return buffer whose body writes ANYTHING
+else (a parameter's field beside the buffer) is neither in-place-only nor buffer-only
+and earns no twin, which is (R-Callee) unchanged.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

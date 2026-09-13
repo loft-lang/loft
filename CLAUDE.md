@@ -739,10 +739,13 @@ reads `d[i]` through one header derived once — and is the bisect step for a wr
 read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
 call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
 op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
-(@PLN157 § V-p) emits no callee TWIN — with it on, a callee that reads a record parameter's
-scalar fields or views its vector fields gets a `<fn>__inv` twin taking those as extra
-parameters, and a loop that hoisted them for the argument calls the twin — and is the bisect
-step for a wrong value read through a record parameter inside a callee a hoisting loop calls.
+(@PLN157 § V-p, § V-ac) emits no callee TWIN — with it on, a callee that reads a record
+parameter's scalar fields, views or indexes its vector fields, or indexes a plain VECTOR
+parameter gets a `<fn>__inv` twin taking those as extra parameters, and a loop that hoisted
+them for the argument — a variable, or for a header any pure path such as `br.img` — calls
+the twin; a callee answering a scalar record through its return buffer qualifies too — and
+is the bisect step for a wrong value read through a record or vector parameter inside a
+callee a hoisting loop calls.
 **`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path

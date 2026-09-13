@@ -2355,11 +2355,12 @@ impl Output<'_> {
             };
             args.push(self.active_scalar_hoist(&(*c, *fld))?.to_owned());
         }
+        // A header input is keyed on the argument's PATH (§ V-ac): `br.img` for a vector
+        // parameter, `h.cv` + the callee's `data` offset for a record parameter's field.
         for (p, offs, _) in &inputs.headers {
-            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
-                return None;
-            };
-            args.push(self.active_vec_header(&(*c, offs.clone()))?.to_owned());
+            let (c, mut key) = hoist::vector_path(self.data, vals.get(*p as usize)?)?;
+            key.extend_from_slice(offs);
+            args.push(self.active_vec_header(&(c, key))?.to_owned());
         }
         Some(args)
     }

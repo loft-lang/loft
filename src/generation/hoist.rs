@@ -443,12 +443,13 @@ pub fn hoistable(
                     && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
                 {
                     for (pf, offs, path) in &fi.headers {
-                        if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
-                            && !rebound.contains(c)
-                            && !out.vectors.iter().any(|(p, _)| p.0 == *c && p.1 == *offs)
+                        if let Some((key, expr)) = args
+                            .get(*pf as usize)
+                            .and_then(|a| input_header_at(data, a, *pf, offs, path))
+                            && !rebound.contains(&key.0)
+                            && !out.vectors.iter().any(|(p, _)| *p == key)
                         {
-                            out.vectors
-                                .push(((*c, offs.clone()), substitute_root(path, *pf, *c)));
+                            out.vectors.push((key, expr));
                         }
                     }
                     if tiers.scalars {
@@ -975,10 +976,7 @@ fn callee_inputs_inner(
         return None;
     };
     // `.base()`: the shape question sees through a `τ?` result (`@FR-N-Shape`).
-    if !def.rust().is_empty()
-        || def.hidden_return_buffer_attr().is_some()
-        || matches!(def.returned().base(), Type::Iterator(_, _))
-    {
+    if !def.rust().is_empty() || matches!(def.returned().base(), Type::Iterator(_, _)) {
         return None;
     }
     let mut active = HashSet::new();
@@ -990,20 +988,35 @@ fn callee_inputs_inner(
     let vars = def.variables();
     let params = u16::try_from(def.attributes().len()).ok()?;
     let rebound = rebound_vars(body);
-    let mut written = WriteSet::default();
-    let mut fresh_elems: HashSet<u16> = HashSet::new();
-    for op in &body.operators {
-        written.extend(&body_writes(
-            op,
-            data,
-            stores,
-            vars,
-            cache,
-            writes,
-            &mut HashSet::new(),
-            &mut fresh_elems,
-        )?);
-    }
+    // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a
+    // return-buffer writer (§ V-ac — `brush_sample` answering a `Smp` through its buffer)
+    // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
+    // admitted body has a typed set of its own, or no twin.
+    let written = if def.hidden_return_buffer_attr().is_some()
+        && retbuf_only_writer(d_nr, data, cache, &mut active)
+    {
+        let attr = def.hidden_return_buffer_attr()?;
+        WriteSet {
+            offsets: HashSet::new(),
+            whole: HashSet::from([plain_record_type(data, &def.attributes()[attr].typedef)?]),
+        }
+    } else {
+        let mut written = WriteSet::default();
+        let mut fresh_elems: HashSet<u16> = HashSet::new();
+        for op in &body.operators {
+            written.extend(&body_writes(
+                op,
+                data,
+                stores,
+                vars,
+                cache,
+                writes,
+                &mut HashSet::new(),
+                &mut fresh_elems,
+            )?);
+        }
+        written
+    };
     // A parameter (never rebound) as a candidate root: its plain record type, or — for a
     // header — whether it names a vector at all.
     let record_param = |p: u16| -> Option<u16> {
@@ -1072,12 +1085,13 @@ fn callee_inputs_inner(
                 }
             }
             for (pf, offs, path) in &fi.headers {
-                if let Some(Value::Var(p)) = args.get(*pf as usize).map(Value::unspan)
-                    && path_root(*p, offs)
-                    && !out.headers.iter().any(|(r, o, _)| *r == *p && o == offs)
+                if let Some(((p, key), expr)) = args
+                    .get(*pf as usize)
+                    .and_then(|a| input_header_at(data, a, *pf, offs, path))
+                    && path_root(p, &key)
+                    && !out.headers.iter().any(|(r, o, _)| *r == p && *o == key)
                 {
-                    out.headers
-                        .push((*p, offs.clone(), substitute_root(path, *pf, *p)));
+                    out.headers.push((p, key, expr));
                 }
             }
         }
@@ -1090,13 +1104,43 @@ fn callee_inputs_inner(
 /// caller's argument variable (@PLN157 § V-p).
 #[must_use]
 pub fn substitute_root(v: &Value, from: u16, to: u16) -> Value {
-    let mut out = v.clone();
-    out.map_nodes(&mut |n| {
-        if matches!(n, Value::Var(x) if *x == from) {
-            *n = Value::Var(to);
-        }
-    });
-    out
+    substitute_path(v, from, &Value::Var(to))
+}
+
+/// `path` — a callee's pure path over `Var(from)` — re-spelled over the caller's argument
+/// `arg`, itself a pure path (@PLN157 § V-ac): the callee's `img` at an argument `br.img`
+/// is the caller's `br.img`, its `c.data` at `h.cv` is `h.cv.data`.  A walk of its own
+/// rather than `map_nodes`, which descends into the replacement: the argument is spelled
+/// over the CALLER's variables, whose numbers can coincide with `from`.
+#[must_use]
+pub fn substitute_path(path: &Value, from: u16, arg: &Value) -> Value {
+    match path {
+        Value::Var(x) if *x == from => arg.clone(),
+        Value::Span(b) => Value::Span(Box::new((b.0.clone(), substitute_path(&b.1, from, arg)))),
+        Value::Call(d, args) => Value::Call(
+            *d,
+            args.iter().map(|a| substitute_path(a, from, arg)).collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// A callee's header input `(pf, offs, path)` at the caller's argument `arg`, when that
+/// argument is a pure path (`@FR-R-Header`): the caller's key — the argument's path
+/// extended by the callee's offsets — and the expression that derives it.  `None` for any
+/// other argument (an element view, a conditional, a call), which keeps the plain call.
+/// Enforces `@FR-R-Inputs` (the path-argument half, @PLN157 § V-ac).
+#[must_use]
+pub fn input_header_at(
+    data: &Data,
+    arg: &Value,
+    pf: u16,
+    offs: &[i64],
+    path: &Value,
+) -> Option<(PathKey, Value)> {
+    let (root, mut key) = vector_path(data, arg)?;
+    key.extend_from_slice(offs);
+    Some(((root, key), substitute_path(path, pf, arg)))
 }
 
 /// @PLN157 § V-n — does statement `at` of `stmts` bind a VIEW of a vector whose header the
