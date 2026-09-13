@@ -163,6 +163,17 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
+**The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
+`OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
+`e = tbl[i]?` mints an ABSENT record element into — when the record is all-scalar.
+The allocation takes a store of its own from a null slot or clears the buffer's OWN
+store, and that store hosts no vector, text or reference, so no header can name
+anything in it; the field sets that follow are (R-InPlace) sets and walk on their own,
+and the scalar tier reads the allocation as the record's type whole (R-Scalar).  Only
+the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and
+a return buffer may be a record the caller offered (R-Callee's second half carries
+that case).  Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`.
+Site: `hoist::null_buffer_alloc`.
 
 ### A callee is admitted by what its body writes, one call deep
 

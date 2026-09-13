@@ -1109,6 +1109,17 @@ pub fn inplace_callee_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_INPLACE_CALLEE_HOIST"))
 }
 
+/// @PLN157 § V-ad: a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a
+/// vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`)
+/// does not decline a header hoist — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_NULL_BUFFER_HOIST` (read at GENERATION time): the before-half of the A/B on
+/// one binary, and the first bisect step for a wrong element read in a loop that
+/// discharges a record element with `?`.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+pub fn null_buffer_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NULL_BUFFER_HOIST"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

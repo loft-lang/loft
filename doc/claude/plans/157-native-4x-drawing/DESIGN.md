@@ -2023,6 +2023,108 @@ the loop's own reads; and a callee with a return buffer whose body writes ANYTHI
 else (a parameter's field beside the buffer) is neither in-place-only nor buffer-only
 and earns no twin, which is (R-Callee) unchanged.
 
+
+## V-ad — a null-discharge buffer does not block the hoist (2026-09-13)
+
+**SHIPPED, default-on, `--native` (generation time; switch `LOFT_NO_NULL_BUFFER_HOIST`,
+`@FR-R-Switch`; the `@FR-R-InPlace` hidden-buffer allowance).**  The first unit aimed at
+`wide_line`, the judged row no unit had targeted.
+
+**The profile, on this box first** (aarch64 Linux, host `lima-default`; `perf` needs
+`kernel.perf_event_paranoid ≤ 2`, which `sudo sysctl -w` sets for the boot).  The recipe:
+a copy of the consumer bench whose `main` prints only `bench_wide_line`
+(`bench/wl_only.loft` in the scratch clone), profiled with `scripts/profile.sh --engine
+--calls -- --native-release <absolute path> --n 300000` — the path must be absolute (the
+script changes directory) and the iteration count large enough for the program to
+dominate: at `--n 3000` the row is 50 ms and 55 % of the samples are loft's own front end
+hashing the build fingerprint.  Self time: `n_polygon_generic` **62.8 %** (with
+`pil_hline`, `roundf` and the rounding helpers' callers inlined into it), `n_edge_x`
+**6.7 %** (a plain call: its argument `pg_cur` is an OPTIONAL element view, which § V-p's
+twin declines, c6), `get_vector` + `vec_get_or_raise_runtime` **12.5 %**, `n_round_up` +
+`n_round_down` **3.5 %**.
+
+**The shape.**  The release-tier emission (`--native-release --native-emit`) showed the
+scanline `while` and the crossing `for i in 0..pg_ec` inside it deriving NO header, while
+the insertion sort and the hline loop beside them hoisted `pg_xx` and `cv.data`.  The
+blocker is one statement: `pg_cur = pg_table[i]?`.  A `?` read of a RECORD element
+discharges an absent element into a hidden per-site buffer (`__ref_p2_N`, a pass-2-only
+work-ref with the null-init preamble and the scope-exit free), and the never-taken arm
+spells `OpDatabaseNP(__ref_p2_1, Edge)` plus seven field sets.  `OpDatabaseNP` is a native
+op that is not store-free, so `blocks_header_hoist` declined the loop — and every `pg_xx`
+read and write in the crossing loop paid a full resolution (`vec_get_or_raise_runtime`),
+and `pg_table[i]` its `get_vector`.
+
+**Invariant** (`@FR-R-InPlace`, extended — [formal/rewrites.md](../../formal/rewrites.md)).
+*An allocation into a hidden null-discharge buffer whose record is all-scalar moves nothing
+a header describes: it takes a store of its own from a null slot, or clears the buffer's
+OWN store, and that store hosts no vector, text or reference.*  It is the argument
+(R-Callee) already makes for a scalar return buffer, applied to the other hidden buffer
+the parser mints.  Only `__ref_p2_` buffers qualify — a `__ref_N` work-ref may be a return
+buffer, and a return buffer may be a record the caller offered (§ V-d), which is a
+different store.
+
+**The code.**  `hoist::null_buffer_alloc` is the one predicate: `OpDatabase`/`OpDatabaseNP`
+whose first operand is a `Var` named `__ref_p2_*` of a plain record type that
+`all_scalar_record` accepts (the helper `retbuf_only_writer` now shares).
+`blocks_header_hoist` admits it beside the record free; `body_writes` reads it as the
+record's type WHOLE, so a scalar hoisted off that type is evicted (the buffer's field sets
+already evict the same offsets — the whole-type entry is the second assertion).
+`keys::null_buffer_hoist_enabled` is the switch.
+
+**Cells before the code** (`bytecode-comparisons/V-ad-null-buffer-cells.loft`, thirteen,
+hand-computed — one comment had my arithmetic wrong on a mirrored index and was corrected
+against the recount): d1 the crossing-loop shape · d2 the default arm TAKEN · d3 a record
+that OWNS HEAP (blocked) · d4 an in-place element write beside the discharge · d5 a push
+beside it · d6 nested loops · d7 two discharge sites (two buffers: the emission spells
+`__ref_p2_1` and `__ref_p2_2`) · d8 a scalar read of the discharged vector · d9 the buffer
+read after the loop · d10 a scalar `?` control · d11 a heap-owning view held across a
+re-discharge · d12 a `&` alias of the discharged variable re-discharged inside the loop,
+over a record with a DECLARED default vector · d13 the same alias over a heap-owning
+record with NO default.  Predicted headers per cell (vector, push): d1 (2,0) d2 (2,0) d3
+(0,0) d4 (3,0) d5 (1,1) d6 (2,0) d7 (2,0) d8 (1,0) d9 (1,0) d10 (2,0) d11 (0,0) d12 (0,0)
+d13 (0,0) — matched on the first
+emission except d4 and d5, which I had predicted one short (d4's summing loop derives its
+own; d5's `t` is a call result and leaves the read list beside a push, `@FR-R-Alias`).
+`tests/null_buffer_hoist.rs` pins them and the switch (every discharging loop back to
+zero); `tests/scripts/157-null-buffer-hoist.loft` carries the values; both join the
+emission audit (0 violations).  Every cell answers the same on `--interpret`, `--native`,
+`LOFT_HOIST_VERIFY=1`, `LOFT_NO_NULL_BUFFER_HOIST=1` and `LOFT_POISON=1`.
+
+**Falsified — and the first attempt taught where the condition is held.**  The red-before
+is the emission pin: the pre-unit form derives no header in any discharging loop.  The
+all-scalar condition dropped (`null_buffer_alloc` admitting a heap-owning record's buffer)
+turns **d13** red on native — `alias_no_default()` 7 → **15**: the loop hoists a header
+for `g.tags` at entry, it names h[0]'s tags, and every iteration reads through it while
+the rebinding of `e` has moved the alias on — and `LOFT_HOIST_VERIFY=1` panics at that read
+(`hoisted vector header is stale`, `src/vector.rs`).  The same sabotage left **d12** at 7,
+and that is the finding: d12's record declares a default vector, so its discharge arm
+BUILDS that default with a growth op (`vector_add`), which blocks the loop on its own — the
+falsifier needs the heap-owning record WITHOUT a default, whose arm sets the vector slot
+to null and grows nothing.  A second sabotage, the whole-type write dropped, stayed green:
+the buffer's field sets already evict the record's offsets for the scalar tier, so the
+whole-type entry is the second assertion of one fact.  Restored byte-identically.
+
+**Measured** (aarch64 Linux, host `lima-default`, shipped tier):
+
+| instrument | before | after | move |
+|---|---:|---:|---:|
+| `wl_only.loft --n 20000`, switch A/B on one binary, ABAB | 17 004 / 17 305 ns/op | **11 795 / 11 763** | **−31 %** |
+| `compare.py --repeat 3`, `wide_line` | 16 380 (5.35×) | **11 580 (4.02×)** | −29 % |
+| `compare.py`, `fill_circle` | 105 380 (3.89×) | **89 080 (3.52×)** | −15 % |
+| `compare.py`, `fill_star` | 38 680 (3.81×) | **31 460 (3.37×)** | −19 % |
+
+14/14 hashes agree.  The fills moved because `fill_poly` runs the same crossing loop.
+The row moved more than the 12 % of store machinery the profile named: with the reads
+served from headers, LLVM also folds the arithmetic around them.  `lock` and
+`lock_curved` are flat in loft's column (2 459k / 2 236k); their ratios read higher only
+because the reference lane came in lower this run.
+
+**What remains in the row** (`wide_line` is AT the bar here, 4.02×): `pil_hline`'s fill
+loop, a bounds-tested scalar store per pixel where Rust's is a vectorised fill — Unit 2,
+the FILL idiom; and `n_edge_x`, a plain call because its argument is an optional element
+view — a twin over an optional-view argument, which the c6 boundary of § V-p would have to
+move for.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

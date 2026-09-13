@@ -828,6 +828,10 @@ fn body_writes(
                 // § V-d's delivery tail into a fresh mint variable (`@FR-R-Mint`): the copy
                 // writes the fresh element, and its source-free releases the builder's own
                 // this-iteration buffer — neither is a record a hoisted scalar can name.
+            } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
+                // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
+                // off ITS type could observe that, and the buffer's view is rebound per use.
+                set.whole.insert(tp);
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),
@@ -1621,6 +1625,48 @@ fn writes_store(
 /// releases `v` alone, so only its first operand is the question.
 const RECORD_FREE_OPS: [&str; 2] = ["OpFreeRef", "OpFreeRefIfDistinct"];
 
+/// Is `def_nr` a record type with no heap in it — every field a fixed-width scalar (a
+/// constant and a routine field hold no store either)?  The record's store then hosts
+/// nothing a hoisted header could name: the fact `@FR-R-Callee`'s return-buffer half and
+/// § V-ad's discharge buffer both stand on.
+fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
+    data.def(def_nr)
+        .attributes()
+        .iter()
+        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
+}
+
+/// @PLN157 § V-ad — `OpDatabase`/`OpDatabaseNP` into a hidden null-discharge buffer
+/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into) whose record is
+/// all-scalar: the allocation takes a store of its own from a null slot, or clears the
+/// buffer's OWN store, and that store hosts no vector, text or reference — so no header
+/// can go stale and no scalar hoist can be reached except through the buffer's own type.
+/// Answers that type.  Only the pass-2 discharge buffers qualify: a `__ref_N` work-ref may
+/// be a return buffer, and a return buffer may be a record the caller offered.
+/// Enforces `@FR-R-InPlace` (the hidden-buffer allowance).
+fn null_buffer_alloc(
+    name: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+    data: &Data,
+) -> Option<u16> {
+    if !crate::keys::null_buffer_hoist_enabled()
+        || !(name == "OpDatabase" || name == "OpDatabaseNP")
+    {
+        return None;
+    }
+    let vars = vars?;
+    let Some(Value::Var(b)) = args.first().map(Value::unspan) else {
+        return None;
+    };
+    if *b >= vars.count() || !vars.name(*b).starts_with("__ref_p2_") {
+        return None;
+    }
+    let tp = plain_record_type(data, vars.tp(*b))?;
+    let def_nr = vars.tp(*b).heap_def_nr()?;
+    all_scalar_record(data, def_nr).then_some(tp)
+}
+
 fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
     let Some(vars) = vars else { return false };
     RECORD_FREE_OPS.contains(&name)
@@ -1669,6 +1715,9 @@ fn blocks_header_hoist(
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
+            // @PLN157 § V-ad — the null-discharge buffer's allocation moves nothing a header
+            // describes; its field sets below are in-place and walk on their own.
+            let buffer_alloc = known && null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some();
             // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
             // under its own tier: it grows one vector whose header the loop keeps current
             // through the push itself; `hoistable` decides the aliasing.  The value operand
@@ -1699,7 +1748,13 @@ fn blocks_header_hoist(
             {
                 fresh.remove(e);
             }
-            if in_place_setter || record_free || fusable_push || record_mint || fresh_delivery {
+            if in_place_setter
+                || record_free
+                || buffer_alloc
+                || fusable_push
+                || record_mint
+                || fresh_delivery
+            {
                 false
             } else if call_writes_store(*d, data, cache, active) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted
@@ -1831,12 +1886,7 @@ fn retbuf_only_writer(
     let Some(record) = def.attributes()[attr].typedef.heap_def_nr() else {
         return false;
     };
-    if !data
-        .def(record)
-        .attributes()
-        .iter()
-        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
-    {
+    if !all_scalar_record(data, record) {
         return false;
     }
     let buf = def.variables().var(&def.attributes()[attr].name);

@@ -30,6 +30,8 @@ const CORPORA: &[&str] = &[
     "tests/scripts/157-callee-inputs.loft",
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ac-vector-param-cells.loft",
     "tests/scripts/157-vector-param-inputs.loft",
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ad-null-buffer-cells.loft",
+    "tests/scripts/157-null-buffer-hoist.loft",
     "tests/scripts/157-push-hoist.loft",
     "tests/scripts/157-mint-hoist.loft",
     "tests/scripts/157-record-push.loft",

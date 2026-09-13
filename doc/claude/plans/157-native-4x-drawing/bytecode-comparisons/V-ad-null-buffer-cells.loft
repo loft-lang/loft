@@ -1,0 +1,71 @@
+// @PLN157 § V-ad cells — a null-discharge DEFAULT BUFFER does not block the hoist
+// (@FR-R-InPlace, the hidden-buffer half).  `e = tbl[i]?` on a vector of records discharges
+// an absent element into a hidden per-site buffer (`__ref_p2_N`): `OpDatabase` on that
+// buffer allocates from a null slot or clears the buffer's OWN store, and the record is
+// ALL-SCALAR, so no hoisted header can name anything in that store — the same argument
+// (R-Callee) already makes for a scalar return buffer.  Before this unit the never-taken
+// arm's allocation declined every header in the loop (the drawing bench's `polygon_generic`
+// crossing loop).  The interpreter (no rewrite) is the oracle; native must answer the same
+// under LOFT_HOIST_VERIFY=1; the emission (which loops derive a header) is pinned by
+// tests/null_buffer_hoist.rs.  Expected values are hand-computed in each cell's comment.
+struct Ed { a: integer, b: integer, w: single }
+struct Hv { a: integer, tags: vector<integer> }
+
+fn table() -> vector<Ed> { [Ed { a: 1, b: 10, w: 0.5f }, Ed { a: 2, b: 20, w: 1.5f }, Ed { a: 3, b: 30, w: 2.5f }] }
+
+// d1 — the crossing-loop shape: a discharge beside an indexed read of another vector.
+// Header for v hoisted.  a·v: 1·7 + 2·8 + 3·9 = 50.
+fn d1() { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; s += e.a * (v[i] ?? 0); } println("d1 {s}"); }
+// d2 — the default arm TAKEN: index 3 is absent, the buffer holds the zero record.
+// i in 0..4: a = 1, 2, 3, 0; v[i] = 7, 8, 9, absent→0 → 50 + 0 = 50; e.b of the absent one is 0.
+fn d2() { t = table(); v = [7, 8, 9]; s = 0; last = -1; for i in 0..4 { e = t[i]?; s += e.a * (v[i] ?? 0); last = e.b; } println("d2 {s} {last}"); }
+// d3 — the record OWNS HEAP (a vector field): the buffer's store can host a vector, so the
+// discharge keeps blocking.  Values: 1·7 + 2·8 = 23; the absent one's tags are empty.
+fn d3() {
+  h: vector<Hv> = [Hv { a: 1, tags: [1] }, Hv { a: 2, tags: [2, 3] }]; v = [7, 8]; s = 0; n = 0;
+  for i in 0..3 { e = h[i]?; s += e.a * (v[i] ?? 0); n += len(e.tags); }
+  println("d3 {s} {n}");
+}
+// d4 — a discharge beside an IN-PLACE element write: the header serves the write too.
+// v[i] = a·10 → [10, 20, 30]; sum 60.
+fn d4() { t = table(); v = [0, 0, 0]; for i in 0..3 { e = t[i]?; v[i] = e.a * 10; } s = 0; for x in v { s += x; } println("d4 {s} {len(v)}"); }
+// d5 — a discharge beside a PUSH: the pushed path takes a push header, the read path its own.
+// pushes b → [10, 20, 30]; reads 1·7 + 2·8 + 3·9 = 50.
+fn d5() { t = table(); v = [7, 8, 9]; out: vector<integer> = []; s = 0; for i in 0..3 { e = t[i]?; out += [e.b]; s += e.a * (v[i] ?? 0); } println("d5 {s} {len(out)} {out[2]?}"); }
+// d6 — NESTED: the discharge in the inner loop, the header derived by the outer.
+// Two passes of d1's 50 = 100.
+fn d6() { t = table(); v = [7, 8, 9]; s = 0; for _j in 0..2 { for i in 0..3 { e = t[i]?; s += e.a * (v[i] ?? 0); } } println("d6 {s}"); }
+// d7 — TWO discharge sites (two buffers) in one loop; f mirrors the index.
+// (1+30)·7 + (2+20)·8 + (3+10)·9 = 217 + 176 + 117 = 510.
+fn d7() { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; f = t[2 - i]?; s += (e.a + f.b) * (v[i] ?? 0); } println("d7 {s}"); }
+// d8 — the discharged vector is ITSELF also indexed for a scalar: `t[i]?.w` beside the view.
+// w: 0.5 + 1.5 + 2.5 = 4.5 → 45; a: 6.
+fn d8() { t = table(); s = 0; w = 0.0f; for i in 0..3 { e = t[i]?; s += e.a; w += t[i]?.w; } println("d8 {s} {(w * 10.0f) as integer}"); }
+// d9 — the buffer's record READ after the loop through the last view: the buffer's last
+// content survives the loop.  Absent at i = 3 → e.a = 0 after the loop; s = 6.
+fn d9() { t = table(); s = 0; e = t[0]?; for i in 0..4 { e = t[i]?; s += e.a; } println("d9 {s} {e.a}"); }
+// d10 — a scalar `?` read (no buffer) beside the discharge, as a control: v[i]? then ?? 0.
+// b: 10 + 20 + 30, v: 7 + 8 + 9 → 84.
+fn d10() { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; x = v[i]?; s += e.b + (x ?? 0); } println("d10 {s}"); }
+
+// d11 — a HEAP-owning record's discharged view held ACROSS a loop that discharges again:
+// the record's default vector lives in the buffer's store, so an admitted allocation would
+// re-clear a store a hoisted header names — the heap-owning record must stay blocked.
+// e is the absent default (tags [4, 5, 6]); f re-discharges each iteration.  4 + 5 + 6 = 15, f.a = 0.
+fn d11() { h: vector<Hd> = [Hd { a: 1, tags: [1] }]; e = h[5]?; s = 0; for i in 0..3 { f = h[5]?; s += (e.tags[i] ?? 0) + f.a; } println("d11 {s} {len(e.tags)}"); }
+struct Hd { a: integer, tags: vector<integer> = [4, 5, 6] }
+
+// d12 — the FALSIFIER of the all-scalar condition: a `&` alias of the discharged variable
+// made before the loop, the variable re-discharged inside it.  The alias follows the
+// rebinding, so `g.tags[0]` reads each element's first tag: 1 + 2 + 4 (absent → default) = 7.
+// A header for (g, tags) derived at loop entry would name h[0]'s tags and answer 3 — which is
+// what admitting a HEAP-owning record's buffer would do; the record owns heap, so it is blocked.
+fn d12() { h: vector<Hd> = [Hd { a: 1, tags: [1] }, Hd { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } println("d12 {s}"); }
+
+// d13 — the FALSIFIER proper: d12's alias shape over a heap-owning record WITHOUT a declared
+// default, so the discharge arm has no growth of its own to block the loop — only the
+// all-scalar condition keeps it blocked.  g follows e: 5 + 2 + 0 (absent, empty tags) = 7;
+// a header for (g, tags) taken at loop entry would read h[0]'s tag three times: 15.
+fn d13() { h: vector<Hv> = [Hv { a: 1, tags: [5] }, Hv { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } println("d13 {s}"); }
+
+fn main() { d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8(); d9(); d10(); d11(); d12(); d13(); }

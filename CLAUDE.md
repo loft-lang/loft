@@ -815,6 +815,14 @@ them (one holder per path per frame, no mover on a held path, a twin handed only
 holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
+**A null-discharge buffer does not block the hoist (@PLN157 § V-ad, `--native`, generation
+time):** `e = tbl[i]?` on a vector of all-scalar records mints an absent element into a
+hidden per-site buffer, and that allocation used to decline every header in the loop
+around it — the drawing bench's polygon crossing loop hoisted nothing (`wide_line` −31 %
+when it did).  **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and is the
+first bisect step for a wrong element read in a loop that discharges a record element
+with `?`; `LOFT_HOIST_VERIFY=1` is the falsifier.
+
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
 local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
 alive to scope exit, so the watermark grew with the number of reassignment SITES rather than

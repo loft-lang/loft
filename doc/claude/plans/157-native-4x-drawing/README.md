@@ -32,6 +32,13 @@ on the argument's PATH, so `brush_sample(br.img, …)` takes the header the reso
 already holds, and a return-buffer writer earns a twin — measured on **aarch64 Linux
 (host `lima-default`)**, ABAB: `lock_curved` −6.3 % (3.89× → 3.63×), `lock` −8.7 % (3.73× →
 3.42×), `render_lock` −2.9 %, the rest noise, 14/14 hashes.  Same switch as § V-p.
+**§ V-ad SHIPPED 2026-09-13** (DESIGN.md § V-ad): the null-discharge default buffer's
+allocation (`pg_cur = pg_table[i]?`) no longer declines the header hoist of the loop
+around it, so `polygon_generic`'s crossing loop hoists its three vectors — aarch64 Linux
+(host `lima-default`): `wide_line` 16 380 → **11 580 ns/op** (5.35× → **4.02×**),
+`fill_circle` 105k → 89k (3.89× → 3.52×), `fill_star` 38.7k → 31.5k (3.81× → 3.37×);
+14/14 hashes.  Switch `LOFT_NO_NULL_BUFFER_HOIST`.  `wide_line` sits AT the bar here; the
+fill idiom (Unit 2 below) is what remains in its row.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -873,6 +880,17 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-13 (evening) — § V-ad shipped, the first unit aimed at `wide_line`** (DESIGN.md
+§ V-ad).  The row's perf profile on this box (the `wl_only.loft` recipe in DESIGN.md § V-ad)
+read `n_polygon_generic` 63 % self with `pil_hline` inlined into it, the un-inlined
+`n_edge_x` 7 %, the store machinery the crossing loop could not hoist 12 %, and the rounding
+helpers 3.5 %.  The 12 % is gone (−29 % on the row, because the hoisted reads also let LLVM
+fold the surrounding arithmetic); what remains is `pil_hline`'s fill loop — **Unit 2, the
+FILL idiom**, is now the next unit for this row and for both fills: `for i in a..=b { v[i]
+= c }` as one bounds test plus a slice fill.  `n_edge_x` stays a plain call because its
+argument `pg_cur` is an OPTIONAL element view (§ V-p c6): a twin over an optional-view
+argument is a second, smaller unit.
+
 **2026-09-13 (later) — § V-ac shipped on the same branch** (DESIGN.md § V-ac): item 2 of
 the `lock_curved` ranking below is done, and the row read 3.63× here (aarch64 Linux, host
 `lima-default`; the lane's rows differ from Apple's and from the 09-12 x86-64 table, so
@@ -1209,6 +1227,7 @@ unless said otherwise.
 | **V-aa** — ⚠ **OPT-IN since 2026-09-12** (`LOFT_VALUE_RECORD=1`; the call-site gate does not hold over the script corpus — three shapes generate a crate that does not compile — so the return buffer is the default until it does; the 2026-09-13 emission of the drawing bench confirms `brush_sample` still returns through its buffer by default) — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
 | **V-ab** — the counted loop's SECOND COUNTER: a `for` whose start is not a literal seeds `next` AT the start, tests it, yields it into `i#index`, then steps it — no null-encoded "not started yet" state on either backend (P3b covered the literal start; `lo - 1` is unrepresentable at the type minimum); reverse exclusive seeds the one counter at `till`; switch `LOFT_NO_NEXT_COUNTER` | [DESIGN.md § V-ab](DESIGN.md) | `tests/next_counter.rs` (emission per cell + the switch), `tests/scripts/157-next-counter.loft` (20 value cells, sabotage-falsified), the P3b matrix byte-identical | **Shipped 2026-09-13** — bare loop 0.79 → 0.54 ns/iter, fill 1.41 → 1.16 ns/write, interpreter −11 %; consumer `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line` −2.3 % |
 | **V-ac** — a VECTOR parameter's header crosses the call: a § V-p header input is keyed on the argument's pure PATH (`br.img`, `h.cv` + the callee's offsets — `hoist::input_header_at`, the one definition the loop's candidate and the twin call ask; `hoist::substitute_path` re-spells the callee's read over the argument), a return-buffer writer is admitted with its buffer's type as its write set, and the return-buffer DELIVERY site asks the twin question too; same switch `LOFT_NO_CALLEE_INPUTS`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ac](DESIGN.md) | a k-cell moves; `tests/callee_inputs.rs`'s § V-ac predictions no longer see a twin or a twin call; the two-paths cell answers b's elements for a (the falsified rotation); a consumer hash disagrees | **Shipped 2026-09-13** — 21 cells exact on both backends under six levers; hand ceiling −5.7 % met and passed: `lock_curved` −6.3 %, `lock` −8.7 %, `render_lock` −2.9 % (aarch64 Linux, ABAB, 14/14 hashes) |
+| **V-ad** — a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`) is admitted at the header gate and read as the record's type whole by the scalar tier (`hoist::null_buffer_alloc`, `@FR-R-InPlace`'s hidden-buffer allowance); before it the never-taken arm declined every header in `polygon_generic`'s crossing loop; switch `LOFT_NO_NULL_BUFFER_HOIST`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ad](DESIGN.md) | a d-cell moves; `tests/null_buffer_hoist.rs` no longer sees the headers, or sees one for a heap-owning record; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under the verifier, the switch and poison; `wide_line` −29 % (5.35× → 4.02×), the fills −15/−19 % (aarch64 Linux, 14/14 hashes) |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

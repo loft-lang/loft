@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! @PLN157 § V-ad (loft#1426) — a null-discharge DEFAULT BUFFER does not block the hoist
+//! (`@FR-R-InPlace`, the hidden-buffer allowance): `e = tbl[i]?` on a vector of all-scalar
+//! records mints an absent element into a hidden `__ref_p2_N` buffer, and the allocation
+//! into that buffer is admitted at the header gate, so the loop around it keeps its headers.
+//!
+//! The cell corpus (`bytecode-comparisons/V-ad-null-buffer-cells.loft`) can only say the
+//! VALUES hold.  This pins the EMISSION: how many headers each cell's function derives, that a
+//! heap-owning record still derives none, and the switch (`LOFT_NO_NULL_BUFFER_HOIST=1`),
+//! which is what makes it red on the build before the unit and on one that lost it.
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const CELLS: &str =
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ad-null-buffer-cells.loft";
+
+/// `(cell function, vector headers derived, push headers derived)` with the admission on.
+const HEADERS: &[(&str, usize, usize)] = &[
+    ("n_d1", 2, 0),  // t and v
+    ("n_d2", 2, 0),  // the default arm taken changes nothing at generation time
+    ("n_d3", 0, 0),  // a heap-owning record: blocked
+    ("n_d4", 3, 0),  // t and v in the loop, v again in the summing loop
+    ("n_d5", 1, 1),  // v read, out pushed; t is a call result and leaves the read list
+    ("n_d6", 2, 0),  // derived by the outer loop once
+    ("n_d7", 2, 0),  // two sites, still t and v
+    ("n_d8", 1, 0),  // t serves the view and the scalar read
+    ("n_d9", 1, 0),  // t
+    ("n_d10", 2, 0), // t and v
+    ("n_d11", 0, 0), // a heap-owning record: blocked
+    ("n_d12", 0, 0), // the alias shape over a record with a default vector: blocked
+    ("n_d13", 0, 0), // the alias falsifier proper: heap-owning, no default, blocked
+];
+
+/// The cells whose loop is blocked without the admission: under the switch none derives a
+/// header (d4 keeps its summing loop's one, d5 its push header — neither discharges).
+const BLOCKED_OFF: &[(&str, usize, usize)] = &[
+    ("n_d1", 0, 0),
+    ("n_d2", 0, 0),
+    ("n_d4", 1, 0),
+    ("n_d5", 0, 0),
+    ("n_d6", 0, 0),
+    ("n_d7", 0, 0),
+    ("n_d8", 0, 0),
+    ("n_d9", 0, 0),
+    ("n_d10", 0, 0),
+];
+
+fn emit(out: &Path, env: &[(&str, &str)]) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.arg("--native-emit")
+        .arg(out)
+        .arg(&src)
+        .env("LOFT_TIMEOUT", "120");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let status = cmd.output().expect("spawn loft --native-emit");
+    assert!(
+        out.exists(),
+        "no Rust emitted (exit {:?}): {}",
+        status.status,
+        String::from_utf8_lossy(&status.stderr)
+    );
+    std::fs::read_to_string(out).expect("read the emitted Rust")
+}
+
+/// Per emitted function: `(vector headers, push headers)` derived in its body.
+fn headers(rust: &str) -> HashMap<String, (usize, usize)> {
+    let mut map: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut current = String::new();
+    for line in rust.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some(paren) = rest.find('(')
+        {
+            current = rest[..paren].to_string();
+            map.entry(current.clone()).or_default();
+            continue;
+        }
+        if line.contains("vector::vec_header(&(") {
+            map.entry(current.clone()).or_default().0 += 1;
+        }
+        if line.contains("vector::push_header(&(") {
+            map.entry(current.clone()).or_default().1 += 1;
+        }
+    }
+    map
+}
+
+#[test]
+fn a_discharge_buffer_leaves_the_loops_headers_in_place() {
+    let out = std::env::temp_dir().join("loft_null_buffer_hoist_on.rs");
+    let fns = headers(&emit(&out, &[]));
+    for (name, vec, push) in HEADERS {
+        let got = fns
+            .get(*name)
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(
+            *got,
+            (*vec, *push),
+            "{name}: (vector headers, push headers)"
+        );
+    }
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn the_switch_blocks_every_discharging_loop_again() {
+    let out = std::env::temp_dir().join("loft_null_buffer_hoist_off.rs");
+    let fns = headers(&emit(&out, &[("LOFT_NO_NULL_BUFFER_HOIST", "1")]));
+    for (name, vec, push) in BLOCKED_OFF {
+        let got = fns
+            .get(*name)
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(
+            *got,
+            (*vec, *push),
+            "{name} under LOFT_NO_NULL_BUFFER_HOIST=1: (vector headers, push headers)"
+        );
+    }
+    let _ = std::fs::remove_file(&out);
+}
