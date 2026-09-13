@@ -23,6 +23,10 @@ HOLDER=${LOFT_GATE_HOLDER:-$LOCK.holder}
 # Is the lock held right now?  Tested on a SEPARATE fd, opened `>>` so the test does
 # not truncate the lock file, and released the instant the subshell exits.
 lock_held() {
+    # No flock (macOS ships none): the gate runs unserialised there, so nothing can hold the
+    # lock — and a command-not-found read as "held" reported a phantom ORPHAN with an
+    # empty pid, telling the operator to kill a process that did not exist.
+    command -v flock >/dev/null 2>&1 || return 1
     ( flock -n 8 ) 8>>"$LOCK" 2>/dev/null && return 1
     return 0
 }
@@ -74,8 +78,15 @@ live_claim() {    # is $1 named by a live .ci-running in any checkout?
     return 1
 }
 
+# Every holder fact below is read from /proc.  A box without it (macOS) can tell HELD from
+# FREE through flock but can name no holder — and "held, no holder found" is exactly the
+# observation an ORPHAN verdict is built on, so without this guard such a box tells the
+# operator to kill a live gate.
+have_proc() { [ -d /proc/self ]; }
+
 state() {
     if ! lock_held; then echo FREE; return; fi
+    if ! have_proc; then echo "HELD_UNKNOWN ? ?"; return; fi
     local pid ppid cwd best_pid="" best_cwd="" any=""
     while IFS=$'\t' read -r pid ppid cwd; do
         [ -n "${pid:-}" ] || continue
@@ -105,6 +116,7 @@ why() {
     case "$1" in
       FREE) echo "the lock is free (acquiring)";;
       HELD_LIVE) echo "held by a LIVE gate in $3 (pid $2); load $(load1)";;
+      HELD_UNKNOWN) echo "held; this box has no /proc, so the holder cannot be named — treat it as a LIVE gate (ps -ef | grep 'make ci')";;
       HELD_ORPHAN) echo "!! held by pid $2 ($3), an ORPHAN reparented to init — it inherited"\
                         "fd 9 from a gate that died (loft#1504); load $(load1)."\
                         "Run: scripts/ci-run.sh doctor";;
@@ -192,6 +204,10 @@ doctor() {
 # a running gate — measured against loft2's live gate while this was being written, which
 # is why cell 3 is permanent.
 selftest() {
+    # The cells assert /proc-derived verdicts (ppid, cwd), so a box without /proc cannot run
+    # them; the GitHub gate does.  Skipping is stated, never silent — and never a pass.
+    if ! have_proc; then echo "gate_lock selftest: SKIPPED — no /proc on this box (macOS); the GitHub gate runs it"; return 0; fi
+    if ! command -v flock >/dev/null 2>&1; then echo "gate_lock selftest: SKIPPED — no flock on this box (brew install flock)"; return 0; fi
     local L; L=$(mktemp -d)/gate.lock
     export LOFT_GATE_LOCK=$L LOFT_GATE_HOLDER=$L.holder
     local p=0 f=0
@@ -206,10 +222,10 @@ selftest() {
            else say "  FAIL [c$CELL] $1 -> got '$3' want '$2'*"; f=$((f+1)); fi; }
     clean(){ rm -f "$L" "$L.holder" "$L.ready" "$L.pid"; : >>"$L"; }
     # a normal child holder (has a real parent)
-    hold(){ ( flock 8; echo $BASHPID >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" &
+    hold(){ ( flock 8; sh -c 'echo $PPID' >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" &
             while [ ! -f "$L.ready" ]; do sleep 0.05; done; HP=$(cat "$L.pid"); }
     # an ORPHAN holder: the intermediate parent exits, so the holder is reparented to init
-    orphan(){ ( ( flock 8; echo $BASHPID >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" & )
+    orphan(){ ( ( flock 8; sh -c 'echo $PPID' >"$L.pid"; touch "$L.ready"; sleep "${1:-90}" ) 8>>"$L" & )
               while [ ! -f "$L.ready" ]; do sleep 0.05; done; OP=$(cat "$L.pid"); }
 
     clean; CELL=1; say "cell 1: lock FREE"

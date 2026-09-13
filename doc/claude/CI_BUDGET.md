@@ -23,6 +23,17 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > its own gate is the one case where `CI_BUDGET_SECS=... make ci` is the right answer for a
 > single run. That is a fact about the box, not about the diff.
 >
+> **A macOS box is not the Linux gate's twin, and four facts bit on 2026-09-13.**  Its
+> `/bin/sh` is bash 3.2: a single quote inside `"${x:+…}"` is read as an opening quote (the
+> recipe died with *unexpected EOF while looking for matching `'`*), and `BASHPID` does not
+> exist.  It ships no `flock` (`brew install flock`; the recipe runs UNSERIALISED without it,
+> saying so).  It has no `/proc`, so `scripts/gate_lock.sh` can tell HELD from FREE but never
+> name the holder — it answers `HELD_UNKNOWN` there and its self-test SKIPS, stated, because
+> its cells are /proc verdicts.  And this box runs an endpoint-security agent (Kandji's ES
+> system extension) at a steady 25–37 % of one core, which taxes every exec and file event —
+> the spawn-heavy phases (rustc per test program, the scratch sweep) more than a hot loop —
+> so a timing taken here beside a build is not a timing.
+>
 > ⚠ A mid-run kill can tear the debug rlib (`undefined symbol: anon.*.llvm.*` out of
 > `libloft.rlib`); recover with `cargo clean -p loft`. The cancel message says so.
 

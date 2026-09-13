@@ -903,7 +903,16 @@ the new form before trusting the numbers).
    while the caller holds `br` invariant.  The § V-p twin passes a RECORD parameter's
    headers; `img` is a plain vector parameter (`br.img` at the call) and never qualifies.
    Extend the twin to a vector parameter whose argument is a hoistable path: four
-   header-served reads.  Hand-measure the ceiling on the emitted Rust first.
+   header-served reads.  **CEILING HAND-MEASURED 2026-09-13: −5.7 %** (rustc-first — the
+   release-tier emission of a `lock_curved`-only bench with `LOFT_VALUE_RECORD=1`, hand-edited
+   so `n_brush_sample` takes `br.img`'s header derived once beside the resolve loop's other
+   headers and reads through `get_elem_hoisted::<i64,_>`, linked with the same flags loft
+   uses (`-C opt-level=3 -C codegen-units=1`, `--extern loft=…libloft.rlib`, the matching
+   `loft_ffi` rlib): base 2 256 582–2 263 300 → **2 127 332–2 141 152 ns/op**, ABAB × 3,
+   spread < 0.3 %, hash `2a3aa61` every run).  That beats the value-record unit's −4.1 %, so
+   it is the next unit to BUILD: cells first (a parameter re-bound in the callee, a callee
+   that pushes to its parameter, two callers passing different paths, a null vector, a
+   non-hoistable argument), then the admission in `hoist::callee_inputs`.
 3. **The raster inner loop's checked integer arithmetic LLVM cannot hoist**: `rs_idx =
    op_add_int_nullable(op_mul_int(op_min_int(yy, ly0), llw), op_min_int(xx, lx0))` — the row
    term invariant across the inner loop, the column term an induction variable, and each op
