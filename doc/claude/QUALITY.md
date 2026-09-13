@@ -2562,10 +2562,11 @@ and the opaque column and the ratchet's `337 · 1317` do not move.  `@FR-N-Shape
 that the shape of the fix: the first draft matched `&in_type` unpeeled and the ratchet refused
 it, which is the guard doing exactly its job on a site written minutes earlier.)
 
-(2026-09-13: @PLN157 § V-ad moved one function from the keystone column to opaque without
-changing a test — `hoist::all_scalar_record` now holds the per-field `Type::Routine` test that
-`retbuf_only_writer` carried inline beside its `heap_def_nr` descent; the test is the same, in
-a home of its own so the discharge-buffer admission can ask it too.)
+(2026-09-13: @PLN157 § V-ad moved one function from the keystone column to the peeling one —
+`hoist::all_scalar_record` now holds the per-field `Type::Routine` test that
+`retbuf_only_writer` carried inline beside its `heap_def_nr` descent, and reads the field
+type through `.base()`; the first cut read it bare and the `@FR-N-Shape` ratchet on the
+GitHub gate refused the new opaque site, which is the ratchet doing its job.)
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through

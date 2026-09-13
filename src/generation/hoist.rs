@@ -1888,10 +1888,9 @@ const RECORD_FREE_OPS: [&str; 2] = ["OpFreeRef", "OpFreeRefIfDistinct"];
 /// nothing a hoisted header could name: the fact `@FR-R-Callee`'s return-buffer half and
 /// § V-ad's discharge buffer both stand on.
 fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
-    data.def(def_nr)
-        .attributes()
-        .iter()
-        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
+    data.def(def_nr).attributes().iter().all(|a| {
+        a.constant || matches!(a.typedef.base(), Type::Routine(_)) || is_scalar(&a.typedef)
+    })
 }
 
 /// @PLN157 § V-ad — `OpDatabase`/`OpDatabaseNP` into a hidden null-discharge buffer
