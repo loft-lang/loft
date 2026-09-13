@@ -1917,6 +1917,67 @@ impl Stores {
         }
     }
 
+    /// @PLN157 § V-ae (`@FR-R-Fill`) — the whole of `for i in lo..hi { v[base + i] = val }` as
+    /// ONE range test and one slice fill, when every index lands: `[base + lo, base + last]`
+    /// inside `[0, len)`, no overflow on the way, a non-empty range.  Answers `false` without
+    /// writing anything otherwise — a negative index counts from the end, a partial range
+    /// drops what falls outside, an empty range writes nothing — and the caller then runs the
+    /// per-element loop, whose cold path spells every one of those exactly.  `size` is the
+    /// element stride and must be `size_of::<T>()`.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db` —
+    /// the point of the switch.  Never in the emitted default.
+    pub fn fill_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        span: crate::vector::FillSpan,
+        val: T,
+    ) -> bool {
+        let crate::vector::FillSpan {
+            base,
+            lo,
+            hi,
+            inclusive,
+        } = span;
+        let Some(last) = (if inclusive {
+            Some(hi)
+        } else {
+            hi.checked_sub(1)
+        }) else {
+            return false;
+        };
+        if lo > last || size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let (Some(first), Some(end)) = (base.checked_add(lo), base.checked_add(last)) else {
+            return false;
+        };
+        if first < 0 || end >= i64::from(h.len) {
+            return false;
+        }
+        let Ok(count) = u32::try_from(end - first + 1) else {
+            return false;
+        };
+        if VERIFY {
+            assert_eq!(
+                *h,
+                crate::vector::vec_header(db, &self.allocations),
+                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+            );
+        }
+        self.allocations[h.store_nr as usize].fill::<T>(
+            h.rec,
+            crate::vector::checked_vec_pos(first as u32, size),
+            count,
+            val,
+        );
+        true
+    }
+
     /// The off-fast-path half of [`Self::vec_set_hoisted_or_raise_runtime`]: an out-of-range or
     /// negative index, which routes back through the runtime so a negative one still addresses
     /// from the end and an out-of-range one still raises.

@@ -1409,6 +1409,264 @@ pub struct FusedPush<'a> {
     pub size: u32,
 }
 
+/// @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is ONE fill: `for i in lo..hi { v[base + i]
+/// = val }` with `base` and `val` invariant, over a pure path a header may serve.
+pub struct FillLoop<'a> {
+    /// The written path's key and operand (the header's, `@FR-R-Header`).
+    pub path: PathKey,
+    pub vector: &'a Value,
+    /// The Rust type of the element, and its width as the setter spells it.
+    pub rust_type: &'static str,
+    pub size: u32,
+    /// The invariant added to the loop variable, when the index is not the variable alone.
+    pub base: Option<&'a Value>,
+    /// The range's end operand, and whether the range includes it.
+    pub hi: &'a Value,
+    pub inclusive: bool,
+    /// The counter the range runs on: the `#index` variable, and the `next` variable of
+    /// the two-counter form (a computed start, § V-ab) — `None` in the single-counter form
+    /// (a literal start, P3b), whose `#index` is seeded one below the start.
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    pub val: &'a Value,
+}
+
+/// Is `v` an INVARIANT scalar expression the fill may evaluate once — a variable other
+/// than the loop's own, a literal, plain integer/float arithmetic over those, or a record
+/// scalar read off such a variable?  Anything else (a call, a `??` block, an element read,
+/// a conversion) keeps the per-element loop: the fill evaluates the expression once and
+/// the fallback once more, so it must be pure and free of the loop's counters.
+fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
+    match v.unspan() {
+        Value::Var(x) => !banned.contains(x),
+        Value::Int(_) | Value::Float(_) => true,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            if matches!(
+                name,
+                "OpAddInt" | "OpMinInt" | "OpMulInt" | "OpAddFloat" | "OpMinFloat" | "OpMulFloat"
+            ) {
+                args.len() == 2 && args.iter().all(|a| simple_invariant(a, data, banned))
+            } else if SCALAR_GETTERS.contains(&name) && args.len() == 3 {
+                matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
+                    && matches!(args[1].unspan(), Value::Int(_))
+                    && matches!(args[2].unspan(), Value::Int(_))
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Is `v` a `break` — bare, or a block whose only statement is one?
+fn is_break_block(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Break(_) => true,
+        Value::Block(b) => {
+            b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(_))
+        }
+        _ => false,
+    }
+}
+
+/// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
+/// counted range in either lowering — the two-counter form `[if hi <cmp> next { break };
+/// index = next; next = next + 1; index]` (§ V-ab) or the single-counter form `[index =
+/// index + 1; if hi <cmp> index { break }; index]` (P3b) — followed by ONE statement, a
+/// fusable scalar set (`OpSetInt`/`OpSetSingle`/`OpSetFloat`) at field 0 of `v[idx]` with
+/// `v` a pure path, `idx` the loop variable or `invariant + variable`, and the value
+/// invariant.  `<cmp>` is `OpLtInt` for an inclusive range and `OpLeInt` for an exclusive
+/// one.  Reports shape only; the emitter confirms the path has a header.
+/// Enforces `@FR-R-Fill`.
+pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
+    let decline = |why: &str| -> Option<FillLoop<'a>> {
+        if trace {
+            eprintln!("fill: loop {} declined — {why}", lp.scope);
+        }
+        None
+    };
+    let kinds = |ops: &[Value]| -> String {
+        ops.iter()
+            .map(|o| kind_of(o.unspan()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if lp.name != "For loop" {
+        return None;
+    }
+    if lp.operators.len() != 2 {
+        return decline(&format!("loop has {} statements", lp.operators.len()));
+    }
+    let Value::Set(loop_var, iter) = lp.operators[0].unspan() else {
+        return decline("first statement is not the loop variable's Set");
+    };
+    let Value::Block(it) = iter.unspan() else {
+        return decline("iterator is not a block");
+    };
+    if it.name != "Iter range" {
+        return decline(&format!("iterator block is `{}`, not a range", it.name));
+    }
+    // The three statements and the yield, in one of the two orders.
+    let (test, seed_index, step, yielded, next_var) = match &it.operators[..] {
+        [a, b, c, d] => {
+            // § V-ab: [if …; index = next; next = next + 1; index]
+            let Value::Set(xi, from) = b.unspan() else {
+                return decline("two-counter form: second statement is not the index Set");
+            };
+            let Value::Var(nx) = from.unspan() else {
+                return decline("two-counter form: the index is not set from a variable");
+            };
+            let Value::Set(nx2, step) = c.unspan() else {
+                return decline("two-counter form: third statement is not the step Set");
+            };
+            if nx2 != nx {
+                return decline("two-counter form: the step is on another variable");
+            }
+            (a, *xi, step.unspan(), d, Some(*nx))
+        }
+        [a, b, c] => {
+            // P3b: [index = index + 1; if …; index]
+            let Value::Set(xi, step) = a.unspan() else {
+                return decline("single-counter form: first statement is not the step Set");
+            };
+            (b, *xi, step.unspan(), c, None)
+        }
+        _ => return decline(&format!("iterator has {} statements", it.operators.len())),
+    };
+    let counter = next_var.unwrap_or(seed_index);
+    // The step: counter = counter + 1.
+    let Value::Call(sd, sargs) = step else {
+        return decline("the step is not a call");
+    };
+    if data.def(*sd).name() != "OpAddInt"
+        || sargs.len() != 2
+        || !matches!(sargs[0].unspan(), Value::Var(c) if *c == counter)
+        || !matches!(sargs[1].unspan(), Value::Int(1))
+    {
+        return decline("the step is not `counter + 1`");
+    }
+    // The test: if hi <cmp> counter { break } else null.
+    let Value::If(cond, on_true, on_false) = test.unspan() else {
+        return decline("the test is not an if");
+    };
+    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
+        return decline("the test does not break");
+    }
+    let Value::Call(cd, cargs) = cond.unspan() else {
+        return decline("the test's condition is not a call");
+    };
+    let inclusive = match data.def(*cd).name() {
+        "OpLtInt" => true,
+        "OpLeInt" => false,
+        _ => return decline("the test is not OpLtInt/OpLeInt"),
+    };
+    if cargs.len() != 2 || !matches!(cargs[1].unspan(), Value::Var(c) if *c == counter) {
+        return decline("the test is not against the counter");
+    }
+    // The yield: the index variable.
+    if !matches!(yielded.unspan(), Value::Var(y) if *y == seed_index) {
+        return decline("the iterator does not yield the index");
+    }
+    // The body: one fusable scalar set over the loop variable's index.
+    let Value::Block(body) = lp.operators[1].unspan() else {
+        return decline("the body is not a block");
+    };
+    // A source-line marker is not a statement (a library module's body carries one).
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    if stmts.len() != 1 {
+        return decline(&format!(
+            "the body has {} statements: {}",
+            stmts.len(),
+            kinds(&body.operators)
+        ));
+    }
+    let Value::Call(setter, wargs) = stmts[0].unspan() else {
+        return decline("the body is not a call");
+    };
+    let Some((_, rust_type)) = FUSABLE_SETTERS
+        .iter()
+        .find(|(name, _)| *name == data.def(*setter).name())
+    else {
+        return decline(&format!(
+            "the body is `{}`, not a fusable setter",
+            data.def(*setter).name()
+        ));
+    };
+    let [inner, fld, val] = &wargs[..] else {
+        return decline("the setter does not take three operands");
+    };
+    if !matches!(fld.unspan(), Value::Int(0)) {
+        return decline("the setter's field is not 0");
+    }
+    let Value::Call(addr, aargs) = inner.unspan() else {
+        return decline("the address is not a call");
+    };
+    if !is_element_address(data, *addr) {
+        return decline("the address is not an element address");
+    }
+    let [vector, size, index] = &aargs[..] else {
+        return decline("the address does not take three operands");
+    };
+    let Value::Int(size) = size.unspan() else {
+        return decline("the element size is not a literal");
+    };
+    let width: u32 = match *rust_type {
+        "i64" | "f64" => 8,
+        "f32" => 4,
+        _ => return None,
+    };
+    if u32::try_from(*size).ok() != Some(width) {
+        return decline("the element size is not the scalar's width");
+    }
+    let Some(path) = vector_path(data, vector) else {
+        return decline("the vector is not a pure path");
+    };
+    let mut banned = vec![*loop_var, seed_index];
+    if let Some(nx) = next_var {
+        banned.push(nx);
+    }
+    banned.push(path.0);
+    // The index: the loop variable, or `invariant + variable` either way round.
+    let base = match index.unspan() {
+        Value::Var(x) if *x == *loop_var => None,
+        Value::Call(d, args) if data.def(*d).name() == "OpAddInt" && args.len() == 2 => {
+            let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == *loop_var);
+            if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {
+                Some(&args[1])
+            } else if is_var(&args[1]) && simple_invariant(&args[0], data, &banned) {
+                Some(&args[0])
+            } else {
+                return decline("the index is not `invariant + loop variable`");
+            }
+        }
+        _ => return decline("the index is neither the loop variable nor a sum"),
+    };
+    if !simple_invariant(val, data, &banned) {
+        return decline("the value is not a simple invariant");
+    }
+    if !simple_invariant(&cargs[0], data, &banned) {
+        return decline("the range's end is not a simple invariant");
+    }
+    Some(FillLoop {
+        path,
+        vector,
+        rust_type,
+        size: width,
+        base,
+        hi: &cargs[0],
+        inclusive,
+        index_var: seed_index,
+        next_var,
+        val,
+    })
+}
+
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
 /// reservation the parser emits before a push to a LOCAL vector.  It claims a record only
 /// for an ABSENT vector and never moves an existing one, so it cannot stale a header; with a

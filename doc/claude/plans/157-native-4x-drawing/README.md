@@ -37,8 +37,15 @@ allocation (`pg_cur = pg_table[i]?`) no longer declines the header hoist of the 
 around it, so `polygon_generic`'s crossing loop hoists its three vectors — aarch64 Linux
 (host `lima-default`): `wide_line` 16 380 → **11 580 ns/op** (5.35× → **4.02×**),
 `fill_circle` 105k → 89k (3.89× → 3.52×), `fill_star` 38.7k → 31.5k (3.81× → 3.37×);
-14/14 hashes.  Switch `LOFT_NO_NULL_BUFFER_HOIST`.  `wide_line` sits AT the bar here; the
-fill idiom (Unit 2 below) is what remains in its row.
+14/14 hashes.  Switch `LOFT_NO_NULL_BUFFER_HOIST`.
+**§ V-ae SHIPPED 2026-09-13** (DESIGN.md § V-ae): the FILL idiom — `pil_hline`'s
+`for x in lo..=hi { d[base + x] = ink }` is one range test and one slice fill, the
+per-element loop its fallback — aarch64 Linux (host `lima-default`): `wide_line` 11 580 →
+**9 020 ns/op** (4.02× → **2.91×**, under the bar), `fill_circle` 89.1k → **45.9k** (3.52× →
+**1.70×**), `fill_star` 31.5k → **18.0k** (3.37× → **1.79×**); 14/14 hashes.  Switch
+`LOFT_NO_FILL_HOIST`.  With § V-ad the row read 17.0k ns/op this morning: **−47 % in a
+day, 5.35× → 2.91×**.  Eight of the ten judged rows are under the bar here; `smooth` and
+`fronds` remain, and neither is this class.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -880,6 +887,20 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-13 (night) — § V-ae shipped: the FILL idiom, Unit 2 of the fills' profile and the
+second unit for `wide_line`** (DESIGN.md § V-ae).  `wide_line` 2.91×, `fill_circle` 1.70×,
+`fill_star` 1.79× on this box — the row the day started on at 5.35× is under the bar, and
+the two fills are the best rows on the board after `hair`.  Two shapes the recogniser had
+to learn from the consumer rather than the probe: the range test is a bare `Break`, not a
+block, and a library module's loop body carries a `Line` marker statement the probe did
+not (`LOFT_TRACE_FILL=1` found both in one emission each).  What the fill does not take,
+by construction: a strided index, a value that reads the vector or depends on the loop
+variable, a `??` value, a record-element field (`v[i].f = c`, a strided fill).  Next for
+the two rows still over the bar: `fronds` is the allocator class (queue items 4b / 5),
+`smooth` the per-point record call (§ V-aa's gate, then mods 2 and 3).  For `wide_line`
+itself, `n_edge_x` as a plain call over an optional element view (§ V-p c6) is the one
+named remainder, ~7 % of the row before today.
+
 **2026-09-13 (evening) — § V-ad shipped, the first unit aimed at `wide_line`** (DESIGN.md
 § V-ad).  The row's perf profile on this box (the `wl_only.loft` recipe in DESIGN.md § V-ad)
 read `n_polygon_generic` 63 % self with `pil_hline` inlined into it, the un-inlined
@@ -1228,6 +1249,7 @@ unless said otherwise.
 | **V-ab** — the counted loop's SECOND COUNTER: a `for` whose start is not a literal seeds `next` AT the start, tests it, yields it into `i#index`, then steps it — no null-encoded "not started yet" state on either backend (P3b covered the literal start; `lo - 1` is unrepresentable at the type minimum); reverse exclusive seeds the one counter at `till`; switch `LOFT_NO_NEXT_COUNTER` | [DESIGN.md § V-ab](DESIGN.md) | `tests/next_counter.rs` (emission per cell + the switch), `tests/scripts/157-next-counter.loft` (20 value cells, sabotage-falsified), the P3b matrix byte-identical | **Shipped 2026-09-13** — bare loop 0.79 → 0.54 ns/iter, fill 1.41 → 1.16 ns/write, interpreter −11 %; consumer `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line` −2.3 % |
 | **V-ac** — a VECTOR parameter's header crosses the call: a § V-p header input is keyed on the argument's pure PATH (`br.img`, `h.cv` + the callee's offsets — `hoist::input_header_at`, the one definition the loop's candidate and the twin call ask; `hoist::substitute_path` re-spells the callee's read over the argument), a return-buffer writer is admitted with its buffer's type as its write set, and the return-buffer DELIVERY site asks the twin question too; same switch `LOFT_NO_CALLEE_INPUTS`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ac](DESIGN.md) | a k-cell moves; `tests/callee_inputs.rs`'s § V-ac predictions no longer see a twin or a twin call; the two-paths cell answers b's elements for a (the falsified rotation); a consumer hash disagrees | **Shipped 2026-09-13** — 21 cells exact on both backends under six levers; hand ceiling −5.7 % met and passed: `lock_curved` −6.3 %, `lock` −8.7 %, `render_lock` −2.9 % (aarch64 Linux, ABAB, 14/14 hashes) |
 | **V-ad** — a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`) is admitted at the header gate and read as the record's type whole by the scalar tier (`hoist::null_buffer_alloc`, `@FR-R-InPlace`'s hidden-buffer allowance); before it the never-taken arm declined every header in `polygon_generic`'s crossing loop; switch `LOFT_NO_NULL_BUFFER_HOIST`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ad](DESIGN.md) | a d-cell moves; `tests/null_buffer_hoist.rs` no longer sees the headers, or sees one for a heap-owning record; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under the verifier, the switch and poison; `wide_line` −29 % (5.35× → 4.02×), the fills −15/−19 % (aarch64 Linux, 14/14 hashes) |
+| **V-ae** — the FILL idiom: a counted loop whose body is ONE in-place scalar set at `invariant + i` of an invariant value over a held header emits one guarded `Stores::fill_hoisted` (a range test, then `Store::fill` — one bounds check per end, a vectorisable store loop) with the per-element loop as the fallback for every range the fill declines and the counters left as the loop leaves them (`hoist::fill_loop`, `Output::fill_fast_path`, `@FR-R-Fill`); switch `LOFT_NO_FILL_HOIST`, `LOFT_TRACE_FILL` names a decline | [DESIGN.md § V-ae](DESIGN.md) | an f-cell moves; `tests/fill_hoist.rs` no longer sees a fill, its guard or its tail; the count sabotage turns the in-range cell red; a consumer hash disagrees | **Shipped 2026-09-13** — 16 cells exact on both backends under the verifier, the switch and poison; `wide_line` −23 % (4.02× → 2.91×), `fill_circle` −48 %, `fill_star` −43 % (aarch64 Linux, 14/14 hashes) |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

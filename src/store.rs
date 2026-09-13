@@ -3275,6 +3275,27 @@ impl Store {
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
+    /// Write `count` copies of `val` at `fld`, `fld + width`, … — one bounds check at each
+    /// end instead of one per element, and an unaligned store per element that the optimiser
+    /// turns into a vector loop (@PLN157 § V-ae, the fill idiom).  `width` is the element
+    /// stride and must be `size_of::<T>()`: a contiguous run of scalars, nothing else.
+    pub fn fill<T: 'static + Copy>(&mut self, rec: u32, fld: u32, count: u32, val: T) {
+        if count == 0 {
+            return;
+        }
+        let width = std::mem::size_of::<T>() as u32;
+        let first = self.begin_write::<T>(rec, fld);
+        let _last = self.begin_write::<T>(rec, fld + (count - 1) * width);
+        let base = unsafe { self.ptr.offset(first) };
+        for k in 0..count as usize {
+            unsafe {
+                base.add(k * width as usize)
+                    .cast::<T>()
+                    .write_unaligned(val)
+            }
+        }
+    }
+
     /// Borrow a field MUTABLY in place, for the values [`Store::write`] cannot store by value.
     ///
     /// A `String` or a `Str` in the store owns a heap buffer that the caller mutates in

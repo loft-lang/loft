@@ -1,0 +1,73 @@
+// @PLN157 § V-ae (loft#1426) — the FILL idiom on the native backend (@FR-R-Fill): a counted
+// loop whose body is ONE in-place scalar set at `invariant + i` of an invariant value, over a
+// vector a header is held for, runs as one range test and one slice fill, with the
+// per-element loop kept as the fallback for every range the fill declines (a negative or
+// partial index, an empty range, an overflow).  The interpreter (no rewrite) is the oracle.
+// The cells pin the boundary from both sides:
+//   - the hline shape in range, an exclusive range, a float vector through a record path, a
+//     large range and nested rows answer the same elements through the fill;
+//   - a range past the end, a range starting below 0 (a negative index counts from the END),
+//     an empty range and an empty vector take the fallback and answer what the loop answers;
+//   - a non-contiguous index, a value that depends on the loop variable or reads the vector,
+//     a `??` value and a two-statement body keep the per-element form.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ae-fill-cells.loft
+// (tests/fill_hoist.rs pins which loops take the fill); this file carries the VALUE cells that
+// must hold whatever the emitter decides.  `LOFT_NO_FILL_HOIST=1` and `LOFT_HOIST_VERIFY=1`
+// must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-13) — `Stores::fill_hoisted` made to fill ONE
+// element short (`count = end - first`) turns the in-range cell red on --native
+// (`assertion failed: indices 5 and 6 only`: index 6 stays 0) with and without
+// LOFT_HOIST_VERIFY=1; the fallback cells stay green, as they must — they never take the fill.
+// Restored byte-identically; interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_FILL_HOIST /
+// LOFT_POISON all green.
+
+struct Cv { width: integer, height: integer, data: vector<integer> }
+struct Fv { data: vector<float> }
+
+fn zeros(n: integer) -> vector<integer> { [for _i in 0..n { 0 }] }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn at(v: const vector<integer>, i: integer) -> integer { v[i] ?? -99 }
+fn hline(cv: Cv, x0: integer, y: integer, x1: integer, ink: integer) {
+  d = &cv.data;
+  base = y * cv.width;
+  for x in x0..=x1 { d[base + x] = ink; }
+}
+
+fn in_range() -> integer { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 1, 1, 2, 7); assert(at(cv.data, 5) == 7 && at(cv.data, 6) == 7 && at(cv.data, 4) == 0 && at(cv.data, 7) == 0, "indices 5 and 6 only"); total(cv.data) }
+fn past_the_end() -> integer { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 2, 2, 6, 7); assert(len(cv.data) == 12, "nothing grows"); total(cv.data) }
+fn below_zero() -> integer { v = zeros(4); for i in -3..=1 { v[i] = 7; } total(v) }
+fn empty_range() -> integer { v = zeros(4); for i in 3..=1 { v[i] = 7; } total(v) }
+fn exclusive_range() -> integer { v = zeros(4); for i in 1..3 { v[i] = 5; } assert(at(v, 0) == 0 && at(v, 3) == 0, "1 and 2 only"); total(v) }
+fn strided_index() -> integer { v = zeros(6); for i in 0..3 { v[2 * i] = 9; } assert(at(v, 1) == 0 && at(v, 3) == 0 && at(v, 5) == 0, "even indices only"); total(v) }
+fn value_of_index() -> integer { v = zeros(4); for i in 0..4 { v[i] = i * 10; } assert(at(v, 3) == 30, "the last is 30"); total(v) }
+fn value_reads_vector() -> integer { v = [1, 0, 0, 0]; for i in 1..4 { v[i] = (v[i - 1] ?? 0) + 1; } assert(at(v, 3) == 4, "a running count"); total(v) }
+fn two_statements() -> integer { v = zeros(4); n = 0; for i in 0..4 { v[i] = 3; n += 1; } total(v) * 10 + n }
+fn float_vector() -> integer { f = Fv { data: [0.0, 0.0, 0.0, 0.0] }; for i in 1..=3 { f.data[i] = 1.5; } s = 0.0; for x in f.data { s += x; } (s * 10.0) as integer }
+fn expression_base() -> integer { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 0, 2, 2, 7); assert(at(cv.data, 8) == 7 && at(cv.data, 11) == 0, "row 2, columns 0..=2"); total(cv.data) }
+fn nested_rows() -> integer { cv = Cv { width: 4, height: 3, data: zeros(12) }; for y in 0..3 { hline(cv, 0, y, 3, 7); } total(cv.data) }
+fn coalesced_value() -> integer { v = zeros(3); n: integer? = null; for i in 0..3 { v[i] = n ?? -1; } total(v) }
+fn empty_vector() -> integer { v: vector<integer> = []; for i in 0..3 { v[i] = 7; } total(v) * 10 + len(v) }
+fn large_range() -> integer { v = zeros(10000); for i in 0..10000 { v[i] = 3; } assert(at(v, 0) == 3 && at(v, 9999) == 3, "both ends"); total(v) }
+fn variable_after() -> integer { v = zeros(5); last = -1; for i in 1..=3 { v[i] = 2; last = i; } total(v) * 10 + last }
+
+fn main() {
+  assert(in_range() == 14, "the hline shape in range: two 7s");
+  assert(past_the_end() == 14, "a range past the end writes what fits: indices 10 and 11");
+  assert(below_zero() == 28, "a negative index counts from the end: every element 7");
+  assert(empty_range() == 0, "an empty range writes nothing");
+  assert(exclusive_range() == 10, "an exclusive range: 1..3");
+  assert(strided_index() == 27, "a strided index keeps the loop: three 9s");
+  assert(value_of_index() == 60, "a value of the loop variable keeps the loop");
+  assert(value_reads_vector() == 10, "a value reading the vector keeps the loop: 1 + 2 + 3 + 4");
+  assert(two_statements() == 124, "two statements keep the loop: 12, counted 4");
+  assert(float_vector() == 45, "a float vector through a record path: 1.5 × 3");
+  assert(expression_base() == 21, "an expression base: 7 × 3");
+  assert(nested_rows() == 84, "nested rows: 12 sevens");
+  assert(coalesced_value() == -3, "a `??` value keeps the loop: three -1s");
+  assert(empty_vector() == 0, "an empty vector: nothing written, length 0");
+  assert(large_range() == 30000, "a large range: 10 000 threes");
+  assert(variable_after() == 63, "a second statement keeps the loop: 6, last 3");
+  println("fill-hoist ok");
+}

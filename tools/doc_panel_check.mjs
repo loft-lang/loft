@@ -88,10 +88,10 @@ for (const [expr, want] of evals) {
   check(`eval ${expr}`, cmd(`eval ${expr}`).replies[0], `D:eval ${expr}=${want}`);
 }
 
-// A shape the evaluator cannot read must answer, not crash, and must not end the session
-// (loft#1187).
-check('a text result answers <unavailable> rather than crashing',
-  cmd('eval "a" + "b"').replies[0], 'D:eval "a" + "b"=<unavailable>');
+// A text result is boxed onto the one value path and answers its VALUE (loft#1187 — it
+// used to answer `<unavailable>`), and the session goes on afterwards.
+check('a text result answers its value',
+  cmd('eval "a" + "b"').replies[0], 'D:eval "a" + "b"="ab"');
 check('and the session survives it', cmd('eval fib(10)').replies[0], 'D:eval fib(10)=55');
 
 // ── A line breakpoint, which is what a gutter click sends ───────────────────

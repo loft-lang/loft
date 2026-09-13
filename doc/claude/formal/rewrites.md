@@ -495,6 +495,32 @@ across calls — and collapsing the delivery BLOCK whole drops its scope-exit fr
 § V-j hook.  Shipped: standalone `fronds` −9.5 % (381–396k → 350–357k ns/op) and
 `smooth` −14.4 % (2 205 → 1 887), hashes exact, cells leak-free under poison.
 
+### A filling loop is one slice fill
+
+```
+  (R-Fill)       a counted loop `for i in lo..hi { v[base + i] = c }` — the body ONE
+                 in-place scalar set (R-InPlace) at field 0 of a plain scalar vector
+                 reached by a pure path a header is held for (R-Header), the index
+                 the loop variable or an invariant plus it, the value and the bound
+                 invariant — runs as ONE range test and one slice fill when every
+                 index lands in [0, len) with no overflow on the way and the range is
+                 non-empty; otherwise the per-element loop runs, unchanged.  The
+                 counters are left where the loop leaves them.
+```
+
+**In words.** @PLN157 § V-ae.  The elements the fill writes are exactly the elements the
+loop would write, in the only case the fill takes: a contiguous run inside the vector.
+Every other case — a negative index (which counts from the end), a range past either
+end, an empty range, an overflow in `base + i` — is the loop's own, so the fill declines
+at run time and the loop runs; the emitter never has to know which case it is.
+`Stores::fill_hoisted` is the guard and the fill, `Store::fill` the primitive (one bounds
+check at each end, an unaligned store per element the optimiser vectorises).  A body
+that reads the vector, a value that depends on the loop variable, a strided index or a
+second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
+`LOFT_HOIST_VERIFY=1` (the fill re-derives the header) and the count sabotage recorded in
+`tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
+loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+
 ### A leaf carries no frame
 
 ```

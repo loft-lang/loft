@@ -597,6 +597,16 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
     }
 }
 
+/// The indices a fill covers (@PLN157 § V-ae, `@FR-R-Fill`): `base + lo` through `base + hi`,
+/// the end included when the range is `..=` and excluded when it is `..`.
+#[derive(Clone, Copy, Debug)]
+pub struct FillSpan {
+    pub base: i64,
+    pub lo: i64,
+    pub hi: i64,
+    pub inclusive: bool,
+}
+
 /// The part of a vector's identity that a loop cannot change while nothing writes to
 /// it: which store holds it, which record its elements live in, and how many there are.
 ///

@@ -823,6 +823,15 @@ when it did).  **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and 
 first bisect step for a wrong element read in a loop that discharges a record element
 with `?`; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**A filling loop is one slice fill (@PLN157 § V-ae, `--native`, generation time):**
+`for i in lo..hi { v[base + i] = c }` with `base` and `c` invariant, over a vector a
+header is held for, emits ONE range test and a slice fill, the per-element loop kept as
+the fallback for every range the fill declines (a negative or partial index, an empty
+range, an overflow) — `wide_line` −23 %, the two fills −48 %.  **`LOFT_NO_FILL_HOIST=1`**
+emits the per-element form again and is the first bisect step for a wrong element or a
+missed write out of a filling loop; `LOFT_TRACE_FILL=1` names the check that declined a
+loop the idiom should have taken.
+
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
 local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
 alive to scope exit, so the watermark grew with the number of reassignment SITES rather than

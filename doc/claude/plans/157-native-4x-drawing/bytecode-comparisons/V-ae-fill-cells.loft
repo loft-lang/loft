@@ -1,0 +1,59 @@
+// @PLN157 § V-ae cells — the FILL idiom: `for i in lo..=hi { v[base + i] = c }` over a held
+// header, with `c` and `base` invariant across the loop, is ONE bounds test and one slice
+// fill instead of a bounds-tested scalar store per element (@FR-R-Fill).  The value of every
+// element is what the per-element loop wrote, so the interpreter (no rewrite) is the oracle;
+// native must answer the same under LOFT_HOIST_VERIFY=1; the emission (which loops become a
+// fill) is pinned by tests/fill_hoist.rs.  Expected values are hand-computed in each cell's
+// comment.  `total`/`show` read the vector back element by element.
+struct Cv { width: integer, height: integer, data: vector<integer> }
+struct Fv { data: vector<float> }
+
+fn zeros(n: integer) -> vector<integer> { [for _i in 0..n { 0 }] }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn show(v: const vector<integer>) -> text { t = ""; for x in v { t += "{x},"; } t }
+
+// pil_hline's shape: an inclusive range, an invariant base, an invariant value, a view.
+fn hline(cv: Cv, x0: integer, y: integer, x1: integer, ink: integer) {
+  d = &cv.data;
+  base = y * cv.width;
+  for x in x0..=x1 { d[base + x] = ink; }
+}
+
+// f1 — the hline shape, fully in range: row 1 of a 4×3, columns 1..=2 → indices 5, 6 = 7.
+fn f1() { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 1, 1, 2, 7); println("f1 {total(cv.data)} {show(cv.data)}"); }
+// f2 — the range runs PAST the end: the per-element form writes what fits and drops the
+// rest (an out-of-range set is a no-op) — the fill must do exactly that.  Indices 10, 11 land,
+// 12..=14 do not: two 7s.
+fn f2() { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 2, 2, 6, 7); println("f2 {total(cv.data)} {len(cv.data)}"); }
+// f3 — the range starts BEFORE 0: a negative index counts from the END, so -3, -2, -1 are
+// 1, 2, 3 and then 0, 1 land — every element 7 = 28.  Not a contiguous fill: the fallback.
+fn f3() { v = zeros(4); for i in -3..=1 { v[i] = 7; } println("f3 {total(v)} {show(v)}"); }
+// f4 — an EMPTY range (hi < lo) writes nothing.
+fn f4() { v = zeros(4); for i in 3..=1 { v[i] = 7; } println("f4 {total(v)}"); }
+// f5 — an EXCLUSIVE range: 1..3 → indices 1, 2.
+fn f5() { v = zeros(4); for i in 1..3 { v[i] = 5; } println("f5 {show(v)}"); }
+// f6 — a NON-CONTIGUOUS index (2·i): not the idiom, the per-element form.  Indices 0, 2, 4 = 9.
+fn f6() { v = zeros(6); for i in 0..3 { v[2 * i] = 9; } println("f6 {show(v)}"); }
+// f7 — the value DEPENDS on the loop variable: not the idiom.  v[i] = i·10.
+fn f7() { v = zeros(4); for i in 0..4 { v[i] = i * 10; } println("f7 {show(v)}"); }
+// f8 — the value READS the vector: not the idiom (a fill would read a stale element).
+// v = [1, 0, 0, 0]; v[i] = v[i-1] + 1 → [1, 2, 3, 4].
+fn f8() { v = [1, 0, 0, 0]; for i in 1..4 { v[i] = (v[i - 1] ?? 0) + 1; } println("f8 {show(v)}"); }
+// f9 — TWO statements in the body: not the idiom.  Fill + a counter.
+fn f9() { v = zeros(4); n = 0; for i in 0..4 { v[i] = 3; n += 1; } println("f9 {total(v)} {n}"); }
+// f10 — a FLOAT vector through a record path.  1.5 × 3 = 4.5 → 45.
+fn f10() { f = Fv { data: [0.0, 0.0, 0.0, 0.0] }; for i in 1..=3 { f.data[i] = 1.5; } s = 0.0; for x in f.data { s += x; } println("f10 {(s * 10.0) as integer}"); }
+// f11 — the base is an EXPRESSION of invariants, the value a parameter: as f1.  Row 2 → 8, 9, 10 = 21.
+fn f11() { cv = Cv { width: 4, height: 3, data: zeros(12) }; hline(cv, 0, 2, 2, 7); println("f11 {total(cv.data)} {show(cv.data)}"); }
+// f12 — NESTED: the outer loop supplies the row, the inner is the fill.  3 rows × 4 → 12 sevens.
+fn f12() { cv = Cv { width: 4, height: 3, data: zeros(12) }; for y in 0..3 { hline(cv, 0, y, 3, 7); } println("f12 {total(cv.data)}"); }
+// f13 — the value is a DISCHARGED nullable (`n ?? -1`): an invariant expression, not a literal. -1 ×3.
+fn f13() { v = zeros(3); n: integer? = null; for i in 0..3 { v[i] = n ?? -1; } println("f13 {show(v)}"); }
+// f14 — the vector is EMPTY (length 0): every index out of range, nothing written, no fault.
+fn f14() { v: vector<integer> = []; for i in 0..3 { v[i] = 7; } println("f14 {total(v)} {len(v)}"); }
+// f15 — a large range (10 000) — the fill and the loop must agree on every element: 10 000 × 3.
+fn f15() { v = zeros(10000); for i in 0..10000 { v[i] = 3; } println("f15 {total(v)}"); }
+// f16 — the loop variable is used AFTER the loop: keeps its last value (x#index semantics).
+fn f16() { v = zeros(5); last = -1; for i in 1..=3 { v[i] = 2; last = i; } println("f16 {total(v)} {last}"); }
+
+fn main() { f1(); f2(); f3(); f4(); f5(); f6(); f7(); f8(); f9(); f10(); f11(); f12(); f13(); f14(); f15(); f16(); }

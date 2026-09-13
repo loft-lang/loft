@@ -2125,6 +2125,82 @@ the FILL idiom; and `n_edge_x`, a plain call because its argument is an optional
 view — a twin over an optional-view argument, which the c6 boundary of § V-p would have to
 move for.
 
+
+## V-ae — a filling loop is one slice fill (2026-09-13)
+
+**SHIPPED, default-on, `--native` (generation time; switch `LOFT_NO_FILL_HOIST`,
+`@FR-R-Switch`; the rule `@FR-R-Fill`, formal/rewrites.md).**  Unit 2 of the fills' first
+profile (README § Unit 2: 59.7 % of `fill_circle`, loft 1.27 ns/write against Rust 0.10)
+and the second unit for `wide_line`, whose remaining cost after § V-ad was `pil_hline`'s
+loop: `for hl_x in hl_lo..=hl_hi { hl_d[hl_base + hl_x] = ink }`, a bounds-tested scalar
+store per pixel behind two checked adds LLVM cannot fold into a vector loop.
+
+**The design.**  A guarded fast path, never a replacement.  The emitter recognises the
+loop (`hoist::fill_loop`) at the `Value::Loop` node, once the loop's own headers are bound,
+and emits `let __fill_N = stores.fill_hoisted::<T, VERIFY>(&hdr, &v, size, base, lo, hi,
+inclusive, val)` followed by the per-element loop under `if !__fill_N { … } else { <the
+counters as the loop leaves them> }`.  `Stores::fill_hoisted` takes the fill only when
+`[base + lo, base + last]` lies inside `[0, len)` with no overflow on the way and the range
+is non-empty; every other range answers `false` without writing, and the loop then spells
+its own semantics — a negative index counts from the END (f3: `-3..=1` over four elements
+writes every one), a range past the end drops what falls outside (f2), an empty range
+writes nothing (f4).  `Store::fill` is the primitive: one bounds check at each end and an
+unaligned store per element, which the optimiser turns into a vector loop.  The counters:
+the two-counter form (§ V-ab) leaves `#index` at the last index and `next` one past; P3b's
+single counter (a literal start, seeded one below) one past the last — set in the `else`
+arm so a read after the loop sees what the loop would have left.
+
+**The shape recognised.**  Either range lowering — `[if hi <cmp> next { break }; index =
+next; next = next + 1; index]` or `[index = index + 1; if hi <cmp> index { break }; index]`
+— with `OpLtInt` an inclusive range and `OpLeInt` an exclusive one; a body of ONE
+statement, a fusable setter (`OpSetInt`/`OpSetSingle`/`OpSetFloat`) at field 0 of
+`v[idx]`, `v` a pure path with an active header, the element size the scalar's width, `idx`
+the loop variable or `invariant + variable` either way round, the value and the bound
+`simple_invariant`: a variable other than the loop's counters and the path's root, a
+literal, plain arithmetic over those, or a scalar field read off such a variable.  Two
+shapes the probe did not show and the consumer did, found by `LOFT_TRACE_FILL=1` (a trace
+that names the check that declined each loop): the range test is a bare `Break`, not a
+block holding one; and a library module's loop body carries a `Line` marker statement,
+which is not a statement.
+
+**Cells before the code** (`bytecode-comparisons/V-ae-fill-cells.loft`, sixteen,
+hand-computed — f3's comment had the negative index wrong, corrected against the recount
+of what a negative index MEANS, which the interpreter then confirmed): f1 the hline shape
+in range · f2 past the end · f3 below zero · f4 empty · f5 exclusive · f6 a strided index ·
+f7 the value of the loop variable · f8 the value reading the vector · f9 two statements ·
+f10 a float vector through a record path · f11 an expression base · f12 nested rows · f13
+a `??` value · f14 an empty vector · f15 ten thousand · f16 the loop variable used after.
+Predicted fills: `hline`, `hline__inv`, f3, f4, f5, f10, f14, f15 — one each, fallback and
+tail beside every one — none for f6–f9, f13, f16; matched on the first emission once the
+two shapes above were learned.  `tests/fill_hoist.rs` pins them and the switch;
+`tests/scripts/157-fill-hoist.loft` carries the values; both join the emission audit (0
+violations, 26 hoisted uses resolved).  Every cell answers the same on `--interpret`,
+`--native`, `LOFT_HOIST_VERIFY=1`, `LOFT_NO_FILL_HOIST=1` and `LOFT_POISON=1`.
+
+**Falsified.**  `fill_hoisted` made to fill one element short (`count = end - first`)
+turns f1's guard cell red on native — `indices 5 and 6 only` fails, index 6 stays 0 —
+with and without the verifier (the header is not what is wrong); the fallback cells stay
+green, as they must.  Restored byte-identically.
+
+**Measured** (aarch64 Linux, host `lima-default`, shipped tier):
+
+| instrument | before | after | move |
+|---|---:|---:|---:|
+| `wl_only.loft --n 20000`, switch A/B on one binary, ABAB | 11 744 / 11 724 ns/op | **8 992 / 8 967** | **−23.5 %** |
+| `compare.py --repeat 3`, `wide_line` | 11 580 (4.02×) | **9 020 (2.91×)** | −22 % |
+| `compare.py`, `fill_circle` | 89 080 (3.52×) | **45 880 (1.70×)** | **−48 %** |
+| `compare.py`, `fill_star` | 31 460 (3.37×) | **17 960 (1.79×)** | **−43 %** |
+
+14/14 hashes agree on every run; every other row flat in loft's column.  With § V-ad the
+same morning, `wide_line` went 17.0k → 9.0k ns/op, 5.35× → 2.91×, in one day.
+
+**What it does not cover, by construction.**  A record-element field (`v[i].f = c`) is a
+STRIDED fill — the element size is not the scalar's width, so `Store::fill`'s contiguous
+run does not apply; a value that is a `??` block (f13), reads the vector (f8) or depends
+on the loop variable (f7) is not invariant; a second statement (f9, f16) is not a fill.  A
+loop whose path has no header — a body the gate declines for another reason — keeps its
+form, because the fill serves from the header.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

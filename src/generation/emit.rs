@@ -618,6 +618,15 @@ impl Output<'_> {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) => {
                 let hoisted = self.begin_vector_hoist(w, lp)?;
+                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
+                // runs the slice fill first; the per-element loop below is its fallback for
+                // every range the fill declines (a negative or partial index, an overflow,
+                // an empty range), and the counters are left as the loop would leave them.
+                let fill = self.fill_fast_path(w, lp)?;
+                if fill {
+                    self.indent(w)?;
+                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
+                }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
                 for v in &lp.operators {
@@ -630,6 +639,9 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
+                if fill {
+                    self.fill_fast_path_tail(w, lp)?;
+                }
                 self.end_vector_hoist(w, hoisted)?;
             }
             Value::Set(var, to) => self.output_set(w, *var, to)?,

@@ -1109,6 +1109,16 @@ pub fn inplace_callee_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_INPLACE_CALLEE_HOIST"))
 }
 
+/// @PLN157 § V-ae: `for i in lo..hi { v[base + i] = c }` over a held header, `base` and `c`
+/// invariant, is ONE range test and a slice fill, the per-element loop kept as the
+/// fallback — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FILL_HOIST` (read at GENERATION
+/// time): the before-half of the A/B on one binary, and the first bisect step for a wrong
+/// element or a missed write out of a filling loop.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+pub fn fill_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FILL_HOIST"))
+}
+
 /// @PLN157 § V-ad: a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a
 /// vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`)
 /// does not decline a header hoist — **DEFAULT ON**.  Opt OUT with

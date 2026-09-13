@@ -819,6 +819,10 @@ pub struct Output<'a> {
     /// loft#885. The before-half of an A/B on one binary, and the first thing to try when
     /// a program answers differently under `--native` than under `--interpret`.
     pub hoist_disabled: bool,
+    /// `LOFT_NO_FILL_HOIST=1` — a filling loop keeps its per-element form (@PLN157 § V-ae,
+    /// `@FR-R-Fill`): the bisect step for a wrong element or a missed write out of
+    /// `for i in lo..hi { v[base + i] = c }`.
+    pub fill_hoist_disabled: bool,
     /// `LOFT_NO_ELEM_FUSE=1` — keep loft#885 stage 1 (the loop-invariant header) but emit
     /// stage 2's scalar element reads unfused, as an address and then a load.
     ///
@@ -1728,6 +1732,7 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
+            fill_hoist_disabled: !crate::keys::fill_hoist_enabled(),
             view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
             wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
                 .is_ok_and(|v| v != "0"),
@@ -2074,6 +2079,85 @@ impl Output<'_> {
     /// enclosing binding is still current, because the promise that let it be hoisted
     /// covers this loop too (the enclosing body contains this one).
     /// Emits `@FR-R-Header` and `@FR-R-Scalar`: the prelude that binds a loop's headers and scalars once.
+    /// An expression emitted into a string, for a prelude that names it once.
+    fn expr_string(&mut self, v: &Value) -> std::io::Result<String> {
+        let mut buf: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut buf, v)?;
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// @PLN157 § V-ae (`@FR-R-Fill`) — when `lp` is one fill over a path an enclosing frame
+    /// holds a header for, emit the guarded slice fill `let __fill_N = stores.fill_hoisted(…)`
+    /// and answer `true`; the caller then emits the per-element loop under `if !__fill_N`
+    /// and [`Self::fill_fast_path_tail`] leaves the counters as the loop would.  The start
+    /// is the `next` counter's current value (§ V-ab) or `#index + 1` (P3b, seeded one
+    /// below a literal start); the end is the range's own bound, inclusive or not.
+    fn fill_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.fill_hoist_disabled {
+            return Ok(false);
+        }
+        let Some(f) = hoist::fill_loop(lp, self.data) else {
+            return Ok(false);
+        };
+        let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
+            return Ok(false);
+        };
+        let variables = self.data.def(self.def_nr).variables();
+        let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
+        let lo = match f.next_var {
+            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+        };
+        let vec = self.expr_string(f.vector)?;
+        let base = match f.base {
+            Some(b) => self.expr_string(b)?,
+            None => "0_i64".to_string(),
+        };
+        let hi = self.expr_string(f.hi)?;
+        let val = self.expr_string(f.val)?;
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __fill_{} = stores.fill_hoisted::<{}, {verify}>(&{hdr}, &({vec}), {}_u32, vector::FillSpan {{ base: ({base}), lo: ({lo}), hi: ({hi}), inclusive: {} }}, ({val})); //@PLN157 § V-ae fill",
+            lp.scope, f.rust_type, f.size, f.inclusive
+        )?;
+        Ok(true)
+    }
+
+    /// The `else` arm of the fill's guard: the counters after the fill are what the loop
+    /// leaves them at — `#index` at the last index yielded (P3b's single counter one past
+    /// it), the `next` counter one past.
+    fn fill_fast_path_tail(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<()> {
+        let f = hoist::fill_loop(lp, self.data).expect("the shape that emitted the fill");
+        let variables = self.data.def(self.def_nr).variables();
+        let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
+        let hi = self.expr_string(f.hi)?;
+        let last = if f.inclusive {
+            format!("({hi})")
+        } else {
+            format!("(({hi}) - 1_i64)")
+        };
+        match f.next_var {
+            Some(nx) => {
+                let next = format!("var_{}", sanitize(variables.name(nx)));
+                writeln!(
+                    w,
+                    "\n}} else {{ {idx} = {last}; {next} = {last} + 1_i64; }}"
+                )
+            }
+            None => writeln!(w, "\n}} else {{ {idx} = {last} + 1_i64; }}"),
+        }
+    }
+
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
