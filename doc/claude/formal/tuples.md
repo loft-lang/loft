@@ -193,6 +193,15 @@ it, not a standing fact.
   closed deliberately, which is exactly why a deviation's measured cells are a claim to
   re-measure and not a record to cite.
 
+  ⚠ **RE-MEASURED AGAIN 2026-09-12: the one cell still stands, and both issues it names are now
+  CLOSED.**  `w: (integer?, integer?) = v[i]` is still refused on both backends with the same
+  *"cannot change type from `(integer?, integer?)` to `(integer, integer)?`"*.  So this entry is
+  the case that says an issue closing is not a deviation closing — loft#1423 and loft#1451 each
+  closed on their own cells while the notion the entry is about did not.  That is why
+  `rule_tags.py registers --issues` reports such a pair to RE-MEASURE rather than calling it
+  closed; four of the five entries it flagged the first time it ran were stale, and this one
+  was not.
+
   ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
   MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`
   into a `String` slot), and under that a nested tuple member emitted a move where a clone was

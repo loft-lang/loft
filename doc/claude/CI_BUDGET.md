@@ -5,6 +5,27 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # CI budget — what runs when, where the time goes, what to split
 
+> **Where the 20-minute rule is ENFORCED (2026-09-13).** In the LOCAL gate, not in GitHub CI.
+> `make ci` carries a hard cancel at `CI_BUDGET_SECS` (default 1200s), implemented in
+> `scripts/ci_budget.sh`; a run that passes it is killed, `result.txt` gets
+> `CI-RESULT: CANCELLED`, and the message says to CUT THE WORK rather than raise the number.
+> The reason it is a cancel and not a report: a gate that grows is a gate that stops being run —
+> measured 2026-09-12, a local `make ci` on macOS passed **45 minutes**, which is long enough
+> that the honest response is to skip it, and a gate nobody runs protects nothing.
+>
+> GitHub CI's sharded legs previously carried `timeout-minutes: 20` and no longer do; they take
+> the same 90 the unsharded legs take, which is a HANG guard rather than a budget. A hosted
+> runner's wall time is not the diff's to control — a slow runner, a cold cache or a queue makes
+> the same commit red or green — and the cancel threw away the leg's output, the one thing that
+> would have said why it ran long.
+>
+> ⚠ Two gates on this box roughly double each other's wall time, so a sibling checkout running
+> its own gate is the one case where `CI_BUDGET_SECS=... make ci` is the right answer for a
+> single run. That is a fact about the box, not about the diff.
+>
+> ⚠ A mid-run kill can tear the debug rlib (`undefined symbol: anon.*.llvm.*` out of
+> `libloft.rlib`); recover with `cargo clean -p loft`. The cancel message says so.
+
 > **Status: DESIGN (2026-07-26).** Measured against real runs, not estimates:
 > PR run `30203257738` and nightly run `30191161652`. Every duration below is
 > observed. The owner's rule is the premise: **a normal PR must settle within

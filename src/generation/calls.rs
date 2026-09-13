@@ -208,7 +208,30 @@ impl Output<'_> {
             write!(w, "cell")?;
             first_arg = false;
         }
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted callee has no return buffer
+        // parameter, so the site must not pass one: the buffer argument is the attribute
+        // the signature dropped, in the same position.
+        // The callee's NUMBER, not a name lookup: `def_nr(name)` resolves for the
+        // current source, so a library function called from another module answered a
+        // different definition (measured: `n_path_at` kept its buffer argument while its
+        // signature had dropped it).  `current_call_def` is what `output_call_inner`
+        // threads here for exactly this reason.
+        let callee_nr = self.current_call_def;
+        let drop_buf = self
+            .value_records
+            .fns
+            .contains_key(&callee_nr)
+            .then(|| {
+                def_fn
+                    .attributes()
+                    .iter()
+                    .position(|a| a.name == "__retbuf")
+            })
+            .flatten();
         for (idx, v) in vals.iter().enumerate() {
+            if drop_buf == Some(idx) {
+                continue;
+            }
             if !first_arg {
                 write!(w, ", ")?;
             }

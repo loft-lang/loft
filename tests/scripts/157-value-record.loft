@@ -1,0 +1,58 @@
+// @PLN157 § V-aa (`@FR-R-ValueRecord`) — a NO-HEAP RECORD returned BY VALUE: an admitted
+// function returns its record's fields in registers (a Rust tuple), its call sites read
+// tuple elements, and neither a return buffer nor a store round-trip remains.  A library's
+// cdylib bridge keeps the record contract at the C boundary by MATERIALISING the tuple
+// into the destination record it already owns, so loft-to-loft calls inside the library
+// take the value path while the ABI is unchanged.  The interpreter keeps the record and is
+// the oracle; tests/value_record.rs pins which functions are admitted.
+// `LOFT_NO_VALUE_RECORD=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (two sabotages, 2026-09-12) — removing the USE gate
+// (`local_read_fieldwise` always true) admits a record that is stored and one that is
+// passed on: 8 rustc errors, no output at all; removing the BODY gate
+// (`builds_record_by_object`) admits a FORWARDING body whose signature then promises a
+// tuple over a `DbRef`: 14 rustc errors.  Restored, the corpus is exact on both backends
+// under LOFT_POISON, LOFT_NO_VALUE_RECORD, LOFT_NO_ZERO_CLAIM and LOFT_POISON_CLAIM.
+
+struct Smp { sa: float, sr: float, sg: float, sb: float }
+struct Mixed { mi: integer, mf: float, mb: boolean }
+
+fn mk_smp(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+fn mk_mixed(k: integer) -> Mixed { Mixed { mi: k * 3, mf: (k as float) * 0.5, mb: k % 2 == 0 } }
+fn mk_kept(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+
+fn main() {
+  // The admitted shape: every field of every call reads back exactly.
+  t = 0.0;
+  for i in 0..4 {
+    r = mk_smp((i as float) + 1.0);
+    t = (t + r.sa + r.sr + r.sg + r.sb) ?? 0.0;
+  }
+  assert(t == 100.0, "a value-returned record's fields read back exactly");
+
+  // Mixed scalar kinds, read out of order.
+  s = 0; f = 0.0; n = 0;
+  for i in 0..5 {
+    m = mk_mixed(i);
+    if m.mb { n += 1; }
+    s += m.mi;
+    f = (f + m.mf) ?? 0.0;
+  }
+  assert(s == 30 && f == 5.0 && n == 3,
+    "an integer, a float and a boolean survive the register tuple");
+
+  // A STORED record declines the value path, and both the stored copy and the
+  // field read stay exact (the sabotage that admits this one stops compiling).
+  keep: vector<Smp> = [];
+  k = 0.0;
+  for i in 0..3 {
+    r = mk_kept((i as float) + 1.0);
+    keep += [r];
+    k = (k + r.sa) ?? 0.0;
+  }
+  for e in keep { k = (k + e.sb) ?? 0.0; }
+  assert(len(keep) == 3 && k == 30.0,
+    "a record that is stored keeps its buffer and its values");
+
+  println("value record ok");
+}

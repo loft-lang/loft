@@ -1,0 +1,165 @@
+// @PLN157 § V-z — ELEMENT-FIRST: a local vector built and then consumed exactly once
+// as a record-literal field of an append (`out += [R { f: v, … }]`) is built INSIDE
+// the appended element instead of in its own store and deep-copied in.  The emitter
+// mints the element at the LOCAL'S DECLARATION site (the length bump stays at the
+// append's finish, so the element is invisible until then), binds the local to the
+// element's own field slot (a vector value IS the ref to its handle slot), lets the
+// build target it in place — § V-u's adoption then delivers a call's record DIRECTLY
+// into the element — and the append site keeps its scalar sets and the finish while
+// the `vector_add` copies and the temps' stores vanish.
+//
+// Hand ceiling (rustc-first, 2026-09-12): fronds 270.2–283.0k → 191.7–210.3k ns/op
+// (−27–29 %), hash exact — the estimate's ~6 % missed the temp stores' reuse-clears,
+// their claims/frees and tree traffic, and the adoption composition.
+//
+// The interpreter keeps the temp-store build and is the VALUES oracle.
+// Switch: LOFT_NO_ELEMENT_FIRST=1 keeps the temp stores on native.
+
+struct Pt { px: float, py: float }
+struct Frond { fpts: vector<Pt>, fwid: vector<float>, fid: integer }
+struct Wrap { ws: vector<float> }
+
+fn pt(ax: float, ay: float) -> Pt { Pt { px: ax, py: ay } }
+
+fn sum_f(v: const vector<Frond>) -> float {
+  s = 0.0;
+  for f in v {
+    s = (s + (f.fid as float)) ?? 0.0;
+    for p in f.fpts { s = (s + p.px + p.py) ?? 0.0; }
+    for w in f.fwid { s = (s + w) ?? 0.0; }
+  }
+  s
+}
+
+// c1 — the base shape: two temps built then consumed by one append per iteration.
+fn c1() {
+  out: vector<Frond> = [];
+  for i in 0..3 {
+    ps: vector<Pt> = [];
+    ws: vector<float> = [];
+    ps += [pt((i as float) ?? 0.0, 1.0), pt(2.0, (i as float) ?? 0.0)];
+    ws += [10.0, (i as float) ?? 0.0];
+    out += [Frond { fpts: ps, fwid: ws, fid: i }];
+  }
+  println("c1 {len(out)} {sum_f(out)}");
+}
+
+// c2 — the fronds shape: the temps declared BEFORE an if, built differently per arm,
+// appended after it — the element mint rides the declaration site.
+fn c2(mode: boolean) -> float {
+  out: vector<Frond> = [];
+  for i in 0..3 {
+    ps: vector<Pt> = [];
+    ws: vector<float> = [];
+    if mode {
+      ps += [pt(1.0, 2.0), pt(3.0, 4.0), pt(5.0, 6.0)];
+      ws += [1.0, 2.0, 3.0];
+    } else {
+      ps += [pt((i as float) ?? 0.0, 0.5)];
+      ws += [9.0];
+    }
+    out += [Frond { fpts: ps, fwid: ws, fid: i * 10 }];
+  }
+  sum_f(out)
+}
+fn c2r() { println("c2 {c2(true)} {c2(false)}"); }
+
+// c3 — a temp READ AFTER the append: the copy must stay (the read sees the temp's
+// own value, and under a wrong pairing it would read the element's slot).
+fn c3() {
+  out: vector<Frond> = []; t = 0;
+  for i in 0..3 {
+    ps: vector<Pt> = [];
+    ws: vector<float> = [];
+    ps += [pt(1.0, 1.0)];
+    ws += [5.0];
+    out += [Frond { fpts: ps, fwid: ws, fid: i }];
+    t += len(ps);
+  }
+  println("c3 {len(out)} {sum_f(out)} {t}");
+}
+
+// c4 — a temp consumed by TWO appends: the FIRST append's pairing is declined by the
+// use-reconciliation (the second's mention is unaccounted in its stretch), and the
+// SECOND pairs — sound, because the intervening first append merely READS the slot
+// (its own copy stays), and every read of the slot ref answers what the temp held.
+fn c4() {
+  a: vector<Frond> = []; b: vector<Frond> = [];
+  for i in 0..2 {
+    ws: vector<float> = [];
+    ws += [(i as float) ?? 0.0, 7.0];
+    a += [Frond { fpts: [], fwid: ws, fid: i }];
+    b += [Frond { fpts: [], fwid: ws, fid: i + 100 }];
+  }
+  println("c4 {sum_f(a)} {sum_f(b)}");
+}
+
+// c5 — `len(out)` read BETWEEN the declaration and the append: the early mint may not
+// change what it answers, so the pair declines.
+fn c5() {
+  out: vector<Frond> = []; seen = 0;
+  for i in 0..3 {
+    ws: vector<float> = [];
+    ws += [1.0];
+    seen += len(out);
+    out += [Frond { fpts: [], fwid: ws, fid: i }];
+  }
+  println("c5 {len(out)} {seen} {sum_f(out)}");
+}
+
+// c6 — the destination is a nested single-field struct: the same pairing one field
+// deep; values exact whichever way the emitter decides.
+fn c6() {
+  out: vector<Wrap> = [];
+  for i in 0..3 {
+    ws: vector<float> = [];
+    ws += [(i as float) ?? 0.0, 0.5];
+    out += [Wrap { ws: ws }];
+  }
+  t = 0.0;
+  for w in out { for x in w.ws { t = (t + x) ?? 0.0; } }
+  println("c6 {len(out)} {t}");
+}
+
+// c7 — the append under an IF ARM: on the skipped path the minted element must stay
+// invisible (the finish is the length bump), and the temp dies unconsumed.
+fn c7() {
+  out: vector<Frond> = [];
+  for i in 0..4 {
+    ws: vector<float> = [];
+    ws += [(i as float) ?? 0.0];
+    if i % 2 == 0 { out += [Frond { fpts: [], fwid: ws, fid: i }]; }
+  }
+  println("c7 {len(out)} {sum_f(out)}");
+}
+
+// c8 — a TEXT-element temp: heap handles ride the in-place build.
+struct Tag { names: vector<text>, tid: integer }
+fn c8() {
+  out: vector<Tag> = [];
+  for i in 0..3 {
+    ns: vector<text> = [];
+    ns += ["t{i}", "u{i}"];
+    out += [Tag { names: ns, tid: i }];
+  }
+  t = 0;
+  for g in out { for n in g.names { t += len(n); } t += g.tid; }
+  println("c8 {len(out)} {t}");
+}
+
+// c9 — the temp declared BEFORE the destination in the same block: the pair declines
+// (the element mint would precede the destination's own store — the sqldb schema
+// fixture's shape, which failed to even compile before this gate).
+fn c9() {
+  t = 0.0;
+  for i in 0..3 {
+    ws: vector<float> = [];
+    ws += [(i as float) ?? 0.0, 2.0];
+    late: vector<Wrap> = [];
+    late += [Wrap { ws: ws }];
+    for w in late { for x in w.ws { t = (t + x) ?? 0.0; } }
+  }
+  println("c9 {t}");
+}
+
+fn main() { c1(); c2r(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); }

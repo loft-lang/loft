@@ -24,6 +24,17 @@
 //                            an empty name and the run died a few calls later
 //
 // The last one is why this is a memory-safety guard and not only a semantics one.
+//
+// ⚠ Three of the cells below use a NON-optional heap value as the condition — `if v`, `if empty`
+// and `if live` — which `constant-condition` reports, correctly: a heap value is falsy exactly
+// when it is null and a non-optional one cannot be, so those three branches always run.  They
+// stay as they are and the warning is PINNED, because they are this file's controls: the
+// complement `(v == null) != (if v { … })` has to hold for a value that cannot be absent as
+// much as for one that can, and deleting them would leave only the nullable half measured.
+//
+// @EXPECT_WARNING: Warning[constant-condition]
+// @EXPECT_WARNING: Warning[constant-condition]
+// @EXPECT_WARNING: Warning[constant-condition]
 
 enum Csh { Dot, Circle { r: integer } }
 struct Crec { a: integer }

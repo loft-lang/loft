@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**You can call a type `T`.**  The standard library's generic functions — `min_of`, `max_of`,
+`sum`, `tree_walk` — each write `<T>` for "whatever type you pass".  If your own program also
+declared `struct T`, the two names met behind the scenes, and a `vector<T>` of *your* `T` was
+quietly handed the internal bookkeeping belonging to the generic one.  Nothing you could see went
+wrong — the values were right — but anything walking that vector record by record was reading it
+against the wrong shape.  The two are now kept apart, so a single-letter type name is an ordinary
+name again.
+
 **A program that creates and frees many collections is much faster, and its cost now grows with
 its input instead of with the square of it.**  Reusing a freed store charged the new occupant for
 the LARGEST collection that slot had ever held, however small the new one is — so a program that

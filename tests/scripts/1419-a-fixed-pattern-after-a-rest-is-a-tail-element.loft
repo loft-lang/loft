@@ -40,6 +40,14 @@ fn tail_two_fixed(ts: vector<Tok>) -> integer {
 fn tail_bare_name(ts: vector<Tok>) -> integer {
   match ts { [Kw { word }, .., z] => match z { End { e } => e, _ => 0 }, _ => -1 }
 }
+// `_` as a tail element.  Accepted BEFORE this fix as well — `(P-Point)` admits it and the
+// entry grouped it with the bare binding — so this is a CONTROL, not a cell: it says the cure
+// admitted the two new forms without disturbing the two that already worked.  It is here
+// because `formal/matching.md`'s `(P-Rest)` conformance line names all four, and a conformance
+// claim nothing runs is a claim nobody re-measures.
+fn tail_underscore(ns: vector<integer>) -> integer {
+  match ns { [a, .., _] => a, _ => -1 }
+}
 fn head_variant(ts: vector<Tok>) -> integer {
   match ts { [End { e }, ..] => e, _ => -1 }
 }
@@ -48,6 +56,12 @@ fn literal_in_tail(ns: vector<integer>) -> integer {
 }
 fn literal_in_head(ns: vector<integer>) -> integer {
   match ns { [9, .., a] => a, _ => -1 }
+}
+
+fn an_underscore_tail_still_matches() {
+  assert_eq("{tail_underscore([1, 2, 3, 9])}", "1", "`_` as a tail element still binds the head");
+  assert_eq("{tail_underscore([1, 9])}", "1", "and with an empty middle");
+  assert_eq("{tail_underscore([1])}", "-1", "and needs the tail element to exist");
 }
 
 fn a_variant_after_a_rest_is_a_tail_element() {

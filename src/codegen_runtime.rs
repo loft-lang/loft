@@ -301,7 +301,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// passed by value (`DbRef`).  The function allocates into the store referenced by
 /// `db`, then returns the updated `DbRef`.
 /// Bytecode equivalent: `OpDatabase` in `src/state/io.rs:319`.
-pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, mut db: DbRef, db_tp: i32) -> DbRef {
+pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
+    op_database_inner(cell, db, db_tp, true)
+}
+
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — [`OpDatabase`] minus the default prefill: the
+/// emitter proved this site's literal group writes EVERY field of the type (declared
+/// defaults, sentinels and the variant tag included — the parser's lowering is complete
+/// by construction), so `set_default_value`'s walk (or its all-zero `zero_range`, which
+/// duplicates the zero-on-claim) writes nothing that survives the next few statements.
+pub fn OpDatabaseNP(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
+    op_database_inner(cell, db, db_tp, false)
+}
+
+fn op_database_inner(
+    cell: &std::cell::UnsafeCell<Stores>,
+    mut db: DbRef,
+    db_tp: i32,
+    prefill: bool,
+) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let db_tp = db_tp as u16;
     // B2-runtime parity with the bytecode VM (`state/io.rs::database`): an
@@ -331,8 +349,14 @@ pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, mut db: DbRef, db_tp: i3
     // free_named can recognise closure-record stores at free time
     // (cascade-free walks `__closure_*` records' DbRef fields).
     stores.allocations[r.store_nr as usize].set_known_type(db_tp);
+    // See `State::database`: the minted record is read before it is fully written, so a
+    // fresh store's collection handles must read as absent.  One fill per store creation,
+    // and BEFORE the type tag — `zero_fill` starts at byte 4, which is the tag itself.
+    stores.store_mut(&r).zero_fill(r.rec);
     stores.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
-    stores.set_default_value(db_tp, &r);
+    if prefill {
+        stores.set_default_value(db_tp, &r);
+    }
     db.store_nr = r.store_nr;
     db.rec = 1;
     db.pos = 8;
@@ -348,18 +372,41 @@ pub fn OpNewRecord(
     parent_tp: i32,
     fld: i32,
 ) -> DbRef {
+    op_new_record_inner(cell, data, parent_tp, fld, true)
+}
+
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — [`OpNewRecord`] minus the default prefill,
+/// for a mint whose group the emitter proved writes every field of the element type.
+pub fn OpNewRecordNP(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    parent_tp: i32,
+    fld: i32,
+) -> DbRef {
+    op_new_record_inner(cell, data, parent_tp, fld, false)
+}
+
+fn op_new_record_inner(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    parent_tp: i32,
+    fld: i32,
+    prefill: bool,
+) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let parent_tp = parent_tp as u16;
     let fld = fld as u16;
     let new_value = stores.record_new(&data, parent_tp, fld);
-    stores.set_default_value(
-        if fld == u16::MAX {
-            stores.content(parent_tp)
-        } else {
-            stores.content(stores.field_type(parent_tp, fld))
-        },
-        &new_value,
-    );
+    if prefill {
+        stores.set_default_value(
+            if fld == u16::MAX {
+                stores.content(parent_tp)
+            } else {
+                stores.content(stores.field_type(parent_tp, fld))
+            },
+            &new_value,
+        );
+    }
     new_value
 }
 

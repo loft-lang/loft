@@ -92,6 +92,10 @@ impl Output<'_> {
                 // P198 / DX-source-map: a `// loft:<file>:<line>` comment so
                 // rustc errors trace back to the loft source line.
                 let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // @PLN157 — remember where we are, so an operator checkpoint can name the
+                // loft line it came from.  This stream is the emitter's only notion of
+                // position.
+                self.ckpt_cur_line = node.line_nr();
                 return writeln!(w, "// loft:{file}:{}", node.line_nr());
             }
             ValueType::Break => {
@@ -2264,6 +2268,16 @@ impl Output<'_> {
         // expression's type would be `DbRef`, not `(u32, DbRef)`; and
         // the `i64` from OpGetInt4 needs an explicit `as u32` cast to
         // match the fn-ref tuple's first slot.
+        // @PLN157 § V-u (`@FR-R-RetAdopt`) — inside the delivery block of an ADOPTED
+        // result local, the `OpClearVector(buf)` + `OpAppendVector(buf, v, tp)` pair has
+        // nothing to move (the local IS the buffer; the clear would wipe the result, the
+        // append would self-copy).  The block's OTHER statements — the scope-exit frees,
+        // the returned value — emit unchanged, and the ENTRY clear (a bare statement
+        // outside any such block) stays: it is the buffer's reuse contract.
+        let adopt_delivery = bl.name == "one_buffer_vec_copy" && self.ret_adopt.is_some();
+        if adopt_delivery {
+            self.in_adopt_delivery += 1;
+        }
         if bl.name == "fn_ref_field_read" && bl.operators.len() == 2 {
             write!(w, "((")?;
             self.output_code_inner(w, &bl.operators[0])?;
@@ -2283,6 +2297,68 @@ impl Output<'_> {
         // Inject shadow call stack instrumentation if set by output_function().
         if let Some(prefix) = self.call_stack_prefix.take() {
             writeln!(w, "{prefix}")?;
+        }
+        // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
+        // call's buffer as a record in the destination's own store, and arm the loop
+        // variable so the append's OpCopyRecord emits the move.  The destination's
+        // `__vdb` is live here by scoping: the loop appends to it, so its declaration
+        // already ran.  The guard places ONCE per host lifetime: an enclosing loop
+        // re-enters with the record still placed and reuses it (the callee's entry
+        // clear resets its length); the var is nulled only where the HOST store is
+        // freed, which re-arms the guard for a host recreated per iteration (c21).
+        let move_pair = self.move_pair_for_block(bl).cloned();
+        if let Some(pair) = &move_pair {
+            let vars = self.data.def(self.def_nr).variables();
+            let buf = super::sanitize(vars.name(pair.buf));
+            // @PLN157 § V-u — an adopted result local has no witness store; its elements
+            // live in the return buffer, which is where the paired call's buffer belongs.
+            let vdb = match &self.ret_adopt {
+                Some(a) if a.vdb == pair.host_vdb => super::sanitize(vars.name(a.buf)),
+                _ => super::sanitize(vars.name(pair.host_vdb)),
+            };
+            self.indent(w)?;
+            writeln!(
+                w,
+                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}u16); }} //@PLN157 § V-j placed buffer",
+                pair.buf_tp
+            )?;
+            self.active_move_vars.push(pair.loop_var);
+        }
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function's `Object` tail
+        // builds its record's fields in REGISTERS: the block's `OpSet*` calls carry one
+        // value per field at a constant offset, so the whole block — the buffer's
+        // allocate-or-reuse, the writes, the yield — is exactly the tuple of those
+        // values, in field order.  The buffer it wrote into no longer exists.
+        if bl.name == "Object"
+            && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
+            && let Some(parts) = self.value_record_parts(bl, tp)
+        {
+            write!(w, "(")?;
+            for (i, val) in parts.iter().enumerate() {
+                if i > 0 {
+                    write!(w, ", ")?;
+                }
+                self.output_code_inner(w, val)?;
+            }
+            // The 1-tuple's trailing comma, matching the signature built in
+            // `hoist::value_records` — without it a single-field record returns a bare
+            // scalar and the call site's `.0` does not compile.
+            if parts.len() == 1 {
+                write!(w, ",")?;
+            }
+            write!(w, ")")?;
+            // The block's OPENING brace is already out; close it exactly as the ordinary
+            // path does, or the arm eats a delimiter (measured: `unclosed delimiter` on
+            // the conditional-construction cell, where the Object sits inside an `if` arm).
+            self.indent(w)?;
+            return write!(
+                w,
+                "}} /*{}_{}: {}*/",
+                bl.name,
+                bl.scope,
+                bl.result
+                    .show(self.data, self.data.def(self.def_nr).variables())
+            );
         }
         let is_void_block = matches!(bl.result, Type::Void);
         let is_text_result = wrap_text && matches!(bl.result, Type::Text(_));
@@ -2394,6 +2470,8 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
+        let mut flat_lit_open: Option<(u16, u16)> = None;
         for (vnr, v) in operators.iter().enumerate() {
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
@@ -2401,9 +2479,196 @@ impl Output<'_> {
             // expression context get rendered (rare in practice).
             if let Value::Line(line) = v {
                 let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // @PLN157 — see the sibling in `output_code_node`: the statement-level
+                // half of the same position stream.
+                self.ckpt_cur_line = *line;
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;
+            }
+            // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
+            // ONCE: the declaration statement (its pre-evals included — an OpDatabase
+            // hoisted out of the guard would re-clear the store per iteration) runs only
+            // while the local is unbound.  The local was pre-declared at function top, so
+            // the binding survives iterations and re-entries.
+            // A FLAT group closes at its first non-member statement.
+            if let Some((fv, fvdb)) = flat_lit_open
+                && !super::hoist::flat_lit_member(
+                    v,
+                    fv,
+                    fvdb,
+                    self.data,
+                    self.data.def(self.def_nr).variables(),
+                )
+            {
+                flat_lit_open = None;
+                self.indent -= 1;
+                self.indent(w)?;
+                writeln!(w, "}}")?;
+            }
+            // …and opens at its witness's OpDatabase.
+            if flat_lit_open.is_none()
+                && let Value::Call(d, cargs) = v.unspan()
+                && self.data.def(*d).name() == "OpDatabase"
+                && let Some(Value::Var(vdb)) = cargs.first().map(Value::unspan)
+                && let Some(fv) = self.invariant_lits.flat.get(vdb).copied()
+            {
+                flat_lit_open = Some((fv, *vdb));
+                let name = sanitize(self.data.def(self.def_nr).variables().name(fv));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ //@PLN157 § V-x invariant literal built once"
+                )?;
+                self.indent += 1;
+            }
+            // @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first overrides: a paired
+            // temp's declaration becomes the element mint (first temp) plus a bind to
+            // the element's own field slot, and the append site loses its reservation,
+            // mint, paired handle-zeros and paired copies (scalar sets and the finish
+            // stay — the finish is the length bump that keeps the element invisible
+            // until the append).
+            if !self.elem_first.pairs.is_empty() {
+                let dvars = self.data.def(self.def_nr).variables();
+                let named = |d: &u32, n: &str| {
+                    (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
+                };
+                let uv = |x: Option<&Value>| match x.map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let ui = |x: Option<&Value>| match x.map(Value::unspan) {
+                    Some(Value::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                let mut handled = false;
+                match v.unspan() {
+                    // The temp's declaration site.
+                    Value::Call(d, args) if named(d, "OpDatabase") => {
+                        if let Some(vdb) = uv(args.first())
+                            && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
+                        {
+                            let pair = &self.elem_first.pairs[pi];
+                            let b = pair
+                                .binds
+                                .iter()
+                                .find(|b| b.vdb == vdb)
+                                .expect("by_vdb names a bind");
+                            let outn = sanitize(dvars.name(pair.out));
+                            let elmn = sanitize(dvars.name(pair.elm));
+                            let tmpn = sanitize(dvars.name(b.tmp));
+                            self.indent(w)?;
+                            if b.first {
+                                writeln!(
+                                    w,
+                                    "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration",
+                                    pair.prealloc_size, pair.out_tp
+                                )?;
+                                self.indent(w)?;
+                            }
+                            writeln!(
+                                w,
+                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {} }}; //@PLN157 § V-z field-slot bind",
+                                b.field_off
+                            )?;
+                            handled = true;
+                        }
+                    }
+                    // The declaration's bind and length reset are replaced above.
+                    Value::Set(_, x)
+                        if matches!(x.unspan(), Value::Call(d, cargs)
+                            if named(d, "OpGetField")
+                                && uv(cargs.first())
+                                    .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
+                    {
+                        handled = true;
+                    }
+                    Value::Call(d, args)
+                        if named(d, "OpSetInt4")
+                            && uv(args.first())
+                                .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
+                    {
+                        handled = true;
+                    }
+                    // The append site's reservation (only when the next statement is
+                    // the suppressed mint of an admitted element).
+                    Value::Call(d, args) if named(d, "OpPreAllocVector") => {
+                        if ui(args.get(1)) == Some(1)
+                            && let Some(next) = operators[vnr + 1..]
+                                .iter()
+                                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                            && let Value::Set(e2, m2) = next.unspan()
+                            && self.elem_first.by_elm.contains_key(e2)
+                            && matches!(m2.unspan(), Value::Call(md, margs)
+                                if named(md, "OpNewRecord")
+                                    && uv(margs.first()) == uv(args.first()))
+                        {
+                            handled = true;
+                        }
+                    }
+                    // The append site's mint.
+                    Value::Set(e2, m2)
+                        if self.elem_first.by_elm.contains_key(e2)
+                            && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
+                    {
+                        handled = true;
+                    }
+                    // Paired handle-zeros and paired copies on the element.
+                    Value::Call(d, args)
+                        if named(d, "OpSetInt4")
+                            && uv(args.first())
+                                .and_then(|e| self.elem_first.by_elm.get(&e))
+                                .is_some_and(|&pi| {
+                                    ui(args.get(1)).is_some_and(|off| {
+                                        self.elem_first.pairs[pi]
+                                            .binds
+                                            .iter()
+                                            .any(|b| b.field_off == off)
+                                    })
+                                }) =>
+                    {
+                        handled = true;
+                    }
+                    Value::Call(d, args)
+                        if named(d, "OpAppendVector")
+                            && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                            if named(gd, "OpGetField")
+                                && uv(gargs.first())
+                                    .and_then(|e| self.elem_first.by_elm.get(&e))
+                                    .is_some_and(|&pi| {
+                                        ui(gargs.get(1)).is_some_and(|off| {
+                                            self.elem_first.pairs[pi]
+                                                .binds
+                                                .iter()
+                                                .any(|b| b.field_off == off)
+                                        })
+                                    })) =>
+                    {
+                        handled = true;
+                    }
+                    _ => {}
+                }
+                if handled {
+                    continue;
+                }
+            }
+            let lit_guard = match v.unspan() {
+                Value::Set(var, _)
+                    if self.invariant_lits.wrapped.contains(var)
+                        && tail_capture.is_none_or(|(_, ri)| ri != vnr) =>
+                {
+                    Some(*var)
+                }
+                _ => None,
+            };
+            if let Some(gv) = lit_guard {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(gv));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ //@PLN157 § V-x invariant literal built once"
+                )?;
+                self.indent += 1;
             }
             // Ref-return tail-call capture: `return __native_tail_ret;` in
             // place of the Return(Null)'s null-sentinel emission.  No pre_evals
@@ -2695,9 +2960,19 @@ impl Output<'_> {
             self.counter = counter_after_collect;
             // Restore the enclosing statement's pre-eval map (empty at top level).
             self.active_pre_eval = saved_pre_eval;
+            if lit_guard.is_some() {
+                self.indent -= 1;
+                self.indent(w)?;
+                writeln!(w, "}}")?;
+            }
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+        }
+        if flat_lit_open.is_some() {
+            self.indent -= 1;
+            self.indent(w)?;
+            writeln!(w, "}}")?;
         }
         for _ in 0..view_frames {
             self.vec_headers.pop();
@@ -2733,6 +3008,19 @@ impl Output<'_> {
             } else {
                 writeln!(w, "{}", default_native_value(&bl.result))?;
             }
+        }
+        if move_pair.is_some() {
+            self.active_move_vars.pop();
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — no free here: the placed record stays
+            // for an enclosing loop to REUSE (the callee's entry clear resets its length)
+            // and dies WITH ITS HOST STORE — `OpFreeRefEmitter` injects the record-level
+            // release before every free of the host `__vdb` (early dead-after-last-read
+            // sites included, the soundness line the 2026-09-11 gate corruption drew) and
+            // the buffer attr's own scope-end free is the null-guarded backstop that
+            // covers an adopted `__retbuf` host, which no in-function site frees.
+        }
+        if adopt_delivery {
+            self.in_adopt_delivery -= 1;
         }
         self.indent(w)?;
         write!(

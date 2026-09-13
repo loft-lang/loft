@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 460 | 436 | **24** |
+| 473 | 449 | **24** |
+
+(2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
+§ V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
+the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
+all three on the peel side, **24** opaque still.)
 
 
 
@@ -1528,7 +1533,12 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 55 | **12** | 43 |
+| 62 | **12** | 50 |
+
+(The four 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
+`flat_lit_member`, § V-y's `group_covers_type` and § V-z's `element_first`, which match
+the parser's literal-build ops by name and DECLINE anything else — a missed spelling
+costs the optimisation, never correctness, so single-spelling is their design.)
 
 
 
@@ -2544,7 +2554,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 780 | 437 | 6 | **337** |
+| 791 | 448 | 6 | **337** |
+
+(2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
+schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through
+`peel_link` as well — every new discriminating site on both streams is aware, so the opaque
+column and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
+obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
+`make optional-ratchet` fail — a new test is as able to grow this count as new code is.
+§ V-aa's sites land on the see-through side for the same reason.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque
@@ -7340,7 +7358,9 @@ is `head + tail <= len`, the tail is read at negative indices, and `hi = len −
 being computed *inside the refused branch*.  The diagnostic stood in front of a correct lowering,
 so the work was establishing that it was safe to delete, not writing a lowering.  Recorded as
 D-match-3; `OPEN: 0` is now `OPEN: 1`, because a variant sub-pattern after a `..` is still a
-parse-error cascade in both spellings (loft#1419, D-match-4).
+parse-error cascade in both spellings (loft#1419, D-match-4).  *(That `OPEN: 1` went back to 0 on
+2026-09-12: D-match-4 closed the way this paragraph predicted — by knowing the tail length before
+the sub-pattern is parsed — and the register had been reading OPEN over the merged fix for days.)*
 
 **Then `matrix_axes.py` earned its keep.**  Run on the new guard it reported `narrow-int` as an
 element type the cells did not reach.  Building that one cell found loft#1420: a `vector<u8>`

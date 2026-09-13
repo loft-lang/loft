@@ -2178,7 +2178,7 @@ fn length_sorted(s: &mut State) {
 
 fn clear_vector(s: &mut State) {
     let v_r = s.get_stack::<DbRef>();
-    vector::clear_vector(&v_r, &mut s.database.allocations);
+    s.database.clear_vector_release(&v_r);
 }
 
 fn get_vector(s: &mut State) {

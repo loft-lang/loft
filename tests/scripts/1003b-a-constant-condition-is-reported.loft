@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `constant-condition` — a non-optional HEAP value in a condition cannot fail the test.
+//
+// `LOFT.md` § Conversions is the language's rule: *"`false` and null are falsy; integer
+// `i32::MIN` is falsy; every other value is truthy"*.  The formal `(E-Truthy)` records only the
+// `null` half, which is why this went unsaid for so long — the behaviour is documented and is
+// NOT changing; the silence at the call site was the defect, because `if v` reads to a
+// programmer as a test.
+//
+// ⚠ **The SCALAR exclusion is the load-bearing half of this file.**  A scalar's absent value is
+// IN-BAND and reachable from a non-optional declaration, so `if d` on a plain `integer` is a
+// genuine two-state test — measured on both backends, an `integer` holding `i64::MIN` takes the
+// ELSE branch.  A lint that reported it would make a false claim about every integer condition
+// in the language, and the first draft of this one did: `if 0` takes the THEN branch, which is
+// true and proves nothing, because `0` is not the sentinel.  The scalar cells below are what
+// stop that draft coming back.  The `!` spelling of the same question belongs to
+// `redundant-null-negation`, which asks `IntegerSpec::non_null_reads_null` where it is known.
+//
+// Axes this file MOVES:  the subject's kind (heap · scalar) and its nullability
+//                        (non-optional · `?`), which are the two facts the lint reads.
+// Axes it HOLDS FIXED:   the position — `if` and `while` share one call site.
+//
+// @falsified-at: 6f2850cd3 — interpret exit 0 -> 0, and the channel is the EXPECTATION count,
+//   not exit: on that build the lint does not exist, so the three `@EXPECT_WARNING` pins never
+//   fire, and an `@EXPECT_WARNING` that never fires is fatal.  The scalar cells are inert
+//   against that control by construction — they assert an ABSENCE, which is also what a build
+//   without the lint produces — so they are scored by the mutation instead: widening the
+//   allow-list to `Type::Integer(_)` makes `no_warning_on_a_plain_integer` report and this
+//   file fail.  CHANNEL: expectations.
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
+
+// @EXPECT_WARNING: Warning[constant-condition]
+// @EXPECT_WARNING: Warning[constant-condition]
+// @EXPECT_WARNING: Warning[constant-condition]
+
+fn main() {
+  // --- the cells: a non-optional heap value cannot be absent ---
+  v: vector<integer> = [1, 2];
+  if v { println("vector: the branch always runs"); }
+
+  t: text = "hello";
+  if t { println("text: the branch always runs"); }
+
+  e: vector<integer> = [];
+  if e { println("an EMPTY vector is still not absent"); }
+
+  // --- the SCALAR controls: these must stay QUIET ---
+  // A plain integer can hold the in-band sentinel, so this is a real test.
+  d: integer = 0;
+  if d { println("integer 0 is truthy"); } else { println("unreachable for 0"); }
+
+  big: integer = 0 - 9223372036854775807 - 1;
+  if big { println("unreachable for the sentinel"); } else { println("the sentinel is falsy"); }
+
+  f: float = 0.0;
+  if f { println("float 0.0 is truthy"); }
+
+  // --- the NULLABLE control: a presence test is exactly what `(E-Truthy)` licenses ---
+  n: vector<integer>? = null;
+  if n { println("unreachable"); } else { println("an absent vector is falsy"); }
+
+  p: vector<integer>? = [3];
+  if p { println("a present vector is truthy"); }
+
+  // The values are asserted too, so a cure that silenced the lint by changing the ANSWER
+  // would fail here rather than read green.
+  assert(len(v) == 2, "the vector still holds its elements");
+  assert(big < 0, "the sentinel is still a negative integer: {big}");
+  println("1003b OK");
+}

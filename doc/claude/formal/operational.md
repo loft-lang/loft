@@ -145,6 +145,15 @@ comparison, `??`) evaluates both operands under E-Left.
                 elsewhere a `null` boolean stays null under (E-NullArg).  So
                 `true && null` is `false`, not `null`, and the result of `&&`/`||`
                 never holds the boolean null sentinel.
+  (E-Truthy-1)  and EVERY other value is true there — `LOFT.md` § Conversions, which this
+                rule recorded only half of until 2026-09-12.  So `if 0`, `if ""` and `if []`
+                all take the THEN branch.  Falsity is absence and nothing else, which makes
+                the two kinds differ: a SCALAR carries its absent value IN BAND (integer null
+                is `i64::MIN`), so `if d` on a plain `integer` is a real two-state test and an
+                `integer` holding the sentinel takes the ELSE branch; a HEAP value has no such
+                value, so a NON-optional one is unconditionally true and its condition cannot
+                fail.  That last case is `constant-condition`; the `!` spelling of the same
+                question is `redundant-null-negation`.
 ```
 
 **In words.** Arithmetic gives the obvious result when it fits. When it *can't* — overflow,

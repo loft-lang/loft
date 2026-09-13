@@ -199,6 +199,10 @@ pub struct HoistTiers {
     pub push: bool,
     /// `(R-Mint)` — the record mint group admitted as a mover (`LOFT_NO_MINT_HOIST` off).
     pub mint: bool,
+    /// `(R-PushRec)` — an admitted mint whose element is a plain no-heap struct EMITS
+    /// through a push header of its own (`LOFT_NO_RECORD_PUSH` off).  A refinement of
+    /// `mint`: it changes what the group's ops emit, never whether the loop hoists.
+    pub record_push: bool,
 }
 
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
@@ -363,6 +367,11 @@ pub struct LoopHoist {
     /// `vectors` as well), which the push keeps current and every read of the path serves
     /// from.
     pub pushes: Vec<(PathKey, Value)>,
+    /// @PLN157 § V-t (`@FR-R-PushRec`) — the admitted MINT paths whose element is a plain
+    /// no-heap struct: each takes a [`crate::vector::PushHeader`] the record append emits
+    /// through (the slot from the header, the length bump at the finish).  A mint that does
+    /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
+    pub mint_pushes: Vec<(PathKey, Value)>,
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -400,6 +409,7 @@ pub fn hoistable(
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
         pushes: Vec::new(),
+        mint_pushes: Vec::new(),
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
@@ -491,6 +501,11 @@ pub fn hoistable(
     // the path only has to LEAVE the read list.  The gate admitted every mint in the body
     // as one over a plain bare-variable vector, so this collection cannot disagree with it.
     let mut mints: Vec<PathKey> = Vec::new();
+    // § V-t (`@FR-R-PushRec`) — per mint path, the operand expression and whether EVERY
+    // mint group on it qualifies for the record push (the element a plain no-heap struct).
+    // One unqualified group keeps the whole path on § V-s's no-holder behaviour, because a
+    // header only some of the path's appends keep current would go stale at the others.
+    let mut mint_fused: Vec<(PathKey, Value, bool)> = Vec::new();
     if tiers.mint {
         for op in &body.operators {
             op.any_node(&mut |n| {
@@ -498,9 +513,14 @@ pub fn hoistable(
                     && (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
                     && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
-                    && !mints.contains(&path)
                 {
-                    mints.push(path);
+                    let q = tiers.record_push && mint_push_qualifies(stores, args);
+                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == path) {
+                        row.2 &= q;
+                    } else {
+                        mints.push(path.clone());
+                        mint_fused.push((path, args[0].clone(), q));
+                    }
                 }
                 false
             });
@@ -538,6 +558,10 @@ pub fn hoistable(
         }
         out.vectors.retain(|(q, _)| !mover(q));
         out.pushes = pushes;
+        out.mint_pushes = mint_fused
+            .into_iter()
+            .filter_map(|(p, expr, q)| q.then_some((p, expr)))
+            .collect();
     }
     if found.is_empty() {
         return out;
@@ -1402,6 +1426,36 @@ pub fn mint_path(
     matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
 }
 
+/// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
+/// schema is asked, not the op shape: the parent must be a plain inline-element vector
+/// (`Parts::Vector` — an `array`/`ordered` conversion holds 4-byte handles, and a keyed
+/// container's same-named ops place records), the form the tail-slot append (`fld ==
+/// u16::MAX`), and the element a plain struct that owns no heap — a raw slot carries stale
+/// bytes, and a heap handle is the one field kind whose stale bytes something could walk
+/// before the group's writes land.  The group's writes cover every scalar field explicitly
+/// (the IR's literal lowering emits omitted fields' defaults and sentinels itself; a
+/// declined delivery is a whole-record copy), so no prefill is owed.
+#[must_use]
+pub fn mint_push_qualifies(stores: &Stores, args: &[Value]) -> bool {
+    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
+        args.get(1).map(Value::unspan),
+        args.get(2).map(Value::unspan),
+    ) else {
+        return false;
+    };
+    if *fld != i32::from(u16::MAX) {
+        return false;
+    }
+    let Ok(tp) = u16::try_from(*tp) else {
+        return false;
+    };
+    if !stores.is_plain_vector(tp) {
+        return false;
+    }
+    let elem = stores.content(tp);
+    elem != u16::MAX && stores.is_struct(elem) && !stores.owns_heap(elem)
+}
+
 const FUSABLE_SETTERS: [(&str, &str); 3] = [
     ("OpSetInt", "i64"),
     ("OpSetSingle", "f32"),
@@ -1812,3 +1866,1945 @@ fn is_scalar(tp: &Type) -> bool {
             | Type::Enum(_, false, _)
     )
 }
+
+/// @PLN157 § V-j (`@FR-R-MoveAppend`) — one paired move-append: a `for f in call(…)` whose
+/// loop variable's SINGLE use after binding is one append into an owned local vector.  The
+/// call's hidden `__ref` buffer is then PLACED as a record inside the destination's own
+/// `__vdb` store, the append relocates the element's bytes instead of re-claiming and
+/// deep-copying its heap, and the buffer's free is a record-level release inside the store
+/// that lives on.
+#[derive(Clone, Debug)]
+pub struct MoveAppend {
+    /// The hidden `__ref` buffer variable the paired call fills.
+    pub buf: u16,
+    /// The `__vdb` witness variable of the destination — the store the buffer is placed in.
+    pub host_vdb: u16,
+    /// The buffer's holder type (`main_vector<E>`), for the placement and the record free.
+    pub buf_tp: u16,
+    /// The loop variable whose single append becomes the move.
+    pub loop_var: u16,
+    /// The destination vector variable.
+    pub dest: u16,
+    /// The element stride the move relocates, from the group's own `OpPreAllocVector`.
+    pub elem_size: u32,
+}
+
+/// The paired move-appends of `def_nr`'s body, keyed by BUFFER variable
+/// (@PLN157 § V-j, `@FR-R-MoveAppend`).  Every gate here is an under-approximation on
+/// purpose — a declined pairing keeps today's deep copy, which is always correct:
+///
+/// - the iterated expression is a CALL of a loft-defined function that MINTS its result
+///   (`returns_borrowed_view` declines — moving out of a borrowed view would zero a named
+///   vector's elements, the V-j c6 cell), delivered through a trailing `__ref` buffer;
+/// - the loop variable is bound once by the iterator and appears EXACTLY once after it, as
+///   the source of the append group `Set(elm, OpNewRecord(dest)) · OpCopyRecord(f, elm) ·
+///   OpFinishRecord(dest, elm)` — a read after the append would see the zeroed source
+///   (c2/c3/c7 decline), and a group under a FURTHER loop appends once per inner iteration
+///   while the move can only give the element away once (c8's class);
+/// - the destination is an owned local plain vector of a PLAIN STRUCT element (an enum /
+///   nullable element's discriminant is not bytes this move reasons about), never rebound
+///   in the function — a rebind frees the store the buffer was placed in while the buffer
+///   is still written through (the placed record must die with the store that hosts it);
+/// - the buffer serves ONLY this call: its other appearances are its null declaration and
+///   its scope-exit frees.
+#[must_use]
+pub fn move_appends(data: &Data, def_nr: u32) -> HashMap<u16, MoveAppend> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    // The rebind set of the WHOLE function: a destination or buffer reassigned anywhere
+    // declines, wherever the For sits.
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n {
+            // A declaration's two initialisation Sets are not rebinds: the `= null` decl,
+            // and the vector local's binding to its own `__vdb` witness's path
+            // (`v = OpGetField(__vdb_N, 0, tp)`).
+            let init = match to.unspan() {
+                Value::Null => true,
+                Value::Call(d, cargs) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if *w < vars.count() && vars.name(*w).starts_with("__vdb"))
+                }
+                _ => false,
+            };
+            if !init {
+                *set_counts.entry(*v).or_default() += 1;
+            }
+        }
+        false
+    });
+    let mut out: HashMap<u16, MoveAppend> = HashMap::new();
+    let mut dead: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "For block"
+            && let Some(pair) = pair_for_block(bl, data, vars, &set_counts)
+        {
+            // A buffer serving TWO paired loops is a buffer this analysis does not own.
+            if out.remove(&pair.buf).is_some() || dead.contains(&pair.buf) {
+                dead.insert(pair.buf);
+            } else {
+                out.insert(pair.buf, pair);
+            }
+        }
+        false
+    });
+    // The buffer's whole-function uses: one call argument (counted inside its own For by
+    // construction), plus frees.  Any OTHER appearance — a second call, a read, a copy —
+    // declines the pair.
+    out.retain(|buf, _| {
+        // Reconciled counts, because `any_node` descends into a call's arguments too:
+        // every `Var(buf)` in the body must be accounted for as the ONE paired call's
+        // argument or as a free's operand — anything else is a use this analysis does
+        // not understand, and the pair declines.
+        let mut total: u32 = 0;
+        let mut call_args: u32 = 0;
+        let mut free_args: u32 = 0;
+        let mut rebound = false;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(v) if v == buf => total += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let name = data.def(*d).name();
+                    let hits = args
+                        .iter()
+                        .filter(|a| matches!(a.unspan(), Value::Var(v) if v == buf))
+                        .count() as u32;
+                    if name == "OpFreeRef" || name == "OpFreeRefTag" {
+                        free_args += hits;
+                    } else {
+                        call_args += hits;
+                    }
+                }
+                // `Set(buf, Null)` is the declaration; any other Set is a rebind.
+                Value::Set(v, to) if v == buf && !matches!(to.unspan(), Value::Null) => {
+                    rebound = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        let ok = call_args == 1 && total == call_args + free_args && !rebound;
+        if !ok && std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!("[move] buf {} uses: total={total} call_args={call_args} free_args={free_args} rebound={rebound}", vars.name(*buf));
+        }
+        ok
+    });
+    out
+}
+
+/// The § V-j pairing of ONE `For` block, or `None` — see [`move_appends`] for the gates.
+fn pair_for_block(
+    bl: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+) -> Option<MoveAppend> {
+    let trace = std::env::var("LOFT_TRACE_MOVE").is_ok();
+    // ops = [Set(_vector, Call(d, [.., Var(buf)])), Set(idx, -1), Loop(..)]
+    let Some(Value::Set(_, call)) = bl.operators.first().map(Value::unspan) else {
+        if trace {
+            eprintln!(
+                "[move] no leading Set: first={:?}",
+                bl.operators.first().map(|v| kind_of(v))
+            );
+        }
+        return None;
+    };
+    let Value::Call(d, cargs) = call.unspan() else {
+        if trace {
+            eprintln!("[move] Set rhs not a Call: {}", kind_of(call));
+        }
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    let callee = data.def(*d);
+    if !callee.is_loft_defined() || callee.returns_borrowed_view() {
+        if trace {
+            eprintln!(
+                "[move] callee {} loft={} borrowed={}",
+                callee.name(),
+                callee.is_loft_defined(),
+                callee.returns_borrowed_view()
+            );
+        }
+        return None;
+    }
+    // The callee must treat the buffer VECTOR-level.  A callee whose result witness was
+    // promoted INTO the buffer parameter re-inits it with `OpDatabase`, and that reuse arm
+    // clears the buffer's WHOLE STORE — which under placement is the caller's result store,
+    // half-built (the sqldb `collect_leaf` corruption; the mv2 cells pin it).
+    if callee_reinits_buffer(data, callee) {
+        if trace {
+            eprintln!("[move] callee {} re-inits its buffer store", callee.name());
+        }
+        return None;
+    }
+    let Some(Value::Var(buf)) = cargs.last().map(Value::unspan) else {
+        if trace {
+            eprintln!("[move] last arg not Var: {:?}", cargs.last().map(kind_of));
+        }
+        return None;
+    };
+    let buf = *buf;
+    if buf >= vars.count()
+        || !vars.name(buf).starts_with("__ref")
+        || !matches!(vars.tp(buf).peel_link(), Type::Vector(_, _))
+    {
+        if trace {
+            eprintln!(
+                "[move] buf gate: name={} tp-vector={}",
+                vars.name(buf),
+                matches!(vars.tp(buf).peel_link(), Type::Vector(_, _))
+            );
+        }
+        return None;
+    }
+    let lp = bl.operators.iter().find_map(|op| match op.unspan() {
+        Value::Loop(lp) => Some(lp),
+        _ => None,
+    })?;
+    let Some(Value::Set(loop_var, _)) = lp.operators.first().map(Value::unspan) else {
+        return None;
+    };
+    let loop_var = *loop_var;
+    // One rebind only — the iterator's own Set.  A second write to f anywhere declines.
+    if set_counts.get(&loop_var).copied().unwrap_or(0) != 1 {
+        return None;
+    }
+    // Scan the loop past the iterator binding: exactly one append group with f as its
+    // source, no use of f after it, no group under a nested loop.
+    let mut scan = MoveScan {
+        loop_var,
+        copies: 0,
+        group: None,
+        use_after: false,
+        bad: false,
+    };
+    for op in lp.operators.iter().skip(1) {
+        scan_move(op, data, &mut scan, 0);
+    }
+    if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+        eprintln!(
+            "[move] scan: copies={} bad={} use_after={} group={:?}",
+            scan.copies, scan.bad, scan.use_after, scan.group
+        );
+    }
+    let (dest, elem_size) = scan.group?;
+    if scan.bad || scan.use_after || scan.copies != 1 {
+        return None;
+    }
+    if dest >= vars.count() || !owned_local(vars, dest) {
+        if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!("[move] dest {} not owned local", vars.name(dest));
+        }
+        return None;
+    }
+    // Never rebound: the placed buffer record must die with the store that hosts it, and a
+    // rebind frees that store mid-flight.
+    if set_counts.get(&dest).copied().unwrap_or(0) != 0 {
+        if std::env::var("LOFT_TRACE_MOVE").is_ok() {
+            eprintln!(
+                "[move] dest {} rebound {}x",
+                vars.name(dest),
+                set_counts[&dest]
+            );
+        }
+        return None;
+    }
+    let trace2 = std::env::var("LOFT_TRACE_MOVE").is_ok();
+    let Type::Vector(elem, _) = vars.tp(dest).peel_link() else {
+        if trace2 {
+            eprintln!(
+                "[move] dest {} not a vector: {:?}",
+                vars.name(dest),
+                vars.tp(dest)
+            );
+        }
+        return None;
+    };
+    // A plain struct element only: the moved bytes are fields, and zeroing the source is
+    // "owns nothing now" in every field kind; an enum's discriminant is not such a field.
+    if plain_record_type(data, elem).is_none() {
+        if trace2 {
+            eprintln!("[move] elem not plain record: {elem:?}");
+        }
+        return None;
+    }
+    let Type::Reference(ed, _) = elem.peel_link() else {
+        if trace2 {
+            eprintln!("[move] elem not Reference");
+        }
+        return None;
+    };
+    let elem_name = elem.name(data);
+    let buf_tp = data.name_type(&format!("main_vector<{elem_name}>"), 0);
+    if buf_tp == u16::MAX {
+        if trace2 {
+            eprintln!("[move] no main_vector<{elem_name}> type");
+        }
+        return None;
+    }
+    // The lookup above is BY NAME, and a user struct named like a stdlib type
+    // variable shares its wrapper's name with the GENERIC template (a struct `T`
+    // finds `main_vector<T>` whose `vector` field still carries `__typevar_T`) —
+    // a record-level walk through that def misreads every element as the
+    // typevar's layout (the c11 refusal, 2026-09-11).  The def is a valid buffer
+    // type only when its `vector` attribute names OUR element; anything else
+    // declines the pairing and the deep copy stays, which is always correct.
+    let wrapper = data.def_nr(&format!("main_vector<{elem_name}>"));
+    let wrapper_elem_is_ours = wrapper != u32::MAX && {
+        let a = data.attr(wrapper, "vector");
+        a != usize::MAX
+            && matches!(
+                data.attr_type(wrapper, a).peel_link(),
+                Type::Vector(e, _)
+                    if matches!(e.peel_link(), Type::Reference(d2, _) if d2 == ed)
+            )
+    };
+    if !wrapper_elem_is_ours {
+        if trace2 {
+            eprintln!(
+                "[move] main_vector<{elem_name}> is not OUR element's wrapper (a name collision with a generic template) — declined"
+            );
+        }
+        return None;
+    }
+    // The host store: the destination's own `__vdb` witness, named by its type's deps.
+    let deps = vars.tp(dest).depend();
+    let mut vdbs = deps
+        .iter()
+        .filter(|dv| vars.name(**dv).starts_with("__vdb"));
+    let Some(host_vdb) = vdbs.next().copied() else {
+        if trace2 {
+            eprintln!("[move] dest {} has no __vdb dep: {deps:?}", vars.name(dest));
+        }
+        return None;
+    };
+    if vdbs.next().is_some() {
+        if trace2 {
+            eprintln!("[move] dest {} has 2+ __vdb deps", vars.name(dest));
+        }
+        return None;
+    }
+    Some(MoveAppend {
+        buf,
+        host_vdb,
+        buf_tp,
+        loop_var,
+        dest,
+        elem_size,
+    })
+}
+
+struct MoveScan {
+    loop_var: u16,
+    copies: u32,
+    /// `(dest, elem_size)` of the one valid append group.
+    group: Option<(u16, u32)>,
+    use_after: bool,
+    bad: bool,
+}
+
+/// Preorder walk for [`pair_for_block`]: finds the append groups, counts the loop
+/// variable's other appearances, and tracks whether anything reads it after the move.
+fn scan_move(v: &Value, data: &Data, scan: &mut MoveScan, loop_depth: u32) {
+    match v.unspan() {
+        Value::Block(bl) => {
+            let mut i = 0;
+            while i < bl.operators.len() {
+                // The group: [OpPreAllocVector(dest, 1, SIZE)] · Set(elm, OpNewRecord(dest,
+                // tp, MAX)) · OpCopyRecord(f, elm, _) · OpFinishRecord(dest, elm, ..).
+                if let Some((dest, elm, size)) = group_head(&bl.operators, i, data)
+                    && let Some(Value::Call(cd, cargs)) = bl.operators.get(i + 2).map(Value::unspan)
+                    && data.def(*cd).name() == "OpCopyRecord"
+                    && matches!(cargs.first().map(Value::unspan), Some(Value::Var(f)) if *f == scan.loop_var)
+                    && matches!(cargs.get(1).map(Value::unspan), Some(Value::Var(e)) if *e == elm)
+                    && let Some(Value::Call(fd, fargs)) = bl.operators.get(i + 3).map(Value::unspan)
+                    && data.def(*fd).name() == "OpFinishRecord"
+                    && matches!(fargs.first().map(Value::unspan), Some(Value::Var(dv)) if *dv == dest)
+                {
+                    scan.copies += 1;
+                    if scan.copies > 1 || loop_depth > 0 {
+                        scan.bad = true;
+                    } else {
+                        scan.group = Some((dest, size));
+                    }
+                    // The group's own nodes are accounted; a SECOND group or any later
+                    // use still flips the flags above.
+                    i += 4;
+                    continue;
+                }
+                scan_move(&bl.operators[i], data, scan, loop_depth);
+                i += 1;
+            }
+        }
+        Value::Loop(lp) => {
+            for op in &lp.operators {
+                scan_move(op, data, scan, loop_depth + 1);
+            }
+        }
+        Value::Var(f) if *f == scan.loop_var => {
+            if scan.group.is_some() {
+                scan.use_after = true;
+            }
+        }
+        // An OpCopyRecord with f as source OUTSIDE the exact group shape: not movable.
+        Value::Call(d, args) => {
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpCopyRecord"
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(f)) if *f == scan.loop_var)
+            {
+                scan.bad = true;
+            }
+            for a in args {
+                scan_move(a, data, scan, loop_depth);
+            }
+        }
+        Value::Set(_, to) => scan_move(to, data, scan, loop_depth),
+        Value::If(c, t, e) => {
+            scan_move(c, data, scan, loop_depth);
+            scan_move(t, data, scan, loop_depth);
+            scan_move(e, data, scan, loop_depth);
+        }
+        Value::Return(r) => scan_move(r, data, scan, loop_depth),
+        _ => {}
+    }
+}
+
+/// The `Set(elm, OpNewRecord(dest, _, u16::MAX))` head of an append group at `i`
+/// (`i` may point at the optional `OpPreAllocVector` before it) — answers
+/// `(dest, elm, elem_size)`.
+fn group_head(ops: &[Value], i: usize, data: &Data) -> Option<(u16, u16, u32)> {
+    // The stride comes from the group's own OpPreAllocVector — the parser's exact number.
+    let (set_at, size) = if let Some(Value::Call(pd, pargs)) = ops.get(i).map(Value::unspan)
+        && data.def(*pd).name() == "OpPreAllocVector"
+        && let Some(Value::Int(sz)) = pargs.get(2).map(Value::unspan)
+    {
+        (i + 1, u32::try_from(*sz).ok()?)
+    } else {
+        return None;
+    };
+    // Only the shifted shape below is matched, so callers pass the PreAlloc index.
+    let Some(Value::Set(elm, rhs)) = ops.get(set_at).map(Value::unspan) else {
+        return None;
+    };
+    let Value::Call(nd, nargs) = rhs.unspan() else {
+        return None;
+    };
+    if data.def(*nd).name() != "OpNewRecord" {
+        return None;
+    }
+    let Some(Value::Var(dest)) = nargs.first().map(Value::unspan) else {
+        return None;
+    };
+    Some((*dest, *elm, size))
+}
+
+/// Debug label for the move trace.
+fn kind_of(v: &Value) -> &'static str {
+    match v.unspan() {
+        Value::Set(_, _) => "Set",
+        Value::Call(_, _) => "Call",
+        Value::Block(_) => "Block",
+        Value::Loop(_) => "Loop",
+        Value::Var(_) => "Var",
+        Value::Null => "Null",
+        _ => "other",
+    }
+}
+
+/// @PLN157 § V-u (`@FR-R-RetAdopt`) — a vector-returning function whose result local ADOPTS
+/// the hidden return buffer: the local builds in the caller's buffer from its declaration,
+/// so every delivery copy at the exits (`OpReplaceVector`, the `OpClearVector` +
+/// `OpAppendVector` pair) has nothing left to move and is emitted as nothing, and the
+/// local's own witness store is never allocated.
+#[derive(Clone, Copy, Debug)]
+pub struct RetAdopt {
+    /// The result local every delivery site copies into the buffer.
+    pub v: u16,
+    /// Its `__vdb` witness variable — the store the adoption leaves unallocated.
+    pub vdb: u16,
+    /// The hidden return-buffer variable the local aliases.
+    pub buf: u16,
+    /// The witness's `OpDatabase` type, for the buffer's null arm (a caller that offered
+    /// no buffer gets one allocated exactly as the witness would have been).
+    pub db_tp: i32,
+}
+
+/// The § V-u adoption of `def_nr`, or `None`.  Every gate is an under-approximation on
+/// purpose — a declined function keeps the delivery copies, which are always correct:
+///
+/// - the function VALUE-returns a plain vector through a hidden buffer (a borrow return
+///   publishes a dep and delivers nothing);
+/// - every delivery into the buffer sources the SAME local `v`, and the buffer serves
+///   nothing else — a site delivering another value, or a call handed the buffer (the
+///   `one_buffer_chain` shape), declines;
+/// - `v` is bound exactly once, from its own witness (`Set(v, OpGetField(__vdb, 0, _))`),
+///   never reassigned (a rebind's `OpDatabase` reuse would clear the CALLER's store) and
+///   never captured;
+/// - the witness serves only its init and its frees;
+/// - no `Parallel` or `Yield` in the body (a resumable frame's buffer discipline is its
+///   own question).
+#[must_use]
+pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
+    let def = data.def(def_nr);
+    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
+    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
+    if !def.is_loft_defined() || def.returns_borrowed_view() {
+        return None;
+    }
+    if !matches!(def.returned().peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    let attr = def.hidden_return_buffer_attr()?;
+    let vars = def.variables();
+    let buf = vars.var(&def.attributes()[attr].name);
+    if buf == u16::MAX {
+        return None;
+    }
+    let body = def.code();
+    // One pass collects every fact the gates need.
+    let mut delivery_src: Option<u16> = None;
+    let mut bad = false;
+    let mut init: Option<(u16, u16)> = None; // (v, vdb)
+    let mut v_sets: u32 = 0;
+    // The Clear+Append delivery pair is only skippable as its `one_buffer_vec_copy`
+    // BLOCK; an append reaching the buffer outside one has no emission that elides it,
+    // so it declines the adoption.
+    let mut appends_total: u32 = 0;
+    let mut appends_in_copy_block: u32 = 0;
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "one_buffer_vec_copy"
+        {
+            for op in &bl.operators {
+                if let Value::Call(d, args) = op.unspan()
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpAppendVector"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == buf)
+                {
+                    appends_in_copy_block += 1;
+                }
+            }
+        }
+        false
+    });
+    body.any_node(&mut |n| {
+        match n {
+            Value::Parallel(_) | Value::Yield(_) => bad = true,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                match name {
+                    "OpReplaceVector" | "OpAppendVector"
+                        if matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == buf) =>
+                    {
+                        if name == "OpAppendVector" {
+                            appends_total += 1;
+                        }
+                        match args.get(1).map(Value::unspan) {
+                            Some(Value::Var(s)) => match delivery_src {
+                                None => delivery_src = Some(*s),
+                                Some(prev) if prev == *s => {}
+                                Some(_) => bad = true,
+                            },
+                            _ => bad = true,
+                        }
+                    }
+                    "OpClearVector" => {}
+                    _ => {
+                        // Any other call handed the buffer is a use this analysis
+                        // does not own (the chain shape delivers THROUGH a callee).
+                        if args
+                            .iter()
+                            .any(|a| matches!(a.unspan(), Value::Var(b) if *b == buf))
+                        {
+                            bad = true;
+                        }
+                    }
+                }
+            }
+            Value::Set(sv, to) => {
+                if let Value::Call(d, gargs) = to.unspan()
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpGetField"
+                    && let Some(Value::Var(w)) = gargs.first().map(Value::unspan)
+                    && (*w as usize) < vars.count() as usize
+                    && vars.name(*w).starts_with("__vdb")
+                    && init.is_none()
+                {
+                    init = Some((*sv, *w));
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+        eprintln!(
+            "[adopt] {}: bad={bad} src={delivery_src:?} init={init:?} appends={appends_total}/{appends_in_copy_block}",
+            def.name()
+        );
+    }
+    if bad || appends_total != appends_in_copy_block {
+        return None;
+    }
+    let v = delivery_src?;
+    let (iv, vdb) = init?;
+    if iv != v || v >= vars.count() || vars.is_argument(v) || vars.is_captured(v) {
+        return None;
+    }
+    // Exactly one Set of v (its init), and the witness's OpDatabase for the null arm.
+    let mut db_tp: Option<i32> = None;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(sv, to) if *sv == v && !matches!(to.unspan(), Value::Null) => {
+                v_sets += 1;
+            }
+            Value::Set(sv, to) if *sv == vdb && !matches!(to.unspan(), Value::Null) => {
+                bad = true;
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpDatabase"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == vdb) =>
+            {
+                if let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) {
+                    if db_tp.is_some() {
+                        bad = true; // two OpDatabase on the witness: a rebind
+                    }
+                    db_tp = Some(*tp);
+                }
+            }
+            // The witness reached by any call BUT its own init family declines.
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if !matches!(
+                    name,
+                    "OpDatabase" | "OpGetField" | "OpSetInt4" | "OpFreeRef" | "OpFreeRefTag"
+                ) && args
+                    .iter()
+                    .any(|a| matches!(a.unspan(), Value::Var(w) if *w == vdb))
+                {
+                    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+                        eprintln!("[adopt] {}: witness touched by {name}", def.name());
+                    }
+                    bad = true;
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    if std::env::var("LOFT_TRACE_ADOPT").is_ok() {
+        eprintln!(
+            "[adopt] {}: second pass bad={bad} v_sets={v_sets} db_tp={db_tp:?}",
+            def.name()
+        );
+    }
+    if bad || v_sets != 1 {
+        return None;
+    }
+    Some(RetAdopt {
+        v,
+        vdb,
+        buf,
+        db_tp: db_tp?,
+    })
+}
+
+/// Does `callee` run `OpDatabase` on its own hidden return buffer (@PLN157 § V-j)?  That
+/// is the witness-promoted delivery shape: the reuse arm CLEARS the buffer's whole store,
+/// so a buffer such a callee receives must own its store — it cannot be placed.
+fn callee_reinits_buffer(data: &Data, callee: &crate::data::Definition) -> bool {
+    let Some(attr) = callee.hidden_return_buffer_attr() else {
+        return true; // no buffer attr: not a delivery this analysis understands
+    };
+    let bv = callee.variables().var(&callee.attributes()[attr].name);
+    if bv == u16::MAX {
+        return true;
+    }
+    let mut reinits = false;
+    callee.code().any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpDatabase"
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == bv)
+        {
+            reinits = true;
+        }
+        false
+    });
+    reinits
+}
+
+/// The scalar getters a § V-x invariant part may read a value-const parameter through —
+/// an ALLOW-list like the rest of the family: a getter missing here declines the
+/// candidate, never miscompiles it.
+const LIT_HOIST_GETTERS: [&str; 7] = [
+    "OpGetInt",
+    "OpGetFloat",
+    "OpGetSingle",
+    "OpGetBoolean",
+    "OpGetByte",
+    "OpGetShort",
+    "OpGetCharacter",
+];
+
+/// Does `tp` mention record/enum definition `pd` anywhere in its shape?
+fn mentions_def(tp: &Type, pd: u32) -> bool {
+    // `.base()` at each node so a `τ?`-wrapped reference is the same mention
+    // (`@FR-N-Shape` — the walk descends wrappers, and the test must too).
+    tp.any_node(
+        &mut |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == pd),
+    )
+}
+
+/// A FRESH-STORE local (@PLN157 § V-x): every `Set` of it is the `= null` declaration and
+/// an `OpDatabase(v, tp)` creates its own store — so the record it names is minted by
+/// THIS activation and can never be a record a parameter links to.
+fn fresh_store_local(v: u16, data: &Data, vars: &crate::variables::Function, body: &Value) -> bool {
+    if vars.is_argument(v) {
+        return false;
+    }
+    let mut all_null = true;
+    let mut created = false;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(w, x) if *w == v => {
+                if !matches!(x.unspan(), Value::Null) {
+                    all_null = false;
+                }
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpDatabase"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v) =>
+            {
+                created = true;
+            }
+            _ => {}
+        }
+        false
+    });
+    all_null && created
+}
+
+/// A § V-x invariant SCALAR part: a literal, a pure/primitive op over invariant parts, a
+/// by-value scalar parameter the function never reassigns, or a scalar-getter read of a
+/// value-const record parameter (collected into `params` for the caller's alias gate).
+fn lit_part_invariant(
+    val: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+    params: &mut HashSet<u16>,
+) -> bool {
+    match val.unspan() {
+        Value::Int(_)
+        | Value::Long(_)
+        | Value::Float(_)
+        | Value::Single(_)
+        | Value::Boolean(_)
+        | Value::Enum(_, _)
+        | Value::Null => true,
+        Value::Var(p) => {
+            // A by-value scalar parameter never reassigned: copies cannot alias, so
+            // only a rebind could move it, and there is none.
+            vars.is_argument(*p)
+                && matches!(
+                    vars.tp(*p).base(),
+                    Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
+                )
+                && !set_counts.contains_key(p)
+        }
+        Value::If(c, a, b) => {
+            lit_part_invariant(c, data, vars, set_counts, params)
+                && lit_part_invariant(a, data, vars, set_counts, params)
+                && lit_part_invariant(b, data, vars, set_counts, params)
+        }
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .all(|op| lit_part_invariant(op, data, vars, set_counts, params)),
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                return false;
+            }
+            let def = data.def(*d);
+            let name = def.name();
+            // A scalar-getter read of a VALUE-CONST record parameter.
+            if LIT_HOIST_GETTERS.contains(&name)
+                && let Some(Value::Var(p)) = args.first().map(Value::unspan)
+                && vars.is_argument(*p)
+                && vars.is_value_const(*p)
+                && matches!(vars.tp(*p).peel_link(), Type::Reference(_, _))
+                && args[1..]
+                    .iter()
+                    .all(|a| matches!(a.unspan(), Value::Int(_)))
+            {
+                params.insert(*p);
+                return true;
+            }
+            // A pure or primitive scalar op over invariant parts.
+            let primitive = matches!(def.code(), Value::Null) && !def.rust().is_empty();
+            (primitive || def.purity == crate::data::Purity::Pure)
+                && args
+                    .iter()
+                    .all(|a| lit_part_invariant(a, data, vars, set_counts, params))
+        }
+        _ => false,
+    }
+}
+
+/// A § V-x invariant vector-literal INITIALIZER: the parser's build group — `OpDatabase`
+/// on the declaration's own `__vdb` witness, the `_vec` temp bound from it, the length
+/// reset, the reservation, and pushes of invariant scalar parts — possibly under an `if`
+/// whose condition is itself invariant.  Anything else declines.
+fn lit_init_invariant(
+    val: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+    set_counts: &HashMap<u16, u32>,
+    params: &mut HashSet<u16>,
+) -> bool {
+    match val.unspan() {
+        Value::If(c, a, b) => {
+            lit_part_invariant(c, data, vars, set_counts, params)
+                && lit_init_invariant(a, data, vars, set_counts, params)
+                && lit_init_invariant(b, data, vars, set_counts, params)
+        }
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .all(|op| lit_init_invariant(op, data, vars, set_counts, params)),
+        Value::Set(t, x) => {
+            // `_vec_N = OpGetField(__vdb_M, 0, tp)` — the temp bound to the fresh store.
+            vars.name(*t).starts_with("_vec")
+                && matches!(x.unspan(), Value::Call(d, cargs)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if vars.name(*w).starts_with("__vdb")))
+        }
+        Value::Var(t) => vars.name(*t).starts_with("_vec"),
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                return false;
+            }
+            let name = data.def(*d).name();
+            match name {
+                "OpDatabase" | "OpSetInt4" => matches!(
+                    args.first().map(Value::unspan),
+                    Some(Value::Var(w)) if vars.name(*w).starts_with("__vdb")
+                ),
+                "OpPreAllocVector" => matches!(
+                    args.first().map(Value::unspan),
+                    Some(Value::Var(w)) if vars.name(*w).starts_with("_vec")
+                ),
+                _ if name.starts_with("OpPush") => {
+                    matches!(
+                        args.first().map(Value::unspan),
+                        Some(Value::Var(w)) if vars.name(*w).starts_with("_vec")
+                    ) && args[1..]
+                        .iter()
+                        .all(|a| lit_part_invariant(a, data, vars, set_counts, params))
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// @PLN157 § V-x — what [`invariant_literals`] admitted, by SHAPE: a `wrapped` local's
+/// whole build is the one `Set(v, if …)` statement the emitter guards directly; a `flat`
+/// local's build is the parser's statement RUN (`OpDatabase(__vdb) · Set(v, OpGetField) ·
+/// OpSetInt4 · OpPreAlloc · pushes`), which the emitter guards from the `OpDatabase` to
+/// the first non-member statement ([`flat_lit_member`] is the shared predicate, so the
+/// two cannot drift).
+#[derive(Default)]
+pub struct LitHoist {
+    /// Admitted locals whose declaration is ONE `Set` statement.
+    pub wrapped: HashSet<u16>,
+    /// Admitted FLAT groups, keyed by the declaration's `__vdb` witness → the local.
+    pub flat: HashMap<u16, u16>,
+}
+
+impl LitHoist {
+    #[must_use]
+    pub fn contains(&self, v: u16) -> bool {
+        self.wrapped.contains(&v) || self.flat.values().any(|w| *w == v)
+    }
+}
+
+/// Is `stmt` a member of the FLAT build group of local `v` with witness `vdb`
+/// (@PLN157 § V-x)?  Shared by the analysis (group collection) and the emitter (guard
+/// close), so an op admitted by one is admitted by the other.  A `Value::Line` marker is
+/// a member — the parser may interleave source positions with the group.
+#[must_use]
+pub fn flat_lit_member(
+    stmt: &Value,
+    v: u16,
+    vdb: u16,
+    data: &Data,
+    _vars: &crate::variables::Function,
+) -> bool {
+    match stmt.unspan() {
+        Value::Line(_) => true,
+        Value::Set(w, x) if *w == v => matches!(x.unspan(), Value::Call(d, cargs)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpGetField"
+                && matches!(cargs.first().map(Value::unspan), Some(Value::Var(u)) if *u == vdb)),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let first_is =
+                |t: u16| matches!(args.first().map(Value::unspan), Some(Value::Var(u)) if *u == t);
+            match name {
+                "OpSetInt4" => first_is(vdb),
+                "OpPreAllocVector" => first_is(v),
+                _ if name.starts_with("OpPush") => first_is(v),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+    // (The part-invariance of each push was proven at admission; membership here is
+    // positional, so a group the analysis declined never reaches the emitter.)
+}
+
+/// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector LITERALS that build ONCE per
+/// activation: a `Set(v, init)` under a `For` where `v` is a plain no-heap-scalar vector
+/// with one `Set` in the whole function, the initializer's parts are invariant
+/// ([`lit_part_invariant`]), the local's other uses are reads only, and — the alias gate
+/// `(Const-Value)` makes necessary, since `const` is per-NAME — every variable in the
+/// function whose type can reach a record type the initializer reads is either a
+/// fresh-store local (its record is this activation's, never the caller's) or a
+/// value-const parameter itself used ONLY as a scalar-getter base.  The emitter
+/// pre-declares each admitted local at function top and wraps its declaration statement
+/// in an unbound-guard, so the build runs once and every later iteration (and re-entry)
+/// reuses the store.  Two admitted locals sharing a sanitized name would share the one
+/// function-top binding, so a collision declines both (the c11 cell).
+pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    // A coroutine's locals persist as state-machine fields, and a `par` body's captures
+    // run beside the loop: both break the plain-frame assumptions of the fn-top guard.
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))) {
+        return LitHoist::default();
+    }
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            *set_counts.entry(*v).or_default() += 1;
+        }
+        false
+    });
+    // Candidates, with the value-const params each one reads.  `flat_of` remembers which
+    // admitted local is a statement-run build and through which witness.
+    let mut cands: HashMap<u16, HashSet<u16>> = HashMap::new();
+    let mut flat_of: HashMap<u16, u16> = HashMap::new();
+    // A FLAT group's own statements mention the local (`OpPreAllocVector(v, …)`, the
+    // pushes), and the use-reconciliation below must account for exactly those.
+    let mut group_mentions: HashMap<u16, u32> = HashMap::new();
+    let elem_ok = |v: u16| {
+        matches!(vars.tp(v).peel_link(), Type::Vector(elem, _)
+            if matches!(elem.base(), Type::Integer(_) | Type::Float
+                | Type::Single | Type::Boolean | Type::Character))
+    };
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "For block"
+        {
+            bl.operators.iter().for_each(|op| {
+                op.any_node(&mut |m| {
+                    // The WRAPPED shape: one Set whose value packages the whole build.
+                    if let Value::Set(v, init) = m
+                        && !cands.contains_key(v)
+                        && set_counts.get(v) == Some(&1)
+                        && elem_ok(*v)
+                    {
+                        let mut params = HashSet::new();
+                        if lit_init_invariant(init, data, vars, &set_counts, &mut params) {
+                            cands.insert(*v, params);
+                        }
+                    }
+                    // The FLAT shape: `OpDatabase(__vdb) · Set(v, OpGetField(__vdb)) ·
+                    // members…` as a statement run of some inner block.
+                    if let Value::Block(inner) = m {
+                        let ops = &inner.operators;
+                        let trace = std::env::var("LOFT_TRACE_LITHOIST").is_ok();
+                        // The parser interleaves `Line` markers with the group.
+                        let next_code =
+                            |from: usize| (from..ops.len())
+                                .find(|j| !matches!(ops[*j].unspan(), Value::Line(_)));
+                        for i in 0..ops.len() {
+                            let Value::Call(d, dargs) = ops[i].unspan() else {
+                                continue;
+                            };
+                            if (*d as usize) >= data.definitions.len()
+                                || data.def(*d).name() != "OpDatabase"
+                            {
+                                continue;
+                            }
+                            let Some(Value::Var(vdb)) = dargs.first().map(Value::unspan) else {
+                                continue;
+                            };
+                            if !vars.name(*vdb).starts_with("__vdb") {
+                                continue;
+                            }
+                            let Some(si) = next_code(i + 1) else { continue };
+                            let Value::Set(v, _) = ops[si].unspan() else {
+                                if trace {
+                                    eprintln!(
+                                        "[lithoist] {}: after OpDatabase({}) not a Set",
+                                        def.name(),
+                                        vars.name(*vdb)
+                                    );
+                                }
+                                continue;
+                            };
+                            if cands.contains_key(v)
+                                || set_counts.get(v) != Some(&1)
+                                || !elem_ok(*v)
+                                || !flat_lit_member(&ops[si], *v, *vdb, data, vars)
+                            {
+                                if trace {
+                                    eprintln!(
+                                        "[lithoist] {}: {} declined (sets={:?}, elem_ok={}, member={})",
+                                        def.name(),
+                                        vars.name(*v),
+                                        set_counts.get(v),
+                                        elem_ok(*v),
+                                        flat_lit_member(&ops[si], *v, *vdb, data, vars)
+                                    );
+                                }
+                                continue;
+                            }
+                            // Collect the run and prove each push part invariant,
+                            // tallying the group's own mentions of the local.
+                            let mut params = HashSet::new();
+                            let mut sound = true;
+                            let mut mentions = 0u32;
+                            for stmt in ops.iter().skip(si + 1) {
+                                if !flat_lit_member(stmt, *v, *vdb, data, vars) {
+                                    break;
+                                }
+                                stmt.any_node(&mut |n| {
+                                    if matches!(n, Value::Var(u) if u == v) {
+                                        mentions += 1;
+                                    }
+                                    false
+                                });
+                                if let Value::Call(pd, pargs) = stmt.unspan()
+                                    && data.def(*pd).name().starts_with("OpPush")
+                                    && !pargs[1..].iter().all(|a| {
+                                        lit_part_invariant(a, data, vars, &set_counts, &mut params)
+                                    })
+                                {
+                                    sound = false;
+                                    if trace {
+                                        eprintln!(
+                                            "[lithoist] {}: {} push part not invariant",
+                                            def.name(),
+                                            vars.name(*v)
+                                        );
+                                    }
+                                    break;
+                                }
+                            }
+                            if sound {
+                                cands.insert(*v, params);
+                                flat_of.insert(*v, *vdb);
+                                group_mentions.insert(*v, mentions);
+                            }
+                        }
+                    }
+                    false
+                });
+            });
+        }
+        false
+    });
+    if cands.is_empty() {
+        return LitHoist::default();
+    }
+    // The local's OTHER uses must all be reads: For-head binds, indexed/length reads,
+    // whole-value binds to another local, and its scope-exit free.  Reconciled counts,
+    // because `any_node` visits the `Var` inside each allowed context too.
+    let mut var_mentions: HashMap<u16, u32> = HashMap::new();
+    let mut allowed_uses: HashMap<u16, u32> = HashMap::new();
+    let mut getter_bases: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(w) => {
+                *var_mentions.entry(*w).or_default() += 1;
+            }
+            Value::Set(_, x) => {
+                if let Value::Var(w) = x.unspan()
+                    && cands.contains_key(w)
+                {
+                    *allowed_uses.entry(*w).or_default() += 1;
+                }
+            }
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if let Some(Value::Var(w)) = args.first().map(Value::unspan) {
+                    // OpGetVector* is NOT here on purpose: it is context-blind — the
+                    // same node is the base of `v[0] = …`'s WRITE — so an indexed use
+                    // declines the candidate (the c5 cell), costing the optimisation
+                    // and never correctness.  The For-head bind covers iteration.
+                    if matches!(name, "OpLengthVector" | "OpFreeRef") && cands.contains_key(w) {
+                        *allowed_uses.entry(*w).or_default() += 1;
+                    }
+                    if LIT_HOIST_GETTERS.contains(&name) {
+                        *getter_bases.entry(*w).or_default() += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    cands.retain(|v, _| {
+        var_mentions.get(v).copied().unwrap_or(0)
+            == allowed_uses.get(v).copied().unwrap_or(0)
+                + group_mentions.get(v).copied().unwrap_or(0)
+    });
+    // The alias gate: for each record definition an admitted init reads, every variable
+    // whose type can reach it must be a fresh-store local or a value-const parameter
+    // used only as a scalar-getter base.
+    let pds: HashSet<u32> = cands
+        .values()
+        .flatten()
+        .filter_map(|p| match vars.tp(*p).peel_link() {
+            Type::Reference(pd, _) => Some(*pd),
+            _ => None,
+        })
+        .collect();
+    let mut fresh_memo: HashMap<u16, bool> = HashMap::new();
+    let alias_clean = pds.iter().all(|pd| {
+        (0..vars.count()).all(|w| {
+            if !mentions_def(vars.tp(w), *pd) || var_mentions.get(&w).copied().unwrap_or(0) == 0 {
+                return true;
+            }
+            if vars.is_argument(w) && vars.is_value_const(w) {
+                // Its only permitted role is a scalar-getter base — a whole-value
+                // escape (a call argument, a bind, an `&`) could reach a writer.
+                return getter_bases.get(&w).copied().unwrap_or(0)
+                    == var_mentions.get(&w).copied().unwrap_or(0);
+            }
+            *fresh_memo
+                .entry(w)
+                .or_insert_with(|| fresh_store_local(w, data, vars, body))
+        })
+    });
+    if !alias_clean {
+        // The gate is per-FUNCTION on purpose: one unprovable alias route makes every
+        // param-reading candidate unsound, and a literal-only candidate reads no pd.
+        cands.retain(|_, params| params.is_empty());
+    }
+    // Two admitted locals sharing a sanitized name would share the one fn-top binding.
+    let mut by_name: HashMap<String, u32> = HashMap::new();
+    for v in cands.keys() {
+        *by_name.entry(super::sanitize(vars.name(*v))).or_default() += 1;
+    }
+    let mut out = LitHoist::default();
+    for v in cands.into_keys() {
+        if by_name[&super::sanitize(vars.name(v))] != 1 {
+            continue;
+        }
+        if let Some(vdb) = flat_of.get(&v) {
+            out.flat.insert(*vdb, v);
+        } else {
+            out.wrapped.insert(v);
+        }
+    }
+    out
+}
+
+/// @PLN157 § V-y — what [`complete_writes`] admitted: `db_vars` are locals whose EVERY
+/// `OpDatabase` site heads a covering literal group (the emitter calls `OpDatabaseNP`);
+/// `mint_tps` are element types whose every `OpNewRecord` site in this function does
+/// (the emitter calls `OpNewRecordNP`).
+#[derive(Default)]
+pub struct CompleteWrites {
+    pub db_vars: HashSet<u16>,
+    pub mint_tps: HashSet<u16>,
+}
+
+/// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
+/// with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
+/// against the schema's field list, the variant tag included (its field sits at
+/// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
+/// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
+/// leaves the group incomplete, and the prefill stays: the check can only DECLINE the
+/// elision, never miscompile it.
+fn group_covers_type(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> bool {
+    if (tp as usize) >= stores.types.len() {
+        return false;
+    }
+    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
+        &stores.types[tp as usize].parts
+    else {
+        return false;
+    };
+    if fields.is_empty() {
+        return false;
+    }
+    let mut written: HashSet<u16> = HashSet::new();
+    for stmt in ops.iter().skip(at) {
+        match stmt.unspan() {
+            Value::Line(_) => {}
+            // The declaration's own bind (`v = OpGetField(target, 0, tp)`) interleaves
+            // a VECTOR store's group between the OpDatabase and the length reset — a
+            // member that covers nothing.  (The collection-field prefill is ONE u32
+            // zero at the field position, exactly the group's `OpSetInt4`'s width, so
+            // admitting the shape is width-equal, not width-blind.)
+            Value::Set(_, x)
+                if matches!(x.unspan(), Value::Call(d, cargs)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(u)) if *u == target)) => {}
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                if name.starts_with("OpSet")
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == target)
+                    && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
+                    && let Ok(off) = u16::try_from(*off)
+                {
+                    written.insert(off);
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    fields.iter().all(|f| written.contains(&f.position))
+}
+
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
+/// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
+/// writes every field explicitly (a named value, the declared default, the interned
+/// empty text, the null sentinel, `false`, the variant tag), and the emitter's proof is
+/// coverage of every schema field position by the group's contiguous `OpSet*`s.
+/// `db_vars` is keyed by the LOCAL (every `OpDatabase(v, …)` site must head a covering
+/// group — a var built completely in one branch and partially in another declines);
+/// `mint_tps` by the ELEMENT TYPE (every `Set(_, OpNewRecord(…, tp, …))` group in the
+/// function must cover it).  The interpreter keeps the prefill and is the oracle.
+pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWrites {
+    let def = data.def(def_nr);
+    let body = def.code();
+    let mut out = CompleteWrites::default();
+    let mut db_declined: HashSet<u16> = HashSet::new();
+    let mut mint_declined: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                match stmt.unspan() {
+                    // `OpDatabase(v, tp)` heading a struct-literal group.
+                    Value::Call(d, args)
+                        if (*d as usize) < data.definitions.len()
+                            && data.def(*d).name() == "OpDatabase" =>
+                    {
+                        let (Some(Value::Var(v)), Some(Value::Int(tp))) = (
+                            args.first().map(Value::unspan),
+                            args.get(1).map(Value::unspan),
+                        ) else {
+                            continue;
+                        };
+                        let Ok(tp) = u16::try_from(*tp) else {
+                            db_declined.insert(*v);
+                            continue;
+                        };
+                        if group_covers_type(ops, i + 1, *v, tp, data, stores) {
+                            out.db_vars.insert(*v);
+                        } else {
+                            db_declined.insert(*v);
+                        }
+                    }
+                    // `Set(e, OpNewRecord(P, tp, fld))` heading a mint group: the sets
+                    // that follow write through `e`.
+                    Value::Set(e, inner) => {
+                        let Value::Call(d, cargs) = inner.unspan() else {
+                            continue;
+                        };
+                        if (*d as usize) >= data.definitions.len()
+                            || data.def(*d).name() != "OpNewRecord"
+                        {
+                            continue;
+                        }
+                        let Some(Value::Int(ptp)) = cargs.get(1).map(Value::unspan) else {
+                            continue;
+                        };
+                        let Ok(ptp) = u16::try_from(*ptp) else {
+                            continue;
+                        };
+                        // The element's CONTENT type is what the prefill would walk.
+                        let fld = match cargs.get(2).map(Value::unspan) {
+                            Some(Value::Int(f)) => u16::try_from(*f).unwrap_or(u16::MAX),
+                            _ => u16::MAX,
+                        };
+                        let etp = if fld == u16::MAX {
+                            stores.content(ptp)
+                        } else {
+                            stores.content(stores.field_type(ptp, fld))
+                        };
+                        if etp != u16::MAX && group_covers_type(ops, i + 1, *e, etp, data, stores) {
+                            out.mint_tps.insert(ptp);
+                        } else {
+                            mint_declined.insert(ptp);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
+    });
+    out.db_vars.retain(|v| !db_declined.contains(v));
+    out.mint_tps.retain(|t| !mint_declined.contains(t));
+    out
+}
+
+/// @PLN157 § V-z — one paired temp of an ELEMENT-FIRST append: the local `tmp` (declared
+/// through witness `vdb`) is consumed exactly once as the record-literal field at byte
+/// `field_off` of the element `elm` appended to `out`.
+pub struct ElemBind {
+    pub tmp: u16,
+    pub vdb: u16,
+    pub field_off: i32,
+    /// This temp's declaration carries the element MINT (the first temp in decl order).
+    pub first: bool,
+}
+
+/// @PLN157 § V-z — an admitted element-first APPEND: the element minted at the first
+/// temp's declaration site, every paired temp bound to its field slot, the append site
+/// keeping its scalar sets and finish while the reservation, the mint, the paired
+/// handle-zeros and the paired `OpAppendVector` copies are suppressed.
+pub struct ElemFirst {
+    pub out: u16,
+    pub out_tp: i32,
+    pub elm: u16,
+    pub prealloc_size: i32,
+    pub binds: Vec<ElemBind>,
+}
+
+/// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of one function.
+/// Keyed for the emitter: `by_vdb` finds a temp's declaration (the `OpDatabase` site is
+/// where the prelude or the slot bind emits), `elms` marks the append-site element vars
+/// whose reservation/mint/zeros/copies the statement loop suppresses.
+#[derive(Default)]
+pub struct ElemFirstMap {
+    pub pairs: Vec<ElemFirst>,
+    pub by_vdb: HashMap<u16, usize>,
+    pub by_elm: HashMap<u16, usize>,
+    pub elms: HashSet<u16>,
+}
+
+fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
+    if let Value::Call(d, args) = stmt.unspan()
+        && (*d as usize) < data.definitions.len()
+        && data.def(*d).name() == name
+    {
+        Some(args)
+    } else {
+        None
+    }
+}
+
+fn as_var(v: Option<&Value>) -> Option<u16> {
+    match v.map(Value::unspan) {
+        Some(Value::Var(w)) => Some(*w),
+        _ => None,
+    }
+}
+
+fn as_int(v: Option<&Value>) -> Option<i32> {
+    match v.map(Value::unspan) {
+        Some(Value::Int(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+/// @PLN157 § V-z (`@FR-R-ElemFirst`) — pair the temps with their one consuming append.
+///
+/// Gates, each carried by a cell: the temp's declaration (`OpDatabase(vdb) ·
+/// Set(tmp, OpGetField(vdb)) · OpSetInt4(vdb, 0, 0)`) and the append group
+/// (`OpPreAlloc(out, 1) · Set(elm, OpNewRecord(out)) · zeros · appends · finish`) are
+/// top-level statements of the SAME block (an append under an `if` arm declines — the
+/// early mint would strand an unfinished element per skipped iteration, c7); nothing
+/// between them mentions `out` (an early mint changes what `len(out)` answers, c5); the
+/// temp's whole-function uses reconcile to its build mentions plus the ONE
+/// `OpAppendVector` (a read after the append or a second append declines, c3/c4);
+/// `out` is an owned plain vector never rebound, its element a plain struct.
+pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))) {
+        return ElemFirstMap::default();
+    }
+    let trace = std::env::var("LOFT_TRACE_ELEMFIRST").is_ok();
+    // Rebind counts, decl-style Sets excluded (the move-append convention).
+    let mut set_counts: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n {
+            let init = match to.unspan() {
+                Value::Null => true,
+                Value::Call(d, cargs) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(cargs.first().map(Value::unspan),
+                            Some(Value::Var(w)) if *w < vars.count()
+                                && vars.name(*w).starts_with("__vdb"))
+                }
+                _ => false,
+            };
+            if !init {
+                *set_counts.entry(*v).or_default() += 1;
+            }
+        }
+        false
+    });
+    let mut out_map = ElemFirstMap::default();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else { return false };
+        let ops = &bl.operators;
+        let code_idx: Vec<usize> = (0..ops.len())
+            .filter(|j| !matches!(ops[*j].unspan(), Value::Line(_)))
+            .collect();
+        // Temp declarations in this list: tmp -> (vdb, position in code_idx).
+        let mut decls: HashMap<u16, (u16, usize)> = HashMap::new();
+        for (k, &j) in code_idx.iter().enumerate() {
+            if let Some(args) = call_named(&ops[j], data, "OpDatabase")
+                && let Some(vdb) = as_var(args.first())
+                && vars.name(vdb).starts_with("__vdb")
+                && k + 2 < code_idx.len()
+                && let Value::Set(tmp, x) = ops[code_idx[k + 1]].unspan()
+                && matches!(x.unspan(), Value::Call(d, cargs)
+                    if data.def(*d).name() == "OpGetField"
+                        && as_var(cargs.first()) == Some(vdb))
+                && call_named(&ops[code_idx[k + 2]], data, "OpSetInt4")
+                    .is_some_and(|a| as_var(a.first()) == Some(vdb))
+            {
+                decls.insert(*tmp, (vdb, k));
+            }
+        }
+        if decls.is_empty() {
+            return false;
+        }
+        // Append groups: reservation + mint + zeros/appends/sets + finish.
+        for (k, &j) in code_idx.iter().enumerate() {
+            let Some(pa) = call_named(&ops[j], data, "OpPreAllocVector") else {
+                continue;
+            };
+            let Some(out) = as_var(pa.first()) else {
+                continue;
+            };
+            if as_int(pa.get(1)) != Some(1) {
+                continue;
+            }
+            let Some(size) = as_int(pa.get(2)) else {
+                continue;
+            };
+            if k + 1 >= code_idx.len() {
+                continue;
+            }
+            let Value::Set(elm, mint) = ops[code_idx[k + 1]].unspan() else {
+                continue;
+            };
+            let Value::Call(md, margs) = mint.unspan() else {
+                continue;
+            };
+            if data.def(*md).name() != "OpNewRecord"
+                || as_var(margs.first()) != Some(out)
+                || as_int(margs.get(2)) != Some(65535)
+            {
+                continue;
+            }
+            let Some(out_tp) = as_int(margs.get(1)) else {
+                continue;
+            };
+            // `out`: owned plain vector, never rebound, element a plain struct.
+            if set_counts.contains_key(&out)
+                || !matches!(vars.tp(out).peel_link(), Type::Vector(e, _)
+                    if plain_record_type(data, e).is_some())
+            {
+                continue;
+            }
+            // Scan the group: paired appends, and the finish that closes it.
+            let mut appended: Vec<(u16, i32)> = Vec::new();
+            let mut fin = None;
+            for &j2 in code_idx.iter().skip(k + 2) {
+                let stmt = &ops[j2];
+                if let Some(a) = call_named(stmt, data, "OpSetInt4")
+                    && as_var(a.first()) == Some(*elm)
+                {
+                    continue;
+                }
+                if let Some(a) = call_named(stmt, data, "OpAppendVector")
+                    && let Value::Call(gd, gargs) = a[0].unspan()
+                    && data.def(*gd).name() == "OpGetField"
+                    && as_var(gargs.first()) == Some(*elm)
+                    && let Some(off) = as_int(gargs.get(1))
+                    && let Some(tmp) = as_var(a.get(1))
+                {
+                    appended.push((tmp, off));
+                    continue;
+                }
+                // A scalar field set on the element stays untouched.
+                if let Value::Call(sd, sargs) = stmt.unspan()
+                    && data.def(*sd).name().starts_with("OpSet")
+                    && as_var(sargs.first()) == Some(*elm)
+                {
+                    continue;
+                }
+                if let Some(a) = call_named(stmt, data, "OpFinishRecord")
+                    && as_var(a.first()) == Some(out)
+                    && as_var(a.get(1)) == Some(*elm)
+                {
+                    fin = Some(j2);
+                }
+                break;
+            }
+            if fin.is_none() || appended.is_empty() {
+                continue;
+            }
+            // Pair each appended temp with a declaration EARLIER in this list, and
+            // require the stretch between declaration and reservation clean of `out`.
+            let mut binds: Vec<ElemBind> = Vec::new();
+            let mut first_decl = usize::MAX;
+            let mut sound = true;
+            for (tmp, off) in &appended {
+                let Some((vdb, dk)) = decls.get(tmp).copied() else {
+                    sound = false;
+                    break;
+                };
+                if dk + 2 >= k {
+                    // the declaration must fully precede the reservation
+                    sound = false;
+                    break;
+                }
+                first_decl = first_decl.min(dk);
+                binds.push(ElemBind {
+                    tmp: *tmp,
+                    vdb,
+                    field_off: *off,
+                    first: false,
+                });
+            }
+            if !sound {
+                if trace {
+                    eprintln!("[elemfirst] {}: append pairing incomplete", def.name());
+                }
+                continue;
+            }
+            // `out`'s own declaration must PRECEDE the first temp's: a temp declared
+            // first would put the prelude before `out`'s binding exists (the sqldb
+            // schema fixture's E0425, and a mint into a store not yet allocated).
+            // `out` declared in an ENCLOSING block is not in this list and passes.
+            if decls.get(&out).is_some_and(|(_, ok)| *ok >= first_decl) {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: out declared after the first temp",
+                        def.name()
+                    );
+                }
+                continue;
+            }
+            // No `out` mention strictly between the first declaration and the group.
+            for &j2 in &code_idx[first_decl + 3..k] {
+                ops[j2].any_node(&mut |m| {
+                    if matches!(m, Value::Var(w) if *w == out) {
+                        sound = false;
+                        return true;
+                    }
+                    false
+                });
+            }
+            if !sound {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: out read between decl and append",
+                        def.name()
+                    );
+                }
+                continue;
+            }
+            // Whole-function reconciliation per temp: its mentions are its builds
+            // (between its own declaration and the group), the one append — and
+            // nothing else (a later read, a second append, an escape all decline).
+            for b in &binds {
+                let mut total = 0u32;
+                body.any_node(&mut |m| {
+                    if matches!(m, Value::Var(w) if *w == b.tmp) {
+                        total += 1;
+                    }
+                    false
+                });
+                let mut allowed = 1u32; // the one OpAppendVector
+                let (_, dk) = decls[&b.tmp];
+                for &j2 in &code_idx[dk + 1..k] {
+                    ops[j2].any_node(&mut |m| {
+                        if matches!(m, Value::Var(w) if *w == b.tmp) {
+                            allowed += 1;
+                        }
+                        false
+                    });
+                }
+                if total != allowed {
+                    if trace {
+                        eprintln!(
+                            "[elemfirst] {}: {} has uses beyond its build ({} vs {})",
+                            def.name(),
+                            vars.name(b.tmp),
+                            total,
+                            allowed
+                        );
+                    }
+                    sound = false;
+                }
+            }
+            if !sound {
+                continue;
+            }
+            // The FIRST temp in declaration order carries the mint.
+            binds.sort_by_key(|b| decls[&b.tmp].1);
+            if let Some(b0) = binds.first_mut() {
+                b0.first = true;
+            }
+            let idx = out_map.pairs.len();
+            for b in &binds {
+                out_map.by_vdb.insert(b.vdb, idx);
+            }
+            out_map.elms.insert(*elm);
+            out_map.by_elm.insert(*elm, idx);
+            out_map.pairs.push(ElemFirst {
+                out,
+                out_tp,
+                elm: *elm,
+                prealloc_size: size,
+                binds,
+            });
+        }
+        false
+    });
+    // A temp or an element serving TWO admitted pairs is beyond this keying.
+    let mut vdb_seen: HashMap<u16, u32> = HashMap::new();
+    for p in &out_map.pairs {
+        for b in &p.binds {
+            *vdb_seen.entry(b.vdb).or_default() += 1;
+        }
+    }
+    if vdb_seen.values().any(|c| *c > 1) {
+        return ElemFirstMap::default();
+    }
+    out_map
+}
+
+/// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose NO-HEAP RECORD result is
+/// returned BY VALUE (a Rust tuple of its fields, in registers) instead of through a
+/// return buffer, with the field offsets that map a `OpGetField` to a tuple index.
+#[derive(Default)]
+pub struct ValueRecords {
+    /// Admitted functions → their record type.
+    pub fns: HashMap<u32, u16>,
+    /// `(record type, byte offset)` → tuple index, for the call site's field reads.
+    pub index: HashMap<(u16, i64), usize>,
+    /// The Rust tuple type of an admitted function's result.
+    pub tuple: HashMap<u32, String>,
+    /// Per admitted function, its fields in ORDER: `(byte offset, Rust type)` — what the
+    /// tuple carries, and what the live-reload arm must read back out of the record the
+    /// interpreter answers with.
+    pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
+}
+
+/// WARNING - OPT-IN as of 2026-09-12 (`LOFT_VALUE_RECORD=1`), not default-on.  The
+/// admission gates do not hold across the script corpus: sites survive that use the
+/// result AS A DbRef (rustc: no field store_nr on type (f64,)), that pass a buffer
+/// argument to a signature which dropped it, and that join a tuple arm with a record arm
+/// in one `match` - each one a generated crate that does not compile.  Gate (2) claims
+/// EVERY call site consumes the result by reading fields off a local it binds; the corpus
+/// says otherwise.  Until that gate is proven against the corpus rather than against nine
+/// hand-written cells, the unit is worth -2.9 % on one bench row against a compiler that
+/// cannot build real programs.  Turn it on to work on it; the tests pass it explicitly.
+///
+/// The old switch restored the return buffer for every record return — the
+/// bisect step for a wrong field out of a record-returning call on native.
+///
+/// The library integration the opt-in phase existed for is closed: a cdylib bridge now
+/// MATERIALISES the tuple into the destination record it already owns
+/// (`native_lib::shared_bridge_wrapper`), so the C boundary keeps its record contract
+/// while loft-to-loft calls inside the library take the value path.
+fn value_record_disabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_VALUE_RECORD").is_ok_and(|v| v != "0"))
+}
+
+/// The scalar field kinds a register tuple can carry: no heap, no collection, no nested
+/// record — the fields `rust_type` maps to a plain Rust scalar.
+fn value_field_type(tp: &Type) -> Option<&'static str> {
+    match tp.base() {
+        Type::Float => Some("f64"),
+        Type::Single => Some("f32"),
+        Type::Integer(_) => Some("i64"),
+        Type::Boolean => Some("bool"),
+        _ => None,
+    }
+}
+
+/// @PLN157 § V-aa (`@FR-R-ValueRecord`) — which record-returning functions may return
+/// their fields in registers.
+///
+/// Two gates, and the second is what makes the first safe to apply per FUNCTION: the
+/// result type is a plain no-heap struct of at most [`VALUE_RECORD_MAX_FIELDS`] scalar
+/// fields; and EVERY call site in the program consumes the result by reading fields off a
+/// local it binds — never storing it, passing it on, returning it or binding it into a
+/// collection.  A single non-reading site declines the whole function, so no site has to
+/// materialise a record out of a tuple and no site can be made slower.
+pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+    let mut out = ValueRecords::default();
+    if value_record_disabled() {
+        return out;
+    }
+    let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    // Candidates by RESULT TYPE.
+    let mut cand: HashMap<u32, u16> = HashMap::new();
+    for d_nr in 0..data.definitions.len() as u32 {
+        let def = data.def(d_nr);
+        if !matches!(def.def_type, crate::data::DefType::Function)
+            || matches!(def.code(), Value::Null)
+        {
+            continue;
+        }
+        let Type::Reference(rd, _) = def.returned().peel_link() else {
+            continue;
+        };
+        if trace {
+            eprintln!("[valuerec] candidate {} returns ref({rd})", def.name());
+        }
+        let Some(tp) = plain_record_type(data, def.returned()) else {
+            if trace {
+                eprintln!("[valuerec] {}: not a plain record", def.name());
+            }
+            continue;
+        };
+        if stores.owns_heap(tp) {
+            continue;
+        }
+        let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
+            &stores.types[tp as usize].parts
+        else {
+            continue;
+        };
+        if fields.is_empty() || fields.len() > VALUE_RECORD_MAX_FIELDS {
+            continue;
+        }
+        let mut parts: Vec<&'static str> = Vec::new();
+        let mut order: Vec<(i64, &'static str)> = Vec::new();
+        let mut ok = true;
+        for (i, f) in fields.iter().enumerate() {
+            // Pair the schema field with the DECLARATION that named it, by name.  The two
+            // lists are not the same list and need not be the same length: a runtime
+            // schema can carry a field the definition declares no attribute for, and
+            // indexing `attributes` by the schema's position then reads another field's
+            // type -- or panics, which is what it did (`882-keyed-element-read-borrows-
+            // its-container.loft` crashed the compiler: "len is 2 but the index is 2").
+            // No match means the record has a part this analysis cannot account for, so
+            // the function declines and keeps its return buffer; declining only ever costs
+            // the optimisation.
+            let Some(a_nr) = data
+                .def(*rd)
+                .attributes
+                .iter()
+                .position(|a| a.name == f.name)
+            else {
+                ok = false;
+                break;
+            };
+            let ftp = data.attr_type(*rd, a_nr);
+            if let Some(rt) = value_field_type(&ftp) {
+                parts.push(rt);
+                order.push((i64::from(f.position), rt));
+            } else {
+                ok = false;
+                break;
+            }
+            out.index.insert((tp, i64::from(f.position)), i);
+        }
+        if !ok {
+            continue;
+        }
+        // The BODY must build the record itself, through `Object` blocks: the value form
+        // is those blocks' writes turned into a tuple, so a tail that FORWARDS another
+        // call's record (or yields a variable) has nothing to convert and the signature
+        // would promise a tuple over a `DbRef` body.
+        if !builds_record_by_object(def.code()) {
+            if trace {
+                eprintln!("[valuerec] {}: tail is not an Object build", def.name());
+            }
+            continue;
+        }
+        // A ONE-FIELD record needs the trailing comma: `(bool)` is Rust for a
+        // PARENTHESISED bool, not a 1-tuple, so the signature promised a scalar while
+        // every call site read `.0` off it and the generated crate would not compile
+        // (measured on `pub fn tx_new() -> Tx { Tx { open: false } }` in the sqldb
+        // fixture: "`bool` is a primitive type and therefore doesn't have fields").
+        // The same comma is required on the VALUE side in `emit.rs`, or the two disagree.
+        let tuple = if parts.len() == 1 {
+            format!("({},)", parts[0])
+        } else {
+            format!("({})", parts.join(", "))
+        };
+        out.tuple.insert(d_nr, tuple);
+        out.fields.insert(d_nr, order);
+        cand.insert(d_nr, tp);
+    }
+    if cand.is_empty() {
+        return out;
+    }
+    // Every CALL SITE must bind the result to a local that is read only by field reads.
+    for caller in 0..data.definitions.len() as u32 {
+        let cdef = data.def(caller);
+        if matches!(cdef.code(), Value::Null) {
+            continue;
+        }
+        let vars = cdef.variables();
+        cdef.code().any_node(&mut |n| {
+            match n {
+                // `r = f(…)` — the admitted shape, if `r`'s other uses are field reads.
+                Value::Set(v, inner) => {
+                    if let Value::Call(d, _) = inner.unspan()
+                        && cand.contains_key(d)
+                        && !local_read_fieldwise(cdef.code(), *v, data, vars)
+                    {
+                        cand.remove(d);
+                    }
+                }
+                // A call in ANY other position — an argument, a return, a field value —
+                // needs a record the tuple cannot supply.
+                Value::Call(d, args) => {
+                    for a in args {
+                        if let Value::Call(inner_d, _) = a.unspan()
+                            && cand.contains_key(inner_d)
+                        {
+                            cand.remove(inner_d);
+                        }
+                    }
+                    let _ = d;
+                }
+                Value::Return(x) => {
+                    if let Value::Call(d, _) = x.unspan() {
+                        cand.remove(d);
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+    out.fns = cand;
+    out.tuple.retain(|d, _| out.fns.contains_key(d));
+    out.fields.retain(|d, _| out.fns.contains_key(d));
+    out
+}
+
+/// Does every RESULT position of `body` build the record with an `Object` block?  The
+/// value path converts those blocks and nothing else, so a forwarded call result, a bare
+/// variable or any other tail declines the function.
+fn builds_record_by_object(body: &Value) -> bool {
+    fn leaf_ok(v: &Value) -> bool {
+        match v.unspan() {
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) => bl.operators.last().is_some_and(leaf_ok),
+            Value::If(_, a, b) => leaf_ok(a) && leaf_ok(b),
+            Value::Insert(ops) => ops.last().is_some_and(leaf_ok),
+            Value::Return(x) => leaf_ok(x),
+            _ => false,
+        }
+    }
+    // Every `Return` in the body, plus the body's own tail.
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        if let Value::Return(x) = n
+            && !leaf_ok(x)
+        {
+            ok = false;
+            return true;
+        }
+        false
+    });
+    ok && leaf_ok(body)
+}
+
+/// The widest record the value path carries.  A register tuple past this is spilled by
+/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
+pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+
+/// Is every use of local `v` in `body` a FIELD READ (or the binding itself)?  The value
+/// path replaces the record with a tuple, so a use that needs the record — an argument, a
+/// return, an append, a copy — answers `false`.
+fn local_read_fieldwise(
+    body: &Value,
+    v: u16,
+    data: &Data,
+    _vars: &crate::variables::Function,
+) -> bool {
+    let mut mentions = 0u32;
+    let mut accounted = 0u32;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(w) if *w == v => mentions += 1,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let name = data.def(*d).name();
+                let first_is_v =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                // A SCALAR FIELD READ at a constant offset — what the value path turns
+                // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
+                // record's scalar field reads through its typed getter.)
+                if first_is_v
+                    && VALUE_RECORD_GETTERS.contains(&name)
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
+                {
+                    accounted += 1;
+                }
+                // The local's own release: with no record there is nothing to free, so
+                // the value path DELETES this use rather than being declined by it.
+                if first_is_v && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct") {
+                    accounted += 1;
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    mentions == accounted
+}
+
+/// The typed scalar getters a record's field read uses — the reads the value path
+/// rewrites into tuple indices.
+pub const VALUE_RECORD_GETTERS: [&str; 6] = [
+    "OpGetFloat",
+    "OpGetInt",
+    "OpGetSingle",
+    "OpGetBoolean",
+    "OpGetByte",
+    "OpGetShort",
+];

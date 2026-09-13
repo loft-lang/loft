@@ -540,6 +540,85 @@ fn rust_fn_ident(name: &str) -> String {
         .collect()
 }
 
+/// Which checkpoint instrumentation the generated Rust carries (`LOFT_NATIVE_CHECKPOINTS`).
+///
+/// A checkpoint is a per-OPERATOR probe the generator writes into the emitted Rust, so a
+/// native program can attribute its own time with no profiler, no symbol table and no
+/// platform support beyond what the program already runs on.  It is the SUPPLEMENTARY
+/// instrument — the normal route is `scripts/profile.sh` (PERFORMANCE.md § Profiling),
+/// which perturbs the program not at all; reach for a checkpoint build when that route is
+/// closed: a stripped release binary, a machine without `perf`, or wasm.
+///
+/// The two tiers exist because a clock and a counter have very different portability.
+/// Measured on an Apple M-series (2026-09-12): reading the cycle counter (`mrs
+/// cntvct_el0`) costs **0.72 ns**, cheaper than the `AtomicU64` increment at 1.43 ns — but
+/// the counter only ADVANCES every ~41.7 ns (196 728 of 200 000 back-to-back reads
+/// returned the same value), while an operator runs in ~1-3 ns.  So no single operator's
+/// duration is measurable; only a sum over many executions is, and only because the
+/// counter is asynchronous to the code, which makes the quantised deltas dither around the
+/// true mean.  That is why [`Time`](Self::Time) publishes the execution count beside every
+/// tick total: a row backed by a handful of samples is noise wearing a number's clothes.
+///
+/// And it is why [`Count`](Self::Count) is the portable tier: wasm has no such instruction
+/// at all — wasip2 pays a host call, and a browser's `performance.now()` is deliberately
+/// clamped as a Spectre mitigation — whereas an increment needs no clock and behaves
+/// identically on every target loft emits for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CkptMode {
+    /// No instrumentation; the emission is byte-identical to an uninstrumented build.
+    #[default]
+    Off,
+    /// One increment per operator execution.  No clock, so every target behaves alike.
+    Count,
+    /// `Count` plus the operator's inclusive ticks.  Native only — on a target without a
+    /// userspace cycle counter the clock reads answer 0 and the report says the tick
+    /// column is unavailable rather than printing zeros as if they were measurements.
+    Time,
+}
+
+impl CkptMode {
+    /// Read the mode from `LOFT_NATIVE_CHECKPOINTS`, whose grammar is `mode[:filter]`.
+    /// `1`/`count` count, `time` also times; anything else (including unset and `0`) is
+    /// off, so the default build is untouched.  The filter is read separately by
+    /// [`ckpt_filter_from_env`].
+    #[must_use]
+    pub fn from_env() -> Self {
+        let raw = std::env::var("LOFT_NATIVE_CHECKPOINTS").unwrap_or_default();
+        match raw.split(':').next().unwrap_or("") {
+            "1" | "count" => Self::Count,
+            "time" => Self::Time,
+            _ => Self::Off,
+        }
+    }
+
+    /// Is any instrumentation emitted?  The one predicate every emission site asks, so a
+    /// site cannot drift from the mode by testing the variants itself.
+    #[must_use]
+    pub fn armed(self) -> bool {
+        self != Self::Off
+    }
+}
+
+/// The SCOPE filter from `LOFT_NATIVE_CHECKPOINTS=mode:<filter>`, if one was given.
+///
+/// Instrumentation is not free — measured at 3.0× (`count`) and 5.4× (`time`) on a
+/// 3.3-billion-operator run — and most of it is usually paid in code the reader has
+/// already ruled out.  A filter answers that: only operators whose enclosing loft function
+/// or source file contains `<filter>` are instrumented, so a second pass over one
+/// subsystem costs a fraction of the first pass over everything, and the sites that remain
+/// are the ones being read.
+///
+/// It also sharpens the numbers, not just the cost.  The probe changes what rustc may
+/// inline ACROSS it, so instrumenting less perturbs less — a filtered run's shares are
+/// closer to the shipped build's than a whole-program run's are.
+#[must_use]
+pub fn ckpt_filter_from_env() -> Option<String> {
+    let raw = std::env::var("LOFT_NATIVE_CHECKPOINTS").ok()?;
+    let (_, filter) = raw.split_once(':')?;
+    let filter = filter.trim();
+    (!filter.is_empty()).then(|| filter.to_string())
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -647,6 +726,71 @@ pub struct Output<'a> {
     /// records.  `LOFT_HOIST_VERIFY=1` is the falsifier (each hoisted scalar is re-read
     /// and compared).
     pub mint_hoist_disabled: bool,
+    /// @PLN157 § V-t (`@FR-R-PushRec`) — the mint paths of the enclosing loops whose record
+    /// APPEND emits through a push header, innermost last: path → the `__ph_N` local (the
+    /// same local `push_headers`-style; the path is also in [`Self::vec_headers`] as
+    /// `__ph_N.h` for every read).  Pushed and popped beside the other hoist frames.
+    mint_push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// `LOFT_NO_RECORD_PUSH=1` — a record append keeps its mint-group templates
+    /// (`OpNewRecord`'s dispatch + prefill, `OpFinishRecord`'s dispatch) as before @PLN157
+    /// § V-t (`@FR-R-PushRec`); the bisect step for a wrong element out of a record-appending
+    /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
+    /// at the slot and at the finish).
+    pub record_push_disabled: bool,
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
+    /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
+    pub move_pairs: HashMap<u16, hoist::MoveAppend>,
+    /// The same pairs keyed by LOOP VARIABLE, for the copy emitter's gate.
+    pub move_by_loopvar: HashMap<u16, hoist::MoveAppend>,
+    /// The loop variables of the paired `For` blocks currently being emitted, innermost
+    /// last — an `OpCopyRecord` whose source is one of these emits the move.
+    pub active_move_vars: Vec<u16>,
+    /// `LOFT_NO_MOVE_APPEND=1` — a paired append keeps the deep copy, as before @PLN157
+    /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
+    /// `for f in call(…) {{ v += [f] }}` loop.
+    pub move_append_disabled: bool,
+    /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
+    /// function that build once per activation ([`hoist::invariant_literals`]): each is
+    /// pre-declared at function top and its declaration statement wrapped in an
+    /// unbound-guard, so every later iteration and re-entry reuses the store.
+    pub invariant_lits: hoist::LitHoist,
+    /// `LOFT_NO_LITERAL_HOIST=1` — every loop-body literal rebuilds per iteration, as
+    /// before @PLN157 § V-x; the bisect step for a wrong constant vector inside a loop.
+    pub literal_hoist_disabled: bool,
+    /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the current function's literal groups
+    /// whose write set covers every field ([`hoist::complete_writes`]): their
+    /// `OpDatabase`/`OpNewRecord` emit the no-prefill twin.
+    pub complete_writes: hoist::CompleteWrites,
+    /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
+    /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
+    /// record on native.
+    pub complete_write_disabled: bool,
+    /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose no-heap record result
+    /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
+    /// for the whole program because the admission asks every call site.
+    pub value_records: hoist::ValueRecords,
+    /// @PLN157 § V-aa — the CURRENT function's locals bound from an admitted call: each
+    /// holds a Rust tuple, not a `DbRef`, so its `let` type, its field reads and its
+    /// release all take the value form.  Local → the callee's def nr.
+    pub value_record_locals: HashMap<u16, u32>,
+    /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
+    /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
+    /// appended element instead of its own store.
+    pub elem_first: hoist::ElemFirstMap,
+    /// `LOFT_NO_ELEMENT_FIRST=1` — every record-literal field keeps its temp-store
+    /// build and deep copy, as before @PLN157 § V-z; the bisect step for a wrong
+    /// vector field of an appended record on native.
+    pub element_first_disabled: bool,
+    /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
+    /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
+    pub ret_adopt: Option<hoist::RetAdopt>,
+    /// `LOFT_NO_RETBUF_ADOPT=1` — a vector-returning function keeps its delivery copies,
+    /// as before @PLN157 § V-u; the bisect step for a wrong vector return or a leak at a
+    /// vector-returning call.
+    pub retbuf_adopt_disabled: bool,
+    /// Non-zero while a `one_buffer_vec_copy` block of an ADOPTED function is being
+    /// emitted — the clear/append pair inside it emits as nothing (§ V-u).
+    pub in_adopt_delivery: u32,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
@@ -698,6 +842,29 @@ pub struct Output<'a> {
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
     /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
     leaf_cache: HashMap<u32, bool>,
+    /// `LOFT_NATIVE_CHECKPOINTS=count|time` — emit a per-OPERATOR checkpoint into the
+    /// generated Rust, so a native run attributes its own time without `perf`, without
+    /// symbols, and identically under wasm.  This is a SUPPLEMENTARY instrument: the
+    /// normal route is `scripts/profile.sh` (PERFORMANCE.md), which perturbs nothing.
+    ///
+    /// `count` is the portable tier — one increment per op site, no clock, so it behaves
+    /// the same on native, wasip2 and in the browser.  `time` adds a cycle-counter pair
+    /// and exists only where the CPU has the instruction; see [`CkptMode`].
+    pub checkpoints: CkptMode,
+    /// `LOFT_NATIVE_CHECKPOINTS=mode:<filter>` — instrument only the operators whose
+    /// enclosing loft function or file matches.  See [`ckpt_filter_from_env`].
+    pub ckpt_filter: Option<String>,
+    /// The checkpoint site table in id order: `(symbol, file, line, enclosing fn)`.
+    /// Built while bodies are emitted, written out after them — a site's id is its
+    /// index here, which is why the table is emitted AFTER `output_functions` and the
+    /// macro that uses it is emitted BEFORE (items are order-free in Rust; only
+    /// `macro_rules!` is not).
+    pub ckpt_sites: Vec<(String, String, u32, String)>,
+    /// The loft line most recently emitted as a `// loft:` marker, so a checkpoint can
+    /// name the source line its operator came from.  The emitter carries no other
+    /// notion of "where am I" — position reaches it as `Value::Line` nodes in the
+    /// statement list, and this is where that stream is remembered.
+    pub ckpt_cur_line: u32,
     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
@@ -1569,6 +1736,24 @@ impl<'a> Output<'a> {
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
+            mint_push_headers: Vec::new(),
+            record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
+            move_pairs: HashMap::new(),
+            move_by_loopvar: HashMap::new(),
+            active_move_vars: Vec::new(),
+            move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            invariant_lits: hoist::LitHoist::default(),
+            literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
+            complete_writes: hoist::CompleteWrites::default(),
+            complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
+                .is_ok_and(|v| v != "0"),
+            value_records: hoist::ValueRecords::default(),
+            value_record_locals: HashMap::new(),
+            elem_first: hoist::ElemFirstMap::default(),
+            element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
+            ret_adopt: None,
+            retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
+            in_adopt_delivery: 0,
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
@@ -1582,6 +1767,10 @@ impl<'a> Output<'a> {
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             leaf_cache: HashMap::new(),
+            checkpoints: CkptMode::from_env(),
+            ckpt_filter: ckpt_filter_from_env(),
+            ckpt_sites: Vec::new(),
+            ckpt_cur_line: 0,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             lean_tier: false,
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
@@ -1808,6 +1997,57 @@ impl Output<'_> {
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.indent = 0;
+        // @PLN157 § V-j — the function's paired move-appends, before anything emits.
+        self.invariant_lits = if self.literal_hoist_disabled {
+            hoist::LitHoist::default()
+        } else {
+            hoist::invariant_literals(self.data, def_nr)
+        };
+        // @PLN157 § V-aa — the locals this function binds from an admitted call.
+        self.value_record_locals.clear();
+        if !self.value_records.fns.is_empty() {
+            let body = self.data.def(def_nr).code();
+            let admitted = &self.value_records.fns;
+            let mut found: Vec<(u16, u32)> = Vec::new();
+            body.any_node(&mut |n| {
+                if let Value::Set(v, inner) = n
+                    && let Value::Call(d, _) = inner.unspan()
+                    && admitted.contains_key(d)
+                {
+                    found.push((*v, *d));
+                }
+                false
+            });
+            self.value_record_locals.extend(found);
+        }
+        self.elem_first = if self.element_first_disabled {
+            hoist::ElemFirstMap::default()
+        } else {
+            hoist::element_first(self.data, def_nr)
+        };
+        self.complete_writes = if self.complete_write_disabled {
+            hoist::CompleteWrites::default()
+        } else {
+            hoist::complete_writes(self.data, self.stores, def_nr)
+        };
+        self.move_pairs = if self.move_append_disabled {
+            HashMap::new()
+        } else {
+            hoist::move_appends(self.data, def_nr)
+        };
+        self.move_by_loopvar = self
+            .move_pairs
+            .values()
+            .map(|p| (p.loop_var, p.clone()))
+            .collect();
+        self.active_move_vars.clear();
+        self.in_adopt_delivery = 0;
+        // @PLN157 § V-u — does this function's result local adopt the return buffer?
+        self.ret_adopt = if self.retbuf_adopt_disabled {
+            None
+        } else {
+            hoist::ret_adopt(self.data, def_nr)
+        };
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
@@ -1817,6 +2057,7 @@ impl Output<'_> {
         self.vec_headers.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
+        self.mint_push_headers.clear();
         self.hoist_counter = 0;
     }
 
@@ -1855,6 +2096,7 @@ impl Output<'_> {
                     scalars: !self.scalar_hoist_disabled,
                     push: !self.push_hoist_disabled,
                     mint: !self.mint_hoist_disabled,
+                    record_push: !self.record_push_disabled,
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             )
@@ -1863,9 +2105,31 @@ impl Output<'_> {
             vectors: candidates,
             scalars,
             pushes,
+            mint_pushes,
         } = hoisted;
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        let mut mint_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
+        // `@FR-R-PushRec` — a minted path binds ONE push header its record appends emit
+        // through; reads of the path serve from the same header (`@FR-R-State`).
+        for (path, expr) in mint_pushes {
+            if self.mint_push_headers.iter().any(|f| f.contains_key(&path)) {
+                continue;
+            }
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__ph_{}", self.hoist_counter);
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &expr)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
+            lines.push(format!(
+                "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@PLN157 § V-t record push header"
+            ));
+            frame.insert(path.clone(), format!("{name}.h"));
+            mint_frame.insert(path, name);
+        }
         // `@FR-R-State` — one holder per path per frame: a pushed path binds its push header
         // here and is absent from `candidates`; an enclosing frame's holder is re-used.
         for (path, expr) in pushes {
@@ -1942,6 +2206,7 @@ impl Output<'_> {
         self.vec_headers.push(frame);
         self.scalar_hoists.push(scalar_frame);
         self.push_headers.push(push_frame);
+        self.mint_push_headers.push(mint_frame);
         Ok(opened)
     }
 
@@ -1950,6 +2215,7 @@ impl Output<'_> {
         self.vec_headers.pop();
         self.scalar_hoists.pop();
         self.push_headers.pop();
+        self.mint_push_headers.pop();
         if opened {
             write!(w, " }}")?;
         }
@@ -2162,6 +2428,104 @@ impl Output<'_> {
             .find_map(|f| f.get(path).map(String::as_str))
     }
 
+    /// The `__ph_N` local of the innermost enclosing loop that binds a RECORD-push header
+    /// for `path` (@PLN157 § V-t, `@FR-R-PushRec`), if any — the holder the mint group's
+    /// ops emit through.
+    #[must_use]
+    pub fn active_mint_push(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.mint_push_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// The § V-j move-append pair of this `For` block, if it is one — recognised by the
+    /// buffer variable its first statement's call carries (@PLN157 § V-j,
+    /// `@FR-R-MoveAppend`).
+    /// @PLN157 § V-aa — the Rust type a local is BOUND at: the callee's tuple when it
+    /// holds a value-returned record, otherwise what `rust_type` says.
+    #[must_use]
+    pub fn local_rust_type(&self, var: u16, tp: &Type) -> String {
+        if let Some(d) = self.value_record_locals.get(&var)
+            && let Some(t) = self.value_records.tuple.get(d)
+        {
+            return t.clone();
+        }
+        rust_type(tp, &Context::Variable)
+    }
+
+    /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
+    /// writes, in field order, or `None` when the block is not the complete
+    /// constant-offset write set the value path needs (then the buffer form stands).
+    #[must_use]
+    pub fn value_record_parts<'b>(
+        &self,
+        bl: &'b crate::data::Block,
+        tp: u16,
+    ) -> Option<Vec<&'b Value>> {
+        let n = self
+            .value_records
+            .index
+            .keys()
+            .filter(|(t, _)| *t == tp)
+            .count();
+        let mut slots: Vec<Option<&Value>> = vec![None; n];
+        for op in &bl.operators {
+            let Value::Call(d, args) = op.unspan() else {
+                continue;
+            };
+            if (*d as usize) >= self.data.definitions.len() {
+                return None;
+            }
+            let name = self.data.def(*d).name();
+            if !name.starts_with("OpSet") {
+                // The allocate-or-reuse guard and the trailing yield are what the value
+                // path replaces; anything ELSE in the block is work it would lose.
+                if matches!(op.unspan(), Value::Var(_)) {
+                    continue;
+                }
+                continue;
+            }
+            let Some(Value::Int(off)) = args.get(1).map(Value::unspan) else {
+                return None;
+            };
+            let idx = *self.value_records.index.get(&(tp, i64::from(*off)))?;
+            if idx >= slots.len() || slots[idx].is_some() {
+                return None;
+            }
+            slots[idx] = args.get(2);
+        }
+        slots.into_iter().collect()
+    }
+
+    pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {
+        if bl.name != "For block" || self.move_pairs.is_empty() {
+            return None;
+        }
+        let Value::Set(_, call) = bl.operators.first()?.unspan() else {
+            return None;
+        };
+        let Value::Call(_, cargs) = call.unspan() else {
+            return None;
+        };
+        let Value::Var(buf) = cargs.last()?.unspan() else {
+            return None;
+        };
+        self.move_pairs.get(buf)
+    }
+
+    /// The § V-j move pair whose LOOP VARIABLE is `v` while its `For` is being emitted —
+    /// the copy emitter's gate: an `OpCopyRecord` from an armed loop variable is the
+    /// paired append's copy, and emits the move.
+    #[must_use]
+    pub fn active_move_pair(&self, v: u16) -> Option<&hoist::MoveAppend> {
+        if self.active_move_vars.contains(&v) {
+            self.move_by_loopvar.get(&v)
+        } else {
+            None
+        }
+    }
+
     /// Whether this push is emitted through a hoisted push header (@PLN157 § V-q): the
     /// shape qualifies ([`hoist::fused_push`]), an enclosing loop bound a push header for
     /// the path, and the mechanism is on.  Answers the fused shape with the header's name.
@@ -2300,6 +2664,12 @@ impl Output<'_> {
         use std::fmt::Write as _;
         let mut pushes = String::new();
         for a in def.attributes() {
+            // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
+            // parameter, so the live-reload arm must not push one either: the
+            // interpreter allocates its own for the parked call.
+            if self.value_records.fns.contains_key(&self.def_nr) && a.name == "__retbuf" {
+                continue;
+            }
             match &a.typedef {
                 Type::Integer(_)
                 | Type::Float
@@ -2330,6 +2700,32 @@ impl Output<'_> {
         };
         let idx = self.live_fns.len();
         self.live_fns.push(def.name().to_string());
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — the live-reload arm answers the OLD
+        // shape, a `DbRef` into the interpreter's record, while an admitted function's
+        // signature says tuple.  Read the fields back out of that record, in field
+        // order, so the reload path and the value path agree on what a call returns.
+        if let Some(fields) = self.value_records.fields.get(&self.def_nr) {
+            let reads: Vec<String> = fields
+                .iter()
+                .map(|(off, rt)| match *rt {
+                    "f64" => format!("__s.store(&__lv).get_float(__lv.rec, __lv.pos + {off}u32)"),
+                    "f32" => format!("__s.store(&__lv).get_single(__lv.rec, __lv.pos + {off}u32)"),
+                    "bool" => {
+                        format!("__s.store(&__lv).get_byte(__lv.rec, __lv.pos + {off}u32, 0) == 1")
+                    }
+                    _ => format!("__s.store(&__lv).get_int(__lv.rec, __lv.pos + {off}u32)"),
+                })
+                .collect();
+            // The 1-tuple's trailing comma, as in `hoist::value_records` and the `Object`
+            // tail: this is the THIRD site that builds the tuple, and each one needs it.
+            // A single-field record made all three emit `(x)` — a parenthesised scalar —
+            // against a signature that by then said `(bool,)`.
+            let tail = if reads.len() == 1 { "," } else { "" };
+            return Some(format!(
+                "  if loft::live_dispatch::live_flipped({idx}) {{ let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __s: &Stores = unsafe {{ &*cell.get() }}; return ({}{tail}); }}\n",
+                reads.join(", ")
+            ));
+        }
         Some(format!(
             "  if loft::live_dispatch::live_flipped({idx}) {{ return loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); }}\n"
         ))
@@ -2340,6 +2736,281 @@ impl Output<'_> {
     /// `reachable` filters the `extern crate <pkg>` declarations to the native
     /// packages the emitted code actually calls (empty = whole-program
     /// fallback, keep all) — see the comment at the emission loop (#307).
+    /// Is the function now being emitted inside the checkpoint filter's scope?
+    ///
+    /// Matched against the enclosing loft function's name AND its file, so
+    /// `:raster_segment` selects one function and `:brush.loft` selects a whole module —
+    /// the two scopes a reader actually narrows to.  No filter means everything.
+    fn ckpt_in_scope(&self) -> bool {
+        let Some(f) = self.ckpt_filter.as_deref() else {
+            return true;
+        };
+        let def = self.data.def(self.def_nr);
+        def.name().contains(f) || def.position().file.contains(f)
+    }
+
+    /// Register one operator site and answer its checkpoint id (its index in
+    /// [`ckpt_sites`](Self::ckpt_sites)).
+    ///
+    /// Called from the single call/op emission chokepoint, so a site exists for exactly
+    /// the operators the program actually emits — a table entry is never a guess about
+    /// what might run.
+    fn ckpt_site(&mut self, symbol: &str) -> usize {
+        let pos = self.data.def(self.def_nr).position().clone();
+        // The statement-level `// loft:` stream is the only position the emitter carries.
+        // Before the first one in a body it is still the PREVIOUS function's line, so a
+        // body that has not emitted one yet falls back to the definition's own line
+        // rather than attributing an operator to an unrelated file's line number.
+        let line = if self.ckpt_cur_line == 0 {
+            pos.line
+        } else {
+            self.ckpt_cur_line
+        };
+        let owner = self.data.def(self.def_nr).name().to_string();
+        self.ckpt_sites
+            .push((symbol.to_string(), pos.file.replace('\n', ""), line, owner));
+        self.ckpt_sites.len() - 1
+    }
+
+    /// The checkpoint macro and clock, emitted into the file HEADER.
+    ///
+    /// Rust items are order-free, so the counter arrays this macro indexes are emitted
+    /// after the function bodies (their length is only known then) — but `macro_rules!`
+    /// is NOT order-free, which is why the macro itself has to be up here.
+    ///
+    /// A macro rather than a function on purpose: the operator has to stay INLINE in the
+    /// expression it came from.  Handing it to a `FnOnce` would wrap every instrumented
+    /// operator in a closure, and a closure capturing the generated `stores` borrow does
+    /// not always type-check in emitted code — the instrument would then fail to compile
+    /// on exactly the programs it is for.
+    fn emit_ckpt_prelude(w: &mut dyn Write, mode: CkptMode) -> std::io::Result<()> {
+        if !mode.armed() {
+            return Ok(());
+        }
+        writeln!(
+            w,
+            "\
+// --- loft checkpoints (LOFT_NATIVE_CHECKPOINTS) ---
+#[inline(always)]
+fn loft_ckpt_now() -> u64 {{
+    #[cfg(target_arch = \"aarch64\")]
+    {{
+        let v: u64;
+        // The userspace virtual counter.  0.72 ns to read, but it only advances every
+        // ~41.7 ns, so one operator's delta is 0 or ~42 — the SUM over many executions is
+        // the measurement, never a single sample.
+        unsafe {{ core::arch::asm!(\"mrs {{}}, cntvct_el0\", out(reg) v, options(nostack)) }};
+        v
+    }}
+    #[cfg(target_arch = \"x86_64\")]
+    {{
+        unsafe {{ core::arch::x86_64::_rdtsc() }}
+    }}
+    // wasm and everything else: no userspace cycle counter.  Answering 0 makes the tick
+    // column empty, and the report says the column is unavailable rather than printing
+    // zeros that read as \"this operator took no time\".
+    #[cfg(not(any(target_arch = \"aarch64\", target_arch = \"x86_64\")))]
+    {{
+        0
+    }}
+}}
+/// Count one execution of operator site `$i`, then answer `$e` unchanged.
+#[allow(unused_macros)]
+macro_rules! loft_ckpt_c {{
+    ($i:expr, $e:expr) => {{{{
+        LOFT_CKPT_COUNT[$i].fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+        $e
+    }}}};
+}}
+/// Count one execution of operator site `$i` and add its inclusive ticks.
+#[allow(unused_macros)]
+macro_rules! loft_ckpt_t {{
+    ($i:expr, $e:expr) => {{{{
+        let __t0 = loft_ckpt_now();
+        let __v = $e;
+        LOFT_CKPT_TICKS[$i]
+            .fetch_add(loft_ckpt_now().wrapping_sub(__t0), ::std::sync::atomic::Ordering::Relaxed);
+        LOFT_CKPT_COUNT[$i].fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+        __v
+    }}}};
+}}
+"
+        )
+    }
+
+    /// The checkpoint counter arrays, the site table and the report, emitted AFTER the
+    /// function bodies — that is the first moment the number of sites is known.
+    ///
+    /// The report prints SHARE rather than converting ticks to seconds: a tick is
+    /// `cntvct_el0` on arm64 and a TSC cycle on x86-64, two different units, and a share is
+    /// the same question in both.  Every row carries its execution count because the tick
+    /// column is a sum of quantised samples (§ [`CkptMode`]) — with few executions the
+    /// ticks are noise, and the count is how a reader sees that.
+    fn emit_ckpt_table(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        if !self.checkpoints.armed() {
+            return Ok(());
+        }
+        let n = self.ckpt_sites.len().max(1);
+        writeln!(w, "const LOFT_CKPT_N: usize = {n};")?;
+        writeln!(
+            w,
+            "static LOFT_CKPT_COUNT: [::std::sync::atomic::AtomicU64; LOFT_CKPT_N] = \
+             [const {{ ::std::sync::atomic::AtomicU64::new(0) }}; LOFT_CKPT_N];"
+        )?;
+        writeln!(
+            w,
+            "static LOFT_CKPT_TICKS: [::std::sync::atomic::AtomicU64; LOFT_CKPT_N] = \
+             [const {{ ::std::sync::atomic::AtomicU64::new(0) }}; LOFT_CKPT_N];"
+        )?;
+        writeln!(
+            w,
+            "static LOFT_CKPT_SITES: [(&str, &str, u32, &str); LOFT_CKPT_N] = ["
+        )?;
+        if self.ckpt_sites.is_empty() {
+            writeln!(w, "    (\"\", \"\", 0, \"\"),")?;
+        }
+        for (sym, file, line, owner) in &self.ckpt_sites {
+            writeln!(
+                w,
+                "    ({:?}, {:?}, {line}, {:?}),",
+                sym.as_str(),
+                file.as_str(),
+                owner.as_str()
+            )?;
+        }
+        writeln!(w, "];")?;
+        let timed = self.checkpoints == CkptMode::Time;
+        // The report goes out on the channel the PROGRAM's own `print` uses, so it lands in
+        // the page's console on a browser build instead of a stderr that is a sink there.
+        let emit_line = if self.wasm_browser {
+            "unsafe { crate::loft_host_print(__l.as_ptr(), __l.len()) };"
+        } else {
+            "crate::codegen_runtime::host_print(&__l);"
+        };
+        writeln!(
+            w,
+            "\
+fn loft_ckpt_report() {{
+    use ::std::sync::atomic::Ordering::Relaxed;
+    let timed = {timed};
+    let mut rows: Vec<(u64, u64, usize)> = (0..LOFT_CKPT_N)
+        .map(|i| (LOFT_CKPT_TICKS[i].load(Relaxed), LOFT_CKPT_COUNT[i].load(Relaxed), i))
+        .filter(|r| r.1 > 0)
+        .collect();
+    let tot_c: u64 = rows.iter().map(|r| r.1).sum();
+    let tot_t: u64 = rows.iter().map(|r| r.0).sum();
+    if tot_c == 0 {{ return; }}
+    if timed && tot_t > 0 {{ rows.sort_by(|a, b| b.0.cmp(&a.0)); }} else {{ rows.sort_by(|a, b| b.1.cmp(&a.1)); }}
+    let ticks = timed && tot_t > 0;
+    let mut __l = format!(
+        \"loft checkpoints — {{}} operator sites, {{}} executions{{}}\\n\",
+        rows.len(), tot_c,
+        if timed && !ticks {{ \" (no userspace cycle counter on this target — counts only)\" }} else {{ \"\" }});
+    {emit_line}
+    __l = if ticks {{
+        format!(\"{{:>7}} {{:>7}} {{:>14}}  {{:<22}} {{}}\\n\", \"calls%\", \"ticks%\", \"executions\", \"operator\", \"site\")
+    }} else {{
+        format!(\"{{:>7}} {{:>14}}  {{:<22}} {{}}\\n\", \"calls%\", \"executions\", \"operator\", \"site\")
+    }};
+    {emit_line}
+    for (t, c, i) in rows.iter().take(40) {{
+        let (sym, file, line, owner) = LOFT_CKPT_SITES[*i];
+        let short = file.rsplit('/').next().unwrap_or(file);
+        let share = 100.0 * (*c as f64) / (tot_c as f64);
+        __l = if ticks {{
+            format!(\"{{:>6.2}}% {{:>6.2}}% {{:>14}}  {{:<22}} {{}}:{{}} {{}}\\n\",
+                share, 100.0 * (*t as f64) / (tot_t as f64), c, sym, short, line, owner)
+        }} else {{
+            format!(\"{{:>6.2}}% {{:>14}}  {{:<22}} {{}}:{{}} {{}}\\n\", share, c, sym, short, line, owner)
+        }};
+        {emit_line}
+    }}
+    // The by-OPERATOR rollup: which operator KINDS the program executes, which is the
+    // question a language change is costed against (\"what would making this op cheaper be
+    // worth?\"), where the per-site table answers \"which line\".
+    let mut ops: Vec<(u64, u64, &str)> = Vec::new();
+    for (t, c, i) in &rows {{
+        let sym = LOFT_CKPT_SITES[*i].0;
+        if let Some(e) = ops.iter_mut().find(|e| e.2 == sym) {{
+            e.0 += *t;
+            e.1 += *c;
+        }} else {{
+            ops.push((*t, *c, sym));
+        }}
+    }}
+    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    __l = format!(\"  -- by operator --\\n\");
+    {emit_line}
+    for (t, c, sym) in ops.iter().take(25) {{
+        __l = if ticks {{
+            format!(\"{{:>6.2}}% {{:>6.2}}% {{:>14}}  {{}}\\n\",
+                100.0 * (*c as f64) / (tot_c as f64), 100.0 * (*t as f64) / (tot_t as f64), c, sym)
+        }} else {{
+            format!(\"{{:>6.2}}% {{:>14}}  {{}}\\n\", 100.0 * (*c as f64) / (tot_c as f64), c, sym)
+        }};
+        {emit_line}
+    }}
+    // The by-FUNCTION rollup.  Every site is one operator inside exactly one loft
+    // function, so summing sites by owner is exclusive by construction — this is the view
+    // that answers \"what takes the time\", where the per-site table answers \"which
+    // operator\".
+    let mut fns: Vec<(u64, u64, &str)> = Vec::new();
+    for (t, c, i) in &rows {{
+        let owner = LOFT_CKPT_SITES[*i].3;
+        if let Some(e) = fns.iter_mut().find(|e| e.2 == owner) {{
+            e.0 += *t;
+            e.1 += *c;
+        }} else {{
+            fns.push((*t, *c, owner));
+        }}
+    }}
+    if ticks {{ fns.sort_by(|a, b| b.0.cmp(&a.0)); }} else {{ fns.sort_by(|a, b| b.1.cmp(&a.1)); }}
+    __l = format!(\"  -- by function --\\n\");
+    {emit_line}
+    for (t, c, owner) in fns.iter().take(20) {{
+        __l = if ticks {{
+            format!(\"{{:>6.2}}% {{:>6.2}}% {{:>14}}  {{}}\\n\",
+                100.0 * (*c as f64) / (tot_c as f64), 100.0 * (*t as f64) / (tot_t as f64), c, owner)
+        }} else {{
+            format!(\"{{:>6.2}}% {{:>14}}  {{}}\\n\", 100.0 * (*c as f64) / (tot_c as f64), c, owner)
+        }};
+        {emit_line}
+    }}
+}}"
+        )
+    }
+
+    /// Write one operator's already-emitted text, wrapped in a checkpoint when it can
+    /// carry one.
+    ///
+    /// The operator is emitted into a buffer first because not every op emits an
+    /// EXPRESSION: a handful expand to nothing at all (the caller supplies the `;`), and a
+    /// macro argument cannot be empty — `loft_ckpt_c!(73, )` is a compile error, which is
+    /// how this was found rather than guessed.  An op with no emitted text has no code to
+    /// attribute, so it is written through un-instrumented and never takes a site id;
+    /// the table therefore describes exactly the operators that can be measured.
+    fn ckpt_write(&mut self, w: &mut dyn Write, symbol: &str, buf: &[u8]) -> std::io::Result<()> {
+        let text = std::str::from_utf8(buf).unwrap_or("");
+        if text.trim().is_empty() || !self.ckpt_in_scope() {
+            return w.write_all(buf);
+        }
+        let id = self.ckpt_site(symbol);
+        let mac = if self.checkpoints == CkptMode::Time {
+            "loft_ckpt_t"
+        } else {
+            "loft_ckpt_c"
+        };
+        // The buffer is BRACED, not passed bare.  Op templates are not uniformly single
+        // expressions — some are a statement sequence (`OpFreeRef(…); r.store_nr =
+        // u16::MAX`), which `$e:expr` cannot match — and a block makes every one of them
+        // one expression.  The cost is that temporaries inside drop at the block's end
+        // rather than the enclosing statement's; for generated op bodies, which already
+        // nest blocks freely, that is a narrowing nobody observes, and anything it did
+        // break would break LOUDLY at rustc rather than silently at runtime.
+        write!(w, "{mac}!({id}, {{")?;
+        w.write_all(buf)?;
+        write!(w, "}})")
+    }
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
@@ -2347,6 +3018,7 @@ impl Output<'_> {
         no_c_abi: bool,
         native_cabi: bool,
         reachable: &HashSet<u32>,
+        checkpoints: CkptMode,
     ) -> std::io::Result<()> {
         // Every `allow` here suppresses a rustc lint about GENERATED code, which a user
         // cannot act on and did not write: the emitter names every local whether or not
@@ -2862,6 +3534,7 @@ extern crate loft;"
         if !lazy.is_empty() {
             write!(w, "{lazy}")?;
         }
+        Self::emit_ckpt_prelude(w, checkpoints)?;
         Ok(())
         // @PLAN12 phase 3.5a (2026-05-24) — removed the `mod external {…}`
         // shim that wrapped cr_rand_int / cr_rand_seed.  No `#rust
@@ -2965,6 +3638,7 @@ extern crate loft;"
             self.no_c_abi(),
             self.native_cabi,
             &self.reachable,
+            self.checkpoints,
         )?;
         writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
         writeln!(
@@ -2981,6 +3655,7 @@ extern crate loft;"
         self.emit_lazy_fetch_registration(w, till)?;
         writeln!(w, "}}\n")?;
         self.output_functions(w, from, till, None)?;
+        self.emit_ckpt_table(w)?;
         self.emit_main_bootstrap(w, till)
     }
 
@@ -3103,6 +3778,7 @@ extern crate loft;"
             self.no_c_abi(),
             self.native_cabi,
             &reachable,
+            self.checkpoints,
         )?;
         writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
         writeln!(
@@ -3119,7 +3795,8 @@ extern crate loft;"
         self.emit_lazy_fetch_registration(w, till)?;
         writeln!(w, "}}\n")?;
         // Emit only reachable functions across the full definition range.
-        self.output_functions(w, 0, till, Some(&reachable))
+        self.output_functions(w, 0, till, Some(&reachable))?;
+        self.emit_ckpt_table(w)
     }
 
     /// Emit a Rust `fn main()` bootstrap if the program defines a loft `main` function.
@@ -3356,6 +4033,15 @@ extern crate loft;"
     ///   the debug NAME the client announces to the server for relay addressing.
     ///   Falls back to `Stores::new()` if the embedded bootstrap fails.
     fn emit_wasm_start(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        // The wasm/browser entry reports the same way the native one does — counts need no
+        // clock, so this tier is fully available here (CkptMode); the report goes out on
+        // the host `println` import, not a stderr that is a sink in a page.
+        let ckpt = if self.checkpoints.armed() {
+            "\n    loft_ckpt_report();"
+        } else {
+            ""
+        };
+        let _ = ckpt;
         let (prelude, args) = self.entry_call_extra_args();
         Self::emit_asyncify_region(w)?;
         Self::emit_page_env_region(w)?;
@@ -3378,7 +4064,7 @@ extern crate loft;"
                  loft::live_dispatch::bootstrap_from_bytes(LOFT_LIVE_FNS, LOFT_SRC)\n            \
                  .unwrap_or_else(|e| {{ eprintln!(\"loft-debug: {{e}}\"); Stores::new() }}));\n    \
                  if loft::live_dispatch::live_enabled() {{ loft::live_dispatch::flip_all_dispatch_debug(); }} else {{ init(&cell); }}\n    \
-                 {prelude}    n_main(&cell{args});\n    \
+                 {prelude}    n_main(&cell{args});{ckpt}\n    \
                  loft::live_dispatch::wasm_host_log(&format!(\"loft-debug: dispatched {{}} interp call(s) over the shared store\\n\", loft::live_dispatch::dispatch_count()));\n}}\n\
                  \n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_debug_selftest() -> i32 {{\n    \
                  let r = loft::live_dispatch::wasm_debug_selftest();\n    \
@@ -3397,12 +4083,21 @@ extern crate loft;"
         } else {
             writeln!(
                 w,
-                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_start() {{\n    loft::codegen_runtime::install_browser_panic_hook();\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    init(&cell);\n{prelude}    n_main(&cell{args});\n}}"
+                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_start() {{\n    loft::codegen_runtime::install_browser_panic_hook();\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n}}"
             )
         }
     }
 
     fn emit_native_main(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        // @PLN157 — the checkpoint report, emitted right after the entry call so it runs
+        // before the `run_failed` exit.  Empty (and so byte-identical) when the mode is
+        // off, which is every ordinary build.
+        let ckpt = if self.checkpoints.armed() {
+            "\n    loft_ckpt_report();"
+        } else {
+            ""
+        };
+        let _ = ckpt;
         let (prelude, args) = self.entry_call_extra_args();
         // #255 / @PLN9: bake the parse-time `#cwd` path-mode default.
         writeln!(
@@ -3444,7 +4139,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -3485,7 +4180,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    init(&cell);\n{prelude}    n_main(&cell{args});\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -4592,6 +5287,20 @@ extern crate loft;"
         } else {
             None
         };
+        // @PLN157 § V-aa — whole-program, computed once: the admission asks every call
+        // site, so it cannot be a per-function analysis.
+        if self.value_records.fns.is_empty() {
+            self.value_records = hoist::value_records(self.data, self.stores);
+            if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                for (d, tp) in &self.value_records.fns {
+                    eprintln!(
+                        "[valuerec] {} -> {} (tp={tp})",
+                        self.data.def(*d).name(),
+                        self.value_records.tuple[d]
+                    );
+                }
+            }
+        }
         for dnr in from..till {
             if !matches!(self.data.def(dnr).def_type(), DefType::Function) {
                 continue;
@@ -5324,7 +6033,13 @@ extern crate loft;"
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" }
         )?;
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
+        // record's fields in registers, so it needs no return BUFFER to write them into.
+        let value_rec = self.value_records.tuple.get(&def_nr).cloned();
         for a in def.attributes() {
+            if value_rec.is_some() && a.name == "__retbuf" {
+                continue;
+            }
             let tp = rust_type(&a.typedef, &Context::Argument);
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
@@ -5349,7 +6064,9 @@ extern crate loft;"
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if returns_owned_string(def) {
+            if let Some(t) = &value_rec {
+                write!(w, "-> {t} ")?;
+            } else if returns_owned_string(def) {
                 write!(w, "-> String ")?;
             } else {
                 write!(w, "-> {} ", rust_type(def.returned(), &Context::Result))?;
@@ -5405,6 +6122,14 @@ extern crate loft;"
                 if !vars.is_argument(v)
                     && (vars.name(v).starts_with("__vdb")
                         || is_iter_scratch
+                        // @PLN157 § V-x — an invariant literal's local is the once-flag
+                        // of its own build guard, so it must outlive the loop body.
+                        || self.invariant_lits.contains(v)
+                        // @PLN157 § V-z — an element-first pair's element is minted at
+                        // the first temp's declaration site, and each temp is bound
+                        // there to its field slot: both lose their in-place `let`.
+                        || self.elem_first.elms.contains(&v)
+                        || self.elem_first.pairs.iter().any(|p| p.binds.iter().any(|b| b.tmp == v))
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {
@@ -5465,6 +6190,11 @@ extern crate loft;"
             // retbuf-attr entirely).  Leading `_` suppresses the unused warning
             // for retbuf locals that are never reassigned.
             for a in def.attributes() {
+                // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no
+                // buffer witness either (the parameter itself is gone).
+                if self.value_records.fns.contains_key(&def_nr) && a.name == "__retbuf" {
+                    continue;
+                }
                 if a.hidden && matches!(&a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))
                 {
                     let av = vars.var(&a.name);

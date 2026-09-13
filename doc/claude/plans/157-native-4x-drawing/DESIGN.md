@@ -1285,8 +1285,10 @@ What `loft introspect` says about c1: the append of a loop variable lowers to
 later use of `f`, because @F106's move applies to a local that OWNS its value (a minted
 literal), and a loop variable over a call's result is a view; the `avoidable-copy` advice
 is therefore silent on c1 and fires on c2/c3/c7/c8 for the wrong reason (a later use it
-could not have moved anyway).  The temporary itself (`__ref_1`) is freed at SCOPE EXIT,
-not after the loop, so a move-append does not shorten any lifetime the rules name.
+could not have moved anyway).  The temporary itself (`__ref_1`) was freed at SCOPE EXIT in the
+pre-move world — safe there, because the free released the buffer's own store.  A PLACED
+buffer's record must instead die at the LOOP's exit (see the shipped addendum below): the
+host store can die before scope end and its slot be recycled.
 
 ## V-j — the copy into a fresh element, and the move's ceiling (2026-09-09)
 
@@ -1343,6 +1345,500 @@ on both backends under `LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_
 −8 % for M+ effort — three new ops, an IR rewrite pairing a call's buffer with the loop
 that consumes it, both backends — and is ranked below the allocation items whose ceilings
 are of the same size at S each.  The cells stay as its guard.
+
+**SHIPPED 2026-09-11 (`@FR-R-MoveAppend`, formal/rewrites.md), generation-side like the
+rest of the family — the interpreter keeps the copy and is the oracle.**  The ceiling was
+re-measured by hand on the § V-t runtime first: **−11.3 %** (401–404k → 355–359k ns/op on
+the rebuilt `vr_fronds` probe, hash `ebcfd875` exact), larger than 2026-09-09's −8 %
+because the copy class had grown to 23 % of a faster row.  The build reached the ceiling
+exactly (396–400k → 354–359k ABAB through the `loft` driver).  What shipped is CHEAPER
+than the sketch's "three new ops": no IR change at all — the pairing
+(`hoist::move_appends`) is a per-function analysis the emitter reads, the placement rides
+declaration dominance (V in scope at the For ⇒ its `__vdb` allocated on every path), and
+three runtime helpers (`place_record_in`, `move_record_shallow`, `free_record_in`) carry
+the semantics.  The buffer's `Set(__ref, Null)` decl emits the bare sentinel (the
+`null_named` slot the old form minted is what leaked in the first hand probe), the For
+emits a place-once guard (an enclosing loop re-enters with the buffer live — fronds' `k`
+loop), `OpCopyRecord` from the armed loop variable dispatches on store identity (same
+store → relocate + zero; anything else → the deep copy, always correct), and the buffer's
+`OpFreeRef` becomes the record-level release.  Sixteen cells (c13 container element, c14
+the inner-loop multi-append falsifier, c15 a rebound destination, c16 the § V-t
+composition — the move lands in the push header's slot — added this pass), hand-computed,
+green on both backends under `LOFT_POISON=1` and both leak checks.  **Falsified**: the
+use-after gate removed turns c2 red (`3 409 45` → `3 409 0` — the read sees the zeroed
+source); the same-store guard and the zeroing were probed too and are defence-in-depth on
+the gated shapes (a minting callee always delivers into the buffer, and the host store
+dies whole in every corpus shape) — the values that pin them are the cells, not a
+reachable red.  Two findings for the next reader: `clear_vector` is SHALLOW (len = 0, a
+standing TODO), which is why an un-zeroed source is unobservable through the callee's
+entry clear; and the `For` wrapper block's IR name is `"For block"`, not `"For"` — the
+first matcher draft silently found nothing.  Switch `LOFT_NO_MOVE_APPEND`;
+`LOFT_TRACE_MOVE=1` names the gate that declined a pairing.  `tests/move_append.rs` pins
+the per-cell emission; `tests/scripts/157-move-append.loft` carries the value cells.
+
+**Addendum (same day, found by the GitHub gate — run 34635309871, `native_scripts` red):
+two lifetime defects, both falsified on the landing build (a6f30ae7) and closed.**
+(1) *The placed record outlived its host store.*  The record-level free rode the buffer
+attr's scope-end `OpFreeRef`, but the DESTINATION's store dies at its last read — earlier
+than scope end whenever the destination is not read again — and a later store recycles the
+slot, so the deferred `free_record_in` deleted a record inside whatever owned the slot by
+then (values right, teardown corrupt: the #796 walker refused a float-bit "edge", then the
+out-of-bounds panic).  One loop per function never showed it — the slot needs a RECYCLER —
+which is why the landing suite (its `native_scripts` timed out locally, misread as the
+cold-cache class) and every single-cell probe stayed green.  First fix: the free rode the For
+block's exit — sound, but it cost `fronds` ~17 % (24 place/free cycles per top call), and
+the SECOND pass the same day replaced it with the host-death form: the release is
+injected before every `OpFreeRef(host_vdb)` site (`ref_ops.rs`, falling through to the
+store free), the buffer attr's scope-end arm stays as the null-guarded backstop that
+covers an adopted `__retbuf` host, and an enclosing loop REUSES the placement — `fronds`
+351k → 295k ns/op, the hand-measured mod-A ceiling met exactly.  The reuse form needed a
+third clause, falsified live: a host recreated per outer iteration is not freed but
+CLEARED (`OpDatabase`'s reuse arm), which reclaims the placement while the guard still
+trusts the stale ref — c21 panicked at rec 472 until the buffer vars are nulled at the
+host's `OpDatabase` site too (`misc_ops.rs`).  c22 pins the two-pairs-one-host shape
+(both records released at the host's one death; pins (2,2,4)).  (2) *The buffer type's name-based
+lookup.*  `main_vector<{elem}>` for a struct named `T` finds the stdlib's GENERIC template
+— its `vector` field still carries `__typevar_T`, and a record-level walk through it
+misreads every element.  The pairing now requires the wrapper's `vector` attribute to name
+OUR element and declines otherwise (cell c19; the corpus's own text-pairing struct,
+accidentally named `T`, was renamed `Tx` so c11 keeps its purpose).  Cells c19–c21 land in
+the corpus and the value shapes in the guard script; 21/21 exact on both backends under
+`LOFT_POISON=1`.
+
+**The def sharing itself was loft#1519, and it is fixed (2026-09-12), so this decline no
+longer has a cause.**  The root was one step further back than "registration": the wrapper
+KEY was being built by the DIAGNOSTIC renderer.  `Type::name` is the schema key and
+`Type::source_name` the user-facing spelling — two jobs of one `render` body, every
+differing arm guarded by `if source` except the type-var placeholder arm, which applied
+`Data::type_var_spelling`'s `T#2`→`T` fold to both.  Guarding that arm gives the key the
+`__typevar_` escape `typedef.rs` already mints for the placeholder's runtime row.  Measured
+here: `LOFT_TRACE_MOVE=1` on `V-j-move-append-cells.loft` fires the decline **twice** before
+and **zero** times after, all 22 cells print identically on both backends before and after,
+the backends agree, and both leak channels are clean — so re-admitting the pairing for
+c19's shape is value-neutral.  **Keep the check**: it costs only the optimisation when it
+fires and is a correct net, but it is no longer load-bearing.
+
+## V-x — an invariant loop-body literal builds once (2026-09-11)
+
+**The shape** (`fronds`' `fd_sides`): `v: vector<float> = if sp.mirror { [1.0, -1.0] }
+else { [1.0] }` inside the `i` loop — per iteration an `OpDatabase` reuse-clear, a
+reservation and the pushes, for a value nothing in the loop can change.  The source-level
+ceiling (moving the declaration above the loop by hand) measured **−8.7 %** on the
+standalone probe.
+
+**SHIPPED same day (`@FR-R-LitHoist`, formal/rewrites.md; switch `LOFT_NO_LITERAL_HOIST`,
+trace `LOFT_TRACE_LITHOIST`).**  Generation-side: `hoist::invariant_literals` admits per
+function, the emitter pre-declares each admitted local at FUNCTION TOP (the existing
+`__vdb` prologue, extended) and guards the declaration on the local being UNBOUND — the
+local is its own once-flag, so the build runs on the first iteration and every re-entry
+reuses the store.  Two lowered shapes, one guard: the CONDITIONAL initializer arrives as
+one `Set(v, if …)` statement (wrapped whole), the PLAIN literal as a flat statement run
+(`OpDatabase(__vdb) · Set(v, OpGetField) · OpSetInt4 · OpPreAlloc · pushes`) which the
+emitter brackets from the `OpDatabase` to the first non-member statement —
+`hoist::flat_lit_member` is the ONE membership predicate both the analysis and the close
+use, so they cannot drift; a statement's pre-evals are wrapped too (an `OpDatabase`
+hoisted out of the guard would re-clear the store per iteration).
+
+**The gate**, and why each clause exists: parts are literals, pure/primitive scalar ops,
+never-reassigned by-value scalar params, or scalar-getter reads of VALUE-CONST record
+params.  `(Const-Value)` is per-NAME — the formal chapter settles that const alone cannot
+carry cross-iteration invariance — so the ALIAS gate requires every variable whose type
+can reach a record type the init reads to be a fresh-store local (all its Sets are the
+`= null` decl and an `OpDatabase(v, tp)` mints its own store, so its record is this
+activation's, never the caller's — `fronds`' `fd_sub` is the motivating pass) or a
+value-const parameter used fn-wide ONLY as a scalar-getter base (an escape could reach a
+writer).  The local's other uses must reconcile exactly: For-head binds, `len`, its
+scope-exit free, plus the flat group's own build mentions — an INDEXED use declines,
+because `OpGetVector` is context-blind (the same node is the lvalue base of `v[0] = …`,
+the c5 falsifier); an append joins the flat run and declines on its varying part (c3);
+two admitted locals sharing a sanitized name would share the one fn-top binding (c11).
+Declined live while building: c9 was silently dropped by the use-reconciliation until the
+flat group's own `OpPreAlloc`/`OpPush` mentions were counted as accounted — the trace
+switch was added for exactly that diagnosis.
+
+**Falsified** (sabotage, 2026-09-11): re-allowing `OpGetVector*` as an accounted use
+admits c5, whose CONDITIONAL element write answers 30 on `--native` against the oracle's
+16 — iteration 0's write carried into later iterations (an unconditional overwrite masks
+itself, which is why the first c5 draft was strengthened).  Eleven cells exact on both
+backends under `LOFT_POISON=1`; `LOFT_NO_LITERAL_HOIST=1` emits zero guards, values
+unchanged; `tests/literal_hoist.rs` pins the per-cell guard counts;
+`tests/scripts/157-literal-hoist.loft` carries the value cells.
+
+**Measured**: `fronds` standalone 296.3–302.8k → **279.1–285.4k ns/op (−5.8 %)**, hash
+`ebcfd875` every run, one guard in `n_fronds`.
+
+## V-y — the complete-write prefill elision (2026-09-12)
+
+**The evidence first.**  The prefill class measured ~7 % of the post-reuse `fronds`
+profile (`set_default_value_nullable` 400 samples), and the global-skip ceiling probe
+(env-gated rlib) −7–8 % beyond A+S; the same matrix showed zero-on-claim stacked ON TOP
+of the skip reproducibly NEGATIVE — the two are one redundancy, so this ships as ONE
+complete-write argument, not two independent skips.  The design question was settled by
+introspection before any code: the parser's literal lowering writes EVERY field
+explicitly — the vy_probe shows an omitted `b: float = 2.5` written as 2.5, an omitted
+`text` as the interned empty, an omitted nullable as the sentinel, an omitted boolean as
+`false`, and a variant literal writes its own tag (`OpSetEnum` at 0) — so the prefill is
+redundant BY CONSTRUCTION for a complete group.
+
+**SHIPPED (`@FR-R-CompleteWrite`, formal/rewrites.md; switch `LOFT_NO_COMPLETE_WRITE`).**
+Runtime twins `OpDatabaseNP` / `OpNewRecordNP` (one inner fn each, the public names
+unchanged); `hoist::complete_writes` proves coverage of every schema field position by
+the group's contiguous `OpSet*`s — `db_vars` keyed by the local (every `OpDatabase` site
+must cover), `mint_tps` by the element type (every mint group in the function must).  A
+VECTOR store's group interleaves its bind (`v = OpGetField(__vdb…)`) between the
+`OpDatabase` and the length reset; admitting that member is width-EQUAL, not width-blind:
+the collection-field prefill is ONE u32 zero at the field position, exactly the group's
+own `OpSetInt4`.  `place_record_in` drops its `set_default_value` dispatch for one
+explicit len-zero — the placed buffer's only field is what the callee's entry-clear ABI
+rewrites.  An uncovered field — a nested struct arriving by `OpCopyRecord`, a
+`__nullable` element whose discriminant no `OpSet` names — keeps the prefill: the check
+only DECLINES.
+
+**Falsified the honest way — the first sabotage could not fail.**  Admit-everything
+stayed green under the production default, because the parser genuinely completes every
+record through SOME op (copies and appends included) and the claim-zeroing papers over
+the rest; a falsifier that cannot fail proves nothing, so the channel had to be found:
+under `LOFT_NO_ZERO_CLAIM=1` (the stale-arena perf lever) the sabotaged build CRASHES the
+V-j corpus at its c17 callee shape, while the restored check keeps that corpus green
+under the same lever (control run, values identical).  Eight cells exact on both
+backends under poison AND under the stale-arena lever; `tests/complete_write.rs` pins
+(no-prefill, prefilled) per cell; `tests/scripts/157-complete-write.loft` carries the
+value cells; the corpus joins the emission audit.
+
+**Measured**: struct literals alone moved `fronds` NOTHING (277–279k flat, 4 NP sites) —
+the samples live in the vector-store creations; with those and the placement admitted
+(9 NP sites), 278.3–279.3k → **264.9–272.7k ns/op (best −4.8 %)**, hash `ebcfd875`
+every run — ~60 % of the global-skip ceiling captured soundly.
+
+## V-z — the element-first build (2026-09-12)
+
+**Ceiling first** (rustc-first on the § V-y tip): 270.2–283.0k → **191.7–210.3k ns/op
+(−27–29 %)**, hash exact — far beyond the ~6 % class estimate, because the hand-mod also
+removed the temp stores' reuse-clears, their claims/frees and free-tree traffic, and
+composed with § V-u: `n_pt(cell, …, var__elm)` delivers each point DIRECTLY into the
+just-minted element, no buffer at all.  Two wrong turns kept for the next reader:
+`OpNewRecord(elm, RecordTp, fld)` on a vector field APPENDS AN ELEMENT (0 points, hash
+`811c9dc5`), and the naive parent_tp names the VECTOR type ("field 0 of 'vector<Frond>'
+has no storage").  The correct binding is trivial: a vector value IS the ref to its
+handle slot, so `var_tmp = DbRef { elm.store_nr, elm.rec, elm.pos + off }`.
+
+**SHIPPED same day (`@FR-R-ElemFirst`, formal/rewrites.md; switch
+`LOFT_NO_ELEMENT_FIRST`, trace `LOFT_TRACE_ELEMFIRST`).**  `hoist::element_first` pairs
+each appended temp (its `OpDatabase · Set(tmp, OpGetField) · OpSetInt4` declaration, in
+the same statement list as the append group, `out` unmentioned between, whole-function
+mentions reconciling to build + one copy) with the append's `OpAppendVector(OpGetField
+(elm, off), tmp)`; the emitter's statement loop overrides: the first temp's declaration
+becomes the reservation + the element mint (PLAIN OpNewRecord — its prefill is a
+load-bearing third of the invariant), every temp's declaration becomes the field-slot
+bind, and the append site drops its reservation, mint, paired zeros and paired copies
+while scalar sets and the finish stay — the finish is the length bump, so the element
+stays invisible until the append, and a skipped-append mint would overwrite the same
+invisible slot.
+
+**A prediction the cells corrected**: c4 (one temp, TWO appends) was written as a
+decline, and the SECOND append soundly pairs — the first append's pairing fails the
+reconciliation, and once the temp is a slot ref, the intervening first append merely
+READS it (its own copy stays).  **Falsified the compound way** (the single sabotages
+cannot fail — the prelude's prefill or the claim-zeroing covers each alone): the
+paired-offset check dropped AND the prelude minting NP crashes the corpus under
+`LOFT_NO_ZERO_CLAIM=1` ("the vector handle in record 3.16 points at record 26, whose
+size word is -207"), naming the invariant: every field written before the finish — by
+the prelude's prefill, a paired build, or the kept sets.
+
+**Measured**: the BUILD meets the hand ceiling exactly — fronds standalone 265k →
+**186.4–199.7k ns/op** (hand 191.8–192.8k), hash `ebcfd875` every run, one admitted
+pair in `n_fronds`.  Eight cells exact on both backends under poison AND the
+stale-arena lever; pins in `tests/element_first.rs`; the value guard
+`tests/scripts/157-element-first.loft`.
+
+## Zero-on-claim: who actually relies on it (owner's ruling, 2026-09-12)
+
+**The ruling: if some callers rely on zeros, fix those callers rather than paying the
+price on every claim.**  Right, and the code half-agrees already — `zero_claim_enabled()`
+documents the belt it fastens: `claim` reuses freed blocks without clearing, and a caller
+relying on zero-init (an empty `[]` collection placeholder whose handle field is never
+written) otherwise inherits stale bytes, resolves a junk record id in
+`remove_claims`/`length_vector`, and takes the interpreter down (@PLN25).
+
+**Why the prefill, not the zeroing, is the mechanism that should survive:** zeroing cannot
+replace `set_default_value`, because zero is the WRONG null for several types (a nullable
+integer's is `i64::MIN`, a nullable boolean's is `255`, a non-null `text` wants an interned
+empty string) — but the prefill can replace zeroing.  § V-y already established the other
+half: the parser's literal lowering writes EVERY field explicitly.  And the § V-y ceiling
+matrix measured the redundancy directly — zero-on-claim stacked on top of the prefill skip
+is reproducibly NEGATIVE (247k → 264k, 3/3).  Standalone the lever is worth ~4 % on
+`fronds`; the sample's 9 % `bzero`/`memset` class is mostly arena-growth `alloc_zeroed`,
+which is the OS handing out zero pages and must not be touched.
+
+**The falsifier this needed, and now has: `LOFT_POISON_CLAIM=1`** (`Store::poison_fill`,
+the claim-side twin of `LOFT_POISON`'s poison-on-free).  It fills a freshly claimed payload
+with `0xDEADBEEF`, so a caller relying on zero-init fails loudly and deterministically
+instead of inheriting recycled bytes that happen to look like zeros — which is why
+`LOFT_NO_ZERO_CLAIM=1` was never a real test of this question.
+
+**The census it produced** (2026-09-12, `--interpret`, every `tests/scripts/*.loft` minus
+the `@EXPECT_ERROR`/`@IGNORE` files): **1 232 clean, 29 dependent.**  All seven @PLN157
+cell corpora are clean on BOTH backends under it.  The 29 are one family by their names —
+return buffers, NRVO aliasing, fn-ref delivery, loop-local buffer lifetime, mapped-lambda
+collections — i.e. the buffer/delivery machinery, not user code at large.
+
+**The class, diagnosed:** the poison arrives as a RECORD ID (`rec=3735928559` = `0xDEADBEEF`)
+where a collection HANDLE should be — first instance `Stores::vector_replace` reading its
+destination handle out of a store-ROOT `main_vector<T>` wrapper (`store=3 rec=1 pos=12`)
+that nothing had written.  Note what this rules out: BOTH `OpDatabase` paths prefill (the
+interpreter's `State::database` and native's `op_database_inner` each call
+`set_default_value`), so the un-initialised wrapper is produced by some OTHER route — the
+next step is to name that producer, and the trace hook for it is one `eprintln` at the
+`vector_replace` read.
+
+**FIRST FIX LANDED (the owner's ruling applied): initialise the record where it is
+CREATED.**  The census's dominant class was `clear_vector` asking a collection handle *"is
+there a vector here?"* on a store-root `main_vector<T>` wrapper whose payload nothing had
+written — the registered field sits at position 0 while the handle the interpreter reads
+is four bytes further in, so `set_default_value`'s typed write never covered it and the
+claim-zeroing was the only thing making the answer "no".  Both `OpDatabase` paths now
+`zero_fill` the record they mint, once per store CREATION, against a memset on every
+claim.  **Census: 29 dependent → 6.**  Cost measured on `fronds`: nothing (251–253k before,
+255–259k after is within this box's spread, and the same fill was already being paid by
+zero-on-claim).  The prize that becomes collectable when the last six go: **246.2–246.8k
+against 250.8–253.0k**, ~2 % on this row and more on allocation-heavy ones.
+
+**NATIVE ALREADY DOES NOT NEED IT.**  Under `LOFT_POISON_CLAIM=1` the whole script corpus
+and all seven cell corpora are clean on `--native` — zero dependence, exactly as
+`zero_claim_enabled()`'s comment claimed ("native uses Rust ownership and never hits
+this").  So the flip can be per-backend the moment someone wants it, without waiting for
+the interpreter's last six.
+
+**The six that remain**, each a PRODUCER that hands out un-initialised words (the fix is
+always at that site, never a wider memset), pinned as a ratchet by
+`tests/poison_claim.rs`:
+| script | reader | what is un-initialised |
+|---|---|---|
+| `json-walker-absent-field` | `native::populate_vector_from_jarray` → `vector_append` | the handle of a collection field the JSON walker materialises into |
+| `a-keyed-view-joins-a-nullable-element-vector` | `remove_claims_mode` → `delete` | a nullable element's payload edge, walked at teardown |
+| `987-par-empty-body-discard`, `40-par-ref-return` | `clear_vector` | a `par` worker's buffer slot |
+| `75-native-stub`, `945-stdlib-worked-examples` | (not yet classified) | — |
+
+**The order of work this implies** (each step falsifiable on its own):
+1. Name the producer of an un-prefilled store-root wrapper; make it write the handle
+   explicitly.  That is the owner's ruling applied to the one class the census found.
+2. Re-run the census; repeat until it reads 0 dependent.
+3. Promote the invariant — *every claimed block is either typed-prefilled or completely
+   written before any read* (§ V-y's coverage proof, generalised from literals to all
+   claim sites) — and demote zero-on-claim to a debug lever beside the poison.
+4. Check first, because it may be free: `zero_claim_enabled()`'s own comment claims the
+   hazard is "interpreter only; native uses Rust ownership and never hits this", yet the
+   zeroing runs on both.  If that is still true, `--native` can stop zeroing today.
+
+## The store reset, retried on the fixed tree — and MEASURED AWAY (2026-09-12)
+
+The design below was built a second time, on top of the zero-on-claim fix, and the retry
+settled two things — one good, one that retires the idea.
+
+**The blocker was not what it looked like.**  The failure that stopped the first attempt —
+`the vector handle in record 1.12 points at record 3 … has been freed` — was NOT a live
+alias.  Record 1 at **+12** is the store-root wrapper's un-initialised slack, the very
+thing the zero-on-claim fix closed; with the producer initialising its record, the reset
+runs clean across all seven cell corpora on BOTH backends under THREE levers
+(`LOFT_POISON`, `LOFT_NO_ZERO_CLAIM`, `LOFT_POISON_CLAIM`) — 42 runs, plus the guard
+scripts, the leak test and 1 116 lib tests.  The `hosts_placed` flag (set in
+`place_record_in`) is what keeps § V-j's placed record safe.
+
+**And then it measured to nothing.**  On a shape that QUALIFIES (`adopt.loft`, no
+placement): reset 0.84–0.87 s against the element walk's 0.78–0.94 s.  On `fronds` the
+reset does not even apply — § V-j places the recursive call's buffer in that very store,
+so `hosts_placed` declines it and the row keeps the walk at ~250k.  **The −36 % this
+section was named for came from the UNSOUND configuration**: the first probe had no
+`hosts_placed` gate, so `fronds` took a reset it was not entitled to, and the 160–167k was
+the speed of freeing a record another frame still held.  A measurement taken before the
+gates exist measures the wrong program.
+
+**So the reset is reverted and should not be rebuilt**: it buys nothing over the element
+walk once it is sound, and it costs a `Store` field, a flag and a second release path.
+What remains true is the ANALYSIS: the buffer's store is exclusive for allocation but not
+for references, and the two holders are a placed record and a live alias.  The allocator
+churn the reset was really attacking is the recycler's target, and the owner's
+record-reuse idea attacks it without freeing anything at all.
+
+## Using the store reset reliably for a function result (the design as it was written)
+
+The measurement is in the README's mechanic note: resetting the buffer's store instead of
+walking its elements puts `fronds` at **160–167k ns/op** against the element walk's 250k
+and the LEAKING build's 186–200k, hash exact, memory flat.  It is worth building properly.
+
+**Why it cannot be decided in `clear_vector`, and where it CAN be.**  The store-root
+vector's store is exclusively its own for ALLOCATION but not for REFERENCES, and the two
+holders are invisible from inside the op: a § V-j placed record (another frame's variable)
+and a live alias of the PREVIOUS result — an `&`-view of it or of an element, or a caller
+local that § V-u adopted onto the same buffer.  A length reset leaves those records intact
+(a stale view reads stale-but-valid data); a store reset frees them under a live reference.
+`clear_vector` is a runtime op with no liveness knowledge.  **The caller's frame has it
+all**, and § V-u already emits the buffer's init THERE:
+
+```rust
+let mut var_result: DbRef = { if var_BUF.store_nr == u16::MAX || var_BUF.rec == 0 {
+    var_BUF = OpDatabase(cell, var_BUF, TP);          // first call: mint the store
+} else { stores.clear_vector_release(&var_BUF); }     // reuse: the clear this fixes
+    var_BUF };
+```
+
+The reset form is the `if` branch verbatim — `OpDatabase`'s reuse arm IS `clear` +
+re-claim — so the RUNTIME needs nothing new at all: the change is to emit the mint on both
+paths when the proof holds, and the whole unit is an analysis plus a one-line emission
+choice.
+
+**The proof obligation, per call site** (all four decidable where the site is emitted):
+1. **The previous result is dead** — this call REASSIGNS the result local and nothing reads
+   the old value afterwards.  (The liveness question § V-u's adoption analysis already asks
+   about the same local, one step further.)
+2. **No live `&`-view** of the previous result or of its elements outlives this point (the
+   dep lists carry it; `@FR-B-View` is the rule).
+3. **Nothing was PLACED in that store** — no § V-j pairing targets it.  Statically decidable
+   from `hoist::move_appends`; the runtime flag `Store::hosts_placed` (set in
+   `place_record_in`) was built and measured as the conservative fallback, and it removed
+   the native half of the failure.
+4. **The previous result did not ESCAPE** — not returned, not stored into a field, not
+   captured by a closure.
+
+**Cells to write before the code** — the first two already exist as failures, which is the
+cheapest possible start:
+- the § V-j corpus on `--native` (a placed record in the reset store) → must decline (3);
+- the § V-j corpus on `--interpret` under `LOFT_NO_ZERO_CLAIM=1` (the live-view case) →
+  must decline (2); it names itself out loud: *"the vector handle in record 1.12 points at
+  record 3 … has been freed"*;
+- `a = make(1); b = make(2); use(a)` → must decline (1);
+- a `&`-view of an element that outlives the next call → must decline (2);
+- a recursive callee whose own buffer lives in that store → must decline (3);
+- the no-heap element case → the reset is pointless but harmless; pin which form is emitted;
+- the admitted shape (`for … { r = make(…); consume(r) }`) → resets, and `fronds` measures
+  160–167k.
+
+**And the sibling design the owner named, which needs no alias proof at all:** REUSE the
+element records and their inner vector allocations instead of freeing and re-claiming them
+— keep the capacity, reset the lengths, let the next call's appends refill.  Nothing is
+freed, so nothing can dangle, and the free/claim churn disappears rather than being made
+cheaper (which is what the reverted size-class recycler was trying to buy, and what most of
+the 39.7 % allocator class actually is).  That is the better unit to build first.
+
+## lock_curved profiled at last, and it names ONE target (2026-09-12)
+
+**The first profile this row has ever had** (`sample`, 10 301 in-process samples,
+`--only lock_curved --n 20000`): **77.9 % is the program's own loft code**
+(`n_lock_layer` alone 77.6 %), allocator 6.8 %, vector ops 5.8 %.  Nothing like `fronds`
+— this row is not allocation-bound, and the allocator work queued for `fronds` will not
+move it.
+
+**The hot loop's per-pixel store traffic is FOUR reads, and they are all one thing.**  The
+resolve loop already has everything the hoist family can give it: 8 vector headers and 7
+invariant scalars hoisted into the prelude (`__vh_31..38`, `__vs_39..45`), 7 element reads
+through `get_elem_hoisted`.  What remains per pixel is `brush_sample` returning a
+four-float `Smp` RECORD: the callee writes four floats into the return buffer, the caller
+reads four back.  (A first count said eleven reads; seven of those were the prelude,
+which runs once per loop.  The corrected count is what this section is about.)
+
+**Measured, three ways.**  A record-returning call against a scalar-returning one:
+**33.0/29.5 ms vs 6.4/5.6 ms** per 3 M calls.  Against a TUPLE-returning one, which is
+the honest comparison because it carries the same four values: **29.5–33.0 ms vs
+13.8–14.1 ms — 2.1–2.4×**.  For `lock_curved` that call is ~10–15 % of the row on its own
+at ~60 ns/pixel, and it is the same class the x86 lane named as `smooth`'s cause (a
+record-returning call per output point, 27–35 % there).  **One unit moves both rows.**
+
+**The mechanism already exists — for tuples.**  `fn mk_tup(v) -> (float, float, float,
+float)` emits as `fn n_mk_tup(cell, var_v: f64) -> (f64, f64, f64, f64)`: in registers, no
+buffer, no store.  `rust_type(Type::Tuple, …)` maps straight to a Rust tuple and the rest
+of the emitter carries it.  A no-heap record return should ride that path.
+
+**What the unit needs** (scoped, not started — it is a multi-session codegen change and
+the cells come first):
+1. the SIGNATURE of an admitted fn: `(f64, …)` instead of `DbRef`, and no `__retbuf`
+   parameter;
+2. the callee's `Object` block: build the Rust tuple instead of writing the buffer;
+3. every CALL SITE: bind the tuple and rewrite each `OpGetField(result, off)` into a tuple
+   index read — plus a MATERIALISATION fallback wherever a real record is needed (stored
+   into a collection, passed on, returned), which costs exactly what today costs, so a
+   declining site cannot regress;
+4. the blocker to solve first: the `live_dispatch::live_flipped` fallback arm returns
+   `live_call_ref(…) -> DbRef` for a record-returning fn, so the value path needs its own
+   arm or the admission must exclude live-dispatchable functions.
+Gate: a PLAIN no-heap struct, all scalar fields, small field count.
+
+**Two hypotheses killed on the way, so nobody re-chases them.**  (a) The per-call
+bookkeeping (`live_flipped`, `cr_call_push`, `CallGuard`) is NOT a cost: on a quiet box a
+call-in-a-loop and its hand-inlined twin measure identical (35.4 ms both) — rustc inlines
+same-crate loft calls, bookkeeping included.  An earlier "1.30 ns per call" from this
+session was a contaminated measurement and is retracted.  (b) Cross-library calls are not
+the issue either: only a library's RUST parts are dylibs
+(`libloft_graphics_native.dylib`); its loft-level functions (`graphics::color_r`) are
+compiled into the program's own crate and inline normally.
+
+## V-aa — the value-record return (2026-09-12)
+
+**SHIPPED, default-on (`@FR-R-ValueRecord`; switch `LOFT_NO_VALUE_RECORD`, trace
+`LOFT_TRACE_VALUEREC`).**  A function whose result is a plain no-heap record of at most
+six scalar fields returns those fields BY VALUE — a Rust tuple, in registers — instead of
+writing them into a return buffer the caller reads back.  `lock_curved`'s profile named
+it: after the hoist family has taken everything it can (8 headers, 7 invariant scalars, 7
+hoisted element reads), the ONLY per-pixel store traffic left was `brush_sample`'s
+four-float record — four writes in, four reads out.
+
+**The mechanism already existed for TUPLES** (`rust_type(Type::Tuple, …)` maps straight to
+a Rust tuple, in registers, no buffer), which is why this is an admission plus five
+emission sites rather than a new ABI: the signature (no `__retbuf` parameter, `-> (f64,
+…)`), the callee's `Object` tail (its writes become the tuple in field order), the call
+site (tuple binding, buffer argument dropped), the field reads (`v.<index>`), and the
+release (nothing to free).
+
+**Three gates, each falsified.**  (1) the result is a plain no-heap struct of ≤6 scalar
+fields; (2) EVERY call site consumes it by reading fields off a local it binds — sabotaged
+by making `local_read_fieldwise` answer true, which admits a stored record and a passed-on
+one: **8 rustc errors**; (3) the BODY builds the record through `Object` blocks at every
+result position — sabotaged by removing `builds_record_by_object`, which admits a
+FORWARDING body whose signature then promises a tuple over a `DbRef`: **14 rustc errors**.
+Gates (2) and (3) are what make (1) safe per FUNCTION: no site ever has to materialise a
+record out of a tuple, so no site can be made slower.
+
+**Two boundaries keep the record contract**, and both were found by building, not by
+thinking: the LIVE-RELOAD arm answers a `DbRef`, so it reads the fields back out of that
+record; and a library's CDYLIB BRIDGE writes the tuple into the destination record it
+already owns (`shared_bridge_wrapper`), so the C ABI is unchanged while loft-to-loft calls
+INSIDE the library take the value path — which is the whole point, since `brush_sample`
+and `lock_layer` are both in `drawing`.
+
+**Measured** (hashes exact throughout): the call itself **1.65×** (29.1–30.1 ms →
+17.7–18.0 ms per 3 M calls); `smooth` **3 192–3 309 → 2 379–3 163 ns/op** (best-to-best
+−25 %, the row the x86 lane named this class for); `lock_curved` **2 339–2 402k →
+2 276–2 331k** (−3 %); and on the full consumer bench every native column improved or held.
+
+**A fifth defect the cells did NOT catch, found by the suite (2026-09-12).**  The field
+loop paired the runtime SCHEMA's fields with the DEFINITION's attributes by position —
+`for (i, f) in fields.iter().enumerate() { data.attr_type(*rd, i) }` — and those are two
+different lists that need not be the same length.  A keyed container's schema carries a
+part the definition declares no attribute for, so the index ran off the end and the
+compiler ICE'd on an EXISTING test script
+(`882-keyed-element-read-borrows-its-container.loft`: *"len is 2 but the index is 2"*,
+`hoist::value_records` → `Data::attr_type`).  Nine cells all used plain structs whose two
+lists happen to agree, which is exactly why a cell corpus cannot replace the suite.
+Closed by pairing the schema field with the declaration that NAMED it and declining the
+function when there is no match — a record with a part this analysis cannot account for
+keeps its return buffer, and declining only ever costs the optimisation.  Note the shape of
+the bug: had the two lists been the same length but differently ordered, the same code would
+have read another field's type and shipped a silently wrong signature rather than crashing.
+
+**Four defects the cells caught before they could ship**: an unclosed delimiter (the
+`Object` interception ate the block's closing brace — visible only in the
+conditional-construction cell, where the block sits inside an `if` arm); a stale return-buffer
+push in the live arm; the two unsound admissions above; and a by-name callee lookup
+(`data.def_nr(name)` resolves for the CURRENT source, so a library function called from
+another module resolved to a different definition and kept its buffer argument while its
+signature had dropped it — `current_call_def` is what the emitter threads for exactly this).
+That is the SECOND by-name-across-sources bug of the day, after `main_vector<T>`'s wrapper
+collision; both are now written up, and the lesson is one line: **a definition is a NUMBER,
+and a name is only a number within one source.**
+
+**And the registry collision the codegen skill warns about, hit verbatim**: the six scalar
+getters were registered for the value path, and `FusedElementReadEmitter` — registered
+later for the same keys — silently won.  The check now lives inside that emitter, with a
+comment saying why it cannot live in a second registration.
 
 ## V-k — the append path's bookkeeping (2026-09-09)
 
@@ -2133,6 +2629,178 @@ Switch `LOFT_NO_MINT_HOIST` (generation time; values identical, zero hoists).
 `v[i]?`-discharge default record (c12), and a PUSH-header tier for the minted vector
 itself (its element writes still resolve per element through the templates) — each a
 measured decision for when a judged row shows it.
+
+## V-t — a record append emits through the push header (2026-09-11)
+
+**The evidence.**  `smooth` re-profiled on this box (macOS `sample` on the standalone
+probe, `--native-release --native-debug`, 3M reps, 5 267 program samples) after § V-s and
+the cold-half outlining: the program's own code is 23 %; the k-loop's append
+`sp_out += [pt(…)]` is ~53 % — per element a `record_new` dispatch, a
+`set_default_value_nullable` type walk (356 samples) + `zero_range` (268) over fields the
+builder is about to write, `vector_finish`/`record_finish` (444) and the per-element
+`pre_alloc_vector` (110); the tangent temporaries (`half_chord`'s per-iteration record
+alloc/free) are ~35 %; the whole-result `vector_add` copy into the retbuf ~8 %.  This is
+§ V-s's deliberately-left scope note — "a PUSH-header tier for the minted vector itself"
+— with the judged row now showing it.
+
+**The ceiling, hand-measured first** (the § V-q discipline): the emitted Rust of the
+standalone probe hand-edited in three independent mods, ABAB against the unmodified build,
+hash `669cdc48` exact on every run — the fused record push **−37 %** (2 890 → 1 820
+ns/op), + scalarized tangents −21 % (→ 1 219), + the result vector built in the retbuf
+−16 % (→ 760, ~1.5× the Rust reference on this box).  Mods 2 and 3 are the next queued
+units; this section ships mod 1.
+
+**Invariant (`@FR-R-PushRec`, formal/rewrites.md).**  A mint group admitted under
+`(R-Mint)` whose element is a plain no-heap struct emits through the path's push header:
+the fresh element is the header's next slot (a growth step re-enters the runtime's append
+and refreshes the header BEFORE the element's writes), and `OpFinishRecord` is the length
+bump — the one visibility step, exactly where `record_finish`'s `vector_finish` was
+(`record_new` never bumped; probed on both backends before the design was fixed).  The
+prefill is redundant because the IR's write set is COMPLETE: probed on `--native-emit`,
+a partial literal (`P3 { a: x }` with a declared default, a zero and a nullable field
+omitted) emits explicit writes for ALL fields, at the caller and in a retbuf-delivered
+builder alike, and a declined delivery is a whole-record `OpCopyRecord`.  The type ask
+keeps out what the probe cannot license: a heap-owning element (stale bytes where a
+handle's zero matters), a `__nullable` element (the discriminant is no field), a keyed
+container (never admitted).
+
+**Cells before the code** (`bytecode-comparisons/V-t-record-push-cells.loft`, fifteen,
+hand-computed, both backends green before the change): c1 literal append across growth ·
+c2 the builder append (delivery guard kept) · c3 the partial literal (default + zero +
+sentinel out of the raw slot) · c4 the same through a call · c5 a borrow-returning element
+(declines — V-s c12's `OpDatabase` class) · c6 boolean/integer/float kinds · c7 a text
+field (heap — declines) · c8 a nested collection field (declines) · c9 `sorted` (not
+admitted) · c10 `vector<Pt?>` (declines) · c11 `len(v)` inside the loop (the bump is the
+finish) · c12 two minted paths, one header each · c13 mint + scalar push · c14 a
+field-path root (declines) · c15 the singleton outside a loop (no header).
+`tests/record_push.rs` pins the per-cell emission (headers bound, fused uses, templates
+left) and the switch; `tests/scripts/157-record-push.loft` carries the value cells.
+**Falsified**: the growth arm's header refresh removed empties every growth cell on native
+(c1 `100 0 25 9801 2475` → `0 0 0 0 0` — the elements land in the dead pre-growth record)
+and `LOFT_HOIST_VERIFY=1` panics naming the stale header at the finish.  The emission
+audit learned the new spellings (`push_record_hoisted`/`push_record_finish` validated like
+a push) and REFUSES a template `OpNewRecord`/`OpFinishRecord` on a held path — the
+collector-order class § V-r exists for.
+
+**Measured** (this box): standalone `smooth` −32 % (3 070 → 2 090 ns/op, the compiler
+keeps the builder's guarded writes the hand ceiling inlined); consumer table `smooth`
+11.0× → **4.57×**, `fronds` 11.1× → **8.36×**, `hair`/`lock` under the bar, 14/14 hashes
+agree.  Switch `LOFT_NO_RECORD_PUSH` (generation time; values identical, templates back).
+
+**Scope left on the table, deliberately**: the heap-owning element (needs an explicit
+zero of the slot's handle fields, or the completeness fact per heap field), the
+`__nullable` element, and the c11 self-reading push (its cost is the parser's per-iteration
+whole-vector copy, § V-q's second finding — a unit of its own).
+
+## V-u — a result vector adopts the return buffer (2026-09-11)
+
+**The evidence.**  `fronds` re-profiled after § V-j with callers: the top INCLUSIVE chain
+was `vector_add` → nested `copy_claims` → `claim`/`claim_block` — the per-level RETURN
+COPY of the whole result vector into the caller's buffer, carrying both the remaining copy
+class (~18 %) and most of the claim/free-tree time (the copies are claimed in the buffer's
+store).  Two cheaper-looking routes were measured first and both came out NEGATIVE on
+today's runtime — the receipts matter as much as the win: the 2026-09-08 "variant A"
+source shape (builders appending into `fd_out[fk].fpts`) is now +7 % because a field-path
+append misses every bare-variable fast path this week built, and placing the two builder
+temporaries in `fd_out`'s store to ADOPT their backings at the literal is +5 % — the same
+lesson as § V-j's P2: churn concentrated into one store costs more than the copies it
+saves, and a per-call temp store is cheap exactly because it dies whole.  The route that
+measured POSITIVE by hand (−7.3 % one level deep) is the § V's Route R twin for vectors:
+the result local IS the caller's buffer.
+
+**Two callee ABIs, and only one pays.**  The witness-promoted shape (the buffer parameter
+IS the `__vdb` witness — `mid`, `mkr`, `collect`) already builds in the caller's buffer
+and its `OpReplaceVector` deliveries self-detect the same backing and no-op.  The SHAPE-A
+ABI (a separate `__retbuf` attr — `fronds`, `smooth_pts`, `mkn`, functions whose appends
+source other calls' buffers) pays the full copy at every exit.  § V-u adopts exactly
+shape A (`@FR-R-RetAdopt`, formal/rewrites.md): `hoist::ret_adopt` proves one result
+local sources every delivery (bound once from its witness, never rebound or captured, the
+buffer serving nothing else, every Clear+Append inside its `one_buffer_vec_copy` block),
+and the emitter aliases the declaration to the buffer, skips the witness's `OpDatabase`,
+blanks the delivery pair INSIDE the block while keeping the block's scope-exit frees and
+the bare entry clear, and re-targets a § V-j placement at the adopted witness to the
+buffer.
+
+**Falsified LIVE, twice, at the scoping that carries the rule**: blanking every
+`OpClearVector(buf)` (the IR-level entry clear included) corrupts the fronds probe — the
+reused buffer accumulates across the recursion's calls (store access out of bounds); and
+collapsing the delivery BLOCK whole drops its scope-exit frees — 2 stores leaked in the
+V-j corpus (`mkn`), caught by `LOFT_NATIVE_LEAK_CHECK`.  Both scars are in the cells.
+
+**Cells** (`bytecode-comparisons/V-u-retbuf-adopt-cells.loft`, seven, hand-computed, both
+backends): u1 the mid-return shape · u2 two delivered locals (declines) · u3 the result
+local rebound (declines) · u4 recursion + reuse + the § V-j composition · u5 a discarded
+result and a caller loop reusing the buffer · u6 the shape-A adopter (the emission pin's
+positive) · u7 shape A with two delivered locals (declines).  `tests/retbuf_adopt.rs`
+pins which functions adopt; `tests/scripts/157-retbuf-adopt.loft` carries the value
+cells.  Switch `LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the declining gate.
+
+**Measured** (ABAB, hashes exact, leak-free under poison): standalone `fronds` 381–396k →
+**350–357k ns/op (−9.5 %)**, `smooth` 2 205 → **1 887 (−14.4 %)** — the smooth Mod-3
+ceiling (−16 %) nearly reached, and `fronds` pays it at every recursion level.
+
+## V-v — free-block footers: delete coalesces backward in O(1) (2026-09-11)
+
+**The evidence.**  `fronds` re-profiled on the § V-u runtime: `Store::coalesce_free` was
+the TOP symbol at 12.0 % — the § V-j P2 cliff, returned exactly as that entry predicted,
+because the adoption chains the recursion's levels into one arena and `claim` runs its
+O(blocks) sweep whenever an allocation would otherwise grow it.  The allocator class as a
+whole was ~49 % of the row.  P2's own sentence named the fix: *"a footer on FREE blocks so
+`delete` coalesces backward in O(1) and the sweep goes."*  The bound probe (sweep off,
+reuse lost) measured −7.5 %, so the footer (sweep off, reuse kept) had at least that.
+
+**Invariant (`@FR-H-FreeFooter`, formal/heap.md).**  A free block of n words carries −n at
+both ends — the header word and the HIGH half of its last word.  The prerequisite was one
+byte of layout: the tree node's fields (`header · LEFT · RIGHT · COLOR`) covered both
+words of a 2-word block, so the COLOR now rides bit 31 of the RIGHT link (positions are
+word indices below `i32::MAX`) and the half-word is clear at every tracked size; a
+one-word block's footer shares its header's word.  `delete` then merges backward: the
+footer names a candidate predecessor, its header must agree, and the free TREE must hold
+that exact block — the falsified step: claimed DATA can spell a matching footer+header
+pair, and without the tree confirmation the guard test merges a freed block into the
+middle of a live claim.  A one-word predecessor is untracked and unconfirmable: `delete`
+leaves it and arms the lazy sweep for exactly that case (its own guard test).  Footers
+live in free space only — persisted images are unchanged and pre-footer images are
+re-footed by `fl_rebuild` on open.  Every free-header write routes through ONE helper
+(`set_free_header`), eleven sites.
+
+**Measured** (ABAB in one window, hash exact): `fronds` 312–319k → **288–295k ns/op
+(−7.7 %)**; `smooth` inside noise (its stores barely fragment).  Store unit tests 50/50
+with the two pre-footer layout tests updated to the new invariant and two new guards
+(the fake-footer safety, the one-word sweep path).  Switch `LOFT_NO_FREE_FOOTER`
+(runtime, both backends — this is a store rewrite, not an emitter one).
+
+## V-w — a self-reading literal rides temps, and the accumulator is linear (2026-09-11)
+
+**The shape** (§ V-q's second finding, promised "a unit of its own for a long path"):
+`cum += [cum[len(cum) - 1]? + d]` — a literal part that reads its own destination.  The
+lowering enforced `(I-Comp)` / `@FR-O-Detach` (*a build reads what its destination held
+when the statement began*) by SNAPSHOTTING the whole vector per execution
+(`snapshot_read_destination`'s `build_src`), which makes every prefix-sum accumulator
+O(n²).  A temp carries the same rule for one part: evaluate the reading part ONCE, before
+anything grows or detaches the destination.
+
+**The gates** (each an under-approximation; the snapshot stays where a temp cannot carry
+the rule): the LITERAL lowering only (a comprehension's reads repeat per iteration — the
+first draft fired on the comprehension call site and crashed q8 on native; the `literal`
+flag is the scar); a bare unlinked VARIABLE destination; a SCALAR element type; parts
+whose calls are all primitives (`#rust`-bodied, no loft body) or `#pure` — a user call
+could mutate the destination through a capture or `&`, and its effect ORDER against the
+appends is the snapshot's to keep (q4).
+
+**Cells** (`V-w-selfread-literal-cells.loft`, nine, hand-computed as the I-Comp oracle
+and pinned green on BOTH backends before the change — the parser lowering changes both):
+q1 the accumulator · q2/q3 the rule's own swap and double-length examples · q4 user call
+(snapshot) · q5 record elements (snapshot) · q6 `&`-linked (snapshot) · q7 field
+(snapshot) · q8 comprehension (its own lowering untouched) · q9 the 2 000-element
+linearity carrier.  `tests/selfread_literal.rs` pins the route per cell.  **Falsified**:
+the temps' Sets dropped (parts renamed onto uninitialized temps) crashes every cell.
+
+**Measured**: the prefix sum is LINEAR — 2 000 → 14 µs, 8 000 → 54 µs (3.9× for 4× the
+size; the snapshot form scaled ~16×).  `lock_curved` itself moved inside noise: at 63
+path points the quadratic barely bites, so the profile's copy band was over-attributed to
+this shape — the unit's value is the SCALING class (any long scan/accumulator), not that
+row.  No switch: a parser lowering, like § V-m's fused push; git is the bisect.
 
 ## fronds — the census, the ceiling, the profile, and the bump claim (2026-09-08)
 

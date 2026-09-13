@@ -2939,7 +2939,7 @@ impl Parser {
             self.lexer.token("in");
             let loop_nr = self.vars.start_loop();
             let mut expr = Value::Null;
-            let in_type = self.parse_in_range(&mut expr, &Value::Null, &id);
+            let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
@@ -3063,12 +3063,42 @@ impl Parser {
     pub(crate) fn parse_in_range_body(
         &mut self,
         expr: &mut Value,
-        data: &Value,
+        data: &mut Value,
+        subject_tp: &Type,
         name: &str,
         in_type: Type,
         reverse: bool,
     ) -> Type {
         let mut incl = self.lexer.has_token("=");
+        // loft#1521 — the slice's SUBJECT is evaluated once for the length and again for every
+        // element read, so a subject that is not free to repeat is NAMED here, once, and every
+        // use below reads the name.  Measured before this: `src(c)[0..2]` called `src` FOUR
+        // times on both backends, and a `vn?[0..2]` rebuilt the discharge default's work-ref
+        // store per read — the second build re-minted the store IN PLACE while the previous
+        // view of it was being freed, so `OpSetInt4` wrote into a freed store.
+        //
+        // `(Slice-Value)` governs the RESULT and says nothing about the subject's evaluation
+        // count; the principle is already written for the neighbouring construct, in
+        // `(E-Asgn-Compound)` — *the place evaluates exactly once* — for exactly this hazard.
+        // `is_repeatable_place` is the shared answer to "is repeating this free?", and the
+        // name BORROWS (`skip_free` + `inline_ref`: no allocation of its own, and whatever
+        // built the value keeps the release), so a plain `v[a..b]` and a projection subject
+        // are untouched and gain no copy.
+        // Built here rather than at its use below, so the naming set is the FIRST statement in
+        // it and the length and bounds already read the name.
+        let mut iter_prelude = Vec::new();
+        // `*data != Value::Null` is also what says `subject_tp` is a real type: the three
+        // callers that pass no subject pass `Type::Null` beside it, and a fourth that ever
+        // passed a subject without its type would fall out at `named == u16::MAX`.
+        if *data != Value::Null && !Self::is_repeatable_place(&self.data, data) {
+            let named = self.vars.work_refs(subject_tp, &mut self.lexer);
+            if named != u16::MAX {
+                self.vars.set_skip_free(named);
+                self.vars.mark_inline_ref(named);
+                iter_prelude.push(v_set(named, data.clone()));
+                *data = Value::Var(named);
+            }
+        }
         // O8.5: capture range bounds for const-unroll detection.
         self.last_range_from = Some(expr.clone());
         let mut till = Value::Null;
@@ -3130,7 +3160,6 @@ impl Parser {
         // end reads OOB nulls/garbage in raw iteration.  Both bounds are bound to
         // temps (evaluated once) and clamped; the slice then runs as a plain
         // exclusive range, so pure ranges keep their raw bounds untouched.
-        let mut iter_prelude = Vec::new();
         if *data != Value::Null {
             let len_var = self.create_unique("slice_len", &I32);
             let lo_var = self.create_unique("slice_lo", &I32);
@@ -3300,7 +3329,13 @@ impl Parser {
         Type::Iterator(Box::new(in_type), Box::new(Type::Null))
     }
 
-    pub(crate) fn parse_in_range(&mut self, expr: &mut Value, data: &Value, name: &str) -> Type {
+    pub(crate) fn parse_in_range(
+        &mut self,
+        expr: &mut Value,
+        data: &mut Value,
+        subject_tp: &Type,
+        name: &str,
+    ) -> Type {
         let mut reverse = false;
         if let LexItem::Identifier(rev) = self.lexer.peek().has
             && &rev == "rev"
@@ -3369,7 +3404,7 @@ impl Parser {
             }
             return in_type;
         }
-        self.parse_in_range_body(expr, data, name, in_type, reverse)
+        self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }
 
     pub(crate) fn parse_object_field(

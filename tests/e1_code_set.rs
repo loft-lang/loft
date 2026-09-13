@@ -117,6 +117,10 @@ const CODES: &[(&str, &str)] = &[
          fn main() { s = S { a: 1 }; if !s.a { print(\"n\") } }",
     ),
     (
+        "constant-condition",
+        "fn main() { v: vector<integer> = [1]; if v { print(\"x\") } }",
+    ),
+    (
         "dead-assignment",
         "fn main() { x = 1; x = 2; print(\"{x}\"); }",
     ),

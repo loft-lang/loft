@@ -12,7 +12,10 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             LIVE at that line and bound for that path.  Two live holders for one path is a
             violation whatever the values say.
   R-Refresh a mover that does not refresh a holder — a template append (`stores.append_*`),
-            `pre_alloc_vector`, `vector_add` — on a path with a live holder is a violation.
+            `pre_alloc_vector`, `vector_add`, or a template mint (`OpNewRecord(cell, P`,
+            `OpFinishRecord(cell, P`) — on a path with a live holder is a violation: the
+            record push (@PLN157 § V-t) is the sanctioned form there
+            (`push_record_hoisted` / `push_record_finish`, validated like a push).
   R-Inputs  a twin call (`<fn>__inv(cell, …)`) hands in only live holders.
 
 A runtime read on a held path (`vec_get_or_raise_runtime`, `length_vector`) is reported as a
@@ -33,6 +36,8 @@ SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
 USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime)::<[^>]*>\(&([\w.]+), &\((.*?)\), \(\d+_i64\) as u32")
 USE_PUSH = re.compile(r"push_hoisted::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\), \d+, __pv\)")
+USE_PUSHREC = re.compile(r"push_record_(?:hoisted|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
+MOVER_MINT = re.compile(r"\b(OpNewRecord|OpFinishRecord)\(cell, (var_\w+),")
 USE_LEN = re.compile(r"\(i64::from\(([\w.]+)\.len\)\)")
 USE_SCALAR = re.compile(r"\b(__vs_\d+)\b")
 TWIN_CALL = re.compile(r"\b\w+__inv\(cell,(.*)\)")
@@ -99,6 +104,7 @@ def audit(text, quiet=False):
         else:
             # ---- uses ----
             uses_total += (len(USE_ELEM.findall(code)) + len(USE_PUSH.findall(code))
+                           + len(USE_PUSHREC.findall(code))
                            + len(USE_LEN.findall(code)) + len(USE_SCALAR.findall(code)))
             for kind, name, path in USE_ELEM.findall(code):
                 h = live(name)
@@ -112,6 +118,12 @@ def audit(text, quiet=False):
                     violations.append(f"{fn}:{nr}: R-Push — push_hoisted names {name}, which is not a live push header")
                 elif h.path != path:
                     violations.append(f"{fn}:{nr}: R-State — push_hoisted names {name} (bound for `{h.path}`) on path `{path}`")
+            for name, path in USE_PUSHREC.findall(code):
+                h = live(name)
+                if h is None or h.kind != "push":
+                    violations.append(f"{fn}:{nr}: R-PushRec — a record push names {name}, which is not a live push header")
+                elif h.path != path:
+                    violations.append(f"{fn}:{nr}: R-State — a record push names {name} (bound for `{h.path}`) on path `{path}`")
             for name in USE_LEN.findall(code):
                 if live(name) is None:
                     violations.append(f"{fn}:{nr}: R-State — `.len` of {name}, which is not live here")
@@ -126,6 +138,10 @@ def audit(text, quiet=False):
                 held = holder_for(path)
                 if held:
                     violations.append(f"{fn}:{nr}: R-Refresh — {op} moves path `{path}` while {held[-1].name} holds it (line {held[-1].line})")
+            for op, path in MOVER_MINT.findall(code):
+                held = holder_for(path)
+                if held:
+                    violations.append(f"{fn}:{nr}: R-Refresh — template {op} mints on path `{path}` while {held[-1].name} holds it (line {held[-1].line}); the record push is the sanctioned form")
             for var in MOVER_ADD.findall(code):
                 held = holder_for(var)
                 if held:

@@ -145,8 +145,13 @@ up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for q
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
 rule already implemented somewhere?"* is a lookup. `scripts/rule_tags.py` is the tool
-(`list` · `check` · `sites <tag>` · `dups`); `check` gates that every citation resolves and no
-rule is defined twice.
+(`list` · `check` · `sites <tag>` · `dups` · `registers`); `check` gates that every citation
+resolves and no rule is defined twice, and **`registers` reads each chapter's stated
+`OPEN: n` against the entries actually attributed to it** — its `-history` companion's
+included, because a chapter that delegates its register states a number nothing beside it
+can check (`types.md` read `OPEN: 0` over an open `D-Domain-Guard` next door). With
+`--issues` it also names an open deviation whose issue the tracker has closed, which is a
+pair to RE-MEASURE and not a closure: of the first five, four were stale and one was not.
 
 ⚠ **A bare `@Name` is NOT unambiguous here** — `@` already carries the tracker tags above, the
 worked-example family (`@AAA-###`) and the corpus annotations (`@ARGS`, `@NAME`, `@IGNORE`,
@@ -692,6 +697,25 @@ caller — one probe inverted from `100 % app_bit` to `99.5 % lib_grind` under
 Prefer `make profile`, which picks the instrument. Off costs nothing (the
 sampler rides the existing per-op debug branch); armed costs +7–11 %. PERFORMANCE.md § Profiling.
 
+**`LOFT_NATIVE_CHECKPOINTS=count|time[:filter]`** — the SECOND profiler, for where the
+sampler cannot reach (a stripped binary, no `perf`, **wasm**). The generator writes a probe
+at the one call/op chokepoint, so every OPERATOR is counted at its own loft `file:line`,
+with a by-function rollup that is exclusive by construction (a user CALL is deliberately
+not a site — timing it would mix inclusive and exclusive rows). `count` needs no clock and
+so behaves identically on native, wasip2 and in a browser; `time` adds the cycle counter
+where one exists and says so where it does not. **The COUNTS are the trustworthy column; the tick
+share is a hint.** Counts validate exactly against the pure-Rust reference (whole-number
+operators per call: `chan` 3.00, `color_g` 2.00, `ramp` 9.00). Ticks do not: the counter
+advances only every ~41.7 ns against a ~1-3 ns operator, so a total is a sum of dithered
+samples, AND the per-operator probe inflates operator-dense functions — measured against
+the instrumented reference, the two biggest `lock_curved` rows disagree ~2× in opposite
+directions. Never quote a tick share as "where the time goes". Costs 3.0×
+(`count`) / 5.4× (`time`), and `:filter` narrows it to one function or module. It changes
+what rustc may inline ACROSS a probe, so it tells you WHICH code runs and roughly where
+time concentrates — confirm a ratio with `compare.py` or `profile.sh`. It is not the normal
+route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
+`LOFT_NATIVE_CHECKPOINTS`.
+
 **Vector-header hoist (loft#885, `--native` only, both switches read at GENERATION time):**
 a loop the emitter proves writes NO store derives each vector's `(store_nr, record, length)`
 once before the loop, so an element read is a bounds test plus address arithmetic (~2×).
@@ -727,6 +751,58 @@ serves from it — and is the bisect step for a wrong element or length out of a
 (`v += [Pt{…}]`, `v += [pt(…)]`) hoist nothing — with it on, the mint group is admitted as a
 mover and the loop's invariant record scalars are read once before it — and is the bisect step
 for a wrong scalar read out of a record-appending loop.
+**`LOFT_NO_RECORD_PUSH=1`** (@PLN157 § V-t) makes an admitted record append keep its
+mint-group templates — with it on, a no-heap struct element is built IN the push header's
+next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
+explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
+default value or length out of a record-appending loop.
+**`LOFT_NO_MOVE_APPEND=1`** (@PLN157 § V-j) makes `for f in call(…) { v += [f] }` keep the
+deep copy — with it on, the call's buffer is PLACED as a record in `v`'s own store, the
+append relocates the element's bytes (heap handles included — they never change store) and
+zeroes the source, and the buffer's free is record-level — and is the bisect step for a
+wrong element, a leak or a double free out of a loop that appends a dying temporary's
+elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa) makes a record-returning function write
+its result into a return buffer again — with it off, a function whose result is a plain
+no-heap record of ≤6 scalar fields, whose every call site reads fields off it and whose
+body builds it with `Object` blocks, returns those fields in REGISTERS and the call site
+reads tuple elements (measured: 1.65× on the call, `smooth` −25 %, `lock_curved` −3 %) —
+and is the bisect step for a wrong field out of a record-returning call on native.
+`LOFT_TRACE_VALUEREC=1` names each admission and decline.
+**`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
+`0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
+the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of
+unwritten space becomes a loud out-of-range value the store's guards refuse, where
+`LOFT_NO_ZERO_CLAIM=1` only leaves stale bytes that often look enough like zeros to pass.
+Census 2026-09-12: 1 232 of 1 261 `tests/scripts` clean on the interpreter, 29 dependent
+(the buffer/delivery family), every @PLN157 cell corpus clean on both backends.
+**`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
+vector's entry clear a pure length reset again — with it off, clearing a REUSED
+store-root vector whose elements own heap releases what they own first, closing an
+unbounded leak in every shape-A return buffer (~357 KB per `fronds` call) — and is the
+bisect step for a double free or a wrong value at a cleared vector.  `LOFT_TRACE_CLEAR=1`
+names each clear's shape and element verdict.
+**`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
+keep its temp-store build and deep copy again — with it off, a local vector consumed
+exactly once by one append is built INSIDE the appended element (minted at the temp's
+declaration, invisible until the finish's length bump) — and is the bisect step for a
+wrong vector field of an appended record on native.
+**`LOFT_NO_COMPLETE_WRITE=1`** (@PLN157 § V-y) makes every record keep its default
+prefill again — with it off, a literal group the emitter PROVES writes every field
+(declared defaults, sentinels, the variant tag included: the parser's lowering is
+complete by construction) calls a no-prefill `OpDatabaseNP`/`OpNewRecordNP` twin —
+and is the bisect step for a wrong default or sentinel in a literal-built record
+on native.
+**`LOFT_NO_LITERAL_HOIST=1`** (@PLN157 § V-x) makes an invariant loop-body vector
+literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
+(or an if-of-literals on a const-param field) under a loop builds ONCE per activation,
+guarded on the local being unbound — and is the bisect step for a wrong constant
+vector inside a loop on native.
+**`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
+delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer
+(built where it must end up; the exits deliver nothing; the buffer's backing reused across
+calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
+call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live
@@ -743,6 +819,16 @@ step for a wrong answer in a function that reassigns a local across sibling bloc
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
 wrong element on the branch NOT taken. QUALITY.md § Cluster III Route 2.
+
+**Free-block footers (@PLN157 § V-v, default-ON, both backends, `@FR-H-FreeFooter`):** a
+store's FREE block carries its size at both ends, so a record delete coalesces BACKWARD in
+O(1) off the footer (tree-confirmed — claimed data can spell a false footer) instead of
+leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
+the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
+whole (every delete arms it) and is the first bisect step for a store-layout fault in a
+delete-heavy run.  Measured: `fronds` −7.7 % (the § V-u arena's churn), and the class it
+retires is the `coalesce_free` cliff PERFORMANCE.md § V-j P2 first measured at 29.5 % of
+a shared-arena row.
 
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after

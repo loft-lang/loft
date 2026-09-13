@@ -1,0 +1,41 @@
+// @PLN157 § V-j with a NO-HEAP element.  If this leaks, the move-append has its
+// own defect; if it does not, § V-j only exposes the element-owned-heap class.
+struct Plain {
+  pa: float,
+  pb: float,
+}
+
+fn sub(k: integer) -> vector<Plain> {
+  sb_out: vector<Plain> = [];
+  for i in 0..k { sb_out += [Plain { pa: (i as float), pb: 2.0 }]; }
+  sb_out
+}
+
+fn build(k: integer) -> vector<Plain> {
+  bd_out: vector<Plain> = [];
+  for i in 0..k { bd_out += [Plain { pa: (i as float), pb: 1.0 }]; }
+  bd_base = len(bd_out);
+  for j in 0..bd_base {
+    for f in sub(24) { bd_out += [f]; }
+  }
+  bd_out
+}
+
+fn main() {
+  mn_n = 2000;
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  mn_sink = 0;
+  for _r in 0..mn_n {
+    mn_out = build(24);
+    mn_sink += len(mn_out);
+  }
+  println("sink {mn_sink}");
+}

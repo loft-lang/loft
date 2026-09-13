@@ -45,6 +45,8 @@ deliberating a fix that has a choice in it.
 python3 scripts/rule_tags.py list          # every defined rule + its doc
 python3 scripts/rule_tags.py check         # citations resolve; no double definition (exit 1)
 python3 scripts/rule_tags.py sites <tag>   # which code sites enforce this rule
+python3 scripts/rule_tags.py registers     # each chapter's stated `OPEN: n` vs its entries;
+                                           #   `--issues` flags an open entry whose issue closed
 python3 scripts/rule_tags.py dups          # rules cited from 2+ sites — duplication by MEANING
 ```
 
@@ -77,6 +79,11 @@ it from one site, and wire `check` into CI before the register grows.
 
 - Rules home: `doc/claude/formal/` — `formal/README.md` § Rule tags is the
   convention's authority; `formal/IMPLEMENTATIONS.md` indexes merged enforcement.
-- Checker: `scripts/rule_tags.py` (defaults already point here); `check` runs in CI.
+- Checker: `scripts/rule_tags.py` (defaults already point here); `check` runs in CI as the
+  `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command so
+  the gate and the tool cannot drift — grep for `rule_tags` in `Makefile`/`.github/` and you
+  will not find it, which is not the same as it not running.
+  `registers` is a REPORT, not a gate: its issue half needs the tracker, and a stale
+  count is a doc fix rather than a reason to fail a build.
 - Tag family context: CLAUDE.md § Tracker tags (why `@FR-` cannot collide with
   `@F<digits>`, `@PLN`, `@P`, corpus annotations).

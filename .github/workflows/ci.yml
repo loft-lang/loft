@@ -167,12 +167,24 @@ jobs:
           # `inputs.os` is set by a dispatch or by the release gate's call and is
           # empty on every other event, so the test needs no event name.
           if [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
-            echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
+            # A DISPATCH IS AN INTERACTIVE RUN AND SHARDS LIKE A PR.  CLAUDE.md sends every
+            # agent here when the local gate is unreliable ("Run the SAME gate on GitHub,
+            # no PR needed"), so this is the path the day actually runs on: of the last ten
+            # ci.yml runs, ten were `workflow_dispatch` and none was a pull_request.  It
+            # used to take the one-leg branch below and run the whole suite unsharded —
+            # 32-42 min against the PR path's 21 — which is the gap that made the budget
+            # look unreachable.  Sharding it costs runner-minutes and buys back ~20 min of
+            # a person's time per run.
+            if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
+              echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            else
+              echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
+            fi
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             # @PLN159 phase E1 — a FOURTH shard carries the native script corpus alone
             # (`native::native_scripts`, 219.6 s of the heavy shard's 764.8 s on the run that
             # measured it), so the serial groups and the corpus overlap instead of queueing.
-            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"}]' >> "$GITHUB_OUTPUT"
+            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           else
             echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest"}]' >> "$GITHUB_OUTPUT"
           fi
@@ -301,6 +313,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    # THE 20-MINUTE BUDGET IS ENFORCED LOCALLY, NOT HERE.  A sharded leg used to carry
+    # `timeout-minutes: 20`, so a run that went long was cancelled and the PR went red.  That
+    # is the wrong place for it: a hosted runner's wall time is not the diff's to control —
+    # a slow runner, a cold cache or a queue makes the same commit red or green — and the
+    # cancel threw away the whole leg's output, which is the one thing that would have said
+    # WHY it ran long.  The budget now lives in `make ci` (`CI_BUDGET_SECS`), where it is
+    # measured against a machine whose load is knowable and where the verdict is read by the
+    # person who can act on it.
+    #
+    # The cap that remains is a HANG guard, not a budget: 90 minutes, the same number the
+    # unsharded macOS and Windows legs carry (40 and 78 min measured).  A red there means
+    # something is stuck, never "re-balance the shards".
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       # SHARDED ON THE PR PATH ONLY, and only along the `heavy-serial` boundary.
@@ -716,7 +741,20 @@ jobs:
             FAILFAST="--no-fail-fast"
           fi
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}"
-          cargo nextest run --profile ci $FAILFAST -E "$FILTER"
+          # `rest-a/b/c` are one filterset split by nextest's own partitioner: the shard
+          # letter picks the slice.  Partitioning is over TESTS, so a single long binary
+          # spreads across the legs instead of pinning one — and nothing has to be
+          # maintained, which is what the named-half list could not manage (it drifted
+          # from 1.2 % to 82 % out of balance in three weeks, and both halves then hit the
+          # 20-minute cap).
+          PART=""
+          case "${{ matrix.shard }}" in
+            rest-a) PART="--partition hash:1/3" ;;
+            rest-b) PART="--partition hash:2/3" ;;
+            rest-c) PART="--partition hash:3/3" ;;
+          esac
+          echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
+          cargo nextest run --profile ci $FAILFAST $PART -E "$FILTER"
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
@@ -739,7 +777,12 @@ jobs:
       # than one that is loud, so this reports even when the suite above is already
       # failing.
       - name: Stdlib round-trip (the exhaustive pair, off the PR path)
-        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        # `!= 'pull_request'` used to include a workflow_dispatch, which is the INTERACTIVE
+        # path CLAUDE.md sends every agent down — so the nightly extras ran on the runs a
+        # person waits for.  Measured on the corpus leg: this plus the two below were 5.7
+        # of its 20.0 minutes, against 4.25 minutes of actual tests.  A dispatch is not a
+        # nightly; schedule and push are.
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'push') }}
         shell: bash
         run: >
           cargo nextest run --profile ci --no-fail-fast
@@ -752,7 +795,7 @@ jobs:
       # bundle (and where binaryen supplies the `wasm-opt` that build needs).
       # `html_asyncify` builds its own artefact, so it belongs here.
       - name: Browser asyncify (nightly — off the flaky PR path)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
         run: cargo nextest run --profile ci -E 'binary(html_asyncify)'
 
@@ -771,16 +814,16 @@ jobs:
       # interp == native == WASM an actual nightly gate (the lib-tested-on-3-backends gap).
       # Nightly + push-to-main only, Linux only — mirrors the oracle step below.
       - name: Install wasip2 target (oracle wasm leg)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         run: rustup target add wasm32-wasip2
       - name: Install wasmtime (oracle wasm leg)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
         with:
           tool: wasmtime
 
       - name: Differential oracle (nightly cross-backend sweep)
-        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
+        if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
         run: cargo test --release --test differential_oracle -- --ignored --nocapture
 

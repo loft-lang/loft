@@ -330,6 +330,147 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
 
+### A record append emits through its push header
+
+```
+  (R-PushRec)    a mint group admitted under (R-Mint) whose element type is a plain
+                 STRUCT owning no heap, on a path that holds a PUSH header, emits
+                 through it: the fresh element e is the header's next slot — a
+                 bounds test against the capacity, no record_new dispatch and no
+                 default prefill — the group's writes fill e as before (the IR's
+                 literal lowering writes every field explicitly, omitted fields'
+                 declared defaults and null sentinels included, and a declined
+                 delivery lands as a whole-record OpCopyRecord), and the
+                 OpFinishRecord is the length bump written to the header AND the
+                 record — the one visibility step, exactly where record_finish's
+                 vector_finish was.  A growth step is the runtime's own append
+                 followed by a fresh header (R-Refresh), taken BEFORE the element's
+                 writes so they land in the moved record.  Admission asks the TYPE:
+                 an element owning heap (text, a nested collection) keeps the
+                 templates, because a raw slot carries stale bytes where a heap
+                 handle's zero matters; a __nullable element's discriminant is not
+                 a field the literal writes.
+```
+
+**In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
+`record_new` dispatch, a `set_default_value` type walk over fields the group was about to
+write, a `zero_range` and a `record_finish` dispatch — ~30 % of `smooth`'s row after every
+other unit.  The prefill is redundant exactly where the write set is complete, and the IR
+makes it complete: a partial literal (`P3 { a: x }`) emits explicit writes for the omitted
+declared default, the omitted zero AND the omitted null sentinel, at the caller and in a
+retbuf-delivered builder alike — the cells pin this from both sides.  The skipped refresh
+is the falsified failure: the sabotage empties every growth cell (`c1 100 0 25 9801 2475`
+→ `0 0 0 0 0`, the elements landing in the dead pre-growth record) and
+`LOFT_HOIST_VERIFY=1` panics naming the stale header.  Switch `LOFT_NO_RECORD_PUSH`;
+falsifier `LOFT_HOIST_VERIFY=1` (the header re-derived and compared at the slot and at
+the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoistable`,
+`Output::begin_vector_hoist`, `Output::active_mint_push`, the registry's
+`NewRecordEmitter`, `FinishRecordEmitter` and `PreAllocEmitter`,
+`Stores::push_record_hoisted`, `Stores::push_record_finish`.  Shipped: standalone
+`smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
+8.4× of Rust on the measuring box, 14/14 hashes unchanged.
+
+### A dying temporary's elements move into the append that consumes them
+
+```
+  (R-MoveAppend) in `for f in call(…) { V += [f] }` where the call MINTS its result
+                 (a borrowed-view return declines), the loop variable's ONLY use
+                 after its binding is that one append (a read after it, a second
+                 append, an append under a further loop all decline), V is an owned
+                 local plain vector of a PLAIN STRUCT element never rebound in the
+                 function, and the call's hidden buffer serves nothing else — the
+                 buffer is PLACED as a record inside V's own `__vdb` store at the
+                 loop (V is in scope there, so its store exists on every path), the
+                 append relocates the element's bytes and ZEROES the source when
+                 source and destination share that store (anything else keeps the
+                 deep copy, which is always correct), and the buffer's free is a
+                 record-level release — the deep walk of what the loop did not
+                 move, then the record's block — inside the store that lives on.
+                 Three lifetime conditions bound the placement.  (1) The placed
+                 record dies WITH ITS HOST STORE: the release is injected before
+                 EVERY free of the host `__vdb` — the early dead-after-last-read
+                 site as much as scope end, since a later store can recycle a dead
+                 host's slot and a deferred release then deletes a record inside
+                 whatever owns it — and the buffer attr's own scope-end free is
+                 the null-guarded backstop that covers an ADOPTED `__retbuf` host,
+                 which no in-function site frees.  Between host deaths an
+                 enclosing loop REUSES the placement (the callee's entry clear
+                 resets its length).  (2) A host store CLEARED whole re-arms the
+                 guard: `OpDatabase`'s reuse arm reclaims the placement with the
+                 clear, so the buffer var is nulled at that site or the next call
+                 delivers into unclaimed bytes.  (3) The buffer's type must be V's
+                 ELEMENT's own wrapper — the lookup is by name, and a struct named
+                 like a stdlib type variable finds the GENERIC template whose
+                 field still carries the typevar, which a record-level walk
+                 misreads (such a name declines the pairing).
+```
+
+**In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
+element re-CLAIMED its inner vectors in the destination's store, copied them, and freed
+the source's — two claims and two frees per element (23 % of the `fronds` row).  Placing
+the buffer where the elements must end up makes the callee's own delivery put them there,
+and the append is then a shallow relocation whose heap handles never change store.  The
+zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
+under-approximations on purpose; the one that carries values is use-after — falsified by
+removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
+`3 409 0`).  All three lifetime conditions were falsified on builds that lacked them
+(2026-09-11): the scope-end-only release corrupted a recycled store slot on a6f30ae7 —
+values right, teardown walked another store's live records (the red `native_scripts`
+gate) — the host-death build WITHOUT the OpDatabase re-arm corrupted c21 (a store panic
+at rec 472: the reuse clear had reclaimed the placement the guard still trusted), and a
+corpus struct named `T` was walked through `main_vector<T>`'s typevar field (the
+c19–c22 cells).  The host-death form reuses the placement across an enclosing loop's
+entries — `fronds` 351k → 295k ns/op (−16 %), the hand ceiling met exactly.  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
+push header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
+cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
+`hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the
+placement in `Output::output_block`, the move arm in `OpCopyRecordEmitter`, the record
+free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
+`Stores::place_record_in`, `Stores::move_record_shallow`, `Stores::free_record_in`.
+Shipped: standalone `fronds` −11 % (396–400k → 354–359k ns/op), the hand-measured
+ceiling reached exactly; hash `ebcfd875` on every run.
+
+### A result vector adopts the return buffer
+
+```
+  (R-RetAdopt)   a function VALUE-returning a plain vector through a hidden buffer
+                 (the shape-A ABI: a separate `__retbuf` attr; a borrow return
+                 delivers nothing and declines), whose EVERY delivery into that
+                 buffer sources ONE result local — bound once from its own
+                 witness, never rebound, never captured, the buffer serving
+                 nothing else, every Clear+Append delivery inside its
+                 `one_buffer_vec_copy` block — has that local ADOPT the buffer:
+                 the declaration aliases it (allocating one exactly as the
+                 witness would have been when the caller offered none), the
+                 witness store is never allocated, the delivery pair inside the
+                 block emits as nothing while the block's OTHER statements — the
+                 scope-exit frees, the returned value — stay, the bare ENTRY
+                 clear stays (it is the buffer's reuse contract across calls),
+                 and `OpReplaceVector` deliveries stay as emitted — they are
+                 aliasing-safe at run time and self-detect the adopted no-op.
+                 The witness-promoted ABI (the buffer parameter IS the witness)
+                 already delivers copy-free through that same self-detection and
+                 declines here.  A § V-j placement into the adopted local's
+                 witness re-targets the return buffer.
+```
+
+**In words.** @PLN157 § V-u.  Before it, a shape-A function copied its WHOLE result
+vector into the caller's buffer at every exit — per element a claim in the buffer's
+store plus a deep copy, at every recursion level (`vector_add` → `copy_claims` was the
+top inclusive chain of `fronds`' profile, carrying most of the claim/free-tree time
+with it).  Adoption builds the result where it must end up, so the exits deliver
+nothing and the buffer's backing capacity survives across calls.  Falsified LIVE,
+twice, at the scoping that carries the rule: blanking every `OpClearVector(buf)`
+(the entry clear included) corrupts the fronds probe — the reused buffer accumulates
+across calls — and collapsing the delivery BLOCK whole drops its scope-exit frees
+(2 stores leaked in the V-j corpus, caught by `LOFT_NATIVE_LEAK_CHECK`).  Switch
+`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  Sites:
+`hoist::ret_adopt`, the init arm in `Output::output_set`, the witness skip in
+`OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
+`in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
+§ V-j hook.  Shipped: standalone `fronds` −9.5 % (381–396k → 350–357k ns/op) and
+`smooth` −14.4 % (2 205 → 1 887), hashes exact, cells leak-free under poison.
+
 ### A leaf carries no frame
 
 ```
@@ -348,6 +489,87 @@ and loses only the innermost frame NAME from the chain.  Switch
 ### A fast path inlines; its cold half is outlined
 
 ```
+  (R-LitHoist)   a loop-body vector LITERAL whose parts are invariant builds ONCE
+                 per activation: `v: vector<σ> = ℓ` under a `for`, σ a no-heap
+                 scalar, ℓ's parts literals, pure scalar ops, never-reassigned
+                 by-value scalar parameters, or scalar-getter reads of value-const
+                 record parameters — the emitter pre-declares `v` at function top
+                 and guards the declaration (the one wrapped Set, or the flat
+                 `OpDatabase · Set · pushes` run) on `v` being UNBOUND, so the
+                 build runs once and every later iteration and re-entry reuses the
+                 store.  `(Const-Value)` is per-NAME, so const alone cannot carry
+                 cross-iteration invariance: the alias gate requires every variable
+                 whose type can reach a record type ℓ reads to be a fresh-store
+                 local (its record is this activation's, never the caller's) or a
+                 value-const parameter itself used ONLY as a scalar-getter base.
+                 The local's other uses must be reads the analysis can see whole:
+                 For-iteration binds, `len`, its scope-exit free — an indexed use
+                 declines, because the same OpGetVector node is the lvalue base of
+                 an element WRITE (context-blind); an append, an escape, a rebind,
+                 a heap element, and two admitted locals sharing a sanitized name
+                 (they would share the one fn-top binding) all decline.
+
+  (R-CompleteWrite) a record built by a COMPLETE literal group skips the default
+                 prefill: the parser's lowering writes EVERY field explicitly — a
+                 named value, the declared default, the interned empty text, the
+                 null sentinel of a nullable, `false`, the variant TAG — so where
+                 the emitter proves coverage of every schema field position by the
+                 group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
+                 `set_default_value`'s walk (or its all-zero `zero_range`, which
+                 duplicates the zero-on-claim) writes nothing that survives, and
+                 the site calls the no-prefill twin (`OpDatabaseNP` /
+                 `OpNewRecordNP`).  An uncovered field — a nested struct arriving
+                 by `OpCopyRecord`, a vector field bound by an append, a
+                 `__nullable` element whose discriminant no `OpSet` names — keeps
+                 the prefill: the check can only DECLINE the elision.  `db_vars`
+                 is keyed by the local (every `OpDatabase` site must cover);
+                 `mint_tps` by the element type (every mint group in the function
+                 must).  The interpreter keeps the prefill and is the oracle.
+
+  (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
+                 an append (`out += [R { f: v, … }]`) is built INSIDE the appended
+                 element: the element is minted at the FIRST paired temp's
+                 declaration site (the mint claims the slot; the LENGTH BUMP stays
+                 at the append's finish, so the element is invisible until then —
+                 and a re-mint overwrites the same invisible slot), each temp is
+                 bound to the element's own field slot (a vector value IS the ref
+                 to its handle slot), the build targets it in place — an adopted
+                 callee then delivers its record DIRECTLY into the element — and
+                 the append site keeps its scalar sets and finish while the
+                 reservation, the mint, the paired handle-zeros and the paired
+                 copies vanish.  The invariant: every field is written before the
+                 finish — by the prelude mint's prefill, a paired build, or the
+                 kept sets.  Gates: declaration and append are top-level
+                 statements of ONE block (an if-arm append strands unfinished
+                 elements per skipped iteration); nothing between them mentions
+                 `out`; the temp's whole-function mentions reconcile to its build
+                 plus the one copy (a later read or a second consuming append
+                 declines — though an INTERVENING append merely reads the slot and
+                 the later one may pair); `out` an owned never-rebound plain
+                 vector of a plain-struct element.  The interpreter keeps the
+                 temp-store build and is the oracle.
+
+  (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
+                 scalar fields returns those fields BY VALUE — a Rust tuple, in
+                 registers — instead of writing them into a return buffer the
+                 caller then reads back.  Three gates, and the second and third
+                 are what make the first safe per FUNCTION: every CALL SITE in the
+                 program consumes the result by reading fields off a local it binds
+                 (a site that stores it, passes it on, returns it onward or binds
+                 it into a collection declines the whole function, so no site has
+                 to materialise a record out of a tuple and none can be made
+                 slower); and the BODY builds the record through `Object` blocks at
+                 every result position (a tail that FORWARDS another call's record
+                 has nothing to convert, and its signature would promise a tuple
+                 over a `DbRef`).  The callee's `Object` block becomes the tuple of
+                 its writes in field order; the call site binds the tuple, drops the
+                 buffer argument, reads `v.<index>` where it read a store, and
+                 releases nothing.  Two boundaries keep the record contract: the
+                 LIVE-RELOAD arm answers a `DbRef` and so reads the fields back out
+                 of it, and a library's CDYLIB BRIDGE materialises the tuple into
+                 the destination record it already owns — so the C ABI is unchanged
+                 while loft-to-loft calls inside the library take the value path.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

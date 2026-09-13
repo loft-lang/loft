@@ -6,7 +6,7 @@
 //! The rest of @PLN155 is about the COMPILE-TIME licence — which binding may be freed, derived
 //! from `deps` and the oracle.  These four rules are the other half: given that a free is
 //! emitted, what does the RUNTIME refuse?  `(H-Free)`'s side conditions, `(H-FreeNull)`,
-//! `(H-FreeTwice)`, `(H-FreeStack)` and `(H-FreeLIFO)`.
+//! `(H-FreeTwice)`, `(H-FreeStack)`, `@FR-H-FreeAny` and `@FR-H-FreeAll`.
 //!
 //! **They are tested here rather than in `tests/scripts/` because no loft program can express
 //! them.** A double free, a free of the evaluation stack, a free out of allocation order — the
@@ -21,11 +21,16 @@
 //! and the debugger's own teardown. It enforces three of the four rules on its own, and the
 //! compile-time licence never needs to reach them.
 //!
-//! The fourth is the finding: **`(H-FreeLIFO)` is enforced nowhere and was deliberately
-//! retired.** `Stores::free_bits` (S29) says so in its own doc — *"eliminates the LIFO-order
-//! requirement on `free()` that the old cascade-based scan imposed"* — and `rule_tags.py`
-//! agrees from the other side: zero citations, alone among the five. `lifo_order_is_not_a_fault`
-//! measures the current behaviour so the rule's state is a reading rather than a claim.
+//! The fourth WAS the finding: `(H-FreeLIFO)` was enforced nowhere and had been deliberately
+//! retired — `Stores::free_bits` (S29) says so in its own doc, *"eliminates the LIFO-order
+//! requirement on `free()` that the old cascade-based scan imposed"*, and `rule_tags.py` agreed
+//! from the other side with zero citations, alone among the five.  **Closed 2026-09-12 by owner
+//! ruling: the rules were rewritten to how the mechanism functions.**  `@FR-H-FreeAny` now
+//! states the positive fact — the store released is the one the reference NAMES, whatever its
+//! allocation order — and `lifo_order_is_not_a_fault` is its guard rather than a reading of a
+//! rule nobody obeyed.  `(H-Free)`'s own premise carried the same retired requirement and was
+//! corrected with it; so was its `free_protected` side condition, which `free_named` never
+//! checks (that gate lives at the deep-copy call sites).
 //!
 //! ⚠ **Each cell records whether it was FALSIFIED, and two were not.**  Every guard here was
 //! removed by hand and the suite re-run; `freeing_the_stack_store_is_refused` went red and the
@@ -139,6 +144,57 @@ fn a_freed_slot_is_reused_which_is_why_a_double_free_bites() {
 /// deliberately removed.  This asserts the behaviour that actually holds, so the rule's state
 /// is a reading rather than an assumption — and so that a future run REINTRODUCING a LIFO
 /// fault fails here rather than in a consumer.
+/// The `LOFT_DOUBLE_FREE` census counts a re-free and classifies it by the freeing SITE.
+///
+/// The census exists because the branch it sits on is NOT a defect channel, which took two
+/// disproven predictions to establish.  Over the corpus it is taken 433 762 times and every one
+/// is deliberate: 433 754 from a DIFFERENT site (a branch join emits one free per arm, only one
+/// arm mints) and 8 from the SAME site (`OpFreeRefIfDistinct`, a runtime-guarded free whose
+/// guard let one instruction through twice, all in `85-record-arm-return-join.loft`).  Both
+/// polarities were predicted to be the anomaly, in that order, and both measured as the design.
+///
+/// The reason is structural, not a property of today's corpus: reaching this branch means the
+/// slot was NOT reused, so nothing else could have been harmed.  A stale reference releasing a
+/// slot that has been handed to a NEW owner finds it live and takes the ordinary path — it
+/// never appears here.  `LOFT_STRICT_STORES` is what converts that case into this one, by never
+/// recycling a slot, and is therefore the gate for it.
+///
+/// Driven through `Stores` directly for this file's standing reason: no loft program can emit a
+/// bare double free.  The counter is process-global, so this reads a DELTA rather than a total.
+#[test]
+fn the_double_free_census_counts_a_re_free() {
+    if !loft::keys::double_free_audit() {
+        // The audit is opt-in, so without it this cell can only assert that it stays silent —
+        // which it does by not counting.  Say so rather than pass quietly.
+        let (a, b) = loft::keys::double_free_counts();
+        let mut stores = Stores::new();
+        let db = alloc(&mut stores, "census-off");
+        stores.free(&db);
+        stores.free(&db);
+        assert_eq!(
+            loft::keys::double_free_counts(),
+            (a, b),
+            "with LOFT_DOUBLE_FREE unset the census must not count — it is opt-in"
+        );
+        return;
+    }
+    let before = loft::keys::double_free_counts();
+    let mut stores = Stores::new();
+    let db = alloc(&mut stores, "census");
+    stores.free(&db);
+    assert!(is_free(&stores, &db), "the first free releases the slot");
+    stores.free(&db);
+    let after = loft::keys::double_free_counts();
+    assert_ne!(
+        before, after,
+        "the second free of the same slot must be counted by the census"
+    );
+    assert!(
+        is_free(&stores, &db),
+        "and the re-free must leave the slot free, not disturb it"
+    );
+}
+
 #[test]
 fn lifo_order_is_not_a_fault() {
     let mut stores = Stores::new();

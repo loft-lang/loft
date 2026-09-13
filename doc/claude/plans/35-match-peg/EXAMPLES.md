@@ -117,11 +117,11 @@ fn parse_stmt(ts: vector<Token>) -> Stmt {
 
 Edges to know — the honest limits of the design as scoped:
 
-- **A tail element is a bare name** — `[ Let, Ident{name}, Eq, ..mid, last ]` is fine and binds
-  `mid` to everything between, but `[ …, ..mid, Semi ]` is not: a variant sub-pattern or literal
-  after a `..` is not parsed (loft#1419, `formal/matching.md` D-match-4). Destructure the bound
-  name in a nested `match`, or use the L3.6 **iterator** input where the cursor stops before
-  `Semi` and the caller continues from there (the natural streaming-parser model).
+- ~~**A tail element is a bare name**~~ — **no longer a limit.** `[ …, ..mid, Semi ]` parses:
+  a variant sub-pattern or a literal after a `..` is a tail element like any other (loft#1419,
+  `formal/matching.md` D-match-4, closed 2026-09-12). The nested-`match` destructure this entry
+  used to recommend is no longer needed; the L3.6 **iterator** input remains the right model
+  where the caller wants to continue from the cursor rather than match a fixed tail.
   *(The rest itself was tail-only until 2026-09-07; `(P-Rest)`'s `t` had always said otherwise.)*
 - **No in-pattern rule reference** — `expr:expr` (match the `expr` sub-grammar inline) is not a
   feature; write `parse_expr(rhs)`.

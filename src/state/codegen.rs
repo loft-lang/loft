@@ -2375,7 +2375,39 @@ impl State {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(free_pos);
-                stack.add_op("OpFreeRef", self);
+                // loft#1523 — the free asks "release the store `v` is displacing", and for a
+                // PROJECTION right-hand side there is one case where the answer is no: the
+                // displaced store IS the container's, because `v` was already a view of it and
+                // the statement above re-minted that container IN PLACE.  Every vector literal
+                // is that case — `OpDatabase(__vdb_N)` then `_vec_N = OpGetField(__vdb_N, 0)` —
+                // so this free released the store the mint had just re-taken and the following
+                // slot write landed in it (visible under `LOFT_STRICT_STORES=1`).
+                //
+                // The CONTAINER is the witness, so the question is asked of the one thing that
+                // can answer it, at run time.  Position, timing and route are unchanged — which
+                // is the point: this free is load-bearing three ways at once (the self-read
+                // snapshot, the view-materialise pairing of BRITTLE.md § 7b, and the release
+                // after a rebuild), and each of those breaks if the free MOVES.  Only the
+                // same-store case stops firing.
+                //
+                // `projection_container_var` is the ONE derivation of *which container did this
+                // view come out of* — it peels the whole chain, so a view several levels down
+                // (`outs[2].inner`) names its root rather than the call just above it.  A
+                // VARIABLE is also free to push twice, which is what lets the witness be read
+                // here without re-evaluating anything.
+                let witness = if crate::keys::displaced_witness_enabled() {
+                    crate::use_analysis::projection_container_var(stack.data, value)
+                } else {
+                    None
+                };
+                if let Some(container) = witness {
+                    let c_pos = stack.var_pos(container);
+                    stack.add_op("OpVarRef", self);
+                    self.code_add(c_pos);
+                    stack.add_op("OpFreeRefIfDistinct", self);
+                } else {
+                    stack.add_op("OpFreeRef", self);
+                }
                 // @PLN118 — this var takes an unconditional pre-build free; its
                 // block-exit free must reset it to the sentinel so a loop re-entry's
                 // pre-build free cannot re-free a reused slot (moros glb H4 UAF).

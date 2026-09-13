@@ -6,9 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — `D-Opt-Value` was opened and CLOSED 2026-09-08 by owner ruling (loft#1471, below):
+OPEN: **0** — `D-Opt-Value` was opened and CLOSED 2026-09-08 by owner ruling (loft#1471, below):
 a `value struct` is nullable through `(L-Null-Tag)`'s discriminant, and nothing had to be built.
-`D-Domain-Guard` (opened 2026-09-08, below): `(N-Domain)`'s GUARD licence is not
+`D-Domain-Guard` (opened 2026-09-08, CLOSED 2026-09-12, below): `(N-Domain)`'s GUARD licence was not
 uniform across its three families — the index and divisor rows are closed, and whether the
 domain-partial MATH row is a code gap or a rule that over-promises is an owner call.
 `D-Null-Chain` was opened and CLOSED 2026-09-08 (loft#1450, below): the last of
@@ -55,7 +55,7 @@ is the honest fix: `(N-Domain)` can now type that read `Pt?` and MEAN it, becaus
 absent value finally exists to hand back.  That was impossible while `Pt?` was unrepresentable,
 and it is a change to the READ rather than a deletion.
 
-### D-Domain-Guard — OPENED 2026-09-08 (loft#1450's walk): `(N-Domain)`'s GUARD licence is not uniform across its families
+### D-Domain-Guard — OPENED 2026-09-08, CLOSED 2026-09-12 (loft#1450's walk): `(N-Domain)`'s GUARD licence is not uniform across its families
 
 `(N-Domain)` promises ONE elision — *"Non-null when the input is PROVABLY in-domain (constant /
 range / guard)"* — and states it over every partial operation it names.  Walked as a rule rather
@@ -99,6 +99,45 @@ of admissible spellings, and none of them a home the others read.  That is
 the index guard on the morning of 2026-09-08 left the identical hole in the divisor that
 afternoon.  A single "what does this guard prove about this value" home, consulted by each
 partial op, is what would make the rule's three licences one thing.
+
+**CLOSED 2026-09-12 — the owner ruled that the LATTICE widens, not that the rule narrows.**
+Narrowing would have enshrined the three-decoder split as intentional and left
+`if x >= 0.0 { sqrt(x) }` typing `float?` — the same over-wide `?` that reached consumers as a
+REFUSAL in `web` 0.3.0 and `stage` 0.18.1 once `(N-Chain)` carried it into a cast.
+
+The cure is smaller than this entry implies, because the home already existed.  `Sign` already
+carried the right lattice (`Pos ⊑ NonNeg ⊑ Unknown`) and `math_arg_in_domain` already consulted
+it through `domain_sign` — which had **no `Value::Var` arm**, so a variable fell to `Unknown`.
+A guard now contributes a `Sign` for the slot (`Parser::math_sign_proven`, the same
+push/truncate/invalidate discipline as `divisor_nonzero`), and the consult side needed that one
+arm.  So the guard COMPOSES with the expression lattice rather than sitting beside it.
+
+Only `<` and `<=` exist as ops, so every spelling lowers into one of four shapes — derived, not
+assumed: `x > 0` → `OpLt(0, x)` proves `Pos` in THEN; `x >= 0` → `OpLe(0, x)` proves `NonNeg` in
+THEN; `x < 0` → `OpLt(x, 0)` proves `NonNeg` in ELSE; `x <= 0` → `OpLe(x, 0)` proves `Pos` in
+ELSE.  Re-measured on both backends by the type `introspect` prints:
+
+| licence | index `v[i]` | divisor `a / d` | `sqrt` `ln` … |
+|---|---|---|---|
+| constant · expression | ✓ | ✓ | ✓ (unchanged) |
+| guard, positive | ✓ | ✓ | **✓ — was `float?`** |
+| guard, early return | ✓ | ✓ | **✓ — was `float?`** |
+
+⚠ **The widening REMOVES a diagnostic, so it is scored on the cells the diagnostic was ABOUT.**
+Each of these still types `float?`: the ELSE side of `x >= 0.0`, an `x != 0.0` that proves no
+sign, an upper bound alone (`x < 5.0`), the truthy `if x`, a slot reassigned after its guard —
+and `ln` given only `NonNeg`, which is the cell that says the `Sign` reuse is doing real work
+rather than acting as a boolean.  Guards:
+`tests/scripts/1450h-the-math-guard-is-read-in-every-spelling.loft` (the positive direction,
+with the two sibling families as controls that must not move) and
+`tests/math_domain.rs::math_domain_guard_proves_only_what_it_proves` (the refusals, which cannot
+share a file with cells that must compile).  The positive test was mutation-tested: with the
+`Value::Var` arm returning `Unknown` it FAILS while the other six pass.
+
+⚠ **This does NOT retire the three decoders.**  `index_bounded`, `divisor_nonzero` and
+`math_sign_proven` are still three stacks; what is shared now is the rule's PROMISE, not its
+implementation.  The generalisation named above — one "what does this guard prove about this
+value" home — remains the open structural work.
 
 ⚠ **Found because a too-CONSERVATIVE type became observable.**  None of this was visible while a
 projection dropped the receiver's `?`: the over-wide `?` on an index sat harmless until

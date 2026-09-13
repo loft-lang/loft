@@ -44,11 +44,19 @@ holder_raw() { [ -f "$HOLDER" ] && cat "$HOLDER" 2>/dev/null; }
 # holder still inside a live process tree has a real parent.  A holder is also accounted
 # for if some checkout's `.ci-running` names it and that pid is alive.
 holder_pids() {   # pid<TAB>ppid<TAB>cwd, one per process holding the lock on ANY fd
-    local p fd t
+    local p fd
     for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
         for fd in /proc/$p/fd/*; do
-            t=$(readlink "$fd" 2>/dev/null) || continue
-            [ "$t" = "$LOCK" ] || continue
+            # `-ef` is a BUILTIN device+inode comparison.  The string form it replaces
+            # (`t=$(readlink "$fd")`) forked once per fd — every fd of every process on the
+            # box — which cost 33 s per HELD `state` call here, nearly all of it `sys`.
+            # That is slow enough to be wrong and not merely slow: `why` and `doctor` each
+            # re-run `state`, so the selftest burned its holder's 90 s window inside two
+            # scans and cell 3 then measured a fixture that had already exited, reporting
+            # `HELD_ORPHAN ? ?` for a live gate — the exact false positive cell 3 exists to
+            # catch.  Inode identity is also the truer question: a symlinked `TMPDIR` gives
+            # two paths to one file, equal by inode and unequal by string.
+            [ "$fd" -ef "$LOCK" ] || continue
             printf '%s\t%s\t%s\n' "$p" "$(awk '{print $4}' /proc/$p/stat 2>/dev/null)" \
                 "$(readlink /proc/$p/cwd 2>/dev/null)"
             break

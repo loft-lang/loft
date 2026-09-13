@@ -8,11 +8,25 @@ use crate::store::Store;
 use std::cmp::Ordering;
 
 /// Checked vector position — `8 + index * size` using u64 to detect overflow.
+///
+/// The raise is OUTLINED (`@FR-R-Cold`): a formatted panic inline made every caller —
+/// `push_hoisted`, the fused element write — too fat to inline across the rlib boundary,
+/// so each in-range element access paid a real call for a fast path that is one multiply
+/// and a compare (the `lock_curved` profile put the two helpers at 40 % of the row).
 #[inline]
 pub(crate) fn checked_vec_pos(index: u32, size: u32) -> u32 {
     let pos = u64::from(index) * u64::from(size) + 8;
-    u32::try_from(pos)
-        .unwrap_or_else(|_| panic!("Vector position overflow: index={index} size={size}"))
+    match u32::try_from(pos) {
+        Ok(p) => p,
+        Err(_) => vec_pos_overflow(index, size),
+    }
+}
+
+/// The outlined raise of [`checked_vec_pos`] (`@FR-R-Cold`).
+#[cold]
+#[inline(never)]
+fn vec_pos_overflow(index: u32, size: u32) -> ! {
+    panic!("Vector position overflow: index={index} size={size}")
 }
 
 /// Checked vector capacity — `(count * size + 15) / 8` using u64.

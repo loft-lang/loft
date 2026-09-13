@@ -79,7 +79,7 @@ fn c9() {
   println("c9 {len(ins_out)} {s}");
 }
 
-struct T { name: text, ins: vector<In> }
+struct Tx { name: text, ins: vector<In> }
 
 fn mkn(seed: integer) -> vector<R?> {
   out: vector<R?> = [];
@@ -89,12 +89,12 @@ fn mkn(seed: integer) -> vector<R?> {
   out
 }
 
-fn mkt(n: integer, seed: integer) -> vector<T> {
-  out: vector<T> = [];
+fn mkt(n: integer, seed: integer) -> vector<Tx> {
+  out: vector<Tx> = [];
   for i in 0..n {
     ins: vector<In> = [];
     for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
-    out += [T { name: "n{seed}-{i}", ins: ins }];
+    out += [Tx { name: "n{seed}-{i}", ins: ins }];
   }
   out
 }
@@ -117,7 +117,7 @@ fn c10() {
   println("c10 {len(outn)} {nulls} {sum_rn(outn)}");
 }
 fn c11() {
-  out: vector<T> = []; s = 0;
+  out: vector<Tx> = []; s = 0;
   for f in mkt(2, 3) { out += [f]; }
   for t in out { s += len(t.name); for x in t.ins { s += x.a; } }
   t1 = out[1]?;
@@ -129,4 +129,161 @@ fn c12() {
   println("c12 {len(out)} {sum_r(out)}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); }
+// c13 — the element type is itself a CONTAINER (`vector<vector<integer>>`): outside the
+// plain-struct admission, the copy stays.  Values right.
+fn mkv(n: integer) -> vector<vector<integer>> {
+  out: vector<vector<integer>> = [];
+  for i in 0..n { out += [[i, i * 2, i * 3]]; }
+  out
+}
+fn c13() {
+  out: vector<vector<integer>> = []; s = 0;
+  for f in mkv(3) { out += [f]; }
+  for xs in out { for x in xs { s += x; } }
+  println("c13 {len(out)} {s}");
+}
+
+// c14 — the append sits under a FURTHER loop, which appends the same `f` once per inner
+// iteration: a move can give the element away only once, so the pair declines (c8's class,
+// with an inner count that would catch a wrong admission).  Values right.
+fn c14() {
+  out: vector<R> = [];
+  for f in mk(2, 8) { for _ in 0..2 { out += [f]; } }
+  println("c14 {len(out)} {sum_r(out)}");
+}
+
+// c15 — the destination is REASSIGNED after the loop: the placed buffer's record would
+// outlive the store that hosts it, so the pair declines.  Values right.
+fn c15() {
+  out: vector<R> = [];
+  for f in mk(2, 9) { out += [f]; }
+  out = mk(1, 10);
+  println("c15 {len(out)} {sum_r(out)}");
+}
+
+// c16 — a NO-HEAP element: the same loop is also § V-t's record push (the mint fuses into
+// the push header), and the move relocates into the header's slot.  Both rewrites on one
+// group; the values are the oracle's either way.
+struct Pt2 { x: float, y: float }
+fn mkp(n: integer) -> vector<Pt2> {
+  out: vector<Pt2> = [];
+  for i in 0..n { out += [Pt2 { x: (i as float) ?? 0.0, y: ((i * i) as float) ?? 0.0 }]; }
+  out
+}
+fn c16() {
+  out: vector<Pt2> = []; s = 0.0;
+  for f in mkp(30) { out += [f]; }
+  for p in out { s = (s + p.x + p.y) ?? 0.0; }
+  println("c16 {len(out)} {out[29]?.y} {s}");
+}
+
+// c17/c18 — the callee RE-INITS its buffer (`OpDatabase` on the hidden attr, the
+// witness-promoted delivery shape): its reuse arm clears the buffer's WHOLE STORE, so a
+// placed buffer would let the callee wipe the caller's half-built result — the sqldb
+// `collect_leaf` corruption.  The pair declines; values right.  c17 is the two-function
+// shape, c18 the direct recursion.
+struct FI2 { name: text, depth: integer, kids: integer }
+struct CF2 { path_name: text, f: FI2 }
+fn fields_of(d: integer) -> vector<FI2> {
+  out: vector<FI2> = [];
+  for i in 0..3 {
+    out += [FI2 { name: "f{d}_{i}", depth: d, kids: if d > 0 && i == 1 { 1 } else { 0 } }];
+  }
+  out
+}
+fn collect_leaf(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; }
+  return out;
+}
+fn collect2(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) {
+    if f.kids == 0 { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; continue; }
+    for cf in collect_leaf(d - 1, "{prefix}{f.name}_") { out += [cf] }
+  }
+  return out;
+}
+fn collectr(d: integer, prefix: text) -> vector<CF2> {
+  out: vector<CF2> = [];
+  for f in fields_of(d) {
+    if f.kids == 0 { out += [CF2 { path_name: "{prefix}{f.name}", f: f }]; continue; }
+    for cf in collectr(d - 1, "{prefix}{f.name}_") { out += [cf] }
+  }
+  return out;
+}
+fn c17() {
+  r = collect2(2, ""); s = 0;
+  for c in r { s += len(c.path_name) + c.f.depth; }
+  println("c17 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
+}
+fn c18() {
+  r = collectr(2, ""); s = 0;
+  for c in r { s += len(c.path_name) + c.f.depth; }
+  println("c18 {len(r)} {r[0]?.path_name} {r[len(r)-1]?.path_name} {s}");
+}
+
+// c19 — a struct named like a stdlib TYPE VARIABLE (`T`).  The buffer type's name-based
+// lookup USED to find the GENERIC `main_vector<T>` template, whose `vector` field carried
+// `__typevar_T`, so the pairing declined on the wrapper-identity check and the deep copy
+// stayed.  loft#1519 fixed that at its root (2026-09-12 — the wrapper key was being built
+// by the DIAGNOSTIC renderer, which folds `T#2` back to `T`), so this cell now PAIRS: the
+// decline fires zero times where it fired twice, and the cell prints the same either way.
+// It is kept as the regression for both halves — the naming, and that the pairing is
+// value-neutral for this shape.  Values right under either outcome.
+struct T { name: text, ins: vector<In> }
+fn mkc(n: integer, seed: integer) -> vector<T> {
+  out: vector<T> = [];
+  for i in 0..n {
+    ins: vector<In> = [];
+    for j in 0..(i + 1) { ins += [In { a: seed * 10 + i * 3 + j, b: 0.0 }]; }
+    out += [T { name: "n{seed}-{i}", ins: ins }];
+  }
+  out
+}
+fn c19() {
+  out: vector<T> = []; s = 0;
+  for f in mkc(2, 5) { out += [f]; }
+  for t in out { s += len(t.name); for x in t.ins { s += x.a; } }
+  t1 = out[1]?;
+  println("c19 {len(out)} {s} {t1.name}");
+}
+
+// c20 — the first destination is NEVER read after its loop, so its store dies early
+// (dead after last use) and the second loop's stores recycle the slot: the placed
+// record's free must ride the LOOP's exit, not the buffer attr's scope end, or it
+// deletes a record inside whatever lives in the slot now (the native_scripts gate
+// corruption, 2026-09-11).  Loop 1 pairs; loop 2 (a read after the append) declines.
+fn c20() {
+  out1: vector<R> = [];
+  for f in mk(3, 1) { out1 += [f]; }
+  out2: vector<R> = []; s2 = 0;
+  for f in mk(3, 1) { out2 += [f]; x = f.ins[0]?; s2 += len(f.ins) + x.a; }
+  println("c20 {s2} {len(out2)} {sum_r(out2)}");
+}
+
+// c21 — an ENCLOSING loop re-enters the paired For block: the loop-exit free nulls the
+// buffer var, so the placement guard re-places on the next entry and each outer
+// iteration gets a fresh placed buffer.  Values exact across both entries.
+fn c21() {
+  total_len = 0; total = 0;
+  for k in 0..2 {
+    dest: vector<R> = [];
+    for f in mk(2, k) { dest += [f]; }
+    total_len += len(dest);
+    total += sum_r(dest);
+  }
+  println("c21 {total_len} {total}");
+}
+
+// c22 — TWO paired loops into ONE destination: the host's death releases BOTH placed
+// records (the host-site injection walks every pair hosted by that `__vdb`), and each
+// buffer attr's scope-end backstop no-ops on its null sentinel.
+fn c22() {
+  o: vector<R> = [];
+  for f in mk(2, 1) { o += [f]; }
+  for f in mk(1, 2) { o += [f]; }
+  println("c22 {len(o)} {sum_r(o)}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); c22(); }

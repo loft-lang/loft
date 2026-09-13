@@ -24,6 +24,27 @@ impl Output<'_> {
         var: u16,
         to: &Value,
     ) -> std::io::Result<()> {
+        // @PLN157 § V-u (`@FR-R-RetAdopt`) — the adopted result local's init: instead of
+        // reading the (never-allocated) witness's vector path, the local IS the return
+        // buffer.  A caller that offered no buffer gets one allocated exactly as the
+        // witness would have been, so ownership travels the same route.
+        if let Some(a) = self.ret_adopt
+            && var == a.v
+            && matches!(to.unspan(), Value::Call(d, _)
+                if (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpGetField")
+        {
+            let variables = self.data.def(self.def_nr).variables();
+            let name = sanitize(variables.name(var));
+            let buf = sanitize(variables.name(a.buf));
+            let tp_str = self.local_rust_type(var, variables.tp(var));
+            self.declared.insert(var);
+            let db_tp = a.db_tp;
+            return write!(
+                w,
+                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
+            );
+        }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {
             return self.output_set_witnessed(w, var, to);
         }
@@ -730,7 +751,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 // @PLN157 § V-g — an elided local aliases the call's result and never
                 // copies into a slot store of its own, so the `null_named` pre-allocation
                 // (a store minted for the copy to land in) would only be minted to be
@@ -985,7 +1006,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 writeln!(
                     w,
                     "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
@@ -1039,7 +1060,7 @@ impl Output<'_> {
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 writeln!(
                     w,
                     "let mut var_{name}: {tp_str} = stores.null_named(\"var_{name}\");"
@@ -1234,7 +1255,7 @@ impl Output<'_> {
                 write!(w, "var_{name} = ")?;
             } else {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 write!(w, "let mut var_{name}: {tp_str} = ")?;
             }
             // The tail is the assigned VALUE, so it needs the same storage-form coercion
@@ -1309,7 +1330,7 @@ impl Output<'_> {
                 write!(w, "var_{name} = ")?;
             } else {
                 self.declared.insert(var);
-                let tp_str = rust_type(variables.tp(var), &Context::Variable);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
                 write!(w, "let mut var_{name}: {tp_str} = ")?;
             }
             // P199 — user-fn / Op-stub callees take `&UnsafeCell<Stores>`
@@ -1395,7 +1416,7 @@ impl Output<'_> {
             } else {
                 variables.tp(var).clone()
             };
-            let tp_str = rust_type(&var_tp, &Context::Variable);
+            let tp_str = self.local_rust_type(var, &var_tp);
             write!(w, "let mut var_{name}: {tp_str} = ")?;
         }
         if matches!(to, Value::Null) && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
@@ -1731,6 +1752,14 @@ impl Output<'_> {
         first: bool,
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
+        // @PLN157 § V-j (`@FR-R-MoveAppend`) — a PAIRED buffer starts as the null sentinel
+        // and is PLACED (as a record in the destination's store) at its `For`, not here:
+        // the destination's `__vdb` does not exist yet at this declaration.  The
+        // `null_named` slot the ordinary path mints would be orphaned by the placement.
+        if self.move_pairs.contains_key(&var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
         // Only a slot that OWNS its store gets a backing allocation here.  Reading
         // the one `owns_store` predicate rather than re-deriving ownership from the
         // dep list is what keeps this correct for the borrows the deps cannot see: a
@@ -1931,6 +1960,16 @@ impl Output<'_> {
         // emissions one Op at a time (without touching the bulk match).
         if crate::generation::ops::has_custom_emitter(name) {
             let name_owned = name.to_string();
+            if self.checkpoints.armed() {
+                let mut buf: Vec<u8> = Vec::new();
+                let mut ctx = crate::generation::ops::EmitCtx {
+                    w: &mut buf,
+                    def_fn,
+                    output: self,
+                };
+                crate::generation::ops::emit_op(&mut ctx, &name_owned, vals)?;
+                return self.ckpt_write(w, &name_owned, &buf);
+            }
             let mut ctx = crate::generation::ops::EmitCtx {
                 w,
                 def_fn,
@@ -1946,8 +1985,19 @@ impl Output<'_> {
             return self.output_call_inner(w, op, &args);
         }
         if def_fn.rust().is_empty() {
+            // A USER call is deliberately NOT a checkpoint site.  Wrapping it would make
+            // its ticks INCLUSIVE of every operator in the callee, so one table would mix
+            // inclusive and exclusive rows and the shares would sum past 100 %.  Per-
+            // function attribution comes out of the site table's owner column instead,
+            // which is exclusive by construction.
             self.output_call_user_fn(w, def_fn, vals)
         } else {
+            if self.checkpoints.armed() {
+                let name_owned = name.to_string();
+                let mut buf: Vec<u8> = Vec::new();
+                self.output_call_template(&mut buf, def_fn, vals)?;
+                return self.ckpt_write(w, &name_owned, &buf);
+            }
             self.output_call_template(w, def_fn, vals)
         }
     }

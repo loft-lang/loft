@@ -1954,7 +1954,14 @@ impl Stores {
     ///
     /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
     /// before the push — the point of the switch.  Never in the emitted default.
-    #[inline]
+    ///
+    /// `#[inline(always)]` rather than `#[inline]`, measured (`@FR-R-Cold`): with the
+    /// growth arm already outlined the body is a bounds test, two stores and a bump, and
+    /// rustc still declined the cross-rlib inline — the helper alone was 31 % of the
+    /// `lock_curved` row's self time.  (The § V-i probe that reverted `inline(always)`
+    /// on `addr`/`addr_mut` measured fns that were ALREADY inlining; this one was not.)
+    #[allow(clippy::inline_always)] // measured, not habitual — see the doc paragraph above
+    #[inline(always)]
     pub fn push_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
         &mut self,
         p: &mut crate::vector::PushHeader,
@@ -1980,9 +1987,267 @@ impl Stores {
             p.h.len += 1;
             store.write::<u32>(p.h.rec, 4, p.h.len);
         } else {
-            T::append_in(self, db, val);
-            *p = crate::vector::push_header(db, &self.allocations);
+            self.push_hoisted_grow(p, db, val);
         }
+    }
+
+    /// The growth arm of [`Self::push_hoisted`], outlined (`@FR-R-Cold`): with the
+    /// runtime's whole append ladder folded into the generic `#[inline]` caller, rustc
+    /// declined to inline it across the rlib boundary, and every in-capacity push — a
+    /// bounds test, one store and a length bump — paid a real call (23.8 % of the
+    /// `lock_curved` row's self time sat in the helper).
+    #[cold]
+    #[inline(never)]
+    fn push_hoisted_grow<T: crate::vector::HoistScalar>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        val: T,
+    ) {
+        T::append_in(self, db, val);
+        *p = crate::vector::push_header(db, &self.allocations);
+    }
+
+    /// @PLN157 § V-t — a RECORD append's slot through a hoisted [`crate::vector::PushHeader`]
+    /// (`@FR-R-PushRec`): when the element fits, the slot is the header's next position —
+    /// no `record_new` dispatch and no default prefill, because the group that follows
+    /// writes every field of the element explicitly (the IR's literal lowering emits the
+    /// omitted fields' defaults and sentinels itself, and a declined delivery lands as a
+    /// whole-record copy).  Otherwise the runtime's own append grows the record and the
+    /// header is re-derived, since the growth may have moved it.  The length is NOT bumped
+    /// here — [`Self::push_record_finish`] is the visibility step, exactly where
+    /// `record_finish`'s bump was.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db`
+    /// before the slot is derived.  Never in the emitted default.
+    pub fn push_record_hoisted<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) -> crate::keys::DbRef {
+        self.records_created += 1;
+        if p.h.rec != 0 && p.h.len.saturating_add(1).saturating_mul(size) <= p.cap {
+            if VERIFY {
+                assert_eq!(
+                    *p,
+                    crate::vector::push_header(db, &self.allocations),
+                    "hoisted record-push header is stale — the loop moved the vector it appends to"
+                );
+            }
+            crate::keys::DbRef {
+                store_nr: p.h.store_nr,
+                rec: p.h.rec,
+                pos: crate::vector::checked_vec_pos(p.h.len, size),
+            }
+        } else {
+            let e = crate::vector::vector_append(db, size, &mut self.allocations);
+            *p = crate::vector::push_header(db, &self.allocations);
+            e
+        }
+    }
+
+    /// The finish half of [`Self::push_record_hoisted`]: the length bump, written to BOTH
+    /// the header and the record — the one step that makes the element visible, exactly as
+    /// `record_finish`'s `vector_finish` was for the unfused group.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY`, when the header no longer describes `db` at the bump — a builder
+    /// between the slot and the finish that moved the vector would be caught here.
+    pub fn push_record_finish<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+    ) {
+        if VERIFY {
+            // The slot was handed out before this bump, so a fresh derivation still reads
+            // the OLD length — header and record agree on every field here or something
+            // between the slot and the finish moved the vector.
+            assert_eq!(
+                *p,
+                crate::vector::push_header(db, &self.allocations),
+                "hoisted record-push header is stale at the finish — the element's builder moved the vector"
+            );
+        }
+        p.h.len += 1;
+        self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
+    }
+
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — place a call's return buffer as a RECORD inside
+    /// `host`'s store, so what the callee builds into it is claimed where the consuming
+    /// append wants the elements to live.  The record is shaped exactly as `OpDatabase`
+    /// shapes a fresh-store buffer (type tag at word 1, content defaulted, `pos` 8); only
+    /// the store differs.  The store's `known_type` is the HOST's and stays untouched.
+    #[must_use]
+    pub fn place_record_in(&mut self, host: &crate::keys::DbRef, db_tp: u16) -> crate::keys::DbRef {
+        let size = self.enum_parent_size(db_tp);
+        let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
+        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
+        // @PLN157 § V-y (`@FR-R-CompleteWrite`) — the placed buffer is a vector record
+        // whose only field the CALLEE's entry clear rewrites (the shape-A clear, or the
+        // adopted init's len reset — the ABI every admitted callee has); the prefill's
+        // whole effect is this one u32 zero, written directly instead of dispatching
+        // through `set_default_value`.
+        self.store_mut(&r).set_u32_raw(r.rec, 8, 0);
+        r
+    }
+
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the move-append: relocate `size` bytes of the
+    /// dying temporary's element into the fresh destination element and ZERO the source,
+    /// both in ONE store — the element's heap handles stay valid because they never change
+    /// store, and the zeroed source is what keeps the temporary's own clear and free from
+    /// releasing what it no longer owns.  The caller dispatches on store identity and takes
+    /// the deep copy when they differ; this is only the same-store arm.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the two elements do NOT share a store —
+    /// the caller's dispatch failed.  Never in the emitted default.
+    pub fn move_record_shallow<const VERIFY: bool>(
+        &mut self,
+        src: &crate::keys::DbRef,
+        dst: &crate::keys::DbRef,
+        size: u32,
+    ) {
+        if VERIFY {
+            assert_eq!(
+                src.store_nr, dst.store_nr,
+                "move-append across stores — the same-store dispatch let a cross-store pair through"
+            );
+        }
+        self.copy_block(src, dst, size);
+        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
+    }
+
+    /// @PLN157 / loft's oldest deferred TODO (`@FR-H-ClearRelease`, formal/heap.md) — the
+    /// clear a REUSED vector owes: `vector::clear_vector` is a LENGTH RESET, sound
+    /// wherever the vector's store dies right after (every use it was written for) and
+    /// unsound for a vector that OUTLIVES the clear — the shape-A return buffer the ABI
+    /// reuses across calls, or a long-lived local cleared per frame — where each clear
+    /// strands the previous elements' owned heap in a store that never dies (~357 KB per
+    /// `fronds` call, unbounded; measured on both architectures).
+    ///
+    /// The release arm exists for the STORE-ROOT vector (`rec == 1 && pos == 8`, the
+    /// shape `OpDatabase` mints): it is the one shape that outlives calls, and its
+    /// element type is readable from the store's own `known_type`.  A FIELD vector
+    /// keeps the plain reset — its store dies with its owner (the recorded residual).
+    /// A placed § V-j buffer is never record 1 (the host's own vector is), so it keeps
+    /// the reset too: its elements are moved out (zeroed) or record-level freed.
+    /// The gate is the ELEMENT TYPE, read from the layout (`owns_heap`), so there is no
+    /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
+    pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
+        // `LOFT_NO_CLEAR_RELEASE=1` restores the pre-fix pure length reset — the bisect
+        // step for a double free or a wrong value at a cleared vector on either backend.
+        fn release_enabled() -> bool {
+            static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *F.get_or_init(|| !std::env::var("LOFT_NO_CLEAR_RELEASE").is_ok_and(|v| v != "0"))
+        }
+        if !release_enabled() {
+            crate::vector::clear_vector(db, &mut self.allocations);
+            return;
+        }
+        if std::env::var("LOFT_TRACE_CLEAR").is_ok() {
+            let kt = if (db.store_nr as usize) < self.allocations.len() {
+                self.allocations[db.store_nr as usize].known_type
+            } else {
+                u16::MAX
+            };
+            let one = kt != u16::MAX
+                && (kt as usize) < self.types.len()
+                && matches!(&self.types[kt as usize].parts,
+                    crate::database::Parts::Struct(f) if f.len() == 1);
+            let vec_tp = if one {
+                self.field_type(kt, 0)
+            } else {
+                u16::MAX
+            };
+            let elem = if vec_tp != u16::MAX
+                && (vec_tp as usize) < self.types.len()
+                && matches!(
+                    self.types[vec_tp as usize].parts,
+                    crate::database::Parts::Vector(_)
+                ) {
+                self.content(vec_tp)
+            } else {
+                u16::MAX
+            };
+            eprintln!(
+                "[clear] store={} rec={} pos={} kt={} elem={} owns_heap={}",
+                db.store_nr,
+                db.rec,
+                db.pos,
+                kt,
+                elem,
+                elem != u16::MAX && self.owns_heap(elem)
+            );
+        }
+        if !db.is_null() && db.rec == 1 && (db.store_nr as usize) < self.allocations.len() {
+            // The shape, not a byte offset: the store's root record is a
+            // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
+            // is exactly what `OpDatabase` mints for a vector local or a return buffer,
+            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
+            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
+            // 12 on the interpreter, and a hardcoded offset silently released on one
+            // backend only (measured: the interpreter kept leaking).  Any other root —
+            // a user struct with collection fields, a placed § V-j buffer (never record
+            // 1) — keeps the plain reset.
+            let kt = self.allocations[db.store_nr as usize].known_type;
+            let one_field_vector = kt != u16::MAX
+                && (kt as usize) < self.types.len()
+                && matches!(&self.types[kt as usize].parts,
+                    crate::database::Parts::Struct(f) if f.len() == 1);
+            let vec_tp = if one_field_vector {
+                self.field_type(kt, 0)
+            } else {
+                u16::MAX
+            };
+            let is_vector = vec_tp != u16::MAX
+                && (vec_tp as usize) < self.types.len()
+                && matches!(
+                    self.types[vec_tp as usize].parts,
+                    crate::database::Parts::Vector(_)
+                );
+            let elem = if is_vector {
+                self.content(vec_tp)
+            } else {
+                u16::MAX
+            };
+            if elem != u16::MAX && self.owns_heap(elem) {
+                let len = crate::vector::length_vector(db, &self.allocations);
+                let size = u32::from(self.size(elem));
+                let v_rec = self.store(db).collection_rec(db.rec, db.pos);
+                if v_rec != 0 {
+                    for i in 0..len {
+                        let e = crate::keys::DbRef {
+                            store_nr: db.store_nr,
+                            rec: v_rec,
+                            pos: 8 + i * size,
+                        };
+                        self.remove_claims(&e, elem);
+                    }
+                }
+            }
+        }
+        crate::vector::clear_vector(db, &mut self.allocations);
+    }
+
+    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
+    /// lives on: the deep release of what the record still owns (elements the loop did not
+    /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`
+    /// performed for a fresh-store buffer released the whole STORE; a placed buffer's store
+    /// is the destination's and must survive.
+    pub fn free_record_in(&mut self, db: &crate::keys::DbRef, db_tp: u16) {
+        if db.store_nr == u16::MAX
+            || db.rec == 0
+            || (db.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        self.remove_claims(db, db_tp);
+        self.allocations[db.store_nr as usize].delete(db.rec);
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of

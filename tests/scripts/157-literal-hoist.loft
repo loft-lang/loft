@@ -1,0 +1,61 @@
+// @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body vector literal builds ONCE
+// on the native backend: the local is the once-flag of its own build guard, so every
+// iteration (and every re-entry from an enclosing loop) reuses the store instead of
+// re-running OpDatabase's clear, the reservation and the pushes.  The interpreter
+// keeps the per-iteration build and is the oracle.  The emission per cell is pinned by
+// tests/literal_hoist.rs over the V-x corpus; this file carries the VALUE cells that
+// must hold whatever the emitter decides.
+// `LOFT_NO_LITERAL_HOIST=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-11) — re-allowing OpGetVector* as an
+// accounted use admits the element-write cell, and its conditional write answers 30 on
+// --native against the oracle's 16 (iteration 0's write carried); restored, all cells
+// exact on both backends under LOFT_POISON=1 and under the off-switch.
+
+struct Sp { mirror: boolean, a: float }
+
+fn mirror_total(sp: const Sp, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n {
+    sides: vector<float> = if sp.mirror { [1.0, -1.0] } else { [1.0] };
+    for s in sides { t = (t + s * ((i + 1) as float)) ?? 0.0; }
+  }
+  t
+}
+
+fn main() {
+  // The base shape: a plain literal in a loop body, values exact across iterations.
+  t1 = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [1.0, 2.0];
+    for s in v { t1 = (t1 + s + (i as float)) ?? 0.0; }
+  }
+  assert(t1 == 15.0, "a hoisted plain literal keeps every iteration's values");
+
+  // The fronds shape: an if-of-literals on a const-param field, both arms.
+  assert(mirror_total(Sp { mirror: true, a: 0.5 }, 3) == 0.0
+      && mirror_total(Sp { mirror: false, a: 0.5 }, 2) == 3.0,
+    "a conditional literal on a const-param field hoists with exact values");
+
+  // The element-write decline: the conditional write must NOT carry across
+  // iterations (the falsified failure mode answers 30 here).
+  t3 = 0.0;
+  for i in 0..3 {
+    v: vector<float> = [1.0, 2.0];
+    if i == 0 { v[1] = 9.0; }
+    for s in v { t3 = (t3 + s) ?? 0.0; }
+  }
+  assert(t3 == 16.0, "an element-written literal rebuilds per iteration");
+
+  // Nested loops: one activation-level build, every (i, j) iteration exact.
+  t4 = 0.0;
+  for i in 0..2 {
+    for j in 0..3 {
+      v: vector<float> = [10.0, 20.0];
+      for s in v { t4 = (t4 + s + ((i * 3 + j) as float)) ?? 0.0; }
+    }
+  }
+  assert(t4 == 210.0, "a doubly-nested literal builds once and reads exact");
+
+  println("literal hoist ok");
+}

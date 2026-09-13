@@ -235,19 +235,62 @@ parameter), OR a **struct-typed view** of one — never a plain copy. The capabi
 (D-cap-3) enforces this by **following the vector's dep chain**: a local vector that aliases a
 parameter (via `&`) is host, a genuinely-copied one is script-owned.
 
-### Free — release a store, in LIFO order, never the stack, never twice
+### Free — release the store a reference NAMES, once, never the stack
 
 ```
   (H-Free)       ⟨free(r), ⟨ρ, H⟩⟩ → ⟨(), ⟨ρ, H \ store(r)⟩⟩
-                   when H ⊢ r live, store(r) is the MOST-RECENTLY-ALLOCATED live heap store,
-                   store(r) ≠ 0 (not the eval stack), and store(r) not free_protected.
+                   when H ⊢ r live, store(r) ≠ 0 (not the eval stack), and store(r) is not
+                   PINNED.  A pinned store (const/global) lives for the whole program and its
+                   free is a no-op.
   (H-FreeNull)   ⟨free(nullref), σ⟩ → ⟨(), σ⟩                      (freeing null is a no-op)
-  (H-FreeLIFO)   freeing a store that is NOT the current top of the allocation order is a
-                 FAULT — the LIFO discipline (a store's lifetime nests within those allocated
-                 before it).  ⚠ RETIRED IN THE IMPLEMENTATION — see D-heap-LIFO below.
+  (H-FreeAny)    the store released is the one `r` NAMES, whatever its allocation order — a
+                 store may be freed while newer ones are live, and that is ordinary.  The
+                 table is a slot vector recycled by a BITMAP (`Stores::free_bits`: allocate
+                 takes the lowest free slot below the watermark), not a stack that unwinds.
+                 Guard `heap_free_discipline.rs::lifo_order_is_not_a_fault`.
   (H-FreeStack)  freeing store 0 (the evaluation stack) is a FAULT (#306): a stack-record ref
-                 is never an owned heap store.
-  (H-FreeTwice)  freeing an already-freed store is a FAULT (use-after-free / double-free).
+                 is never an owned heap store.  REFUSED loudly at runtime.
+  (H-FreeTwice)  freeing an already-freed store is REFUSED: a no-op that leaves the allocation
+                 table undisturbed.  A refusal and not a halt, because the corrupting frees are
+                 discharged STATICALLY by [ownership.md](ownership.md) — reaching one means
+                 that system already failed, so the runtime's job is to not compound it.  The
+                 danger it averts is slot REUSE: a freed slot is handed out again, so a second
+                 free would release someone else's store.
+  (H-FreeAll)    every store is freed exactly ONCE, by program exit.  The residue is reported
+                 (`N stores not freed at program exit`) — a warning ordinarily and an ERROR
+                 under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
+                 both halves: a store used after its free, and a store never freed at all.
+  (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
+                 elements own.  `clear_vector` is a length reset — sound wherever
+                 the vector's store dies straight after (every use it was written
+                 for) and unsound for a vector the ABI REUSES: a shape-A hidden
+                 return buffer, or any store-root vector cleared per call.  There
+                 each clear strands the previous elements' owned heap in a store
+                 that never dies, unbounded in the call count.  The release arm is
+                 gated on the SHAPE and the ELEMENT TYPE, both read from the
+                 layout: the store's root record is a one-field `main_vector<T>`
+                 wrapper (what `OpDatabase` mints — asking the shape, never a byte
+                 offset, is what keeps the two backends together: the field sits at
+                 8 on `--native` and 12 on the interpreter) and the element type
+                 OWNS HEAP.  A no-heap element pays exactly the old reset; a field
+                 vector, a user-struct root and a placed buffer (never record 1)
+                 keep it too.  Values are unaffected either way — this is a leak
+                 rule, not a semantics rule.
+
+  (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
+                 header word and the HIGH half of its LAST word (the tree node's color
+                 rides bit 31 of its RIGHT link, so the half-word is clear at every
+                 tracked size; a one-word block's footer shares its header's word).  A
+                 record delete then coalesces BACKWARD in O(1): the footer at the freed
+                 block's left edge NAMES a candidate predecessor, its header must agree,
+                 and the free TREE must hold that exact block — claimed data can spell a
+                 false footer and header, and the tree cannot lie (falsified: without the
+                 tree confirmation, a fabricated footer+header pair merges a freed block
+                 into the middle of a live claim).  A one-word predecessor is untracked
+                 and unconfirmable: it is left, and the lazy O(blocks) sweep stays armed
+                 for exactly that case.  Footers live in FREE space only — a persisted
+                 image is unchanged, and an image written before footers existed is
+                 re-footed by the open walk.
 ```
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
@@ -274,7 +317,7 @@ every caller (loft#1287, `scopes::scan_args`). Nothing widens: the mark names on
 parameter's ENTRY store, so a REPEATED call still releases the fresh store the previous one
 installed, which the frame does own.
 
-> **D-heap-LIFO — OPEN (2026-09-09).**  `(H-FreeLIFO)` states a fault the implementation
+> **D-heap-LIFO — OPENED 2026-09-09, CLOSED 2026-09-12.**  `(H-FreeLIFO)` stated a fault the implementation
 > deliberately stopped requiring, and nothing enforces it.  `Stores::free_bits` (S29) says so
 > in its own doc — a bitmap of free slots, so `database_named` reuses the lowest free slot
 > below `max`, which *"eliminates the LIFO-order requirement on `free()` that the old
@@ -287,10 +330,27 @@ installed, which the frame does own.
 > LIFO discipline exists to avoid needing — is what makes a double free dangerous in the first
 > place, which is the rule that replaced it.
 >
-> Open rather than closed because the wording is a DESIGN call, not a transcription: either the
-> rule is deleted, or it is rewritten as the weaker invariant that actually holds (a store's
-> lifetime nests within its OWNER's, which is `(H-Free)`'s liveness condition and not an
-> ordering).  @PLN155 phase 4 measured it and did not take that call.
+> It stayed open because the wording was a DESIGN call, not a transcription, and @PLN155 phase 4
+> measured it without taking that call.  **The owner took it on 2026-09-12: the rules are
+> rewritten to how the mechanism functions.**  `(H-FreeLIFO)` is gone; `(H-FreeAny)` states the
+> positive fact in its place, and `(H-FreeAll)` states the completeness obligation that was
+> never written down at all — every store freed exactly once by program exit, which the runtime
+> has always reported and `LOFT_STRICT_STORES` has always made an error.
+>
+> Neither the deletion nor the "weaker nesting invariant" of the two candidates was taken
+> whole.  Nesting is not a HEAP rule: the mechanism has two free-lists (a slot vector recycled
+> by `free_bits`, and `claim` over an LLRB tree inside each store's buffer) and neither asks
+> which store was newest, while single-ownership is discharged by
+> [ownership.md](ownership.md) — `free_named` carries no ref-count at all (@PLN57 phase C:
+> *"every non-pinned store is single-owner … so `free_named` always frees"*).  Writing nesting
+> here would have put the obligation in the doc that does not enforce it.
+>
+> ⚠ **Two neighbours were found stale by the same reading, and both are corrected above.**
+> `(H-Free)`'s premise carried *"store(r) is the MOST-RECENTLY-ALLOCATED live heap store"* — the
+> same retired requirement, in the rule that HAS citations, so the tagged rule was not the one
+> constraining code.  And it required `store(r) not free_protected`, which `free_named` never
+> checks: `is_free_protected()` is read at the deep-copy CALL SITES that decide whether to
+> release a source, so it is a caller's gate and not a precondition of the primitive.
 
 ### Drop — the hook a type declares runs once per resource, when the record that owns it dies
 
@@ -346,8 +406,9 @@ identical on both backends.  Sites: `scopes::displaced_drop`, `scopes::copy_move
 ```
   (H-Sound)   if a program is `deps`-SOUND (ownership.md O-Derived + O-Complete: every free
               it emits is on an OWNED store at its last use), then no execution reaches a
-              faulting free — H-FreeLIFO / H-FreeStack / H-FreeTwice never fire, and no read
-              observes a freed store.  The static checker discharges the dynamic invariant.
+              refused free — H-FreeStack / H-FreeTwice never fire, no read observes a freed
+              store, and H-FreeAll's residue is empty.  The static checker discharges the
+              dynamic invariant, which is why the runtime REFUSES rather than halts.
 ```
 
 **In words.** These free rules describe what a free *does* and when it *would* corrupt the heap.
@@ -373,10 +434,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
-list has been re-cut as each was measured; the count is what is open TODAY); and
-`D-heap-LIFO`, stated with `(H-FreeLIFO)` above, where the rule names a fault the
-implementation deliberately stopped requiring.  The count read **1** while `D-heap-LIFO` was
+OPEN: **1** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+list has been re-cut as each was measured; the count is what is open TODAY).  `D-heap-LIFO`
+CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
 and a deviation placed beside its rule rather than under this heading is the way it goes
 stale.  `D-heap-2` (a cascade that reached three of the member kinds it owned) opened and

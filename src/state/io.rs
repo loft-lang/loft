@@ -883,6 +883,18 @@ impl State {
         // free_named can recognise closure-record stores at free time
         // (cascade-free walks `__closure_*` records' DbRef fields).
         self.database.allocations[r.store_nr as usize].set_known_type(db_tp);
+        // The record this op mints is READ before it is fully written — `clear_vector`
+        // asks a collection handle "is there a vector here?" and a fresh store's answer
+        // must be "no".  `set_default_value` writes the TYPED defaults at the registered
+        // field positions; this clears the record's remaining bytes, which is where the
+        // store-root wrapper's handle is read from.  One small fill per store CREATION,
+        // against a memset on every claim (the `LOFT_POISON_CLAIM` census: this shape is
+        // the interpreter's whole dependence on zero-on-claim).
+        //
+        // BEFORE the type tag, never after: `zero_fill` starts at byte 4, which IS the
+        // tag — and `State::sizeof_ref` reads the tag with an 8-byte `get_int(rec, 4)`,
+        // so erasing it made every `sizeof` answer type 0 (tests/scripts/89-sizeof).
+        self.database.store_mut(&r).zero_fill(r.rec);
         self.database
             .store_mut(&r)
             .set_u32_raw(r.rec, 4, u32::from(db_tp));

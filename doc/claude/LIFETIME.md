@@ -346,6 +346,97 @@ transition, also when the reassign sits inside a loop (the depth guard).
 Correctness is unaffected.  Walks that start from a borrow (e.g. iterating a
 structure owned elsewhere) do not pay it.
 
+**An adopted buffer takes no displacement free (loft#1522).**  A local that ADOPTS a
+construction work-ref's store — `y: S? = S { n: 3 }` builds the literal in the function-scoped
+`__ref_p2_N` and the binding then aliases it, two names for one store — must not release that
+store when a later assignment displaces it.  @P378(a) already paired the SCOPE-EXIT free with
+the buffer (`OpFreeRefIfDistinct(y, buffer)`, declined while they alias, so the buffer keeps
+its store across iterations and frees it once); the displacement free was never paired, and
+`Function::owns_displaced_store` reads @FR-O-Proxy's empty dep list as ownership.  Inside a
+loop the rebind therefore released the buffer's store while the buffer kept naming it, and the
+next pass re-minted through `OpDatabase` — which reuses the slot's store IN PLACE, over
+whatever record the allocator had since put there.
+
+`Function::mark_buffer_witnessed` records the pairing where `witness_buffer` records it, so the
+two cannot drift, and `owns_displaced_store` — the ONE fact both backends read (@FR-O-NoDiverge)
+— vetoes on it.  That is @FR-O-Complete's own stated direction where a single static site cannot
+separate the paths: *a leak is recoverable, a premature free is not.*  Nothing leaks, because
+the store the rebind stops releasing belongs to a work-ref that frees it at function exit.
+
+The veto is safe only because the loft#1200 runtime flag covers the case it declines — and that
+flag had a hole of its own: `local_owns` is keyed by the ORIGINAL var, built from `orig_code`
+before the scan, while a second local of the SAME NAME in a sibling scope (`for … { y: S? = … }`
+twice, which is ordinary) is split into a var of its own by the time `scan_set` runs.  Looking
+it up by the current var found nothing for that half, so its rebinds got no guarded free at all.
+Both lookups read `ov` now.  The pairing's bisect step is `LOFT_NO_BUFFER_VETO=1`.
+
+**A displaced free asks the container it came from (loft#1523).**
+Every vector literal is a PAIR: the wrapper record `__vdb_N` and the view
+`_vec_N = OpGetField(__vdb_N, 0)`.  Two names, one store, and only the wrapper owns it — but the
+parser strips the view's dep so the first bind's preamble gate fires, after which @FR-O-Proxy
+reads the empty list as ownership and the `Set` takes a displacement free.  `OpDatabase` reuses
+the wrapper's store IN PLACE, so on a second pass that free releases the store the mint just
+re-took and the slot write lands in it.  Visible only under `LOFT_STRICT_STORES=1`; with slot
+reuse on, the allocator usually hands the store straight back.
+
+**Three cures are measured wrong.**  Recorded here because each looks obviously right:
+
+- *A runtime-guarded free before the mint* — `OpFreeRefIfDistinct(_vec_N, __vdb_N)`, release what
+  the view held unless the backing names it: **560 use-after-frees across 75 corpus files.**  The
+  view's previous store is usually a view of something still live.
+- *Resetting the view to the null sentinel before the mint*, so the free has nothing to release:
+  corpus-neutral on the leak and strict channels (1370 files, zero differing cells) and still
+  wrong — `1194-a-comprehension-reads-its-destination` fails 9 of 12 functions with `got null`.
+  **The view's claim on the old store is LOAD-BEARING for a self-reading comprehension.**  Three
+  optimisation-count oracles moved with it as well (`literal_hoist`, `move_append`,
+  `retbuf_adopt`), so four independent tests pin this lowering.
+- *A static ownership veto keyed on the binding's shape* — unnecessary once the above is
+  understood, and unsound in principle: the same shape both owns and does not own depending on the
+  path that reached it.
+- *Routing a PROJECTION RHS to the runtime-guarded post-free*, the way an `OpNewRecord` RHS
+  already is — the most promising of the four, because the two are the same situation (both return
+  an interior `DbRef` sharing `store_nr` with their container, which is what the `OpNewRecord` arm
+  exists for) and because `--native`'s `if _old.store_nr != new.store_nr` has always asked exactly
+  that question, so it looked like closing an @FR-O-NoDiverge gap.  It passes the residual, `1194`
+  and all six count oracles (`literal_hoist`, `move_append`, `retbuf_adopt`, `value_record`,
+  `clear_release`, `poison_claim`) — and the four-channel corpus says no: six files answer WRONG
+  and `strict_uaf` goes 0 → 10, led by `1184-a-view-assigned-back-onto-its-own-source` with six.
+  That is the three-condition pairing `state/codegen.rs` warns about in place — *"freshness, the
+  deferral and the post-free are ONE pairing in three conditions — BRITTLE.md § 7b"* — so moving
+  the route moves the other two conditions with it.
+
+So the pre-`Set` free at a projection RHS is load-bearing in three separate ways — the self-read
+snapshot, the view-materialise pairing, and the release after a rebuild.  **That is what the fix
+had to respect, and it is why the four above fail:** each of them suppresses the free, moves it,
+or re-routes it, and every one of those breaks one of the three.
+
+**The cure that holds moves nothing.**  Same position, same timing, same route; the existing
+`OpFreeRef` simply becomes `OpFreeRefIfDistinct` against the CONTAINER the projection reads out
+of — the one thing that can answer *is the store I am about to release your own?* at run time.
+For a projection RHS it can be, because `v` was already a view of that container and the
+statement above re-minted it in place.  Gated on the container being free to repeat
+(`Parser::is_repeatable_place`, the same shared predicate the nullable-slot read uses), since it
+is pushed a second time as the witness.  `--native` has asked this exact question all along
+(`if _old.store_nr != new.store_nr`), so the defect was an @FR-O-NoDiverge gap rather than a
+missing mechanism.  Bisect step: `LOFT_NO_DISPLACED_WITNESS=1`.
+
+Measured: the residual repro 2 → 0; `1194` and `1184` and the rest of the sensitive family green;
+the five count oracles green; and a four-channel corpus A/B on one binary — 1370 files scored on
+exit, assertions, leak and store lifetime — with **zero differing cells**.
+
+What the failures together say is that the free is **not** spurious — it is how the old store is
+released after a rebuild — and the defect is only that it runs when `OpDatabase` reused that store
+IN PLACE.  So a cure has to compare the view's OLD store against the backing's store *after* the
+mint, the way codegen's own #330 epilogue does, rather than suppress the free or compare before.
+
+⚠ **Two instrument holes found while measuring this, both of which produced a confident wrong
+answer.**  A sweep wrote `timeout 90 FOO=1 ./loft …`, where `timeout` runs the assignment as the
+command — so the control read 0 everywhere and two cures were rejected against nothing.  An
+all-zero control over 1370 files is the tell; the real baseline has one retained store and three
+files that exhaust the store table under strict mode.  And the sweep scored only leak and
+store-lifetime strings, never the VALUE channel, which is why it called the sentinel reset
+corpus-neutral while `1194` was answering `null`.
+
 Two runtime backstops make any future wrong-free loud instead of corrupting:
 `free_named` refuses to free the eval-stack store (slot 0,
 `Stores::stack_store_at_zero`), and the slot allocator panics with a

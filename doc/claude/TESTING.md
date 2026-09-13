@@ -1581,8 +1581,20 @@ Measured before the guard: 80 of 261 binaries matched nothing, so a source-side 
 same commit; the failure message names the binary.
 
 `--changed` is the same map read from the other side: `scripts/test_subjects.sh`'s
-`SUBJECT_PATHS` maps a source PATH to a subject, so the diff picks the subjects, an edited
+`subject_paths` maps a source PATH to a subject, so the diff picks the subjects, an edited
 `tests/<name>.rs` picks its own binary, and an edited corpus file picks the three corpus runners.
+
+That map is deliberately **partial**, and its fallback is what makes partial safe: a `src/` path
+no row claims widens the whole run to the curated set instead of letting the diff's other paths
+narrow it.  Measured 2026-09-12 over 400 commits — of the 264 touching `src/*.rs`, 84 (32 %) are
+claimed end to end and get a targeted run, and the rest take the fallback.  The rows cover the
+hot core (parser, scopes, codegen, runtime, store), so an unmapped file costs breadth, never a
+false green.  Two guards hold it up and they fail on different things:
+`doc_hygiene::every_subject_claims_the_paths_it_names` reads the map and catches a row whose
+pattern has drifted off a moved file, while `changed_selects_subjects_by_path` runs
+`changed_filter` itself against a synthetic diff.  Only the second catches a map nothing reads —
+loft#1520 was exactly that, a loop over an array nobody assigned, and the first test passes on
+that build.
 `make ci` uses the same mapping for ORDER only — `scripts/nextest_priority.sh` hands nextest a
 `priority` override so the diff's binaries run first and a red gate says so in its first minute
 (the gate is fail-fast); what runs is unchanged.
@@ -2862,6 +2874,16 @@ recursive walk.
 | `--native` | Compile to native Rust instead of interpreting (with `--tests`) |
 | `--no-warnings` | Suppress warning diagnostics in test output |
 
+⚠ **Put the mode flag BEFORE `--tests`.**  `--tests` takes the NEXT token as its optional
+`[dir|file]`, and it does not check whether that token is a flag — so `loft --tests --interpret
+g.loft` consumes `--interpret` as the target, falls back to the default `.` and runs **every
+`.loft` under the current directory**.  From the repo root that is the whole project: measured
+2026-09-12, it ran for minutes and reported a failure in
+`doc/claude/plans/145-authoring-libs/probe-d0b.loft`, a file the caller had never touched.
+`loft --interpret --tests g.loft` runs the one file.  The two spellings differ only in flag
+order, both exit 0 on a clean tree, and the wrong one prints `2 files` where the right one
+prints `1 file` — that count is the only thing that distinguishes them, so read it.
+
 ### The shared library base (loft#925)
 
 Each test file is its own program with its own parser — a shared one would let one
@@ -3368,6 +3390,29 @@ fact rather than a guess: a missing toolchain does not fail a `--native` run at 
 `timeout` both land on **124**; and an assertion shows in the `asserts` column.  So an
 `exit 1, zero asserts` is none of those three, and the cause was a second concurrent run of the
 same guard clobbering the trace file it writes into the checkout.
+
+**⚠ The sibling of all three, and the commonest in practice: the probe that never RAN.**  The
+shapes above are instruments that ran and could not see.  This one is an instrument that was
+never applied, and its output is indistinguishable — a clean result, from an experiment that did
+not happen.  Six instances in one session (2026-09-12), four distinct causes:
+
+* a `python3` mutation whose `old` string no longer matched because `cargo fmt` had reflowed it.
+  The script raised `AssertionError`, wrote NOTHING, and the suite then passed against the
+  UNMUTATED build — which reads exactly like *"the control has no teeth"*.  Twice.
+* an extraction regex expecting a comma the message does not contain, so a corpus sweep reported
+  `0` where the instrument itself printed `2099` on the same file.
+* a stray `cat > file` with no input, which consumed the heredoc intended for the `python3` on
+  the next line of the same compound command — the mutation silently vanished and the shell hung
+  reading stdin.
+* `pgrep -f "[c]argo"` matching the COMMAND LINE of that hung shell, so a wait-loop reported a
+  build running for minutes when no `cargo` process existed (`ps -C cargo` was empty).
+
+**How to apply.**  A mutation is not applied until you have read it back: `grep` the file for the
+mutant after writing it, and treat a PASS on an unverified mutation as no result at all.  An
+extraction is not measuring until it has reproduced a number you already know by another route —
+run it against one case whose answer you have, before trusting it over a thousand.  Both are one
+command, and both are the only things that caught these.  Sibling of the `--changed` selection
+trap (loft#1520): a suite that runs the wrong subjects also reports green.
 
 **Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
 and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each

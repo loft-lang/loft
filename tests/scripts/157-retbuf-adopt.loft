@@ -1,0 +1,78 @@
+// @PLN157 § V-u (loft#1426 M2) — a vector-returning function's result local
+// ADOPTS the hidden return buffer on the native backend (`@FR-R-RetAdopt`,
+// formal/rewrites.md): the local builds in the caller's buffer
+// from its declaration, the delivery pair at the exits emits as nothing while
+// the scope-exit frees stay, and the buffer's backing is REUSED across calls
+// (the entry clear is the reuse contract).  The interpreter keeps the delivery
+// copies and is the oracle.  The cells pin the boundary from both sides:
+//   - the shape-A ABI (a separate `__retbuf` attr) adopts: builds from other
+//     calls' buffers, recursion, reuse across an enclosing loop, and the § V-j
+//     move landing in the adopted buffer's store;
+//   - the witness-promoted shape (already copy-free through the aliasing-safe
+//     OpReplaceVector), a rebound result local and two delivered locals decline.
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-u-retbuf-adopt-cells.loft
+// (tests/retbuf_adopt.rs pins which functions adopt); this file carries the
+// VALUE cells that must hold whatever the emitter decides.
+// `LOFT_NO_RETBUF_ADOPT=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (live, 2026-09-11) — the delivery-pair blanking
+// UN-SCOPED (every `OpClearVector(buf)` blanked, the IR-level entry clear
+// included) corrupts the fronds probe (store access out of bounds: the reused
+// buffer accumulates across calls), and the whole-BLOCK collapse that preceded
+// it dropped the block's scope-exit frees (2 stores leaked in the V-j corpus,
+// caught by LOFT_NATIVE_LEAK_CHECK); scoped to the block's clear/append pair
+// alone, interpret / native / LOFT_POISON / LOFT_NO_RETBUF_ADOPT all green.
+
+struct In2 { a: integer, b: float }
+struct R2 { id: integer, ins: vector<In2> }
+
+fn mkr(n: integer, seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  for i in 0..n {
+    ins: vector<In2> = [];
+    ins += [In2 { a: seed * 10 + i, b: (i as float) * 0.5 }];
+    out += [R2 { id: seed * 100 + i, ins: ins }];
+  }
+  return out;
+}
+
+fn mixed(seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  for r in mkr(1, seed) { out += [r]; }
+  for r in mkr(1, seed + 1) { out += [r]; }
+  out
+}
+
+fn deep(d: integer, seed: integer) -> vector<R2> {
+  out: vector<R2> = [];
+  if d == 0 {
+    for f in mkr(2, seed) { out += [f]; }
+    return out;
+  }
+  for k in 0..2 {
+    for f in deep(d - 1, seed * 7 + k) { out += [f]; }
+  }
+  return out;
+}
+
+fn sum_r2(v: const vector<R2>) -> integer {
+  s = 0;
+  for r in v { s += r.id; for x in r.ins { s += x.a; } }
+  s
+}
+
+fn main() {
+  // The shape-A adopter: two call-sourced fills, exact values, buffer reused by the
+  // caller's second call.
+  a = mixed(3);
+  assert(len(a) == 2 && sum_r2(a) == 770, "an adopted result local delivers exact elements");
+  b = mixed(7);
+  assert(len(b) == 2 && sum_r2(b) == 1650, "the reused buffer holds exactly the new call's result");
+
+  // Recursion with reuse across an enclosing loop, composed with the § V-j move.
+  r = deep(2, 1);
+  assert(len(r) == 8 && sum_r2(r) == 46648, "recursion through adopted buffers keeps every element");
+
+  println("retbuf adopt ok");
+}

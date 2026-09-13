@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The pre-`Set` displaced-store free asks the CONTAINER whether the store it is about to release
+// is the container's own.
+//
+// A projection right-hand side (`v = c.field`, `v = c[i]`) yields an interior `DbRef` sharing
+// `store_nr` with its container, so the store `v` displaces can BE the container's — `v` was
+// already a view of it and the statement above re-minted that container IN PLACE.  Every vector
+// literal is exactly that: `OpDatabase(__vdb_N)` then `_vec_N = OpGetField(__vdb_N, 0)`.  The
+// free released the store the mint had just re-taken, and the slot write that follows landed in
+// it (loft#1523).
+//
+// ⚠ FOUR other cures were measured WRONG first, and they are recorded in `doc/claude/LIFETIME.md`
+// because each looked right.  The reason they failed is the same every time: this free is
+// load-bearing in THREE separate ways at once — the self-read snapshot
+// (`1194-a-comprehension-reads-its-destination`), the view-materialise pairing of BRITTLE.md
+// § 7b (`1184-a-view-assigned-back-onto-its-own-source`), and the release after a rebuild — so
+// suppressing it, moving it, or re-routing it to the stash-and-post-free arm breaks one of the
+// three.  This cure moves NOTHING: same position, same timing, same route, one runtime question
+// added.  That is why it is the one that holds.
+//
+// ⚠ This file PASSES on the parent in a plain run.  Its channel is `LOFT_STRICT_STORES=1`, which
+// never recycles a slot and so makes the premature free visible; with slot reuse on, the
+// allocator usually hands the freed store straight back and the write lands where it was going
+// anyway.  `tests/store_lifetime_1523.rs` arms that channel per test, because the scripts corpus
+// does not.
+//
+// @falsified-at: 8157e98b9 — interpret exit 0 -> 1 under `LOFT_STRICT_STORES=1`, and the switch
+//   makes the receipt re-runnable on THIS build:
+//     LOFT_NO_DISPLACED_WITNESS=1 LOFT_STRICT_STORES=1 loft --interpret <this file>
+//   reports `USE AFTER FREE (write) … main_vector<integer>` and exits 1; without it, nothing.
+//   `--native` is silent either way — its `if _old.store_nr != new.store_nr` has asked this
+//   runtime question all along, which is what made the interpreter's unguarded free a
+//   @FR-O-NoDiverge gap rather than a missing mechanism.
+//   HOLDS: in a PLAIN run nothing moves — value, exit, leak and panic are equal with the witness
+//   on and off, on both backends.  The corpus is equal too: 1370 files on four channels (exit,
+//   assertions, leak, store lifetime), ZERO differing cells.
+
+fn main() {
+  // ---- the filed shape: a slice of a discharge default, inside a loop ----
+  vn1523: vector<integer>? = null;
+  t1523 = 0;
+  for i in 0..3 {
+    s = vn1523?[0..2];
+    t1523 = t1523 + len(s);
+    assert(len(s) == 0, "iteration {i}: the empty default slices empty, not {len(s)}");
+  }
+  assert(t1523 == 0, "three iterations of an empty slice total 0, not {t1523}");
+
+  // A NON-EMPTY default in the same position: the elements the slice copies come out of the very
+  // store the free was releasing, so this is the cell where a wrong VALUE could surface.
+  qn1523: vector<integer>? = null;
+  for i in 0..3 {
+    q = (qn1523 ?? [41, 52, 63])[0..2];
+    assert(len(q) == 2, "iteration {i}: len={len(q)}");
+    assert(q[0] == 41 && q[1] == 52, "iteration {i}: q={q[0]},{q[1]}");
+  }
+
+  // The same pair reached without any discharge — a plain vector literal REBOUND in a loop — so
+  // the subject is the literal's backing and not the `?`.
+  for i in 0..3 {
+    v: vector<integer> = [71, 82];
+    v = [93, 14, 25];
+    assert(len(v) == 3, "iteration {i}: the rebound literal is 3 long, not {len(v)}");
+    assert(v[0] == 93 && v[2] == 25, "iteration {i}: v={v[0]},{v[2]}");
+  }
+
+  // ---- CONTROLS: the three roles this free still has to fill ----
+  // 1. The release after a rebuild — a literal local rebound to a FRESH backing must still let
+  //    the old one go, which is the half a suppressing cure loses.
+  r1523: vector<integer> = [1, 2, 3];
+  for i in 0..4 { r1523 = [i, i + 1]; }
+  assert(len(r1523) == 2 && r1523[0] == 3, "the last rebuild wins: len={len(r1523)} {r1523[0]}");
+
+  // 2. The self-read: a comprehension whose body reads its own destination.
+  a1523: vector<integer> = [5, 6, 7];
+  a1523 = [for e in a1523 { e * 2 }];
+  assert(len(a1523) == 3, "the self-read rebuilt 3 elements, not {len(a1523)}");
+  assert(a1523[0] == 10 && a1523[2] == 14, "self-read: {a1523[0]},{a1523[2]}");
+
+  // 3. A view bound off a container and read back — the projection route itself.
+  b1523: vector<integer> = [8, 9];
+  c1523 = b1523[0..2];
+  assert(len(c1523) == 2 && c1523[1] == 9, "a view of a plain local: {c1523[1]}");
+
+  // A first bind has no previous store — the free was always a no-op here.
+  f1523: vector<integer> = [31, 42];
+  assert(len(f1523) == 2 && f1523[0] == 31, "a first bind: len={len(f1523)} {f1523[0]}");
+
+  // Appends must still reach the store the view names.
+  p1523: vector<integer> = [51];
+  p1523 += [62, 73];
+  assert(len(p1523) == 3 && p1523[2] == 73, "appends reach it: len={len(p1523)} {p1523[2]}");
+
+  // An element type whose copy is not a scalar.
+  x1523: vector<text> = ["one", "two"];
+  assert(len(x1523) == 2 && x1523[1] == "two", "text elements: {x1523[1]}");
+
+  print("1523 a displaced free asks the container it came from OK");
+}

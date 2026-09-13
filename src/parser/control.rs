@@ -748,6 +748,8 @@ impl Parser {
         let ib_base = self.index_bounded.len();
         // …and the DIVISOR proof, the third of `@FR-N-Domain`'s families, on the same discipline.
         let dz_base = self.divisor_nonzero.len();
+        // …and the MATH family's sign proofs, on the same block discipline.
+        let ms_base = self.math_sign_proven.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek();
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
@@ -1043,6 +1045,13 @@ impl Parser {
                     && !self.divisor_nonzero.contains(&v)
                 {
                     self.divisor_nonzero.push(v);
+                }
+                // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same guard
+                // clause one family over.
+                if let Some((v, sg, false)) = self.math_sign_proof_from_condition(test)
+                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                {
+                    self.math_sign_proven.push((v, sg));
                 }
             }
             if let Value::Insert(ls) = n {
@@ -1596,6 +1605,7 @@ impl Parser {
         self.narrowed_non_null.truncate(nn_base);
         self.index_bounded.truncate(ib_base);
         self.divisor_nonzero.truncate(dz_base);
+        self.math_sign_proven.truncate(ms_base);
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -4456,6 +4466,162 @@ impl Parser {
     /// the branch it holds in: `v != 0` proves it in the THEN branch (`Some((v, true))`); `v == 0`
     /// proves it in the ELSE branch (`Some((v, false))`) — the common `if b == 0 { … } else { a / b }`
     /// safe-division idiom. Mirrors `narrowing_from_condition`'s then/else convention.
+    /// `@FR-E-Truthy-1` — a truthiness position whose subject cannot be absent is CONSTANT.
+    ///
+    /// `LOFT.md` § Conversions states the language's rule — *"`false` and null are falsy;
+    /// integer `i32::MIN` is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
+    /// records only the `null` half.  The behaviour is documented and is NOT changing here: the
+    /// silence at the call site was the defect, because the shape reads to a programmer as a
+    /// test.  What is constant is a HEAP value that cannot be absent: `if v` on a non-optional
+    /// `vector` or `text` always runs its THEN branch.
+    ///
+    /// `warning` rather than `advice` by CLAUDE.md's split — ignoring it can produce a wrong
+    /// RESULT, and did: `if !d { return -1; } … a / d` divides by zero because that guard never
+    /// fires, which is what reverted the divisor family's truthy arm within the hour of its
+    /// being written.
+    ///
+    /// Quiet on a NULLABLE subject, which is the cell that keeps this honest: `if x` on an
+    /// `integer?` is a genuine presence test (measured — an absent one takes the ELSE branch),
+    /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
+    /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
+    /// `ir_walker_audit.py optional` counts as an OPAQUE site.
+    fn warn_constant_condition(&mut self, tp: &Type, at: &crate::lexer::Position, kw: &str) {
+        // Pass 1 parses every body a second time, so an unguarded report lands twice — measured
+        // exactly 2x on every cell before this line existed.
+        if self.first_pass || !crate::keys::constant_condition_enabled() {
+            return;
+        }
+        let (base, nullable) = tp.peel_optional();
+        if nullable {
+            return;
+        }
+        // An ALLOW-list of concrete types, not a deny-list of the ones to skip.  The gate is
+        // deliberately this way round: a type missing from it costs the LINT, never a false
+        // report — the same trade `src/generation/hoist.rs` makes, and the opposite of the
+        // drifted mutation deny-lists PERFORMANCE.md § P8 records.  Measured why: a deny-list
+        // fired on `if got != want` inside the stdlib's own generics, where a comparison on a
+        // BOUND type variable types as `AssertValue` rather than `boolean` at parse time — 32
+        // false reports on an empty program, and a user generic is the same shape.  A type
+        // variable is a `Reference` to its def, so there is no variant to exclude by name.
+        // HEAP kinds only, and the exclusion is measured rather than cautious.  A SCALAR's
+        // absent value is IN-BAND and reachable from a non-optional declaration — `LOFT.md`
+        // § Conversions: *"integer `i32::MIN` is falsy"* — so `if d` on a plain `integer` is a
+        // genuine two-state test, not a constant: measured on both backends, an `integer`
+        // holding `i64::MIN` takes the ELSE branch.  A heap value has no such in-band value;
+        // it is falsy exactly when it is null (`heap-value-as-a-condition.loft`), and a
+        // NON-optional one cannot be, so the condition really is constant.
+        //
+        // The scalar case is not un-linted, it is someone else's: `!x` on a scalar whose
+        // declaration gave the sentinel up is `redundant-null-negation`, which reads
+        // `IntegerSpec::non_null_reads_null` — the same question asked where the answer is
+        // known.  Adding a type list here that re-answered it would be a second decoder.
+        if !matches!(
+            base,
+            Type::Text(_)
+                | Type::Vector(_, _)
+                | Type::Hash(_, _, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+        ) {
+            return;
+        }
+        let shown = base.source_name(&self.data);
+        diagnostic_at!(
+            self.lexer,
+            at,
+            Level::Warning,
+            code = "constant-condition",
+            "a non-null `{shown}` is always true in a `{kw}` condition — a heap value is falsy \
+             only when absent, and this one cannot be"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "compare explicitly — `if d != 0`, `if len(v) > 0`, `if s != \"\"`".to_string(),
+            condition: Some(
+                "a value of this type has no `false` state, so the branch it guards always runs"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "truthiness",
+            concept_ref: "@F12",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "for a PRESENCE test the value must be nullable (`d: integer?`)".to_string(),
+            condition: Some(
+                "`(E-Truthy)` reads an absent value as false, which is the two-state test this \
+                 spelling looks like"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "truthiness",
+            concept_ref: "@F12",
+        });
+    }
+
+    /// `@FR-N-Domain`'s guard licence, MATH family — read a SIGN proof for a variable out of
+    /// a parsed `if` condition, with the branch it holds in.
+    ///
+    /// Only `<` and `<=` exist as ops; every spelling lowers into one of four shapes, and each
+    /// proves a sign on exactly one side:
+    ///
+    /// | written | lowered | proves | branch |
+    /// |---|---|---|---|
+    /// | `x > 0`  | `OpLt(0, x)` | `Pos`    | THEN |
+    /// | `x >= 0` | `OpLe(0, x)` | `NonNeg` | THEN |
+    /// | `x < 0`  | `OpLt(x, 0)` | `NonNeg` | ELSE |
+    /// | `x <= 0` | `OpLe(x, 0)` | `Pos`    | ELSE |
+    ///
+    /// ⚠ **NOT the truthy spellings**, for the reason `divisor_proof_from_condition` records
+    /// from measurement: `if x { … }` proves nothing about a sign, an arm for the divisor twin
+    /// was written and reverted the same hour, and eliding on it answered a silent null through
+    /// a non-null slot.  A comparison against a zero LITERAL is the whole admissible set.
+    fn math_sign_proof_from_condition(&self, test: &Value) -> Option<(u16, super::Sign, bool)> {
+        let Value::Call(op, args) = test.unspan() else {
+            return None;
+        };
+        let name = self.data.def(*op).name();
+        let strict = if name.starts_with("OpLt") {
+            true
+        } else if name.starts_with("OpLe") {
+            false
+        } else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        let is_zero = |a: &Value| match a.unspan() {
+            Value::Int(0) | Value::Long(0) => true,
+            Value::Float(f) => *f == 0.0,
+            Value::Single(f) => *f == 0.0,
+            _ => false,
+        };
+        match (args[0].unspan(), args[1].unspan()) {
+            // `0 < x` / `0 <= x` — the proof holds in the THEN branch.
+            (zero, Value::Var(v)) if is_zero(zero) => Some((
+                *v,
+                if strict {
+                    super::Sign::Pos
+                } else {
+                    super::Sign::NonNeg
+                },
+                true,
+            )),
+            // `x < 0` / `x <= 0` — the proof is the NEGATION, so it holds in the ELSE branch.
+            (Value::Var(v), zero) if is_zero(zero) => Some((
+                *v,
+                if strict {
+                    super::Sign::NonNeg
+                } else {
+                    super::Sign::Pos
+                },
+                false,
+            )),
+            _ => None,
+        }
+    }
+
     fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -4520,8 +4686,10 @@ impl Parser {
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
+        let cond_at = self.lexer.peek().position;
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
+        self.warn_constant_condition(&tp, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;
@@ -4546,6 +4714,12 @@ impl Parser {
         let divisor_base = self.divisor_nonzero.len();
         if let Some((v, true)) = divisor {
             self.divisor_nonzero.push(v);
+        }
+        // …and the MATH twin, the third family, on the same discipline.
+        let math_sign = self.math_sign_proof_from_condition(&test);
+        let math_base = self.math_sign_proven.len();
+        if let Some((v, sg, true)) = math_sign {
+            self.math_sign_proven.push((v, sg));
         }
         // @PLN25 DN3 fault-op (index): `if idx < len(vec) { … }` proves `vec[idx]` in-bounds in the
         // THEN branch (skip-pattern 5) — reuse the warning walk's guard-pair extractor. THEN-only
@@ -4583,6 +4757,7 @@ impl Parser {
         // Leaving the THEN branch, drop its `!= 0` divisor proof; an `== 0` condition instead
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
+        self.math_sign_proven.truncate(math_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {
@@ -4593,6 +4768,9 @@ impl Parser {
         }
         if let Some((v, false)) = divisor {
             self.divisor_nonzero.push(v);
+        }
+        if let Some((v, sg, false)) = math_sign {
+            self.math_sign_proven.push((v, sg));
         }
         let mut false_type = Type::Void;
         let mut false_code = Value::Null;
@@ -4733,6 +4911,7 @@ impl Parser {
         self.narrowed_non_null.truncate(narrow_base);
         self.narrowed_non_null_exprs.truncate(proj_base);
         self.divisor_nonzero.truncate(divisor_base);
+        self.math_sign_proven.truncate(math_base);
         // Belt-and-suspenders: `index_bounded` was already restored after the THEN block (it is
         // THEN-only, no else-push), so this is a no-op today — kept for parity with the two
         // narrowings above and to stay correct if an else-side in-bounds proof is added later.

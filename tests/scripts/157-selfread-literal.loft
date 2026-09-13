@@ -1,0 +1,35 @@
+// @PLN157 § V-w (loft#1426) — a vector LITERAL that reads its own destination
+// evaluates those reads into TEMPS taken before the build, instead of
+// snapshotting the whole vector: `(I-Comp)` / `@FR-O-Detach` kept — every read
+// still sees what the destination held when the statement began — and the
+// prefix-sum accumulator drops from O(n²) to O(n) (measured: 2 000 → 14 µs,
+// 8 000 → 54 µs; the snapshot form scaled ~16× for 4× the size).  BOTH
+// backends changed (the lowering is the parser's); the oracle is the
+// hand-computed I-Comp values, pinned green before the change.  The snapshot
+// stays for a part carrying a user call, record elements, a `&`-linked or
+// field destination, and every comprehension
+// (tests/selfread_literal.rs pins the route per cell over
+// bytecode-comparisons/V-w-selfread-literal-cells.loft).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-11) — the hoisted temps'
+// Sets dropped (parts renamed onto uninitialized temps) crashes every cell on
+// both backends; restored, interpret / native / LOFT_POISON all green.
+
+fn main() {
+  // The accumulator: linear, values exact.
+  cum: vector<float> = [0.0];
+  for i in 0..500 { cum += [cum[len(cum) - 1]? + (i as float)]; }
+  assert(len(cum) == 501 && (cum[500]?) == 124750.0,
+    "a prefix sum reads the value the statement began with, each step");
+
+  // The swap and the double-length read: pre-state reads (the rule's own examples).
+  v: vector<integer> = [10, 20];
+  v = [v[1] ?? -1, v[0] ?? -1];
+  assert((v[0]?) == 20 && (v[1]?) == 10, "a self-reading rebuild sees the pre-state");
+  w: vector<integer> = [7, 8];
+  w += [len(w), len(w)];
+  assert(len(w) == 4 && (w[2]?) == 2 && (w[3]?) == 2,
+    "both appended lengths are the length the statement began with");
+
+  println("selfread literal ok");
+}

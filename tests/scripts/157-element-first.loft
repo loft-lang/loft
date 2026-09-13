@@ -1,0 +1,80 @@
+// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first build on the native backend: a
+// local vector consumed exactly once as a record-literal field of an append is built
+// INSIDE the appended element (minted at the first temp's declaration; the length bump
+// stays at the finish, so the element is invisible until the append), and the paired
+// copies and temp stores vanish.  The interpreter keeps the temp-store build and is
+// the oracle; tests/element_first.rs pins which appends earn the early mint.
+// `LOFT_NO_ELEMENT_FIRST=1` and `LOFT_POISON=1` must answer identically.
+//
+// @falsified-at: hand-measured (compound sabotage, 2026-09-12) — the paired-offset
+// check dropped AND the prelude's prefill removed crashes the corpus under
+// LOFT_NO_ZERO_CLAIM=1 ("the vector handle in record 3.16 points at record 26, whose
+// size word is -207": an unpaired empty-field zero suppressed with nothing writing the
+// slot), naming the invariant: every field is written before the finish — by the
+// prelude's prefill, a paired build, or the append site's kept sets.  Restored, the
+// corpus is exact on both backends under poison AND the stale-arena lever.
+
+struct Pt { px: float, py: float }
+struct Frond { fpts: vector<Pt>, fwid: vector<float>, fid: integer }
+
+fn pt(ax: float, ay: float) -> Pt { Pt { px: ax, py: ay } }
+
+fn sum_f(v: const vector<Frond>) -> float {
+  s = 0.0;
+  for f in v {
+    s = (s + (f.fid as float)) ?? 0.0;
+    for p in f.fpts { s = (s + p.px + p.py) ?? 0.0; }
+    for w in f.fwid { s = (s + w) ?? 0.0; }
+  }
+  s
+}
+
+fn build(mode: boolean, n: integer) -> vector<Frond> {
+  out: vector<Frond> = [];
+  for i in 0..n {
+    ps: vector<Pt> = [];
+    ws: vector<float> = [];
+    if mode {
+      ps += [pt(1.0, 2.0), pt(3.0, 4.0), pt((i as float) ?? 0.0, 6.0)];
+      ws += [1.0, 2.0, 3.0];
+    } else {
+      ps += [pt((i as float) ?? 0.0, 0.5)];
+      ws += [9.0];
+    }
+    out += [Frond { fpts: ps, fwid: ws, fid: i * 10 }];
+  }
+  out
+}
+
+fn main() {
+  // The fronds shape: temps declared before an if, built per arm, appended after.
+  a = build(true, 3);
+  b = build(false, 3);
+  assert(len(a) == 3 && sum_f(a) == 99.0,
+    "the mirrored arm's elements read exactly what the in-place build wrote");
+  assert(len(b) == 3 && sum_f(b) == 61.5,
+    "the plain arm's elements read exactly what the in-place build wrote");
+
+  // A temp read AFTER its append keeps the copy and both readings agree.
+  out: vector<Frond> = []; t = 0;
+  for i in 0..3 {
+    ws: vector<float> = [];
+    ws += [5.0, (i as float) ?? 0.0];
+    out += [Frond { fpts: [], fwid: ws, fid: i }];
+    t += len(ws);
+  }
+  assert(len(out) == 3 && t == 6 && sum_f(out) == 21.0,
+    "a read after the append sees the temp's own value");
+
+  // An append under an if arm declines: skipped iterations strand nothing visible.
+  outc: vector<Frond> = [];
+  for i in 0..4 {
+    ws: vector<float> = [];
+    ws += [(i as float) ?? 0.0];
+    if i % 2 == 0 { outc += [Frond { fpts: [], fwid: ws, fid: i }]; }
+  }
+  assert(len(outc) == 2 && sum_f(outc) == 4.0,
+    "a conditional append keeps the temp-store build and exact values");
+
+  println("element first ok");
+}

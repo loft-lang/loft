@@ -74,6 +74,64 @@ fn f(x: float, y: float) {
 fn main() { }
 ";
 
+// `@FR-N-Domain`'s GUARD licence for this family (loft#1450's walk, D-Domain-Guard).  The rule
+// promises ONE elision — "provably in-domain (constant / range / GUARD)" — over three families,
+// and the math row was the only one without its guard: `if x >= 0.0 { sqrt(x) }` typed `float?`
+// where `if d != 0 { a / d }` and `if i < len(v) { v[i] }` both took theirs.  A comparison
+// against zero now contributes a `Sign` for the slot, so the guard composes with the expression
+// lattice above rather than sitting beside it.
+const GUARDED: &str = "\
+fn f(x: float, y: float) {
+  if x >= 0.0 { g1: float = sqrt(x); }
+  if y > 0.0 { g2: float = ln(y); }
+}
+fn clause(x: float) { if x < 0.0 { return; } g3: float = sqrt(x); }
+fn main() { }
+";
+
+// The soundness half, and the half that decides whether the widening was safe: a guard that
+// proves the WRONG fact, or proves it on the WRONG side, must leave the arg `float?`.  Each is
+// a cell a wrong implementation passes: `u1` takes the else of `x >= 0.0` (so `x < 0`), `u2`
+// proves non-zero rather than a sign, `u3` bounds only from above, `u4` proves `NonNeg` where
+// `ln` needs strictly `Pos`, and `u5` reassigns the slot after the guard.
+const GUARD_UNSOUND: &str = "\
+fn a(x: float) { if x >= 0.0 { } else { u1: float = sqrt(x); } }
+fn b(x: float) { if x != 0.0 { u2: float = sqrt(x); } }
+fn c(x: float) { if x < 5.0 { u3: float = sqrt(x); } }
+fn d(x: float) { if x >= 0.0 { u4: float = ln(x); } }
+fn e(x: float) { if x >= 0.0 { x = 0.0 - 1.0; u5: float = sqrt(x); } }
+fn main() { }
+";
+
+#[test]
+fn math_domain_takes_the_guard_licence() {
+    let (ok, diag) = compile("guarded", GUARDED, true);
+    assert!(
+        ok && !diag.contains(REPORT),
+        "a zero-comparison guard must prove the arg in-domain, as it already does for the \
+         divisor and index families; diag={diag}"
+    );
+}
+
+#[test]
+fn math_domain_guard_proves_only_what_it_proves() {
+    // The cell the diagnostic was ABOUT.  A widening that removes a diagnostic is measured
+    // here, not only where the diagnostic was noise — the divisor's truthy arm was written and
+    // reverted the same hour for exactly this reason.
+    let (ok, diag) = compile("guard_unsound", GUARD_UNSOUND, true);
+    assert!(
+        ok,
+        "the reported stores proceed and the program runs; diag={diag}"
+    );
+    for v in ["u1", "u2", "u3", "u4", "u5"] {
+        assert!(
+            reported(&diag, v),
+            "a guard that does not prove the domain must leave the arg float? — {v} must be \
+             reported; diag={diag}"
+        );
+    }
+}
+
 #[test]
 fn math_domain_opt_out_keeps_expression_args_forced() {
     // `LOFT_NO_MATH_DOMAIN` reverts to the constant-only elision — the expression args are

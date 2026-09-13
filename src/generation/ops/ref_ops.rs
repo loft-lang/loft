@@ -31,7 +31,72 @@ pub struct OpFreeRefEmitter;
 
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a local holding a value-returned record
+        // owns no store record, so there is nothing to release.
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.value_record_locals.contains_key(v)
+        {
+            return write!(ctx.w, "()");
+        }
         if let [db_val] = args {
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — a placed record dies WITH ITS HOST
+            // STORE: this var is the `__vdb` some pair placed a buffer into, and the
+            // store free below is the host's death (an early dead-after-last-read site
+            // as much as scope end), so every record still placed here is released
+            // FIRST, while the store is alive, and its var nulled — the backstop arm
+            // below and any later host site then no-op on the sentinel.  Freeing at the
+            // host's death instead of the paired loop's exit is what lets an enclosing
+            // loop REUSE the placement (24 place/free cycles per `fronds` call → 1,
+            // the −16.6 % hand-measured ceiling); freeing no LATER than it is the
+            // soundness line the 2026-09-11 gate corruption drew.
+            if let Value::Var(v) = db_val.unspan() {
+                let hosted: Vec<(String, u16)> = ctx
+                    .output
+                    .move_pairs
+                    .values()
+                    .filter(|p| p.host_vdb == *v)
+                    .map(|p| {
+                        let name = super::super::sanitize(
+                            ctx.output
+                                .data
+                                .def(ctx.output.def_nr)
+                                .variables()
+                                .name(p.buf),
+                        );
+                        (name, p.buf_tp)
+                    })
+                    .collect();
+                for (buf, tp) in hosted {
+                    write!(
+                        ctx.w,
+                        "stores.free_record_in(&(var_{buf}), {tp}u16); var_{buf} = DbRef::NULL; "
+                    )?;
+                }
+            }
+            // The buffer attr's own free site is the BACKSTOP: it is what releases the
+            // record when the host is an ADOPTED `__retbuf` (returned to the caller, so
+            // no host free exists in this function), and a no-op via the null sentinel
+            // whenever a host site above already ran.  A record-level release — the deep
+            // walk of whatever the loop did not move (a `break`'s leftovers), then the
+            // record's own block — never the store free `OpFreeRef` performs: that store
+            // is the destination's and lives on.
+            if let Value::Var(v) = db_val.unspan()
+                && let Some(pair) = ctx.output.move_pairs.get(v)
+            {
+                let tp = pair.buf_tp;
+                let name = super::super::sanitize(
+                    ctx.output
+                        .data
+                        .def(ctx.output.def_nr)
+                        .variables()
+                        .name(pair.buf),
+                );
+                write!(
+                    ctx.w,
+                    "{{ stores.free_record_in(&(var_{name}), {tp}u16); var_{name} = DbRef::NULL; }}"
+                )?;
+                return Ok(());
+            }
             // S34/S35: skip_free variables share a slot with an outer variable
             // that already owns the record; suppressing their OpFreeRef
             // prevents a double-free.
@@ -210,6 +275,13 @@ pub struct OpFreeRefIfDistinctEmitter;
 
 impl OpEmitter for OpFreeRefIfDistinctEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — nothing to release: the local holds a
+        // tuple in registers, not a record in a store.
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.value_record_locals.contains_key(v)
+        {
+            return write!(ctx.w, "()");
+        }
         if let [ph_val, wit_val] = args {
             let ph_name = if let Value::Var(v) = ph_val {
                 format!(
@@ -328,6 +400,57 @@ pub struct OpCopyRecordEmitter;
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [src, dst, tp_val] = args {
+            // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the
+            // source is the armed loop variable and both elements share a store (the
+            // placed buffer landed the callee's result beside the destination), the
+            // element's bytes RELOCATE and the source is zeroed; anything else — a null
+            // element, a callee that returned another store — keeps the deep copy, which
+            // is always correct.
+            if let Value::Var(f) = src.unspan()
+                && let Some(pair) = ctx.output.active_move_pair(*f)
+            {
+                let size = pair.elem_size;
+                let verify = if ctx.output.hoist_verify {
+                    "true"
+                } else {
+                    "false"
+                };
+                write!(ctx.w, "{{ if ")?;
+                ctx.emit(src)?;
+                write!(ctx.w, ".store_nr == ")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, ".store_nr && ")?;
+                ctx.emit(src)?;
+                write!(ctx.w, ".rec != 0 && ")?;
+                ctx.emit(dst)?;
+                write!(
+                    ctx.w,
+                    ".rec != 0 {{ stores.move_record_shallow::<{verify}>(&("
+                )?;
+                ctx.emit(src)?;
+                write!(ctx.w, "), &(")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, "), {size}) }} else {{ ")?;
+                emit_copy_plain(ctx, src, dst, tp_val)?;
+                write!(ctx.w, " }} }}")?;
+                return Ok(());
+            }
+            emit_copy_plain(ctx, src, dst, tp_val)?;
+        }
+        Ok(())
+    }
+}
+
+/// The plain (deep) `OpCopyRecord` emission — the pre-§ V-j form, and the fallback arm the
+/// move dispatches to.
+fn emit_copy_plain(
+    ctx: &mut EmitCtx<'_, '_>,
+    src: &Value,
+    dst: &Value,
+    tp_val: &Value,
+) -> io::Result<()> {
+    {
+        {
             // #250: when the copy type is a nested vector, resolve its id at
             // RUNTIME (order-independent) rather than trusting the parser's
             // literal — the two diverge in native at 3+ nesting depth.  The
@@ -370,8 +493,8 @@ impl OpEmitter for OpCopyRecordEmitter {
             ctx.emit_i32_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
-        Ok(())
     }
+    Ok(())
 }
 
 /// `OpSizeofRef` — record size of a reference.  `args`: `[val]`.

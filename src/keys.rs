@@ -569,6 +569,20 @@ pub fn warn_copies_enabled() -> bool {
 /// suite-wide sweep proved the whole corpus clean (stdlib + all `tests/scripts` + fixture libs +
 /// `tests/lib` + examples); `LOFT_NO_DEAD_STORES` opts out. One cached env read. See
 /// `use_analysis::warn_dead_stores`, `doc/claude/plans/107-dead-code-lint/`.
+/// `@FR-E-Truthy` — the constant-condition warning: a non-optional HEAP value in an
+/// `if`/`while` condition cannot be absent, and a heap value is falsy only when absent, so the
+/// test cannot fail.  `LOFT_NO_CONSTANT_CONDITION` opts out.  One cached env read.
+///
+/// Scalars are deliberately outside it: their absent value is IN-BAND and reachable from a
+/// non-optional declaration (`LOFT.md` § Conversions — *"integer `i32::MIN` is falsy"*), so
+/// `if d` on a plain `integer` is a real two-state test.  See
+/// `Parser::warn_constant_condition`.
+#[must_use]
+pub fn constant_condition_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONSTANT_CONDITION"))
+}
+
 #[must_use]
 pub fn dead_stores_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -1549,6 +1563,29 @@ pub fn owner_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OWNER_WITNESS"))
 }
 
+/// loft#1523 — the pre-`Set` displaced-store free asks the CONTAINER whether the store it is
+/// about to release is the container's own.  For a projection right-hand side it can be: `v` was
+/// already a view of that container and the statement above re-minted it IN PLACE, which is what
+/// every vector literal does (`OpDatabase(__vdb_N)` then `_vec_N = OpGetField(__vdb_N, 0)`).
+/// `LOFT_NO_DISPLACED_WITNESS=1` restores the unconditional free and is the first bisect step for
+/// a leak or a use-after-free at a projection-bound local.
+#[must_use]
+pub fn displaced_witness_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DISPLACED_WITNESS"))
+}
+
+/// loft#1522 — the @P378(a) adoption pairing carried to the DISPLACEMENT free: a local that
+/// adopted a construction work-ref's store does not release it at a rebind, because the buffer
+/// still names it and frees it once at function exit.  `LOFT_NO_BUFFER_VETO=1` emits the
+/// unpaired form — the rebind frees the buffer's store — and is the first bisect step for a
+/// leak or a wrong value at a nullable literal local reassigned inside a loop.
+#[must_use]
+pub fn buffer_veto_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_VETO"))
+}
+
 /// D-heap-3 (loft#1506) — the field-grained copy-out hand-off: a projection copied out of a
 /// lifted call result moves that field's release to the copy, and the lift's scope-end drop
 /// runs the `…OpDropAllExcept` cascade.  `LOFT_NO_FIELD_HANDOFF=1` keeps the full cascade —
@@ -1809,6 +1846,55 @@ pub fn strict_store_violations() -> usize {
 ///
 /// One relaxed add on a path that must never execute; free when it does not.
 static STACK_FREE_REFUSALS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// `LOFT_DOUBLE_FREE` — the double-free audit, with the discriminator that makes it mean
+/// something.
+///
+/// `free_named`'s already-free branch is NOT a rare backstop: measured over the corpus it is
+/// taken **824 588 times in 264 of 1366 files**, almost all of it the join/conditional-ownership
+/// model working as designed — each arm of a value branch emits its free, and the arm that did
+/// not mint this pass lands here.  In a loop that is hundreds of hits on a handful of slots.  So
+/// a bare count of this branch measures the ownership model, not a defect.
+///
+/// The discriminator is the free SITE.  `strict_note_free` already records `(pc, name)` per slot;
+/// a second free from the SAME pc is that loop, and one from a DIFFERENT pc is two sites both
+/// believing they own the store — the shape worth reading.
+///
+/// ⚠ **What this does NOT catch, and it is the dangerous one.**  A stale free only reaches this
+/// branch while the slot is still free.  Once the slot has been REUSED the store is live again,
+/// so the second free takes the ORDINARY path and silently releases its new owner's store.
+/// `LOFT_STRICT_STORES` is what converts that case into this one, by never recycling a slot.
+///
+/// ⚠ **Interpreter only.**  `Stores::alloc_pc` is zero outside interpretation, so every free on
+/// `--native` carries the same pc and the audit would call all of it benign.  The report says so
+/// rather than printing a clean bill.
+#[must_use]
+pub fn double_free_audit() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
+}
+
+static DF_SAME_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DF_OTHER_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Record a re-free of an already-free slot, classified by whether the freeing SITE differs
+/// from the one that freed it first.
+pub fn note_double_free(same_site: bool) {
+    if same_site {
+        DF_SAME_SITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        DF_OTHER_SITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `(same-site, other-site)` re-free counts — the second is the one to read.
+#[must_use]
+pub fn double_free_counts() -> (usize, usize) {
+    (
+        DF_SAME_SITE.load(std::sync::atomic::Ordering::Relaxed),
+        DF_OTHER_SITE.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
 
 /// Record a refused whole-store free of the eval-stack store. See [`stack_free_refusals`].
 pub fn note_stack_free_refusal() {

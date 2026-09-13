@@ -1,0 +1,188 @@
+// @PLN157 § V-t cells — a record append EMITS through the held push header (`@FR-R-PushRec`):
+// the slot is derived from the header (a growth step re-enters the runtime's append and
+// refreshes it), the group's writes fill every field explicitly — the IR's literal lowering
+// writes omitted fields' defaults and sentinels itself, and a declined delivery lands as a
+// whole-record OpCopyRecord — and the length bump at the finish is the only visibility step.
+// Admitted only where (R-Mint) admitted the group and the element type is a plain struct
+// that owns no heap.
+// The interpreter (old ops) is the oracle; native must answer the same under
+// LOFT_HOIST_VERIFY=1.  Expected values are hand-computed in V-t-record-push-cells.expected;
+// the emission per cell (which appends fuse) is pinned by tests/record_push.rs.
+struct Pt { ptx: float, pty: float }
+struct P3 { a: float, b: float = 2.5, c: integer, d: float? }
+struct Mix { on: boolean, k: integer, f: float }
+struct TxtE { t: text, n: integer }
+struct VecE { xs: vector<integer>, n: integer }
+struct KRec { k: integer }
+struct H { pts: vector<Pt> }
+
+fn pt(x: float, y: float) -> Pt { Pt { ptx: x, pty: y } }
+fn sum_ptx(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.ptx) ?? 0.0; } s }
+fn sum_pty(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.pty) ?? 0.0; } s }
+
+// c1 — the LITERAL append across GROWTH: 100 elements cross the initial capacity several
+// times; every element written through the header slot survives the moves.  FUSES.
+fn m1(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    out += [Pt { ptx: ((i as float) * 0.5) ?? 0.0, pty: ((i * i) as float) ?? 0.0 }];
+  }
+  out
+}
+fn c1() { r = m1(100); println("c1 {len(r)} {r[0]?.ptx} {r[50]?.ptx} {r[99]?.pty} {sum_ptx(r)}"); }
+
+// c2 — the BUILDER append (smooth's shape): the callee delivers into the header slot as its
+// return buffer (§ V-d), no OpNewRecord default fill before it.  FUSES.
+fn m2(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n { out += [pt(((i as float) + 1.5) ?? 0.0, 2.0)]; }
+  out
+}
+fn c2() { r = m2(20); println("c2 {len(r)} {r[0]?.ptx} {r[19]?.ptx} {sum_pty(r)}"); }
+
+// c3 — a PARTIAL literal: the omitted declared default (b = 2.5), the omitted zero (c) and
+// the omitted NULLABLE (d) must all read their defaults out of the raw slot — the pin that
+// the IR's literal lowering writes every field explicitly, prefill or no prefill.  FUSES.
+fn m3(n: integer) -> vector<P3> {
+  out: vector<P3> = [];
+  for i in 0..n { out += [P3 { a: (i as float) ?? 0.0 }]; }
+  out
+}
+fn c3() { r = m3(3); e = r[2]?; println("c3 {len(r)} {e.a} {e.b} {e.c} {e.d ?? -9.0}"); }
+
+// c4 — the same pin THROUGH A CALL: the builder's own literal is partial, its delivered
+// form writes every field of the retbuf.  FUSES.
+fn mk3(x: float) -> P3 { P3 { c: (x as integer) ?? 0 } }
+fn m4(n: integer) -> vector<P3> {
+  out: vector<P3> = [];
+  for i in 0..n { out += [mk3(((i * 10) as float) ?? 0.0)]; }
+  out
+}
+fn c4() { r = m4(3); e = r[1]?; println("c4 {e.a} {e.b} {e.c} {e.d ?? -9.0}"); }
+
+// c5 — the element expression is a BORROW-returning callee: its lift carries an
+// `OpDatabase` arm (an allocation off the allow-list), so the LOOP declines and the group
+// keeps its templates — c12's class in V-s.  Values right; the OpCopyRecord delivery arm
+// under fusion is c2's guard.  DECLINES.
+fn first_of(v: const vector<Pt>) -> Pt { v[0]? }
+fn m5(src: const vector<Pt>, n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..n { out += [first_of(src)]; }
+  out
+}
+fn c5() { s: vector<Pt> = [Pt { ptx: 7.5, pty: 8.5 }]; r = m5(s, 4); println("c5 {len(r)} {r[3]?.ptx} {sum_pty(r)}"); }
+
+// c6 — mixed field KINDS (boolean, integer, float) written through the slot.  FUSES.
+fn m6(n: integer) -> vector<Mix> {
+  out: vector<Mix> = [];
+  for i in 0..n {
+    out += [Mix { on: i >= 2, k: i * 3, f: ((i as float) / 2.0) ?? 0.0 }];
+  }
+  out
+}
+fn c6() { r = m6(4); e = r[3]?; println("c6 {len(r)} {e.on} {e.k} {e.f} {r[0]?.on}"); }
+
+// c7 — the element owns HEAP (a text field): outside the admission (the raw slot carries
+// stale bytes where a heap handle's zero matters), the group keeps its templates.  Values right.
+fn m7(n: integer) -> vector<TxtE> {
+  out: vector<TxtE> = [];
+  for i in 0..n { out += [TxtE { t: "x{i}", n: i }]; }
+  out
+}
+fn c7() { r = m7(3); e = r[2]?; println("c7 {len(r)} {e.t} {e.n}"); }
+
+// c8 — a NESTED COLLECTION field: same heap ask, same decline.  Values right.
+fn m8(n: integer) -> vector<VecE> {
+  out: vector<VecE> = [];
+  for i in 0..n { out += [VecE { xs: [i, i + 1], n: i }]; }
+  out
+}
+fn c8() { r = m8(3); e = r[1]?; println("c8 {len(r)} {len(e.xs)} {e.xs[1]?} {e.n}"); }
+
+// c9 — a KEYED container (`sorted`): the mint is not admitted at all (V-s), nothing fuses.
+fn m9(base: KRec) -> sorted<KRec[k]> {
+  s: sorted<KRec[k]> = [];
+  for i in 0..3 { s += [KRec { k: base.k * (3 - i) }]; }
+  s
+}
+fn c9() { s = m9(KRec { k: 2 }); first = 0; last = 0; n = 0; for r in s { if n == 0 { first = r.k; } last = r.k; n += 1; } println("c9 {len(s)} {first} {last}"); }
+
+// c10 — a NULLABLE element type (`vector<Pt?>`, a `__nullable<Pt>` enum): the type ask
+// declines — the discriminant is not a struct field the literal writes.  Values right.
+fn m10(n: integer) -> vector<Pt?> {
+  out: vector<Pt?> = [];
+  for i in 0..n { out += [Pt { ptx: (i as float) ?? 0.0, pty: 0.0 }]; }
+  out
+}
+fn c10() { r = m10(3); println("c10 {len(r)} {r[1]?.ptx}"); }
+
+// c11 — the loop READS `len(out)` while pushing: the bump lands at the FINISH, so the read
+// inside the element's value sees the pre-push length — on both backends, fused or not.
+fn m11(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for _ in 0..n { out += [Pt { ptx: ((len(out) * 10) as float) ?? 0.0, pty: 0.0 }]; }
+  out
+}
+fn c11() { r = m11(4); println("c11 {len(r)} {r[0]?.ptx} {r[3]?.ptx}"); }
+
+// c12 — TWO minted paths in one loop, both owned locals: both fuse, each through its own
+// header.
+fn m12(n: integer) -> float {
+  a: vector<Pt> = [];
+  b: vector<Pt> = [];
+  for i in 0..n {
+    a += [Pt { ptx: (i as float) ?? 0.0, pty: 0.0 }];
+    b += [Pt { ptx: 0.0, pty: ((i * 2) as float) ?? 0.0 }];
+  }
+  (sum_ptx(a) + sum_pty(b) * 100.0) ?? 0.0
+}
+fn c12() { println("c12 {m12(3)}"); }
+
+// c13 — a record mint and a SCALAR push in one loop (V-s c5's twin): both movers, both fused,
+// one header each.
+fn m13(a: Pt, b: Pt) -> float {
+  v: vector<Pt> = [];
+  w: vector<float> = [];
+  for i in 0..3 {
+    v += [Pt { ptx: (a.ptx * (i as float)) ?? 0.0, pty: 0.0 }];
+    w += [(b.pty + (i as float)) ?? 0.0];
+  }
+  s = 0.0; for x in w { s = (s + x) ?? 0.0; }
+  (sum_ptx(v) + s * 100.0) ?? 0.0
+}
+fn c13() { println("c13 {m13(Pt { ptx: 2.0, pty: 0.0 }, Pt { ptx: 0.0, pty: 7.0 })}"); }
+
+// c14 — a FIELD-PATH mint (`h.pts`): outside the bare-variable admission, unchanged.  Values right.
+fn m14(a: Pt) -> H {
+  h = H { pts: [] };
+  for _ in 0..3 { h.pts += [Pt { ptx: a.ptx, pty: 0.0 }]; }
+  h
+}
+fn c14() { h = m14(Pt { ptx: 3.0, pty: 0.0 }); println("c14 {len(h.pts)} {sum_ptx(h.pts)}"); }
+
+// c15 — the SINGLETON append outside any loop: no header exists, the group keeps its
+// templates.  Values right.
+fn m15() -> vector<Pt> {
+  out: vector<Pt> = [];
+  out += [Pt { ptx: 42.0, pty: 1.0 }];
+  out += [pt(43.0, 2.0)];
+  out
+}
+fn c15() { r = m15(); println("c15 {len(r)} {r[0]?.ptx} {r[1]?.ptx}"); }
+
+// c16 — mints in OPPOSITE ARMS of a conditional, one path: both emit through the ONE
+// header the loop bound (a slot is derived only on the arm that runs).
+fn m16(n: integer) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n {
+    if i >= 2 { out += [Pt { ptx: (i as float) ?? 0.0, pty: 1.0 }]; }
+    else { out += [Pt { ptx: 0.5, pty: 2.0 }]; }
+  }
+  out
+}
+fn c16() { r = m16(30); println("c16 {len(r)} {r[0]?.ptx} {r[29]?.ptx} {sum_ptx(r)}"); }
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10();
+  c11(); c12(); c13(); c14(); c15(); c16();
+}

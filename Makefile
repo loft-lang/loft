@@ -2026,8 +2026,36 @@ ci-guard:
 # actually being asked.
 CI_MAX_FAIL ?= 5
 
+# THE LOCAL GATE IS CANCELLED WHEN IT RUNS LONG, and that is the point.  A gate that grows is
+# a gate that stops being run: measured 2026-09-12, a local `make ci` on macOS passed 45
+# minutes, which is long enough that the honest response is to skip it — and a gate nobody runs
+# protects nothing.  So the budget is a hard cancel here, where the machine's load is knowable
+# and the verdict reaches the person who can act on it.
+#
+# A red means CUT THE WORK — be critical about what the gate has to run — never "raise the
+# number": raising it is how a 20-minute gate becomes a 45-minute one an hour at a time, which
+# is exactly how it got there.  While iterating, the targeted runners are the answer
+# (`scripts/find_problems.sh --changed` / `--subject <name>`, seconds instead of minutes);
+# `make ci` is the ONE run before committing, and the PR's own ci.yml re-runs the same gate on
+# the same sha anyway.
+#
+# `CI_BUDGET_SECS=... make ci` raises it for ONE run — worth it only when a sibling checkout is
+# running its own gate, since two gates on this box roughly double each other's wall time
+# (CI_BUDGET.md § A LOCAL `make ci`); that is a fact about the box, not about the diff.
+# `CI_BUDGET_SECS=0` disables the cancel.
+#
+# This used to be `timeout-minutes: 20` on every sharded leg of ci.yml, which is the wrong place
+# for it: a hosted runner's wall time is not the diff's to control, and the cancel threw away
+# the leg's output — the one thing that would have said why it ran long.
+CI_BUDGET_SECS ?= 1200
+
 ci: ci-guard
 	@echo $$PPID > .ci-running
+	@# The 20-minute budget — a hard cancel, in scripts/ci_budget.sh so the tree-kill and the
+	@# pid-reuse guard are readable and testable rather than a wall of Makefile continuations.
+	@# Backgrounded here and self-terminating: it polls `.ci-running`, so it exits within one
+	@# interval of the gate ending and no watchdog can outlive its own run.
+	@[ "$(CI_BUDGET_SECS)" = 0 ] || ./scripts/ci_budget.sh $$PPID $(CI_BUDGET_SECS) >/dev/null 2>&1 &
 	@# Fresh header FIRST so result.txt can never be mistaken for a stale
 	@# run.  rebuild-native-cdylibs is invoked INSIDE the chain below (not as
 	@# an order-only prerequisite) so its output — and any failure — lands in
