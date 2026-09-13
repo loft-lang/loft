@@ -2554,7 +2554,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 791 | 448 | 6 | **337** |
+| 792 | 449 | 6 | **337** |
+
+(2026-09-13: loft#1525's inclusive-range guard adds one discriminating site and it peels
+(`in_type.base()`), so it lands in the wrapper-aware column — 791 → 792 total, 448 → 449 aware,
+and the opaque column and the ratchet's `337 · 1317` do not move.  `@FR-N-Shape` is what made
+that the shape of the fix: the first draft matched `&in_type` unpeeled and the ratchet refused
+it, which is the guard doing exactly its job on a site written minutes earlier.)
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through

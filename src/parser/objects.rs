@@ -3276,6 +3276,40 @@ impl Parser {
                 in_type.clone(),
                 I32.clone(),
             );
+            // loft#1525 — an INCLUSIVE range stops on the value it just yielded, BEFORE the
+            // step, so it never has to represent `till + 1`.  The overshoot test below cannot
+            // do that job when `till` is the type's maximum: the step overflows to the null
+            // sentinel (`i64::MIN` for `integer`), and `till < null` is false under the plain
+            // order — so the loop either restarts (the null-init form reads the sentinel as
+            // "not started yet") or runs on with `i = null` forever.
+            //
+            // Both spellings of the counter take this test unchanged.  In the plain-counter
+            // form `i` starts at `lo - 1`, so `i == till` on entry is exactly the empty range
+            // `lo..=lo-1`, where breaking is the right answer; in the null-init form `i` starts
+            // at the sentinel, which equals `till` only when `till` is itself null — a range
+            // that already ran zero times.  So no "have we started" test is needed, and the
+            // cost is one compare in `..=` loops only.
+            //
+            // Skipped entirely when the end is a CONSTANT strictly below the type's maximum
+            // (`0..=9`), where the step cannot overflow — that keeps @PLN157 § V-ab's counted
+            // loop at one increment and one compare for the common form.
+            // `@FR-N-Shape` — the scrutinee is PEELED (`base()`), so a nullable loop type is
+            // asked the same question as its dense twin rather than falling through the match
+            // and taking the test it does not need.
+            let end_can_reach_max = !matches!(
+                (till.unspan(), in_type.base()),
+                (Value::Int(t), Type::Integer(spec)) if i64::from(*t) < i64::from(spec.max)
+            );
+            if incl && end_can_reach_max {
+                let reached = self.conv_op(
+                    "==",
+                    Value::Var(ivar),
+                    till.clone(),
+                    in_type.clone(),
+                    till_tp.clone(),
+                );
+                ls.push(v_if(reached, Value::Break(0), Value::Null));
+            }
             if let Some(init) = plain_init {
                 plain_counter_init = Some(Value::Int(init));
                 ls.push(v_set(ivar, step));
