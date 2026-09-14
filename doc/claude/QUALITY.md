@@ -2562,7 +2562,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 810 | 468 | 5 | **337** |
+| 812 | 470 | 5 | **337** |
+
+(2026-09-15, loft#1529: `Parser::enum_slot_view` and `read_through_enum_slot` are new and read
+the nullable struct-enum's `Type::Enum` off a `.base()`, so both land in the wrapper-aware
+column: 810 → 812 total, 468 → 470 aware, the opaque column and the ratchet unmoved.  The first
+cut matched the truthiness arm's `tp` and a call result's return type bare, and the ratchet
+refused the second.)
 
 (2026-09-14, loft#1526: `Parser::parse_single`'s tuple literal now reads a `&` member through its
 reference, and `match_borrow_source` resolves a tuple member — both read a `Type` variant off a

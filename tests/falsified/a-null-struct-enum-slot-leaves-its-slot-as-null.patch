@@ -1,0 +1,198 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 5f2893212..1aa42a68e 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1478,37 +1478,6 @@ impl Parser {
+             let write = self.emit_nullable_slot_write(syn, to, val.clone());
+             return v_block(write, Type::Void, "nullable_elem_convert");
+         }
+-        // loft#1529 — the writer half of `(L-Null)` for a nullable struct-enum slot.  A source
+-        // that may be null reached `OpCopyRecord`, which copies nothing from a null source, so
+-        // the slot kept whatever it held: `h.e = absent` left `h.e` present.  Absence is the
+-        // zero tag word, which is what a literal `null` already writes; a present source still
+-        // copies.  A source that is not free to evaluate twice is named first.
+-        if op == "="
+-            && !self.first_pass
+-            && matches!(f_type, Type::Optional(_))
+-            && matches!(src_tp, Type::Optional(_))
+-            && let Type::Enum(e_nr, true, _) = f_type.base()
+-            && !self.data.def(*e_nr).name.starts_with("__nullable<")
+-            && let Some((base, fld)) = self.inline_slot_word(to)
+-        {
+-            let (prelude, source) = if Self::is_repeatable_place(&self.data, val) {
+-                (None, val.clone())
+-            } else {
+-                let named = self.vars.work_refs(src_tp.base(), &mut self.lexer);
+-                self.vars.set_skip_free(named);
+-                self.vars.mark_inline_ref(named);
+-                (Some(v_set(named, val.clone())), Value::Var(named))
+-            };
+-            if let Some(absent) = self.null_test(source.clone(), src_tp, false) {
+-                let clear = self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);
+-                let copy = self.copy_ref(to, &source, f_type.base());
+-                let write = v_if(absent, clear, copy);
+-                return match prelude {
+-                    Some(bind) => v_block(vec![bind, write], Type::Void, "enum_slot_write"),
+-                    None => write,
+-                };
+-            }
+-        }
+         // @PLN25 index flip — an element WRITE `v[i] = h` is an lvalue slot, not a nullable
+         // read: under the flip `v[i]` types `Optional(Reference/Enum)`, but the slot itself
+         // holds the base record, so a whole-element assign is still a `copy_ref` (OpCopyRecord).
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 6470edee1..a95dcff53 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -208,10 +208,6 @@ impl Parser {
+             && (self.lexer.peek_token("(") || self.find_poly_enum_field(*enum_d, &field).is_none())
+         {
+             self.read_through_tag(code, &mut t);
+-        } else {
+-            // The base of a field read is not a slot either, for a struct-enum slot as for the
+-            // tagged one: an absent `h.e` answers the typed null for `h.e.n` (loft#1529).
+-            self.read_through_enum_slot(code, &t);
+         }
+         // ⚠ `dnr` is the receiver's DEF, and the two are not the same thing to a reader:
+         // `type_def_nr` answers the def a type is REPRESENTED by, so a fn-ref's is `i32` and a
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index e19cd1bdc..64807e283 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -4854,13 +4854,6 @@ impl Parser {
+                 return true;
+             }
+         }
+-        // loft#1529 — an `E?` slot value meeting an `E?` store is the pointer on the far side
+-        // (`(L-Null-Which)`).  Asked before the equality accept, which is the path it takes:
+-        // the two types are the same and nothing else would convert it.  Only a STORE: a
+-        // comparison or a null test asks the slot itself.
+-        if !self.store_ctx.is_empty() && matches!(should, Type::Optional(_)) {
+-            self.read_through_enum_slot(code, is_type);
+-        }
+         if is_type.is_equal(should) {
+             return true;
+         }
+@@ -11169,8 +11162,7 @@ impl Parser {
+     /// emitter declines while the layout has no known type yet — and is rebuilt anyway.
+     pub(crate) fn read_through_tag(&mut self, code: &mut Value, tp: &mut Type) -> bool {
+         let Some((syn, pointer)) = self.tagged_pointer_type(tp) else {
+-            // A struct-enum slot is the same rule with the discriminant in its own bytes.
+-            return self.read_through_enum_slot(code, tp);
++            return false;
+         };
+         *code = self.emit_nullable_slot_read(syn, code.clone(), tp);
+         *tp = pointer;
+@@ -11242,86 +11234,6 @@ impl Parser {
+         )
+     }
+ 
+-    /// Is `code` a nullable STRUCT-ENUM read that is still its SLOT — a field or a
+-    /// `vector<E?>` element, or a variable that views one?  Layout.md `(L-Null)` spells the
+-    /// absence of such a slot as discriminant 0 in its own bytes, so the value is a
+-    /// sub-reference into the holder and never itself null.  The two shapes are exactly the
+-    /// two slot branches of [`Parser::null_test`], which is where the question was first
+-    /// answered: an `OpGetField` read (a field, and an element, which is read as a field at
+-    /// offset 0) and a variable [`Parser::views_a_nullable_element_slot`] says is one.
+-    /// The tagged `__nullable<S>` has its own reader ([`Self::read_through_tag`]).
+-    pub(crate) fn enum_slot_view(&self, code: &Value, tp: &Type) -> bool {
+-        if !matches!(tp, Type::Optional(_)) {
+-            return false;
+-        }
+-        let Type::Enum(e_nr, true, _) = tp.base() else {
+-            return false;
+-        };
+-        if self.data.def(*e_nr).name.starts_with("__nullable<") {
+-            return false;
+-        }
+-        self.inline_slot_word(code).is_some()
+-            || (matches!(code.unspan(), Value::Var(_)) && self.views_a_nullable_element_slot(tp))
+-    }
+-
+-    /// `(L-Null-Which)` for a nullable struct-enum slot: a value LEAVING the slot for a
+-    /// position that is not a slot — a local, a parameter, a return, a `??` or `?` subject,
+-    /// the base of a field read — is the pointer, `nullref` when the slot is absent.  Left as
+-    /// the slot's sub-reference it was present to every handle test and read as a record of
+-    /// zeroes (loft#1529).  The type is unchanged (`E?` either way), so this is pass-2 only.
+-    /// The slot is read twice, for the tag and as the value, which a projection is free to
+-    /// do.  A slot read off a CALL's record (`fresh().e`) is not: the call is named once and
+-    /// the slot re-read off the name.  Argument lifting would name it too, but only after
+-    /// parsing, which is too late for this decision, so the name takes the lift's place and
+-    /// with it the lift's OWNERSHIP of the delivered record — marked as a borrow instead, the
+-    /// record was never released (one `Holder` store per call, on both backends).
+-    pub(crate) fn read_through_enum_slot(&mut self, code: &mut Value, tp: &Type) -> bool {
+-        if self.first_pass || !self.enum_slot_view(code, tp) {
+-            return false;
+-        }
+-        if Self::is_repeatable_place(&self.data, code) {
+-            let Some(absent) = self.null_test(code.clone(), tp, false) else {
+-                return false;
+-            };
+-            let null = self.cl("OpNullRefSentinel", &[]);
+-            *code = v_if(absent, null, code.clone());
+-            return true;
+-        }
+-        let Value::Call(get_d, args) = code.unspan().clone() else {
+-            return false;
+-        };
+-        let Some(base) = args.first() else {
+-            return false;
+-        };
+-        let Value::Call(call_d, _) = base.unspan() else {
+-            return false;
+-        };
+-        let holder_d = match self.data.def(*call_d).returned().base() {
+-            Type::Reference(d, _) => *d,
+-            _ => return false,
+-        };
+-        let named = self
+-            .vars
+-            .work_refs(&Type::Reference(holder_d, Deps::none()), &mut self.lexer);
+-        if named == u16::MAX {
+-            return false;
+-        }
+-        self.vars.mark_inline_ref(named);
+-        let mut slot_args = args.clone();
+-        slot_args[0] = Value::Var(named);
+-        let slot = Value::Call(get_d, slot_args);
+-        let Some(absent) = self.null_test(slot.clone(), tp, false) else {
+-            return false;
+-        };
+-        let null = self.cl("OpNullRefSentinel", &[]);
+-        *code = v_block(
+-            vec![v_set(named, base.clone()), v_if(absent, null, slot)],
+-            tp.clone(),
+-            "enum_slot_read_named",
+-        );
+-        true
+-    }
+-
+     /// `if <discriminant is set> { <payload> } else { <the reference null sentinel> }` — the
+     /// body of [`Self::emit_nullable_slot_read`], with the slot's address supplied twice
+     /// because the tag and the payload are two reads of it.
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 3157193d1..dfa8b2d91 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -2704,19 +2704,8 @@ impl Parser {
+             // points at — a missing one has no record.  A COLLECTION is the case above:
+             // there the DbRef addresses the slot HOLDING the collection, so `rec` names
+             // the holder and says nothing about what the slot contains.
+-            // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
+-            // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
+-            // present.  Its tag says, through the one null test that already reads it.
+-            let as_optional = Type::Optional(Box::new(tp.clone()));
+-            if matches!(tp.base(), Type::Enum(_, true, _))
+-                && self.enum_slot_view(src, &as_optional)
+-                && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
+-            {
+-                not_null
+-            } else {
+-                let conv_nr = self.data.def_nr("OpConvBoolFromRef");
+-                Value::Call(conv_nr, vec![src.clone()])
+-            }
++            let conv_nr = self.data.def_nr("OpConvBoolFromRef");
++            Value::Call(conv_nr, vec![src.clone()])
+         } else if matches!(tp, Type::Boolean) {
+             // @PLN17: the null-check is "is NOT null" (v_if true → keep lhs).
+             // For a boolean that is `src != null` (raw `!= 255`), NOT the

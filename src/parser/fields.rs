@@ -208,6 +208,10 @@ impl Parser {
             && (self.lexer.peek_token("(") || self.find_poly_enum_field(*enum_d, &field).is_none())
         {
             self.read_through_tag(code, &mut t);
+        } else {
+            // The base of a field read is not a slot either, for a struct-enum slot as for the
+            // tagged one: an absent `h.e` answers the typed null for `h.e.n` (loft#1529).
+            self.read_through_enum_slot(code, &t);
         }
         // ⚠ `dnr` is the receiver's DEF, and the two are not the same thing to a reader:
         // `type_def_nr` answers the def a type is REPRESENTED by, so a fn-ref's is `i32` and a

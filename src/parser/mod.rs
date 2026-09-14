@@ -4854,6 +4854,13 @@ impl Parser {
                 return true;
             }
         }
+        // loft#1529 — an `E?` slot value meeting an `E?` store is the pointer on the far side
+        // (`(L-Null-Which)`).  Asked before the equality accept, which is the path it takes:
+        // the two types are the same and nothing else would convert it.  Only a STORE: a
+        // comparison or a null test asks the slot itself.
+        if !self.store_ctx.is_empty() && matches!(should, Type::Optional(_)) {
+            self.read_through_enum_slot(code, is_type);
+        }
         if is_type.is_equal(should) {
             return true;
         }
@@ -11162,7 +11169,8 @@ impl Parser {
     /// emitter declines while the layout has no known type yet — and is rebuilt anyway.
     pub(crate) fn read_through_tag(&mut self, code: &mut Value, tp: &mut Type) -> bool {
         let Some((syn, pointer)) = self.tagged_pointer_type(tp) else {
-            return false;
+            // A struct-enum slot is the same rule with the discriminant in its own bytes.
+            return self.read_through_enum_slot(code, tp);
         };
         *code = self.emit_nullable_slot_read(syn, code.clone(), tp);
         *tp = pointer;
@@ -11232,6 +11240,86 @@ impl Parser {
             result_tp,
             "nullable_slot_read",
         )
+    }
+
+    /// Is `code` a nullable STRUCT-ENUM read that is still its SLOT — a field or a
+    /// `vector<E?>` element, or a variable that views one?  Layout.md `(L-Null)` spells the
+    /// absence of such a slot as discriminant 0 in its own bytes, so the value is a
+    /// sub-reference into the holder and never itself null.  The two shapes are exactly the
+    /// two slot branches of [`Parser::null_test`], which is where the question was first
+    /// answered: an `OpGetField` read (a field, and an element, which is read as a field at
+    /// offset 0) and a variable [`Parser::views_a_nullable_element_slot`] says is one.
+    /// The tagged `__nullable<S>` has its own reader ([`Self::read_through_tag`]).
+    pub(crate) fn enum_slot_view(&self, code: &Value, tp: &Type) -> bool {
+        if !matches!(tp, Type::Optional(_)) {
+            return false;
+        }
+        let Type::Enum(e_nr, true, _) = tp.base() else {
+            return false;
+        };
+        if self.data.def(*e_nr).name.starts_with("__nullable<") {
+            return false;
+        }
+        self.inline_slot_word(code).is_some()
+            || (matches!(code.unspan(), Value::Var(_)) && self.views_a_nullable_element_slot(tp))
+    }
+
+    /// `(L-Null-Which)` for a nullable struct-enum slot: a value LEAVING the slot for a
+    /// position that is not a slot — a local, a parameter, a return, a `??` or `?` subject,
+    /// the base of a field read — is the pointer, `nullref` when the slot is absent.  Left as
+    /// the slot's sub-reference it was present to every handle test and read as a record of
+    /// zeroes (loft#1529).  The type is unchanged (`E?` either way), so this is pass-2 only.
+    /// The slot is read twice, for the tag and as the value, which a projection is free to
+    /// do.  A slot read off a CALL's record (`fresh().e`) is not: the call is named once and
+    /// the slot re-read off the name.  Argument lifting would name it too, but only after
+    /// parsing, which is too late for this decision, so the name takes the lift's place and
+    /// with it the lift's OWNERSHIP of the delivered record — marked as a borrow instead, the
+    /// record was never released (one `Holder` store per call, on both backends).
+    pub(crate) fn read_through_enum_slot(&mut self, code: &mut Value, tp: &Type) -> bool {
+        if self.first_pass || !self.enum_slot_view(code, tp) {
+            return false;
+        }
+        if Self::is_repeatable_place(&self.data, code) {
+            let Some(absent) = self.null_test(code.clone(), tp, false) else {
+                return false;
+            };
+            let null = self.cl("OpNullRefSentinel", &[]);
+            *code = v_if(absent, null, code.clone());
+            return true;
+        }
+        let Value::Call(get_d, args) = code.unspan().clone() else {
+            return false;
+        };
+        let Some(base) = args.first() else {
+            return false;
+        };
+        let Value::Call(call_d, _) = base.unspan() else {
+            return false;
+        };
+        let holder_d = match self.data.def(*call_d).returned().base() {
+            Type::Reference(d, _) => *d,
+            _ => return false,
+        };
+        let named = self
+            .vars
+            .work_refs(&Type::Reference(holder_d, Deps::none()), &mut self.lexer);
+        if named == u16::MAX {
+            return false;
+        }
+        self.vars.mark_inline_ref(named);
+        let mut slot_args = args.clone();
+        slot_args[0] = Value::Var(named);
+        let slot = Value::Call(get_d, slot_args);
+        let Some(absent) = self.null_test(slot.clone(), tp, false) else {
+            return false;
+        };
+        let null = self.cl("OpNullRefSentinel", &[]);
+        *code = v_block(
+            vec![v_set(named, base.clone()), v_if(absent, null, slot)],
+            tp.clone(),
+            "enum_slot_read_named",
+        );
+        true
     }
 
     /// `if <discriminant is set> { <payload> } else { <the reference null sentinel> }` — the

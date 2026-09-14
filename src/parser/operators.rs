@@ -2704,8 +2704,19 @@ impl Parser {
             // points at — a missing one has no record.  A COLLECTION is the case above:
             // there the DbRef addresses the slot HOLDING the collection, so `rec` names
             // the holder and says nothing about what the slot contains.
-            let conv_nr = self.data.def_nr("OpConvBoolFromRef");
-            Value::Call(conv_nr, vec![src.clone()])
+            // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
+            // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
+            // present.  Its tag says, through the one null test that already reads it.
+            let as_optional = Type::Optional(Box::new(tp.clone()));
+            if matches!(tp.base(), Type::Enum(_, true, _))
+                && self.enum_slot_view(src, &as_optional)
+                && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
+            {
+                not_null
+            } else {
+                let conv_nr = self.data.def_nr("OpConvBoolFromRef");
+                Value::Call(conv_nr, vec![src.clone()])
+            }
         } else if matches!(tp, Type::Boolean) {
             // @PLN17: the null-check is "is NOT null" (v_if true → keep lhs).
             // For a boolean that is `src != null` (raw `!= 255`), NOT the
