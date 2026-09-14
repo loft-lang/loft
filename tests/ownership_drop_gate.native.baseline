@@ -4,7 +4,6 @@
 c_coalesce_enum DOUBLE
 c_coalesce_field DOUBLE
 c_coalesce_push DOUBLE
-c_coalesce_reassign REFUSED
 c_coalesce_veclit DOUBLE
 c_elem_enum DOUBLE
 c_elem_field DOUBLE

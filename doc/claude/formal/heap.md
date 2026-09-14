@@ -993,10 +993,20 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
        whether the binding owns the record it displaces (`proxy_says_owned`).  The first arm
        answers no and takes no snapshot; the second sees the cleared deps and takes one.
        `LOFT_LOG=type_timeline:x` shows the two writes.
-   - A `??` spelling (`x = mk(9); x = a ?? mk(2)`, `c_coalesce_reassign`) has the same missing
-     flag: it releases `a` twice on the present path, crashes the interpreter under poison, and
-     does not compile natively (`E0425: cannot find value var___disp_2` — the arm is a scope-less
-     `Insert`, so the snapshot temp is declared inside a Rust block the loft scope does not have).
+   - ✓ **The `??` and scalar-`match` spellings — CLOSED 2026-09-14 for what they add.**
+     `x = mk(9); x = a ?? mk(2)` (`c_coalesce_reassign`) and `x = mk(9); x = match k { 0 => … }`
+     crashed the interpreter under poison and did not compile natively (`E0425: cannot find value
+     var___disp_2`), and the `??` present path released `a` twice.  One cause for all three: those
+     lowerings write their arms WITHOUT a block, so a lowered arm's displaced-release snapshot was
+     registered at the ENCLOSING scope and released at that scope's exit on every path — reading
+     an uninitialised slot on the paths that skipped the arm.  On the plain interpreter the slot
+     happened to hold a reference to the kept record, which is the second release.  This entry
+     first attributed that release to the missing flag; it was inferred, not measured, and it was
+     wrong — giving such an arm a block of its own (`sink_set_into_arms`) closed all three with no
+     flag in play.  Guard: `tests/scripts/a-reassignment-from-a-bare-arm-releases-its-snapshot-in-that-arm.loft`.
+     The corpus-wide emission diff differs in 28 files, every one by the added block alone: the
+     interpreter's bytecode is identical in all of them.  A `match` whose arms are LOCALS still
+     loses releases like the `if` spelling above.
    - Not this family: `x = mk(9); x = if c { a } else { mk(2) }` keeps the value form (the call
      arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for its whole
      life and its earlier owned record is freed with no hook on both paths (`p_j1`/`p_j2`).
@@ -1023,9 +1033,9 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      before it, the lowered form of `p_s4` was clean only because both its sources were stopped
      statically.
 
-And one NATIVE-only refusal: `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) generates Rust
-that does not compile (`E0425: cannot find value var___disp_2`), where the interpreter runs it
-and releases twice.
+✓ The NATIVE-only refusal of `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) — CLOSED
+2026-09-14 with family 7's `??` spelling, above: the same misplaced snapshot temp, and the cell
+now releases once on both backends.
 
 ⚠ **A double release is not only a handle closed twice.**  In one process, a cell that is clean
 on its own lost its release when it ran after a doubling one — `t = (a ?? mk(4), 1)` after
@@ -1035,14 +1045,14 @@ a process of its own, and why a cell's verdict inside a batch is not a measureme
 
 **Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
 each retired in the commit of the fix that moved it.  Closed so far: families 5, 6 and 8 whole,
-family 3 for sequential code and a taken branch, and family 1's present path.  Still open, each
-with its answer in the rules: family 1's absent path and family 3's two residuals (the loop and
-the branch not taken), which wait on the carrier question — a resolver given a VARIABLE where the
-answer belongs to an ASSIGNMENT — and the native refusal of `x = mk(); x = a ?? d`.  Family 2 has
-its answer too, but reaching it needs a fact about the caller.  Family 4 waits on D-heap-1's
-design call.  Family 7 is next: its lowered form needs the per-path flags, which family 8's cure
-made safe to mint, and its binding needs the join deps gone before its first arm asks who owns
-the displaced record; the native refusal is family 7's `??` spelling.
+family 3 for sequential code and a taken branch, family 1's present path, and family 7's `??` and
+scalar-`match` spellings with the native refusal they caused.  Still open, each with its answer
+in the rules: family 1's absent path and family 3's two residuals (the loop and the branch not
+taken), which wait on the carrier question — a resolver given a VARIABLE where the answer belongs
+to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the caller.
+Family 4 waits on D-heap-1's design call.  Family 7 is next: its lowered form needs the per-path
+flags, which family 8's cure made safe to mint, and its binding needs the join deps gone before
+its first arm asks who owns the displaced record.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

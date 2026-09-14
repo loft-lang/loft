@@ -12962,6 +12962,12 @@ impl Scopes<'_> {
     /// bind can take as it is: the binding itself, a compiler temp (a `??` hoist, a lift, a
     /// literal's work-ref), or a shape this cannot read.  `ov` is the ORIGINAL id, so each
     /// sunk `Set` takes the same scope mapping the value form would have.
+    ///
+    /// An arm that is not a block of its own — a bare tail, or an `Insert` as the `??` and scalar
+    /// `match` lowerings write it — is given one.  A sunk `Set` can take a snapshot of the record
+    /// it displaces, and that temp is registered at the scope the `Set` runs in and released at
+    /// that scope's exit.  Without a block that scope is the ENCLOSING one, whose exit also runs on
+    /// the paths where this arm, and the temp's declaration with it, never ran.
     fn sink_set_into_arms(v: u16, ov: u16, value: &Value, function: &Function) -> Option<Value> {
         fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
             match tail.unspan() {
@@ -12981,12 +12987,28 @@ impl Scopes<'_> {
                 _ => false,
             }
         }
+        // A nested `if` is not wrapped: its own arms are, when `sink` reaches them.
+        fn block_arm(arm: &mut Value) {
+            if matches!(arm.unspan(), Value::Block(_) | Value::If(_, _, _)) {
+                return;
+            }
+            let inner = std::mem::replace(arm, Value::Null);
+            *arm = Value::Block(Box::new(Block {
+                name: "sunk arm",
+                operators: vec![inner],
+                result: Type::Void,
+                scope: 0,
+                var_size: 0,
+            }));
+        }
         fn sink(node: &mut Value, ov: u16) {
             match node {
                 Value::Span(b) => sink(&mut b.1, ov),
                 Value::If(_, t, f) => {
                     sink(t, ov);
                     sink(f, ov);
+                    block_arm(t);
+                    block_arm(f);
                 }
                 Value::Block(bl) => {
                     if let Some(last) = bl.operators.last_mut() {
