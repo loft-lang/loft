@@ -363,8 +363,64 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 3.**
 
+* **D-bind-39** *(opened 2026-09-14)* — `(B-Ref-Read)` and `(B-Ref-Write)` for a link to a NARROW
+  place: the link does not honour the place's stored width, and nothing says so.
+  - `u: vector<u8> = [1, 250, 7]; c = &u[1]` reads 2042 on `--interpret`, and `c = 200` then leaves
+    `1,200,0`, so the write reached the next element.  `vector<i8>` is wrong the same way.  On
+    `--native` both panic in the store (`addr_mut`: not aligned for `i64`).
+  - A write through a link to a `u8` FIELD is lost on both backends: `o = B{a: 250, b: 9, n: 7}; c =
+    &o.a; c = 200` leaves `250,9,7`.  The read is right.
+  - A write through a link to an ENUM element is lost on both backends: `es = [Red, Green, Blue]; e =
+    &es[1]; e = Blue` leaves `Red,Green,Blue`.  The read is right.
+  A 4-byte place (`character`, `single`) and an 8-byte one (`integer`, `float`) link correctly, a
+  middle element with a neighbour after it included, and so does a `boolean` element.  (`u16` and
+  `i32` places are refused instead, D-bind-38.)  Silent: every face but the native element panic
+  answers a wrong value.  The interpreter's repoint of a narrow INTEGER link is not routed to the
+  link's slot (D-bind-36): routed, it would read the same wrong width where it now stops in the
+  store.  **Where (measured).**  Two causes, not one.  For the `u8` field and the enum element the
+  `&` is dropped at the bind: `c = &o.a` lowers to `c: integer(0, 255) = OpGetByte(o, 8, 0)` and `e =
+  &es[1]` to `e: Col = OpGetEnum(OpGetVector(es, 1, 1), 0)`, a plain copy that no write reaches back
+  from (`(B-Ref-Alias)`).  For the `u8`/`i8` element the link is real (`c: &integer(0, 255) =
+  OpGetVector(u, 1, 1)`), but reading and writing through a link picks the op by the kind alone —
+  `OpGetInt` / `OpSetInt` for every integer in `state/codegen.rs` — so an 8-byte op runs over a
+  1-byte element; native takes a `*mut i64` into the same slot.  Found while checking D-bind-36's
+  cells against a middle element.
+* **D-bind-38** *(opened 2026-09-14)* — `(B-Ref-Lvalue)`: a link to a TEXT place, or to an element
+  of a `u16` or `i32` vector, is refused.  `a: vector<text> = ["aa"]; t = &a[0]`, `o = O{s: "aa"}; t =
+  &o.s`, `u: vector<u16> = […]; c = &u[1]` and the same over `vector<i32>` all stop with "`&` requires
+  an addressable operand — a variable, struct field, or vector element", on both backends and
+  already on the first bind, while the same spellings over an integer, `u8`, float, enum or struct
+  place link.  The rule names a field and an element as lvalues without an exception for either.
+  **Where (measured).**  Each of these places reads through an op of its own — `OpGetText(OpGetVector(a,
+  4, 0), 0)`, `OpGetText(o, 8)`, `OpGetShortRaw(OpGetVector(u, 2, 1), 0, 0)`, `OpGetInt4(OpGetVector(d,
+  4, 1), 0)` — and `Parser::is_amp_place` lists the other getters (`OpGetByte` among them) but none of
+  these.  Lifting the refusal is not the whole cure: a local `&text` link is a
+  `*mut String` on `--native`, and a store's text slot is not a `String`, so the link needs a
+  representation for a text that lives in a store.  Found while probing D-bind-36's repoint over
+  every element kind.
+* **D-bind-37** *(opened 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a `&τ` PARAMETER:
+  `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-points the parameter's link on
+  `--interpret` (the callee reads 2, the caller's variable keeps 7), and `--native` does not compile
+  it (rustc E0308, mismatched types).  A loud divergence, not a wrong value.  **Where (measured).**
+  The native generator re-points a LOCAL scalar link to a place by taking a `*mut T` into the store
+  slot, and that arm excludes arguments; the parameter falls through to the write-back and emits
+  `*var_c = <the element's DbRef>` into its `&mut i64`.  Found beside D-bind-36: before that closure
+  the interpreter wrote neither, and read 7 in the callee.
+* **D-bind-36** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` on `--interpret` for
+  a link to a SCALAR whose new source is an element or a field: `c = &w[0]; c = &v[0]` and `f =
+  &o.x; f = &o.y` panicked (a store access out of bounds; in the allocator for a float element),
+  while native re-pointed.  The parser lowers the place to its own op (`OpGetVector`, `OpGetField`),
+  not to the install op D-bind-32 routed to the link's slot, so `set_var` took the write-through
+  path.  For a link to a scalar the right-hand side's TYPE separates
+  the two spellings: a place op is declared to return a reference, a value read out of the place is
+  the scalar.  `set_var` routes the former to the link's slot as well, except for an integer stored
+  narrower than 8 bytes, whose link reads the wrong width (D-bind-39).  A link to a record or a
+  collection reads an element's VALUE as a reference too, so there the type cannot tell them apart
+  and only the install op is routed.  (A struct element bound with `&` is typed as a view of its
+  vector, `ref(P)`, rather than as a `&P` link; rebinding it already left the first element alone,
+  and a cell pins that.)  Guard `tests/scripts/a-scalar-link-re-points-to-an-element-or-a-field.loft`.
 * **D-bind-35** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Disturb)` did not hold for a view
   bound inside ONE ARM of an `if` whose other arm assigns the same local: `x = mk(4); if k > 0 { x =
   h.inner } else { x = mk(0) }; h = Hold{…}` left `x` reading the new container on both backends,
